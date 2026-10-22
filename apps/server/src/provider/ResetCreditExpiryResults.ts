@@ -118,8 +118,9 @@ export function resetCreditAutoUseStatus(
 ): ResetCreditAutoUseResult["status"] | undefined {
   if (!usage || usage.unavailable) return;
   const credits = usage.resetCredits;
-  const listed = credits?.nextCreditId === creditId || credits?.expiries?.includes(expiresAt);
+  if (!credits) return;
+  const listed = credits.nextCreditId === creditId || credits.expiries?.includes(expiresAt);
   if (listed) return now >= Date.parse(expiresAt) - 60_000 ? "failed" : undefined;
   // A different selection alone cannot prove removal when the provider omits the expiry list.
-  if (!credits?.availableCount || credits.expiries !== undefined) return "used";
+  if (!credits.availableCount || credits.expiries !== undefined) return "used";
 }

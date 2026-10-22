@@ -184,8 +184,27 @@ const make = Effect.gen(function* () {
     const scope = yield* Effect.scope;
     const reschedule = yield* Effect.acquireRelease(Queue.unbounded<void>(), Queue.shutdown);
     const reconcile = Effect.fn("ResetCreditExpiry.reconcile")(function* () {
-      const providers = providerCredits(yield* registry.getProviders);
-      const hubAccounts = sourceCredits(yield* sources.current);
+      const providerSnapshots = yield* registry.getProviders;
+      const sourceSnapshots = yield* sources.current;
+      const providers = providerCredits(providerSnapshots);
+      const hubAccounts = sourceCredits(sourceSnapshots);
+      // An optional credit-list read can fail while ordinary usage remains readable.
+      const unknownAccounts = new Set([
+        ...providerSnapshots
+          .filter(
+            (provider) =>
+              provider.enabled &&
+              provider.auth.status !== "unauthenticated" &&
+              provider.usageLimits !== undefined &&
+              provider.usageLimits.resetCredits === undefined,
+          )
+          .map(resetCreditAccountKey),
+        ...sourceSnapshots.flatMap((source) =>
+          source.accounts
+            .filter((account) => account.usageLimits.resetCredits === undefined)
+            .map((account) => resetCreditSourceAccountKey(source.id, account)),
+        ),
+      ]);
       const candidates = new Map<string, ExpiringCredit>();
       for (const credit of [...providers, ...hubAccounts]) {
         if (!candidates.has(credit.accountKey)) candidates.set(credit.accountKey, credit);
@@ -194,7 +213,9 @@ const make = Effect.gen(function* () {
         const credit = candidates.get(accountKey);
         const signature = credit
           ? creditSignature([credit.owner, credit.creditId, credit.expiresAt])
-          : null;
+          : unknownAccounts.has(accountKey)
+            ? job.signature
+            : null;
         // A driver's refresh publishes while redemption is still returning its result.
         if (signature !== job.signature && !job.redemption.active) {
           yield* Fiber.interrupt(job.fiber);
@@ -262,7 +283,14 @@ const make = Effect.gen(function* () {
             yield* credit.refresh;
             yield* report();
             redemption.active = false;
-            if (!(yield* credit.isCurrent)) {
+            const usage = yield* credit.usage;
+            const credits = usage?.resetCredits;
+            // Only a changed authoritative snapshot replaces this job; stale or unknown data retries.
+            if (
+              usage === undefined ||
+              (credits !== undefined &&
+                (credits.nextCreditId !== creditId || credits.nextExpiresAt !== expiresAt))
+            ) {
               jobs.delete(accountKey);
               // Reconcile on the subscription fiber so concurrent jobs cannot race scheduling.
               yield* Queue.offer(reschedule, undefined);

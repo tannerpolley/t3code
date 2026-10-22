@@ -1,3 +1,7 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as ModelManifest from "./ModelManifest.ts";
+import * as ServerConfig from "../config.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -686,5 +690,102 @@ it.effect("permits redemption at the exact one-minute boundary", () =>
       assert.strictEqual((yield* Ref.get(f.calls)).length, 1);
       assert.strictEqual((yield* Queue.take(f.results)).status, "used");
     }),
+  ),
+);
+
+it.effect("paces failed refreshes when the registry retains a stale selected credit", () =>
+  Effect.gen(function* () {
+    const initial = provider(20 * MINUTE);
+    const live = yield* Ref.make(initial);
+    const streamGate = yield* Deferred.make<void>();
+    const refreshGate = yield* Deferred.make<void>();
+    const refreshTimes: number[] = [];
+    const refreshed = yield* Queue.unbounded<void>();
+    const ready = yield* Deferred.make<void>();
+    let consumes = 0;
+    const instance: ProviderInstance = {
+      instanceId: initial.instanceId,
+      driverKind: initial.driver,
+      enabled: true,
+      displayName: undefined,
+      continuationIdentity: { driverKind: initial.driver, continuationKey: initial.instanceId },
+      snapshot: {
+        getSnapshot: Ref.get(live),
+        resolveMaintenance: () => Effect.die("Maintenance must not run during credit auto-use"),
+        applyUsageLimits: () => Effect.void,
+        // Hold subscription delivery so the real registry must recover its cached snapshot.
+        streamChanges: Stream.fromEffect(
+          Deferred.await(streamGate).pipe(Effect.andThen(Ref.get(live))),
+        ),
+        refresh: Effect.gen(function* () {
+          refreshTimes.push(yield* Clock.currentTimeMillis);
+          yield* Queue.offer(refreshed, undefined);
+          // Bound the broken immediate loop so its assertion can fail without hanging.
+          if (refreshTimes.length === 3) yield* Deferred.await(refreshGate);
+          return yield* Effect.die("refresh failed before producing a snapshot");
+        }),
+      },
+      consumeResetCredit: (_expected, guard) =>
+        Effect.gen(function* () {
+          if (guard && !(yield* guard)) return "nothingToReset" as const;
+          consumes++;
+          yield* Ref.set(live, provider(30 * MINUTE, "codex", "credit-b"));
+          return "reset" as const;
+        }),
+      orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+      textGeneration: {} as ProviderInstance["textGeneration"],
+    };
+    const changes = yield* PubSub.unbounded<void>();
+    const instances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+      listInstances: Effect.succeed([instance]),
+      listUnavailable: Effect.succeed([]),
+      getInstance: () => Effect.succeed(instance),
+      subscribeChanges: PubSub.subscribe(changes),
+    });
+    const registry = yield* ProviderRegistry.ProviderRegistry.pipe(
+      Effect.provide(ProviderRegistry.layer.pipe(Layer.provide(instances))),
+    );
+    const deps = Layer.mergeAll(
+      instances,
+      Layer.succeed(ProviderRegistry.ProviderRegistry, {
+        ...registry,
+        subscribeChanges: registry.subscribeChanges.pipe(
+          Effect.map((stream) => stream.pipe(Stream.tap(() => Deferred.succeed(ready, undefined)))),
+        ),
+      }),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({
+        current: Effect.succeed([]),
+        streamChanges: Stream.make([]),
+      }),
+      Settings.layerTest({ autoUseExpiringResetCredits: true }),
+    );
+    const scheduler = yield* ResetCreditExpiry.ResetCreditExpiry.pipe(
+      Effect.provide(ResetCreditExpiry.layer.pipe(Layer.provide(deps))),
+    );
+    yield* scheduler.start;
+    yield* Deferred.await(ready);
+    yield* TestClock.adjust(10 * MINUTE);
+    yield* Queue.take(refreshed);
+    yield* TestClock.adjust(0);
+    assert.deepStrictEqual([...refreshTimes], [10 * MINUTE]);
+    yield* TestClock.adjust(MINUTE - 1);
+    assert.deepStrictEqual([...refreshTimes], [10 * MINUTE]);
+    yield* TestClock.adjust(1);
+    assert.deepStrictEqual([...refreshTimes], [10 * MINUTE, 11 * MINUTE]);
+    assert.strictEqual(consumes, 1);
+    assert.strictEqual(
+      (yield* registry.getProviders)[0]?.usageLimits?.resetCredits?.nextCreditId,
+      "credit-a",
+    );
+    assert.strictEqual((yield* Ref.get(live)).usageLimits?.resetCredits?.nextCreditId, "credit-b");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-credit-pacing-" }),
+        ModelManifest.layerTest,
+        ProviderLatestVersions.layer,
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
+    ),
+    Effect.scoped,
   ),
 );

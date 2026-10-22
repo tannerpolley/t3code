@@ -235,3 +235,143 @@ it.effect(
       Effect.scoped,
     ),
 );
+
+it.effect("keeps auto-use scheduled without reporting used when hub credit-list reads fail", () =>
+  Effect.gen(function* () {
+    const minute = 60_000;
+    const ready = yield* Deferred.make<void>();
+    const credit = (id: string, minutes: number) => ({
+      id,
+      expires_at: DateTime.formatIso(DateTime.makeUnsafe(minutes * minute)),
+      status: "available",
+      reset_type: "codex_rate_limits",
+    });
+    const remote = [credit("credit-a", 20), credit("credit-b", 30)];
+    let failCreditRead = false;
+    const notices = yield* Queue.unbounded<unknown>();
+    const refreshes = yield* Queue.unbounded<void>();
+    const requests: { creditId: string; at: number }[] = [];
+    const decodeRequest = Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({ url: Schema.String, data: Schema.optional(Schema.String) }),
+      ),
+    );
+    const decodeConsume = Schema.decodeUnknownEffect(
+      Schema.fromJsonString(Schema.Struct({ credit_id: Schema.String })),
+    );
+    const http = HttpClient.make((request) =>
+      Effect.gen(function* () {
+        const path = new URL(request.url).pathname;
+        if (path.endsWith("/auth-files"))
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              files: [
+                {
+                  id: "account.json",
+                  auth_index: "a",
+                  provider: "codex",
+                  email: "a@example.com",
+                  id_token: { chatgpt_account_id: "account-a" },
+                },
+              ],
+            }),
+          );
+        if (path.endsWith("/reset-quota"))
+          return HttpClientResponse.fromWeb(request, Response.json({}));
+        const body =
+          request.body._tag === "Uint8Array"
+            ? yield* decodeRequest(new TextDecoder().decode(request.body.body)).pipe(Effect.orDie)
+            : undefined;
+        let response: unknown = { plan_type: "pro", rate_limit: null };
+        if (body?.url.endsWith("/rate-limit-reset-credits")) {
+          if (failCreditRead)
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ status_code: 503, body: "temporarily unavailable" }),
+            );
+          response = { credits: remote };
+        }
+        if (body?.url.endsWith("/consume")) {
+          const data = yield* decodeConsume(body.data!).pipe(Effect.orDie);
+          requests.push({ creditId: data.credit_id, at: yield* Clock.currentTimeMillis });
+          failCreditRead = true;
+          response = { code: "nothing_to_reset" };
+        }
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({ status_code: 200, body: JSON.stringify(response) }),
+        );
+      }),
+    );
+    const sources = yield* UsageLimitSources.make.pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    yield* sources.refresh;
+    const deps = Layer.mergeAll(
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        subscribeChanges: Effect.succeed(Stream.make([])),
+        getProviders: Effect.succeed([]),
+      }),
+      Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        getInstance: () => Effect.succeed(undefined),
+      }),
+      Layer.succeed(UsageLimitSources.UsageLimitSources, {
+        ...sources,
+        publishResetCreditAutoUse: (sourceId, accountId, key, result) =>
+          Queue.offer(notices, result).pipe(
+            Effect.andThen(sources.publishResetCreditAutoUse(sourceId, accountId, key, result)),
+          ),
+        refresh: sources.refresh.pipe(Effect.tap(() => Queue.offer(refreshes, undefined))),
+        streamChanges: sources.streamChanges.pipe(
+          Stream.tap(() => Deferred.succeed(ready, undefined)),
+        ),
+      }),
+    );
+    const scheduler = yield* ResetCreditExpiry.ResetCreditExpiry.pipe(
+      Effect.provide(ResetCreditExpiry.layer.pipe(Layer.provide(deps))),
+    );
+    yield* scheduler.start;
+    yield* Deferred.await(ready);
+    yield* TestClock.adjust(10 * minute);
+    yield* Queue.take(refreshes);
+    yield* TestClock.adjust(0);
+    expect(requests).toEqual([{ creditId: "credit-a", at: 10 * minute }]);
+    expect((yield* sources.current)[0]?.accounts[0]?.usageLimits.resetCredits).toBeUndefined();
+    expect(yield* Queue.size(notices)).toBe(0);
+    yield* TestClock.adjust(minute - 1);
+    expect(yield* Queue.size(refreshes)).toBe(0);
+    yield* TestClock.adjust(1);
+    // A retry refresh proves the unknown snapshot did not cancel or immediately restart the job.
+    expect(yield* Queue.size(refreshes)).toBe(1);
+    expect(yield* Queue.size(notices)).toBe(0);
+    failCreditRead = false;
+    yield* TestClock.adjust(minute);
+    expect(requests).toHaveLength(1);
+    yield* TestClock.adjust(minute);
+    expect(requests).toEqual([
+      { creditId: "credit-a", at: 10 * minute },
+      { creditId: "credit-a", at: 13 * minute },
+    ]);
+    expect(yield* Queue.size(notices)).toBe(0);
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        autoUseExpiringResetCredits: true,
+        usageLimitSources: {
+          [UsageLimitSourceId.make("hub")]: {
+            kind: "cliproxy",
+            url: "http://hub.test:8317",
+            managementKey: "fake-key",
+            enabled: true,
+          },
+        },
+      }),
+      NodeCrypto.layer,
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+    ]),
+    Effect.scoped,
+  ),
+);

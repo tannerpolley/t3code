@@ -17,6 +17,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -177,7 +178,7 @@ it.layer(claudeLayer)("ClaudeDriver", (it) => {
         yield* Deferred.await(entered);
         const updates = yield* PubSub.unbounded<readonly ServerProvider[]>();
         const ready = yield* Deferred.make<void>();
-        const completed = yield* Deferred.make<void>();
+        const completed = yield* Queue.unbounded<void>();
         const deps = Layer.mergeAll(
           ServerSettings.layerTest({ autoUseExpiringResetCredits: true }),
           Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -208,7 +209,7 @@ it.layer(claudeLayer)("ClaudeDriver", (it) => {
                 consumeResetCredit: (expected, canRedeem) =>
                   Deferred.succeed(queued, undefined).pipe(
                     Effect.andThen(f.instance.consumeResetCredit!(expected, canRedeem)),
-                    Effect.tap(() => Deferred.succeed(completed, undefined)),
+                    Effect.tap(() => Queue.offer(completed, undefined)),
                   ),
               }),
           }),
@@ -240,7 +241,7 @@ it.layer(claudeLayer)("ClaudeDriver", (it) => {
         yield* TestClock.adjust(0);
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(holder);
-        yield* Deferred.await(completed);
+        yield* Queue.take(completed);
         expect(f.requests).toHaveLength(0);
         yield* TestClock.adjust(0);
         expect(notices).toEqual([]);
@@ -256,6 +257,7 @@ it.layer(claudeLayer)("ClaudeDriver", (it) => {
           },
         }));
         yield* PubSub.publish(updates, [yield* Ref.get(f.current)]);
+        yield* Queue.take(completed);
         yield* TestClock.adjust(9 * minute);
         expect(f.requests).toContainEqual(expect.objectContaining({ creditId: "credit-a" }));
       }).pipe(Effect.scoped),
