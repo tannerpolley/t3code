@@ -1,16 +1,27 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { shortModelSelectionEffort } from "./threadExecution.ts";
+import { modelSelectionEffortLevel } from "./threadExecution.ts";
 
-describe("shortModelSelectionEffort", () => {
-  it("shortens catalog labels and preserves provider extras", () => {
-    expect(shortModelSelectionEffort("Low")).toBe("Low");
-    expect(shortModelSelectionEffort("Medium")).toBe("Med");
-    expect(shortModelSelectionEffort("High")).toBe("High");
-    expect(shortModelSelectionEffort("Extra High")).toBe("XHigh");
-    expect(shortModelSelectionEffort("xhigh")).toBe("XHigh");
-    expect(shortModelSelectionEffort("Maximum")).toBe("Max");
-    expect(shortModelSelectionEffort("Ultra")).toBe("Ultra");
-    expect(shortModelSelectionEffort(null)).toBeNull();
+describe("modelSelectionEffortLevel", () => {
+  it("places catalog labels and raw values on the five-step scale", () => {
+    const levels = (labels: string[]) =>
+      labels.map((label) => Object.values(modelSelectionEffortLevel(label)));
+    expect(levels(["Low", "Medium", "High", "Extra High", "Maximum"])).toEqual([
+      [1, "Low"],
+      [2, "Medium"],
+      [3, "High"],
+      [4, "Extra high"],
+      [5, "Max"],
+    ]);
+    expect(levels(["med", "xhigh", "extra_high", "max"])).toEqual([
+      [2, "Medium"],
+      [4, "Extra high"],
+      [4, "Extra high"],
+      [5, "Max"],
+    ]);
+    expect(levels(["Ultra", "Minimal"])).toEqual([
+      [0, "Ultra"],
+      [0, "Minimal"],
+    ]);
   });
 });

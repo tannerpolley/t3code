@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ThreadId, type IssueMilestone, type IssueSummary } from "@t3tools/contracts";
-import { issueRoadmap, issueLiveStatus, createIssueRoadmapClock } from "./issueRoadmap.logic";
+import {
+  issueRoadmap,
+  issueLiveStatus,
+  issueLiveWorkSummary,
+  createIssueRoadmapClock,
+} from "./issueRoadmap.logic";
 
 const scope = { host: "github.com", repository: "owner/repo" };
 const ref = (number: number, state: "open" | "closed" = "open", repository = scope.repository) => ({
@@ -312,4 +317,32 @@ it("holds unacknowledged openings out of every open section, then restores their
   expect(numbers(inSection(acknowledged, "ready").rows)).toEqual([1, 4]);
   expect(numbers(inSection(acknowledged, "blocked").rows)).toEqual([2]);
   expect(numbers(inSection(acknowledged, "in-progress").rows)).toEqual([3]);
+});
+
+it("names the first thread in the issue's status, its role and how many more are linked", () => {
+  const thread = (title: string, status: "working" | "idle", role?: "investigator") => ({
+    ...work(status)[0]!,
+    threadId: ThreadId.make(title),
+    title,
+    ...(role === undefined ? {} : { role }),
+  });
+  const summary = issueLiveWorkSummary(
+    issue(1, {
+      liveWork: [
+        thread("Alpha", "idle"),
+        thread("#736 Pahlavanzadeh 2013 MDEA research", "working", "investigator"),
+        thread("Beta", "idle"),
+      ],
+    }),
+  );
+  expect(summary?.label).toBe("Working · Investigator: #736 Pahlavanzadeh 2013 MDEA research");
+  expect(summary?.more).toBe(2);
+  expect(summary?.work.map((item) => item.title)).toEqual([
+    "#736 Pahlavanzadeh 2013 MDEA research",
+    "Alpha",
+    "Beta",
+  ]);
+  const roleless = issueLiveWorkSummary(issue(2, { liveWork: [thread("Gamma", "idle")] }));
+  expect(roleless).toMatchObject({ label: "Idle · Gamma", more: 0 });
+  expect(issueLiveWorkSummary(issue(3))).toBeNull();
 });

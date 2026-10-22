@@ -120,6 +120,7 @@ export class LegacyV1ThreadImporter extends Context.Service<
   LegacyV1ThreadImporterShape
 >()("t3/orchestration-v2/legacy/LegacyV1ThreadImporter") {}
 
+const MAX_CONFIRMED_TRANSCRIPT_THREADS = 50_000;
 const decodeModelSelection = Schema.decodeUnknownOption(ModelSelection);
 const decodeAttachments = Schema.decodeUnknownOption(Schema.Array(ChatAttachment));
 const decodePullRequests = Schema.decodeUnknownOption(Schema.Array(ThreadPullRequestLink));
@@ -433,7 +434,21 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // Only reconcileShells inserts import rows, during startup before requests run.
+  // Missing rows and completed imports stay valid until reconciliation runs again.
+  const confirmedTranscriptThreadIds = new Set<ThreadId>();
+  // Lookups of thread ids that don't exist also land here while an import is pending, so cap it;
+  // clearing only costs a fresh lookup.
+  const confirmTranscript = (threadId: ThreadId) => {
+    if (confirmedTranscriptThreadIds.size >= MAX_CONFIRMED_TRANSCRIPT_THREADS)
+      confirmedTranscriptThreadIds.clear();
+    confirmedTranscriptThreadIds.add(threadId);
+  };
+  let noPendingTranscripts = false;
+
   const reconcileShellsBase = Effect.gen(function* () {
+    confirmedTranscriptThreadIds.clear();
+    noPendingTranscripts = false;
     const now = DateTime.formatIso(yield* DateTime.now);
     const repairRows = yield* sql<LegacyRepairRow>`
       SELECT
@@ -677,16 +692,13 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // `transcript_imported_at` is never reset to NULL, so a positive answer
-  // stays valid for the process lifetime; ensureTranscript runs on most
-  // thread reads and command dispatches, so skipping the lock + lookup here
-  // keeps that path off the database entirely after first confirmation.
-  const confirmedTranscriptThreadIds = new Set<ThreadId>();
-
   const ensureTranscriptBase = (threadId: ThreadId) =>
     transcriptImports.withLock(
       threadId,
       Effect.gen(function* () {
+        if (noPendingTranscripts || confirmedTranscriptThreadIds.has(threadId)) {
+          return { importedThreadCount: 0, importedMessageCount: 0 };
+        }
         const imports = yield* sql<LegacyImportRow>`
           SELECT thread_id, transcript_imported_at
           FROM orchestration_v2_legacy_imports
@@ -695,9 +707,7 @@ const make = Effect.gen(function* () {
         `;
         const imported = imports[0];
         if (imported === undefined || imported.transcript_imported_at !== null) {
-          if (imported !== undefined) {
-            confirmedTranscriptThreadIds.add(threadId);
-          }
+          confirmTranscript(threadId);
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
         const messages = yield* listMessages(threadId);
@@ -746,7 +756,7 @@ const make = Effect.gen(function* () {
             last_error = NULL
           WHERE thread_id = ${threadId}
         `;
-        confirmedTranscriptThreadIds.add(threadId);
+        confirmTranscript(threadId);
         return {
           importedThreadCount: 1,
           importedMessageCount: missing.length,
@@ -755,18 +765,20 @@ const make = Effect.gen(function* () {
     );
 
   const ensureTranscript = (threadId: ThreadId) =>
-    confirmedTranscriptThreadIds.has(threadId)
-      ? Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 })
-      : ensureTranscriptBase(threadId).pipe(
-          Effect.mapError(
-            (cause) =>
-              new LegacyV1ThreadImportError({
-                operation: "hydrate transcript for",
-                threadId,
-                cause,
-              }),
+    Effect.suspend(() =>
+      noPendingTranscripts || confirmedTranscriptThreadIds.has(threadId)
+        ? Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 })
+        : ensureTranscriptBase(threadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new LegacyV1ThreadImportError({
+                  operation: "hydrate transcript for",
+                  threadId,
+                  cause,
+                }),
+            ),
           ),
-        );
+    );
 
   const importPendingTranscripts = Effect.gen(function* () {
     const rows = yield* sql<LegacyImportRow>`
@@ -806,6 +818,9 @@ const make = Effect.gen(function* () {
       importedMessageCount += result.importedMessageCount;
       yield* Effect.yieldNow;
     }
+    noPendingTranscripts = rows.every((row) =>
+      confirmedTranscriptThreadIds.has(ThreadId.make(row.thread_id)),
+    );
     return { importedThreadCount, importedMessageCount };
   }).pipe(
     Effect.catchCause((cause) =>

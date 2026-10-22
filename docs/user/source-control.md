@@ -400,8 +400,8 @@ repositories** widens it to every repository you can read.
 
 The **Inbox** on the repository's **Issues** page holds issues opened and comments posted by
 another project through `t3_issue_post`. Unmarked writes and other issue changes do not appear.
-T3 checks about every two minutes and notifies the orchestrator of unacknowledged items at most
-once every 15 minutes. A paused repository catches up when resumed.
+T3 checks repositories with an orchestrator every five minutes and other project repositories every
+15 minutes. It notifies the orchestrator of unacknowledged items at most once every 15 minutes. A paused repository catches up when resumed.
 
 The orchestrator reviews each item, revises it if needed with `propose_issue_change`, then
 acknowledges it with `t3_issue_inbox` `mark_read`. You can also acknowledge it with **Mark read**.

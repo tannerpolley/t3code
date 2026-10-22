@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   ComposerContextId,
   EventId,
@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
@@ -77,6 +78,98 @@ const seedPendingTranscripts = Effect.gen(function* () {
   }
   yield* importer.reconcileShells;
 });
+
+it.effect.each([
+  { name: "confirming a thread has no legacy row", scanPending: false },
+  { name: "an empty pending scan", scanPending: true },
+])("skips SQL and locking after $name", ({ scanPending }) =>
+  Effect.gen(function* () {
+    const lock = yield* KeyedLock.make();
+    using _makeLock = vi.spyOn(KeyedLock, "make").mockReturnValue(Effect.succeed(lock));
+    using withLock = vi.spyOn(lock, "withLock");
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter.pipe(
+      Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)),
+    );
+    yield* importer.reconcileShells;
+    yield* importer.ensureTranscript(ThreadId.make("thread:first"));
+    assert.equal(withLock.mock.calls.length, 1);
+    if (scanPending) yield* importer.importPendingTranscripts;
+    withLock.mockClear();
+    const statements: string[] = [];
+    const result = yield* importer
+      .ensureTranscript(ThreadId.make(scanPending ? "thread:never-checked" : "thread:first"))
+      .pipe(
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          statements.push(statement.compile()[0]);
+          return Effect.succeed(statement);
+        }),
+      );
+    assert.deepStrictEqual(result, { importedThreadCount: 0, importedMessageCount: 0 });
+    assert.deepStrictEqual(statements, []);
+    assert.equal(withLock.mock.calls.length, 0);
+    yield* seedPendingTranscripts.pipe(
+      Effect.provideService(LegacyV1ThreadImporter.LegacyV1ThreadImporter, importer),
+    );
+    assert.deepStrictEqual(yield* importer.ensureTranscript(ThreadId.make("thread:first")), {
+      importedThreadCount: 1,
+      importedMessageCount: 1,
+    });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("imports a pending transcript once even when the ensure effect is reused", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const lock = yield* KeyedLock.make();
+    using _makeLock = vi.spyOn(KeyedLock, "make").mockReturnValue(Effect.succeed(lock));
+    using withLock = vi.spyOn(lock, "withLock");
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter.pipe(
+      Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)),
+    );
+    yield* seedPendingTranscripts.pipe(
+      Effect.provideService(LegacyV1ThreadImporter.LegacyV1ThreadImporter, importer),
+    );
+    const statements: string[] = [];
+    const ensure = importer.ensureTranscript(ThreadId.make("thread:first")).pipe(
+      Effect.provideService(Statement.CurrentTransformer, (statement) => {
+        statements.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      }),
+    );
+    assert.deepStrictEqual(yield* ensure, { importedThreadCount: 1, importedMessageCount: 1 });
+    const firstImportStatements = [...statements];
+    assert.deepStrictEqual(yield* ensure, { importedThreadCount: 0, importedMessageCount: 0 });
+    assert.deepStrictEqual(statements, firstImportStatements);
+    assert.equal(withLock.mock.calls.length, 1);
+    const messages = yield* sql<{ readonly event_id: string }>`
+      SELECT event_id FROM orchestration_events
+      WHERE stream_id = 'thread:first' AND event_type = 'message.updated'
+        AND application_event_version = 2
+      ORDER BY event_id
+    `;
+    assert.deepStrictEqual(messages, [
+      { event_id: "migration:v1:message:thread:first:latest" },
+      { event_id: "migration:v1:message:thread:first:old" },
+    ]);
+    assert.equal(yield* importer.pendingThreadCount, 1);
+    assert.deepStrictEqual(yield* importer.importPendingTranscripts, {
+      importedThreadCount: 1,
+      importedMessageCount: 1,
+    });
+    withLock.mockClear();
+    assert.deepStrictEqual(
+      yield* importer
+        .ensureTranscript(ThreadId.make("thread:after-import"))
+        .pipe(
+          Effect.provideService(Statement.CurrentTransformer, () =>
+            Effect.die("SQL after all pending transcripts imported"),
+          ),
+        ),
+      { importedThreadCount: 0, importedMessageCount: 0 },
+    );
+    assert.equal(withLock.mock.calls.length, 0);
+  }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect(
   "keeps hydrating later transcripts after a defect and leaves the failed thread pending",

@@ -1110,7 +1110,7 @@ it.effect.each(["external", "bot", "listing"] as const)(
       const inbox = yield* IssueInbox.make;
       yield* inbox.pollDue;
       closed = true;
-      yield* TestClock.adjust("2 minutes");
+      yield* TestClock.adjust("5 minutes");
       yield* inbox.pollDue;
       yield* worker.drain();
       listingCaughtUp = true;
@@ -1124,7 +1124,7 @@ it.effect.each(["external", "bot", "listing"] as const)(
         (yield* store.queue(reference)).map((entry) => entry.issue.number),
         [3],
       );
-      yield* TestClock.adjust("2 minutes");
+      yield* TestClock.adjust("5 minutes");
       yield* inbox.pollDue;
       assert.deepEqual(
         (yield* store.queue(reference)).map((entry) => entry.issue.number),
@@ -1441,7 +1441,7 @@ it.effect.each([false, true])(
       yield* inbox.pollDue;
       assert.isNull((yield* service.repositoryStatus(reference)).rootThreadId);
       arrived = true;
-      yield* TestClock.adjust("2 minutes");
+      yield* TestClock.adjust("15 minutes");
       yield* Effect.all(
         [
           inbox.pollDue,

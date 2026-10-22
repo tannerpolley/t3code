@@ -177,26 +177,29 @@ export function formatModelSelectionEffort(
   return null;
 }
 
-/** Compact catalog effort labels for fixed-width thread columns. */
-export function shortModelSelectionEffort(label: string | null): string | null {
-  if (label === null) return null;
-  switch (label.toLowerCase().replace(/[ _-]/g, "")) {
-    case "low":
-      return "Low";
-    case "medium":
-    case "med":
-      return "Med";
-    case "high":
-      return "High";
-    case "extrahigh":
-    case "xhigh":
-      return "XHigh";
-    case "maximum":
-    case "max":
-      return "Max";
-    default:
-      return label;
-  }
+const MODEL_SELECTION_EFFORT_SCALE: Record<string, number> = {
+  low: 1,
+  medium: 2,
+  med: 2,
+  high: 3,
+  extrahigh: 4,
+  xhigh: 4,
+  maximum: 5,
+  max: 5,
+};
+const MODEL_SELECTION_EFFORT_NAMES = ["Low", "Medium", "High", "Extra high", "Max"] as const;
+
+/**
+ * An effort's level on the five-step scale, Low 1 to Max 5, with one name per level whether the
+ * label is a catalog label ("Extra High") or a raw value ("xhigh"). Other efforts are level 0 and
+ * keep their own label.
+ */
+export function modelSelectionEffortLevel(label: string): {
+  readonly level: number;
+  readonly name: string;
+} {
+  const level = MODEL_SELECTION_EFFORT_SCALE[label.toLowerCase().replace(/[ _-]/g, "")] ?? 0;
+  return { level, name: level === 0 ? label : MODEL_SELECTION_EFFORT_NAMES[level - 1]! };
 }
 
 const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {

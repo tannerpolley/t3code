@@ -97,6 +97,7 @@ export function createLiveIssueWorkOverlay() {
       return {
         threadId: thread.id,
         title: thread.title,
+        ...(thread.source.role === undefined ? {} : { role: thread.source.role }),
         branch: thread.branch,
         worktreePath: thread.worktreePath,
         worktreeExists: issue.liveWork?.find(

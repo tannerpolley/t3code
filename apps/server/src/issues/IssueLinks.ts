@@ -252,6 +252,7 @@ const make = Effect.gen(function* () {
       const item = {
         threadId: thread.id,
         title: thread.title,
+        ...(thread.role === undefined ? {} : { role: thread.role }),
         branch: thread.branch,
         worktreePath: thread.worktreePath,
         worktreeExists: thread.worktreePath !== null && existingWorktrees.has(thread.worktreePath),
