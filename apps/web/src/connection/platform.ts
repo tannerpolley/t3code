@@ -527,7 +527,7 @@ export type PrimaryEnvironmentTargetRead =
       readonly cause: unknown;
     };
 
-function readPrimaryEnvironmentTargetResult(
+export function readPrimaryEnvironmentTargetResult(
   readTarget: () => PrimaryEnvironmentTarget | null = readPrimaryEnvironmentTarget,
 ): PrimaryEnvironmentTargetRead {
   try {

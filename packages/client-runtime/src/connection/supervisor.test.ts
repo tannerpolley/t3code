@@ -147,6 +147,7 @@ const eventuallyState = Effect.fn("TestConnectionHarness.eventuallyState")(funct
 });
 
 const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?: {
+  readonly isLocal?: boolean;
   readonly networkStatus?: NetworkStatus;
   readonly prepare?: (
     attempt: number,
@@ -203,6 +204,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
 
     const session = yield* Effect.acquireRelease(
       Effect.succeed({
+        isLocal: options?.isLocal ?? false,
         client: TEST_RPC_CLIENT,
         initialConfig:
           options?.initialConfig?.(attempt) ??
@@ -692,10 +694,11 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
-  it.effect("reconnects immediately when the session closes during a resume probe", () =>
+  it.effect.each([false, true])("closes during a resume probe (isLocal=%s)", (isLocal) =>
     Effect.gen(function* () {
       const probeStarted = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
+        isLocal,
         probe: (attempt) =>
           attempt === 1
             ? Deferred.succeed(probeStarted, undefined).pipe(Effect.andThen(Effect.never))
@@ -753,6 +756,111 @@ describe("EnvironmentSupervisor", () => {
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    { isLocal: false, timeoutSeconds: 15 },
+    { isLocal: true, timeoutSeconds: 60 },
+  ])(
+    "uses $timeoutSeconds seconds for a stalled foreground probe (isLocal=$isLocal)",
+    ({ isLocal, timeoutSeconds }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          isLocal,
+          probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        yield* harness.wake("application-active");
+        if (isLocal) {
+          yield* TestClock.adjust("20 seconds");
+          expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+          yield* TestClock.adjust("35 seconds");
+          expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+          yield* TestClock.adjust("4999 millis");
+        } else {
+          yield* TestClock.adjust(`${timeoutSeconds * 1000 - 1} millis`);
+        }
+        expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+        yield* TestClock.adjust("1 milli");
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
+        );
+
+        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([{ isLocal: false }, { isLocal: true }])(
+    "an explicit retry respects the foreground probe deadline (isLocal=$isLocal)",
+    ({ isLocal }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          isLocal,
+          probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        yield* harness.wake("application-active");
+        yield* TestClock.adjust("5 seconds");
+        yield* supervisor.retryNow;
+        yield* TestClock.adjust("2999 millis");
+        expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+        if (isLocal) {
+          yield* TestClock.adjust("47001 millis");
+          expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+          yield* TestClock.adjust("4999 millis");
+        }
+        yield* TestClock.adjust("1 milli");
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
+        );
+
+        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    { isLocal: false, timeoutSeconds: 3 },
+    { isLocal: true, timeoutSeconds: 60 },
+  ])(
+    "uses $timeoutSeconds seconds for a quick liveness probe (isLocal=$isLocal)",
+    ({ isLocal, timeoutSeconds }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          isLocal,
+          probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        yield* harness.wake("application-active-probe");
+        if (isLocal) {
+          yield* TestClock.adjust("20 seconds");
+          expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+          yield* TestClock.adjust("35 seconds");
+          expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+          yield* TestClock.adjust("5 seconds");
+        } else {
+          yield* TestClock.adjust(`${timeoutSeconds} seconds`);
+        }
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
+        );
+
+        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("honors an explicit disconnect while a foreground probe is stalled", () =>

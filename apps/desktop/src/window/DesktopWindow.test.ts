@@ -473,6 +473,22 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("centres the splash inside saved bounds that still fit a display", () => {
+    const persistedBounds = { x: 2040, y: 80, width: 1320, height: 880 };
+    const displays = [
+      { x: 0, y: 0, width: 1920, height: 1080 },
+      { x: 1920, y: 0, width: 2560, height: 1440 },
+    ];
+    const size = { width: 360, height: 220 };
+
+    assert.deepEqual(DesktopWindow.splashPositionFor(persistedBounds, displays, size), {
+      x: 2520,
+      y: 410,
+    });
+    assert.equal(DesktopWindow.splashPositionFor(persistedBounds, [displays[0]!], size), null);
+    assert.equal(DesktopWindow.splashPositionFor(null, displays, size), null);
+  });
+
   it.effect(
     "opens and reopens the window without backend readiness when local execution is disabled",
     () =>
