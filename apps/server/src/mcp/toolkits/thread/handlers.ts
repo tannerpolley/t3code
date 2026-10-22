@@ -67,8 +67,7 @@ const readPendingRequest = Effect.fn("mcp.readPendingRequest")(function* (input:
     (request) =>
       request.id === input.requestId &&
       request.kind !== "auth_refresh" &&
-      request.kind !== "dynamic_tool_call" &&
-      request.status === "pending",
+      request.kind !== "dynamic_tool_call",
   );
   const item = context.projection.turnItems.find(
     (item) =>
@@ -81,7 +80,15 @@ const readPendingRequest = Effect.fn("mcp.readPendingRequest")(function* (input:
   )
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
-      message: "The pending question or approval was not found.",
+      message: "The pending user-input request was not found.",
+    });
+  if (request.status !== "pending")
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message:
+        request.status === "resolved"
+          ? "The user-input request was already answered."
+          : `The user-input request is no longer pending (${request.status}).`,
     });
   return { ...context, request, item };
 });
@@ -277,7 +284,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_pending_request_respond: writesThread((input) =>
     Effect.gen(function* () {
-      const { threads, projection, caller } = yield* readThread(input.threadId);
+      const { threads, projection, caller } = yield* readPendingRequest(input);
       const result = yield* threads
         .respondToPendingRequest({
           projectId: projection.thread.projectId,

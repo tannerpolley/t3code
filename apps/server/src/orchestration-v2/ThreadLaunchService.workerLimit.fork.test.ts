@@ -11,13 +11,7 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import {
-  adapter,
-  makeHarness,
-  modelSelection,
-  projectId,
-  suspensionWorkerLayer,
-} from "./ThreadLaunchService.testHarness.ts";
+import { adapter, makeHarness, modelSelection, projectId, suspensionWorkerLayer } from "./ThreadLaunchService.testHarness.ts";
 
 it.effect(
   "validates repository limits, preserves Stop and usage-limit holds on a raise, and only holds new starts on a lower",

@@ -112,11 +112,16 @@ export function IssueDetailActions({
       const target =
         action === "implement" ? implementation.threadRef : (threadRef ?? opened?.draftId);
       if (!target) {
-        throw new Error(
-          implementation.disabledReason && action === "implement"
-            ? implementation.disabledReason
-            : "Add a project for this repository to open a thread.",
-        );
+        toastManager.add({
+          type: "error",
+          title: "Could not prepare the composer",
+          description:
+            implementation.disabledReason && action === "implement"
+              ? implementation.disabledReason
+              : "Add a project for this repository to open a thread.",
+        });
+        setPending(false);
+        return;
       }
       const store = useComposerDraftStore.getState();
       const key = typeof target === "string" ? `draft:${target}` : scopedThreadKey(target);
@@ -151,9 +156,8 @@ export function IssueDetailActions({
         title: "Could not prepare the composer",
         description: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      setPending(false);
     }
+    setPending(false);
   };
   const write = async (action: "unlink" | "close" | "reopen") => {
     if (action === "unlink" && threadRef === null) return;

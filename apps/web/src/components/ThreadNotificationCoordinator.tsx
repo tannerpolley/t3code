@@ -260,7 +260,8 @@ function EnvironmentNotifications({
         attention !== prior?.attention &&
         (!child || prior?.notifiedAttention?.has(attention) !== true)
           ? "input"
-          : completion !== null &&
+          : !rawThread.latestRunStopRequested &&
+              completion !== null &&
               prior !== undefined &&
               (prior.completion === null || completion > prior.completion)
             ? "completion"

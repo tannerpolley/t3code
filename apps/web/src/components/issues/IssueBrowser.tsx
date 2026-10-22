@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { LockIcon, PinIcon, PinOffIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
-import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, type Ref,  useEffect,  useRef, useState } from "react";
 
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import { cn } from "~/lib/utils";
@@ -147,15 +147,11 @@ type IssuePagingState = {
 export function useIssueRepositoryTargets(preferredEnvironmentId?: EnvironmentId) {
   const { environments } = useEnvironments();
   const environmentsBootstrapped = useAllEnvironmentShellsBootstrapped();
-  const environmentLabels = useMemo(
-    () =>
+  const environmentLabels = (() =>
       new Map(
         environments.map((environment) => [environment.environmentId, environment.label] as const),
-      ),
-    [environments],
-  );
-  const capableEnvironmentIds = useMemo(
-    () =>
+      ))();
+  const capableEnvironmentIds = (() =>
       new Set(
         environments
           .filter(
@@ -163,24 +159,18 @@ export function useIssueRepositoryTargets(preferredEnvironmentId?: EnvironmentId
               environment.serverConfig?.environment.capabilities.githubIssues === true,
           )
           .map((environment) => environment.environmentId),
-      ),
-    [environments],
-  );
-  const capableEnvironmentList = useMemo(
-    () =>
+      ))();
+  const capableEnvironmentList = (() =>
       [...capableEnvironmentIds].toSorted(
         (left, right) =>
           Number(right === preferredEnvironmentId) - Number(left === preferredEnvironmentId) ||
           (environmentLabels.get(left) ?? left).localeCompare(
             environmentLabels.get(right) ?? right,
           ),
-      ),
-    [capableEnvironmentIds, environmentLabels, preferredEnvironmentId],
-  );
+      ))();
   const issueRepositories = useIssueRepositories(capableEnvironmentList);
   // Prefer the current thread’s environment when repositories overlap across connections.
-  const repositoryTargets = useMemo(
-    () =>
+  const repositoryTargets = (() =>
       mergeIssueRepositoryTargets(
         capableEnvironmentList.flatMap((environmentId) => {
           const answer = issueRepositories.answers.find(
@@ -190,13 +180,8 @@ export function useIssueRepositoryTargets(preferredEnvironmentId?: EnvironmentId
             ? []
             : [{ environmentId, repositories: answer.result.repositories }];
         }),
-      ),
-    [capableEnvironmentList, issueRepositories.answers],
-  );
-  const repositoryErrors = useMemo(
-    () => issueRepositories.failures.map((failure) => issueError(failure.cause, null)),
-    [issueRepositories.failures],
-  );
+      ))();
+  const repositoryErrors = (() => issueRepositories.failures.map((failure) => issueError(failure.cause, null)))();
   const capabilitiesKnown =
     environments.some((environment) => environment.serverConfig !== null) ||
     environmentsBootstrapped;
@@ -257,8 +242,7 @@ export function IssueBrowser({
   const [views, setViews] = useIssueViews();
   const stateFilter = issueStateFilter(preferences);
   const explicitScope = search.repository !== undefined;
-  const urlRepository = useMemo(
-    () =>
+  const urlRepository = (() =>
       search.repository === undefined
         ? null
         : (repositoryTargets.find((target) =>
@@ -266,15 +250,13 @@ export function IssueBrowser({
               host: search.host ?? target.host,
               repository: search.repository!,
             }),
-          ) ?? null),
-    [repositoryTargets, search.host, search.repository],
-  );
+          ) ?? null))();
   const scopedKey =
     urlRepository === null ? null : repositoryKey(urlRepository.host, urlRepository.repository);
   const explicitScopeMissing =
     explicitScope && urlRepository === null && !issueRepositories.isPending;
   // A repository link shows that repository whatever the Filter menu says.
-  const shownRepositories = useMemo(() => {
+  const shownRepositories = (() => {
     if (explicitScope)
       return urlRepository === null ||
         (stateFilter === null &&
@@ -289,17 +271,8 @@ export function IssueBrowser({
         (host === undefined || target.host === host) &&
         repositoryShown(target, preferences),
     );
-  }, [
-    explicitScope,
-    preferences,
-    repositoryTargets,
-    search.host,
-    stateFilter,
-    urlRepository,
-    views,
-  ]);
-  const baseListTargets = useMemo<ReadonlyArray<IssueListTarget>>(
-    () =>
+  })();
+  const baseListTargets = (() =>
       shownRepositories
         .filter(
           (target) =>
@@ -324,13 +297,10 @@ export function IssueBrowser({
               roadmap: true,
             },
           };
-        }),
-    [explicitScope, shownRepositories, stateFilter, views],
-  );
+        }))();
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
   const generationRef = useRef(0);
-  const listTargets = useMemo(
-    () =>
+  const listTargets = (() =>
       baseListTargets.flatMap((target) => {
         const state = pagingByKey[issueListScopeKey(target)];
         const cursors = new Set<string | null>([state?.cursor ?? null]);
@@ -339,18 +309,16 @@ export function IssueBrowser({
           ...target,
           input: { ...target.input, ...(cursor === null ? {} : { cursor }) },
         }));
-      }),
-    [baseListTargets, pagingByKey],
-  );
+      }))();
   const issueLists = useIssueLists(listTargets);
   const liveIssueWork = useLiveIssueWork();
-  const issueErrors = useMemo(() => {
+  const issueErrors = (() => {
     const errors = new Map<string, IssueError>();
     for (const failure of issueLists.failures) {
       errors.set(issueListScopeKey(failure.target), issueError(failure.cause, null));
     }
     return errors;
-  }, [issueLists.failures]);
+  })();
 
   useEffect(() => {
     if (issueLists.answers.length === 0) return;
@@ -394,6 +362,7 @@ export function IssueBrowser({
 
   useEffect(() => {
     if (issueLists.failures.length === 0) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- Query failures settle the pending page refresh owned by this component.
     setPagingByKey((current) => {
       let next = current;
       for (const failure of issueLists.failures) {
@@ -407,7 +376,7 @@ export function IssueBrowser({
     });
   }, [issueLists.failures]);
 
-  const refreshIssues = useCallback(() => {
+  const refreshIssues = () => {
     const nextGeneration = generationRef.current + 1;
     generationRef.current = nextGeneration;
     setPagingByKey((current) => {
@@ -427,8 +396,8 @@ export function IssueBrowser({
     onRefresh?.();
     issueRepositories.refresh();
     issueLists.refresh(baseListTargets);
-  }, [baseListTargets, issueLists, issueRepositories, onRefresh]);
-  const loadMore = useCallback((key: string) => {
+  };
+  const loadMore = (key: string) => {
     setPagingByKey((current) => {
       const state = current[key];
       if (
@@ -442,7 +411,7 @@ export function IssueBrowser({
       }
       return { ...current, [key]: { ...state, cursor: state.snapshot.nextCursor } };
     });
-  }, []);
+  };
   const selectIssue = (
     issue: IssueSummary,
     target: IssueRepositoryTarget,
@@ -469,7 +438,7 @@ export function IssueBrowser({
     assignee: preferences.assignee,
   };
   const narrowed = query.trim() !== "" || filters.milestone !== "all" || filters.assignee !== "all";
-  const stateNoun = (count: number, state: "all" | "open" | "closed" = filters.state) =>
+  const stateNoun = (count: number, state: "all" | "open" | "closed") =>
     state === "all" ? (count === 1 ? "issue" : "issues") : state;
   const viewerLogins = [
     ...new Set(issueRepositories.answers.map((answer) => answer.result.viewer.login)),

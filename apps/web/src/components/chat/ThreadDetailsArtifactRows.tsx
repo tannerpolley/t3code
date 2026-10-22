@@ -116,22 +116,18 @@ export function ThreadDetailsArtifactRows({
                 event.preventDefault();
                 setBusy(true);
                 setMessage(null);
-                try {
-                  const saved = await add({
-                    environmentId,
-                    input: {
-                      projectId,
-                      path: path.trim(),
-                      ...(label.trim() ? { label: label.trim() } : {}),
-                    },
-                  });
-                  if (saved._tag === "Success") {
-                    setPath("");
-                    setLabel("");
-                    setAdding(false);
-                  }
-                } finally {
-                  setBusy(false);
+                const saved = await add({
+                  environmentId,
+                  input: {
+                    projectId,
+                    path: path.trim(),
+                    ...(label.trim() ? { label: label.trim() } : {}),
+                  },
+                }).finally(() => setBusy(false));
+                if (saved._tag === "Success") {
+                  setPath("");
+                  setLabel("");
+                  setAdding(false);
                 }
               }}
             >

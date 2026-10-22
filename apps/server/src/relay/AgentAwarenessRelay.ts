@@ -80,7 +80,7 @@ function isTurnItemPayload(
   );
 }
 
-export function shouldPublishAgentAwarenessEvent(
+function shouldPublishAgentAwarenessEvent(
   event: Pick<OrchestrationV2DomainEvent, "type"> & { readonly payload?: unknown },
 ): boolean {
   if (
@@ -387,7 +387,7 @@ export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
-  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
   const scope = yield* Effect.scope;
@@ -889,7 +889,7 @@ export const make = Effect.gen(function* () {
                   event.type !== "thread.metadata-updated"
                 )
                   return;
-                const children = yield* projections.getPendingRoutedRequestThreadIds(threadId);
+                const children = Option.isSome(projections) ? yield* projections.value.getPendingRoutedRequestThreadIds(threadId) : [];
                 yield* Effect.forEach(children, enqueueThreadPublish, { discard: true });
               }),
             ),
