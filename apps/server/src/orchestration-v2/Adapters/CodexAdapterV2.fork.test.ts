@@ -330,9 +330,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("disables native subagents for repository-managed Codex sessions", () =>
+  it.effect.each([
+    ["worker", { "features.multi_agent": false, "features.multi_agent_v2": false }],
+    ["root", {}],
+  ] as const)("sets native subagents for a %s Codex session", ([role, nativeSubagents]) =>
     Effect.gen(function* () {
-      const scenario = "managed-native-subagents";
+      const scenario = `managed-native-subagents-${role}`;
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-managed-codex"),
         threadId: ThreadId.make(`thread-${scenario}`),
@@ -341,7 +344,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer test-token",
         browserToolsAvailable: false,
-        managedIssue: "worker",
+        managedIssue: role,
       });
       const requests: Array<unknown> = [];
       const entries = codexReplayPreamble({
@@ -358,8 +361,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           params: {
             config: {
               ...CodexAdapterV2.CODEX_THREAD_CONFIG,
-              "features.multi_agent": false,
-              "features.multi_agent_v2": false,
+              ...nativeSubagents,
             },
           },
         },
@@ -383,8 +385,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             "tools.update_plan.enabled": true,
             "features.default_mode_request_user_input": true,
             mcp_optional_startup_grace_ms: 10_000,
-            "features.multi_agent": false,
-            "features.multi_agent_v2": false,
+            ...nativeSubagents,
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
