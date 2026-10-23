@@ -14,14 +14,21 @@ import { useEnvironmentQuery, formatEnvironmentQueryError } from "~/state/query"
 import { useAtomCommand } from "~/state/use-atom-command";
 import { randomUUID } from "~/lib/utils";
 import { issueQueueRequestAfterResult, type IssueQueueRequest } from "./issueQueue.logic";
+import { issueProgress } from "./IssueStateIcon";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 
-export function useIssueQueue(environmentId: EnvironmentId, reference: IssueRepositoryRef) {
+export function useIssueQueue(
+  environmentId: EnvironmentId | undefined,
+  reference: IssueRepositoryRef | null,
+) {
   const configs = useServerConfigs();
-  const supported = configs.get(environmentId)?.environment.capabilities.issueQueue === true;
+  const supported =
+    environmentId !== undefined &&
+    reference !== null &&
+    configs.get(environmentId)?.environment.capabilities.issueQueue === true;
   const query = useEnvironmentQuery(
     supported
       ? issueEnvironment.repositoryStatus({
@@ -34,6 +41,15 @@ export function useIssueQueue(environmentId: EnvironmentId, reference: IssueRepo
       : null,
   );
   return { supported, ...query };
+}
+
+/** Whether the issue waits in its repository's queue; state icons show it as queued. */
+export function useIssueQueued(
+  environmentId: EnvironmentId | undefined,
+  reference: IssueRef | null,
+) {
+  const status = useIssueQueue(environmentId, reference);
+  return status.data?.queue?.some((entry) => entry.issue.number === reference?.number) === true;
 }
 
 export function IssueQueueAction({
@@ -63,6 +79,7 @@ export function IssueQueueAction({
     ) === true;
   if (!status.supported || (!queued && (issue.state !== "open" || inProgress))) return null;
   const label = queued ? "Remove from queue" : "Add to queue";
+  const resumable = !queued && issueProgress(issue) === "paused";
   const change = async (remove = queued) => {
     if (busy) return;
     if (request.current?.queued !== remove)
@@ -105,15 +122,16 @@ export function IssueQueueAction({
         <TooltipTrigger
           render={
             <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={label}
+              variant={resumable ? "outline" : "ghost"}
+              size={resumable ? "xs" : "icon-xs"}
+              aria-label={resumable ? "Resume: add to queue" : label}
               disabled={busy || status.data === null || (queued ? !canUnqueue : !canQueue)}
               onClick={() => void change()}
             />
           }
         >
           {queued ? <ListMinusIcon aria-hidden /> : <ListPlusIcon aria-hidden />}
+          {resumable ? "Resume" : null}
         </TooltipTrigger>
         <TooltipPopup side="top">
           {label}

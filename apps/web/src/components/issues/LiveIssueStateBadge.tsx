@@ -1,6 +1,7 @@
 import type { EnvironmentId, IssueRepositoryRef, IssueSummary } from "@t3tools/contracts";
 
 import { useLiveIssueSummary } from "~/state/issues";
+import { useIssueQueued } from "./IssueQueueAction";
 import { IssueStateIcon, issueStatePresentation } from "./IssueStateIcon";
 import { Badge } from "../ui/badge";
 
@@ -15,7 +16,8 @@ export function LiveIssueStateBadge({
   readonly environmentId: EnvironmentId;
 }) {
   const liveIssue = useLiveIssueSummary(issue, reference, environmentId);
-  const summary = liveIssue ?? issue;
+  const queued = useIssueQueued(environmentId, { ...reference, number: issue.number });
+  const summary = { ...(liveIssue ?? issue), queued };
   const state = issueStatePresentation(summary);
   return (
     <Badge size="sm" variant={state.badgeVariant}>

@@ -4,6 +4,7 @@ import {
   CircleCheckIcon,
   CircleDotDashedIcon,
   CircleDotIcon,
+  CircleEllipsisIcon,
   CirclePauseIcon,
   CircleSlashIcon,
 } from "lucide-react";
@@ -22,6 +23,8 @@ type IssueStateInput = Pick<IssueSummary, "state"> &
     readonly pullRequests?:
       | readonly Pick<NonNullable<IssueSummary["pullRequests"]>[number], "state">[]
       | undefined;
+    /** In the repository's issue queue, waiting for its orchestrator to start it. */
+    readonly queued?: boolean | undefined;
   };
 
 export type IssueProgress =
@@ -29,14 +32,16 @@ export type IssueProgress =
   | "not_planned"
   | "blocked"
   | "in_progress"
+  | "queued"
   | "paused"
   | "open";
 
 /**
  * Closed wins, split the way GitHub closes an issue: not planned (or a duplicate) apart from
  * completed, which is also what an issue closed without a reason counts as. Then an open
- * blocker. In progress means an agent is on it now, working or waiting for the owner; work
- * without one (an open or draft pull request, an idle linked thread) is paused. Project fields
+ * blocker. In progress means an agent is on it now, working or waiting for the owner; then queued
+ * for its orchestrator; work without either (an open or draft pull request, an idle linked
+ * thread) is paused. Project fields
  * are metadata only.
  */
 export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgress {
@@ -48,6 +53,7 @@ export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgres
   const work = issue.liveWork ?? [];
   if (work.some((entry) => entry.status === "working" || entry.status === "waiting_on_you"))
     return "in_progress";
+  if (issue.queued) return "queued";
   if (work.length > 0 || issue.pullRequests?.some((pr) => pr.state === "open")) return "paused";
   return "open";
 }
@@ -65,6 +71,12 @@ export const ISSUE_PROGRESS_PRESENTATION = {
     toneClassName: "text-sky-600 dark:text-sky-300/90",
     badgeVariant: "info",
     Icon: CircleDotDashedIcon,
+  },
+  queued: {
+    label: "Queued",
+    toneClassName: "text-indigo-600 dark:text-indigo-300/90",
+    badgeVariant: "secondary",
+    Icon: CircleEllipsisIcon,
   },
   paused: {
     label: "Paused",

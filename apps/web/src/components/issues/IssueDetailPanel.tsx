@@ -75,7 +75,7 @@ import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { issueEnvironment, useLiveIssueSummary } from "~/state/issues";
 import { useEnvironmentQuery } from "~/state/query";
-import { IssueQueueAction } from "./IssueQueueAction";
+import { IssueQueueAction, useIssueQueued } from "./IssueQueueAction";
 import { IssueStartAction } from "./IssueStartAction";
 import { IssueChangeCards } from "./IssueChangeCards";
 
@@ -477,22 +477,24 @@ export function IssueDetailPanel({
   const result = useAtomValue(atom);
   const query = useEnvironmentQuery(atom);
   const liveIssue = useLiveIssueSummary(query.data?.issue, reference, environmentId);
+  const queued = useIssueQueued(environmentId, reference);
   const lastRefreshToken = useRef(refreshToken);
   const staleError =
     query.data !== null && result._tag === "Failure"
       ? issuePanelError(result.cause, query.error)
       : null;
 
+  const refreshQuery = query.refresh;
   useEffect(() => {
     if (
       refreshToken !== undefined &&
       lastRefreshToken.current !== undefined &&
       refreshToken !== lastRefreshToken.current
     ) {
-      query.refresh();
+      refreshQuery();
     }
     lastRefreshToken.current = refreshToken;
-  }, [query.refresh, refreshToken]);
+  }, [refreshQuery, refreshToken]);
 
   // GitHub's `/issues/n` address can name a pull request; the reader then opens it where pull
   // requests open, once per issue address.
@@ -594,7 +596,7 @@ export function IssueDetailPanel({
   const issueUrl = safeExternalUrl(issue.url);
   const canOpenBesideThread = threadRef !== null && onOpenBesideThread !== undefined;
   const displayedIssue = liveIssue ?? issue;
-  const state = issueStatePresentation(displayedIssue);
+  const state = issueStatePresentation({ ...displayedIssue, queued });
   const tabs: ReadonlyArray<{ value: IssueDetailTab; label: string }> = [
     { value: "summary", label: "Summary" },
     {

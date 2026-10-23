@@ -29,7 +29,7 @@ const project = (status: string | null) => ({
   priority: null,
 });
 
-it("orders closed, then an open blocker, then an agent on it, then paused work, then open", () => {
+it("orders closed, then an open blocker, then an agent on it, then queued, then paused work, then open", () => {
   expect(issueProgress({ state: "closed", blockedBy: [blocker("open")] })).toBe("completed");
   expect(
     issueProgress({ state: "open", blockedBy: [blocker("open")], liveWork: [work("working")] }),
@@ -38,6 +38,13 @@ it("orders closed, then an open blocker, then an agent on it, then paused work, 
   expect(issueProgress({ state: "open", liveWork: [work("waiting_on_you")] })).toBe("in_progress");
   expect(issueProgress({ state: "open", liveWork: [work("working")] })).toBe("in_progress");
   expect(issueProgress({ state: "open", liveWork: [work("idle")] })).toBe("paused");
+  expect(issueProgress({ state: "open", liveWork: [work("idle")], queued: true })).toBe("queued");
+  expect(issueProgress({ state: "open", liveWork: [work("working")], queued: true })).toBe(
+    "in_progress",
+  );
+  expect(issueProgress({ state: "open", blockedBy: [blocker("open")], queued: true })).toBe(
+    "blocked",
+  );
   expect(issueProgress({ state: "open", projects: [project("In Progress")] })).toBe("open");
   expect(issueProgress({ state: "open", projects: [project("Todo")] })).toBe("open");
 });
