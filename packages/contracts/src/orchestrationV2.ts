@@ -1083,8 +1083,12 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
    * Legacy fallback events without this field remain valid on replay. */
   routedTo: Schema.optional(ThreadId),
   responseCapability: Schema.Union([
-    Schema.Struct({ type: Schema.Literal("live"), providerSessionId: ProviderSessionId }),
-    // Asked through T3's own tool (t3_request_user_input) during a live turn of this session.
+    Schema.Struct({
+      type: Schema.Literal("live"),
+      providerSessionId: ProviderSessionId,
+      supportsFeedback: Schema.optional(Schema.Boolean),
+    }),
+    // Asked through T3 during a live turn of this session.
     Schema.Struct({ type: Schema.Literal("app_owned"), providerSessionId: ProviderSessionId }),
     Schema.Struct({ type: Schema.Literal("message") }),
     Schema.Struct({ type: Schema.Literal("not_resumable"), reason: Schema.String }),
@@ -1092,6 +1096,7 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   resolvedAt: Schema.NullOr(Schema.DateTimeUtc),
   decision: Schema.optional(ProviderApprovalDecision),
+  feedback: Schema.optional(Schema.String),
   answers: Schema.optional(ProviderUserInputAnswers),
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
@@ -2744,6 +2749,11 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.optional(Schema.String),
+    /**
+     * False when the caller stops the thread's delegated tasks itself, as the server's tree walks
+     * do under their caller's dispatch limit. Otherwise Stop also stops every task under the thread.
+     */
+    stopDelegatedTasks: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),
@@ -3115,6 +3125,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     requestId: RuntimeRequestId,
     decision: Schema.optional(ProviderApprovalDecision),
+    feedback: Schema.optional(Schema.String),
     answers: Schema.optional(ProviderUserInputAnswers),
     attachmentsByQuestionId: Schema.optional(UserInputAttachments),
     respondedBy: Schema.optional(RuntimeRequestResponder),

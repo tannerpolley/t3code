@@ -3,7 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import { TestClock } from "effect/testing";
+import * as TestClock from "effect/testing/TestClock";
 
 import type * as Electron from "electron";
 
@@ -20,6 +20,7 @@ function layerElectronApp(
   appListeners: Map<string, (...args: readonly unknown[]) => void>,
   quit: Effect.Effect<void> = Effect.void,
   overrides: Partial<ElectronApp.ElectronApp["Service"]> = {},
+  exit: (code: number) => Effect.Effect<void> = () => Effect.void,
 ) {
   const registerListener = (eventName: string, listener: (...args: readonly unknown[]) => void) =>
     Effect.acquireRelease(
@@ -39,7 +40,7 @@ function layerElectronApp(
     whenReady: Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),
     quit,
-    exit: () => Effect.void,
+    exit: overrides.exit ?? exit,
     relaunch: () => Effect.void,
     setPath: () => Effect.void,
     setName: () => Effect.void,
@@ -236,91 +237,138 @@ describe("DesktopLifecycle", () => {
     }),
   );
 
-  it.effect.each([
-    "quit",
-    "repeated quit",
-    "SIGTERM",
-    "SIGTERM first",
-    "relaunch",
-    "development relaunch",
-  ] as const)("exits at the original deadline with a stuck provider close after %s", (trigger) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
-        const shutdownRequested = yield* Deferred.make<void>();
-        const releaseClose = yield* Deferred.make<void>();
-        let requests = 0;
-        let progressUrl = "";
-        const exits: number[] = [];
-        const relaunches: Electron.RelaunchOptions[] = [];
-        const quit = Effect.sync(() =>
-          appListeners.get("before-quit")?.({ preventDefault: () => {} }),
-        );
-        const layer = DesktopLifecycle.layer.pipe(
-          Layer.provideMerge(
-            layerElectronApp(appListeners, quit, {
-              exit: (code) =>
-                Effect.sync(() => {
-                  exits.push(code);
-                }),
-              relaunch: (options) =>
-                Effect.sync(() => {
-                  relaunches.push(options);
-                }),
-            }),
-          ),
-          Layer.provideMerge(layerElectronTheme),
-          Layer.provideMerge(
-            layerElectronWindow(Effect.void, (url) => {
-              progressUrl = url;
-            }),
-          ),
-          Layer.provideMerge(layerDesktopWindow()),
-          Layer.provideMerge(
-            Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
-              platform: "linux",
-              isDevelopment: trigger === "development relaunch",
-            } as DesktopEnvironment.DesktopEnvironment["Service"]),
-          ),
-          Layer.provideMerge(
-            Layer.succeed(DesktopShutdown.DesktopShutdown, {
-              request: Effect.sync(() => {
-                requests++;
-              }).pipe(
-                Effect.andThen(Deferred.succeed(shutdownRequested, undefined)),
-                Effect.asVoid,
-              ),
-              awaitRequest: Deferred.await(shutdownRequested),
-              markComplete: Deferred.succeed(releaseClose, undefined).pipe(Effect.asVoid),
-              // Provider scope finalizers can remain uninterruptible indefinitely.
-              awaitComplete: Deferred.await(releaseClose).pipe(Effect.uninterruptible),
-              isComplete: Deferred.isDone(releaseClose),
-            }),
-          ),
-          Layer.provideMerge(DesktopState.layer),
-        );
-        yield* Effect.gen(function* () {
+  it.effect.each(["quit", "SIGTERM first", "relaunch", "development relaunch"] as const)(
+    "exits at the original deadline with a stuck provider close after %s",
+    (trigger) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+          const shutdownRequested = yield* Deferred.make<void>();
+          const releaseClose = yield* Deferred.make<void>();
+          let requests = 0;
+          let progressUrl = "";
+          const exits: number[] = [];
+          const relaunches: Electron.RelaunchOptions[] = [];
+          const quit = Effect.sync(() =>
+            appListeners.get("before-quit")?.({ preventDefault: () => {} }),
+          );
+          const layer = DesktopLifecycle.layer.pipe(
+            Layer.provideMerge(
+              layerElectronApp(appListeners, quit, {
+                exit: (code) =>
+                  Effect.sync(() => {
+                    exits.push(code);
+                  }),
+                relaunch: (options) =>
+                  Effect.sync(() => {
+                    relaunches.push(options);
+                  }),
+              }),
+            ),
+            Layer.provideMerge(layerElectronTheme),
+            Layer.provideMerge(
+              layerElectronWindow(Effect.void, (url) => {
+                progressUrl = url;
+              }),
+            ),
+            Layer.provideMerge(layerDesktopWindow()),
+            Layer.provideMerge(
+              Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+                platform: "linux",
+                isDevelopment: trigger === "development relaunch",
+              } as DesktopEnvironment.DesktopEnvironment["Service"]),
+            ),
+            Layer.provideMerge(
+              Layer.succeed(DesktopShutdown.DesktopShutdown, {
+                request: Effect.sync(() => {
+                  requests++;
+                }).pipe(
+                  Effect.andThen(Deferred.succeed(shutdownRequested, undefined)),
+                  Effect.asVoid,
+                ),
+                awaitRequest: Deferred.await(shutdownRequested),
+                markComplete: Deferred.succeed(releaseClose, undefined).pipe(Effect.asVoid),
+                // Provider scope finalizers can remain uninterruptible indefinitely.
+                awaitComplete: Deferred.await(releaseClose).pipe(Effect.uninterruptible),
+                isComplete: Deferred.isDone(releaseClose),
+              }),
+            ),
+            Layer.provideMerge(DesktopState.layer),
+          );
+          yield* Effect.gen(function* () {
+            const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+            yield* lifecycle.register;
+            if (trigger === "relaunch" || trigger === "development relaunch")
+              yield* lifecycle.relaunch("test");
+            else if (trigger === "SIGTERM first") process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+            else yield* quit;
+            yield* Deferred.await(shutdownRequested);
+            yield* TestClock.adjust("10 seconds");
+            yield* TestClock.adjust("9999 millis");
+            assert.deepEqual(exits, []);
+            yield* TestClock.adjust("1 millis");
+            assert.deepEqual(exits, [trigger === "development relaunch" ? 75 : 0]);
+            assert.include(decodeURIComponent(progressUrl), "Stopping T3 Code…");
+            assert.equal(requests, 1);
+            assert.equal(relaunches.length, trigger === "relaunch" ? 1 : 0);
+            yield* Deferred.succeed(releaseClose, undefined);
+          }).pipe(Effect.provide(layer));
+        }),
+      ),
+  );
+
+  it.effect("exits on a repeated quit only once shutdown has stalled", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const exitCodes: number[] = [];
+      const exit = (code: number) =>
+        Effect.sync(() => {
+          exitCodes.push(code);
+        });
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "darwin",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(layerElectronApp(appListeners, Effect.void, {}, exit)),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(layerEnvironment),
+        // Nothing marks this shutdown complete, so it stays pending.
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
           const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
           yield* lifecycle.register;
-          if (trigger === "relaunch" || trigger === "development relaunch")
-            yield* lifecycle.relaunch("test");
-          else if (trigger === "SIGTERM first") process.listeners("SIGTERM").at(-1)?.("SIGTERM");
-          else yield* quit;
-          yield* Deferred.await(shutdownRequested);
-          yield* TestClock.adjust("10 seconds");
-          if (trigger === "repeated quit") yield* quit;
-          if (trigger === "SIGTERM") process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+
+          let prevented = 0;
+          const event = {
+            preventDefault: () => {
+              prevented += 1;
+            },
+          } as Electron.Event;
+          appListeners.get("before-quit")?.(event);
+          appListeners.get("before-quit")?.(event);
           yield* TestClock.adjust("9999 millis");
-          assert.deepEqual(exits, []);
+          appListeners.get("before-quit")?.(event);
+          assert.deepEqual(
+            exitCodes,
+            [],
+            "a repeat before the threshold must not cut shutdown short",
+          );
+
           yield* TestClock.adjust("1 millis");
-          assert.deepEqual(exits, [trigger === "development relaunch" ? 75 : 0]);
-          assert.include(decodeURIComponent(progressUrl), "Stopping T3 Code…");
-          assert.equal(requests, 1);
-          assert.equal(relaunches.length, trigger === "relaunch" ? 1 : 0);
-          yield* Deferred.succeed(releaseClose, undefined);
-        }).pipe(Effect.provide(layer));
-      }),
-    ),
+          appListeners.get("before-quit")?.(event);
+
+          assert.deepEqual(exitCodes, [0]);
+          assert.equal(prevented, 4);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
   );
 
   it.effect("ignores app activation while quitting", () =>

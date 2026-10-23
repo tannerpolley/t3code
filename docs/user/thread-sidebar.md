@@ -189,6 +189,10 @@ while title generation is in progress or when the connected environment needs a 
 every ten minutes for top-level threads with new messages. Titles you typed are never changed
 automatically, and nothing runs when the server has no Codex provider.
 
+To change how titles are written, add **Thread title instructions** in **Settings → General →
+Text generation**, such as a length limit or an identifier to put first. They apply to new and
+regenerated titles. Select a project to give it its own instructions.
+
 Agents connected through T3 Code can use the same server-owned metadata workflow to
 rename a thread, regenerate its title, or link and unlink a pull request. These changes
 appear on web, desktop, and mobile without requiring the originating browser to remain

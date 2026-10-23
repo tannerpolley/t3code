@@ -122,16 +122,20 @@ const make = Effect.gen(function* () {
         return { type: "complete" as const };
       }
 
+      const { settings } = resolveProjectSettings(
+        yield* serverSettings.getSettings,
+        projection.thread.projectId,
+      );
       const modelSelection =
         input.kind.type === "regenerate"
           ? TITLE_REFRESH_MODEL_SELECTION
-          : resolveProjectSettings(yield* serverSettings.getSettings, projection.thread.projectId)
-              .settings.textGenerationModelSelection;
+          : settings.textGenerationModelSelection;
       const result = yield* textGeneration.generateThreadTitle({
         cwd: projection.thread.worktreePath ?? project.value.workspaceRoot,
         message: context.message,
         attachments: context.attachments,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
+        instructions: settings.threadTitleInstructions,
         modelSelection,
       });
       const generatedTitle = result.title.trim();

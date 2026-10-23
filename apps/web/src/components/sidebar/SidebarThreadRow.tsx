@@ -21,12 +21,8 @@ import {
   QUEUED_TURN_START_GRACE_MS,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
-import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import {
-  formatWorkingDurationLabel,
-  resolveThreadProviderStack,
-} from "@t3tools/client-runtime/state/models";
+import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
@@ -70,12 +66,10 @@ import { useRightPanelStore } from "../../rightPanelStore";
 import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
-import { useNowMinute } from "../../hooks/useNowMinute";
-import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
+import { parseTimestampDate } from "../../timestampFormat";
 import type { SidebarThreadSummary } from "../../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
@@ -89,7 +83,6 @@ import {
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
   shouldRecedeSidebarThread,
-  resolveWorkingStartedAt,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
 } from "../Sidebar.logic";
@@ -97,7 +90,6 @@ import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
   ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
-  ThreadWorktreeIndicator,
   prStatusIndicator,
   resolveThreadPullRequestBadge,
   terminalStatusFromRunningIds,
@@ -145,20 +137,6 @@ function JumpHintBadge(props: { label: string }) {
   );
 }
 
-function WorkingDuration(props: { startedAt: string | null }) {
-  const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
-  if (Number.isNaN(startedMs)) return null;
-  return <WorkingDurationLabel startedMs={startedMs} />;
-}
-
-// Self-ticking so only this span re-renders each second, not the whole row;
-// the shared tick lands every working row's update in the same frame.
-function WorkingDurationLabel(props: { startedMs: number }) {
-  const nowMs = useNowSecond();
-  return (
-    <span className="tabular-nums">{formatWorkingDurationLabel(nowMs - props.startedMs)}</span>
-  );
-}
 function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
@@ -504,8 +482,6 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
     </>
   ),
 };
-
-const EMPTY_CHILD_THREADS: readonly SidebarThreadSummary[] = [];
 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
@@ -1355,8 +1331,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           ) : null}
                           {/* The label alone is the live region: a role="status"
                             wrapper around the ticking duration would make
-                            screen readers announce every second. */}
-                          <span role="status">{topStatus.label}</span>
+                            screen readers announce every second. The open
+                            thread announces its own status, so its row stays
+                            quiet instead of saying everything twice. */}
+                          <span role={props.isRouteThread ? undefined : "status"}>
+                            {topStatus.label}
+                          </span>
                           {status === "working" || status === "waiting" ? (
                             <span aria-hidden>
                               <SidebarThreadTime thread={thread} status={status} />

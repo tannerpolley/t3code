@@ -1,14 +1,8 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  findSharedSettingsMismatches,
-  pickSharedServerSettings,
-  splitSharedServerPatch,
-} from "./sharedSettings.ts";
+import { pickSharedServerSettings, splitSharedServerPatch } from "./sharedSettings.ts";
 
-const primaryId = EnvironmentId.make("env-primary");
-const boxId = EnvironmentId.make("env-box");
 const restartCapabilities = { threadRestartContinuation: true };
 
 describe("pickSharedServerSettings", () => {
@@ -62,21 +56,5 @@ describe("shared usage limit recovery", () => {
       autoResumeLimitedThreads: false,
       snoozeLimitedThreads: false,
     });
-  });
-  it("detects a mode mismatch even when the compatibility switches agree", () => {
-    expect(
-      findSharedSettingsMismatches({
-        primaryEnvironmentId: primaryId,
-        primarySettings: { ...DEFAULT_SERVER_SETTINGS, usageLimitRecovery: "switch" },
-        environments: [
-          {
-            environmentId: boxId,
-            label: "Box",
-            syncEligible: true,
-            settings: DEFAULT_SERVER_SETTINGS,
-          },
-        ],
-      }),
-    ).toEqual([{ environmentId: boxId, label: "Box" }]);
   });
 });

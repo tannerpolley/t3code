@@ -190,6 +190,7 @@ export interface InterruptThreadTurnInput extends ThreadCommandInput {
 export interface RespondToThreadApprovalInput extends ThreadCommandInput {
   readonly requestId: RuntimeRequestId;
   readonly decision: ProviderApprovalDecision;
+  readonly feedback?: string;
 }
 
 export interface RespondToThreadUserInputInput extends ThreadCommandInput {
@@ -857,6 +858,7 @@ export const respondToThreadApproval = Effect.fn("EnvironmentCommands.respondToT
       threadId: input.threadId,
       requestId: input.requestId,
       decision: input.decision,
+      ...(input.feedback === undefined ? {} : { feedback: input.feedback }),
     });
   },
 );

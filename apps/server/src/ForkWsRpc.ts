@@ -9,9 +9,9 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
+import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as Stream from "effect/Stream";
 
 import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
@@ -31,14 +31,13 @@ import * as BackgroundTasks from "./orchestration-v2/backgroundTaskOutput.ts";
 import { InlineShellRuns } from "./terminal/InlineShellRuns.ts";
 
 const UpstreamServerWsRpcGroup = UpstreamWsRpcGroup.middleware(RpcInstrumentation);
-type UpstreamRpc = RpcGroup.Rpcs<typeof UpstreamServerWsRpcGroup>;
 
 export const upstreamWsRpcHandlers = UpstreamServerWsRpcGroup.of;
 
-export const layerWsRpcWithFork = <Handlers extends RpcGroup.HandlersFrom<UpstreamRpc>, E, R>(
+export const layerWsRpcWithFork = <Services, E, R>(
   currentSession: EnvironmentAuth.AuthenticatedSession,
-  handlers: Effect.Effect<Handlers, E, R>,
-) => Layer.merge(UpstreamServerWsRpcGroup.toLayer(handlers), layerForkWsRpc(currentSession));
+  handlers: Effect.Effect<Context.Context<Services>, E, R>,
+) => Layer.merge(Layer.effectContext(handlers), layerForkWsRpc(currentSession));
 
 const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
   ForkWsRpcGroup.middleware(RpcInstrumentation).toLayer(

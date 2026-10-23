@@ -8,6 +8,7 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import ProjectionMessagesLatestAssistant from "./ForkMigrations/001_ProjectionMessagesLatestAssistant.ts";
+import RetireTurnItemCounts from "./ForkMigrations/024_RetireTurnItemCounts.ts";
 import ProjectionTurnItemCounts from "./ForkMigrations/002_ProjectionTurnItemCounts.ts";
 import ThreadIssueWork from "./ForkMigrations/003_ThreadIssueWork.ts";
 import RepositoryOrchestration from "./ForkMigrations/004_RepositoryOrchestration.ts";
@@ -58,6 +59,7 @@ export const forkMigrationEntries = [
   [21, "OwnerDecisions", OwnerDecisions],
   [22, "OwnerDecisionDelivery", OwnerDecisionDelivery],
   [23, "ProjectArtifactSections", ProjectArtifactSections],
+  [24, "RetireTurnItemCounts", RetireTurnItemCounts],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.

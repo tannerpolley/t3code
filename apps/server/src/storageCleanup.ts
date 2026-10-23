@@ -149,7 +149,9 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
 }
 
 /** Only a complete subagent chain within this worktree shares ownership. */
-function worktreeOwner(threads: ReadonlyArray<OrchestrationV2ThreadShell>) {
+function worktreeOwner<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineage">>(
+  threads: ReadonlyArray<T>,
+) {
   if (threads.length === 1) return threads[0];
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
   const tops = threads.filter((thread) => !byId.has(thread.lineage.parentThreadId!));
@@ -788,8 +790,12 @@ const make = Effect.gen(function* () {
     // Physical, so later path joins can't re-collapse `..` after a symlink lexically.
     const worktreePath = yield* Effect.try(() => physicalWorkspacePath(thread.worktreePath!));
     const worktreeIdentity = yield* canonicalPath(thread.worktreePath!);
-    const activityAt = Math.max(...group.map(storageCleanupActivityAt));
     const deleted = "workspaceRoot" in thread;
+    const members = deleted ? [thread, ...group] : group;
+    const activityAt = Math.max(
+      DateTime.toEpochMillis(thread.createdAt),
+      ...group.map(storageCleanupActivityAt),
+    );
     const project = deleted
       ? { workspaceRoot: thread.workspaceRoot }
       : snapshot.projects.find((entry) => entry.id === thread.projectId);
@@ -809,7 +815,7 @@ const make = Effect.gen(function* () {
     yield* Effect.gen(function* () {
       if (!(yield* fs.exists(worktreePath))) return;
       if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
-      if (group.length > 1 && worktreeOwner(group) === undefined)
+      if (members.length > 1 && worktreeOwner(members) === undefined)
         return keep(`shared by ${group.length} threads`);
       if (project === undefined) return keep("project is unavailable");
       if (
@@ -817,7 +823,7 @@ const make = Effect.gen(function* () {
         (!deleted && !group.every((member) => storageCleanupThreadIdle(member, now)))
       )
         return keep("thread is running or has pending work");
-      if (group.some((member) => member.branch !== thread.branch))
+      if (members.some((member) => member.branch !== thread.branch))
         return keep("a subagent thread's branch differs from this worktree's branch");
       if (yield* hasTerminal(worktreeIdentity, canonicalPath)) return keep("open terminal");
       // Roots are canonical, so compare canonical paths. A symlinked parent
@@ -839,7 +845,6 @@ const make = Effect.gen(function* () {
       const changes = yield* localChangesReason(worktreePath, settings);
       if (changes !== null) return keep(changes);
       if (
-        !deleted &&
         group.some(
           (member) =>
             member.settledAt !== null &&
@@ -965,7 +970,6 @@ const make = Effect.gen(function* () {
         if (yield* hasTerminal(worktreeIdentity, canonicalPath)) return "open terminal";
         if (deleted) {
           if (
-            latest.length > 0 ||
             !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
               .worktreeOnDelete
           )
@@ -977,12 +981,13 @@ const make = Effect.gen(function* () {
               WHERE thread_id = ${thread.id} AND status NOT IN ('succeeded', 'cancelled') LIMIT 1
             `;
           if (pendingCleanup.length > 0) return "thread deletion is still pending";
-        } else {
+        }
+        {
           const latestShells = yield* Effect.forEach(latest, (entry) =>
             projections.getThreadShell(entry.threadId),
           );
           const latestGroup = latestShells.filter((shell) => shell !== null);
-          const latestOwner = worktreeOwner(latestGroup);
+          const latestOwner = worktreeOwner(deleted ? [thread, ...latestGroup] : latestGroup);
           const latestPaths = yield* Effect.forEach(latestGroup, (shell) =>
             shell.worktreePath === null ? Effect.succeed(null) : canonicalPath(shell.worktreePath),
           );
@@ -1147,7 +1152,7 @@ const make = Effect.gen(function* () {
           FROM orchestration_v2_projection_threads t
           JOIN projection_projects p ON p.project_id = t.project_id
           WHERE t.deleted_at IS NOT NULL
-        `;
+        `.pipe(NodeSqliteClient.readOnly);
     const deletedThreads = (yield* Effect.forEach(deletedRows, (row) =>
       decodeCleanupThread(row.payload_json).pipe(
         Effect.map((thread) => ({ ...thread, workspaceRoot: row.workspaceRoot })),
@@ -1172,8 +1177,26 @@ const make = Effect.gen(function* () {
       group.push(thread);
       groups.set(key, group);
     }
+    const deletedByPath = new Map<string, typeof deletedThreads>();
+    for (const thread of deletedThreads) {
+      const key = yield* canonicalPath(thread.worktreePath!);
+      const group = deletedByPath.get(key) ?? [];
+      group.push(thread);
+      deletedByPath.set(key, group);
+    }
     const candidates = [
-      ...[...groups.values()].map((group) => worktreeOwner(group) ?? group[0]!),
+      ...[...groups].map(
+        ([key, group]) =>
+          deletedByPath
+            .get(key)
+            ?.find(
+              (deleted) =>
+                resolveWorktreeCleanup(serverSettings, deleted.projectId).worktreeOnDelete &&
+                worktreeOwner([deleted, ...group]) === deleted,
+            ) ??
+          worktreeOwner(group) ??
+          group[0]!,
+      ),
       ...(yield* Effect.filter(deletedThreads, (thread) =>
         canonicalPath(thread.worktreePath!).pipe(Effect.map((key) => !groups.has(key))),
       )),

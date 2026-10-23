@@ -68,5 +68,15 @@ it.effect("backfills counts and keeps moves, streaming, rollback and rebuild ato
       ["thread", "", 1],
       ["thread", "run", 1],
     ]);
+    yield* runMigrations({ toForkMigrationInclusive: 24 });
+    const retired = yield* sql`SELECT name FROM sqlite_master
+      WHERE name = 'orchestration_v2_projection_turn_item_counts'
+        OR name LIKE 'orchestration_v2_turn_item_count_%'`;
+    assert.deepEqual(retired, []);
+    yield* insert("after-retirement", "thread", "run");
+    assert.equal(
+      (yield* sql`SELECT COUNT(*) AS count FROM orchestration_v2_projection_turn_items`)[0]!.count,
+      3,
+    );
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
