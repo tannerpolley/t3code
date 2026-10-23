@@ -22,7 +22,7 @@ describe("repository-managed Claude delegation", () => {
     };
     const ordinary = claudeMcpQueryOverrides({ mcpSession: session, readOnlySandbox: false });
     const managed = claudeMcpQueryOverrides({
-      mcpSession: { ...session, managedIssue: true },
+      mcpSession: { ...session, managedIssue: "worker" },
       readOnlySandbox: false,
     });
     const policy = claudeRuntimeQueryPolicyForRuntimePolicy({
@@ -46,5 +46,23 @@ describe("repository-managed Claude delegation", () => {
     assert.deepEqual(options.disallowedTools, ["Agent", "Task", "TeamCreate"]);
     assert.include(options.allowedTools ?? [], "mcp__t3-code__*");
     assert.isUndefined(ordinary.disallowedTools);
+  });
+
+  it("keeps native subagents for the repository root's own work", () => {
+    const root = claudeMcpQueryOverrides({
+      mcpSession: {
+        environmentId: EnvironmentId.make("managed-environment"),
+        threadId: ThreadId.make("repository-root"),
+        providerSessionId: "root-session",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test-token",
+        browserToolsAvailable: false,
+        managedIssue: "root",
+      },
+      readOnlySandbox: false,
+    });
+    assert.isUndefined(root.disallowedTools);
+    assert.equal(root.managedIssue, "root");
   });
 });

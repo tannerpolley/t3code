@@ -448,7 +448,11 @@ export const layerWithOptions = (
           if ((yield* mcpSessions.read(threadId)) === undefined) return;
           const thread = yield* projectionStore.getThread(threadId);
           const managedIssue =
-            thread.linkedIssue !== undefined || thread.repositoryOrchestration !== undefined;
+            thread.linkedIssue !== undefined
+              ? "worker"
+              : thread.repositoryOrchestration !== undefined
+                ? "root"
+                : undefined;
           const withIssue = yield* mcpSessions.read(threadId);
           if (withIssue !== undefined) yield* mcpSessions.set({ ...withIssue, managedIssue });
           if (Option.isNone(serverSettings)) return;
