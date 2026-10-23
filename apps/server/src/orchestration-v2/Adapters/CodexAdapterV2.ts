@@ -2574,6 +2574,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 result: task.result,
               },
             });
+            // The active-to-terminal transition deduplicates activity and native turn completion.
+            // Codex does not wake a parent whose turn already completed, so
+            // the child's result would sit unread until the next message.
+            // Only direct children of a root turn wake it: a grandchild
+            // reports to its own parent, and a root turn already running on
+            // the thread receives the result natively.
+            const parent = input.subagent.parentContext;
+            if (
+              !settled &&
+              continuationRequests !== undefined &&
+              parent.subagent === null &&
+              (task.status === "completed" || task.status === "failed") &&
+              !(yield* Ref.get(terminalizedNonCompletedNativeTurns)).has(parent.nativeTurnId) &&
+              ![...(yield* Ref.get(activeTurns)).values()].some(
+                (active) =>
+                  active.subagent === null && active.providerThread.id === parent.providerThread.id,
+              )
+            ) {
+              yield* continuationRequests.offer({
+                threadId: parent.projectionThreadId,
+                providerThreadId: parent.providerThread.id,
+                driver: CODEX_PROVIDER,
+                detail: codexNativeSubagentDetail(task),
+                // The detail is the whole wake; Codex buffers no output for it.
+                delivery: "message_text",
+                notification: backgroundWorkNotification([
+                  {
+                    kind: "subagent",
+                    label: codexNativeSubagentLabel(task),
+                    outcome: task.status,
+                    childThreadId: input.subagent.childThreadId,
+                  },
+                ]),
+              });
+            }
           });
 
         const emitSubagentProviderTurnStarted =
@@ -6197,41 +6232,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   status: input.status,
                   completedAt: input.completedAt,
                 });
-                // Codex does not wake a parent whose turn already completed, so
-                // the child's result would sit unread until the next message.
-                // Only direct children of a root turn wake it: a grandchild
-                // reports to its own parent, and a root turn already running on
-                // the thread receives the result natively.
-                const parent = input.context.subagent.parentContext;
-                if (
-                  continuationRequests !== undefined &&
-                  parent.subagent === null &&
-                  (input.status === "completed" || input.status === "failed") &&
-                  !(yield* Ref.get(terminalizedNonCompletedNativeTurns)).has(parent.nativeTurnId) &&
-                  ![...(yield* Ref.get(activeTurns)).values()].some(
-                    (active) =>
-                      active.subagent === null &&
-                      active.providerThread.id === parent.providerThread.id,
-                  )
-                ) {
-                  const task = input.context.subagent.task;
-                  yield* continuationRequests.offer({
-                    threadId: parent.projectionThreadId,
-                    providerThreadId: parent.providerThread.id,
-                    driver: CODEX_PROVIDER,
-                    detail: codexNativeSubagentDetail(task),
-                    // The detail is the whole wake; Codex buffers no output for it.
-                    delivery: "message_text",
-                    notification: backgroundWorkNotification([
-                      {
-                        kind: "subagent",
-                        label: codexNativeSubagentLabel(task),
-                        outcome: input.status,
-                        childThreadId: input.context.subagent.childThreadId,
-                      },
-                    ]),
-                  });
-                }
               }
               if (input.status === "interrupted" || input.status === "failed") {
                 yield* terminalizeRunningCommandItems(

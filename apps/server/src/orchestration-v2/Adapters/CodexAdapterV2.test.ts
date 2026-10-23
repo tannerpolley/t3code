@@ -5791,6 +5791,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             entries.push(stateEntry(nativeStatus, "status-update"));
           }
           if (nativeStatus === "late-activity-completed") {
+            entries.push(entries.at(-1)!);
             entries.push({
               type: "emit_inbound",
               label: "late-marker",
@@ -5850,6 +5851,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           yield* Deferred.await(marker);
           const latest = harness.subagentUpdates().at(-1)!.subagent;
           assert.equal(latest.status, expectedStatus);
+          assert.lengthOf(
+            harness.continuationRequests,
+            nativeStatus === "late-activity-completed" ? 1 : 0,
+          );
+          if (nativeStatus === "late-activity-completed") {
+            assert.equal(harness.continuationRequests[0]?.delivery, "message_text");
+            assert.include(harness.continuationRequests[0]?.detail, "/root/resume_agent");
+          }
           if (nativeStatus === "duplicate-completed") {
             const first = harness.subagentUpdates().find((e) => e.subagent.status === "completed")!;
             assert.equal(
