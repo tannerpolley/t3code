@@ -237,7 +237,17 @@ function WorkspaceBrowserPreview(props: {
     absolutePath: props.absolutePath,
   });
   const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const revision = `${props.workspaceMutationId ?? ""}:${props.revealRequestId}`;
+  // A rebuilt file outside the workspace is a new inode, which the old signed link no longer
+  // serves, so each reload mints a new link rather than only changing the query.
+  useWorkspaceMutationRefresh({
+    mutationId: revision,
+    resourceKey: JSON.stringify([props.environmentId, resource]),
+    refresh: () => {
+      void refreshAssetUrl().catch(() => undefined);
+    },
+  });
   const revisionSuffix = `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(revision)}`;
 
   if (assetUrl._tag === "Failure") {
