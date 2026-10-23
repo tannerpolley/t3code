@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
@@ -103,8 +104,11 @@ export const ProjectArtifact = Schema.Struct({
   resolvedPath: Schema.String,
   name: Schema.String,
   label: Schema.NullOr(Schema.String),
-  /** Lists return artifacts grouped by section, in the project's section order. */
-  section: Schema.String,
+  /**
+   * Lists return artifacts grouped by section, in the project's section order. Servers from
+   * before sections omit it; their pins read as one "Files" section instead of failing to decode.
+   */
+  section: Schema.String.pipe(Schema.withDecodingDefaultKey(Effect.succeed("Files"))),
   addedBy: Schema.Literals(["user", "agent"]),
   available: Schema.Boolean,
 });

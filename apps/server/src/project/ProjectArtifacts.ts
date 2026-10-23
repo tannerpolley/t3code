@@ -128,20 +128,21 @@ const make = Effect.gen(function* () {
   const pruneSections = (projectId: ProjectId) =>
     sql`DELETE FROM project_artifact_sections WHERE project_id = ${projectId}
       AND name NOT IN (SELECT section FROM project_artifacts WHERE project_id = ${projectId})`;
-  const write = <A>(
-    projectId: ProjectId,
-    change: (root: string) => Effect.Effect<A, ProjectArtifactError | SqlError.SqlError>,
-  ) =>
-    lock.withPermits(1)(
-      Effect.gen(function* () {
-        const root = yield* rootFor(projectId);
-        const result = yield* sql
-          .withTransaction(change(root))
-          .pipe(Effect.catchTags({ SqlError: (cause) => Effect.fail(storageError(cause)) }));
-        yield* PubSub.publish(changes, projectId);
-        return result;
-      }).pipe(Effect.uninterruptible),
-    );
+  const write = Effect.fn("ProjectArtifacts.write")(
+    function* <A>(
+      projectId: ProjectId,
+      change: (root: string) => Effect.Effect<A, ProjectArtifactError | SqlError.SqlError>,
+    ) {
+      const root = yield* rootFor(projectId);
+      const result = yield* sql
+        .withTransaction(change(root))
+        .pipe(Effect.catchTags({ SqlError: (cause) => Effect.fail(storageError(cause)) }));
+      yield* PubSub.publish(changes, projectId);
+      return result;
+    },
+    Effect.uninterruptible,
+    lock.withPermits(1),
+  );
   const add = Effect.fn("ProjectArtifacts.add")(function* (
     input: ProjectArtifactAddInput,
     addedBy: "user" | "agent",
