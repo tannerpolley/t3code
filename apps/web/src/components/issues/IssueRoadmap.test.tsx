@@ -57,8 +57,8 @@ it("remembers each roadmap section across refreshes, repository changes and remo
   expect(sections().map((section) => section.props["aria-label"])).toEqual([
     "Done",
     "In progress",
-    "Paused",
     "Queued",
+    "Paused",
     "Ready",
     "Blocked",
     "Closed",

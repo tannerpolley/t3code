@@ -201,8 +201,8 @@ describe("live roadmap", () => {
     expect(first.map((section) => numbers(section.rows))).toEqual([
       [],
       [2, 7, 11, 12],
-      [3, 6, 8],
       [],
+      [3, 6, 8],
       [9, 13, 14],
       [1, 4, 5, 10],
       [],
@@ -225,8 +225,8 @@ describe("live roadmap", () => {
     expect(refreshed.map((section) => numbers(section.rows))).toEqual([
       [],
       [],
-      [1, 2],
       [],
+      [1, 2],
       [3, 4],
       [],
       [],
@@ -244,8 +244,8 @@ it("puts queued issues above Ready in insertion order and removes them from thei
   expect(sections.map((section) => [section.title, numbers(section.rows)])).toEqual([
     ["Done", []],
     ["In progress", []],
-    ["Paused", []],
     ["Queued", [2, 1]],
+    ["Paused", []],
     ["Ready", [3]],
     ["Blocked", []],
     ["Closed", [4]],
