@@ -55,7 +55,7 @@ The owner reviews UI changes live before a build, on a dev instance with mock da
   - The owner's t3code project has two actions, **Open dev preview** and **Close dev preview**, which run `scripts/fork-dev/preview.sh open|close`. Opening resets the sandbox to `main`, replacing any branch an agent was previewing.
 - **Previewing branches:** `git -C .worktrees/fork-sandbox checkout --detach main`, then `git -C .worktrees/fork-sandbox merge --no-edit <branch>…`. It reloads on its own.
 - **Signing in:** the in-app browser stays signed in through the fixed `T3CODE_DEV_AUTH_TOKEN` in the main checkout's `.env`; never print it. For the owner's own browser, mint a link with `node apps/server/src/bin.ts pair --ttl 2h --base-dir <sandbox>/.t3`.
-- **GitHub:** the dev instance never writes to GitHub. Only `scripts/fork-dev/github.py` writes, and only to the sandbox repository.
+- **GitHub:** only `scripts/fork-dev/github.py` writes on purpose, and only to the sandbox repository. One exception: open owner decisions in the dev data make the dev instance add the `decision-needed` label, and choosing one posts a comment, on the sandbox repository. Remove test decisions after previewing.
 
 ## Building and installing
 
