@@ -17,6 +17,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as DateTime from "effect/DateTime";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Foreign comment fixtures compute hashes independently of the service under test.
 import * as NodeCrypto from "node:crypto";
@@ -644,6 +645,10 @@ it.effect("the next reconcile repairs a label removed by another environment's s
     assert.isFalse(github.labels.has("decision-needed"));
     assert.isFalse((yield* b.service.listForCaller(threadId))[0]!.pendingLabel);
 
+    // Re-assertion is throttled: a tick within the interval leaves GitHub alone.
+    yield* a.service.drain;
+    assert.isFalse(github.labels.has("decision-needed"));
+    yield* TestClock.adjust("5 minutes");
     yield* a.service.drain;
     assert.equal((yield* a.service.listForCaller(threadId))[0]!.id, current.id);
     assert.equal((yield* a.service.listForCaller(threadId))[0]!.state, "awaiting_choice");

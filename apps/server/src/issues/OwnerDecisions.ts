@@ -11,6 +11,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -121,6 +122,8 @@ const storageError = (cause: unknown) =>
     ? cause
     : new OwnerDecisionError({ code: "storage", message: "Owner decision storage failed.", cause });
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+
+const LABEL_REASSERT_MS = 5 * 60_000;
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -603,10 +606,20 @@ const make = Effect.gen(function* () {
           }),
     ),
   );
+  // The scheduler drains every 5 s; re-asserting an open request's label costs GitHub calls.
+  const labelSyncedAt = new Map<string, number>();
   const drain = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
     const pending =
       yield* sql<Row>`SELECT * FROM owner_decisions WHERE state = 'awaiting_choice' OR pending_publish IS NOT NULL OR pending_delivery = 1 OR pending_label = 1 ORDER BY created_at, id`;
     for (const row of pending) {
+      const reassertOnly =
+        row.state === "awaiting_choice" &&
+        row.pending_publish === null &&
+        row.pending_delivery !== 1 &&
+        row.pending_label !== 1;
+      if (reassertOnly && now - (labelSyncedAt.get(row.id) ?? -Infinity) < LABEL_REASSERT_MS)
+        continue;
       const recordFailure = Effect.fn("OwnerDecisions.recordFailure")(function* (error: unknown) {
         const problem = storageError(error);
         if (problem.code === "publication-mismatch")
@@ -621,10 +634,13 @@ const make = Effect.gen(function* () {
       const current = yield* get(row.id);
       // Label cleanup and delivery retry independently; neither may strand the other.
       // Another environment can remove the shared label after reading stale comments.
-      if (current.state === "awaiting_choice" || current.pendingLabel)
+      if (current.state === "awaiting_choice" || current.pendingLabel) {
         yield* syncLabel(current).pipe(Effect.catch(recordFailure));
+        labelSyncedAt.set(current.id, now);
+      }
+      if (current.state !== "awaiting_choice") labelSyncedAt.delete(current.id);
       yield* deliver(current).pipe(Effect.catch(recordFailure));
-      yield* notify;
+      if (!reassertOnly) yield* notify;
     }
   }).pipe(lock.withPermit, Effect.withSpan("OwnerDecisions.drain"), Effect.mapError(storageError));
   return OwnerDecisions.of({
