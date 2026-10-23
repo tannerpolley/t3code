@@ -26,6 +26,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
+import { SidebarWorkerProviderItem } from "./SidebarWorkerProviderItem";
 import { SidebarAskModeItem } from "./SidebarAskModeItem";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
@@ -245,6 +246,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </>
       )}
       <SidebarUpdatePill />
+      <SidebarWorkerProviderItem />
       {isOnUtilityPage ? null : <SidebarAskModeItem />}
     </SidebarMenu>
   );

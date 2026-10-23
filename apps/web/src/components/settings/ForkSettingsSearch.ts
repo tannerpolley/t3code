@@ -366,6 +366,13 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["thread title rename regenerate automatic refresh luna sidebar names"],
   },
   {
+    id: "worker-provider",
+    title: "Worker provider",
+    to: "/settings/providers",
+    scope: "environment-defaults",
+    searchTerms: ["worker provider all Claude mixed all Codex model roles override"],
+  },
+  {
     id: "model-roles",
     title: "Model roles",
     to: "/settings/providers",

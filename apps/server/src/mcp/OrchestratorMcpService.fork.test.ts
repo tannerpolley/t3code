@@ -527,6 +527,69 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
+  it("filters worker choices by provider, retaining fallback choices and orchestrators", () => {
+    const claude = ProviderInstanceId.make("custom-claude");
+    const blockedClaude = ProviderInstanceId.make("blocked-claude");
+    const providers: ServerProvider[] = [
+      providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "sol",
+      }),
+      providerSnapshot({
+        instanceId: claude,
+        driver: ProviderDriverKind.make("claudeAgent"),
+        model: "opus",
+      }),
+      {
+        ...providerSnapshot({
+          instanceId: blockedClaude,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          model: "opus",
+        }),
+        auth: { status: "unauthenticated" },
+      },
+    ];
+    const targets = [
+      { providerInstanceId: codexInstanceId, model: "sol" },
+      { providerInstanceId: blockedClaude, model: "opus" },
+      { providerInstanceId: claude, model: "opus" },
+    ] as const;
+    const role: ModelRole = {
+      id: "implementor-fast",
+      name: "Implementor",
+      description: "",
+      targets,
+    };
+    const roles: ModelRole[] = [
+      role,
+      { ...role, id: "orchestrator" },
+      { ...role, id: "checker", targets: [targets[0], targets[1]] },
+    ];
+    const capable = new Set(providers.map((provider) => provider.instanceId));
+    const statuses = (mode: "mixed" | "claude" | "codex") =>
+      modelRoleStatuses(roles, providers, capable, modelRoleStatusNow, mode);
+    const mixed = statuses("mixed");
+    const claudeOnly = statuses("claude");
+    const codexOnly = statuses("codex");
+    assert.deepEqual(
+      claudeOnly[0]!.targets.map((target) => target.providerInstanceId),
+      [claude],
+    );
+    assert.deepEqual(
+      codexOnly[0]!.targets.map((target) => target.providerInstanceId),
+      [codexInstanceId],
+    );
+    assert.deepEqual(claudeOnly[1], mixed[1]);
+    assert.deepEqual(codexOnly[1], mixed[1]);
+    assert.deepEqual(claudeOnly[2], mixed[2]);
+    assert.deepEqual(
+      mixed[0]!.targets.map((target) => target.providerInstanceId),
+      [codexInstanceId, claude, blockedClaude],
+    );
+    assert.deepEqual(modelRoleStatuses(roles, providers, capable, modelRoleStatusNow), mixed);
+  });
+
   it("orders role choices by weekly headroom, keeping unknown and unavailable choices last", () => {
     const instance = (id: string) => ProviderInstanceId.make(id);
     const configured = [

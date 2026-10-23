@@ -19,9 +19,7 @@ export function SidebarAskModeItem() {
     ? "Ask mode: on (agents can ask you questions)"
     : "Ask mode: off (agents decide without asking)";
   return (
-    // Last in the footer. The desktop update control before it already pushes right (`ml-auto`), so
-    // it drops its own push there instead of splitting the free space with it.
-    <SidebarMenuItem className="ms-auto shrink-0 [.ml-auto+&]:ms-0">
+    <SidebarMenuItem className="shrink-0">
       <Tooltip>
         <TooltipTrigger
           render={

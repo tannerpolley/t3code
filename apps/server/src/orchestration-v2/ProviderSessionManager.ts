@@ -463,6 +463,7 @@ export const layerWithOptions = (
             providers,
             capableInstanceIds,
             now,
+            settings.workerProvider,
           );
           const withRoles = yield* mcpSessions.read(threadId);
           if (withRoles !== undefined) yield* mcpSessions.set({ ...withRoles, modelRoles });

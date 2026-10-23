@@ -21,6 +21,7 @@ import {
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { WorkerProviderSelect } from "../WorkerProviderSelect";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import {
@@ -90,6 +91,18 @@ export function ModelRolesSection() {
 
   return (
     <SettingsSection title="Model roles">
+      <SettingsRow
+        serverScoped
+        settingKeys={["workerProvider"]}
+        {...searchableSetting("worker-provider")}
+        description="Prefer Claude, Codex, or weekly usage ordering for worker roles. Orchestrators are unchanged; roles without an available choice from the chosen provider keep their choices."
+        control={
+          <WorkerProviderSelect
+            value={settings.workerProvider}
+            onChange={(workerProvider) => updateSettings({ workerProvider })}
+          />
+        }
+      />
       <SettingsRow
         serverScoped
         settingKeys={MODEL_ROLE_KEYS}

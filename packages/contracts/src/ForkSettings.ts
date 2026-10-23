@@ -337,7 +337,10 @@ export const ForkClientSettingsFields = {
   chatMath: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 };
 
+const WorkerProvider = Schema.Literals(["mixed", "claude", "codex"]);
+
 export const ForkServerSettingsFields = {
+  workerProvider: WorkerProvider.pipe(Schema.withDecodingDefault(Effect.succeed("mixed"))),
   autoUseExpiringResetCredits: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -422,6 +425,7 @@ export const ForkClientSettingsPatchFields = {
 };
 
 export const ForkServerSettingsPatchFields = {
+  workerProvider: Schema.optionalKey(WorkerProvider),
   autoUseExpiringResetCredits: Schema.optionalKey(Schema.Boolean),
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
   issueUpkeepRequiresApproval: Schema.optionalKey(Schema.Boolean),

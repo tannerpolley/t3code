@@ -289,3 +289,15 @@ it("defaults banked reset automation and reminders on and preserves opt-outs", (
     resetCreditReminders: false,
   });
 });
+
+it("defaults worker provider to mixed and validates saved overrides and patches", () => {
+  expect(decodeServerSettingsFile("{}").workerProvider).toBe("mixed");
+  for (const workerProvider of ["mixed", "claude", "codex"]) {
+    const saved = { workerProvider };
+    expect(
+      encodeServerSettings(decodeServerSettingsFile(JSON.stringify(saved))).workerProvider,
+    ).toBe(workerProvider);
+    expect(decodeServerPatch(saved)).toEqual(saved);
+  }
+  expect(() => decodeServerPatch({ workerProvider: "other" })).toThrow();
+});

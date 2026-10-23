@@ -59,7 +59,7 @@ import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRe
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { checkDelegateTarget } from "../mcp/delegateTaskTarget.ts";
+import { checkDelegateTarget, workerProviderTargets } from "../mcp/delegateTaskTarget.ts";
 import {
   issueEligibility,
   isReadOnlyIssueRole,
@@ -293,7 +293,8 @@ export const layer = Layer.effect(
             code: "invalid-request",
             message: "Repository work is paused.",
           });
-        const roles = (yield* settings.getSettings.pipe(Effect.mapError(mapError))).modelRoles;
+        const serverSettings = yield* settings.getSettings.pipe(Effect.mapError(mapError));
+        const roles = serverSettings.modelRoles;
         const role = roles.find((entry) => entry.id === input.modelRoleId);
         if (role === undefined)
           return yield* new IssueWorkError({
@@ -308,15 +309,27 @@ export const layer = Layer.effect(
         }
         let selection: ModelSelection | undefined;
         let rejection: string | undefined;
-        for (const target of role.targets) {
-          const model = checkDelegateTarget({
-            providers: availableProviders,
-            orchestrationCapableInstanceIds: capableIds,
-            instanceId: target.providerInstanceId,
-            requestedModel: target.model,
-            inheritedModel: undefined,
-            options: target.options,
-          });
+        const checkedTargets = new Map(
+          role.targets.map((target) => [
+            target,
+            checkDelegateTarget({
+              providers: availableProviders,
+              orchestrationCapableInstanceIds: capableIds,
+              instanceId: target.providerInstanceId,
+              requestedModel: target.model,
+              inheritedModel: undefined,
+              options: target.options,
+            }),
+          ]),
+        );
+        const preferred = workerProviderTargets(
+          role,
+          availableProviders,
+          serverSettings.workerProvider,
+          (target) => typeof checkedTargets.get(target) === "string",
+        );
+        for (const target of new Set([...preferred, ...role.targets])) {
+          const model = checkedTargets.get(target)!;
           if (typeof model === "string") {
             selection = {
               instanceId: target.providerInstanceId,

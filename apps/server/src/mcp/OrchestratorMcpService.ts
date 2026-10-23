@@ -2302,6 +2302,7 @@ const make = Effect.gen(function* () {
         providers,
         orchestrationCapableInstanceIds,
         yield* Clock.currentTimeMillis,
+        settings.workerProvider,
       );
       const inherited = parent?.thread.modelSelection;
       const searchTerms = input.search?.toLowerCase().split(/\s+/) ?? [];

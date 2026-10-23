@@ -386,6 +386,8 @@ are marked. Codex agents see changes on their next turn and
 Claude agents in their next session. Reset model roles to get the latest
 defaults; this replaces your customizations.
 
+Choose **All Claude**, **Mixed** (weekly usage ordering), or **All Codex** beside the sidebar update control or in Model roles settings to override worker choices; orchestrators and roles without an available choice from the selected provider keep their choices.
+
 Every thread has a role. Threads that start in a worktree, or move into one, are
 Implementors. Other threads you start are Orchestrators. Child agents are
 Implementors unless their parent gives them another role. Forks keep their source's

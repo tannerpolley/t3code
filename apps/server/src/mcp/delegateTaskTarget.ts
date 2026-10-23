@@ -1,6 +1,8 @@
 import {
   isProviderAvailable,
   type ModelRole,
+  type ModelRoleTarget,
+  resolveThreadRole,
   OrchestratorMcpFailure,
   type OrchestratorMcpModelRole,
   type ProviderDriverKind,
@@ -8,6 +10,7 @@ import {
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ServerProvider,
+  type ServerSettings,
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import { elapsedShare, paceOf, remainingPercent } from "@t3tools/shared/usageLimits";
@@ -148,12 +151,33 @@ export function checkDelegateTarget(input: {
   return model;
 }
 
+export function workerProviderTargets<T extends ModelRoleTarget>(
+  role: Pick<ModelRole, "id" | "role"> & { readonly targets: readonly [T, ...T[]] },
+  providers: ReadonlyArray<ServerProvider>,
+  workerProvider: ServerSettings["workerProvider"],
+  isAvailable: (target: T) => boolean,
+): readonly [T, ...T[]] {
+  if (workerProvider === "mixed" || (role.role ?? resolveThreadRole(role.id)) === "orchestrator")
+    return role.targets;
+  const driver = workerProvider === "claude" ? "claudeAgent" : "codex";
+  const matching = role.targets.filter(
+    (target) =>
+      providers.some(
+        (provider) =>
+          provider.instanceId === target.providerInstanceId && provider.driver === driver,
+      ) && isAvailable(target),
+  );
+  const [first, ...rest] = matching;
+  return first === undefined ? role.targets : [first, ...rest];
+}
+
 /** Each role's choices with why `delegate_task` would reject each right now, or null. */
 export function modelRoleStatuses(
   roles: ReadonlyArray<ModelRole>,
   providers: ReadonlyArray<ServerProvider>,
   orchestrationCapableInstanceIds: ReadonlySet<ProviderInstanceId>,
   now: number,
+  workerProvider: ServerSettings["workerProvider"] = "mixed",
 ): ReadonlyArray<OrchestratorMcpModelRole> {
   const providerById = new Map(providers.map((provider) => [provider.instanceId, provider]));
   return roles.map((role) => {
@@ -218,7 +242,12 @@ export function modelRoleStatuses(
     );
     return {
       ...role,
-      targets: Arr.map(sortedChoices, ({ target }) => target),
+      targets: workerProviderTargets(
+        { ...role, targets: Arr.map(sortedChoices, ({ target }) => target) },
+        providers,
+        workerProvider,
+        (target) => target.unavailableReason === null,
+      ),
     };
   });
 }
