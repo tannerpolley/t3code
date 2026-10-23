@@ -25,6 +25,8 @@ const setup = Effect.gen(function* () {
     VALUES (${projectId}, 'Artifacts', ${root}, '[]', '2026-10-20T00:00:00.000Z', '2026-10-20T00:00:00.000Z')`;
   yield* fs.writeFileString(path.join(root, "paper.qmd"), "# Paper");
   yield* fs.writeFileString(path.join(outside, "slides.tex"), "Slides");
+  for (const file of ["report.html", "plot.png", "results.csv", "build.rs", "notes"])
+    yield* fs.writeFileString(path.join(root, file), file);
   return {
     fs,
     path,
@@ -127,6 +129,91 @@ it.layer(layer)("project artifacts", (it) => {
             available: true,
           },
         ]);
+      }),
+  );
+  it.effect(
+    "defaults sections from the file type for user and agent pins, unless one is given",
+    () =>
+      Effect.gen(function* () {
+        const { artifacts, projectId } = yield* setup;
+        const pins = [
+          ["paper.qmd", "agent"],
+          ["report.html", "user"],
+          ["plot.png", "agent"],
+          ["results.csv", "user"],
+          ["build.rs", "agent"],
+          ["notes", "user"],
+        ] as const;
+        for (const [file, addedBy] of pins)
+          yield* artifacts.add({ projectId, path: file }, addedBy);
+        yield* artifacts.add({ projectId, path: "paper.qmd", section: "Ignored" }, "user");
+        expect(
+          (yield* artifacts.list(projectId)).map((artifact) => [artifact.path, artifact.section]),
+        ).toEqual([
+          ["paper.qmd", "Documents"],
+          ["report.html", "Web pages"],
+          ["plot.png", "Images"],
+          ["results.csv", "Data"],
+          ["build.rs", "Code"],
+          ["notes", "Files"],
+        ]);
+        const other = yield* setup;
+        expect(
+          (yield* artifacts.add(
+            { projectId: other.projectId, path: "plot.png", section: "Figures" },
+            "agent",
+          )).section,
+        ).toBe("Figures");
+      }),
+  );
+  it.effect(
+    "moves, renames and reorders sections; new sections go last and empty ones vanish",
+    () =>
+      Effect.gen(function* () {
+        const { artifacts, projectId } = yield* setup;
+        const sections = Effect.map(artifacts.list(projectId), (list) =>
+          list.map((artifact) => `${artifact.section}:${artifact.path}`),
+        );
+        const paper = yield* artifacts.add({ projectId, path: "paper.qmd" }, "user");
+        const plot = yield* artifacts.add({ projectId, path: "plot.png" }, "user");
+        const data = yield* artifacts.add({ projectId, path: "results.csv" }, "user");
+        yield* artifacts.reorderSections({ projectId, sections: ["Data", "Documents"] });
+        expect(yield* sections).toEqual([
+          "Data:results.csv",
+          "Documents:paper.qmd",
+          "Images:plot.png",
+        ]);
+
+        yield* artifacts.move({ projectId, id: paper.id, section: "Manuscript" });
+        expect(yield* sections).toEqual([
+          "Data:results.csv",
+          "Images:plot.png",
+          "Manuscript:paper.qmd",
+        ]);
+        yield* artifacts.move({ projectId, id: data.id, section: "Images" });
+        yield* artifacts.move({ projectId, id: data.id, section: "Data" });
+        expect(yield* sections).toEqual([
+          "Images:plot.png",
+          "Manuscript:paper.qmd",
+          "Data:results.csv",
+        ]);
+
+        yield* artifacts.renameSection({ projectId, from: "Images", to: "Figures" });
+        expect(yield* sections).toEqual([
+          "Figures:plot.png",
+          "Manuscript:paper.qmd",
+          "Data:results.csv",
+        ]);
+        yield* artifacts.renameSection({ projectId, from: "Data", to: "Figures" });
+        expect(yield* sections).toEqual([
+          "Figures:plot.png",
+          "Figures:results.csv",
+          "Manuscript:paper.qmd",
+        ]);
+        yield* artifacts.remove({ projectId, id: plot.id });
+        yield* artifacts.remove({ projectId, id: data.id });
+        yield* artifacts.add({ projectId, path: "results.csv", section: "Figures" }, "user");
+        expect(yield* sections).toEqual(["Manuscript:paper.qmd", "Figures:results.csv"]);
       }),
   );
   it.effect("streams the initial list and committed add/remove changes", () =>

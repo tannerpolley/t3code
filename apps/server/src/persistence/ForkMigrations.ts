@@ -17,6 +17,7 @@ import OwnerDecisionDelivery from "./ForkMigrations/022_OwnerDecisionDelivery.ts
 import IssueChanges from "./ForkMigrations/006_IssueChanges.ts";
 import SidebarLayout from "./ForkMigrations/013_SidebarLayout.ts";
 import ProjectArtifacts from "./ForkMigrations/017_ProjectArtifacts.ts";
+import ProjectArtifactSections from "./ForkMigrations/023_ProjectArtifactSections.ts";
 import ClosedIssueWorkIndexes from "./ForkMigrations/018_ClosedIssueWorkIndexes.ts";
 import UsageLimitRecoveryIndex from "./ForkMigrations/019_UsageLimitRecoveryIndex.ts";
 import IssueQueue from "./ForkMigrations/016_IssueQueue.ts";
@@ -56,6 +57,7 @@ export const forkMigrationEntries = [
   [20, "MarkedIssueInbox", MarkedIssueInbox],
   [21, "OwnerDecisions", OwnerDecisions],
   [22, "OwnerDecisionDelivery", OwnerDecisionDelivery],
+  [23, "ProjectArtifactSections", ProjectArtifactSections],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.

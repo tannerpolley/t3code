@@ -6,6 +6,9 @@ import {
   ProjectArtifactScope,
   ProjectArtifactAddInput,
   ProjectArtifactRemoveInput,
+  ProjectArtifactMoveInput,
+  ProjectArtifactRenameSectionInput,
+  ProjectArtifactReorderSectionsInput,
   ProjectArtifactList,
   ProjectArtifactError,
 } from "./projectArtifact.ts";
@@ -14,6 +17,9 @@ export const PROJECT_ARTIFACT_METHODS = {
   list: "projectArtifacts.list",
   add: "projectArtifacts.add",
   remove: "projectArtifacts.remove",
+  move: "projectArtifacts.move",
+  renameSection: "projectArtifacts.renameSection",
+  reorderSections: "projectArtifacts.reorderSections",
   subscribe: "projectArtifacts.subscribe",
 } as const;
 const error = Schema.Union([ProjectArtifactError, EnvironmentAuthorizationError]);
@@ -30,6 +36,21 @@ export const projectArtifactRpcs = [
   }),
   Rpc.make(PROJECT_ARTIFACT_METHODS.remove, {
     payload: ProjectArtifactRemoveInput,
+    success: Schema.Void,
+    error,
+  }),
+  Rpc.make(PROJECT_ARTIFACT_METHODS.move, {
+    payload: ProjectArtifactMoveInput,
+    success: Schema.Void,
+    error,
+  }),
+  Rpc.make(PROJECT_ARTIFACT_METHODS.renameSection, {
+    payload: ProjectArtifactRenameSectionInput,
+    success: Schema.Void,
+    error,
+  }),
+  Rpc.make(PROJECT_ARTIFACT_METHODS.reorderSections, {
+    payload: ProjectArtifactReorderSectionsInput,
     success: Schema.Void,
     error,
   }),

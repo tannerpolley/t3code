@@ -19,6 +19,9 @@ import { WS_METHODS } from "./rpc.ts";
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [PROJECT_ARTIFACT_METHODS.add]: AuthOrchestrationOperateScope,
   [PROJECT_ARTIFACT_METHODS.remove]: AuthOrchestrationOperateScope,
+  [PROJECT_ARTIFACT_METHODS.move]: AuthOrchestrationOperateScope,
+  [PROJECT_ARTIFACT_METHODS.renameSection]: AuthOrchestrationOperateScope,
+  [PROJECT_ARTIFACT_METHODS.reorderSections]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.sidebarLayoutUpdate]: AuthSettingsWriteScope,
   [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,

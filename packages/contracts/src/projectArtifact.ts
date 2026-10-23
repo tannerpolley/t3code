@@ -1,11 +1,78 @@
 import * as Schema from "effect/Schema";
 import { ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
+const SECTION_EXTENSIONS = {
+  Documents: ["pdf", "md", "txt", "docx", "qmd", "tex", "rst"],
+  "Web pages": ["html", "htm"],
+  Images: ["png", "jpg", "jpeg", "gif", "svg", "webp"],
+  Data: ["csv", "tsv", "json", "jsonl", "parquet", "xlsx", "sqlite", "yaml", "yml", "toml"],
+  Code: [
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "mjs",
+    "cjs",
+    "py",
+    "ipynb",
+    "r",
+    "jl",
+    "m",
+    "rs",
+    "go",
+    "java",
+    "kt",
+    "scala",
+    "c",
+    "h",
+    "cc",
+    "cpp",
+    "hpp",
+    "cs",
+    "swift",
+    "rb",
+    "php",
+    "lua",
+    "sh",
+    "bash",
+    "zsh",
+    "ps1",
+    "sql",
+    "css",
+    "scss",
+    "vue",
+    "svelte",
+    "f90",
+    "f",
+    "zig",
+    "ex",
+    "hs",
+    "ml",
+  ],
+};
+const sectionByExtension = new Map(
+  Object.entries(SECTION_EXTENSIONS).flatMap(([section, extensions]) =>
+    extensions.map((extension) => [extension, section] as const),
+  ),
+);
+
+/** The section an artifact gets when it is pinned without one. */
+export const defaultArtifactSection = (path: string): string => {
+  const name = path.split(/[\\/]/).at(-1) ?? "";
+  const dot = name.lastIndexOf(".");
+  const extension = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  return sectionByExtension.get(extension) ?? "Files";
+};
+
+const SectionName = TrimmedNonEmptyString.check(Schema.isMaxLength(100));
 export const ProjectArtifactScope = Schema.Struct({ projectId: ProjectId });
 export const ProjectArtifactAddInput = Schema.Struct({
   projectId: ProjectId,
   path: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
   label: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
+  section: Schema.optional(
+    SectionName.annotate({ description: "Defaults to a section named after the file type." }),
+  ),
 });
 export type ProjectArtifactAddInput = typeof ProjectArtifactAddInput.Type;
 export const ProjectArtifactRemoveInput = Schema.Struct({
@@ -13,12 +80,31 @@ export const ProjectArtifactRemoveInput = Schema.Struct({
   id: Schema.String,
 });
 export type ProjectArtifactRemoveInput = typeof ProjectArtifactRemoveInput.Type;
+export const ProjectArtifactMoveInput = Schema.Struct({
+  projectId: ProjectId,
+  id: Schema.String,
+  section: SectionName,
+});
+export type ProjectArtifactMoveInput = typeof ProjectArtifactMoveInput.Type;
+export const ProjectArtifactRenameSectionInput = Schema.Struct({
+  projectId: ProjectId,
+  from: Schema.String,
+  to: SectionName,
+});
+export type ProjectArtifactRenameSectionInput = typeof ProjectArtifactRenameSectionInput.Type;
+export const ProjectArtifactReorderSectionsInput = Schema.Struct({
+  projectId: ProjectId,
+  sections: Schema.Array(Schema.String),
+});
+export type ProjectArtifactReorderSectionsInput = typeof ProjectArtifactReorderSectionsInput.Type;
 export const ProjectArtifact = Schema.Struct({
   id: Schema.String,
   path: Schema.String,
   resolvedPath: Schema.String,
   name: Schema.String,
   label: Schema.NullOr(Schema.String),
+  /** Lists return artifacts grouped by section, in the project's section order. */
+  section: Schema.String,
   addedBy: Schema.Literals(["user", "agent"]),
   available: Schema.Boolean,
 });

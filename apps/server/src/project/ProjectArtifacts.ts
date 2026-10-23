@@ -1,8 +1,12 @@
 import {
+  defaultArtifactSection,
   ProjectArtifactError,
   type ProjectArtifact,
   type ProjectArtifactAddInput,
+  type ProjectArtifactMoveInput,
   type ProjectArtifactRemoveInput,
+  type ProjectArtifactRenameSectionInput,
+  type ProjectArtifactReorderSectionsInput,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -15,6 +19,7 @@ import * as PubSub from "effect/PubSub";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import type * as SqlError from "effect/sql/SqlError";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 
 export class ProjectArtifacts extends Context.Service<
@@ -29,6 +34,13 @@ export class ProjectArtifacts extends Context.Service<
     ) => Effect.Effect<ProjectArtifact, ProjectArtifactError>;
     readonly remove: (
       input: ProjectArtifactRemoveInput,
+    ) => Effect.Effect<void, ProjectArtifactError>;
+    readonly move: (input: ProjectArtifactMoveInput) => Effect.Effect<void, ProjectArtifactError>;
+    readonly renameSection: (
+      input: ProjectArtifactRenameSectionInput,
+    ) => Effect.Effect<void, ProjectArtifactError>;
+    readonly reorderSections: (
+      input: ProjectArtifactReorderSectionsInput,
     ) => Effect.Effect<void, ProjectArtifactError>;
     readonly subscribe: (
       projectId: ProjectId,
@@ -81,6 +93,7 @@ const make = Effect.gen(function* () {
     id: string;
     path: string;
     label: string | null;
+    section: string;
     added_by: "user" | "agent";
   }
   const present = Effect.fn("ProjectArtifacts.present")(function* (root: string, row: Row) {
@@ -89,6 +102,7 @@ const make = Effect.gen(function* () {
       id: row.id,
       path: row.path,
       label: row.label,
+      section: row.section,
       addedBy: row.added_by,
       name: path.basename(row.path),
       available: Option.isSome(resolved),
@@ -98,40 +112,105 @@ const make = Effect.gen(function* () {
   const list = Effect.fn("ProjectArtifacts.list")(function* (projectId: ProjectId) {
     const root = yield* rootFor(projectId);
     const rows =
-      yield* sql<Row>`SELECT id, path, label, added_by FROM project_artifacts WHERE project_id = ${projectId} ORDER BY rowid`.pipe(
+      yield* sql<Row>`SELECT a.id, a.path, a.label, a.section, a.added_by FROM project_artifacts a
+        LEFT JOIN project_artifact_sections s ON s.project_id = a.project_id AND s.name = a.section
+        WHERE a.project_id = ${projectId}
+        ORDER BY s.position IS NULL, s.position, a.section, a.rowid`.pipe(
         Effect.mapError(storageError),
       );
     return yield* Effect.forEach(rows, (row) => present(root, row));
   });
+  // Every section in use has an order row; new ones go last and empty ones lose theirs.
+  const ensureSection = (projectId: ProjectId, name: string) =>
+    sql`INSERT OR IGNORE INTO project_artifact_sections (project_id, name, position)
+      SELECT ${projectId}, ${name}, COALESCE(MAX(position) + 1, 0)
+      FROM project_artifact_sections WHERE project_id = ${projectId}`;
+  const pruneSections = (projectId: ProjectId) =>
+    sql`DELETE FROM project_artifact_sections WHERE project_id = ${projectId}
+      AND name NOT IN (SELECT section FROM project_artifacts WHERE project_id = ${projectId})`;
+  const write = <A>(
+    projectId: ProjectId,
+    change: (root: string) => Effect.Effect<A, ProjectArtifactError | SqlError.SqlError>,
+  ) =>
+    lock.withPermits(1)(
+      Effect.gen(function* () {
+        const root = yield* rootFor(projectId);
+        const result = yield* sql
+          .withTransaction(change(root))
+          .pipe(Effect.catchTags({ SqlError: (cause) => Effect.fail(storageError(cause)) }));
+        yield* PubSub.publish(changes, projectId);
+        return result;
+      }).pipe(Effect.uninterruptible),
+    );
   const add = Effect.fn("ProjectArtifacts.add")(function* (
     input: ProjectArtifactAddInput,
     addedBy: "user" | "agent",
   ) {
-    return yield* lock.withPermits(1)(
+    return yield* write(input.projectId, (root) =>
       Effect.gen(function* () {
-        const root = yield* rootFor(input.projectId);
         const resolved = yield* resolve(root, input.path.trim());
+        const section = input.section ?? defaultArtifactSection(resolved.stored);
+        // A repeated pin keeps its label, section and attribution.
         const rows =
-          yield* sql<Row>`INSERT INTO project_artifacts (id, project_id, path, label, added_by)
-        VALUES (lower(hex(randomblob(16))), ${input.projectId}, ${resolved.stored}, ${input.label?.trim() || null}, ${addedBy})
+          yield* sql<Row>`INSERT INTO project_artifacts (id, project_id, path, label, section, added_by)
+        VALUES (lower(hex(randomblob(16))), ${input.projectId}, ${resolved.stored}, ${input.label?.trim() || null}, ${section}, ${addedBy})
         ON CONFLICT(project_id, path) DO UPDATE SET path = excluded.path
-        RETURNING id, path, label, added_by`.pipe(Effect.mapError(storageError));
-        yield* PubSub.publish(changes, input.projectId);
+        RETURNING id, path, label, section, added_by`;
+        yield* ensureSection(input.projectId, rows[0]!.section);
         return yield* present(root, rows[0]!);
-      }).pipe(Effect.uninterruptible),
+      }),
     );
   });
   const remove = Effect.fn("ProjectArtifacts.remove")(function* (
     input: ProjectArtifactRemoveInput,
   ) {
-    yield* lock.withPermits(1)(
+    yield* write(input.projectId, () =>
       Effect.gen(function* () {
-        yield* rootFor(input.projectId);
-        yield* sql`DELETE FROM project_artifacts WHERE project_id = ${input.projectId} AND id = ${input.id}`.pipe(
-          Effect.mapError(storageError),
+        yield* sql`DELETE FROM project_artifacts WHERE project_id = ${input.projectId} AND id = ${input.id}`;
+        yield* pruneSections(input.projectId);
+      }),
+    );
+  });
+  const move = Effect.fn("ProjectArtifacts.move")(function* (input: ProjectArtifactMoveInput) {
+    yield* write(input.projectId, () =>
+      Effect.gen(function* () {
+        yield* sql`UPDATE project_artifacts SET section = ${input.section}
+          WHERE project_id = ${input.projectId} AND id = ${input.id}`;
+        yield* ensureSection(input.projectId, input.section);
+        yield* pruneSections(input.projectId);
+      }),
+    );
+  });
+  const renameSection = Effect.fn("ProjectArtifacts.renameSection")(function* (
+    input: ProjectArtifactRenameSectionInput,
+  ) {
+    yield* write(input.projectId, () =>
+      Effect.gen(function* () {
+        yield* sql`UPDATE project_artifacts SET section = ${input.to}
+          WHERE project_id = ${input.projectId} AND section = ${input.from}`;
+        // Renaming onto an existing section merges into it and keeps its place.
+        yield* sql`UPDATE OR IGNORE project_artifact_sections SET name = ${input.to}
+          WHERE project_id = ${input.projectId} AND name = ${input.from}`;
+        yield* pruneSections(input.projectId);
+      }),
+    );
+  });
+  const reorderSections = Effect.fn("ProjectArtifacts.reorderSections")(function* (
+    input: ProjectArtifactReorderSectionsInput,
+  ) {
+    yield* write(input.projectId, () =>
+      Effect.gen(function* () {
+        // Sections the client did not list keep their relative order after the listed ones.
+        yield* sql`UPDATE project_artifact_sections SET position = position + ${input.sections.length}
+          WHERE project_id = ${input.projectId}`;
+        yield* Effect.forEach(
+          input.sections,
+          (name, position) =>
+            sql`UPDATE project_artifact_sections SET position = ${position}
+              WHERE project_id = ${input.projectId} AND name = ${name}`,
+          { discard: true },
         );
-        yield* PubSub.publish(changes, input.projectId);
-      }).pipe(Effect.uninterruptible),
+      }),
     );
   });
   const subscribe = (projectId: ProjectId) =>
@@ -149,6 +228,14 @@ const make = Effect.gen(function* () {
         );
       }),
     );
-  return ProjectArtifacts.of({ list, add, remove, subscribe });
+  return ProjectArtifacts.of({
+    list,
+    add,
+    remove,
+    move,
+    renameSection,
+    reorderSections,
+    subscribe,
+  });
 });
 export const layer = Layer.effect(ProjectArtifacts, make).pipe(Layer.provide(ProjectStore.layer));

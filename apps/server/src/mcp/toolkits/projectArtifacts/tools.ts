@@ -4,6 +4,7 @@ import {
   ProjectArtifact,
   ProjectArtifactList,
   ProjectArtifactAddInput,
+  ProjectArtifactMoveInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -27,7 +28,7 @@ export const ProjectArtifactsToolkit = Toolkit.make(
   Tool.make("t3_project_artifacts_list", {
     ...shared,
     description:
-      "List the project's pinned artifacts, including resolved paths and whether each file still exists.",
+      "List the project's pinned artifacts, grouped by section in the project's section order, including resolved paths and whether each file still exists.",
     parameters: Schema.Struct({ projectId }),
     success: ProjectArtifactList,
   })
@@ -36,9 +37,16 @@ export const ProjectArtifactsToolkit = Toolkit.make(
   Tool.make("t3_project_artifacts_add", {
     ...shared,
     description:
-      "Pin an existing file for every thread in a project. Pass a project-relative or absolute file path and an optional label. The pin is attributed to an agent. Adding an already pinned path preserves its label and attribution.",
+      "Pin an existing file for every thread in a project. Pass a project-relative or absolute file path, an optional label, and an optional section name; without one the pin goes to a section named after its file type (Documents, Web pages, Images, Data, Code or Files). The pin is attributed to an agent. Adding an already pinned path preserves its label, section and attribution; use t3_project_artifacts_move to change its section.",
     parameters: Schema.Struct({ ...ProjectArtifactAddInput.fields, projectId }),
     success: ProjectArtifact,
+  }).annotate(Tool.Destructive, false),
+  Tool.make("t3_project_artifacts_move", {
+    ...shared,
+    description:
+      "Move a project's artifact pin by id to another section, creating the section if it is new. An emptied section disappears.",
+    parameters: Schema.Struct({ ...ProjectArtifactMoveInput.fields, projectId }),
+    success: Schema.Void,
   }).annotate(Tool.Destructive, false),
   Tool.make("t3_project_artifacts_remove", {
     ...shared,

@@ -86,6 +86,7 @@ describe("command permissions", () => {
                 resolvedPath: "/science/paper.qmd",
                 name: "paper.qmd",
                 label: null,
+                section: "Documents",
                 addedBy: "user" as const,
                 available: true,
               };
@@ -224,6 +225,9 @@ describe("command permissions", () => {
           for (const method of [
             PROJECT_ARTIFACT_METHODS.add,
             PROJECT_ARTIFACT_METHODS.remove,
+            PROJECT_ARTIFACT_METHODS.move,
+            PROJECT_ARTIFACT_METHODS.renameSection,
+            PROJECT_ARTIFACT_METHODS.reorderSections,
             WS_METHODS.issuesCloseOut,
             WS_METHODS.issuesCancelRequest,
             WS_METHODS.issuesRestoreRoot,

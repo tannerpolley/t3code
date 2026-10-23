@@ -24,4 +24,16 @@ export const projectArtifacts = {
     label: "project-artifacts:remove",
     tag: PROJECT_ARTIFACT_METHODS.remove,
   }),
+  move: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-artifacts:move",
+    tag: PROJECT_ARTIFACT_METHODS.move,
+  }),
+  renameSection: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-artifacts:rename-section",
+    tag: PROJECT_ARTIFACT_METHODS.renameSection,
+  }),
+  reorderSections: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-artifacts:reorder-sections",
+    tag: PROJECT_ARTIFACT_METHODS.reorderSections,
+  }),
 };

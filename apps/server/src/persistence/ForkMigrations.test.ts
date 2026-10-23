@@ -49,6 +49,7 @@ describe("fork migration ledger", () => {
           { migration_id: 20, name: "MarkedIssueInbox" },
           { migration_id: 21, name: "OwnerDecisions" },
           { migration_id: 22, name: "OwnerDecisionDelivery" },
+          { migration_id: 23, name: "ProjectArtifactSections" },
         ],
       );
       const columns = yield* sql<{ name: string }>`PRAGMA table_info(owner_decisions)`;
@@ -186,6 +187,41 @@ describe("fork migration ledger", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("backfills existing artifact pins with their file-type section", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toForkMigrationInclusive: 22 });
+      for (const project of ["a", "b"])
+        yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+          VALUES (${project}, ${project}, ${`/${project}`}, '[]', '2026-10-20T00:00:00.000Z', '2026-10-20T00:00:00.000Z')`;
+      for (const [id, project, path] of [
+        ["1", "a", "paper.pdf"],
+        ["2", "a", "data/results.csv"],
+        ["3", "a", "slides.tex"],
+        ["4", "b", "/tmp/Plot.PNG"],
+        ["5", "b", "Makefile"],
+      ])
+        yield* sql`INSERT INTO project_artifacts (id, project_id, path, added_by) VALUES (${id}, ${project}, ${path}, 'user')`;
+      yield* runMigrations();
+      assert.deepEqual(yield* sql`SELECT id, section FROM project_artifacts ORDER BY id`, [
+        { id: "1", section: "Documents" },
+        { id: "2", section: "Data" },
+        { id: "3", section: "Documents" },
+        { id: "4", section: "Images" },
+        { id: "5", section: "Files" },
+      ]);
+      assert.deepEqual(
+        yield* sql`SELECT project_id, name, position FROM project_artifact_sections ORDER BY project_id, position`,
+        [
+          { project_id: "a", name: "Documents", position: 0 },
+          { project_id: "a", name: "Data", position: 1 },
+          { project_id: "b", name: "Images", position: 0 },
+          { project_id: "b", name: "Files", position: 1 },
+        ],
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("applies usage migration 11 after inline shell migration 10 is already recorded", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -216,6 +252,7 @@ describe("fork migration ledger", () => {
           { migration_id: 20, name: "MarkedIssueInbox" },
           { migration_id: 21, name: "OwnerDecisions" },
           { migration_id: 22, name: "OwnerDecisionDelivery" },
+          { migration_id: 23, name: "ProjectArtifactSections" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

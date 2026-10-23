@@ -25,6 +25,13 @@ export const layer = McpToolAccess.toLayer(ProjectArtifactsToolkit, {
       return yield* artifacts.add({ ...input, projectId }, "agent").pipe(Effect.mapError(failure));
     }),
   ),
+  t3_project_artifacts_move: McpToolAccess.writes((input) =>
+    Effect.gen(function* () {
+      const projectId = yield* resolveProjectId(yield* readCaller(), input.projectId);
+      const artifacts = yield* ProjectArtifacts.ProjectArtifacts;
+      return yield* artifacts.move({ ...input, projectId }).pipe(Effect.mapError(failure));
+    }),
+  ),
   t3_project_artifacts_remove: McpToolAccess.writes((input) =>
     Effect.gen(function* () {
       const projectId = yield* resolveProjectId(yield* readCaller(), input.projectId);
