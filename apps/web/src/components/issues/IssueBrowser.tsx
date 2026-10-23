@@ -1,4 +1,4 @@
-import { OwnerDecisionsView } from "./OwnerDecisionCards";
+import { OwnerDecisionsToggle, OwnerDecisionsView } from "./OwnerDecisionCards";
 import { useOwnerDecisions } from "~/state/ownerDecisions";
 import { IssueMilestoneControls, IssueRepositoryControls } from "./IssueMilestoneControls";
 import { IssueInboxSection } from "./IssueInbox";
@@ -240,13 +240,6 @@ export function IssueBrowser({
   } = repositories;
   const decisions = useOwnerDecisions();
   const [showDecisions, setShowDecisions] = useState(false);
-  const decisionCount = decisions.records.filter(
-    ({ decision }) =>
-      decision.chosenOptionId === null &&
-      decision.state !== "withdrawn" &&
-      (!search.host || decision.host === search.host.toLowerCase()) &&
-      (!search.repository || decision.repository === search.repository.toLowerCase()),
-  ).length;
   const [preferences, setPreferences] = useIssueFilterPreferences();
   const [views, setViews] = useIssueViews();
   const stateFilter = issueStateFilter(preferences);
@@ -884,14 +877,14 @@ export function IssueBrowser({
               />
             </InputGroup>
           </div>
-          <Button
+          <OwnerDecisionsToggle
+            view={decisions}
+            host={search.host}
+            repository={search.repository}
+            pressed={showDecisions}
+            onPressedChange={setShowDecisions}
             size="xs"
-            variant={showDecisions ? "secondary" : "outline"}
-            aria-pressed={showDecisions}
-            onClick={() => setShowDecisions((value) => !value)}
-          >
-            Decisions ({decisionCount})
-          </Button>
+          />
           <IssueFilterMenu
             singleRepository={explicitScope}
             host={explicitScope ? "" : (search.host ?? "")}

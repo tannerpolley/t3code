@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, OwnerDecision, OwnerDecisionsListInput } from "@t3tools/contracts";
-import { useRef, useState } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 import { useServerConfigs } from "~/state/entities";
 import { ownerDecisions, useOwnerDecisions } from "~/state/ownerDecisions";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
@@ -144,6 +144,57 @@ export function OwnerDecisionCards({
       ))}
     </section>
   );
+}
+
+/** The Decisions toggle shared by the Issues and pull request browsers, counting unanswered requests. */
+export function OwnerDecisionsToggle({
+  view,
+  host,
+  repository,
+  pressed,
+  onPressedChange,
+  size = "default",
+}: {
+  view: ReturnType<typeof useOwnerDecisions>;
+  host?: string | undefined;
+  repository?: string | undefined;
+  pressed: boolean;
+  onPressedChange: (pressed: boolean) => void;
+  size?: ComponentProps<typeof Button>["size"];
+}) {
+  const count = view.records.filter(
+    ({ decision }) =>
+      decision.chosenOptionId === null &&
+      decision.state !== "withdrawn" &&
+      (!host || decision.host === host.toLowerCase()) &&
+      (!repository || decision.repository === repository.toLowerCase()),
+  ).length;
+  return (
+    <Button
+      size={size}
+      variant={pressed ? "secondary" : "outline"}
+      aria-pressed={pressed}
+      onClick={() => onPressedChange(!pressed)}
+    >
+      Decisions ({count})
+    </Button>
+  );
+}
+
+/** The Decisions toggle and the view it swaps in for a browser's list. */
+export function useOwnerDecisionsPane(scope: {
+  host?: string | undefined;
+  repository?: string | undefined;
+  query: string;
+}) {
+  const view = useOwnerDecisions();
+  const [open, setOpen] = useState(false);
+  return {
+    toggle: (
+      <OwnerDecisionsToggle view={view} {...scope} pressed={open} onPressedChange={setOpen} />
+    ),
+    pane: open ? <OwnerDecisionsView view={view} {...scope} /> : null,
+  };
 }
 
 export function OwnerDecisionsView({

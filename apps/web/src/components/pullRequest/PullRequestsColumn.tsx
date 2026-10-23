@@ -88,6 +88,7 @@ export function PullRequestsColumn({
   onState,
   onHost,
   searchInput,
+  decisionsToggle,
   sortMenu,
   filtersMenu,
   rightPanelControl,
@@ -108,6 +109,7 @@ export function PullRequestsColumn({
   onState: (state: PullRequestListState) => void;
   onHost: (host: string | undefined) => void;
   searchInput: ReactNode;
+  decisionsToggle: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
   rightPanelControl: ReactNode;
@@ -244,6 +246,7 @@ export function PullRequestsColumn({
               <div className="min-w-0 basis-full @lg/pr-list:basis-0 @lg/pr-list:flex-1">
                 {searchInput}
               </div>
+              {decisionsToggle}
               {sortMenu}
               {filtersMenu}
               <PullRequestCompactFilterMenu

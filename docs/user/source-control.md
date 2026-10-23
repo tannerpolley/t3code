@@ -476,6 +476,6 @@ even when its changes look independent. Stack actions require an environment tha
 
 ## Owner decisions
 
-Agents can request a decision on a GitHub issue, with two to four choices, a recommendation, evidence, and the consequence of each choice. Open **Decisions** in the Issues page or a thread's Issues pane, or answer from the issue detail. The all-projects view gathers decisions from connected environments and warns when an environment is unavailable.
+Agents can request a decision on a GitHub issue or pull request, with two to four choices, a recommendation, evidence, and the consequence of each choice. Open **Decisions** in the Issues page, a thread's Issues pane, or the Pull requests page, or answer from the issue or pull request detail. The all-projects view gathers decisions from connected environments and warns when an environment is unavailable.
 
 Only T3's signed-in owner interface accepts a choice. Agents and Ask mode cannot choose. T3 records the choice in a GitHub comment, then notifies the requesting thread. Temporary publication or delivery failures retry automatically. Comment mismatches and unavailable requesters without a successor stay visible and stop retrying. A decision does not approve a separate issue-change preview. This identity guarantee uses the owner login boundary: it cannot prove a physical person clicked if someone else has the owner's credentials.

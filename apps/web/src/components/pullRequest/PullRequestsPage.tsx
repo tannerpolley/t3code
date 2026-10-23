@@ -52,6 +52,7 @@ import {
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
+import { useOwnerDecisionsPane } from "../issues/OwnerDecisionCards";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import {
   PullRequestFiltersMenu,
@@ -1103,11 +1104,20 @@ export function PullRequestsPage() {
       {panelToggleControls}
     </div>
   );
+  const scopedIdentity = scopedProject?.repositoryIdentity;
+  const decisions = useOwnerDecisionsPane({
+    host: search.host,
+    repository:
+      scopedIdentity?.owner && scopedIdentity.name
+        ? `${scopedIdentity.owner}/${scopedIdentity.name}`
+        : undefined,
+    query: typedParsed.text,
+  });
   const carriedToNothing =
     shownCount === 0 &&
     typedQuery.length === 0 &&
     (!querySettled || (showingCarried && listQuery.isPending));
-  const listBody = (
+  const listBody = decisions.pane ?? (
     <>
       {!capabilityKnown ? (
         <PullRequestListGhost rows={7} />
@@ -1285,6 +1295,7 @@ export function PullRequestsPage() {
     onState: (state: PullRequestListState) => updateListScope({ state }),
     onHost: (host: string | undefined) => updateListScope({ host }),
     searchInput,
+    decisionsToggle: decisions.toggle,
     sortMenu,
     filtersMenu,
     rightPanelControl: !pullRequestsSupported ? null : (

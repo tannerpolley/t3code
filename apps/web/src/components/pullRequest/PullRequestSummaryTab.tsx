@@ -27,6 +27,7 @@ import { useOpenLink } from "~/browser/useOpenLink";
 import { RelativeTime } from "~/components/RelativeTime";
 
 import { Button } from "../ui/button";
+import { OwnerDecisionCards } from "../issues/OwnerDecisionCards";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
@@ -661,6 +662,14 @@ export function PullRequestSummaryTab({
   return (
     <div ref={scrollerRef} className="h-full overflow-y-auto" data-pull-request-summary-scroll>
       <section className="px-4 pt-2.5 pb-1">
+        <OwnerDecisionCards
+          environmentId={environmentId}
+          input={{
+            ...(reference.host === undefined ? {} : { host: reference.host }),
+            repository: reference.repository,
+            number: reference.number,
+          }}
+        />
         <div className="space-y-2">
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">

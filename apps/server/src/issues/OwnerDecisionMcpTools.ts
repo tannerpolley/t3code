@@ -19,7 +19,7 @@ const dependencies = [
 ];
 export const RequestOwnerDecisionTool = Tool.make("request_owner_decision", {
   description:
-    "Request an owner decision on a GitHub issue. Supply 2–4 options with stable ids, labels and consequences, a recommendation with its reason and evidence link, and a stable clientRequestId for retries. The server records your thread and project and publishes an audit comment. Only T3's signed-in owner interface can choose; Ask mode never answers these requests. An answer does not approve an issue-change proposal.",
+    "Request an owner decision on a GitHub issue or pull request (pass its number; they share one sequence). Supply 2–4 options with stable ids, labels and consequences, a recommendation with its reason and evidence link, and a stable clientRequestId for retries. The server records your thread and project and publishes an audit comment. Only T3's signed-in owner interface can choose; Ask mode never answers these requests. An answer does not approve an issue-change proposal.",
   parameters: OwnerDecisionRequest,
   success: OwnerDecision,
   failure: OrchestratorMcpFailure,
