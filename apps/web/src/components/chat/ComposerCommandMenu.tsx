@@ -35,7 +35,14 @@ import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
 export type ComposerCommandItem =
-  | { id: string; type: "issue"; issue: IssueContextMetadata; label: string; description: string }
+  | {
+      id: string;
+      type: "issue";
+      issue: IssueContextMetadata;
+      queued: boolean;
+      label: string;
+      description: string;
+    }
   | {
       id: string;
       type: "path";
@@ -221,7 +228,13 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
       {props.item.type === "issue" && props.item.issue.state !== null ? (
-        <IssueStateIcon issue={{ ...props.item.issue, state: props.item.issue.state }} />
+        <IssueStateIcon
+          issue={{
+            ...props.item.issue,
+            state: props.item.issue.state,
+            queued: props.item.queued,
+          }}
+        />
       ) : null}
       {pullRequestPresentation ? (
         <pullRequestPresentation.Icon

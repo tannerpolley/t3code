@@ -4,6 +4,7 @@ import { Atom, AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { issueEnvironment, useLiveIssueWork } from "~/state/issues";
 import { useServerConfigs } from "~/state/entities";
+import { useIssueQueue } from "./IssueQueueAction";
 import { filterComposerIssues, issueContextMetadata } from "./issueComposerContext";
 
 const repositoryIssues = Atom.family((key: string) =>
@@ -58,6 +59,7 @@ export function useComposerIssues(
       : emptyIssues,
   );
   const liveWork = useLiveIssueWork();
+  const queue = useIssueQueue(environmentId, query === null ? null : scope);
   const issues = [
     ...new Map(
       result.pages
@@ -70,6 +72,8 @@ export function useComposerIssues(
     issues: filterComposerIssues(issues, query ?? "")
       .slice(0, 20)
       .map(issueContextMetadata),
+    // Kept beside the metadata: messages save that metadata, and queue state would go stale there.
+    queuedNumbers: new Set(queue.data?.queue?.map((entry) => entry.issue.number)),
     isPending: result.waiting,
   };
 }

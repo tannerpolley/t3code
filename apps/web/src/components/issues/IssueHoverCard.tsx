@@ -10,6 +10,7 @@ import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadPullRequestsMiniList } from "../ThreadStatusIndicators";
 import { PullRequestLabelChip } from "../pullRequest/pullRequestPresentation";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
+import { useIssueQueued } from "./IssueQueueAction";
 import { IssueStateIcon, issueStatePresentation } from "./IssueStateIcon";
 import { issueHoverPullRequests } from "./issueHoverCard.logic";
 import { openIssueBlockers } from "./issueRoadmap.logic";
@@ -30,6 +31,7 @@ export function IssueHoverCardContent({ target, issue: fallback, title }: IssueH
   const { environmentId, input } = target;
   const query = useEnvironmentQuery(issueEnvironment.detail({ environmentId, input }));
   const issue = useLiveIssueSummary(query.data?.issue ?? fallback, input, environmentId);
+  const queued = useIssueQueued(environmentId, input);
   const openPr = useOpenPrLink();
   const openIssue = useOpenIssueLink();
   const pullRequests =
@@ -57,8 +59,8 @@ export function IssueHoverCardContent({ target, issue: fallback, title }: IssueH
       ) : (
         <>
           <div className="flex items-center gap-2">
-            <IssueStateIcon issue={issue} />
-            <span>{issueStatePresentation(issue).label}</span>
+            <IssueStateIcon issue={{ ...issue, queued }} />
+            <span>{issueStatePresentation({ ...issue, queued }).label}</span>
           </div>
           {issue.milestone ? <div>Milestone: {issue.milestone.title}</div> : null}
           {issue.labels.length > 0 ? (
