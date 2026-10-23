@@ -383,7 +383,8 @@ standard roles are Orchestrator, Implementor, Reviewer, Investigator and Checker
 Implementor has separate Fast and Thorough profiles, each with its own model and
 effort choices. Choices are ranked by available weekly usage; unavailable choices
 are marked. Codex agents see changes on their next turn and
-Claude agents in their next session. Reset model roles to get the latest
+Claude agents in their next session; the current choices are always available through
+`orchestrator_capabilities`. Reset model roles to get the latest
 defaults; this replaces your customizations.
 
 Choose **All Claude**, **Mixed** (weekly usage ordering), or **All Codex** beside the sidebar update control or in Model roles settings to override worker choices; orchestrators and roles without an available choice from the selected provider keep their choices.

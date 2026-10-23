@@ -4,6 +4,9 @@ import {
   EventId,
   IssueReadError,
   MessageId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
   type OrchestrationV2Run,
   type ThreadRole,
@@ -168,6 +171,74 @@ const assertQuietContinuation = (key: string) =>
     assert.deepEqual(continued.storedEvents, []);
     assert.equal(yield* sink.latestSequence(), sequence);
   });
+
+it.effect("keeps root creation on the configured fallback when workers use All Claude", () => {
+  const claude = {
+    ...adapter,
+    instanceId: ProviderInstanceId.make("claude"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+  };
+  const adapters = [adapter, claude];
+  const base = makeHarness({
+    adapters,
+    providers: adapters.map((entry): ServerProvider => ({
+      instanceId: entry.instanceId,
+      driver: entry.driver,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-23T00:00:00Z",
+      availability: "available",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    })),
+    issueServiceLayer: reads,
+    projectRepositoryIdentity,
+    localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
+    serverSettings: {
+      workerProvider: "claude",
+      modelRoles: [
+        {
+          id: "worker",
+          name: "Worker",
+          description: "Issue worker",
+          targets: [
+            { providerInstanceId: modelSelection.instanceId, model: modelSelection.model },
+            { providerInstanceId: claude.instanceId, model: "claude-sonnet-4-6" },
+          ],
+        },
+      ],
+    },
+  });
+  const dependencies = Layer.mergeAll(
+    base.layer,
+    reads,
+    IssueWorkStore.layer.pipe(Layer.provide(base.layer)),
+    IdAllocator.layer,
+  );
+  return Effect.gen(function* () {
+    const service = yield* IssueWorkService.IssueWorkService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const started = yield* service.start({
+      ...input(1, "worker-provider:root"),
+      projectId,
+      modelRoleId: "worker",
+      createOrchestrator: true,
+    });
+    assert.deepEqual(
+      (yield* threads.getThreadRecords(started.rootThreadId, [])).thread.modelSelection,
+      modelSelection,
+    );
+    assert.equal(
+      (yield* store.latestRequest(issue(1)))!.modelSelection.instanceId,
+      claude.instanceId,
+    );
+  }).pipe(Effect.provide(IssueWorkService.layer.pipe(Layer.provideMerge(dependencies))));
+});
 
 it.effect(
   "persists ordered requests without an orchestrator; enqueue, dequeue and retries are idempotent and separate from Start",

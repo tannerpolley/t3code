@@ -51,12 +51,14 @@ export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 ${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
 `;
 
-/** Upper bound on the model roles block, which is sent with every turn. */
+/** Upper bound on the model roles block, which providers deliver with their orchestration instructions. */
 export const MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH = 6_000;
 
 const MODEL_ROLES_HEADER = `
 
 ### Model roles
+
+The user can switch worker providers (All Claude / Mixed / All Codex) at any time, so read \`orchestrator_capabilities\` before choosing a worker model because its roles are current.
 
 The user's choices for delegated work are equal alternatives, ordered by current weekly headroom, with more quota left relative to time remaining first. You may override this order for task fit; explicit user instructions win. Unknown usage keeps the configured order after known choices, and unavailable targets go last. Weekly usage shows quota left, reset time, and pace against elapsed window time when reported. Pass a choice's Target JSON as \`delegate_task\`'s \`target\` (not its \`role\` field); \`orchestrator_capabilities\` lists all choices and their availability again.
 

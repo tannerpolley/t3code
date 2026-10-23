@@ -328,7 +328,7 @@ export const layer = Layer.effect(
           serverSettings.workerProvider,
           (target) => typeof checkedTargets.get(target) === "string",
         );
-        for (const target of new Set([...preferred, ...role.targets])) {
+        for (const target of role.targets) {
           const model = checkedTargets.get(target)!;
           if (typeof model === "string") {
             selection = {
@@ -345,6 +345,18 @@ export const layer = Layer.effect(
             code: "invalid-request",
             message: `Managed issue work requires an available Codex or Claude target in the selected model role${rejection === undefined ? "" : ` (${rejection})`}.`,
           });
+        const fallbackSelection = selection;
+        for (const target of preferred) {
+          const model = checkedTargets.get(target)!;
+          if (typeof model === "string") {
+            selection = {
+              instanceId: target.providerInstanceId,
+              model,
+              ...(target.options === undefined ? {} : { options: target.options }),
+            };
+            break;
+          }
+        }
         if (
           root === null &&
           requireExplicitRoot &&
@@ -398,7 +410,7 @@ export const layer = Layer.effect(
           // serialized receipt and unique projected repository key are the lock.
           const commandId = CommandId.make(`issue-root:${issue.host}:${issue.repositoryId}`);
           const orchestratorRole = roles.find((entry) => entry.id === "orchestrator");
-          let rootSelection = selection;
+          let rootSelection = fallbackSelection;
           for (const target of orchestratorRole?.targets ?? []) {
             const model = checkDelegateTarget({
               providers: availableProviders,
