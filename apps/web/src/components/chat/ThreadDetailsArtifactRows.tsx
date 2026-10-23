@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { Fragment, useId, useState } from "react";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
+import { openFileInPreview } from "~/browser/openFileInPreview";
 import { useTheme } from "~/hooks/useTheme";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { projectArtifacts } from "~/state/projectArtifacts";
@@ -160,7 +160,9 @@ export function ThreadDetailsArtifactRows({
     }
     setAvailability((values) => new Map(values).set(artifact.id, true));
     const threadRef = scopeThreadRef(environmentId, threadId);
-    if (isBrowserPreviewFile(fresh.path)) {
+    // Only pages need hosting; the file viewer re-mints its link when a file changes, while a
+    // browser tab keeps the link it opened with.
+    if (/\.html?$/i.test(fresh.path)) {
       if (!httpBaseUrl) return;
       const opened = await openFileInPreview({
         threadRef,
