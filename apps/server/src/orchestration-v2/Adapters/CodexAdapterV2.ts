@@ -776,7 +776,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
     readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
-    readonly managedIssue?: boolean;
+    readonly managedIssue?: McpProviderSession.ManagedIssueRole;
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
@@ -1421,7 +1421,7 @@ function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
-      ...(mcpSession?.managedIssue === true
+      ...(mcpSession?.managedIssue === "worker"
         ? { "features.multi_agent": false, "features.multi_agent_v2": false }
         : {}),
       ...(mcpSession === undefined
@@ -6612,7 +6612,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
-              managedIssue: mcpSession?.managedIssue ?? false,
+              ...(mcpSession?.managedIssue === undefined
+                ? {}
+                : { managedIssue: mcpSession.managedIssue }),
               ...(mcpSession?.modelRoles === undefined
                 ? {}
                 : { modelRoles: mcpSession.modelRoles }),

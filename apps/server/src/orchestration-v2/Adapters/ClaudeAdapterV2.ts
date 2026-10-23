@@ -1316,7 +1316,7 @@ export function makeClaudeQueryOptions(input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
-  readonly managedIssue?: boolean;
+  readonly managedIssue?: McpProviderSession.ManagedIssueRole;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -1523,7 +1523,7 @@ export function claudeMcpQueryOverrides(input: {
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
-  readonly managedIssue?: boolean;
+  readonly managedIssue?: McpProviderSession.ManagedIssueRole;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
 } {
   const session = input.mcpSession;
@@ -1535,8 +1535,9 @@ export function claudeMcpQueryOverrides(input: {
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
-    ...(session.managedIssue === true
-      ? { disallowedTools: ["Agent", "Task", "TeamCreate"], managedIssue: true }
+    ...(session.managedIssue === undefined ? {} : { managedIssue: session.managedIssue }),
+    ...(session.managedIssue === "worker"
+      ? { disallowedTools: ["Agent", "Task", "TeamCreate"] }
       : {}),
     mcpServers: {
       "t3-code": {
@@ -2247,7 +2248,7 @@ export function claudeEffectiveQueryPolicyKey(
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
     readonly disallowedTools?: ReadonlyArray<string>;
-    readonly managedIssue?: boolean;
+    readonly managedIssue?: McpProviderSession.ManagedIssueRole;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   },
 ): string {

@@ -5,6 +5,8 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
+export type ManagedIssueRole = "root" | "worker";
+
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -26,8 +28,11 @@ export interface McpProviderSessionConfig {
    * the orchestration instructions.
    */
   readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
-  /** Repository-owned roots and issue workers must delegate through T3. */
-  readonly managedIssue?: boolean;
+  /**
+   * Issue workers must delegate through T3. The repository root keeps native
+   * subagents for its own work between orchestration runs.
+   */
+  readonly managedIssue?: ManagedIssueRole;
 }
 
 export function withAgentDeviceEnvironment(
