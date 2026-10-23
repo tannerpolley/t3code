@@ -31,6 +31,7 @@ import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useIssueSectionCollapsed } from "./useIssueSectionCollapsed";
+import { useIssueQueue } from "./IssueQueueAction";
 import { IssueStateIcon } from "./IssueStateIcon";
 
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
@@ -129,6 +130,8 @@ function InboxList({
   );
   const events = data?.events ?? [];
   const issuesByNumber = new Map(issues?.map((issue) => [issue.number, issue]));
+  const queue = useIssueQueue(environmentId, reference);
+  const queuedNumbers = new Set(queue.data?.queue?.map((entry) => entry.issue.number));
   if (events.length === 0) return null;
   const mark = (ids?: ReadonlyArray<number>) =>
     void markRead({
@@ -182,7 +185,11 @@ function InboxList({
                       )}
                     >
                       <span className="mt-0.75 flex w-4 shrink-0">
-                        {issue ? <IssueStateIcon issue={issue} /> : null}
+                        {issue ? (
+                          <IssueStateIcon
+                            issue={{ ...issue, queued: queuedNumbers.has(issue.number) }}
+                          />
+                        ) : null}
                       </span>
                       <a
                         className="flex min-w-0 flex-1 flex-col"

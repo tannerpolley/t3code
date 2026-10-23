@@ -322,6 +322,7 @@ export function useComposerMenuItems({
           id: `issue:${issue.url}`,
           type: "issue" as const,
           issue,
+          queued: issueLookup.queuedNumbers.has(issue.number),
           label: `#${issue.number}`,
           description: issue.title,
         }))
