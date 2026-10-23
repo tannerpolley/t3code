@@ -17,6 +17,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 import * as Metrics from "./Metrics.ts";
+import * as ForkHeapSnapshot from "./ForkHeapSnapshot.ts";
 
 // Node's delay histogram wakes a native timer every RESOLUTION_MS and records the
 // gap between wakeups, so an idle loop reads about RESOLUTION_MS and a stall of S
@@ -141,9 +142,10 @@ export interface StallLogOptions {
   readonly maxBytes: number;
 }
 
-export const layerWith = (
+const layerWith = (
   makeSampler: Effect.Effect<Effect.Effect<EventLoopReadings>, never, Scope.Scope>,
   stallLog: StallLogOptions,
+  logsDir: string,
 ) =>
   Layer.effect(
     EventLoopMonitor,
@@ -173,6 +175,7 @@ export const layerWith = (
       const tick = Effect.gen(function* () {
         const readings = yield* sample;
         yield* recordGauges(readings);
+        yield* ForkHeapSnapshot.check(readings.heapUsedBytes, logsDir);
         const delayMaxMs = stallMs(readings);
         if (delayMaxMs === undefined) return;
         const { utilization, usage, rssBytes, loadAverage, cpuCount } = readings;
@@ -241,11 +244,15 @@ export const layerWith = (
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
-    const { serverTracePath } = yield* ServerConfig.ServerConfig;
+    const { serverTracePath, logsDir } = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
-    return layerWith(makeNodeSampler, {
-      filePath: path.join(path.dirname(serverTracePath), "event-loop-stalls.ndjson"),
-      maxBytes: STALL_LOG_MAX_BYTES,
-    });
+    return layerWith(
+      makeNodeSampler,
+      {
+        filePath: path.join(path.dirname(serverTracePath), "event-loop-stalls.ndjson"),
+        maxBytes: STALL_LOG_MAX_BYTES,
+      },
+      logsDir,
+    );
   }),
 );

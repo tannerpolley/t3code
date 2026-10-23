@@ -23,25 +23,34 @@ export function IssueWorkerLimitControl({
   reference,
   config,
   slotsInUse,
+  pool = "worker",
   onSettled,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRepositoryRef;
   config: RepositoryOrchestration;
   slotsInUse: number;
+  pool?: "worker" | "readOnly";
   onSettled: () => void;
 }) {
-  const [draft, setDraft] = useState(String(config.workerLimit));
+  const currentLimit = pool === "worker" ? config.workerLimit : config.readOnlyLimit;
+  const command =
+    pool === "worker" ? issueEnvironment.setWorkerLimit : issueEnvironment.setReadOnlyLimit;
+  const label = pool === "worker" ? "worker" : "read-only";
+  const [draft, setDraft] = useState(String(currentLimit));
   const [busy, setBusy] = useState(false);
-  const canSetLimit = useAtomValue(issueEnvironment.setWorkerLimit.permissionAtom(environmentId));
-  const setLimit = useAtomCommand(issueEnvironment.setWorkerLimit, { reportFailure: false });
+  const canSetLimit = useAtomValue(command.permissionAtom(environmentId));
+  const setWorkerLimit = useAtomCommand(issueEnvironment.setWorkerLimit, { reportFailure: false });
+  const setReadOnlyLimit = useAtomCommand(issueEnvironment.setReadOnlyLimit, {
+    reportFailure: false,
+  });
   const limit = Number(draft);
   const valid = Number.isInteger(limit) && limit >= 1 && limit <= 32;
   const disabled = busy || !canSetLimit || config.handoff?.status === "draining";
   return (
     <span className="flex min-w-0 items-center gap-1">
       <span className="truncate" role="status">
-        {slotsInUse} of {config.workerLimit} in use
+        {slotsInUse} of {currentLimit} in use
       </span>
       {canSetLimit ? (
         <Popover>
@@ -53,7 +62,7 @@ export function IssueWorkerLimitControl({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      aria-label="Change worker limit"
+                      aria-label={`Change ${label} limit`}
                       disabled={disabled}
                     />
                   }
@@ -62,29 +71,28 @@ export function IssueWorkerLimitControl({
             >
               <PencilIcon />
             </TooltipTrigger>
-            <TooltipPopup side="bottom">Change worker limit</TooltipPopup>
+            <TooltipPopup side="bottom">{`Change ${label} limit`}</TooltipPopup>
           </Tooltip>
           <PopoverPopup align="start" padding="compact">
             <form
               className="flex items-center gap-1.5"
               onSubmit={async (event) => {
                 event.preventDefault();
-                if (disabled || !valid || limit === config.workerLimit) return;
+                if (disabled || !valid || limit === currentLimit) return;
                 setBusy(true);
-                const result = await setLimit({
-                  environmentId,
-                  input: {
-                    ...reference,
-                    workerLimit: limit,
-                    expectedRevision: config.revision,
-                    clientRequestId: CommandId.make(randomUUID()),
-                  },
-                });
+                const input = {
+                  ...reference,
+                  expectedRevision: config.revision,
+                  clientRequestId: CommandId.make(randomUUID()),
+                };
+                const result = await (pool === "worker"
+                  ? setWorkerLimit({ environmentId, input: { ...input, workerLimit: limit } })
+                  : setReadOnlyLimit({ environmentId, input: { ...input, readOnlyLimit: limit } }));
                 setBusy(false);
                 if (result._tag === "Failure")
                   toastManager.add({
                     type: "error",
-                    title: "Could not update the repository worker limit",
+                    title: `Could not update the repository ${label} limit`,
                     description: formatEnvironmentQueryError(result.cause),
                   });
                 onSettled();
@@ -95,7 +103,7 @@ export function IssueWorkerLimitControl({
                 <Input
                   type="number"
                   size="compact"
-                  aria-label="Repository worker limit"
+                  aria-label={`Repository ${label} limit`}
                   min={1}
                   max={32}
                   step={1}
@@ -105,11 +113,13 @@ export function IssueWorkerLimitControl({
                   onChange={(event) => setDraft(event.target.value)}
                 />
               </div>
-              <span className="text-xs text-muted-foreground">workers</span>
+              <span className="text-xs text-muted-foreground">
+                {pool === "worker" ? "workers" : "read-only children"}
+              </span>
               <Button
                 size="xs"
                 type="submit"
-                disabled={disabled || !valid || limit === config.workerLimit}
+                disabled={disabled || !valid || limit === currentLimit}
               >
                 Save
               </Button>

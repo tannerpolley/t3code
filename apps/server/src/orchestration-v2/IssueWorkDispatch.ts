@@ -1,3 +1,4 @@
+import { isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type {
   IssueWorkRead,
   ThreadId,
@@ -9,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { sameIssueRepository } from "../issues/IssueEligibility.ts";
+import { sameIssueRepository, isReadOnlyIssueRole } from "../issues/IssueEligibility.ts";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
@@ -46,12 +47,18 @@ class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
   },
 ) {}
 
-/** Whole-thread writes to managed descendants serialize with their root's commands. */
+// ponytail: Unlinked managers lock themselves, so concurrent read-only delegations can go one over
+// the cap (#91); rollback and model-sync key mismatches on root-keyed threads remain in #97.
 export function threadDispatchLockKey(
   threadId: ThreadId,
   shell: OrchestrationV2ThreadShell | null,
 ) {
-  return shell?.linkedIssue === undefined ? threadId : shell.lineage.rootThreadId;
+  return shell?.linkedIssue !== undefined ||
+    (isReadOnlyIssueRole(shell?.role) &&
+      shell?.lineage.relationshipToParent === "subagent" &&
+      !isProviderNativeSubagentThread(shell))
+    ? shell.lineage.rootThreadId
+    : threadId;
 }
 
 /**
@@ -100,6 +107,7 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
       const shell = yield* projectionStore.getThreadShell(threadId);
       if (
         shell?.linkedIssue !== undefined &&
+        !isReadOnlyIssueRole(shell.role) &&
         shell.activeRunId === null &&
         Option.isSome(issueWorkStore) &&
         (yield* issueWorkStore.value.canAdmit(shell.linkedIssue, threadId))

@@ -24,7 +24,6 @@ const delivery = (id: string, compact = false): InlineShellDelivery => ({
   messageId: MessageId.make(`message-${id}`),
   text: compact ? "/compact" : "Explain the result",
   compact,
-  turnStart: true,
 });
 const complete = (id: string) =>
   Effect.gen(function* () {

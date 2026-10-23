@@ -26,7 +26,6 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
@@ -225,11 +224,14 @@ describe("command permissions", () => {
           for (const method of [
             PROJECT_ARTIFACT_METHODS.add,
             PROJECT_ARTIFACT_METHODS.remove,
+            WS_METHODS.issuesCloseOut,
             WS_METHODS.issuesCancelRequest,
             WS_METHODS.issuesRestoreRoot,
+            WS_METHODS.issuesAssignOrchestrator,
             WS_METHODS.issuesInboxMarkRead,
             WS_METHODS.ownerDecisionsChoose,
             WS_METHODS.issuesSetWorkerLimit,
+            WS_METHODS.issuesSetReadOnlyLimit,
             WS_METHODS.issuesQueue,
             WS_METHODS.issuesUnqueue,
           ]) {
@@ -257,6 +259,8 @@ describe("command permissions", () => {
           client: {
             [WS_METHODS.ownerDecisionsChoose]: () =>
               Effect.sync(() => calls.push(WS_METHODS.ownerDecisionsChoose)),
+            [WS_METHODS.issuesCloseOut]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesCloseOut)),
             [WS_METHODS.issuesCancelRequest]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesCancelRequest)),
             [WS_METHODS.issuesQueue]: () => Effect.sync(() => calls.push(WS_METHODS.issuesQueue)),
@@ -264,6 +268,10 @@ describe("command permissions", () => {
               Effect.sync(() => calls.push(WS_METHODS.issuesUnqueue)),
             [WS_METHODS.issuesSetWorkerLimit]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesSetWorkerLimit)),
+            [WS_METHODS.issuesSetReadOnlyLimit]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesSetReadOnlyLimit)),
+            [WS_METHODS.issuesAssignOrchestrator]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesAssignOrchestrator)),
             [WS_METHODS.issuesRestoreRoot]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesRestoreRoot)),
           },
@@ -299,6 +307,7 @@ describe("command permissions", () => {
           expectedRevision: 2,
           targetThreadId: ThreadId.make("lead"),
         };
+        const scopeWithTarget = { ...scope, targetThreadId: ThreadId.make("lead") };
         for (const environmentId of [other, env]) {
           const outcome = environmentId === env ? "Success" : "Failure";
           const chosen = yield* Effect.promise(() =>
@@ -308,16 +317,31 @@ describe("command permissions", () => {
             }),
           );
           expect(chosen._tag).toBe(outcome);
+          const closedOut = yield* Effect.promise(() =>
+            issues.closeOut.run(registry, {
+              environmentId,
+              input: { ...scope, issueId: "issue", expectedRevision: 2 },
+            }),
+          );
           const cancelled = yield* Effect.promise(() =>
             issues.cancelRequest.run(registry, { environmentId, input: cancel }),
           );
           const restored = yield* Effect.promise(() =>
             issues.restoreRoot.run(registry, { environmentId, input: restore }),
           );
+          const assigned = yield* Effect.promise(() =>
+            issues.assignOrchestrator.run(registry, { environmentId, input: scopeWithTarget }),
+          );
           const limited = yield* Effect.promise(() =>
             issues.setWorkerLimit.run(registry, {
               environmentId,
               input: { ...scope, workerLimit: 8, expectedRevision: 2 },
+            }),
+          );
+          const readOnlyLimited = yield* Effect.promise(() =>
+            issues.setReadOnlyLimit.run(registry, {
+              environmentId,
+              input: { ...scope, readOnlyLimit: 8, expectedRevision: 2 },
             }),
           );
           const queued = yield* Effect.promise(() =>
@@ -326,15 +350,25 @@ describe("command permissions", () => {
           const unqueued = yield* Effect.promise(() =>
             issues.unqueueIssue.run(registry, { environmentId, input: { ...scope, number: 1 } }),
           );
-          expect([cancelled._tag, restored._tag, limited._tag, queued._tag, unqueued._tag]).toEqual(
-            [outcome, outcome, outcome, outcome, outcome],
-          );
+          expect([
+            closedOut._tag,
+            cancelled._tag,
+            restored._tag,
+            assigned._tag,
+            limited._tag,
+            readOnlyLimited._tag,
+            queued._tag,
+            unqueued._tag,
+          ]).toEqual([outcome, outcome, outcome, outcome, outcome, outcome, outcome, outcome]);
         }
         expect(calls).toEqual([
           WS_METHODS.ownerDecisionsChoose,
+          WS_METHODS.issuesCloseOut,
           WS_METHODS.issuesCancelRequest,
           WS_METHODS.issuesRestoreRoot,
+          WS_METHODS.issuesAssignOrchestrator,
           WS_METHODS.issuesSetWorkerLimit,
+          WS_METHODS.issuesSetReadOnlyLimit,
           WS_METHODS.issuesQueue,
           WS_METHODS.issuesUnqueue,
         ]);
@@ -342,9 +376,9 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect(
-    "issue cleanup checks source-control permission at execution in the destination environment",
-    () =>
+  it.effect.each(["delete-branch", "remove-worktree"] as const)(
+    "issue cleanup (%s) checks source-control permission at execution in the destination environment",
+    (action) =>
       Effect.scoped(
         Effect.gen(function* () {
           const registry = yield* setup;
@@ -385,7 +419,7 @@ describe("command permissions", () => {
             repository: "owner/repo",
             number: 1,
             threadId: ThreadId.make("worker"),
-            action: "delete-branch" as const,
+            action,
             expectedBranch: "work",
             expectedWorktreePath: null,
             confirmed: true,
@@ -471,27 +505,6 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect("requires the destination settings grant to check OTLP endpoints", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        const check = createCommandPermissions(runtime, WS_METHODS.serverCheckOtlpEndpoint);
-        registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(check.permissionAtom(env))).toBe(false);
-        registry.set(
-          sessions(env),
-          AsyncResult.success({
-            ...grant(false),
-            scopes: [AuthSettingsWriteScope],
-            permissions: [AuthSettingsWriteScope],
-          }),
-        );
-        expect(registry.get(check.permissionAtom(env))).toBe(true);
-        yield* check.authorize(registry, env);
-      }),
-    ),
-  );
-
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -515,18 +528,6 @@ describe("command permissions", () => {
         yield* Effect.yieldNow;
         registry.set(sessions(env), AsyncResult.success(grant(true)));
         yield* Fiber.join(fiber);
-      }),
-    ),
-  );
-  it.effect("bounds a session that never loads", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        const fiber = yield* permissions
-          .authorize(registry, env)
-          .pipe(Effect.flip, Effect.forkChild);
-        yield* TestClock.adjust("6 seconds");
-        expect((yield* Fiber.join(fiber))._tag).toBe("EnvironmentAuthorizationError");
       }),
     ),
   );

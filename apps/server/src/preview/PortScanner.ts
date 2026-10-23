@@ -465,9 +465,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
-  const { dirname, join, resolve } = yield* Path.Path;
-  const projectStore = yield* ProjectStore.ProjectStoreV2;
-  const serverSettings = yield* ServerSettingsService;
+  const { dirname, join, resolve } = yield* Path.Path.pipe(Effect.provide(Path.layer));
+  const projectStore = yield* Effect.serviceOption(ProjectStore.ProjectStoreV2);
+  const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
@@ -584,7 +584,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       ...new Set(servers.flatMap((server) => (server.pid === null ? [] : [server.pid]))),
     ];
     if (hostPlatform !== "linux" || processIds.length === 0) return servers;
-    const shells = yield* projectStore.listShells().pipe(Effect.orElseSucceed(() => []));
+    const shells = Option.isNone(projectStore) ? [] : yield* projectStore.value.listShells().pipe(Effect.orElseSucceed(() => []));
     // /proc reports physical paths, so symlinked roots are compared by their target.
     const projects = yield* Effect.forEach(
       shells,
@@ -793,7 +793,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     listeners: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
   ) {
-    const hideRules = yield* serverSettings.getSettings.pipe(
+    const hideRules = Option.isNone(serverSettings) ? [] : yield* serverSettings.value.getSettings.pipe(
       Effect.map((settings) => settings.localServerHideRules),
       Effect.orElseSucceed(() => []),
     );

@@ -265,6 +265,7 @@ export function migrateSidebarRoleDisplay(settings: {
 }
 
 export const ForkClientSettingsFields = {
+  resetCreditReminders: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Desktop-only, Linux and Windows: closing the window leaves the app in the
   // system tray so its built-in server and agents keep running.
   keepRunningInBackground: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -337,6 +338,9 @@ export const ForkClientSettingsFields = {
 };
 
 export const ForkServerSettingsFields = {
+  autoUseExpiringResetCredits: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
   autoOrganizeByFolder: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   issueUpkeepRequiresApproval: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
@@ -377,6 +381,7 @@ export const ForkServerSettingsFields = {
 };
 
 export const ForkClientSettingsPatchFields = {
+  resetCreditReminders: Schema.optionalKey(Schema.Boolean),
   keepRunningInBackground: Schema.optionalKey(Schema.Boolean),
   projectIconFallback: Schema.optionalKey(ProjectIconFallback),
   sidebarTogglePosition: Schema.optionalKey(SidebarTogglePosition),
@@ -417,6 +422,7 @@ export const ForkClientSettingsPatchFields = {
 };
 
 export const ForkServerSettingsPatchFields = {
+  autoUseExpiringResetCredits: Schema.optionalKey(Schema.Boolean),
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
   issueUpkeepRequiresApproval: Schema.optionalKey(Schema.Boolean),
   dontAskMode: Schema.optionalKey(Schema.Boolean),

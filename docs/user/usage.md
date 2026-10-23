@@ -79,7 +79,7 @@ the dialog.
 ## Track subscription limits
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
-or Claude accounts across your environments and hubs you read one number per window rather than a
+or Claude accounts across your enabled environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,
 kept in the same column across windows. Accounts are ordered by their next 5-hour refill, soonest
 first. For an account with no weekly quota left, this is when its session becomes usable again.
@@ -92,6 +92,15 @@ list their banked reset credits with expiry dates and a **Use reset** action und
 Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
 Keychain. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
+
+Banked resets with expiry dates get native reminders with sound at 24, 12, 6, 3 and 1 hour,
+then 30, 10, 5 and 1 minute before expiry. Allow desktop notifications in Settings. If the app
+was closed, reopening shows only the most recent missed reminder. Clicking one opens Usage.
+By default, the server also tries to use the next expiring banked reset 10 minutes before expiry,
+retrying each minute until 1 minute remains. This works with no window open while the server is
+running. Usage shows the result; a failed attempt offers **Use now** while the credit is available.
+Change **Banked reset reminders** or **Auto-use expiring banked resets** under
+**Settings → General → Usage** (also listed in Customizations).
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.

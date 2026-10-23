@@ -91,3 +91,39 @@ It checks for staged builds shortly after startup and every four minutes while r
   - fork migrations use their own ledger (`ForkMigrations.ts`), and fork RPCs their own group (`ForkWsRpc.ts`).
 - Measure conflicts before a sync with `git merge-tree --write-tree --name-only --no-messages main upstream/main`.
 - Conflict resolution can drop fork code without a conflict marker or a failing test: the 2026-10-20 sync lost 23 fork behaviors that its review missed. Before merging a sync into `main`, run `scripts/fork-sync/lost-fork-code.py main <upstream commit merged> <sync branch>`. It lists fork-added lines the merge no longer has and fork files nothing imports any more. Judge every flagged hunk: restyled (keep), replaced by upstream's own version (drop the fork code, citing upstream's), or dropped (restore it). The sync review checks those judgments.
+
+## Slow request evidence
+
+The standalone watcher saves requests over 10 seconds (excluding subscription streams) to
+`~/.t3/userdata/logs/slow-requests.ndjson`. Each JSON line has the request end time in UTC,
+name, duration in milliseconds, slowest descendant steps and their lock waits, top queries
+by lock wait, and the machine's 1-, 5-, and 15-minute load averages at collection time.
+The repository orchestrator's daily review groups recurring causes and turns them into issues;
+one-off machine-load spikes are noted without filing an issue.
+
+Install from the checkout containing the watcher (repeat the two `install` commands when updating):
+
+```sh
+install -Dm755 scripts/fork-dev/slow-requests.py ~/.local/lib/t3-code/slow-requests.py
+install -Dm644 scripts/fork-dev/t3-slow-requests.service ~/.config/systemd/user/t3-slow-requests.service
+systemctl --user daemon-reload
+systemctl --user enable --now t3-slow-requests.service
+```
+
+Read the latest records with `tail -n 20 ~/.t3/userdata/logs/slow-requests.ndjson`;
+pipe one line through `python3 -m json.tool` for a readable breakdown. Check the watcher with
+`systemctl --user status t3-slow-requests` or `journalctl --user -u t3-slow-requests`.
+Disable it with `systemctl --user disable --now t3-slow-requests`.
+
+The log rotates daily or at 20 MiB into timestamped `slow-requests.ndjson.*` files; archives older
+than 14 days are removed hourly. The watcher retains at most 15 minutes or 100,000 spans,
+so older descendants can be absent from very long requests. It starts at the beginning of
+the active trace file and follows rotations. For an offline replay of the available ten
+rotations plus the active file, without writing to the normal output log:
+
+```sh
+python3 scripts/fork-dev/slow-requests.py --once \
+  --trace ~/.t3/userdata/logs/server.trace.ndjson --out /tmp/slow-requests.ndjson
+```
+
+Replays append records, and their load averages describe the replay machine at replay time.

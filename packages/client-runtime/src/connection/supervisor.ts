@@ -47,6 +47,7 @@ const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_T
 const synchronizationTimeout = Duration.fromInputUnsafe("75 seconds");
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
+const LOCAL_CONNECTION_PROBE_TIMEOUT = "60 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
 const BETTER_ROUTE_CHECK_INTERVAL = "60 seconds";
 // A better route that answered the check but then failed to connect is not
@@ -124,7 +125,7 @@ export interface EnvironmentSupervisorOptions {
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
-export function retryDelayMs(failureCount: number, random: number): number {
+function retryDelayMs(failureCount: number, random: number): number {
   const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
 }
@@ -564,18 +565,24 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     return undefined;
   });
 
-  const probeTimeoutFor = (next: SupervisorSignal): Duration.Input | undefined => {
+  const probeTimeoutFor = (
+    next: SupervisorSignal,
+    session: RpcSession.RpcSession,
+  ): Duration.Input | undefined => {
+    const quickTimeout = session.isLocal
+      ? LOCAL_CONNECTION_PROBE_TIMEOUT
+      : QUICK_CONNECTION_PROBE_TIMEOUT;
     switch (next._tag) {
       case "RetryRequested":
-        return QUICK_CONNECTION_PROBE_TIMEOUT;
+        return quickTimeout;
       case "NetworkChanged":
-        return next.network === "offline" ? QUICK_CONNECTION_PROBE_TIMEOUT : undefined;
+        return next.network === "offline" ? quickTimeout : undefined;
       case "Wakeup":
         if (next.reason === "application-active") {
-          return CONNECTION_PROBE_TIMEOUT;
+          return session.isLocal ? LOCAL_CONNECTION_PROBE_TIMEOUT : CONNECTION_PROBE_TIMEOUT;
         }
         return next.reason === "application-active-probe" || next.reason === "network-changed"
-          ? QUICK_CONNECTION_PROBE_TIMEOUT
+          ? quickTimeout
           : undefined;
       case "ConnectRequested":
       case "DisconnectRequested":
@@ -617,7 +624,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       ) {
         yield* requestBetterRouteCheck(lease);
       }
-      const probeTimeout = probeTimeoutFor(next);
+      const probeTimeout = probeTimeoutFor(next, lease.session);
       if (probeTimeout === undefined) {
         continue;
       }
@@ -654,7 +661,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           yield* Fiber.interrupt(probe);
           return endDuringProbe === "reset";
         }
-        const signalTimeout = probeTimeoutFor(probeEvent.signal);
+        const signalTimeout = probeTimeoutFor(probeEvent.signal, lease.session);
         if (signalTimeout !== undefined) {
           const signalDeadline =
             (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(signalTimeout);

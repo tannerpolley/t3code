@@ -25,7 +25,12 @@ import * as RpcClientError from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
-import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
+import {
+  makeWsRpcProtocolClient,
+  PING_TIMEOUT,
+  LOCAL_PING_TIMEOUT,
+  type WsRpcProtocolClient,
+} from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT, UNRESPONSIVE_HOST_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
@@ -46,6 +51,7 @@ import { environmentMismatchError } from "../connection/errors.ts";
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
 export interface RpcSession {
+  readonly isLocal?: boolean;
   readonly client: WsRpcProtocolClient;
   readonly initialConfig: Effect.Effect<ServerConfig, ConnectionAttemptError>;
   readonly subscribeServerConfig: (
@@ -57,6 +63,7 @@ export interface RpcSession {
 }
 
 export interface RpcSessionOptions {
+  readonly localPrimary?: boolean;
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
@@ -123,7 +130,6 @@ function serverConfigReplayEvents(
 }
 
 const isSocketErrorReason = Schema.is(Socket.SocketErrorReason);
-const PING_TIMEOUT_SECONDS = Duration.toSeconds(PING_TIMEOUT);
 
 function mapSessionRpcError(
   error: InitialConfigError | ProbeError | ServerConfigSubscriptionError,
@@ -172,6 +178,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   };
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
+    const isLocal =
+      options.localPrimary === true && connection.target._tag === "PrimaryConnectionTarget";
+    const pingTimeout = isLocal ? LOCAL_PING_TIMEOUT : PING_TIMEOUT;
     const via = connection.target._tag === "RelayConnectionTarget" ? "relay" : "direct";
     const networkHint = via === "relay" ? ` ${NETWORK_BLOCKING_HINT}` : "";
     const mapRpcError = (error: Parameters<typeof mapSessionRpcError>[0]) =>
@@ -197,7 +206,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
               detail: !wasConnected
                 ? `${connection.label} could not establish a WebSocket connection.${networkHint}`
                 : timedOut
-                  ? `${connection.label} stopped responding for ${PING_TIMEOUT_SECONDS}s. ${UNRESPONSIVE_HOST_HINT}`
+                  ? `${connection.label} stopped responding for ${Duration.toSeconds(pingTimeout)}s. ${UNRESPONSIVE_HOST_HINT}`
                   : `${connection.label} disconnected.`,
               ...socketFailureLocation(via),
             }),
@@ -212,7 +221,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
-        pingTimeout: PING_TIMEOUT,
+        pingTimeout,
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
         onPingTimeout: Ref.set(pingTimedOut, true),
@@ -403,6 +412,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     );
 
     return {
+      isLocal,
       client: protocolClient,
       initialConfig,
       subscribeServerConfig,

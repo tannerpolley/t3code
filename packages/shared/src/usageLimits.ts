@@ -20,6 +20,13 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";
+export const CHATGPT_USAGE_LIMIT_CODE = "subscription_sharing_usage_limit_exceeded";
+/** A ChatGPT Business admin caps plan use in other apps; only the admin can raise it. */
+export const CHATGPT_WORKSPACE_USAGE_LIMIT_CODE =
+  "subscription_sharing_workplace_individual_usage_limit_exceeded";
+/** OpenAI's partner guidelines fix this wording; the user sends it to their admin themselves. */
+export const CHATGPT_WORKSPACE_ADMIN_REQUEST =
+  "I've reached the limit for using my ChatGPT plan in T3 Code. Could you increase our workspace's usage limits so I can continue?\n\nGo to admin.openai.com → Workspace → Usage limits. Thank you!";
 
 export function usesChatGptSharing(provider: ServerProvider | null | undefined): boolean {
   return provider?.auth.status === "authenticated" && provider.auth.subscriptionSharing === true;
@@ -52,9 +59,7 @@ function cursorUsageWindowRank(id: string): number {
   return rank < 0 ? CURSOR_USAGE_WINDOWS.length : rank;
 }
 
-export function providersWithLimits(
-  providers: readonly ServerProvider[],
-): readonly ServerProvider[] {
+function providersWithLimits(providers: readonly ServerProvider[]): readonly ServerProvider[] {
   return providers.filter(
     (provider) =>
       provider.enabled &&
@@ -209,6 +214,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ];
     const winner = fresher ? next : previous;
     const creditSource = creditSources.get(key);
+    const redeem =
+      hubRedeems.get(key)?.redeem ??
+      (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem));
+    const creditId = creditSource?.limits.resetCredits?.nextCreditId;
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
@@ -216,9 +225,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
-      redeem:
-        hubRedeems.get(key)?.redeem ??
-        (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
+      redeem: redeem && creditId ? { ...redeem, input: { ...redeem.input, creditId } } : redeem,
       limits: {
         ...winner.limits,
         ...(creditSource?.limits.resetCredits
@@ -248,7 +255,15 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         accentColor: provider.accentColor,
         environments: [{ environmentId, label }],
         sourceLabel: null,
-        redeem: { environmentId, input: { instanceId: provider.instanceId } },
+        redeem: {
+          environmentId,
+          input: {
+            instanceId: provider.instanceId,
+            ...(provider.usageLimits.resetCredits?.nextCreditId
+              ? { creditId: provider.usageLimits.resetCredits.nextCreditId }
+              : {}),
+          },
+        },
         limits: provider.usageLimits,
       });
     }
@@ -745,9 +760,12 @@ export function collectProviderUsageLimits(
           ? {
               sourceId: hubCredits.source.id,
               accountId: hubCredits.account.id,
-              creditId: hubCreditId,
+              creditId: shownCredits?.nextCreditId ?? hubCreditId,
             }
-          : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
+          : {
+              instanceId: credits?.provider.instanceId ?? provider.instanceId,
+              ...(shownCredits?.nextCreditId ? { creditId: shownCredits.nextCreditId } : {}),
+            },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),

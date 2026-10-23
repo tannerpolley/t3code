@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import * as Sidebar from "../../../sidebarLayout.ts";
 import {
   editLocalServerHideRules,
@@ -59,9 +60,11 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         platform: descriptor.platform,
         preferences: {
           ...preferences(current),
-          sidebarLayout: (yield* (yield* Sidebar.SidebarLayoutService).get.pipe(
-            Effect.mapError(unavailable),
-          )).layout,
+          ...yield* Effect.gen(function* () {
+            const sidebar = yield* Effect.serviceOption(Sidebar.SidebarLayoutService);
+            if (Option.isNone(sidebar)) return {};
+            return { sidebarLayout: (yield* sidebar.value.get.pipe(Effect.mapError(unavailable))).layout };
+          }),
         },
       };
     }),

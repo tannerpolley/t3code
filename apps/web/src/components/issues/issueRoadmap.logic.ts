@@ -1,13 +1,43 @@
-import type { IssueMilestone, IssueRepositoryRef, IssueSummary } from "@t3tools/contracts";
+import {
+  THREAD_ROLE_LABELS,
+  type IssueMilestone,
+  type IssueRepositoryRef,
+  type IssueSummary,
+} from "@t3tools/contracts";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 import { issuePriorityRank } from "./issueProjects.logic";
 import { issueProgress } from "./IssueStateIcon";
 
 export function issueLiveStatus(issue: IssueSummary) {
   const work = issue.liveWork ?? [];
-  if (work.some((thread) => thread.status === "working")) return "working";
-  if (work.some((thread) => thread.status === "waiting_on_you")) return "waiting_on_you";
-  return work.length > 0 ? "idle" : null;
+  if (work.some((thread) => thread.status === "working")) return "working" as const;
+  if (work.some((thread) => thread.status === "waiting_on_you")) return "waiting_on_you" as const;
+  return work.length > 0 ? ("idle" as const) : null;
+}
+
+export const LIVE_WORK_STATUS_LABELS = {
+  working: "Working",
+  waiting_on_you: "Waiting on you",
+  idle: "Idle",
+} as const;
+
+/** The row names the first thread in the issue's status; the popup lists every thread. */
+export function issueLiveWorkSummary(issue: IssueSummary) {
+  const status = issueLiveStatus(issue);
+  if (status === null) return null;
+  const work = [...(issue.liveWork ?? [])].sort(
+    (a, b) =>
+      Number(b.status === status) - Number(a.status === status) || a.title.localeCompare(b.title),
+  );
+  const first = work[0]!;
+  const agent =
+    first.role === undefined ? first.title : `${THREAD_ROLE_LABELS[first.role]}: ${first.title}`;
+  return {
+    status,
+    work,
+    label: `${LIVE_WORK_STATUS_LABELS[status]} · ${agent}`,
+    more: work.length - 1,
+  };
 }
 export function openIssueBlockers(issue: IssueSummary) {
   return (issue.blockedBy ?? []).filter((blocker) => blocker.state === "open");
@@ -22,6 +52,7 @@ export function issueRoadmap(
   issues: readonly IssueSummary[],
   queuedNumbers: readonly number[] = [],
   now = Date.now(),
+  pendingInboxNumbers: readonly number[] = [],
 ) {
   const open = issues.filter((issue) => issue.state === "open");
   const byNumber = new Map(open.map((issue) => [issue.number, issue]));
@@ -111,29 +142,33 @@ export function issueRoadmap(
     for (const next of outgoing[id]!) if (--incoming[next]! === 0) insert(next);
   }
   const queueOrder = new Map(queuedNumbers.map((number, index) => [number, index]));
-  const sections = [
-    { id: "ready", title: "Ready", rows: [] as typeof ordered },
-    { id: "queued", title: "Queued", rows: [] as typeof ordered },
-    { id: "in-progress", title: "In progress", rows: [] as typeof ordered },
-    { id: "blocked", title: "Blocked", rows: [] as typeof ordered },
-    { id: "done", title: "Done", rows: [] as typeof ordered },
-    { id: "closed", title: "Closed", rows: [] as typeof ordered },
-  ];
+  const section = (id: string, title: string) => ({ id, title, rows: [] as typeof ordered });
+  const closed = section("closed", "Closed");
+  const blocked = section("blocked", "Blocked");
+  const readySection = section("ready", "Ready");
+  const queued = section("queued", "Queued");
+  const paused = section("paused", "Paused");
+  const inProgress = section("in-progress", "In progress");
+  const done = section("done", "Done");
+  const pendingInbox = new Set(pendingInboxNumbers);
   // Queue membership keeps its explicit order; dependency warnings remain visible on queued rows.
   for (const row of ordered) {
+    if (pendingInbox.has(row.issue.number)) continue;
     const progress = issueProgress(row.issue);
-    const section = queueOrder.has(row.issue.number)
-      ? 1
+    const target = queueOrder.has(row.issue.number)
+      ? queued
       : progress === "blocked"
-        ? 3
+        ? blocked
         : progress === "in_progress"
-          ? 2
-          : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
-            ? 3
-            : 0;
-    sections[section]!.rows.push(row);
+          ? inProgress
+          : progress === "paused"
+            ? paused
+            : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
+              ? blocked
+              : readySection;
+    target.rows.push(row);
   }
-  sections[1]!.rows.sort(
+  queued.rows.sort(
     (left, right) => queueOrder.get(left.issue.number)! - queueOrder.get(right.issue.number)!,
   );
   for (const issue of issues
@@ -143,9 +178,9 @@ export function issueRoadmap(
         (Date.parse(b.closedAt ?? "") || 0) - (Date.parse(a.closedAt ?? "") || 0) ||
         b.number - a.number,
     )) {
-    sections[recentlyDone(issue, now) ? 4 : 5]!.rows.push({ issue, cycle: false });
+    (recentlyDone(issue, now) ? done : closed).rows.push({ issue, cycle: false });
   }
-  return sections;
+  return [done, inProgress, paused, queued, readySection, blocked, closed];
 }
 
 const RECENTLY_DONE_MS = 24 * 60 * 60 * 1000;

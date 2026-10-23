@@ -191,6 +191,27 @@ export function resolveInitialMainWindowBounds(
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
 }
 
+const CONNECTING_SPLASH_SIZE = { width: 360, height: 220 } as const;
+
+// Electron's `center` uses the primary display, so centre the splash where the
+// main window will restore instead; `null` falls back to `center: true`.
+export function splashPositionFor(
+  persistedBounds: DesktopAppSettings.DesktopWindowBounds | null,
+  displays: readonly DisplayBounds[],
+  size: { readonly width: number; readonly height: number },
+): { x: number; y: number } | null {
+  if (
+    persistedBounds === null ||
+    resolveInitialMainWindowBounds(persistedBounds, displays) !== persistedBounds
+  ) {
+    return null;
+  }
+  return {
+    x: Math.round(persistedBounds.x + (persistedBounds.width - size.width) / 2),
+    y: Math.round(persistedBounds.y + (persistedBounds.height - size.height) / 2),
+  };
+}
+
 function buildConnectingSplashDataUrl(
   shouldUseDarkColors: boolean,
   message: ConnectingSplashLabel,
@@ -203,7 +224,7 @@ function buildConnectingSplashDataUrl(
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
-export function isSameOriginRendererNavigation(input: {
+function isSameOriginRendererNavigation(input: {
   readonly applicationUrl: string;
   readonly navigationUrl: string;
 }): boolean {
@@ -214,7 +235,7 @@ export function isSameOriginRendererNavigation(input: {
   }
 }
 
-export function isRetryableDevelopmentRendererLoadFailure(input: {
+function isRetryableDevelopmentRendererLoadFailure(input: {
   readonly applicationUrl: string;
   readonly errorCode: number;
   readonly isMainFrame: boolean;
@@ -230,7 +251,7 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
   );
 }
 
-export function concealPendingQuitWindow(
+function concealPendingQuitWindow(
   window: Pick<
     Electron.BrowserWindow,
     "isDestroyed" | "isFullScreen" | "setFullScreen" | "setOpacity"
@@ -378,18 +399,8 @@ export const make = Effect.gen(function* () {
     yield* applyZoomDirection(window, direction);
   });
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
-    Option.Option<Electron.BrowserWindow>,
-    DesktopWindowError
-  > {
-    if (yield* Ref.get(desktopState.quitting)) return Option.none();
-    yield* previewManager.getBrowserSession();
-    const applicationUrl = getDesktopUrl(environment.isDevelopment);
-    const iconPaths = yield* assets.iconPaths;
-    const iconOption = getIconOption(iconPaths, environment.platform);
-    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+  const readMainWindowPlacement = Effect.gen(function* () {
     const persistedSettings = yield* desktopSettings.get;
-    const persistedBounds = persistedSettings.mainWindowBounds;
     const displayBoundsResult = yield* Effect.sync(() => {
       try {
         return {
@@ -406,6 +417,21 @@ export const make = Effect.gen(function* () {
         : yield* logWindowWarning("failed to read connected displays; using defaults", {
             cause: displayBoundsResult.cause,
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
+    return { persistedSettings, displayBounds } as const;
+  });
+
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
+    Option.Option<Electron.BrowserWindow>,
+    DesktopWindowError
+  > {
+    if (yield* Ref.get(desktopState.quitting)) return Option.none();
+    yield* previewManager.getBrowserSession();
+    const applicationUrl = getDesktopUrl(environment.isDevelopment);
+    const iconPaths = yield* assets.iconPaths;
+    const iconOption = getIconOption(iconPaths, environment.platform);
+    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const { persistedSettings, displayBounds } = yield* readMainWindowPlacement;
+    const persistedBounds = persistedSettings.mainWindowBounds;
     const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
@@ -934,16 +960,21 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(existingWindow)) return;
 
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+      const { persistedSettings, displayBounds } = yield* readMainWindowPlacement;
+      const position = splashPositionFor(
+        persistedSettings.mainWindowBounds,
+        displayBounds,
+        CONNECTING_SPLASH_SIZE,
+      );
       if (yield* Ref.get(desktopState.quitting)) return;
       const splash = yield* electronWindow.create({
-        width: 360,
-        height: 220,
+        ...CONNECTING_SPLASH_SIZE,
+        ...(position ?? { center: true }),
         resizable: false,
         minimizable: false,
         maximizable: false,
         fullscreenable: false,
         frame: false,
-        center: true,
         show: false,
         skipTaskbar: false,
         backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),

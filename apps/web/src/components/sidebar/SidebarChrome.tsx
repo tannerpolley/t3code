@@ -1,21 +1,9 @@
-import {
-  ArrowLeftIcon,
-  ChartNoAxesColumnIcon,
-  CircleDotIcon,
-  MessageCircleQuestionIcon,
-  SettingsIcon,
-} from "lucide-react";
-import type { CSSProperties, ReactNode } from "react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, CircleDotIcon, SettingsIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
-import {
-  useClientSettings,
-  useEnvironmentIdentificationMode,
-  usePrimarySettings,
-  usePrimarySettingsAvailable,
-  useUpdatePrimarySettings,
-} from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useIssuePageScope } from "../issues/useIssuePageScope";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
@@ -38,6 +26,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
+import { SidebarAskModeItem } from "./SidebarAskModeItem";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
@@ -170,53 +159,6 @@ function SidebarUtilityItem({
           }
         />
         <TooltipPopup side="top">{label}</TooltipPopup>
-      </Tooltip>
-    </SidebarMenuItem>
-  );
-}
-
-/** Ask mode reflects the inverse of the primary server's automatic-answer setting. */
-function SidebarAskModeItem() {
-  const available = usePrimarySettingsAvailable();
-  const on = usePrimarySettings((settings) => !settings.dontAskMode);
-  const updateSettings = useUpdatePrimarySettings();
-  if (!available) return null;
-  const label = on
-    ? "Ask mode: on (agents can ask you questions)"
-    : "Ask mode: off (agents decide without asking)";
-  return (
-    // Last in the footer. The desktop update control before it already pushes right (`ml-auto`), so
-    // it drops its own push there instead of splitting the free space with it.
-    <SidebarMenuItem className="ms-auto shrink-0 [.ml-auto+&]:ms-0">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarMenuButton
-              aria-label={label}
-              aria-pressed={on}
-              onClick={() => updateSettings({ dontAskMode: on })}
-              size="icon"
-              // Orange matches the sidebar's questions waiting for you.
-              style={
-                on
-                  ? ({ "--sidebar-icon-color": "var(--warning-foreground)" } as CSSProperties)
-                  : undefined
-              }
-            >
-              <MessageCircleQuestionIcon />
-            </SidebarMenuButton>
-          }
-        />
-        <TooltipPopup side="top" className="max-w-64">
-          <div className="flex flex-col gap-0.5">
-            <span className="font-medium text-foreground">{label}</span>
-            <span className="text-muted-foreground">
-              {on
-                ? "Turn off when you step away: questions get their recommended option and approvals are granted."
-                : "Questions get their recommended option and approvals are granted. Turn on to answer them yourself."}
-            </span>
-          </div>
-        </TooltipPopup>
       </Tooltip>
     </SidebarMenuItem>
   );

@@ -60,10 +60,10 @@ export interface ComposerMentionDragEvent {
  * focuses on the next frame, after the editor has caught up.
  */
 export interface ComposerMentionDropHost {
-  readonly supportsIssueContexts: boolean;
+  readonly supportsIssueContexts?: boolean;
   insertMentionAtEnd(text: string): boolean;
   insertPullRequestAtEnd(pullRequest: PullRequestContextMetadata): boolean;
-  insertIssueAtEnd(issue: IssueContextMetadata): boolean;
+  insertIssueAtEnd?(issue: IssueContextMetadata): boolean;
   setDragActive(active: boolean): void;
   onInsertRejected(): void;
 }
@@ -114,7 +114,7 @@ export function makeComposerMentionDragHandlers(
         event.dataTransfer.types.includes(COMPOSER_ISSUE_DRAG_TYPE)
       ) {
         const issue = decodeIssuePayload(event.dataTransfer.getData(COMPOSER_ISSUE_DRAG_TYPE));
-        if (Option.isSome(issue) && !host.insertIssueAtEnd(issue.value)) host.onInsertRejected();
+        if (Option.isSome(issue) && host.insertIssueAtEnd?.(issue.value) === false) host.onInsertRejected();
         return;
       }
       if (event.dataTransfer.types.includes(COMPOSER_PULL_REQUEST_DRAG_TYPE)) {

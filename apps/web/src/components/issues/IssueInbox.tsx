@@ -1,3 +1,4 @@
+import { IssueHoverCard } from "./IssueHoverCard";
 import { startIssueDrag } from "./issueComposerContext";
 import { useAtomValue } from "@effect/atom-react";
 import type {
@@ -91,6 +92,14 @@ function describe(event: IssueInboxEvent): string {
   return `${KIND_LABELS[event.kind]}${source} · ${formatRelativeTimeLabel(event.occurredAt)}`;
 }
 
+export function useIssueInbox(environmentId: EnvironmentId, reference: IssueRepositoryRef) {
+  const supported =
+    useServerConfigs().get(environmentId)?.environment.capabilities.issueInbox === true;
+  return useEnvironmentQuery(
+    supported ? issueEnvironment.inbox({ environmentId, input: reference }) : null,
+  );
+}
+
 /** The repository's unread external issue activity on the Issues page, high priority first. */
 export function IssueInboxSection(props: {
   readonly environmentId: EnvironmentId;
@@ -111,7 +120,7 @@ function InboxList({
   readonly reference: IssueRepositoryRef;
   readonly issues?: readonly IssueSummary[] | undefined;
 }) {
-  const { data } = useEnvironmentQuery(issueEnvironment.inbox({ environmentId, input: reference }));
+  const { data } = useIssueInbox(environmentId, reference);
   const markRead = useAtomCommand(issueEnvironment.markInboxRead);
   const canMark = useAtomValue(issueEnvironment.markInboxRead.permissionAtom(environmentId));
   const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
@@ -150,72 +159,79 @@ function InboxList({
             const issue = issuesByNumber.get(event.issueNumber);
             return (
               <li key={event.id} className="px-2 py-1">
-                <div
-                  draggable
-                  onDragStart={(dragEvent) =>
-                    startIssueDrag(
-                      dragEvent,
-                      issue ?? {
-                        number: event.issueNumber,
-                        title: event.issueTitle,
-                        url: `https://${reference.host}/${reference.repository}/issues/${event.issueNumber}`,
-                      },
-                    )
-                  }
-                  className={cn(
-                    PULL_REQUEST_ROW_CLASS,
-                    "items-start px-1 py-1.5 hover:bg-accent/60",
-                  )}
-                >
-                  <span className="mt-0.75 flex w-4 shrink-0">
-                    {issue ? <IssueStateIcon issue={issue} /> : null}
-                  </span>
-                  <a
-                    className="flex min-w-0 flex-1 flex-col"
-                    href={event.url}
-                    rel="noopener noreferrer"
-                    target="_blank"
-                  >
-                    <PullRequestRowLines
-                      number={null}
-                      title={event.issueTitle}
-                      signals={
-                        <>
-                          {event.highPriority ? (
-                            <Badge size="sm" variant="warning">
-                              High priority
-                            </Badge>
-                          ) : null}
-                          {event.tagged ? (
-                            <Badge size="sm" variant="info">
-                              Tagged
-                            </Badge>
-                          ) : null}
-                        </>
+                <IssueHoverCard
+                  target={{ environmentId, input: { ...reference, number: event.issueNumber } }}
+                  issue={issue}
+                  title={event.issueTitle}
+                  render={
+                    <div
+                      draggable
+                      onDragStart={(dragEvent) =>
+                        startIssueDrag(
+                          dragEvent,
+                          issue ?? {
+                            number: event.issueNumber,
+                            title: event.issueTitle,
+                            url: `https://${reference.host}/${reference.repository}/issues/${event.issueNumber}`,
+                          },
+                        )
                       }
-                      meta={
-                        <>
-                          {event.issueNumber > 0 ? (
-                            <span className={PULL_REQUEST_ROW_NUMBER_CLASS}>
-                              #{event.issueNumber}
-                            </span>
-                          ) : null}
-                          <span className="truncate">{describe(event)}</span>
-                        </>
-                      }
-                    />
-                    {event.snippet !== "" ? (
-                      <span className="truncate text-2xs text-muted-foreground">
-                        {event.snippet}
+                      className={cn(
+                        PULL_REQUEST_ROW_CLASS,
+                        "items-start px-1 py-1.5 hover:bg-accent/60",
+                      )}
+                    >
+                      <span className="mt-0.75 flex w-4 shrink-0">
+                        {issue ? <IssueStateIcon issue={issue} /> : null}
                       </span>
-                    ) : null}
-                  </a>
-                  {canMark ? (
-                    <MarkReadButton label="Mark read" onClick={() => mark([event.id])}>
-                      <CheckIcon />
-                    </MarkReadButton>
-                  ) : null}
-                </div>
+                      <a
+                        className="flex min-w-0 flex-1 flex-col"
+                        href={event.url}
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        <PullRequestRowLines
+                          number={null}
+                          title={event.issueTitle}
+                          signals={
+                            <>
+                              {event.highPriority ? (
+                                <Badge size="sm" variant="warning">
+                                  High priority
+                                </Badge>
+                              ) : null}
+                              {event.tagged ? (
+                                <Badge size="sm" variant="info">
+                                  Tagged
+                                </Badge>
+                              ) : null}
+                            </>
+                          }
+                          meta={
+                            <>
+                              {event.issueNumber > 0 ? (
+                                <span className={PULL_REQUEST_ROW_NUMBER_CLASS}>
+                                  #{event.issueNumber}
+                                </span>
+                              ) : null}
+                              <span className="truncate">{describe(event)}</span>
+                            </>
+                          }
+                        />
+                        {event.snippet !== "" ? (
+                          <span className="truncate text-2xs text-muted-foreground">
+                            {event.snippet}
+                          </span>
+                        ) : null}
+                      </a>
+                      {canMark ? (
+                        <MarkReadButton label="Mark read" onClick={() => mark([event.id])}>
+                          <CheckIcon />
+                        </MarkReadButton>
+                      ) : null}
+                    </div>
+                  }
+                />
               </li>
             );
           })}

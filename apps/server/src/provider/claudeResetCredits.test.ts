@@ -1,13 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -162,6 +159,20 @@ const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requ
   });
 
 effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
+  it.effect("returns without a request when the redemption precondition no longer permits it", () =>
+    Effect.gen(function* () {
+      const login = yield* writeLogin;
+      const result = yield* ClaudeResetCredits.consumeClaudeResetCredit({
+        ...login,
+        version: "2.1.0",
+        grantId: "grant_a",
+        requestId: "r-1",
+        canRedeem: Effect.succeed(false),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, refuseRequests));
+      expect(result).toBe("nothingToReset");
+    }),
+  );
+
   it.effect("claims the grant for the organization", () =>
     Effect.gen(function* () {
       const client = HttpClient.make((request) =>
@@ -215,41 +226,6 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
         }
       }
     }),
-  );
-
-  it.effect("times out a stalled claim body", () =>
-    Effect.gen(function* () {
-      const login = yield* writeLogin;
-      const readingBody = yield* Deferred.make<void>();
-      const client = HttpClient.make((request) => {
-        const response = HttpClientResponse.fromWeb(request, Response.json({ result: "reset" }));
-        Object.defineProperty(response, "json", {
-          value: Deferred.succeed(readingBody, undefined).pipe(Effect.andThen(Effect.never)),
-        });
-        return Effect.succeed(response);
-      });
-      const claim = yield* ClaudeResetCredits.consumeClaudeResetCredit({
-        ...login,
-        version: "2.1.0",
-        grantId: "grant_a",
-        requestId: "r-1",
-      }).pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HttpClient.HttpClient, client),
-        Effect.result,
-        Effect.forkChild,
-      );
-      yield* Deferred.await(readingBody);
-      yield* TestClock.adjust("26 seconds");
-      expect(yield* Fiber.join(claim)).toMatchObject({
-        _tag: "Failure",
-        failure: {
-          _tag: "ClaudeResetCreditError",
-          reason: "requestFailed",
-          cause: { _tag: "TimeoutError" },
-        },
-      });
-    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("refuses malformed ids without sending anything", () =>

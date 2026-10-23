@@ -135,7 +135,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "issue-work",
   ),
   set_repository_worker_limit: tool(
-    ["Update", "Updating", "Updated", "repository worker limit"],
+    ["Update", "Updating", "Updated", "repository concurrency limit"],
     "issue-work",
   ),
   set_repository_work_paused: tool(
@@ -144,6 +144,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   request_repository_handoff: tool(
     ["Request", "Requesting", "Requested", "an orchestrator handoff"],
+    "issue-work",
+  ),
+  close_out_issue_attempt: tool(
+    ["Close out", "Closing out", "Closed out", "an issue attempt"],
     "issue-work",
   ),
   cancel_issue_request: tool(
@@ -456,10 +460,4 @@ export function resolveT3McpToolPresentation(
 ): T3McpToolPresentation | null {
   const definition = resolveT3McpToolDefinition(toolName);
   return definition === null ? null : { displayName: definition.displayName, logo: "t3-code" };
-}
-
-export function resolveT3McpToolSummaryAction(
-  toolName: string | null | undefined,
-): T3McpToolSummaryAction | null {
-  return resolveT3McpToolDefinition(toolName)?.summaryAction ?? null;
 }

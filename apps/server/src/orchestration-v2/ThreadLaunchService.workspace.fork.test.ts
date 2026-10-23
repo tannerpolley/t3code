@@ -1,15 +1,7 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { assert, describe, it, vi } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import {
-  CommandId,
-  EnvironmentId,
-  GitCommandError,
-  MessageId,
-  ProviderDriverKind,
-  ThreadId,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { CommandId, EnvironmentId, GitCommandError, MessageId, ProviderDriverKind, ThreadId, type ServerProvider } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -21,12 +13,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import {
-  adapter,
-  makeHarness,
-  modelSelection,
-  projectId,
-} from "./ThreadLaunchService.testHarness.ts";
+import { adapter, makeHarness, modelSelection, projectId } from "./ThreadLaunchService.testHarness.ts";
 
 describe("delegate_task isolation", () => {
   const parentThreadId = ThreadId.make("thread:delegate-parent");

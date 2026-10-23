@@ -29,9 +29,13 @@ type ConnectionLayerSource =
   | typeof BackgroundActivityReporter.layerObserver
   | typeof BackgroundActivityReporter.layer;
 
+const primaryTarget = ConnectionPlatform.readPrimaryEnvironmentTargetResult();
+
 const layerProvidedClientConnection = layerSnapshotLoader.pipe(
   Layer.provideMerge(
     Connection.layerWithOptions({
+      localPrimary:
+        primaryTarget._tag === "Success" && primaryTarget.target?.source === "desktop-managed",
       environmentThemes: true,
       usageLimitSources: true,
       usageLimitsCommand: true,

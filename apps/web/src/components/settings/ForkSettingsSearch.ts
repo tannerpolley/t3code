@@ -2,6 +2,19 @@ import type { SettingsSearchItem } from "./settingsSearch";
 
 export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
+    id: "reset-credit-reminders",
+    title: "Banked reset reminders",
+    to: "/settings/general",
+    searchTerms: ["banked reset credits expiry expires reminders notification sound"],
+  },
+  {
+    id: "auto-use-expiring-reset-credits",
+    title: "Auto-use expiring banked resets",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["automatic banked reset credit expiry expires redeem use"],
+  },
+  {
     id: "dont-ask-mode",
     title: "Ask mode",
     to: "/settings/general",

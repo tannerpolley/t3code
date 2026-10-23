@@ -10,10 +10,7 @@ import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSidebarTextSizes } from "./ForkSidebarTextSizes";
 import { sectionTarget, useProjectSectionPlacementReady } from "../../projectSectionPlacement";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
-import {
-  formatModelSelectionEffort,
-  shortModelSelectionEffort,
-} from "@t3tools/client-runtime/state/thread-execution";
+import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
 import {
@@ -1464,9 +1461,7 @@ const SidebarProjectThreadRow = memo(
                     />
                   }
                   model={resolveSidebarThreadModelLabel(props.thread, provider, true, false)}
-                  effort={shortModelSelectionEffort(
-                    formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
-                  )}
+                  effort={formatModelSelectionEffort(props.thread.modelSelection, provider?.models)}
                   name={
                     <SidebarProjectThreadName thread={props.thread} badges={false}>
                       <span className="sidebar-role-title">

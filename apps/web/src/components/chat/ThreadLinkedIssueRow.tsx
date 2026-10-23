@@ -8,6 +8,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useThreadShell } from "~/state/entities";
 import { issueEnvironment, useLiveIssueSummary } from "~/state/issues";
+import { IssueHoverCard } from "../issues/IssueHoverCard";
 import { IssueRow } from "../issues/IssueRow";
 import {
   PULL_REQUEST_ROW_CLASS,
@@ -72,19 +73,28 @@ function LinkedIssueContent({
       className="px-2.5"
     />
   ) : (
-    <button
-      type="button"
-      draggable
-      onDragStart={(event) => startIssueDrag(event, issue)}
-      className={`${PULL_REQUEST_ROW_CLASS} px-2.5`}
-      onClick={onSelect}
-    >
-      <span aria-hidden className="size-4 shrink-0" />
-      <PullRequestRowLines
-        number={null}
-        title={issue.title || "Untitled issue"}
-        meta={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>{referenceLabel}</span>}
-      />
-    </button>
+    <IssueHoverCard
+      target={{
+        environmentId,
+        input: { host: issue.host, repository: issue.repository, number: issue.number },
+      }}
+      title={issue.title}
+      render={
+        <button
+          type="button"
+          draggable
+          onDragStart={(event) => startIssueDrag(event, issue)}
+          className={`${PULL_REQUEST_ROW_CLASS} px-2.5`}
+          onClick={onSelect}
+        >
+          <span aria-hidden className="size-4 shrink-0" />
+          <PullRequestRowLines
+            number={null}
+            title={issue.title || "Untitled issue"}
+            meta={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>{referenceLabel}</span>}
+          />
+        </button>
+      }
+    />
   );
 }

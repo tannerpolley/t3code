@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -753,6 +754,11 @@ export const make = Effect.gen(function* () {
           yield* writeUpdateRestartMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
+          if (forkUpdates) {
+            // The lifecycle owns bounded shutdown after the launcher is scheduled.
+            yield* forkUpdates.install(downloadedVersion);
+            return { accepted: true, completed: false, failed: false };
+          }
           // Stop every backend in the pool, not just the primary. With parallel
           // WSL + Windows backends, leaving the WSL instance up means
           // quitAndInstall's app.quit() exits before the pool's scope cascade
@@ -766,17 +772,14 @@ export const make = Effect.gen(function* () {
           yield* Ref.set(installRunningBackendsRef, runningInstances);
           yield* Effect.forEach(
             instances,
-            (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+            (instance) =>
+              instance.stop({ timeout: DesktopBackendManager.QUIT_BACKEND_STOP_TIMEOUT }),
             { concurrency: "unbounded" },
           );
-          if (forkUpdates) {
-            yield* forkUpdates.install(downloadedVersion);
-          } else {
-            yield* electronUpdater.quitAndInstall({
-              isSilent: true,
-              isForceRunAfter: true,
-            });
-          }
+          yield* electronUpdater.quitAndInstall({
+            isSilent: true,
+            isForceRunAfter: true,
+          });
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({

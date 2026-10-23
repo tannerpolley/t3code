@@ -701,23 +701,18 @@ export const BranchToolbar = memo(function BranchToolbar({
   const handleReturnToRoot = async () => {
     if (returningToRoot || !canReturnToRoot) return;
     setReturningToRoot(true);
-    try {
-      const result = await returnToRoot({ environmentId, input: { threadId } });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not move to main checkout",
-              description: error instanceof Error ? error.message : "Workspace move failed.",
-            }),
-          );
-        }
-        return;
-      }
-    } finally {
-      setReturningToRoot(false);
+    const result = await returnToRoot({ environmentId, input: { threadId } }).finally(() =>
+      setReturningToRoot(false),
+    );
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not move to main checkout",
+          description: error instanceof Error ? error.message : "Workspace move failed.",
+        }),
+      );
     }
   };
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);

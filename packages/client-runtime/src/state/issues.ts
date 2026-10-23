@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
   type IssueDetailInput,
+  type IssueListInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -42,11 +43,19 @@ export function createIssueEnvironmentAtoms<R, E>(
     tag: WS_METHODS.issuesSubscribeLinkRefreshes,
   });
   const localChanges = Atom.family((_environmentId: EnvironmentId) => Atom.make(0));
+  const linkSignals = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) =>
+      [
+        Option.getOrElse(
+          AsyncResult.value(get(linkRefreshes({ environmentId, input: {} }))),
+          () => 0,
+        ),
+        get(localChanges(environmentId)),
+      ].join(":"),
+    ),
+  );
   const linkRefreshTrigger = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
-    Atom.make((get) => [
-      get(linkRefreshes({ environmentId, input: {} })),
-      get(localChanges(environmentId)),
-    ]);
+    linkSignals(environmentId);
   const changeRefreshes = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:issues:change-refreshes",
     tag: WS_METHODS.issueChangesSubscribe,
@@ -126,6 +135,62 @@ export function createIssueEnvironmentAtoms<R, E>(
       { initialValueTarget: source },
     ).pipe(Atom.setIdleTTL(0));
   });
+  const listQuery = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:issues:list",
+    tag: WS_METHODS.issuesList,
+    staleTimeMs: LIVE_ISSUE_REFRESH_MS,
+    refreshTrigger: linkRefreshTrigger,
+  });
+  const list = ({
+    environmentId,
+    input,
+  }: {
+    readonly environmentId: EnvironmentId;
+    readonly input: IssueListInput;
+  }) =>
+    listQuery({
+      environmentId,
+      input: {
+        host: input.host.toLowerCase(),
+        repository: input.repository.toLowerCase(),
+        state: input.state ?? "open",
+        roadmap: input.roadmap ?? false,
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+      },
+    });
+  // All visible first-page consumers share one poll and one underlying list request.
+  const polledLists = Atom.family((source: ReturnType<typeof list>) =>
+    Atom.transform(
+      source,
+      (get) => {
+        const result = get(source);
+        if (!result.waiting) {
+          // @effect-diagnostics-next-line globalTimers:off -- Scoped to the mounted live list.
+          const timer = setTimeout(() => get.refresh(source), LIVE_ISSUE_REFRESH_MS);
+          get.addFinalizer(() => clearTimeout(timer));
+        }
+        return result;
+      },
+      { initialValueTarget: source },
+    ).pipe(Atom.setIdleTTL(0)),
+  );
+  const liveList = (target: Parameters<typeof list>[0]) => polledLists(list(target));
+  const repositoryStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:issues:repository-status",
+    tag: WS_METHODS.issuesRepositoryStatus,
+    staleTimeMs: LIVE_ISSUE_REFRESH_MS,
+    refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
+    refreshTrigger: linkRefreshTrigger,
+  });
+  const statusBatch = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:issues:status-batch",
+    tag: WS_METHODS.issuesStatusBatch,
+    // Retired sidebar sets must stop polling as soon as their last row unsubscribes.
+    idleTtlMs: 0,
+    staleTimeMs: LIVE_ISSUE_REFRESH_MS,
+    refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
+    refreshTrigger: linkRefreshTrigger,
+  });
   return {
     inboxUnread,
     inbox: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -176,13 +241,11 @@ export function createIssueEnvironmentAtoms<R, E>(
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
     }),
-    repositoryStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:issues:repository-status",
-      tag: WS_METHODS.issuesRepositoryStatus,
-      staleTimeMs: 5_000,
-      refreshIntervalMs: 5_000,
-      refreshTrigger: linkRefreshTrigger,
-    }),
+    repositoryStatus: ({ environmentId, input }: Parameters<typeof repositoryStatus>[0]) =>
+      repositoryStatus({
+        environmentId,
+        input: { host: input.host.toLowerCase(), repository: input.repository.toLowerCase() },
+      }),
     workMilestone: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:milestone",
       tag: WS_METHODS.issuesWorkMilestone,
@@ -191,9 +254,23 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:worker-limit",
       tag: WS_METHODS.issuesSetWorkerLimit,
     }),
+    setReadOnlyLimit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:read-only-limit",
+      tag: WS_METHODS.issuesSetReadOnlyLimit,
+    }),
+    closeOut: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:close-out",
+      tag: WS_METHODS.issuesCloseOut,
+    }),
     setPaused: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:pause",
       tag: WS_METHODS.issuesSetPaused,
+    }),
+    assignOrchestrator: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:assign-orchestrator",
+      tag: WS_METHODS.issuesAssignOrchestrator,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
     }),
     handoff: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:handoff",
@@ -229,41 +306,25 @@ export function createIssueEnvironmentAtoms<R, E>(
       tag: WS_METHODS.issuesRepositories,
       staleTimeMs: 5 * 60_000,
     }),
-    list: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:issues:list",
-      tag: WS_METHODS.issuesList,
-      staleTimeMs: 30_000,
-      refreshTrigger: linkRefreshTrigger,
-    }),
-    /**
-     * One repository's list shown beside a thread, kept live while agents work on its issues.
-     * The Issues page reads many repositories through `list`, which stays unpolled.
-     */
-    liveList: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:issues:live-list",
-      tag: WS_METHODS.issuesList,
-      staleTimeMs: 30_000,
-      refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
-      refreshTrigger: linkRefreshTrigger,
-    }),
-    /** Roadmap page one observes link changes without re-reading after agent turns. */
-    roadmapList: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:issues:roadmap-list",
-      tag: WS_METHODS.issuesList,
-      staleTimeMs: 30_000,
-      refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
-      refreshTrigger: linkRefreshTrigger,
-    }),
-    statusBatch: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:issues:status-batch",
-      tag: WS_METHODS.issuesStatusBatch,
-      // Retired sidebar sets must stop polling as soon as their last row unsubscribes.
-      idleTtlMs: 0,
-      staleTimeMs: LIVE_ISSUE_REFRESH_MS,
-      refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
-      refreshTrigger: (target) =>
-        Atom.make((get) => [get(refreshTrigger(target)), get(linkRefreshTrigger(target))]),
-    }),
+    list,
+    liveList,
+    roadmapList: liveList,
+    statusBatch: ({ environmentId, input }: Parameters<typeof statusBatch>[0]) => {
+      const issues = new Map(
+        input.issues.map(({ host, nodeId }) => {
+          const ref = { host: host.toLowerCase(), nodeId };
+          return [JSON.stringify(ref), ref] as const;
+        }),
+      );
+      return statusBatch({
+        environmentId,
+        input: {
+          issues: [...issues.entries()]
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([, ref]) => ref),
+        },
+      });
+    },
     detail: (target: Parameters<typeof detail>[0]) => liveDetail(environmentRpcKey(target)),
   };
 }

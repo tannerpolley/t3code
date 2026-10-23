@@ -7,6 +7,16 @@ import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import { IssueRef, IssueRepositoryRef } from "./issue.ts";
 
+export const CLOSED_ISSUE_SUSPENSION_REASON =
+  "Issue closed during work. Decide whether to resume or close out the retained result.";
+
+export const DEFAULT_REPOSITORY_WORK_SETTINGS = {
+  workerLimit: 4,
+  readOnlyLimit: 4,
+  publishStatusComments: true,
+  publishCloseoutComments: true,
+} as const;
+
 export const RepositoryMilestonePlan = Schema.Struct({
   number: Schema.Int.check(Schema.isGreaterThan(0)),
   modelRoleId: ModelRoleId,
@@ -23,6 +33,9 @@ export const RepositoryOrchestration = Schema.Struct({
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   paused: Schema.Boolean,
   workerLimit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })),
+  readOnlyLimit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_REPOSITORY_WORK_SETTINGS.readOnlyLimit)),
+  ),
   publishStatusComments: Schema.Boolean,
   publishCloseoutComments: Schema.Boolean,
   milestones: Schema.Array(RepositoryMilestonePlan).pipe(
@@ -52,11 +65,6 @@ export const RepositoryOrchestration = Schema.Struct({
   retiredToThreadId: Schema.optional(ThreadId),
 });
 export type RepositoryOrchestration = typeof RepositoryOrchestration.Type;
-export const DEFAULT_REPOSITORY_WORK_SETTINGS = {
-  workerLimit: 4,
-  publishStatusComments: true,
-  publishCloseoutComments: true,
-} as const;
 
 export const RepositoryWorkTarget = Schema.Struct({
   host: TrimmedNonEmptyString,
@@ -78,6 +86,29 @@ export const RepositoryWorkerLimitInput = Schema.Struct({
   clientRequestId: CommandId,
 });
 export type RepositoryWorkerLimitInput = typeof RepositoryWorkerLimitInput.Type;
+export const RepositoryReadOnlyLimitInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  readOnlyLimit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })),
+  expectedRevision: RepositoryOrchestration.fields.revision,
+  clientRequestId: CommandId,
+});
+export type RepositoryReadOnlyLimitInput = typeof RepositoryReadOnlyLimitInput.Type;
+export const RepositoryConcurrencyLimitInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  workerLimit: Schema.optional(RepositoryWorkerLimitInput.fields.workerLimit),
+  readOnlyLimit: Schema.optional(RepositoryReadOnlyLimitInput.fields.readOnlyLimit),
+  expectedRevision: RepositoryOrchestration.fields.revision,
+  clientRequestId: CommandId,
+});
+export type RepositoryConcurrencyLimitInput = typeof RepositoryConcurrencyLimitInput.Type;
+export const IssueWorkCloseOutInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  issueId: TrimmedNonEmptyString,
+  expectedRevision: RepositoryOrchestration.fields.revision,
+  clientRequestId: CommandId,
+});
+export type IssueWorkCloseOutInput = typeof IssueWorkCloseOutInput.Type;
+
 export const RepositoryWorkControlInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   paused: Schema.Boolean,
@@ -89,6 +120,7 @@ export const RepositoryHandoffRequestInput = Schema.Struct({
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   summary: TrimmedNonEmptyString,
   modelSelection: Schema.optional(ModelSelection),
+  targetThreadId: Schema.optional(ThreadId),
   clientRequestId: CommandId,
 });
 export type RepositoryHandoffRequestInput = typeof RepositoryHandoffRequestInput.Type;
@@ -102,6 +134,14 @@ export const RepositoryHandoffInput = Schema.Union([
   }),
 ]);
 export type RepositoryHandoffInput = typeof RepositoryHandoffInput.Type;
+export const RepositoryOrchestratorInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  projectId: ProjectId,
+  targetThreadId: ThreadId,
+  clientRequestId: CommandId,
+});
+export type RepositoryOrchestratorInput = typeof RepositoryOrchestratorInput.Type;
+
 /** User-only recovery; expectations prevent overwriting a newer repository owner. */
 export const RepositoryWorkRestoreInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
@@ -163,6 +203,9 @@ export const RepositoryWorkResult = Schema.Struct({
   rootThreadId: Schema.NullOr(ThreadId),
   orchestration: Schema.NullOr(RepositoryOrchestration),
   slotsInUse: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  readOnlySlotsInUse: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(0)),
+  ),
   queue: Schema.optional(Schema.Array(IssueQueueEntry)),
 });
 export type RepositoryWorkResult = typeof RepositoryWorkResult.Type;

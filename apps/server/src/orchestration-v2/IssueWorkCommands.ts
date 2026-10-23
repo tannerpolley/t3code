@@ -17,6 +17,8 @@ import * as Ref from "effect/Ref";
 
 import {
   issueEligibility,
+  isReadOnlyIssueRole,
+  requiresManagedIssueAdmission,
   sameIssueRepository,
   supportsManagedIssueWork,
   issueScopeExpansionError,
@@ -80,6 +82,12 @@ export function makeIssueWorkCommands({
     );
   const canStartIssueRun = (thread: OrchestrationV2AppThread) =>
     Effect.gen(function* () {
+      if (isReadOnlyIssueRole(thread.role) && thread.lineage.relationshipToParent === "subagent") {
+        if (Option.isNone(issueWorkStore)) return true;
+        const store = issueWorkStore.value;
+        if (!(yield* store.isRepositoryOrchestrator(thread.lineage.rootThreadId))) return true;
+        return yield* store.canAdmitReadOnly(thread.lineage.rootThreadId, thread.id);
+      }
       const issue = thread.linkedIssue;
       if (issue === undefined) return true;
       if (Option.isNone(issueWorkStore)) return false;
@@ -116,6 +124,7 @@ export function makeIssueWorkCommands({
       const issue = thread.linkedIssue;
       if (
         issue === undefined ||
+        isReadOnlyIssueRole(thread.role) ||
         Option.isNone(issueWorkStore) ||
         command.delegatedCompletion !== undefined ||
         command.usageLimitContinuationOfRunId !== undefined ||
@@ -288,9 +297,15 @@ export function makeIssueWorkCommands({
     command: OrchestrationV2ServerCommand,
   ) =>
     Effect.gen(function* () {
-      const managed =
-        parentProjection.thread.repositoryOrchestration !== undefined ||
-        parentProjection.thread.linkedIssue !== undefined;
+      if (isReadOnlyIssueRole(request.role)) return false;
+      const parent = parentProjection.thread;
+      const root =
+        parent.lineage.rootThreadId === parent.id
+          ? parent
+          : yield* projectionStore
+              .getThread(parent.lineage.rootThreadId)
+              .pipe(mapDispatchError(command));
+      const managed = requiresManagedIssueAdmission(request.role, parent, root);
       if (managed && request.issue === undefined)
         return yield* new OrchestratorDispatchError({
           commandId: request.commandId,
@@ -402,7 +417,7 @@ export function makeIssueWorkCommands({
     });
 
   const childIssueFields = (request: DelegatedTaskRequest) => ({
-    ...(request.issue === undefined
+    ...(request.issue === undefined || isReadOnlyIssueRole(request.role)
       ? {}
       : { linkedIssue: request.issue, titleSource: "generated" as const }),
     ...(request.role === undefined ? {} : { role: request.role }),
@@ -412,10 +427,25 @@ export function makeIssueWorkCommands({
   // preparation binds one; it never borrows the parent's.
   const childWorkspaceFields = (request: DelegatedTaskRequest) =>
     request.workspaceStrategy === undefined
-      ? request.issue === undefined
+      ? request.issue === undefined || isReadOnlyIssueRole(request.role)
         ? {}
         : { branch: null, worktreePath: null }
       : { branch: request.workspaceStrategy.branch ?? null, worktreePath: null };
+
+  const closeOut = Effect.fn("IssueWorkCommands.closeOut")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "issue.work.close-out" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const read = yield* issueSnapshot(command.issue);
+    if (read?.state !== "closed")
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        detail: "Only a confirmed closed issue can be closed out.",
+      });
+    for (const event of yield* issueWorkRecovery.closeOut(command).pipe(mapDispatchError(command)))
+      yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
+  });
 
   const cancel = (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "issue.work.cancel" }>,
@@ -433,6 +463,7 @@ export function makeIssueWorkCommands({
     reuseManagedChild,
     childIssueFields,
     childWorkspaceFields,
+    closeOut,
     cancel,
   };
 }

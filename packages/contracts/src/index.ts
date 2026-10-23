@@ -84,3 +84,6 @@ export * from "./issueLinks.ts";
 export * from "./issueCleanup.ts";
 
 export * from "./ownerDecision.ts";
+export * from "./repositoryOrchestrator.ts";
+
+export * from "./ResetCreditExpiry.ts";

@@ -7,6 +7,10 @@ import { useUiStateStore } from "~/uiStateStore";
 import { IssueRoadmap } from "./IssueRoadmap";
 
 vi.mock("./IssueQueueAction", () => ({ useIssueQueue: () => ({ supported: true, data: null }) }));
+vi.mock("./IssueInbox", () => ({
+  useIssueInbox: () => ({ data: null }),
+  IssueInboxSection: () => null,
+}));
 vi.mock("./IssueRow", () => ({ IssueRow: () => null }));
 
 const issue: IssueSummary = {
@@ -51,11 +55,12 @@ it("remembers each roadmap section across refreshes, repository changes and remo
     renderer = create(render());
   });
   expect(sections().map((section) => section.props["aria-label"])).toEqual([
-    "Ready",
-    "Queued",
-    "In progress",
-    "Blocked",
     "Done",
+    "In progress",
+    "Paused",
+    "Queued",
+    "Ready",
+    "Blocked",
     "Closed",
   ]);
   expect(sections().map((section) => section.findByType("button").props["aria-expanded"])).toEqual([
@@ -64,15 +69,16 @@ it("remembers each roadmap section across refreshes, repository changes and remo
     true,
     true,
     true,
+    true,
     false,
   ]);
-  for (const index of [0, 1, 2, 3, 4]) {
+  for (const index of [0, 1, 2, 3, 4, 5]) {
     await act(async () => button(index).props.onClick());
     expect(button(index).props["aria-expanded"]).toBe(false);
     expect(sections()[index]!.findAllByType("ul")).toHaveLength(0);
   }
   expect(
-    button(0)
+    button(4)
       .findAllByType("span")
       .some((span) => span.children[0] === "1"),
   ).toBe(true);
@@ -85,9 +91,10 @@ it("remembers each roadmap section across refreshes, repository changes and remo
     renderer = create(render());
   });
   expect(renderer!.root.findAllByType("li")).toHaveLength(0);
-  await act(async () => button(0).props.onClick());
+  await act(async () => button(4).props.onClick());
   expect(renderer!.root.findAllByType("li")).toHaveLength(1);
-  expect(button(2).props["aria-expanded"]).toBe(false);
   expect(button(1).props["aria-expanded"]).toBe(false);
+  expect(button(2).props["aria-expanded"]).toBe(false);
   expect(button(3).props["aria-expanded"]).toBe(false);
+  expect(button(5).props["aria-expanded"]).toBe(false);
 });

@@ -247,6 +247,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import { isNetworkPath } from "@t3tools/shared/path";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { isTelemetryIdHash } from "@t3tools/shared/telemetryId";
 import {
@@ -269,7 +270,7 @@ const resolveDiscoveryForConfig = <A, E, R>(
     Effect.map(Option.getOrElse(onTimeout)),
   );
 
-export const resolveAvailableEditorsForConfig = <A, E, R>(
+const resolveAvailableEditorsForConfig = <A, E, R>(
   discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
 ) => resolveDiscoveryForConfig(discovery, () => []);
 
@@ -604,14 +605,14 @@ const MAX_CLIENT_APP_VERSION_LENGTH = 64;
 const MAX_CLIENT_BROWSER_LENGTH = 64;
 const MAX_CLIENT_DEVICE_MODEL_LENGTH = 80;
 
-export function hasCompatibleOrchestrationProtocol(url: URL): boolean {
+function hasCompatibleOrchestrationProtocol(url: URL): boolean {
   return (
     url.searchParams.get(ORCHESTRATION_PROTOCOL_QUERY_PARAM) ===
     String(ORCHESTRATION_PROTOCOL_VERSION)
   );
 }
 
-export function shouldUseBoundedThreadSnapshot(input: {
+function shouldUseBoundedThreadSnapshot(input: {
   readonly acceptBoundedSnapshot?: boolean;
 }): boolean {
   return input.acceptBoundedSnapshot === true;
@@ -2342,17 +2343,20 @@ export const layerWsRpc = (
                   detail: "This provider does not bank reset credits.",
                 });
               }
-              const outcome = yield* instance.consumeResetCredit().pipe(
-                Effect.mapError(
-                  (error) =>
-                    new ProviderSetupError({
-                      instanceId: input.instanceId,
-                      operation: "consume-reset-credit",
-                      detail: error.detail,
-                      cause: error,
-                    }),
-                ),
-              );
+              // Old clients omit the ID; accept their open-confirmation race with auto-use to preserve upstream's unpinned behavior.
+              const outcome = yield* instance
+                .consumeResetCredit(input.creditId ? { creditId: input.creditId } : undefined)
+                .pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new ProviderSetupError({
+                        instanceId: input.instanceId,
+                        operation: "consume-reset-credit",
+                        detail: error.detail,
+                        cause: error,
+                      }),
+                  ),
+                );
               return { outcome };
             }),
           [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),
@@ -2746,7 +2750,9 @@ export const layerWsRpc = (
                 input.resource._tag === "native-app-icon" ||
                 input.resource._tag === "tool-output-image" ||
                 input.resource._tag === "github-media" ||
-                (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
+                (input.resource._tag === "media-file" &&
+                  path.isAbsolute(input.resource.path) &&
+                  !isNetworkPath(input.resource.path))
               ) {
                 return yield* issueAssetUrl({ resource: input.resource });
               }

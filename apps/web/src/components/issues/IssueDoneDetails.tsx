@@ -1,5 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, IssueRepositoryRef, IssueSummary } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueCleanupInput,
+  IssueRepositoryRef,
+  IssueSummary,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { useState } from "react";
@@ -76,7 +81,7 @@ function IssueWorkCleanup({
   const [unmerged, setUnmerged] = useState(false);
   const [removed, setRemoved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const remove = async (confirmUnmerged = false) => {
+  const remove = async (action: IssueCleanupInput["action"], confirmUnmerged = false) => {
     setFailure(null);
     setBusy(true);
     const result = await cleanup({
@@ -84,7 +89,7 @@ function IssueWorkCleanup({
       input: {
         ...reference,
         threadId: work.threadId,
-        action: "delete-branch",
+        action,
         expectedBranch: work.branch,
         expectedWorktreePath: work.worktreePath,
         confirmed: true,
@@ -109,6 +114,13 @@ function IssueWorkCleanup({
       });
       return;
     }
+    if (action === "remove-worktree") {
+      if (result.value?.outcome === "kept") {
+        setFailure(result.value.reason);
+        return;
+      }
+      return;
+    }
     setRemoved(true);
     setUnmerged(false);
   };
@@ -126,12 +138,22 @@ function IssueWorkCleanup({
       >
         Open worker · {work.title}
       </Button>
+      {work.worktreePath && work.worktreeExists ? (
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={!permitted || busy || work.status !== "idle"}
+          {...confirm.props("worktree", () => void remove("remove-worktree"))}
+        >
+          {confirm.isArmed("worktree") ? "Confirm remove worktree?" : "Remove worktree"}
+        </Button>
+      ) : null}
       {work.branch && !removed ? (
         <Button
           size="xs"
           variant="ghost"
           disabled={!permitted || busy || work.status !== "idle"}
-          {...confirm.props("branch", () => void remove(unmerged))}
+          {...confirm.props("branch", () => void remove("delete-branch", unmerged))}
         >
           {confirm.isArmed("branch")
             ? unmerged

@@ -270,3 +270,22 @@ it("migrates full legacy client files and saves only the role display choice", (
   ).toBe("name");
   expect(() => decodeClientPatch({ sidebarRoleDisplay: "unknown" })).toThrow();
 });
+
+it("defaults banked reset automation and reminders on and preserves opt-outs", () => {
+  expect(decodeServerSettingsFile("{}").autoUseExpiringResetCredits).toBe(true);
+  expect(decodeClientSettingsFile("{}").resetCreditReminders).toBe(true);
+  expect(
+    encodeServerSettings(decodeServerSettingsFile('{"autoUseExpiringResetCredits":false}'))
+      .autoUseExpiringResetCredits,
+  ).toBe(false);
+  expect(
+    encodeClientSettings(decodeClientSettingsFile('{"resetCreditReminders":false}'))
+      .resetCreditReminders,
+  ).toBe(false);
+  expect(decodeServerPatch({ autoUseExpiringResetCredits: false })).toEqual({
+    autoUseExpiringResetCredits: false,
+  });
+  expect(decodeClientPatch({ resetCreditReminders: false })).toEqual({
+    resetCreditReminders: false,
+  });
+});

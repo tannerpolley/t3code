@@ -161,7 +161,7 @@ const RequestUserInputTool = Tool.make("t3_request_user_input", {
   success: ProviderUserInputAnswers,
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
-  dependencies: [...commandTool.dependencies, Orchestrator.OrchestratorV2],
+  dependencies: commandTool.dependencies,
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);

@@ -101,8 +101,6 @@ export function UsageLimitRecoverySettings() {
                           provider={entry.driverKind}
                           models={entry.models}
                           model={saved.model}
-                          prompt=""
-                          onPromptChange={() => {}}
                           modelOptions={saved.options ?? null}
                           allowPromptInjectedEffort={false}
                           planModeEnabled={settings.planModeEnabled}

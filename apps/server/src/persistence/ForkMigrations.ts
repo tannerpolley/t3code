@@ -12,8 +12,8 @@ import ProjectionTurnItemCounts from "./ForkMigrations/002_ProjectionTurnItemCou
 import ThreadIssueWork from "./ForkMigrations/003_ThreadIssueWork.ts";
 import RepositoryOrchestration from "./ForkMigrations/004_RepositoryOrchestration.ts";
 import RepositoryScheduledWork from "./ForkMigrations/005_RepositoryScheduledWork.ts";
-import OwnerDecisions from "./ForkMigrations/020_OwnerDecisions.ts";
-import OwnerDecisionDelivery from "./ForkMigrations/021_OwnerDecisionDelivery.ts";
+import OwnerDecisions from "./ForkMigrations/021_OwnerDecisions.ts";
+import OwnerDecisionDelivery from "./ForkMigrations/022_OwnerDecisionDelivery.ts";
 import IssueChanges from "./ForkMigrations/006_IssueChanges.ts";
 import SidebarLayout from "./ForkMigrations/013_SidebarLayout.ts";
 import ProjectArtifacts from "./ForkMigrations/017_ProjectArtifacts.ts";
@@ -21,6 +21,7 @@ import ClosedIssueWorkIndexes from "./ForkMigrations/018_ClosedIssueWorkIndexes.
 import UsageLimitRecoveryIndex from "./ForkMigrations/019_UsageLimitRecoveryIndex.ts";
 import IssueQueue from "./ForkMigrations/016_IssueQueue.ts";
 import IssueInbox from "./ForkMigrations/015_IssueInbox.ts";
+import MarkedIssueInbox from "./ForkMigrations/020_MarkedIssueInbox.ts";
 import UsageLimitSwitchRecovery from "./ForkMigrations/012_UsageLimitSwitchRecovery.ts";
 import InlineShellRuns from "./ForkMigrations/010_InlineShellRuns.ts";
 import ThreadUsageSummary from "./ForkMigrations/011_ThreadUsageSummary.ts";
@@ -52,8 +53,9 @@ export const forkMigrationEntries = [
   [17, "ProjectArtifacts", ProjectArtifacts],
   [18, "ClosedIssueWorkIndexes", ClosedIssueWorkIndexes],
   [19, "UsageLimitRecoveryIndex", UsageLimitRecoveryIndex],
-  [20, "OwnerDecisions", OwnerDecisions],
-  [21, "OwnerDecisionDelivery", OwnerDecisionDelivery],
+  [20, "MarkedIssueInbox", MarkedIssueInbox],
+  [21, "OwnerDecisions", OwnerDecisions],
+  [22, "OwnerDecisionDelivery", OwnerDecisionDelivery],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.

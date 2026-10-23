@@ -33,6 +33,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as IssueService from "./IssueService.ts";
 import * as IssueInbox from "./IssueInbox.ts";
 import * as IssueWorkStore from "./IssueWorkStore.ts";
+import * as IssueWorkService from "./IssueWorkService.ts";
 import * as OwnerDecisions from "./OwnerDecisions.ts";
 
 const threadId = ThreadId.make("requester");
@@ -71,6 +72,7 @@ const setup = (send?: ThreadManagement.ThreadManagementService["Service"]["dispa
     let failLabels = false;
     let pages = 0;
     const dependencies = Layer.mergeAll(
+      Layer.mock(IssueWorkService.IssueWorkService)({}),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: (id) =>
           Effect.sync(() =>
@@ -208,6 +210,7 @@ const setup = (send?: ThreadManagement.ThreadManagementService["Service"]["dispa
           revision: 2,
           paused: false,
           workerLimit: 4,
+          readOnlyLimit: 4,
           publishStatusComments: false,
           publishCloseoutComments: false,
           milestones: [],

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ThreadId, type IssueMilestone, type IssueSummary } from "@t3tools/contracts";
-import { issueRoadmap, issueLiveStatus, createIssueRoadmapClock } from "./issueRoadmap.logic";
+import {
+  issueRoadmap,
+  issueLiveStatus,
+  issueLiveWorkSummary,
+  createIssueRoadmapClock,
+} from "./issueRoadmap.logic";
 
 const scope = { host: "github.com", repository: "owner/repo" };
 const ref = (number: number, state: "open" | "closed" = "open", repository = scope.repository) => ({
@@ -58,6 +63,8 @@ const pr = (state: "open" | "merged" | "closed") => ({
 });
 const numbers = (rows: ReturnType<typeof issueRoadmap>[number]["rows"]) =>
   rows.map((row) => row.issue.number);
+const inSection = (sections: ReturnType<typeof issueRoadmap>, id: string) =>
+  sections.find((section) => section.id === id)!;
 
 describe("live roadmap", () => {
   it("orders the acceptance chains and keeps every blocked issue behind its blockers within its section", () => {
@@ -73,9 +80,9 @@ describe("live roadmap", () => {
         issue(423),
       ],
     );
-    expect(numbers(sections[0]!.rows)).toEqual([423, 431]);
-    expect(numbers(sections[3]!.rows)).toEqual([432, 434, 439, 435]);
-    const blocked = numbers(sections[3]!.rows);
+    expect(numbers(inSection(sections, "ready").rows)).toEqual([423, 431]);
+    expect(numbers(inSection(sections, "blocked").rows)).toEqual([432, 434, 439, 435]);
+    const blocked = numbers(inSection(sections, "blocked").rows);
     expect(blocked.indexOf(439)).toBeLessThan(blocked.indexOf(435));
   });
   it("orders an open child before its parent, ignores closed children and closed blockers, and separates closed issues", () => {
@@ -89,8 +96,8 @@ describe("live roadmap", () => {
         issue(5, { state: "closed", parent: ref(1) }),
       ],
     );
-    expect(numbers(sections[0]!.rows)).toEqual([2, 7, 1]);
-    expect(sections[3]!.rows).toEqual([]);
+    expect(numbers(inSection(sections, "ready").rows)).toEqual([2, 7, 1]);
+    expect(inSection(sections, "blocked").rows).toEqual([]);
   });
   it("uses milestone group order, then Project Priority, then oldest issue number for available nodes", () => {
     const alpha = milestone(2, "Alpha"),
@@ -110,7 +117,7 @@ describe("live roadmap", () => {
         issue(3, { milestone: alpha }),
       ],
     );
-    expect(numbers(sections[0]!.rows)).toEqual([7, 8, 9, 3, 2, 1]);
+    expect(numbers(inSection(sections, "ready").rows)).toEqual([7, 8, 9, 3, 2, 1]);
   });
   it("dependency order beats priority and milestone order in the same section", () => {
     const alpha = milestone(1, "Alpha"),
@@ -129,7 +136,7 @@ describe("live roadmap", () => {
         issue(3, { milestone: zeta, parent: ref(2), liveWork: work("working") }),
       ],
     );
-    expect(numbers(sections[2]!.rows)).toEqual([3, 2]);
+    expect(numbers(inSection(sections, "in-progress").rows)).toEqual([3, 2]);
   });
   it("shows external and unloaded open blockers without giving an external issue number an ordering edge", () => {
     const sections = issueRoadmap(
@@ -141,7 +148,7 @@ describe("live roadmap", () => {
         issue(7, { blockedBy: [ref(1000)] }),
       ],
     );
-    expect(numbers(sections[3]!.rows)).toEqual([1, 2, 7]);
+    expect(numbers(inSection(sections, "blocked").rows)).toEqual([1, 2, 7]);
   });
   it("numbers cycles deterministically, including child/blocker cycles and self edges, without badging their descendants", () => {
     const sections = issueRoadmap(
@@ -155,7 +162,7 @@ describe("live roadmap", () => {
         issue(1),
       ],
     );
-    expect(numbers(sections[0]!.rows)).toEqual([1, 9]);
+    expect(numbers(inSection(sections, "ready").rows)).toEqual([1, 9]);
     expect(
       sections
         .flatMap((section) => section.rows)
@@ -163,10 +170,12 @@ describe("live roadmap", () => {
         .map((row) => row.issue.number)
         .sort((a, b) => a - b),
     ).toEqual([3, 4, 9]);
-    expect(numbers(sections[3]!.rows)).toEqual([3, 4, 2]);
-    expect(sections[3]!.rows.find((row) => row.issue.number === 2)?.cycle).toBe(false);
+    expect(numbers(inSection(sections, "blocked").rows)).toEqual([3, 4, 2]);
+    expect(inSection(sections, "blocked").rows.find((row) => row.issue.number === 2)?.cycle).toBe(
+      false,
+    );
   });
-  it("keeps only running agents In progress, open PRs In progress, and blockers ahead of both", () => {
+  it("keeps working or waiting agents In progress, idle work and open PRs Paused, and blockers ahead of both", () => {
     const first = issueRoadmap(
       scope,
       [],
@@ -190,11 +199,12 @@ describe("live roadmap", () => {
       ],
     );
     expect(first.map((section) => numbers(section.rows))).toEqual([
-      [2, 3, 9, 13, 14],
       [],
-      [7, 8, 11, 12],
-      [1, 4, 5, 6, 10],
+      [2, 7, 11, 12],
+      [3, 6, 8],
       [],
+      [9, 13, 14],
+      [1, 4, 5, 10],
       [],
     ]);
     expect(
@@ -213,17 +223,18 @@ describe("live roadmap", () => {
       ],
     );
     expect(refreshed.map((section) => numbers(section.rows))).toEqual([
-      [1, 2, 3, 4],
       [],
       [],
+      [1, 2],
       [],
+      [3, 4],
       [],
       [],
     ]);
   });
 });
 
-it("puts queued issues after Ready in insertion order and removes them from their other sections", () => {
+it("puts queued issues above Ready in insertion order and removes them from their other sections", () => {
   const sections = issueRoadmap(
     scope,
     [],
@@ -231,11 +242,12 @@ it("puts queued issues after Ready in insertion order and removes them from thei
     [2, 1, 4],
   );
   expect(sections.map((section) => [section.title, numbers(section.rows)])).toEqual([
-    ["Ready", [3]],
-    ["Queued", [2, 1]],
-    ["In progress", []],
-    ["Blocked", []],
     ["Done", []],
+    ["In progress", []],
+    ["Paused", []],
+    ["Queued", [2, 1]],
+    ["Ready", [3]],
+    ["Blocked", []],
     ["Closed", [4]],
   ]);
 });
@@ -290,4 +302,47 @@ it("notifies at closure expiry without polling and cancels its timer when the vi
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("holds unacknowledged openings out of every open section, then restores their normal state", () => {
+  const issues = [
+    issue(1),
+    issue(2, { blockedBy: [ref(1)] }),
+    issue(3, { liveWork: work("working") }),
+    issue(4),
+  ];
+  const before = issueRoadmap(scope, [], issues, [], Date.now(), [1, 2, 3]);
+  expect(before.flatMap((section) => numbers(section.rows))).toEqual([4]);
+  const acknowledged = issueRoadmap(scope, [], issues, [], Date.now(), []);
+  expect(numbers(inSection(acknowledged, "ready").rows)).toEqual([1, 4]);
+  expect(numbers(inSection(acknowledged, "blocked").rows)).toEqual([2]);
+  expect(numbers(inSection(acknowledged, "in-progress").rows)).toEqual([3]);
+});
+
+it("names the first thread in the issue's status, its role and how many more are linked", () => {
+  const thread = (title: string, status: "working" | "idle", role?: "investigator") => ({
+    ...work(status)[0]!,
+    threadId: ThreadId.make(title),
+    title,
+    ...(role === undefined ? {} : { role }),
+  });
+  const summary = issueLiveWorkSummary(
+    issue(1, {
+      liveWork: [
+        thread("Alpha", "idle"),
+        thread("#736 Pahlavanzadeh 2013 MDEA research", "working", "investigator"),
+        thread("Beta", "idle"),
+      ],
+    }),
+  );
+  expect(summary?.label).toBe("Working · Investigator: #736 Pahlavanzadeh 2013 MDEA research");
+  expect(summary?.more).toBe(2);
+  expect(summary?.work.map((item) => item.title)).toEqual([
+    "#736 Pahlavanzadeh 2013 MDEA research",
+    "Alpha",
+    "Beta",
+  ]);
+  const roleless = issueLiveWorkSummary(issue(2, { liveWork: [thread("Gamma", "idle")] }));
+  expect(roleless).toMatchObject({ label: "Idle · Gamma", more: 0 });
+  expect(issueLiveWorkSummary(issue(3))).toBeNull();
 });

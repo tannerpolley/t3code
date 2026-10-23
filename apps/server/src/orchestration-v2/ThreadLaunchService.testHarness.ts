@@ -216,7 +216,13 @@ function makeHarness(options: HarnessOptions = {}) {
       getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
-      listShells: () => Effect.die("unused"),
+      listShells: () =>
+        Effect.succeed(
+          [project, otherProject].map((entry) => ({
+            ...entry,
+            repositoryIdentity: options.projectRepositoryIdentity ?? entry.repositoryIdentity,
+          })),
+        ),
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
@@ -543,6 +549,7 @@ const createReviewRoot = Effect.fn("test.createReviewRoot")(function* (
       revision: 1,
       paused: false,
       workerLimit: 4,
+      readOnlyLimit: 4,
       publishStatusComments: false,
       publishCloseoutComments: false,
       milestones: [

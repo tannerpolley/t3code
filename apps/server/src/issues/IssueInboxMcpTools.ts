@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import {
   IssueInboxToolInput,
   IssueInboxToolResult,
@@ -15,7 +16,6 @@ import * as IssueInbox from "./IssueInbox.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  IssueInbox.IssueInbox,
   ThreadManagementService.ThreadManagementService,
 ];
 
@@ -34,7 +34,7 @@ export const IssuePostTool = Tool.make("t3_issue_post", {
 
 export const IssueInboxTool = Tool.make("t3_issue_inbox", {
   description:
-    "The repository orchestrator's inbox of external GitHub issue activity: new issues and comments, closes and reopens, label and milestone changes, and title renames, written by other projects or by hand. Body edits are not tracked. Available to the repository orchestrator and its delegated children. action=list returns unread events, high priority first, without bodies; action=read with ids returns those events with a snippet and link; action=mark_read marks ids read, or every unread event when ids are omitted. Triage new external issues into a milestone; nothing outside the selected milestones starts automatically.",
+    "The repository orchestrator's inbox of issues opened and comments posted through t3_issue_post with another project's source marker. Unmarked writes and other issue changes never enter the Inbox. Available to the repository orchestrator and its delegated children. action=list returns unread events without bodies; action=read with ids returns snippets and links without acknowledging them. Review each item and revise it if needed, for example with propose_issue_change, then acknowledge it with action=mark_read. An open issue's unacknowledged opening holds it in Inbox; acknowledgment places it in Ready, or the normal section its current state gives it. Comments leave their issue in its current section. mark_read acknowledges ids, or every unread item when ids are omitted. Nothing outside the selected milestones starts automatically.",
   parameters: IssueInboxToolInput,
   success: IssueInboxToolResult,
   failure: OrchestratorMcpFailure,
@@ -65,13 +65,17 @@ const caller = Effect.gen(function* () {
 export const issueInboxHandlers = {
   t3_issue_post: McpToolAccess.actsAsCaller((input: IssuePostInput) =>
     Effect.gen(function* () {
-      const inbox = yield* IssueInbox.IssueInbox;
+      const available = yield* Effect.serviceOption(IssueInbox.IssueInbox);
+      if (Option.isNone(available)) return yield* new OrchestratorMcpFailure({ code: "orchestration_error", message: "Issue tools are unavailable in this runtime." });
+      const inbox = available.value;
       return yield* inbox.post(yield* caller, input).pipe(Effect.mapError(failure));
     }),
   ),
   t3_issue_inbox: McpToolAccess.actsAsCaller((input: IssueInboxToolInput) =>
     Effect.gen(function* () {
-      const inbox = yield* IssueInbox.IssueInbox;
+      const available = yield* Effect.serviceOption(IssueInbox.IssueInbox);
+      if (Option.isNone(available)) return yield* new OrchestratorMcpFailure({ code: "orchestration_error", message: "Issue tools are unavailable in this runtime." });
+      const inbox = available.value;
       return yield* inbox.forCaller(yield* caller, input).pipe(Effect.mapError(failure));
     }),
   ),

@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString, ThreadId } from "./baseSchemas.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import { PullRequestState } from "./pullRequest.ts";
+import { ThreadRole } from "./threadRole.ts";
 
 const IssueNumber = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
@@ -121,8 +122,11 @@ export const IssueSummary = Schema.Struct({
         /** An ordinary issue link, removable without altering managed work or PRs. */
         canUnlink: Schema.optional(Schema.Boolean),
         title: Schema.String,
+        /** Absent from older servers and threads without an assigned role. */
+        role: Schema.optional(ThreadRole),
         branch: Schema.NullOr(Schema.String),
         worktreePath: Schema.NullOr(Schema.String),
+        worktreeExists: Schema.optional(Schema.Boolean),
         pullRequests: Schema.Array(Schema.String),
       }),
     ),

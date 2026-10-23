@@ -1,13 +1,15 @@
 import { ChevronRightIcon } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { splitSidebarModelLabel } from "./SidebarBackgroundWork.logic";
+import { modelSelectionEffortLevel } from "@t3tools/client-runtime/state/thread-execution";
+import { sidebarModelCellLabel } from "./SidebarBackgroundWork.logic";
 import { sidebarCaretCount } from "./SidebarColumns.logic";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "~/lib/utils";
 
-if (import.meta.env.DEV) void import("./ForkSidebarDebug");
+// The debug toggles touch `document` on load, which tests running outside a browser lack.
+if (import.meta.env.DEV && typeof document !== "undefined") void import("./ForkSidebarDebug");
 
 /*
  * The Codex-style sidebar's shared columns. Every row (section header, project, thread, subagent,
@@ -142,9 +144,10 @@ export function SidebarThreadColumns(props: {
   readonly location?: ReactNode;
   readonly role?: ReactNode;
   readonly provider?: ReactNode;
-  /** The short model label; its name and version fill two aligned tracks. */
+  /** The short model label; its name and version fill the model track. */
   readonly model?: string | undefined;
-  readonly effort?: ReactNode;
+  /** The effort label, shown as a five-dot meter. */
+  readonly effort?: string | null | undefined;
   readonly name: ReactNode;
   /** The row has no model or effort, so its name starts in the model's column. */
   readonly wideName?: boolean | undefined;
@@ -160,7 +163,6 @@ export function SidebarThreadColumns(props: {
     role: settings.sidebarRoleDisplay === "icon",
     provider: !settings.codexStyleSidebar || settings.sidebarShowProvider,
     model: !settings.codexStyleSidebar || settings.sidebarShowModel,
-    version: !settings.codexStyleSidebar || settings.sidebarShowModel,
     effort: !settings.codexStyleSidebar || settings.sidebarShowEffort,
     issue: !settings.codexStyleSidebar || settings.sidebarShowIssueBadge,
     pr: !settings.codexStyleSidebar || settings.sidebarShowPullRequestBadge,
@@ -195,7 +197,7 @@ export function SidebarThreadColumns(props: {
         <SidebarThreadModel label={props.model} />
       ) : null}
       {columns.effort !== false && !props.wideName ? (
-        <span className="sidebar-thread-effort">{props.effort}</span>
+        <SidebarEffortMeter effort={props.effort} />
       ) : null}
       <span className={cn("sidebar-thread-name", props.wideName && "sidebar-thread-name-wide")}>
         {props.name}
@@ -241,24 +243,41 @@ export function sidebarThreadName(name: string, title: string): ReactNode {
   );
 }
 
-/** The model's name and version cells, with the whole label on the name's hover. */
+/** The model's name and version in one cell, with the whole label on hover. */
 function SidebarThreadModel(props: { readonly label: string | undefined }) {
-  if (!props.label) {
-    return (
-      <>
-        <span className="sidebar-thread-model" />
-        <span className="sidebar-thread-version" />
-      </>
-    );
-  }
-  const { name, version } = splitSidebarModelLabel(props.label);
+  if (!props.label) return <span className="sidebar-thread-model" />;
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger render={<span className="sidebar-thread-model" />}>{name}</TooltipTrigger>
-        <TooltipPopup side="top">{props.label}</TooltipPopup>
-      </Tooltip>
-      <span className="sidebar-thread-version">{version}</span>
-    </>
+    <Tooltip>
+      <TooltipTrigger render={<span className="sidebar-thread-model" />}>
+        {sidebarModelCellLabel(props.label)}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** Five dots filling from the bottom, one per effort level; an effort off that scale shows none. */
+function SidebarEffortMeter(props: { readonly effort: string | null | undefined }) {
+  if (!props.effort) return <span className="sidebar-thread-effort" />;
+  const { level, name } = modelSelectionEffortLevel(props.effort);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className="sidebar-thread-effort" role="img" aria-label={name} />}
+      >
+        {level === 0
+          ? null
+          : [1, 2, 3, 4, 5].map((dot) => (
+              <span
+                key={dot}
+                className={cn(
+                  "size-0.75 rounded-full",
+                  dot <= level ? "bg-success" : "bg-sidebar-muted-foreground/25",
+                )}
+              />
+            ))}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{name}</TooltipPopup>
+    </Tooltip>
   );
 }

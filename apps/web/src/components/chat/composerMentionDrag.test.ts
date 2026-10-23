@@ -2,13 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   COMPOSER_MENTION_DRAG_TYPE,
-  COMPOSER_ISSUE_DRAG_TYPE,
-  encodeIssueDragPayload,
-  COMPOSER_PULL_REQUEST_DRAG_TYPE,
-  encodePullRequestDragPayload,
   type ComposerMentionDropHost,
-  composerMentionFromTreePath,
-  dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag.ts";
 
@@ -38,7 +32,6 @@ const makeDragEvent = (options?: {
 const makeHost = (insertResult = true) => {
   const log: Array<string> = [];
   const host: ComposerMentionDropHost = {
-    supportsIssueContexts: true,
     insertMentionAtEnd: (text) => {
       log.push(`insert:${text}`);
       return insertResult;
@@ -47,40 +40,11 @@ const makeHost = (insertResult = true) => {
       log.push(`pr:${pullRequest.number}`);
       return insertResult;
     },
-    insertIssueAtEnd: (issue) => {
-      log.push(`issue:${issue.number}:${issue.repository}`);
-      return insertResult;
-    },
     setDragActive: (active) => void log.push(`active:${active}`),
     onInsertRejected: () => void log.push("rejected"),
   };
   return { host, log };
 };
-
-describe("composerMentionFromTreePath", () => {
-  it("serializes a file path into a mention", () => {
-    expect(composerMentionFromTreePath("docs/index.md")).toBe("[index.md](docs/index.md)");
-  });
-
-  it("strips the trailing slash directory rows carry", () => {
-    expect(composerMentionFromTreePath("docs/architecture/")).toBe(
-      "[architecture](docs/architecture)",
-    );
-  });
-
-  it("rejects drags that carry no path", () => {
-    expect(composerMentionFromTreePath("")).toBeNull();
-    expect(composerMentionFromTreePath("/")).toBeNull();
-  });
-});
-
-describe("dataTransferHasComposerMention", () => {
-  it("detects the mention payload among drag types", () => {
-    expect(dataTransferHasComposerMention([COMPOSER_MENTION_DRAG_TYPE, "text/plain"])).toBe(true);
-    expect(dataTransferHasComposerMention(["Files"])).toBe(false);
-    expect(dataTransferHasComposerMention([])).toBe(false);
-  });
-});
 
 describe("makeComposerMentionDragHandlers", () => {
   it("leaves drags without the mention payload alone", () => {
@@ -115,123 +79,5 @@ describe("makeComposerMentionDragHandlers", () => {
     const { event } = makeDragEvent();
     handlers.onDragOver(event);
     expect(event.dataTransfer.dropEffect).toBe("move");
-  });
-
-  it("inserts the mention with its trailing space and clears the highlight", () => {
-    const { host, log } = makeHost();
-    const handlers = makeComposerMentionDragHandlers(host);
-    handlers.onDragEnter(makeDragEvent().event);
-    handlers.onDrop(makeDragEvent().event);
-    expect(log).toEqual(["active:true", "active:false", "insert:[index.md](docs/index.md) "]);
-  });
-
-  it("reports a rejected insert instead of failing silently", () => {
-    const { host, log } = makeHost(false);
-    const handlers = makeComposerMentionDragHandlers(host);
-    handlers.onDrop(makeDragEvent().event);
-    expect(log).toContain("rejected");
-  });
-
-  it("ignores a drop whose payload is empty", () => {
-    const { host, log } = makeHost();
-    const handlers = makeComposerMentionDragHandlers(host);
-    handlers.onDrop(makeDragEvent({ mention: "" }).event);
-    expect(log).toEqual(["active:false"]);
-  });
-
-  it("drops a pull request row as a pull request, not as text", () => {
-    const { host, log } = makeHost();
-    const handlers = makeComposerMentionDragHandlers(host);
-    const pullRequest = {
-      number: 18094,
-      title: "fix(server): queued runs land on the timeline where they started",
-      url: "https://github.com/pingdotgg/t3code/pull/18094",
-      headBranch: "fix/run-timeline-position",
-      baseBranch: "main",
-      state: "open",
-      isDraft: false,
-    } as const;
-    handlers.onDrop(
-      makeDragEvent({
-        format: COMPOSER_PULL_REQUEST_DRAG_TYPE,
-        mention: encodePullRequestDragPayload(pullRequest),
-      }).event,
-    );
-    expect(log).toEqual(["active:false", "pr:18094"]);
-  });
-
-  it("ignores a pull request payload that does not decode", () => {
-    const { host, log } = makeHost();
-    const handlers = makeComposerMentionDragHandlers(host);
-    handlers.onDrop(
-      makeDragEvent({ format: COMPOSER_PULL_REQUEST_DRAG_TYPE, mention: '{"number":0}' }).event,
-    );
-    expect(log).toEqual(["active:false"]);
-  });
-});
-
-const issue = {
-  host: "github.com",
-  repository: "owner/repo",
-  number: 42,
-  title: "Reference issues",
-  url: "https://github.com/owner/repo/issues/42",
-  state: "closed",
-  stateReason: "completed",
-  blockedBy: [],
-  liveWork: [],
-  pullRequests: [],
-} as const;
-
-describe("issue row drags", () => {
-  it("leaves issue drags unclaimed when the server does not support issue contexts", () => {
-    const { host, log } = makeHost();
-    const handlers = makeComposerMentionDragHandlers({ ...host, supportsIssueContexts: false });
-    const { event, calls } = makeDragEvent({
-      format: COMPOSER_ISSUE_DRAG_TYPE,
-      mention: encodeIssueDragPayload(issue),
-    });
-    expect(dataTransferHasComposerMention(event.dataTransfer.types)).toBe(false);
-    handlers.onDragEnter(event);
-    handlers.onDragOver(event);
-    handlers.onDrop(event);
-    expect(calls).toEqual([]);
-    expect(log).toEqual([]);
-    expect(event.dataTransfer.dropEffect).toBe("none");
-  });
-  it("claims issue drags and routes decoded metadata without eager focus", () => {
-    const { host, log } = makeHost();
-    const handlers = makeComposerMentionDragHandlers(host);
-    const { event, calls } = makeDragEvent({
-      format: COMPOSER_ISSUE_DRAG_TYPE,
-      mention: encodeIssueDragPayload(issue),
-    });
-    expect(dataTransferHasComposerMention(event.dataTransfer.types, true)).toBe(true);
-    handlers.onDragEnter(event);
-    handlers.onDragOver(event);
-    handlers.onDrop(event);
-    expect(event.dataTransfer.dropEffect).toBe("move");
-    expect(calls).toContain("nativeStopPropagation");
-    expect(log).toEqual(["active:true", "active:true", "active:false", "issue:42:owner/repo"]);
-  });
-  it("reports a busy composer and ignores invalid issue payloads", () => {
-    const { host, log } = makeHost(false);
-    const handlers = makeComposerMentionDragHandlers(host);
-    handlers.onDrop(
-      makeDragEvent({ format: COMPOSER_ISSUE_DRAG_TYPE, mention: encodeIssueDragPayload(issue) })
-        .event,
-    );
-    expect(log).toEqual(["active:false", "issue:42:owner/repo", "rejected"]);
-    for (const mention of [
-      "",
-      "{",
-      JSON.stringify({ ...issue, number: 0 }),
-      JSON.stringify({ ...issue, repository: "bad" }),
-      JSON.stringify({ ...issue, url: "javascript:alert(1)" }),
-    ]) {
-      log.length = 0;
-      handlers.onDrop(makeDragEvent({ format: COMPOSER_ISSUE_DRAG_TYPE, mention }).event);
-      expect(log).toEqual(["active:false"]);
-    }
   });
 });

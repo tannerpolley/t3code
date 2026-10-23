@@ -1,3 +1,4 @@
+import { useRepositoryOrchestratorAction } from "./useRepositoryOrchestratorAction";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import {
@@ -68,6 +69,7 @@ export function useThreadActionMenu(input: {
 }) {
   const { threadRef, projectCwd, onStartRename } = input;
   const router = useRouter();
+  const repositoryOrchestratorAction = useRepositoryOrchestratorAction();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -132,7 +134,9 @@ export function useThreadActionMenu(input: {
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+      const assignOrchestrator = await repositoryOrchestratorAction.forThread(thread);
       const items = buildThreadActionMenuItems({
+        ...(assignOrchestrator ? { repositoryOrchestrator: assignOrchestrator.item } : {}),
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         branch: thread.branch ?? null,
         projectFilter: null,
@@ -181,6 +185,9 @@ export function useThreadActionMenu(input: {
         }
       };
       switch (action) {
+        case "make-repository-orchestrator":
+          await assignOrchestrator?.run();
+          return;
         case "project-settings": {
           const project = projects.find(
             (candidate) =>

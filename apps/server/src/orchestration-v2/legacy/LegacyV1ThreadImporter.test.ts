@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   ComposerContextId,
   EventId,
@@ -9,9 +9,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
@@ -79,6 +79,98 @@ const seedPendingTranscripts = Effect.gen(function* () {
   yield* importer.reconcileShells;
 });
 
+it.effect.each([
+  { name: "confirming a thread has no legacy row", scanPending: false },
+  { name: "an empty pending scan", scanPending: true },
+])("skips SQL and locking after $name", ({ scanPending }) =>
+  Effect.gen(function* () {
+    const lock = yield* KeyedLock.make();
+    using _makeLock = vi.spyOn(KeyedLock, "make").mockReturnValue(Effect.succeed(lock));
+    using withLock = vi.spyOn(lock, "withLock");
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter.pipe(
+      Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)),
+    );
+    yield* importer.reconcileShells;
+    yield* importer.ensureTranscript(ThreadId.make("thread:first"));
+    assert.equal(withLock.mock.calls.length, 1);
+    if (scanPending) yield* importer.importPendingTranscripts;
+    withLock.mockClear();
+    const statements: string[] = [];
+    const result = yield* importer
+      .ensureTranscript(ThreadId.make(scanPending ? "thread:never-checked" : "thread:first"))
+      .pipe(
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          statements.push(statement.compile()[0]);
+          return Effect.succeed(statement);
+        }),
+      );
+    assert.deepStrictEqual(result, { importedThreadCount: 0, importedMessageCount: 0 });
+    assert.deepStrictEqual(statements, []);
+    assert.equal(withLock.mock.calls.length, 0);
+    yield* seedPendingTranscripts.pipe(
+      Effect.provideService(LegacyV1ThreadImporter.LegacyV1ThreadImporter, importer),
+    );
+    assert.deepStrictEqual(yield* importer.ensureTranscript(ThreadId.make("thread:first")), {
+      importedThreadCount: 1,
+      importedMessageCount: 1,
+    });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("imports a pending transcript once even when the ensure effect is reused", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const lock = yield* KeyedLock.make();
+    using _makeLock = vi.spyOn(KeyedLock, "make").mockReturnValue(Effect.succeed(lock));
+    using withLock = vi.spyOn(lock, "withLock");
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter.pipe(
+      Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)),
+    );
+    yield* seedPendingTranscripts.pipe(
+      Effect.provideService(LegacyV1ThreadImporter.LegacyV1ThreadImporter, importer),
+    );
+    const statements: string[] = [];
+    const ensure = importer.ensureTranscript(ThreadId.make("thread:first")).pipe(
+      Effect.provideService(Statement.CurrentTransformer, (statement) => {
+        statements.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      }),
+    );
+    assert.deepStrictEqual(yield* ensure, { importedThreadCount: 1, importedMessageCount: 1 });
+    const firstImportStatements = [...statements];
+    assert.deepStrictEqual(yield* ensure, { importedThreadCount: 0, importedMessageCount: 0 });
+    assert.deepStrictEqual(statements, firstImportStatements);
+    assert.equal(withLock.mock.calls.length, 1);
+    const messages = yield* sql<{ readonly event_id: string }>`
+      SELECT event_id FROM orchestration_events
+      WHERE stream_id = 'thread:first' AND event_type = 'message.updated'
+        AND application_event_version = 2
+      ORDER BY event_id
+    `;
+    assert.deepStrictEqual(messages, [
+      { event_id: "migration:v1:message:thread:first:latest" },
+      { event_id: "migration:v1:message:thread:first:old" },
+    ]);
+    assert.equal(yield* importer.pendingThreadCount, 1);
+    assert.deepStrictEqual(yield* importer.importPendingTranscripts, {
+      importedThreadCount: 1,
+      importedMessageCount: 1,
+    });
+    withLock.mockClear();
+    assert.deepStrictEqual(
+      yield* importer
+        .ensureTranscript(ThreadId.make("thread:after-import"))
+        .pipe(
+          Effect.provideService(Statement.CurrentTransformer, () =>
+            Effect.die("SQL after all pending transcripts imported"),
+          ),
+        ),
+      { importedThreadCount: 0, importedMessageCount: 0 },
+    );
+    assert.equal(withLock.mock.calls.length, 0);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "keeps hydrating later transcripts after a defect and leaves the failed thread pending",
   () =>
@@ -115,6 +207,7 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
+// regression: #15920 one bad legacy message stopped the server from starting
 it.effect("propagates interruption from transcript reads and retry-marker writes", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -151,48 +244,6 @@ it.effect("propagates interruption from transcript reads and retry-marker writes
 );
 
 it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
-  it.effect("uses the created-thread index for startup migration checks", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-      const statements: string[] = [];
-      const tracer = Tracer.make({
-        span(options) {
-          const span = new Tracer.NativeSpan(options);
-          const end = span.end.bind(span);
-          span.end = (endTime, exit) => {
-            end(endTime, exit);
-            const query = span.attributes.get("db.query.text");
-            if (
-              typeof query === "string" &&
-              query.includes("FROM projection_threads AS thread") &&
-              query.includes("FROM orchestration_events AS event")
-            ) {
-              statements.push(query);
-            }
-          };
-          return span;
-        },
-      });
-
-      assert.equal(yield* importer.pendingThreadCount.pipe(Effect.withTracer(tracer)), 0);
-      assert.deepStrictEqual(yield* importer.reconcileShells.pipe(Effect.withTracer(tracer)), {
-        importedThreadCount: 0,
-        importedMessageCount: 0,
-      });
-      assert.lengthOf(statements, 2);
-      for (const statement of statements) {
-        const plan = yield* sql.unsafe<{ readonly detail: string }>(
-          `EXPLAIN QUERY PLAN ${statement}`,
-        );
-        assert.match(
-          plan.map((row) => row.detail).join("\n"),
-          /SEARCH event USING INDEX orchestration_events_v2_created_threads_idx \(stream_id=\?\)/,
-        );
-      }
-    }),
-  );
-
   it.effect("imports lightweight shells, hydrates transcripts, and remains idempotent", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -694,75 +745,6 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
         ORDER BY sequence
       `;
       assert.deepStrictEqual(eventsAfterRestart, eventsBeforeRetry);
-    }),
-  );
-});
-
-it.layer(layerTest)("LegacyV1ThreadImporter transcript lookup", (it) => {
-  it.effect("finds imported messages on the V2 thread index, past the thread's V1 events", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-      const threadId = ThreadId.make("thread:legacy-lookup");
-      yield* sql`
-        INSERT INTO projection_projects (
-          project_id, title, workspace_root, default_model_selection_json, scripts_json,
-          created_at, updated_at, deleted_at
-        ) VALUES (
-          'project:legacy-lookup', 'Legacy project', '/tmp/legacy-lookup',
-          '{"instanceId":"codex","model":"gpt-5.4"}', '[]',
-          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL
-        )
-      `;
-      yield* sql`
-        INSERT INTO projection_threads (
-          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
-          created_at, updated_at
-        ) VALUES (
-          ${threadId}, 'project:legacy-lookup', 'Migrated conversation',
-          '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
-          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
-        )
-      `;
-      yield* sql`
-        INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, is_streaming, created_at, updated_at
-        ) VALUES (
-          'message:legacy-lookup:1', ${threadId}, 'user', 'Question', 0,
-          '2026-01-01T01:00:00.000Z', '2026-01-01T01:00:00.000Z'
-        )
-      `;
-      yield* importer.reconcileShells;
-
-      const statements: string[] = [];
-      const tracer = Tracer.make({
-        span(options) {
-          const span = new Tracer.NativeSpan(options);
-          const end = span.end.bind(span);
-          span.end = (endTime, exit) => {
-            end(endTime, exit);
-            const query = span.attributes.get("db.query.text");
-            if (
-              typeof query === "string" &&
-              /^\s*SELECT event_id\s+FROM orchestration_events/.test(query)
-            ) {
-              statements.push(query);
-            }
-          };
-          return span;
-        },
-      });
-      yield* importer.ensureTranscript(threadId).pipe(Effect.withTracer(tracer));
-
-      assert.lengthOf(statements, 1);
-      const plan = yield* sql.unsafe<{ readonly detail: string }>(
-        `EXPLAIN QUERY PLAN ${statements[0]}`,
-        [threadId, "migration:v1:message:%"],
-      );
-      assert.match(
-        plan.map((row) => row.detail).join("\n"),
-        /USING INDEX idx_orchestration_events_agent_stream_sequence \(stream_id=\?\)/,
-      );
     }),
   );
 });

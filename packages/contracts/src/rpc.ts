@@ -194,7 +194,7 @@ import {
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
-import { IssueCleanupInput, IssueCleanupError } from "./issueCleanup.ts";
+import { IssueCleanupInput, IssueCleanupError, IssueCleanupResult } from "./issueCleanup.ts";
 import { IssueLinkInput, IssueLinkResult, IssueLinkError } from "./issueLinks.ts";
 import {
   IssueRef,
@@ -216,10 +216,13 @@ import {
   IssueWorkStatusResult,
   RepositoryWorkInput,
   RepositoryHandoffInput,
+  RepositoryOrchestratorInput,
   RepositoryWorkControlInput,
   RepositoryWorkerLimitInput,
+  RepositoryReadOnlyLimitInput,
   RepositoryWorkRestoreInput,
   IssueWorkCancelInput,
+  IssueWorkCloseOutInput,
   IssueWorkRequested,
   RepositoryWorkResult,
 } from "./issueWork.ts";
@@ -611,14 +614,17 @@ export const WS_METHODS = {
   issuesWorkMilestone: "issues.workMilestone",
   issuesRepositoryStatus: "issues.repositoryStatus",
   issuesSetPaused: "issues.setPaused",
+  issuesCloseOut: "issues.closeOut",
   issuesSetWorkerLimit: "issues.setWorkerLimit",
   ownerDecisionsList: "issues.decisions.list",
   ownerDecisionsChoose: "issues.decisions.choose",
   ownerDecisionsSubscribe: "issues.decisions.subscribe",
+  issuesSetReadOnlyLimit: "issues.setReadOnlyLimit",
   issueChangesList: "issues.changes.list",
   issueChangesDecide: "issues.changes.decide",
   issueChangesSubscribe: "issues.changes.subscribe",
   issuesHandoff: "issues.handoff",
+  issuesAssignOrchestrator: "issues.assignOrchestrator",
   issuesCancelRequest: "issues.cancelRequest",
   issuesRestoreRoot: "issues.restoreRoot",
   issuesInboxList: "issues.inbox.list",
@@ -1094,7 +1100,7 @@ const WsIssuesSetStateRpc = Rpc.make(WS_METHODS.issuesSetState, {
 });
 const WsIssuesCleanupRpc = Rpc.make(WS_METHODS.issuesCleanup, {
   payload: IssueCleanupInput,
-  success: Schema.Void,
+  success: IssueCleanupResult,
   error: Schema.Union([IssueCleanupError, EnvironmentAuthorizationError]),
 });
 const WsIssuesUnlinkRpc = Rpc.make(WS_METHODS.issuesUnlink, {
@@ -1137,6 +1143,16 @@ const WsIssuesRepositoryStatusRpc = Rpc.make(WS_METHODS.issuesRepositoryStatus, 
 });
 const WsIssuesSetWorkerLimitRpc = Rpc.make(WS_METHODS.issuesSetWorkerLimit, {
   payload: RepositoryWorkerLimitInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+const WsIssuesSetReadOnlyLimitRpc = Rpc.make(WS_METHODS.issuesSetReadOnlyLimit, {
+  payload: RepositoryReadOnlyLimitInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+const WsIssuesCloseOutRpc = Rpc.make(WS_METHODS.issuesCloseOut, {
+  payload: IssueWorkCloseOutInput,
   success: RepositoryWorkResult,
   error: IssueRpcError,
 });
@@ -1184,6 +1200,12 @@ const WsIssuesCancelRequestRpc = Rpc.make(WS_METHODS.issuesCancelRequest, {
 });
 const WsIssuesRestoreRootRpc = Rpc.make(WS_METHODS.issuesRestoreRoot, {
   payload: RepositoryWorkRestoreInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesAssignOrchestratorRpc = Rpc.make(WS_METHODS.issuesAssignOrchestrator, {
+  payload: RepositoryOrchestratorInput,
   success: RepositoryWorkResult,
   error: IssueRpcError,
 });
@@ -2246,8 +2268,11 @@ const forkWsRpcs = [
   WsIssuesWorkMilestoneRpc,
   WsIssuesRepositoryStatusRpc,
   WsIssuesSetPausedRpc,
+  WsIssuesCloseOutRpc,
   WsIssuesSetWorkerLimitRpc,
+  WsIssuesSetReadOnlyLimitRpc,
   WsIssuesHandoffRpc,
+  WsIssuesAssignOrchestratorRpc,
   WsIssuesCancelRequestRpc,
   WsIssuesRestoreRootRpc,
   WsOwnerDecisionsListRpc,
@@ -2490,8 +2515,11 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.issuesWorkMilestone,
   WS_METHODS.issuesRepositoryStatus,
   WS_METHODS.issuesSetPaused,
+  WS_METHODS.issuesCloseOut,
   WS_METHODS.issuesSetWorkerLimit,
+  WS_METHODS.issuesSetReadOnlyLimit,
   WS_METHODS.issuesHandoff,
+  WS_METHODS.issuesAssignOrchestrator,
   WS_METHODS.issuesCancelRequest,
   WS_METHODS.issuesRestoreRoot,
   WS_METHODS.ownerDecisionsList,

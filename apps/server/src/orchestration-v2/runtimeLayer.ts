@@ -327,8 +327,24 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
   ),
 );
 const layerIssueChangesProvided = IssueChangeService.layer.pipe(Layer.provide(EffectOutbox.layer));
+const layerIssueWorkProvided = IssueWorkService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerProjectService,
+      IssueWorkStore.layer,
+      layerThreadLaunchProvided,
+      layerThreadManagementProvided,
+      IdAllocator.layer,
+      layerProviderAdapterRegistryProvided,
+      layerEventSinkProvided,
+      layerCommandReceiptStoreProvided,
+    ),
+  ),
+);
 const layerIssueInboxProvided = IssueInbox.layer.pipe(
-  Layer.provide(Layer.merge(layerProjectService, layerThreadManagementProvided)),
+  Layer.provide(
+    Layer.mergeAll(layerProjectService, layerThreadManagementProvided, layerIssueWorkProvided),
+  ),
 );
 const layerOwnerDecisionsProvided = OwnerDecisions.layer.pipe(
   Layer.provide(
@@ -406,20 +422,7 @@ export const layerProduction = Layer.mergeAll(
   IssueWorkStore.layer,
   layerIssueInboxProvided,
   layerOwnerDecisionsProvided,
-  IssueWorkService.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerProjectService,
-        IssueWorkStore.layer,
-        layerThreadLaunchProvided,
-        layerThreadManagementProvided,
-        IdAllocator.layer,
-        layerProviderAdapterRegistryProvided,
-        layerEventSinkProvided,
-        layerCommandReceiptStoreProvided,
-      ),
-    ),
-  ),
+  layerIssueWorkProvided,
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,

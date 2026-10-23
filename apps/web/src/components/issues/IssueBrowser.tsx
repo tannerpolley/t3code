@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { LockIcon, PinIcon, PinOffIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
-import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useRef, useState } from "react";
 
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import { cn } from "~/lib/utils";
@@ -149,56 +149,39 @@ type IssuePagingState = {
 export function useIssueRepositoryTargets(preferredEnvironmentId?: EnvironmentId) {
   const { environments } = useEnvironments();
   const environmentsBootstrapped = useAllEnvironmentShellsBootstrapped();
-  const environmentLabels = useMemo(
-    () =>
-      new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
-      ),
-    [environments],
-  );
-  const capableEnvironmentIds = useMemo(
-    () =>
-      new Set(
-        environments
-          .filter(
-            (environment) =>
-              environment.serverConfig?.environment.capabilities.githubIssues === true,
-          )
-          .map((environment) => environment.environmentId),
-      ),
-    [environments],
-  );
-  const capableEnvironmentList = useMemo(
-    () =>
-      [...capableEnvironmentIds].toSorted(
-        (left, right) =>
-          Number(right === preferredEnvironmentId) - Number(left === preferredEnvironmentId) ||
-          (environmentLabels.get(left) ?? left).localeCompare(
-            environmentLabels.get(right) ?? right,
-          ),
-      ),
-    [capableEnvironmentIds, environmentLabels, preferredEnvironmentId],
-  );
+  const environmentLabels = (() =>
+    new Map(
+      environments.map((environment) => [environment.environmentId, environment.label] as const),
+    ))();
+  const capableEnvironmentIds = (() =>
+    new Set(
+      environments
+        .filter(
+          (environment) => environment.serverConfig?.environment.capabilities.githubIssues === true,
+        )
+        .map((environment) => environment.environmentId),
+    ))();
+  const capableEnvironmentList = (() =>
+    [...capableEnvironmentIds].toSorted(
+      (left, right) =>
+        Number(right === preferredEnvironmentId) - Number(left === preferredEnvironmentId) ||
+        (environmentLabels.get(left) ?? left).localeCompare(environmentLabels.get(right) ?? right),
+    ))();
   const issueRepositories = useIssueRepositories(capableEnvironmentList);
   // Prefer the current thread’s environment when repositories overlap across connections.
-  const repositoryTargets = useMemo(
-    () =>
-      mergeIssueRepositoryTargets(
-        capableEnvironmentList.flatMap((environmentId) => {
-          const answer = issueRepositories.answers.find(
-            (entry) => entry.environmentId === environmentId,
-          );
-          return answer === undefined
-            ? []
-            : [{ environmentId, repositories: answer.result.repositories }];
-        }),
-      ),
-    [capableEnvironmentList, issueRepositories.answers],
-  );
-  const repositoryErrors = useMemo(
-    () => issueRepositories.failures.map((failure) => issueError(failure.cause, null)),
-    [issueRepositories.failures],
-  );
+  const repositoryTargets = (() =>
+    mergeIssueRepositoryTargets(
+      capableEnvironmentList.flatMap((environmentId) => {
+        const answer = issueRepositories.answers.find(
+          (entry) => entry.environmentId === environmentId,
+        );
+        return answer === undefined
+          ? []
+          : [{ environmentId, repositories: answer.result.repositories }];
+      }),
+    ))();
+  const repositoryErrors = (() =>
+    issueRepositories.failures.map((failure) => issueError(failure.cause, null)))();
   const capabilitiesKnown =
     environments.some((environment) => environment.serverConfig !== null) ||
     environmentsBootstrapped;
@@ -268,24 +251,21 @@ export function IssueBrowser({
   const [views, setViews] = useIssueViews();
   const stateFilter = issueStateFilter(preferences);
   const explicitScope = search.repository !== undefined;
-  const urlRepository = useMemo(
-    () =>
-      search.repository === undefined
-        ? null
-        : (repositoryTargets.find((target) =>
-            sameRepository(target, {
-              host: search.host ?? target.host,
-              repository: search.repository!,
-            }),
-          ) ?? null),
-    [repositoryTargets, search.host, search.repository],
-  );
+  const urlRepository = (() =>
+    search.repository === undefined
+      ? null
+      : (repositoryTargets.find((target) =>
+          sameRepository(target, {
+            host: search.host ?? target.host,
+            repository: search.repository!,
+          }),
+        ) ?? null))();
   const scopedKey =
     urlRepository === null ? null : repositoryKey(urlRepository.host, urlRepository.repository);
   const explicitScopeMissing =
     explicitScope && urlRepository === null && !issueRepositories.isPending;
   // A repository link shows that repository whatever the Filter menu says.
-  const shownRepositories = useMemo(() => {
+  const shownRepositories = (() => {
     if (explicitScope)
       return urlRepository === null ||
         (stateFilter === null &&
@@ -300,68 +280,54 @@ export function IssueBrowser({
         (host === undefined || target.host === host) &&
         repositoryShown(target, preferences),
     );
-  }, [
-    explicitScope,
-    preferences,
-    repositoryTargets,
-    search.host,
-    stateFilter,
-    urlRepository,
-    views,
-  ]);
-  const baseListTargets = useMemo<ReadonlyArray<IssueListTarget>>(
-    () =>
-      shownRepositories
-        .filter(
-          (target) =>
-            !repositoryKnownEmpty(
-              target,
-              views[repositoryKey(target.host, target.repository)] === "roadmap"
-                ? "all"
-                : (stateFilter ?? "open"),
-            ),
-        )
-        .map((target) => {
-          const roadmapView = views[repositoryKey(target.host, target.repository)] === "roadmap";
-          // Every view reads blockers and live work so issue circles show blocked and in progress.
-          return {
-            environmentId: target.environmentId,
-            roadmapView,
-            live: explicitScope,
-            input: {
-              host: target.host,
-              repository: target.repository,
-              state: issueListStateFor(stateFilter ?? "open", roadmapView),
-              roadmap: true,
-            },
-          };
-        }),
-    [explicitScope, shownRepositories, stateFilter, views],
-  );
+  })();
+  const baseListTargets = (() =>
+    shownRepositories
+      .filter(
+        (target) =>
+          !repositoryKnownEmpty(
+            target,
+            views[repositoryKey(target.host, target.repository)] === "roadmap"
+              ? "all"
+              : (stateFilter ?? "open"),
+          ),
+      )
+      .map((target) => {
+        const roadmapView = views[repositoryKey(target.host, target.repository)] === "roadmap";
+        // Every view reads blockers and live work so issue circles show blocked and in progress.
+        return {
+          environmentId: target.environmentId,
+          roadmapView,
+          live: explicitScope,
+          input: {
+            host: target.host,
+            repository: target.repository,
+            state: issueListStateFor(stateFilter ?? "open", roadmapView),
+            roadmap: true,
+          },
+        };
+      }))();
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
   const generationRef = useRef(0);
-  const listTargets = useMemo(
-    () =>
-      baseListTargets.flatMap((target) => {
-        const state = pagingByKey[issueListScopeKey(target)];
-        const cursors = new Set<string | null>([state?.cursor ?? null]);
-        if ((target.roadmapView || target.live) && !state?.refreshing) cursors.add(null);
-        return [...cursors].map((cursor) => ({
-          ...target,
-          input: { ...target.input, ...(cursor === null ? {} : { cursor }) },
-        }));
-      }),
-    [baseListTargets, pagingByKey],
-  );
+  const listTargets = (() =>
+    baseListTargets.flatMap((target) => {
+      const state = pagingByKey[issueListScopeKey(target)];
+      const cursors = new Set<string | null>([state?.cursor ?? null]);
+      if ((target.roadmapView || target.live) && !state?.refreshing) cursors.add(null);
+      return [...cursors].map((cursor) => ({
+        ...target,
+        input: { ...target.input, ...(cursor === null ? {} : { cursor }) },
+      }));
+    }))();
   const issueLists = useIssueLists(listTargets);
   const liveIssueWork = useLiveIssueWork();
-  const issueErrors = useMemo(() => {
+  const issueErrors = (() => {
     const errors = new Map<string, IssueError>();
     for (const failure of issueLists.failures) {
       errors.set(issueListScopeKey(failure.target), issueError(failure.cause, null));
     }
     return errors;
-  }, [issueLists.failures]);
+  })();
 
   useEffect(() => {
     if (issueLists.answers.length === 0) return;
@@ -405,6 +371,7 @@ export function IssueBrowser({
 
   useEffect(() => {
     if (issueLists.failures.length === 0) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- Query failures settle the pending page refresh owned by this component.
     setPagingByKey((current) => {
       let next = current;
       for (const failure of issueLists.failures) {
@@ -418,7 +385,7 @@ export function IssueBrowser({
     });
   }, [issueLists.failures]);
 
-  const refreshIssues = useCallback(() => {
+  const refreshIssues = () => {
     const nextGeneration = generationRef.current + 1;
     generationRef.current = nextGeneration;
     setPagingByKey((current) => {
@@ -438,8 +405,8 @@ export function IssueBrowser({
     onRefresh?.();
     issueRepositories.refresh();
     issueLists.refresh(baseListTargets);
-  }, [baseListTargets, issueLists, issueRepositories, onRefresh]);
-  const loadMore = useCallback((key: string) => {
+  };
+  const loadMore = (key: string) => {
     setPagingByKey((current) => {
       const state = current[key];
       if (
@@ -453,7 +420,7 @@ export function IssueBrowser({
       }
       return { ...current, [key]: { ...state, cursor: state.snapshot.nextCursor } };
     });
-  }, []);
+  };
   const selectIssue = (
     issue: IssueSummary,
     target: IssueRepositoryTarget,
@@ -480,7 +447,7 @@ export function IssueBrowser({
     assignee: preferences.assignee,
   };
   const narrowed = query.trim() !== "" || filters.milestone !== "all" || filters.assignee !== "all";
-  const stateNoun = (count: number, state: "all" | "open" | "closed" = filters.state) =>
+  const stateNoun = (count: number, state: "all" | "open" | "closed") =>
     state === "all" ? (count === 1 ? "issue" : "issues") : state;
   const viewerLogins = [
     ...new Set(issueRepositories.answers.map((answer) => answer.result.viewer.login)),
@@ -558,6 +525,15 @@ export function IssueBrowser({
       pinned: pinned ? current.pinned.filter((entry) => entry !== key) : [...current.pinned, key],
     }));
 
+  const showsRoadmap = (entry: RepositoryEntry) =>
+    entry.scopeKey !== null && entry.snapshot !== null && views[entry.key] === "roadmap";
+  const inboxFor = (entry: RepositoryEntry) => (
+    <IssueInboxSection
+      issues={entry.snapshot?.issues}
+      environmentId={entry.environmentId}
+      reference={{ host: entry.host, repository: entry.repository }}
+    />
+  );
   const renderRepositoryBody = (entry: RepositoryEntry) => {
     const { scopeKey, state, snapshot, error, filteredIssues } = entry;
     const message = (text: string) => (
@@ -619,10 +595,11 @@ export function IssueBrowser({
             Roadmap view
           </label>
         ) : null}
-        {views[entry.key] === "roadmap" ? (
+        {showsRoadmap(entry) ? (
           <IssueRoadmap
             scope={entry}
             environmentId={entry.environmentId}
+            inbox={inboxFor(entry)}
             milestones={snapshot.milestones}
             issues={snapshot.issues}
             visibleNumbers={new Set(filteredIssues.map((issue) => issue.number))}
@@ -692,11 +669,7 @@ export function IssueBrowser({
             environmentId={entry.environmentId}
             reference={{ host: entry.host, repository: entry.repository }}
           />
-          <IssueInboxSection
-            issues={entry.snapshot?.issues}
-            environmentId={entry.environmentId}
-            reference={{ host: entry.host, repository: entry.repository }}
-          />
+          {showsRoadmap(entry) ? null : inboxFor(entry)}
           {renderRepositoryBody(entry)}
         </section>
       );
@@ -766,11 +739,7 @@ export function IssueBrowser({
                   environmentId={entry.environmentId}
                   reference={{ host: entry.host, repository: entry.repository }}
                 />
-                <IssueInboxSection
-                  issues={entry.snapshot?.issues}
-                  environmentId={entry.environmentId}
-                  reference={{ host: entry.host, repository: entry.repository }}
-                />
+                {showsRoadmap(entry) ? null : inboxFor(entry)}
                 {renderRepositoryBody(entry)}
               </div>
             ) : null}

@@ -1,3 +1,4 @@
+import * as ResetCreditExpiry from "./provider/ResetCreditExpiry.ts";
 import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
@@ -621,6 +622,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
   ProviderUsageLimitsIngestion.layer,
+  Layer.effectDiscard(
+    Effect.flatMap(ResetCreditExpiry.ResetCreditExpiry, (service) => service.start),
+  ).pipe(Layer.provide(ResetCreditExpiry.layer)),
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),

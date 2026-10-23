@@ -12,14 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import {
-  layerExecutorFor,
-  oldSessionId,
-  providerThreadId,
-  providerTurnId,
-  runId,
-  threadId,
-} from "./EffectWorker.testHarness.ts";
+import { layerExecutorFor, oldSessionId, providerThreadId, providerTurnId, runId, threadId } from "./EffectWorker.testHarness.ts";
 
 it.effect(
   "isolates stalled and failing issue comments from lifecycle work and bounds retries",

@@ -116,7 +116,7 @@ kept in the server's secret store, applies right away, and is used before `CAFE_
 sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories on
 `staging.git.cafe` need their own login with `--host https://staging.git.cafe/api`.
 
-Line comments, reviewer requests, and labels are not available for GitCafe pull requests yet.
+Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
 
 ## Start, clone, or publish a project
@@ -134,7 +134,9 @@ Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository.
 provider or paste a Git URL, then choose where to save it. The project opens right away while the
 clone runs in the background: you can write your first prompt, and sending waits until the files
 are in place. A toast tracks progress and lets you cancel; if the clone fails, retry it from the
-toast or from the banner above the composer.
+toast or from the banner above the composer. When the host refuses the machine's SSH key, T3 Code
+clones over HTTPS with Git's credentials for that host instead, and the project's remote uses the
+HTTPS URL.
 
 For a local Git repository without a remote, **Publish Repository** creates a hosted repository,
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
@@ -267,19 +269,23 @@ and other issue details. Search, Filter and Refresh share the header row. An Iss
 repository.
 
 In the Issues pane, turn on **Roadmap view** for a repository (at the top of **Filter** when the
-pane shows one repository) for dependency order, with **Ready**, **Queued**, **In progress**,
-**Done**, and **Closed** sections. **Blocked** stays between In progress and Done, with red
+pane shows one repository) for dependency order, with **Closed**, **Blocked**, **Inbox**,
+**Ready**, **Queued**, **Paused**, **In progress** and **Done** sections. Blocked shows red
 warnings for open dependencies. Within a section, open blockers and sub-issues come before the
 issues that depend on them; closed blockers no longer hold work back. The view choice is remembered
-per repository. **In progress** follows a linked thread’s running indicator or an open linked PR;
-waiting for a question or approval alone does not count as running. GitHub Project status does not
-change these sections or the issue icon. A thread’s own linked pull request also associates it
-with the issues that GitHub identifies that pull request as closing.
+per repository. **In progress** means a linked agent is working on the issue or waiting for your
+answer. **Paused** means the issue has work, such as an open or draft PR or an idle linked thread,
+but no agent on it right now. GitHub Project status does not change these sections or the issue
+icon. A thread’s own linked pull request also associates it with the issues that GitHub identifies
+that pull request as closing.
 
 Include **Closed** in Filter to see completed and closed issues. **Done** shows those closed in the
 last 24 hours, with their closure reason and time and attached PR numbers, titles, states and links.
 At 24 hours they move to **Closed**, which starts collapsed. Archived worker links remain available
-on closed issues. Open a worker from its row, or confirm **Delete local branch** to remove a branch
+on closed issues. Open a worker from its row, or confirm **Remove worktree** to remove its local
+checkout while keeping its branch. Removal checks for active workers, shared worktrees, open terminals
+and provider sessions, and local changes; a refusal appears on the row. This explicit action does not
+wait for Storage cleanup's age or policy thresholds. Confirm **Delete local branch** to remove a branch
 after its PR is merged. A branch checked out in any worktree cannot be deleted;
 remove the worktree or switch its branch first. Unmerged work, including local commits added after
 the PR merged, needs a separate explicit confirmation before deletion. These actions affect only
@@ -301,6 +307,12 @@ panel, and its back arrow returns to the issue. A link to a GitHub issue in a pu
 or chat message opens the same issue panel. **Prepare draft** opens a new thread for the issue's
 project in a worktree on a branch named after the issue, with an unsent prompt.
 Select the issue number at the top to comment or make other changes on GitHub.
+
+To assign the repository orchestrator, right-click an unarchived top-level thread in its project
+and choose **Make repository orchestrator**, or use that action in the command palette.
+Choosing another thread moves the role after live issue work drains. If none is registered when
+an issue is queued or a marked cross-project item reaches the Inbox, T3 selects the most recently
+active eligible Orchestrator thread in the repository's project. Without one, work waits.
 
 To run issue work, open an issue, choose **Start agent**, then a model role and the
 matching repository project. Use a model role with an available Codex or Claude target.
@@ -334,9 +346,20 @@ registered orchestrator, the queue waits. Claimed work is managed through its or
 To change how much issue work runs at once, edit **Workers** at the top of the repository on the
 Issues pane. The limit starts at 4 and can be set from 1 to 32; **Workers** shows how many slots
 are in use. Raising it starts eligible queued work. Lowering it lets current workers finish and
-holds new starts until there is room. The repository orchestrator does not use a worker slot.
+holds new starts until there is room. A slot covers a managed worker preparing, running, waiting,
+or awaiting your response. Queued workers and completed workers, including those with an open PR,
+do not hold slots. The repository orchestrator and read-only reviewers, checkers and investigators
+do not use worker slots. They use a separate **Read-only** limit in repository **Status**, initially
+4 and adjustable from 1 to 32. It covers children throughout the repository's thread tree, including
+restart continuations. Excess requests wait in order until a slot frees. Raising the limit starts
+queued children; lowering it lets current children finish. Agents can set either limit through
+`set_repository_worker_limit`, using `workerLimit` or `readOnlyLimit` and the current revision.
+Read-only children share their parent's checkout unless another isolation is requested; an issue
+link gives visibility without claiming its work.
 An issue worker paused by an open GitHub blocker resumes by itself within about a minute after
 all its blockers close. Other pauses wait until you resume repository work from **Status**.
+If an issue closes during work, cancel or finish its remaining work, then use **Close out attempt**
+under the repository's **Status** to finish the retained attempt and clear its hold.
 
 Issue agents can create issues, split work into sub-issues, and move issues between milestones.
 To require approval for these too, turn on **Ask before agents create, split or move issues** in
@@ -375,25 +398,16 @@ repositories** widens it to every repository you can read.
 
 ### Cross-project issue inbox
 
-A repository with a repository orchestrator gets an inbox of outside issue activity. About every
-two minutes T3 records new issues and comments, closes and reopens, label and milestone changes,
-and title renames made by another project's agents or by you on GitHub. Edits to issue and comment
-text are not tracked. Its own agents' writes and bots are left out. If T3 was offline long enough
-to miss more than one catch-up can read, the inbox says so once; check the repository on GitHub.
-An issue another project's agent opens or comments on gets the `external`, `priority: high` and
-`from:<project>` labels; an issue you open yourself gets none unless that happens. T3 labels each issue once, so a label you remove stays
-removed. A paused repository's inbox is not read or labeled until you resume it, then it catches up.
+The **Inbox** on the repository's **Issues** page holds issues opened and comments posted by
+another project through `t3_issue_post`. Unmarked writes and other issue changes do not appear.
+T3 checks repositories with an orchestrator every five minutes and other project repositories every
+15 minutes. It notifies the orchestrator of unacknowledged items at most once every 15 minutes. A paused repository catches up when resumed.
 
-The orchestrator reads unread events in one line at the start of its next turn. Untagged events
-wait for that turn and never start one. Tagged events also wake an idle orchestrator with a short
-digest, at most once every 15 minutes, queued behind a running turn. An event is tagged when the
-issue has the `cross-project` label, the text mentions `@orchestrator`, or another project's agent
-wrote it.
-
-The orchestrator's sidebar row shows its unread count. Open the repository on the **Issues** page
-for its **Inbox**, high-priority events first, with links and **Mark read**. Agents read the inbox
-with the `t3_issue_inbox` tool, and write to another project's issues with `t3_issue_post`, which
-marks and labels the write so that repository's orchestrator is notified.
+The orchestrator reviews each item, revises it if needed with `propose_issue_change`, then
+acknowledges it with `t3_issue_inbox` `mark_read`. You can also acknowledge it with **Mark read**.
+An open issue stays only in Inbox until its opening is acknowledged, then appears in Ready or
+the normal section for its current state. A comment leaves its issue in its current section.
+Cross-project writes keep their `external`, `priority: high`, and `from:<project>` labels.
 
 ## Troubleshooting
 

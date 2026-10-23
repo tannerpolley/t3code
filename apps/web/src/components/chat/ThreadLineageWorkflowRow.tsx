@@ -5,7 +5,6 @@ import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { SidebarThreadColumns, sidebarThreadName } from "../sidebar/SidebarColumns";
 import { sidebarThreadTitle } from "../sidebar/SidebarBackgroundWork.logic";
 import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
-import { shortModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { shortModelName } from "./providerIconUtils";
 import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
 import type {
@@ -113,7 +112,7 @@ function WorkflowMemberRow({
             role={thread ? <ThreadRoleIcon thread={thread.source} /> : undefined}
             provider={<ThreadRelationshipIcon driver={driver} provider={provider} />}
             model={shortModelName(member.model ?? thread?.modelSelection.model ?? "")}
-            effort={shortModelSelectionEffort(member.effort ?? null)}
+            effort={member.effort ?? null}
             name={
               <span className="flex min-w-0 items-center gap-1.5">
                 <span className={cn("min-w-0 flex-1 truncate", thread && "sidebar-role-title")}>

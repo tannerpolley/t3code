@@ -37,10 +37,30 @@ const tableNames = Effect.gen(function* () {
 });
 
 describe("fork migration ledger", () => {
-  it.effect("adds the durable decision destination without changing existing requests", () =>
+  it.effect("upgrades the marked inbox database through both owner decision migrations", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toForkMigrationInclusive: 20 });
+      assert.isFalse((yield* tableNames).has("owner_decisions"));
+      yield* runMigrations();
+      assert.deepEqual(
+        yield* sql`SELECT migration_id, name FROM ${sql(FORK_MIGRATIONS_TABLE)} WHERE migration_id >= 20 ORDER BY migration_id`,
+        [
+          { migration_id: 20, name: "MarkedIssueInbox" },
+          { migration_id: 21, name: "OwnerDecisions" },
+          { migration_id: 22, name: "OwnerDecisionDelivery" },
+        ],
+      );
+      const columns = yield* sql<{ name: string }>`PRAGMA table_info(owner_decisions)`;
+      assert.isTrue(columns.some((column) => column.name === "delivery_thread_id"));
+      assert.deepEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("adds the durable decision destination without changing existing requests", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toForkMigrationInclusive: 21 });
       yield* sql`INSERT INTO owner_decisions (id, requesting_thread_id, requesting_project_id, client_request_id, host, repository, issue_number, request_json, state, created_at, updated_at)
         VALUES ('existing', 'requester', 'project', 'retry', 'github.com', 'acme/repo', 46, '{}', 'answered', '2026-10-20', '2026-10-20')`;
       yield* runMigrations();
@@ -193,8 +213,9 @@ describe("fork migration ledger", () => {
           { migration_id: 17, name: "ProjectArtifacts" },
           { migration_id: 18, name: "ClosedIssueWorkIndexes" },
           { migration_id: 19, name: "UsageLimitRecoveryIndex" },
-          { migration_id: 20, name: "OwnerDecisions" },
-          { migration_id: 21, name: "OwnerDecisionDelivery" },
+          { migration_id: 20, name: "MarkedIssueInbox" },
+          { migration_id: 21, name: "OwnerDecisions" },
+          { migration_id: 22, name: "OwnerDecisionDelivery" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

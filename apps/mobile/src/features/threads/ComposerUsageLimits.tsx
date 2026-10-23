@@ -36,7 +36,14 @@ export function ComposerUsageLimits({
         {report.accounts.map((account, index) => {
           const resetCreditInput =
             account.resetCreditInput ??
-            (account.instanceId ? { instanceId: account.instanceId } : undefined);
+            (account.instanceId
+              ? {
+                  instanceId: account.instanceId,
+                  ...(account.limits.resetCredits?.nextCreditId
+                    ? { creditId: account.limits.resetCredits.nextCreditId }
+                    : {}),
+                }
+              : undefined);
           const driverLabel = DRIVER_LABEL[account.driver] ?? String(account.driver);
           return (
             <AccountLimits

@@ -71,7 +71,7 @@ it("keeps issue, PR and live-agent navigation separate as the issue's live state
     await click("Open pull request acme/repo#12: Implementation");
     expect(openPr).toHaveBeenCalledWith(expect.anything(), prUrl, undefined, environmentId);
     expect(onSelect).not.toHaveBeenCalled();
-    await click("Working: Implementor");
+    await click("Working · Implementor");
     expect(navigate).toHaveBeenCalledWith({
       to: "/$environmentId/$threadId",
       params: { environmentId, threadId },
@@ -86,7 +86,7 @@ it("keeps issue, PR and live-agent navigation separate as the issue's live state
     expect(
       container.querySelector('[role="img"][aria-label="In progress"]')?.getAttribute("class"),
     ).toContain("text-sky-600");
-    await click("Waiting on you: Implementor");
+    await click("Waiting on you · Implementor");
     expect(navigate).toHaveBeenCalledTimes(2);
     expect(onSelect).toHaveBeenCalledOnce();
   } finally {
