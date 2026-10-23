@@ -46,8 +46,10 @@ export function SidebarWorkerProviderItem() {
           >
             {WORKER_PROVIDER_OPTIONS.map((option) => (
               <MenuRadioItem key={option.value} value={option.value}>
-                {option.label}
-                <MenuRadioItemIndicator />
+                <span className="flex items-center gap-2">
+                  <span className="flex-1">{option.label}</span>
+                  <MenuRadioItemIndicator />
+                </span>
               </MenuRadioItem>
             ))}
           </MenuRadioGroup>
