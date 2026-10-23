@@ -81,7 +81,11 @@ const setup = (
     let repositoryOwner = threadId;
     let failLabels = false;
     let pages = 0;
+    let dontAskMode = true;
     const dependencies = Layer.mergeAll(
+      Layer.mock(ServerSettings.ServerSettingsService)({
+        getDontAskMode: Effect.sync(() => dontAskMode),
+      }),
       Layer.mock(IssueWorkService.IssueWorkService)({}),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: (id) =>
@@ -209,6 +213,9 @@ const setup = (
       setRequesterStatus: (value: typeof requesterStatus) => {
         requesterStatus = value;
       },
+      setDontAskMode: (value: boolean) => {
+        dontAskMode = value;
+      },
       setPageSize: (size: number) => {
         pageSize = size;
       },
@@ -275,6 +282,21 @@ it.effect("immutable, idempotent requests derive identity and scope agent listin
         (yield* service.request(threadId, input).pipe(Effect.flip)).code,
         "invalid-request",
       );
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("refuses new requests while Ask mode is on but still answers retries", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    const recorded = yield* h.service.request(threadId, request);
+    h.setDontAskMode(false);
+    assert.equal((yield* h.service.request(threadId, request)).id, recorded.id);
+    const refused = yield* h.service
+      .request(threadId, { ...request, clientRequestId: "while-present" })
+      .pipe(Effect.flip);
+    assert.equal(refused.code, "invalid-request");
+    assert.match(refused.message, /question tool/);
+    assert.lengthOf(yield* h.service.list({}), 1);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 

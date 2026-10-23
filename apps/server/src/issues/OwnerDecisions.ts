@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as IssueInbox from "./IssueInbox.ts";
 import * as IssueWorkStore from "./IssueWorkStore.ts";
@@ -132,6 +133,7 @@ const make = Effect.gen(function* () {
   const inbox = yield* IssueInbox.IssueInbox;
   const work = yield* IssueWorkStore.IssueWorkStore;
   const issues = yield* IssueService.IssueService;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const github = yield* Watcher.make;
   const lock = yield* Semaphore.make(1);
   const updates = yield* PubSub.sliding<number>(1);
@@ -219,6 +221,14 @@ const make = Effect.gen(function* () {
       const existing =
         yield* sql<Row>`SELECT * FROM owner_decisions WHERE requesting_thread_id = ${threadId} AND client_request_id = ${input.clientRequestId}`;
       if (existing[0] !== undefined) return yield* matchRequest(existing[0], input);
+      // Decisions exist because Don't ask mode auto-answers the question tool; while the user can
+      // answer, a durable request only delays what one question would settle.
+      if (!(yield* settings.getDontAskMode))
+        return yield* new OwnerDecisionError({
+          code: "invalid-request",
+          message:
+            "Ask mode is on: ask the user with your question tool instead. Owner decisions are only for when Don't ask mode is on.",
+        });
       const shell = yield* threads.getThreadShell(threadId);
       if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null)
         return yield* new OwnerDecisionError({
