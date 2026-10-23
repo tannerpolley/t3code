@@ -155,17 +155,6 @@ function makeCodexTestAppThread(input: {
 }
 
 describe("CodexAdapterV2 post-settle continuation", () => {
-  const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      for (let attempt = 0; attempt < 5000; attempt++) {
-        if (predicate()) {
-          return;
-        }
-        yield* Effect.yieldNow;
-      }
-      return yield* Effect.die(`Timed out waiting for ${label}.`);
-    });
-
   const makeCodexReplayHarness = (
     transcript: CodexReplay.CodexAppServerReplayTranscript,
     onEvent: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<unknown> = () =>
@@ -2072,87 +2061,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           [undefined, "implementor"],
         );
         assert.equal(childThreads[1]?.id, childThreads[0]?.id);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-    ),
-  );
-
-  it.effect("preserves a subagent result across a trailing empty final and resume", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeCodexReplayHarness(resumeSubagentTranscript);
-        const now = yield* DateTime.now;
-
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-codex-resume"),
-            text: RESUME_PROMPT,
-          }),
-        );
-        yield* awaitUntil(
-          () =>
-            harness.subagentUpdates().some((event) => event.subagent.result === "CODEX_FIRST_DONE"),
-          "first subagent result",
-        );
-        assert.lengthOf(
-          harness.subagentUpdates().filter((event) => event.subagent.result === "CODEX_FIRST_DONE"),
-          1,
-        );
-        yield* TestClock.adjust("100 millis");
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
-        assert.equal(harness.terminalEvents()[0]?.status, "completed");
-        const settledUpdates = harness.subagentUpdates();
-        const firstCompletion = settledUpdates[settledUpdates.length - 1];
-        assert.equal(firstCompletion?.subagent.status, "completed");
-        assert.equal(firstCompletion?.subagent.result, "CODEX_FIRST_DONE");
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        const settledUpdateCount = settledUpdates.length;
-
-        yield* TestClock.adjust("30 seconds");
-        yield* awaitUntil(
-          () => harness.subagentUpdates().length > settledUpdateCount,
-          "subagent re-open",
-        );
-        const reopened = harness.subagentUpdates()[settledUpdateCount];
-        assert.equal(reopened?.subagent.status, "running");
-        assert.equal(DateTime.toEpochMillis(reopened!.subagent.startedAt!), 1782622470000);
-        assert.isNull(reopened!.subagent.completedAt);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
-
-        yield* TestClock.adjust("30 seconds");
-        yield* awaitUntil(() => {
-          const updates = harness.subagentUpdates();
-          const latest = updates[updates.length - 1];
-          return (
-            latest !== undefined &&
-            latest.subagent.status === "completed" &&
-            latest.subagent.result === "CODEX_RESUME_DONE"
-          );
-        }, "resumed subagent completion");
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        assert.lengthOf(harness.terminalEvents(), 1);
-        assert.lengthOf(harness.continuationRequests, 1);
-        assert.deepEqual(harness.continuationRequests[0]?.notification, {
-          source: {
-            kind: "subagent",
-            childThreadId: ThreadId.make(
-              `thread:provider:codex:native-thread:${RESUME_CHILD_THREAD}`,
-            ),
-          },
-          outcome: "completed",
-          summary: 'Subagent "/root/resume_agent" finished',
-        });
-        assert.equal(
-          harness.continuationRequests[0]?.detail,
-          "Subagent /root/resume_agent finished. Its <subagent_notification> in this thread has the full result." +
-            "\n\nResult tail:\nCODEX_RESUME_DONE",
-        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

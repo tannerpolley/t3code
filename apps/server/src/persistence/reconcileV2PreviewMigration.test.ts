@@ -148,6 +148,7 @@ describe("V2 preview upgrade", () => {
         [65, "CodexUsageNativeTurnIndex"],
         [66, "RepairClientSettlementTimestamps"],
         [67, "WebhookDedupe"],
+        [68, "ShellStopRequestIndex"],
       ]);
       // The preview reconciler moves the fork's 56 to 57; the fork ledger then takes it as 1.
       assert.deepStrictEqual(

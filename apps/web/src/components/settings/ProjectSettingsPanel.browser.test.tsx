@@ -67,10 +67,12 @@ vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
     })) as typeof actual.createEnvironmentSessionAtoms,
   };
 });
-vi.mock(import("~/state/environments"), async (original) => ({
-  ...(await original()),
+// environments and useSettings import each other; awaiting both originals deadlocks collection.
+vi.mock(import("~/state/environments"), () => ({
   useEnvironments: (() => ({ environments })) as never,
   usePrimaryEnvironmentId: () => primaryId,
+  usePrimaryEnvironment: (() => environments[0] ?? null) as never,
+  useEnvironmentProviders: () => new Map(),
 }));
 vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
@@ -112,12 +114,10 @@ vi.mock(import("../ui/toast"), async (original) => {
   return { ...actual, toastManager: { ...actual.toastManager, add: state.toast } };
 });
 // These sections have separate data sources and their own tests.
-vi.mock(import("./ProjectDefaultsSettings"), async (original) => ({
-  ...(await original()),
+vi.mock(import("./ProjectDefaultsSettings"), () => ({
   ProjectDefaultsSettings: (() => null) as never,
 }));
-vi.mock(import("./ProjectActionsSettings"), async (original) => ({
-  ...(await original()),
+vi.mock(import("./ProjectActionsSettings"), () => ({
   ProjectActionsSettings: (() => null) as never,
 }));
 
