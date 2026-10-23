@@ -32,7 +32,7 @@ export interface McpProviderSessionConfig {
    * Issue workers must delegate through T3. The repository root keeps native
    * subagents for its own work between orchestration runs.
    */
-  readonly managedIssue?: ManagedIssueRole;
+  readonly managedIssue?: ManagedIssueRole | undefined;
 }
 
 export function withAgentDeviceEnvironment(
