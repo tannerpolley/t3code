@@ -1106,7 +1106,9 @@ export function PullRequestsPage() {
   );
   const scopedIdentity = scopedProject?.repositoryIdentity;
   const decisions = useOwnerDecisionsPane({
-    host: search.host,
+    environmentIds: queryEnvironmentIds,
+    // Identity keys start with the host, so a scoped project also narrows the host.
+    host: search.host ?? scopedIdentity?.canonicalKey.split("/")[0],
     repository:
       scopedIdentity?.owner && scopedIdentity.name
         ? `${scopedIdentity.owner}/${scopedIdentity.name}`

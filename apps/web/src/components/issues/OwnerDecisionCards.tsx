@@ -146,28 +146,38 @@ export function OwnerDecisionCards({
   );
 }
 
+interface DecisionScope {
+  /** The environments the surrounding list shows; omitted means every connected one. */
+  environmentIds?: readonly EnvironmentId[] | undefined;
+  host?: string | undefined;
+  repository?: string | undefined;
+}
+const inScope = (
+  { environmentId, decision }: ReturnType<typeof useOwnerDecisions>["records"][number],
+  { environmentIds, host, repository }: DecisionScope,
+) =>
+  (!environmentIds || environmentIds.includes(environmentId)) &&
+  (!host || decision.host === host.toLowerCase()) &&
+  (!repository || decision.repository === repository.toLowerCase());
+
 /** The Decisions toggle shared by the Issues and pull request browsers, counting unanswered requests. */
 export function OwnerDecisionsToggle({
   view,
-  host,
-  repository,
   pressed,
   onPressedChange,
   size = "default",
-}: {
+  ...scope
+}: DecisionScope & {
   view: ReturnType<typeof useOwnerDecisions>;
-  host?: string | undefined;
-  repository?: string | undefined;
   pressed: boolean;
   onPressedChange: (pressed: boolean) => void;
   size?: ComponentProps<typeof Button>["size"];
 }) {
   const count = view.records.filter(
-    ({ decision }) =>
-      decision.chosenOptionId === null &&
-      decision.state !== "withdrawn" &&
-      (!host || decision.host === host.toLowerCase()) &&
-      (!repository || decision.repository === repository.toLowerCase()),
+    (record) =>
+      record.decision.chosenOptionId === null &&
+      record.decision.state !== "withdrawn" &&
+      inScope(record, scope),
   ).length;
   return (
     <Button
@@ -182,11 +192,7 @@ export function OwnerDecisionsToggle({
 }
 
 /** The Decisions toggle and the view it swaps in for a browser's list. */
-export function useOwnerDecisionsPane(scope: {
-  host?: string | undefined;
-  repository?: string | undefined;
-  query: string;
-}) {
+export function useOwnerDecisionsPane(scope: DecisionScope & { query: string }) {
   const view = useOwnerDecisions();
   const [open, setOpen] = useState(false);
   return {
@@ -199,13 +205,10 @@ export function useOwnerDecisionsPane(scope: {
 
 export function OwnerDecisionsView({
   view,
-  host,
-  repository,
   query,
-}: {
+  ...scope
+}: DecisionScope & {
   view: ReturnType<typeof useOwnerDecisions>;
-  host?: string | undefined;
-  repository?: string | undefined;
   query: string;
 }) {
   const [project, setProject] = useState("");
@@ -221,8 +224,7 @@ export function OwnerDecisionsView({
   ].sort();
   const records = view.records.filter(
     ({ environmentId, decision }) =>
-      (!host || decision.host === host.toLowerCase()) &&
-      (!repository || decision.repository === repository.toLowerCase()) &&
+      inScope({ environmentId, decision }, scope) &&
       (!project || JSON.stringify([environmentId, decision.requestingProjectId]) === project) &&
       (!target || `${decision.host}/${decision.repository}` === target) &&
       `${decision.question} ${decision.repository} ${decision.requestingProjectTitle} ${decision.requestingThreadTitle}`
@@ -247,7 +249,7 @@ export function OwnerDecisionsView({
             </MenuRadioGroup>
           </MenuPopup>
         </Menu>
-        {!repository ? (
+        {!scope.repository ? (
           <Menu>
             <MenuTrigger render={<Button size="xs" variant="outline" />}>
               {target || "All repositories"}
