@@ -605,7 +605,7 @@ const make = Effect.gen(function* () {
   );
   const drain = Effect.gen(function* () {
     const pending =
-      yield* sql<Row>`SELECT * FROM owner_decisions WHERE pending_publish IS NOT NULL OR pending_delivery = 1 OR pending_label = 1 ORDER BY created_at, id`;
+      yield* sql<Row>`SELECT * FROM owner_decisions WHERE state = 'awaiting_choice' OR pending_publish IS NOT NULL OR pending_delivery = 1 OR pending_label = 1 ORDER BY created_at, id`;
     for (const row of pending) {
       const recordFailure = Effect.fn("OwnerDecisions.recordFailure")(function* (error: unknown) {
         const problem = storageError(error);
@@ -620,7 +620,9 @@ const make = Effect.gen(function* () {
       yield* publish(yield* get(row.id)).pipe(Effect.catch(recordFailure));
       const current = yield* get(row.id);
       // Label cleanup and delivery retry independently; neither may strand the other.
-      if (current.pendingLabel) yield* syncLabel(current).pipe(Effect.catch(recordFailure));
+      // Another environment can remove the shared label after reading stale comments.
+      if (current.state === "awaiting_choice" || current.pendingLabel)
+        yield* syncLabel(current).pipe(Effect.catch(recordFailure));
       yield* deliver(current).pipe(Effect.catch(recordFailure));
       yield* notify;
     }

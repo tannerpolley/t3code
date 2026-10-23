@@ -15,6 +15,8 @@ import {
   type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Foreign comment fixtures compute hashes independently of the service under test.
 import * as NodeCrypto from "node:crypto";
@@ -58,10 +60,17 @@ const owner = {
   scopes: ["orchestration:operate" as const],
 };
 const testLayer = Layer.mergeAll(SqlitePersistence.layerMemory, NodeCryptoLayer.layer);
-const setup = (send?: ThreadManagement.ThreadManagementService["Service"]["dispatch"]) =>
+const fakeGithub = () => ({
+  comments: [] as Array<{ id: number; body: string; html_url: string }>,
+  labels: new Set<string>(),
+  beforeLabelDelete: Effect.void,
+});
+const setup = (
+  send?: ThreadManagement.ThreadManagementService["Service"]["dispatch"],
+  github = fakeGithub(),
+) =>
   Effect.gen(function* () {
-    const comments: Array<{ id: number; body: string; html_url: string }> = [];
-    const labels = new Set<string>();
+    const { comments, labels } = github;
     const commands: OrchestrationV2ServerCommand[] = [];
     let loseCommentResponse = false;
     let loseDeliveryResponse = false;
@@ -167,8 +176,10 @@ const setup = (send?: ThreadManagement.ThreadManagementService["Service"]["dispa
                   operation: "detail",
                   message: "Label failure",
                 });
-              if (input.method === "DELETE") labels.delete("decision-needed");
-              else if (input.method === "POST") labels.add("decision-needed");
+              if (input.method === "DELETE") {
+                yield* github.beforeLabelDelete;
+                labels.delete("decision-needed");
+              } else if (input.method === "POST") labels.add("decision-needed");
               body = [...labels].map((name) => ({ name }));
             }
             return { status: 200, body: JSON.stringify(body), nextPage, etag: null };
@@ -603,6 +614,41 @@ it.effect(
       yield* restarted.drain;
       assert.isFalse(h.labels.has("decision-needed"));
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("the next reconcile repairs a label removed by another environment's stale cleanup", () =>
+  Effect.gen(function* () {
+    const github = fakeGithub();
+    const contextA = yield* Layer.build(Layer.fresh(testLayer));
+    const contextB = yield* Layer.build(Layer.fresh(testLayer));
+    const a = yield* setup(undefined, github).pipe(Effect.provideContext(contextA));
+    const b = yield* setup(undefined, github).pipe(Effect.provideContext(contextB));
+    const previous = yield* b.service.request(threadId, request);
+    yield* b.service.drain;
+    yield* b.service.choose({ id: previous.id, optionId: "adopt" }, owner);
+
+    const deleting = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    github.beforeLabelDelete = Effect.gen(function* () {
+      yield* Deferred.succeed(deleting, undefined);
+      yield* Deferred.await(resume);
+    });
+    const cleanup = yield* b.service.drain.pipe(Effect.forkChild);
+    yield* Deferred.await(deleting);
+    const current = yield* a.service.request(threadId, { ...request, clientRequestId: "new" });
+    yield* a.service.drain;
+    assert.isTrue(github.labels.has("decision-needed"));
+    assert.isFalse((yield* a.service.listForCaller(threadId))[0]!.pendingLabel);
+    yield* Deferred.succeed(resume, undefined);
+    yield* Fiber.join(cleanup);
+    assert.isFalse(github.labels.has("decision-needed"));
+    assert.isFalse((yield* b.service.listForCaller(threadId))[0]!.pendingLabel);
+
+    yield* a.service.drain;
+    assert.equal((yield* a.service.listForCaller(threadId))[0]!.id, current.id);
+    assert.equal((yield* a.service.listForCaller(threadId))[0]!.state, "awaiting_choice");
+    assert.isTrue(github.labels.has("decision-needed"));
+  }).pipe(Effect.scoped),
 );
 
 it.effect("an incomplete comment page never permits label removal", () =>
