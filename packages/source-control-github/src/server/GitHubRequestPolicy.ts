@@ -315,7 +315,11 @@ export const make = Effect.gen(function* () {
       }
     });
 
+    const queuedAt = yield* Clock.currentTimeMillis;
     const run = Effect.gen(function* () {
+      yield* Effect.annotateCurrentSpan({
+        "github.request.queue_ms": (yield* Clock.currentTimeMillis) - queuedAt,
+      });
       const lease = yield* quota
         .admit(host, input.resource, { allowReserve: input.allowReserve })
         .pipe(
@@ -329,6 +333,7 @@ export const make = Effect.gen(function* () {
         );
       // One deadline covers the headers and the body: a host that answers headers and then
       // stalls must not hold a shared slot for undici's own five-minute body timeout.
+      const startedAt = yield* Clock.currentTimeMillis;
       const answer = yield* send({
         ...REQUEST_HEADERS,
         authorization: `Bearer ${Redacted.value(token)}`,
@@ -338,6 +343,13 @@ export const make = Effect.gen(function* () {
           orElse: () =>
             Effect.fail(new GitHubApiRequestError({ ...context, cause: new Cause.TimeoutError() })),
         }),
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* Effect.annotateCurrentSpan({
+              "github.request.send_ms": (yield* Clock.currentTimeMillis) - startedAt,
+            });
+          }),
+        ),
       );
       return yield* settle(lease, answer);
     });

@@ -118,6 +118,7 @@ export const layer = Layer.effect(
           );
         }),
       ).pipe(
+        Stream.merge(issues.refreshes.pipe(Stream.drop(1))),
         // One command often commits ownership, thread and run events together.
         Stream.groupedWithin(128, "250 millis"),
         Stream.scan(

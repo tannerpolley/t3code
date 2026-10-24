@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
@@ -19,7 +21,9 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 
-function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Response) {
+function harness(
+  respond: (request: HttpClientRequest.HttpClientRequest) => Response | Effect.Effect<Response>,
+) {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let tokens = ["first", "second"];
   let invalidations = 0;
@@ -48,7 +52,10 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
     HttpClient.HttpClient,
     HttpClient.make((request) => {
       requests.push(request);
-      return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request)));
+      const response = respond(request);
+      return (Effect.isEffect(response) ? response : Effect.succeed(response)).pipe(
+        Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
+      );
     }),
   );
   const layer = GitHubRest.layer.pipe(
@@ -116,6 +123,8 @@ describe("GitHubRest", () => {
         "url.path": "/repos/acme/web/actions/runs",
         "http.response.status_code": 200,
         "github.ratelimit.remaining": 4800,
+        "github.request.queue_ms": 0,
+        "github.request.send_ms": 0,
       });
       // Nothing recorded carries the query string or the token.
       const everything = spans
@@ -126,6 +135,56 @@ describe("GitHubRest", () => {
       expect(spans.some((span) => span.attributes.has("url.full"))).toBe(false);
     }).pipe(Effect.provide(layer), Effect.withTracer(tracer));
   });
+
+  it.effect("distinguishes waiting for a shared request slot from sending to GitHub", () =>
+    Effect.gen(function* () {
+      const full = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      let held = 0;
+      const { layer, requests } = harness((request) => {
+        if (new URL(request.url).pathname !== "/queued") {
+          held++;
+          return (held === 8 ? Deferred.succeed(full, undefined) : Effect.void).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(json({ ok: true })),
+          );
+        }
+        return json({ ok: true });
+      });
+      yield* Effect.gen(function* () {
+        const api = yield* GitHubRest.GitHubRest;
+        const active = yield* Effect.all(
+          Array.from({ length: 8 }, (_, index) =>
+            api.rest({ host: "github.com", operation: "probe", path: `held/${index}` }),
+          ),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(full);
+        const queued = yield* api
+          .rest({ host: "github.com", operation: "probe", path: "queued" })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust("10 seconds");
+        expect(requests).toHaveLength(8);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(active);
+        yield* Fiber.join(queued);
+        const send = spans.find((span) => span.attributes.get("url.path") === "/queued")!;
+        expect(Object.fromEntries(send.attributes)).toMatchObject({
+          "github.request.queue_ms": 10_000,
+          "github.request.send_ms": 0,
+          "http.response.status_code": 200,
+        });
+      }).pipe(Effect.provide(layer), Effect.withTracer(tracer));
+    }),
+  );
 
   it.effect("lets an interactive request through a pause a background read recorded", () => {
     const reset = Math.floor(NOW / 1000) + 600;

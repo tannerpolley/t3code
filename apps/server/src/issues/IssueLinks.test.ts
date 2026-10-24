@@ -183,6 +183,7 @@ it.effect(
       Layer.provideMerge(h.layer),
       Layer.provide(
         Layer.mock(IssueService.IssueService)({
+          refreshes: Stream.empty,
           list: () => Effect.succeed(list()),
           statusBatch: () =>
             Effect.succeed([
