@@ -1713,8 +1713,8 @@ export const layer = Layer.effect(
     const service = IssueWorkService.of({
       assignOrchestrator,
       ensureOrchestrator,
-      workStatus: Effect.fn("IssueWorkService.workStatus")(
-        function* (input): Effect.fn.Return<IssueWorkStatusResult, IssueWorkError> {
+      workStatus: (input) =>
+        Effect.gen(function* () {
           const request = yield* store.latestRequest(input);
           const issue = (yield* store.linkedIssue(input)) ?? request?.issue ?? null;
           if (issue === null) {
@@ -1783,10 +1783,7 @@ export const layer = Layer.effect(
             status: (yield* progressFor(owner, (root?.paused ?? false) || suspended)).status,
             publishing: yield* store.publishing(owner, issue),
           };
-        },
-        (reads) => sql.withTransaction(reads).pipe(NodeSqliteClient.readOnly),
-        Effect.mapError(mapError),
-      ),
+        }),
       queueIssue: (input) => changeQueue(input, true),
       unqueueIssue: (input) => changeQueue(input, false),
       start: (input) => start(input),
