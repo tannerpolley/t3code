@@ -826,19 +826,31 @@ export const layer = Layer.effect(
         )
         .join("\n\n");
     });
-    /** Runs one pass per root at a time; callers arriving mid-pass share one more pass after it. */
+    /** Runs updates and passes serially per root; callers arriving mid-pass share the next pass. */
     const coalescedPerRoot = <E>(pass: (rootThreadId: ThreadId) => Effect.Effect<void, E>) => {
-      const passes = new Map<ThreadId, { pending: boolean; done: Deferred.Deferred<void, E> }>();
-      return (rootThreadId: ThreadId) =>
+      const passes = new Map<
+        ThreadId,
+        {
+          pending: boolean;
+          updates: Array<Effect.Effect<void, E>>;
+          done: Deferred.Deferred<void, E>;
+        }
+      >();
+      return (rootThreadId: ThreadId, update?: Effect.Effect<void, E>) =>
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const { state, leader } = yield* Effect.sync(() => {
               const existing = passes.get(rootThreadId);
               if (existing !== undefined) {
                 existing.pending = true;
+                if (update !== undefined) existing.updates.push(update);
                 return { state: existing, leader: false };
               }
-              const state = { pending: false, done: Deferred.makeUnsafe<void, E>() };
+              const state = {
+                pending: false,
+                updates: update === undefined ? [] : [update],
+                done: Deferred.makeUnsafe<void, E>(),
+              };
               passes.set(rootThreadId, state);
               return { state, leader: true };
             });
@@ -847,6 +859,7 @@ export const layer = Layer.effect(
               Effect.gen(function* () {
                 do {
                   state.pending = false;
+                  for (const update of state.updates.splice(0)) yield* update;
                   yield* pass(rootThreadId);
                 } while (state.pending);
               }),
@@ -1200,7 +1213,7 @@ export const layer = Layer.effect(
           );
       });
 
-    const reconcile: IssueWorkService["Service"]["reconcile"] = coalescedPerRoot(reconcilePass);
+    const reconcile = coalescedPerRoot(reconcilePass);
 
     const workMilestone: IssueWorkService["Service"]["workMilestone"] = (input) =>
       Effect.gen(function* () {
@@ -1324,25 +1337,25 @@ export const layer = Layer.effect(
       return yield* repositoryStatus(input);
     });
 
-    const resumeWork = Effect.fn("IssueWorkService.resumeWork")(function* (
-      rootThreadId: ThreadId,
-      commandId: CommandId,
-      issueId?: string,
-    ) {
-      const config = (yield* store.configuration(rootThreadId))!;
-      if (config.handoff?.status === "draining")
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: "A handoff is draining. Cancel the handoff before resuming work.",
-        });
-      const suspendedIssues =
-        issueId === undefined ? [] : config.suspendedIssues.filter((entry) => entry.id !== issueId);
-      const paused = issueId === undefined ? false : config.paused;
-      // Explicit Resume removes only the chosen suspensions; reconcile still validates GitHub.
-      if (paused !== config.paused || suspendedIssues.length !== config.suspendedIssues.length)
-        yield* update(rootThreadId, { ...config, paused, suspendedIssues }, commandId);
-      yield* reconcile(rootThreadId);
-    });
+    const resumeWork = Effect.fn("IssueWorkService.resumeWork")(
+      function* (rootThreadId: ThreadId, commandId: CommandId, issueId?: string) {
+        const config = (yield* store.configuration(rootThreadId))!;
+        if (config.handoff?.status === "draining")
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: "A handoff is draining. Cancel the handoff before resuming work.",
+          });
+        const suspendedIssues =
+          issueId === undefined
+            ? []
+            : config.suspendedIssues.filter((entry) => entry.id !== issueId);
+        const paused = issueId === undefined ? false : config.paused;
+        // Explicit Resume removes only the chosen suspensions; reconcile still validates GitHub.
+        if (paused !== config.paused || suspendedIssues.length !== config.suspendedIssues.length)
+          yield* update(rootThreadId, { ...config, paused, suspendedIssues }, commandId);
+      },
+      (effect, rootThreadId) => reconcile(rootThreadId, effect),
+    );
 
     const setPaused: IssueWorkService["Service"]["setPaused"] = Effect.fn(
       "IssueWorkService.setPaused",

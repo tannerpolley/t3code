@@ -33,8 +33,7 @@ export function makeIssueQueueCommands(
     ) => Effect.Effect<void, OrchestratorV2Error>;
   },
 ) {
-  const { issueWorkStore, projectionStore, emit, mapDispatchError, OrchestratorDispatchError } =
-    hooks;
+  const { issueWorkStore, emit, mapDispatchError, OrchestratorDispatchError } = hooks;
   const change = Effect.fn("IssueQueueCommands.change")(function* (
     command: Command<"issue.queue.change">,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -53,17 +52,8 @@ export function makeIssueQueueCommands(
     );
     if (command.queued ? current?.state === "queued" : current === undefined) return;
     if (command.queued) {
-      const owner = yield* store.currentIssueOwner(command.issue).pipe(mapDispatchError(command));
-      const pending = yield* store.latestRequest(command.issue).pipe(mapDispatchError(command));
-      const ownerShell =
-        owner === null
-          ? null
-          : yield* projectionStore.getThreadShell(owner).pipe(mapDispatchError(command));
       if (
-        (owner !== null &&
-          (ownerShell?.activeRunId != null ||
-            !(yield* store.resultAvailable(owner).pipe(mapDispatchError(command))))) ||
-        (owner === null && pending !== null && pending.cancellation === undefined)
+        (yield* store.queueWorkState(command.issue).pipe(mapDispatchError(command))) === "working"
       ) {
         const config = yield* store.configuration(command.threadId).pipe(mapDispatchError(command));
         if (!config?.suspendedIssues.some((entry) => entry.id === command.issue.id))
@@ -106,7 +96,12 @@ export function makeIssueQueueCommands(
           sameIssueRepository(read.issue, candidate.issue) && read.issue.id === candidate.issue.id,
       );
       // A reviewed issue can close without a worker, even when no slot is free for the next one.
-      if (read?.outcome === "closed" || read?.outcome === "worked") {
+      if (
+        read?.outcome === "closed" ||
+        (read?.outcome === "worked" &&
+          (yield* store.queueWorkState(candidate.issue).pipe(mapDispatchError(command))) ===
+            "working")
+      ) {
         yield* emit(
           events,
           command,
@@ -129,22 +124,15 @@ export function makeIssueQueueCommands(
     let entry: IssueQueueEntry | undefined;
     for (const candidate of queue) {
       if (candidate.state !== "queued") continue;
-      const owner = yield* store.currentIssueOwner(candidate.issue).pipe(mapDispatchError(command));
-      const pending = yield* store.latestRequest(candidate.issue).pipe(mapDispatchError(command));
-      const ownerShell =
-        owner === null
-          ? null
-          : yield* projectionStore.getThreadShell(owner).pipe(mapDispatchError(command));
-      const working =
-        owner === null
-          ? pending !== null && pending.cancellation === undefined
-          : ownerShell?.activeRunId != null ||
-            !(yield* store.resultAvailable(owner).pipe(mapDispatchError(command)));
+      const workState = yield* store
+        .queueWorkState(candidate.issue)
+        .pipe(mapDispatchError(command));
+      if (workState === "suspending") continue;
       const read = reads.find(
         (read) =>
           sameIssueRepository(read.issue, candidate.issue) && read.issue.id === candidate.issue.id,
       );
-      if (working) {
+      if (workState === "working") {
         yield* emit(
           events,
           command,

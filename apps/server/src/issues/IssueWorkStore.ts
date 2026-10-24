@@ -58,6 +58,9 @@ export class IssueWorkStore extends Context.Service<
       threadId: ThreadId,
       runId: import("@t3tools/contracts").RunId,
     ) => Effect.Effect<import("@t3tools/contracts").IssueQueueEntry | null, IssueWorkError>;
+    readonly queueWorkState: (
+      issue: ThreadLinkedIssue,
+    ) => Effect.Effect<"available" | "working" | "suspending", IssueWorkError>;
     readonly queueRootIdle: (threadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
     readonly queuedRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly queue: (
@@ -182,7 +185,30 @@ export const layer = Layer.effect(
         AND NOT ${usesWorkerSlot}
       GROUP BY run.thread_id
     `;
-    return IssueWorkStore.of({
+    const store: IssueWorkStore["Service"] = IssueWorkStore.of({
+      queueWorkState: Effect.fn("IssueWorkStore.queueWorkState")(function* (issue) {
+        const owner = yield* store.currentIssueOwner(issue);
+        if (owner === null) {
+          const pending = yield* store.latestRequest(issue);
+          return pending !== null && pending.cancellation === undefined ? "working" : "available";
+        }
+        const [thread] = yield* sql<{ active_run_id: string | null; interrupt_pending: number }>`
+          SELECT run.run_id AS active_run_id,
+            EXISTS (SELECT 1 FROM orchestration_v2_effect_outbox effect
+              WHERE effect.thread_id = run.thread_id
+                AND effect.effect_type = 'issue.suspension.interrupt'
+                AND effect.status IN ('pending', 'running')
+                AND json_extract(effect.payload_json, '$.runId') = run.run_id) AS interrupt_pending
+          FROM orchestration_v2_projection_runs run
+          WHERE run.thread_id = ${owner} AND run.status IN ('preparing', 'starting', 'running')
+          ORDER BY run.ordinal DESC, run.run_id DESC LIMIT 1
+        `.pipe(Effect.mapError(mapError));
+        // Resume must keep its queue request while the suspension interrupt can still stop this run.
+        if (thread?.interrupt_pending === 1) return "suspending";
+        return thread?.active_run_id != null || !(yield* store.resultAvailable(owner))
+          ? "working"
+          : "available";
+      }),
       readOnlySlotsInUse: (rootThreadId) =>
         sql<{
           active: number;
@@ -617,5 +643,6 @@ export const layer = Layer.effect(
           Effect.mapError(mapError),
         ),
     });
+    return store;
   }),
 );

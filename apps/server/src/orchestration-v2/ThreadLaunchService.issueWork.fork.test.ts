@@ -34,6 +34,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
@@ -2071,6 +2072,162 @@ it.effect.each(["partial", "failed"] as const)(
       yield* service.reconcile(root);
       yield* worker.drain();
       assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 2);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("serializes per-issue Resume with reconcile without rejecting accepted retries", () => {
+  let firstIssueClosed = false;
+  let secondIssueBlocked = false;
+  let gate:
+    | { entered: Deferred.Deferred<void>; proceed: Deferred.Deferred<void>; armed: boolean }
+    | undefined;
+  const harness = reviewHarness((input) =>
+    Effect.succeed({
+      ...reviewRead(reviewIssue(input.number)),
+      state: input.number === 1 && firstIssueClosed ? ("closed" as const) : ("open" as const),
+      blockedBy:
+        input.number === 2 && secondIssueBlocked
+          ? [{ issue: reviewIssue(99), state: "open" as const }]
+          : [],
+    }),
+  );
+  const gatedThreads = Layer.effect(
+    ThreadManagement.ThreadManagementService,
+    Effect.map(ThreadManagement.ThreadManagementService, (threads) => ({
+      ...threads,
+      dispatch: (command) =>
+        Effect.gen(function* () {
+          if (
+            gate !== undefined &&
+            gate.armed &&
+            String(command.commandId).startsWith("issue-queue-resume:")
+          ) {
+            gate.armed = false;
+            yield* Deferred.succeed(gate.entered, undefined);
+            yield* Deferred.await(gate.proceed);
+          }
+          return yield* threads.dispatch(command);
+        }),
+    })),
+  ).pipe(Layer.provide(harness.dependencies));
+  const layer = Layer.mergeAll(
+    harness.dependencies,
+    suspensionWorkerLayer(harness.dependencies),
+    IssueWorkService.layer.pipe(Layer.provide(gatedThreads), Layer.provide(harness.dependencies)),
+  );
+  return Effect.gen(function* () {
+    const service = yield* IssueWorkService.IssueWorkService;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const root = yield* createReviewRoot();
+    const initial = (yield* store.configuration(root))!;
+    yield* threads.dispatch({
+      type: "repository.work.update",
+      commandId: CommandId.make("resume-race-no-milestones"),
+      threadId: root,
+      expectedRevision: initial.revision,
+      orchestration: { ...initial, milestones: [] },
+    });
+    yield* delegateReviewIssue(root, reviewIssue(1), "resume-race-first-worker");
+    yield* delegateReviewIssue(root, reviewIssue(2), "resume-race-second-worker");
+    firstIssueClosed = true;
+    yield* service.reconcile(root);
+    yield* worker.drain();
+    firstIssueClosed = false;
+    gate = {
+      entered: yield* Deferred.make<void>(),
+      proceed: yield* Deferred.make<void>(),
+      armed: true,
+    };
+    const input = {
+      host: "github.com",
+      repository: "tannerpolley/t3code",
+      number: 1,
+      clientRequestId: CommandId.make("racing-resume"),
+    };
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const resume = yield* service.queueIssue(input).pipe(Effect.result, Effect.forkScoped);
+        yield* Deferred.await(gate!.entered);
+        secondIssueBlocked = true;
+        const reconcile = yield* service
+          .reconcile(root)
+          .pipe(Effect.result, Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.succeed(gate!.proceed, undefined);
+        assert.equal((yield* Fiber.join(reconcile))._tag, "Success");
+        assert.equal((yield* Fiber.join(resume))._tag, "Success");
+      }),
+    );
+    gate = undefined;
+    const retry = yield* service.queueIssue(input).pipe(Effect.result);
+    assert.equal(retry._tag, "Success");
+    assert.deepEqual(
+      (yield* store.configuration(root))!.suspendedIssues.map((entry) => entry.id),
+      [reviewIssue(2).id],
+    );
+    const receipt = yield* receipts.getByCommandId(
+      CommandId.make(`issue-queue-resume:${input.clientRequestId}`),
+    );
+    assert.isTrue(Option.isSome(receipt));
+    assert.equal(Option.getOrThrow(receipt).status, "accepted");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect(
+  "retains per-issue Resume while its suspension interrupt is pending and the root is idle",
+  () => {
+    let unreadable = false;
+    const harness = reviewHarness((input) =>
+      Effect.succeed({ ...reviewRead(reviewIssue(input.number)), parentComplete: !unreadable }),
+    );
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const root = yield* createReviewRoot();
+      yield* delegateReviewIssue(root, reviewIssue(1), "pending-interrupt-worker");
+      const child = (yield* store.issueOwner(reviewIssue(1)))!;
+      const rootRun = (yield* threads.getThreadRecords(root, ["runs"])).runs.at(-1)!;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("resume-idle-root"),
+            type: "run.updated",
+            threadId: root,
+            runId: rootRun.id,
+            occurredAt: now,
+            payload: { ...rootRun, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      assert.isTrue(yield* store.queueRootIdle(root));
+      unreadable = true;
+      yield* service.reconcile(root);
+      unreadable = false;
+      yield* service.queueIssue({
+        host: "github.com",
+        repository: "tannerpolley/t3code",
+        number: 1,
+        clientRequestId: CommandId.make("pending-interrupt-resume"),
+      });
+      const pendingQueue = yield* store.queue(reviewIssue(1));
+      assert.lengthOf(pendingQueue, 1);
+      assert.isUndefined(pendingQueue[0]!.noticeRunId);
+      yield* worker.drain();
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      const queue = yield* store.queue(reviewIssue(1));
+      const runs = (yield* threads.getThreadRecords(child, ["runs"])).runs;
+      assert.equal(runs[0]!.status, "interrupted");
+      assert.lengthOf(queue, 1);
+      assert.equal(queue[0]!.issue.id, reviewIssue(1).id);
+      assert.equal(queue[0]!.state, "queued");
     }).pipe(Effect.provide(harness.layer));
   },
 );

@@ -187,14 +187,9 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
       return { reads, queueLength: queue.length };
     for (const entry of queue) {
       if (entry.state !== "queued") continue;
-      const owner = yield* store.currentIssueOwner(entry.issue);
-      const pending = yield* store.latestRequest(entry.issue);
-      const ownerShell = owner === null ? null : yield* projectionStore.getThreadShell(owner);
-      if (
-        owner === null
-          ? pending !== null && pending.cancellation === undefined
-          : ownerShell?.activeRunId != null || !(yield* store.resultAvailable(owner))
-      ) {
+      const workState = yield* store.queueWorkState(entry.issue);
+      if (workState === "suspending") continue;
+      if (workState === "working") {
         reads.push({ issue: entry.issue, outcome: "worked" });
         continue;
       }
