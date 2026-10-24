@@ -13,7 +13,7 @@ import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type IssueStateInput = Pick<IssueSummary, "state"> &
-  Partial<Pick<IssueSummary, "stateReason" | "projects">> & {
+  Partial<Pick<IssueSummary, "stateReason" | "projects" | "suspensionReason">> & {
     readonly liveWork?:
       | readonly Pick<NonNullable<IssueSummary["liveWork"]>[number], "status">[]
       | undefined;
@@ -33,6 +33,7 @@ export type IssueProgress =
   | "blocked"
   | "in_progress"
   | "queued"
+  | "suspended"
   | "paused"
   | "open";
 
@@ -49,6 +50,7 @@ export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgres
     return issue.stateReason === "not_planned" || issue.stateReason === "duplicate"
       ? "not_planned"
       : "completed";
+  if (issue.suspensionReason !== undefined) return "suspended";
   if (issue.blockedBy?.some((blocker) => blocker.state === "open")) return "blocked";
   const work = issue.liveWork ?? [];
   if (work.some((entry) => entry.status === "working" || entry.status === "waiting_on_you"))
@@ -78,6 +80,12 @@ export const ISSUE_PROGRESS_PRESENTATION = {
     badgeVariant: "secondary",
     Icon: CircleEllipsisIcon,
   },
+  suspended: {
+    label: "Suspended",
+    toneClassName: "text-amber-600 dark:text-amber-300/90",
+    badgeVariant: "warning",
+    Icon: CirclePauseIcon,
+  },
   paused: {
     label: "Paused",
     toneClassName: "text-amber-600 dark:text-amber-300/90",
@@ -106,6 +114,8 @@ export const ISSUE_PROGRESS_PRESENTATION = {
 
 export function issueStatePresentation(issue: IssueStateInput) {
   const presentation = ISSUE_PROGRESS_PRESENTATION[issueProgress(issue)];
+  if (issue.state === "open" && issue.suspensionReason !== undefined)
+    return { ...presentation, label: `Suspended: ${issue.suspensionReason}` };
   return issue.stateReason === "duplicate"
     ? { ...presentation, label: "Closed as duplicate" }
     : presentation;

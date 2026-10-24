@@ -159,6 +159,7 @@ export const layer = Layer.effect(
             result.push({
               host: status.host,
               nodeId: status.nodeId,
+              suspensionReason: status.suspensionReason,
               state: status.state,
               stateReason: status.stateReason,
               blockedBy: status.blockedBy,

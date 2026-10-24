@@ -45,6 +45,12 @@ export const issueScopeExpansionError =
 
 export const openBlockerSuspensionReason = "A GitHub blocker is open. Resolve it before resuming.";
 
+export const unreadableRelationshipsSuspensionReason =
+  "Issue relationships are unreadable. Restore access before resuming.";
+
+export const isAutomaticIssueSuspension = (reason: string | undefined) =>
+  reason === openBlockerSuspensionReason || reason === unreadableRelationshipsSuspensionReason;
+
 /** Failed or partial relationship reads never authorize a worker. */
 export function issueEligibility(
   read: IssueWorkRead,

@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { makeThreadFixture } from "~/test-fixtures";
 import { createLiveIssueWorkOverlay, indexIssueWork } from "./issueLiveWork.logic";
-import { issueProgress } from "./IssueStateIcon";
+import { issueProgress, issueStatePresentation } from "./IssueStateIcon";
 import { issueRoadmap } from "./issueRoadmap.logic";
 
 const overlay = createLiveIssueWorkOverlay();
@@ -485,4 +485,17 @@ it("preserves server checkout existence for matching paths and drops it when a w
     })),
   };
   expect(withLiveIssueWork(removed, [thread]).issues[0]?.liveWork?.[0]?.worktreeExists).toBe(false);
+});
+
+it("shows the server suspension over live working state and clears it after Resume refreshes the issue", () => {
+  const reason = "Issue relationships are unreadable. Restore access before resuming.";
+  const working = { ...root, runtime: running.runtime };
+  const serverList = { ...list, issues: [{ ...list.issues[0]!, suspensionReason: reason }] };
+  const suspended = withLiveIssueWork(serverList, [working]);
+  expect(issueProgress(suspended.issues[0]!)).toBe("suspended");
+  expect(issueStatePresentation(suspended.issues[0]!).label).toBe(`Suspended: ${reason}`);
+  expect(section(suspended)).toBe("suspended");
+  const resumed = withLiveIssueWork(list, [working]);
+  expect(issueProgress(resumed.issues[0]!)).toBe("in_progress");
+  expect(issueStatePresentation(resumed.issues[0]!).label).toBe("In progress");
 });

@@ -7,6 +7,7 @@ import { cn } from "~/lib/utils";
 import { issueLiveWorkSummary, LIVE_WORK_STATUS_LABELS } from "./issueRoadmap.logic";
 
 const STATUS_ICONS = {
+  suspended: CirclePauseIcon,
   working: CirclePlayIcon,
   waiting_on_you: CirclePauseIcon,
   idle: LinkIcon,
@@ -58,7 +59,8 @@ export function IssueLiveWork({
             <div key={thread.threadId}>
               <p>
                 {thread.role === undefined ? "" : `${THREAD_ROLE_LABELS[thread.role]}: `}
-                {thread.title} · {LIVE_WORK_STATUS_LABELS[thread.status]}
+                {thread.title} ·{" "}
+                {status === "suspended" ? label : LIVE_WORK_STATUS_LABELS[thread.status]}
               </p>
               {thread.branch ? <p>Branch: {thread.branch}</p> : null}
               {thread.worktreePath ? <p>Worktree: {thread.worktreePath}</p> : null}

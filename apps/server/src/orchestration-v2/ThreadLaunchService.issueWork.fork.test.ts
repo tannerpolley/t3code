@@ -16,7 +16,15 @@ import * as IssueService from "../issues/IssueService.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { assert, describe, it, vi } from "@effect/vitest";
-import { CommandId, MessageId, ProviderDriverKind, ProviderInstanceId, ThreadId, type ServerProvider } from "@t3tools/contracts";
+import {
+  CommandId,
+  IssueReadError,
+  MessageId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -30,7 +38,20 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { adapter, createReviewRoot, delegateReviewIssue, launchInput, makeHarness, modelSelection, otherProjectId, projectId, reviewHarness, reviewIssue, reviewRead, suspensionWorkerLayer } from "./ThreadLaunchService.testHarness.ts";
+import {
+  adapter,
+  createReviewRoot,
+  delegateReviewIssue,
+  launchInput,
+  makeHarness,
+  modelSelection,
+  otherProjectId,
+  projectId,
+  reviewHarness,
+  reviewIssue,
+  reviewRead,
+  suspensionWorkerLayer,
+} from "./ThreadLaunchService.testHarness.ts";
 
 describe("managed issue work", () => {
   const exercise = (scenario: "baseline" | "direct-resume" | "deletion") => {
@@ -1796,13 +1817,13 @@ it.effect(
   "resumes only blocker-suspended workers once, retains other suspensions, and survives notification replay",
   () => {
     let blocked = false;
-    let unreadable = false;
+    let closed = false;
     const harness = reviewHarness((input) =>
       Effect.succeed({
         ...reviewRead(reviewIssue(input.number)),
         blockedBy:
           input.number === 1 && blocked ? [{ issue: reviewIssue(99), state: "open" as const }] : [],
-        blockersComplete: input.number !== 2 || !unreadable,
+        state: input.number === 2 && closed ? ("closed" as const) : ("open" as const),
       }),
     );
     return Effect.gen(function* () {
@@ -1819,7 +1840,7 @@ it.effect(
       const other = (yield* store.issueOwner(reviewIssue(2)))!;
       const before = (yield* threads.getThreadRecords(child, ["runs"])).thread;
       blocked = true;
-      unreadable = true;
+      closed = true;
       yield* service.reconcile(root);
       yield* worker.drain();
       assert.equal(
@@ -1852,7 +1873,7 @@ it.effect(
       assert.include(otherNotice.text, "Ask through t3_request_user_input");
 
       blocked = false;
-      unreadable = false;
+      closed = false;
       const beforeResume = (yield* store.configuration(root))!;
       yield* service.reconcile(root);
       yield* worker.drain();
@@ -1985,57 +2006,190 @@ it.effect("periodic root selection retains a blocker suspension without mileston
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect("keeps an unreadable suspension when access returns with an open blocker", () => {
-  let unreadable = false;
-  let blocked = false;
-  const harness = reviewHarness((input) =>
-    Effect.succeed({
-      ...reviewRead(reviewIssue(input.number)),
-      blockersComplete: !unreadable,
-      blockedBy: blocked ? [{ issue: reviewIssue(99), state: "open" as const }] : [],
-    }),
-  );
-  return Effect.gen(function* () {
-    const threads = yield* ThreadManagement.ThreadManagementService;
-    const service = yield* IssueWorkService.IssueWorkService;
-    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-    const store = yield* IssueWorkStore.IssueWorkStore;
-    const root = yield* createReviewRoot();
-    yield* delegateReviewIssue(root, reviewIssue(1), "unreadable-before-blocker");
-    const child = (yield* store.issueOwner(reviewIssue(1)))!;
-    unreadable = true;
-    yield* service.reconcile(root);
-    const original = (yield* store.configuration(root))!.suspendedIssues;
-    assert.include(original[0]!.reason, "unreadable");
-
-    // Access recovers before the durable interrupt has run.
-    unreadable = false;
-    blocked = true;
-    yield* service.reconcile(root);
-    assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, original);
-    yield* worker.drain();
-    blocked = false;
-    yield* service.reconcile(root);
-    yield* worker.drain();
-    assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, original);
-    assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 1);
-    assert.isFalse(yield* store.canAdmit(reviewIssue(1), child));
-    assert.isFalse(
-      (yield* threads.getThreadRecords(root, ["messages"])).messages.some((message) =>
-        message.text.startsWith("Issue #1 resumed:"),
-      ),
+it.effect.each(["partial", "failed"] as const)(
+  "recovers an unreadable suspension after a %s read on the next successful reconcile without milestone work",
+  (failure) => {
+    let unreadable = false;
+    let recovery:
+      | { entered: Deferred.Deferred<void>; proceed: Deferred.Deferred<void> }
+      | undefined;
+    const harness = reviewHarness((input) =>
+      Effect.gen(function* () {
+        if (recovery !== undefined) {
+          yield* Deferred.succeed(recovery.entered, undefined);
+          yield* Deferred.await(recovery.proceed);
+        }
+        if (unreadable && failure === "failed")
+          return yield* new IssueReadError({
+            code: "rate-limited",
+            operation: "detail",
+            message: "Rate limited",
+          });
+        return { ...reviewRead(reviewIssue(input.number)), parentComplete: !unreadable };
+      }),
     );
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const root = yield* createReviewRoot();
+      const initial = (yield* store.configuration(root))!;
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        threadId: root,
+        commandId: CommandId.make("unreadable-no-milestones"),
+        expectedRevision: initial.revision,
+        orchestration: { ...initial, milestones: [] },
+      });
+      yield* delegateReviewIssue(root, reviewIssue(1), "unreadable-worker");
+      const child = (yield* store.issueOwner(reviewIssue(1)))!;
+      unreadable = true;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      assert.include((yield* store.configuration(root))!.suspendedIssues[0]!.reason, "unreadable");
+      yield* service.reconcile(root);
+      assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 1);
+      assert.deepEqual(yield* store.activeRoots(), [root]);
+      unreadable = false;
+      recovery = { entered: yield* Deferred.make<void>(), proceed: yield* Deferred.make<void>() };
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const reconcile = yield* service.reconcile(root).pipe(Effect.forkScoped);
+          yield* Deferred.await(recovery!.entered);
+          assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 1);
+          yield* Deferred.succeed(recovery!.proceed, undefined);
+          yield* Fiber.join(reconcile);
+        }),
+      );
+      yield* worker.drain();
+      assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, []);
+      assert.isTrue(yield* store.canAdmit(reviewIssue(1), child));
+      const resumed = yield* threads.getThreadRecords(child, ["runs"]);
+      assert.lengthOf(resumed.runs, 2);
+      assert.equal(resumed.runs.at(-1)!.status, "starting");
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 2);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
 
-    yield* service.setPaused({
-      host: "github.com",
-      repository: "tannerpolley/t3code",
-      paused: false,
-      clientRequestId: CommandId.make("explicitly-clear-unreadable-suspension"),
-    });
-    assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, []);
-    assert.isTrue(yield* store.canAdmit(reviewIssue(1), child));
-  }).pipe(Effect.provide(harness.layer));
-});
+it.effect.each(["closed", "re-parented"] as const)(
+  "per-issue Resume clears only its own %s suspension and reconciles",
+  (reason) => {
+    let changed = false;
+    const harness = reviewHarness((input) =>
+      Effect.succeed({
+        ...reviewRead(reviewIssue(input.number)),
+        state: changed && reason === "closed" ? ("closed" as const) : ("open" as const),
+        parent: changed && reason === "re-parented" ? reviewIssue(99) : null,
+      }),
+    );
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const root = yield* createReviewRoot();
+      for (const number of [1, 2])
+        yield* delegateReviewIssue(root, reviewIssue(number), `resume-one:${number}`);
+      changed = true;
+      yield* service.reconcile(root);
+      const suspended = (yield* store.configuration(root))!.suspendedIssues;
+      assert.lengthOf(suspended, 2);
+      changed = false;
+      yield* service.reconcile(root);
+      assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, suspended);
+      const input = {
+        host: "github.com",
+        repository: "tannerpolley/t3code",
+        number: 1,
+        clientRequestId: CommandId.make("resume-only-one"),
+      };
+      const result = yield* service.queueIssue(input);
+      assert.deepEqual(result.orchestration!.suspendedIssues, [
+        suspended.find((entry) => entry.id === reviewIssue(2).id)!,
+      ]);
+      assert.isTrue(
+        yield* store.canAdmit(reviewIssue(1), (yield* store.issueOwner(reviewIssue(1)))!),
+      );
+      yield* service.queueIssue(input);
+      assert.deepEqual(
+        (yield* store.configuration(root))!.suspendedIssues,
+        result.orchestration!.suspendedIssues,
+      );
+      // An unchanged GitHub restriction is restored by the reconcile after Resume.
+      changed = true;
+      yield* service.queueIssue({
+        ...input,
+        number: 2,
+        clientRequestId: CommandId.make("resume-still-closed"),
+      });
+      assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 2);
+      changed = false;
+      yield* service.setPaused({
+        ...input,
+        paused: false,
+        clientRequestId: CommandId.make("resume-repository"),
+      });
+      assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, []);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect(
+  "changes an unreadable suspension to a blocker suspension until the blocker closes",
+  () => {
+    let unreadable = false;
+    let blocked = false;
+    const harness = reviewHarness((input) =>
+      Effect.succeed({
+        ...reviewRead(reviewIssue(input.number)),
+        blockersComplete: !unreadable,
+        blockedBy: blocked ? [{ issue: reviewIssue(99), state: "open" as const }] : [],
+      }),
+    );
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const root = yield* createReviewRoot();
+      yield* delegateReviewIssue(root, reviewIssue(1), "unreadable-before-blocker");
+      const child = (yield* store.issueOwner(reviewIssue(1)))!;
+      unreadable = true;
+      yield* service.reconcile(root);
+      const original = (yield* store.configuration(root))!.suspendedIssues;
+      assert.include(original[0]!.reason, "unreadable");
+
+      // Access recovers before the durable interrupt has run.
+      unreadable = false;
+      blocked = true;
+      yield* service.reconcile(root);
+      assert.include((yield* store.configuration(root))!.suspendedIssues[0]!.reason, "blocker");
+      yield* worker.drain();
+      blocked = false;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, []);
+      assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 2);
+      assert.isTrue(yield* store.canAdmit(reviewIssue(1), child));
+      assert.isTrue(
+        (yield* threads.getThreadRecords(root, ["messages"])).messages.some((message) =>
+          message.text.startsWith("Issue #1 resumed:"),
+        ),
+      );
+
+      yield* service.setPaused({
+        host: "github.com",
+        repository: "tannerpolley/t3code",
+        paused: false,
+        clientRequestId: CommandId.make("explicitly-clear-unreadable-suspension"),
+      });
+      assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, []);
+      assert.isTrue(yield* store.canAdmit(reviewIssue(1), child));
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
 
 it.effect(
   "does not announce a resumed worker that finished before the suspension interrupt",

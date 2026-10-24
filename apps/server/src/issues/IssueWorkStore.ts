@@ -14,7 +14,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { readIssueQueue, readIssueQueueNotice, isIssueQueueNoticeRun } from "./IssueQueueStore.ts";
-import { openBlockerSuspensionReason, readOnlyIssueRoles } from "./IssueEligibility.ts";
+import {
+  openBlockerSuspensionReason,
+  unreadableRelationshipsSuspensionReason,
+  readOnlyIssueRoles,
+} from "./IssueEligibility.ts";
 
 const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(RepositoryOrchestration));
 import * as SqlClient from "effect/sql/SqlClient";
@@ -392,7 +396,7 @@ export const layer = Layer.effect(
           AND (json_extract(thread.payload_json, '$.repositoryOrchestration.handoff.status') = 'draining'
             OR (owner.paused = 0 AND EXISTS (
               SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.suspendedIssues') suspension
-              WHERE json_extract(suspension.value, '$.reason') = ${openBlockerSuspensionReason}))
+              WHERE json_extract(suspension.value, '$.reason') IN (${openBlockerSuspensionReason}, ${unreadableRelationshipsSuspensionReason})))
             OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.milestones') plan
             WHERE json_extract(plan.value, '$.status') <> 'complete')
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request

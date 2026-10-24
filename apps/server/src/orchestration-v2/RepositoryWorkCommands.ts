@@ -18,7 +18,10 @@ import type { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type { DelegatedTaskRequest, ForkCommandHooks } from "./IssueWorkCommands.ts";
 import type { OrchestratorV2Error, OrchestratorProjectionError } from "./Orchestrator.ts";
-import { openBlockerSuspensionReason } from "../issues/IssueEligibility.ts";
+import {
+  openBlockerSuspensionReason,
+  isAutomaticIssueSuspension,
+} from "../issues/IssueEligibility.ts";
 
 interface RepositoryWorkCommandHooks extends ForkCommandHooks {
   readonly providerAdapters: ProviderAdapterRegistryV2["Service"];
@@ -172,6 +175,9 @@ export function makeRepositoryWorkCommands({
         });
       const now = yield* DateTime.now;
       const resumedIssueId = command.resumeBlockedIssueId;
+      const resumeReason = prior.suspendedIssues.find(
+        (entry) => entry.id === resumedIssueId,
+      )?.reason;
       if (
         resumedIssueId !== undefined &&
         (prior.paused ||
@@ -179,14 +185,14 @@ export function makeRepositoryWorkCommands({
           command.orchestration.paused ||
           command.orchestration.handoff?.status === "draining" ||
           !prior.suspendedIssues.some(
-            (entry) => entry.id === resumedIssueId && entry.reason === openBlockerSuspensionReason,
+            (entry) => entry.id === resumedIssueId && isAutomaticIssueSuspension(entry.reason),
           ) ||
           command.orchestration.suspendedIssues.some((entry) => entry.id === resumedIssueId))
       )
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: "Only an active repository's blocker suspension can resume automatically.",
+          cause: "Only an active repository's transient suspension can resume automatically.",
         });
       yield* emit(
         events,
@@ -272,7 +278,10 @@ export function makeRepositoryWorkCommands({
               threadId: owner.id,
               senderThreadId: owner.lineage.parentThreadId!,
               messageId: MessageId.make(`${command.commandId}:worker`),
-              text: `Issue #${owner.linkedIssue.number}'s GitHub blockers are closed. Continue working on the issue from where you left off.`,
+              text:
+                resumeReason === openBlockerSuspensionReason
+                  ? `Issue #${owner.linkedIssue.number}'s GitHub blockers are closed. Continue working on the issue from where you left off.`
+                  : `Issue #${owner.linkedIssue.number}'s GitHub relationships are readable again. Continue working on the issue from where you left off.`,
               attachments: [],
               modelSelection: latest.modelSelection,
               dispatchMode: { type: "queue_after_active" },
@@ -292,7 +301,7 @@ export function makeRepositoryWorkCommands({
                   type: "issue.suspension.notify",
                   projectId: prior.projectId,
                   issue: owner.linkedIssue!,
-                  reason: openBlockerSuspensionReason,
+                  reason: resumeReason!,
                   resumed: true,
                 },
               } satisfies PendingOrchestrationEffectV2,

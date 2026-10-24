@@ -64,12 +64,15 @@ export function makeIssueQueueCommands(
           (ownerShell?.activeRunId != null ||
             !(yield* store.resultAvailable(owner).pipe(mapDispatchError(command))))) ||
         (owner === null && pending !== null && pending.cancellation === undefined)
-      )
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "This issue already has work in progress.",
-        });
+      ) {
+        const config = yield* store.configuration(command.threadId).pipe(mapDispatchError(command));
+        if (!config?.suspendedIssues.some((entry) => entry.id === command.issue.id))
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This issue already has work in progress.",
+          });
+      }
     }
     yield* emit(
       events,

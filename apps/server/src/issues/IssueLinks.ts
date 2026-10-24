@@ -1,5 +1,6 @@
 import {
   IssueLinkError,
+  RepositoryOrchestration,
   IssueRef,
   type IssueLinkInput,
   type IssueLinkResult,
@@ -33,6 +34,7 @@ const key = (issue: IssueRef) =>
 const isIssueRef = Schema.is(IssueRef);
 const encodeMemoKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodePrRefs = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(IssueRef)));
+const decodeOrchestration = Schema.decodeEffect(Schema.fromJsonString(RepositoryOrchestration));
 const storageError = (cause: unknown) => new IssueLinkError({ code: "storage", cause });
 
 type WorkList = {
@@ -88,7 +90,7 @@ export class IssueLinks extends Context.Service<
     ) => Effect.Effect<
       T & {
         readonly issues: readonly (T["issues"][number] &
-          Pick<IssueSummary, "liveWork" | "pullRequestCount">)[];
+          Pick<IssueSummary, "liveWork" | "pullRequestCount" | "suspensionReason">)[];
       },
       IssueLinkError
     >;
@@ -252,6 +254,39 @@ const make = Effect.gen(function* () {
         ),
       { concurrency: 16, discard: true },
     );
+    const suspensions = new Map<string, string>();
+    const roots = [
+      ...new Set(
+        threads
+          .filter((thread) => thread.linkedIssue !== undefined)
+          .map((thread) => thread.lineage.rootThreadId),
+      ),
+    ];
+    if (roots.length > 0) {
+      const rows = yield* sql<{ config_json: string }>`
+        SELECT json_extract(payload_json, '$.repositoryOrchestration') AS config_json
+        FROM orchestration_v2_projection_threads
+        WHERE thread_id IN ${sql.in(roots)}
+          AND lower(json_extract(payload_json, '$.repositoryOrchestration.host')) = ${host}
+          AND lower(json_extract(payload_json, '$.repositoryOrchestration.repository')) = ${repository}
+          AND json_extract(payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
+      `.pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError));
+      for (const row of rows) {
+        const config = yield* decodeOrchestration(row.config_json).pipe(
+          Effect.mapError(storageError),
+        );
+        for (const entry of config.suspendedIssues) suspensions.set(entry.id, entry.reason);
+      }
+    }
+    const suspensionReasons = new Map(
+      threads.flatMap((thread) => {
+        const reason =
+          thread.linkedIssue === undefined ? undefined : suspensions.get(thread.linkedIssue.id);
+        return reason === undefined || thread.linkedIssue === undefined
+          ? []
+          : [[thread.linkedIssue.number, reason] as const];
+      }),
+    );
     const work = new Map<number, NonNullable<IssueSummary["liveWork"]>[number][]>();
     for (const { thread, refs } of linked) {
       const state = workState(thread);
@@ -305,6 +340,7 @@ const make = Effect.gen(function* () {
         );
         return {
           ...summary,
+          suspensionReason: suspensionReasons.get(issue.number),
           closingPullRequests,
           pullRequests,
           pullRequestCount: pullRequests.length,

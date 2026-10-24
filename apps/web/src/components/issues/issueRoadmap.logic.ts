@@ -10,12 +10,14 @@ import { issueProgress } from "./IssueStateIcon";
 
 export function issueLiveStatus(issue: IssueSummary) {
   const work = issue.liveWork ?? [];
+  if (work.length > 0 && issue.suspensionReason !== undefined) return "suspended" as const;
   if (work.some((thread) => thread.status === "working")) return "working" as const;
   if (work.some((thread) => thread.status === "waiting_on_you")) return "waiting_on_you" as const;
   return work.length > 0 ? ("idle" as const) : null;
 }
 
 export const LIVE_WORK_STATUS_LABELS = {
+  suspended: "Suspended",
   working: "Working",
   waiting_on_you: "Waiting on you",
   idle: "Idle",
@@ -35,7 +37,10 @@ export function issueLiveWorkSummary(issue: IssueSummary) {
   return {
     status,
     work,
-    label: `${LIVE_WORK_STATUS_LABELS[status]} · ${agent}`,
+    label:
+      status === "suspended"
+        ? `Suspended · ${issue.suspensionReason}`
+        : `${LIVE_WORK_STATUS_LABELS[status]} · ${agent}`,
     more: work.length - 1,
   };
 }
@@ -147,6 +152,7 @@ export function issueRoadmap(
   const blocked = section("blocked", "Blocked");
   const readySection = section("ready", "Ready");
   const queued = section("queued", "Queued");
+  const suspended = section("suspended", "Suspended");
   const paused = section("paused", "Paused");
   const inProgress = section("in-progress", "In progress");
   const done = section("done", "Done");
@@ -155,17 +161,20 @@ export function issueRoadmap(
   for (const row of ordered) {
     if (pendingInbox.has(row.issue.number)) continue;
     const progress = issueProgress(row.issue);
-    const target = queueOrder.has(row.issue.number)
-      ? queued
-      : progress === "blocked"
-        ? blocked
-        : progress === "in_progress"
-          ? inProgress
-          : progress === "paused"
-            ? paused
-            : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
-              ? blocked
-              : readySection;
+    const target =
+      progress === "suspended"
+        ? suspended
+        : queueOrder.has(row.issue.number)
+          ? queued
+          : progress === "blocked"
+            ? blocked
+            : progress === "in_progress"
+              ? inProgress
+              : progress === "paused"
+                ? paused
+                : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
+                  ? blocked
+                  : readySection;
     target.rows.push(row);
   }
   queued.rows.sort(
@@ -180,7 +189,16 @@ export function issueRoadmap(
     )) {
     (recentlyDone(issue, now) ? done : closed).rows.push({ issue, cycle: false });
   }
-  return [done, inProgress, queued, paused, readySection, blocked, closed];
+  return [
+    done,
+    inProgress,
+    ...(suspended.rows.length === 0 ? [] : [suspended]),
+    queued,
+    paused,
+    readySection,
+    blocked,
+    closed,
+  ];
 }
 
 const RECENTLY_DONE_MS = 24 * 60 * 60 * 1000;

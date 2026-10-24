@@ -69,6 +69,8 @@ import {
   supportsManagedIssueWork,
   issueScopeExpansionError,
   openBlockerSuspensionReason,
+  unreadableRelationshipsSuspensionReason,
+  isAutomaticIssueSuspension,
 } from "./IssueEligibility.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -728,6 +730,15 @@ export const layer = Layer.effect(
           queued,
         })
         .pipe(Effect.mapError(mapError));
+      if (owner !== null && queued) {
+        const config = (yield* store.configuration(owner.rootThreadId))!;
+        if (config.suspendedIssues.some((entry) => entry.id === issue.id))
+          yield* resumeWork(
+            owner.rootThreadId,
+            CommandId.make(`issue-queue-resume:${input.clientRequestId}`),
+            issue.id,
+          );
+      }
       if (owner !== null)
         yield* deliverQueuedIssue(owner.rootThreadId, input.clientRequestId).pipe(
           Effect.catchCause((cause) =>
@@ -994,7 +1005,7 @@ export const layer = Layer.effect(
           const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
           if (
             shell?.linkedIssue === undefined ||
-            (suspended.get(shell.linkedIssue.id) !== openBlockerSuspensionReason &&
+            (!isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) &&
               shell.activeRunId === null &&
               shell.status !== "queued" &&
               (shell.pendingBackgroundTasks?.length ?? 0) === 0 &&
@@ -1002,13 +1013,13 @@ export const layer = Layer.effect(
                 (yield* progressFor(threadId, false)).progress.state === "result_available"))
           )
             continue;
-          // User-decision suspensions remain until the user explicitly resumes repository work.
+          // Closed and re-parented attempts still require an explicit Resume decision.
           const priorReason = suspended.get(shell.linkedIssue.id);
-          if (priorReason !== undefined && priorReason !== openBlockerSuspensionReason) continue;
+          if (priorReason !== undefined && !isAutomaticIssueSuspension(priorReason)) continue;
           const read = yield* issues.workRead(shell.linkedIssue).pipe(Effect.result);
           let reason: string | null = null;
           if (read._tag === "Failure" || issueEligibility(read.success) === "unknown")
-            reason = "Issue relationships are unreadable. Restore access before resuming.";
+            reason = unreadableRelationshipsSuspensionReason;
           else if (read.success.state === "closed") reason = CLOSED_ISSUE_SUSPENSION_REASON;
           else if (issueEligibility(read.success) === "blocked")
             reason = openBlockerSuspensionReason;
@@ -1023,7 +1034,7 @@ export const layer = Layer.effect(
           }
           if (reason === null) {
             if (
-              suspended.get(shell.linkedIssue.id) !== openBlockerSuspensionReason ||
+              !isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) ||
               config.paused ||
               config.handoff?.status === "draining"
             )
@@ -1313,36 +1324,49 @@ export const layer = Layer.effect(
       return yield* repositoryStatus(input);
     });
 
-    const setPaused: IssueWorkService["Service"]["setPaused"] = (input) =>
-      Effect.gen(function* () {
-        const owner = yield* store.repositoryOwnerByRef(input);
-        if (owner === null)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "This repository has no registered orchestrator.",
-          });
-        const config = (yield* store.configuration(owner.rootThreadId))!;
-        if (config.handoff?.status === "draining")
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "A handoff is draining. Cancel the handoff before changing the pause state.",
-          });
-        // Resume is an explicit decision to re-check suspended work. Admission still validates GitHub.
-        if (config.paused !== input.paused || (!input.paused && config.suspendedIssues.length > 0))
-          yield* update(
-            owner.rootThreadId,
-            {
-              ...config,
-              paused: input.paused,
-              suspendedIssues: input.paused ? config.suspendedIssues : [],
-            },
-            input.clientRequestId,
-          );
-        if (!input.paused) {
-          yield* reconcile(owner.rootThreadId);
-        }
-        return yield* repositoryStatus(input);
-      });
+    const resumeWork = Effect.fn("IssueWorkService.resumeWork")(function* (
+      rootThreadId: ThreadId,
+      commandId: CommandId,
+      issueId?: string,
+    ) {
+      const config = (yield* store.configuration(rootThreadId))!;
+      if (config.handoff?.status === "draining")
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "A handoff is draining. Cancel the handoff before resuming work.",
+        });
+      const suspendedIssues =
+        issueId === undefined ? [] : config.suspendedIssues.filter((entry) => entry.id !== issueId);
+      const paused = issueId === undefined ? false : config.paused;
+      // Explicit Resume removes only the chosen suspensions; reconcile still validates GitHub.
+      if (paused !== config.paused || suspendedIssues.length !== config.suspendedIssues.length)
+        yield* update(rootThreadId, { ...config, paused, suspendedIssues }, commandId);
+      yield* reconcile(rootThreadId);
+    });
+
+    const setPaused: IssueWorkService["Service"]["setPaused"] = Effect.fn(
+      "IssueWorkService.setPaused",
+    )(function* (input) {
+      const owner = yield* store.repositoryOwnerByRef(input);
+      if (owner === null)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "This repository has no registered orchestrator.",
+        });
+      const config = (yield* store.configuration(owner.rootThreadId))!;
+      if (config.handoff?.status === "draining")
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "A handoff is draining. Cancel the handoff before changing the pause state.",
+        });
+      if (input.paused) {
+        if (!config.paused)
+          yield* update(owner.rootThreadId, { ...config, paused: true }, input.clientRequestId);
+      } else {
+        yield* resumeWork(owner.rootThreadId, input.clientRequestId);
+      }
+      return yield* repositoryStatus(input);
+    });
 
     const validateLead = Effect.fn("IssueWorkService.validateLead")(function* (
       input: RepositoryOrchestratorInput,

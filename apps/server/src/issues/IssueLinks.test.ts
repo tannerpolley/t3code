@@ -4,6 +4,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as NodeSqlite from "node:sqlite";
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
+  DEFAULT_REPOSITORY_WORK_SETTINGS,
   ProjectId,
   ThreadId,
   RuntimeRequestId,
@@ -858,5 +860,57 @@ it.effect("memoizes unchanged work and invalidates it on the next projected thre
     const next = yield* links.enrich(list());
     assert.equal(next.issues[0]?.liveWork?.[0]?.title, "Changed");
     assert.equal(next.issues[0]?.liveWork?.[0]?.status, "idle");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("roadmap work exposes and clears its repository suspension reason", () => {
+  const root = liveThreadShell(ThreadId.make("suspension-root"));
+  const reason = "Issue relationships are unreadable. Restore access before resuming.";
+  const orchestrator = {
+    ...root,
+    repositoryOrchestration: {
+      host: ref.host,
+      repository: ref.repository,
+      repositoryId: "repo",
+      projectId: root.projectId,
+      launchCommandId: CommandId.make("suspension-root:create"),
+      revision: 1,
+      paused: false,
+      ...DEFAULT_REPOSITORY_WORK_SETTINGS,
+      milestones: [],
+      suspendedIssues: [{ id: "13", reason }],
+    },
+  };
+  const managed = {
+    ...liveThreadShell(threadId),
+    lineage: {
+      rootThreadId: root.id,
+      parentThreadId: root.id,
+      relationshipToParent: "subagent" as const,
+    },
+    linkedIssue: {
+      ...ref,
+      repositoryId: "repo",
+      id: "13",
+      nodeId: "I_13",
+      title: "Roadmap",
+      url: "https://github.com/owner/repo/issues/13",
+    },
+  };
+  const h = harness([orchestrator, managed]);
+  return Effect.gen(function* () {
+    const links = yield* IssueLinks.IssueLinks;
+    assert.equal((yield* links.enrich(list())).issues[0]!.suspensionReason, reason);
+    const sql = yield* SqlClient.SqlClient;
+    const resumed = {
+      ...orchestrator,
+      repositoryOrchestration: {
+        ...orchestrator.repositoryOrchestration,
+        revision: 2,
+        suspendedIssues: [],
+      },
+    };
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${JSON.stringify(resumed)} WHERE thread_id = ${root.id}`;
+    assert.isUndefined((yield* links.enrich(list())).issues[0]!.suspensionReason);
   }).pipe(Effect.provide(h.layer));
 });

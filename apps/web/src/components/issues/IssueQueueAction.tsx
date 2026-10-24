@@ -71,7 +71,9 @@ export function IssueQueueAction({
   const entry = status.data?.queue?.find((entry) => entry.issue.number === reference.number);
   const queued = entry !== undefined;
   const needsAttention = entry?.state === "needs_attention";
+  const suspended = issue.suspensionReason !== undefined;
   const inProgress =
+    !suspended &&
     issue.liveWork?.some((work) =>
       ["working", "queued_preparing", "waiting_on_you", "waiting_on_sub_issues", "paused"].includes(
         work.status,
@@ -79,7 +81,7 @@ export function IssueQueueAction({
     ) === true;
   if (!status.supported || (!queued && (issue.state !== "open" || inProgress))) return null;
   const label = queued ? "Remove from queue" : "Add to queue";
-  const resumable = !queued && issueProgress(issue) === "paused";
+  const resumable = !queued && (suspended || issueProgress(issue) === "paused");
   const change = async (remove = queued) => {
     if (busy) return;
     if (request.current?.queued !== remove)
@@ -118,13 +120,23 @@ export function IssueQueueAction({
           Retry
         </Button>
       ) : null}
+      {queued && suspended ? (
+        <Button
+          variant="outline"
+          size="xs"
+          disabled={busy || !canQueue}
+          onClick={() => void change(false)}
+        >
+          Resume
+        </Button>
+      ) : null}
       <Tooltip>
         <TooltipTrigger
           render={
             <Button
               variant={resumable ? "outline" : "ghost"}
               size={resumable ? "xs" : "icon-xs"}
-              aria-label={resumable ? "Resume: add to queue" : label}
+              aria-label={resumable ? "Resume issue" : label}
               disabled={busy || status.data === null || (queued ? !canUnqueue : !canQueue)}
               onClick={() => void change()}
             />
@@ -134,7 +146,7 @@ export function IssueQueueAction({
           {resumable ? "Resume" : null}
         </TooltipTrigger>
         <TooltipPopup side="top">
-          {label}
+          {resumable ? "Resume issue" : label}
           {queued && status.data?.rootThreadId === null
             ? " · Waiting for a repository orchestrator"
             : ""}

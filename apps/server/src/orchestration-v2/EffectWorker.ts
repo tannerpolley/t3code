@@ -34,7 +34,10 @@ import * as IssueService from "../issues/IssueService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
-import { openBlockerSuspensionReason } from "../issues/IssueEligibility.ts";
+import {
+  openBlockerSuspensionReason,
+  isAutomaticIssueSuspension,
+} from "../issues/IssueEligibility.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -192,8 +195,10 @@ export const layerExecutor: Layer.Layer<
                 commandId: CommandId.make(`${effect.id}:attempt:${effect.attemptCount}`),
                 messageId,
                 text: request.resumed
-                  ? `Issue #${request.issue.number} resumed: its GitHub blockers are closed.`
-                  : `Issue #${request.issue.number} paused: ${request.reason} Its workspace, link and results are retained. ${request.reason === openBlockerSuspensionReason ? "It resumes automatically when its GitHub blockers close; no user decision is needed." : "Ask through t3_request_user_input; do not reopen it or change the existing lineage."}`,
+                  ? request.reason === openBlockerSuspensionReason
+                    ? `Issue #${request.issue.number} resumed: its GitHub blockers are closed.`
+                    : `Issue #${request.issue.number} resumed: its GitHub relationships are readable again.`
+                  : `Issue #${request.issue.number} paused: ${request.reason} Its workspace, link and results are retained. ${isAutomaticIssueSuspension(request.reason) ? (request.reason === openBlockerSuspensionReason ? "It resumes automatically when its GitHub blockers close; no user decision is needed." : "It resumes automatically once GitHub relationships are readable and the issue is eligible; no user decision is needed.") : "Ask through t3_request_user_input; do not reopen it or change the existing lineage."}`,
                 attachments: [],
                 mode: "queue",
                 createdBy: "agent",
@@ -656,7 +661,14 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           case "issue.status.refresh": {
-            if (Option.isNone(eventSink)) return Effect.fail(new OrchestrationEffectExecutionError({ effectId: effect.id, effectType: effect.request.type, cause: "Issue event sink is unavailable." }));
+            if (Option.isNone(eventSink))
+              return Effect.fail(
+                new OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  cause: "Issue event sink is unavailable.",
+                }),
+              );
             return withIssueWriteLock(
               effect.request.issue,
               eventSink.value.refreshIssueStatus({
@@ -676,7 +688,12 @@ export const layerExecutor: Layer.Layer<
           }
           case "issue.github.comment": {
             const request = effect.request;
-            if (Option.isNone(issues) || Option.isNone(projections) || Option.isNone(eventSink) || Option.isNone(idAllocator)) {
+            if (
+              Option.isNone(issues) ||
+              Option.isNone(projections) ||
+              Option.isNone(eventSink) ||
+              Option.isNone(idAllocator)
+            ) {
               return Effect.fail(
                 new OrchestrationEffectExecutionError({
                   effectId: effect.id,
@@ -919,10 +936,7 @@ export const layerWithOptions = (
 
       // The worker probes for work repeatedly, including when the outbox is empty.
       const runOnce = Effect.fnUntraced(
-        function* (
-          excludeRestartContinuations = false,
-          lane?: EffectOutbox.EffectWorkerLane,
-        ) {
+        function* (excludeRestartContinuations = false, lane?: EffectOutbox.EffectWorkerLane) {
           const claimExit = yield* Effect.exit(
             outbox.claimNext({
               workerId,

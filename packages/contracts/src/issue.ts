@@ -70,6 +70,7 @@ const IssueWorkStatus = Schema.Struct({
 });
 
 export const IssueSummary = Schema.Struct({
+  suspensionReason: Schema.optional(Schema.String),
   number: IssueNumber,
   title: Schema.String,
   url: IssueUrl,
@@ -167,6 +168,7 @@ export const IssueStatusBatchResult = Schema.Array(
   Schema.Struct({
     host: Host,
     nodeId: ThreadLinkedIssue.fields.nodeId,
+    suspensionReason: IssueSummary.fields.suspensionReason,
     state: IssueSummary.fields.state,
     stateReason: IssueSummary.fields.stateReason,
     blockedBy: Schema.Array(Schema.Struct({ state: IssueSummary.fields.state })),
