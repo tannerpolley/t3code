@@ -861,12 +861,19 @@ export const layer = Layer.effect(
                   state.pending = false;
                   for (const update of state.updates.splice(0)) yield* update;
                   yield* pass(rootThreadId);
-                } while (state.pending);
+                  // Check and release in one step, so a caller joining now cannot be dropped.
+                } while (
+                  yield* Effect.sync(() => {
+                    if (state.pending) return true;
+                    passes.delete(rootThreadId);
+                    return false;
+                  })
+                );
               }),
             ).pipe(
               Effect.onExit((exit) =>
                 Effect.gen(function* () {
-                  passes.delete(rootThreadId);
+                  if (passes.get(rootThreadId) === state) passes.delete(rootThreadId);
                   yield* Deferred.done(state.done, exit);
                 }),
               ),
