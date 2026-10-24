@@ -26,6 +26,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -394,6 +395,7 @@ export const make = Effect.gen(function* () {
       ON e.host = o.host AND e.repository_id = o.repository_id AND e.read_at IS NULL
     GROUP BY o.host, o.repository_id
   `.pipe(
+    NodeSqliteClient.readOnly,
     Effect.map((rows) =>
       rows.map((row) => ({
         host: row.host,
@@ -546,16 +548,20 @@ export const make = Effect.gen(function* () {
 
   return IssueInbox.of({
     pollDue,
-    list: Effect.fn("IssueInbox.list")(function* (input) {
-      const events = yield* unreadEvents(input);
-      const pending = yield* sql<{ issue_number: number }>`
+    list: Effect.fn("IssueInbox.list")(
+      function* (input) {
+        const events = yield* unreadEvents(input);
+        const pending = yield* sql<{ issue_number: number }>`
         SELECT issue_number FROM issue_inbox_events
         WHERE host = ${input.host.toLowerCase()}
           AND lower(repository) = ${input.repository.toLowerCase()}
           AND kind = 'issue_opened' AND read_at IS NULL
       `;
-      return { events, pendingIssueNumbers: pending.map((row) => row.issue_number) };
-    }, Effect.mapError(storageError)),
+        return { events, pendingIssueNumbers: pending.map((row) => row.issue_number) };
+      },
+      (reads) => sql.withTransaction(reads).pipe(NodeSqliteClient.readOnly),
+      Effect.mapError(storageError),
+    ),
     markRead: (input) => markRead(input).pipe(Effect.mapError(storageError)),
     unread: Stream.unwrap(
       Effect.gen(function* () {
