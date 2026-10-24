@@ -93,7 +93,7 @@ const adapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 interface HarnessOptions {
-  readonly databaseLayer?: ReturnType<typeof SqlitePersistence.layerFromPath>;
+  readonly databaseLayer?: typeof SqlitePersistence.layerMemory;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly projectRepositoryIdentity?: import("@t3tools/contracts").RepositoryIdentity;

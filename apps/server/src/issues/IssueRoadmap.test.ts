@@ -18,6 +18,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Queue from "effect/Queue";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as Stream from "effect/Stream";
@@ -68,7 +69,10 @@ it.effect(
       Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
       Layer.provide(
         Layer.mergeAll(
-          Layer.mock(IssueService.IssueService)({ list: () => Effect.succeed(list) }),
+          Layer.mock(IssueService.IssueService)({
+            refreshes: Stream.empty,
+            list: () => Effect.succeed(list),
+          }),
           Layer.mock(IssueLinks.IssueLinks)({
             enrich: () =>
               Effect.gen(function* () {
@@ -104,7 +108,10 @@ it.effect("preserves an underlying GitHub read failure", () => {
     Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(IssueService.IssueService)({ list: () => Effect.fail(error) }),
+        Layer.mock(IssueService.IssueService)({
+          refreshes: Stream.empty,
+          list: () => Effect.fail(error),
+        }),
         Layer.mock(IssueLinks.IssueLinks)({
           enrich: () => Effect.die("should not enrich a failed list"),
         }),
@@ -152,7 +159,10 @@ it.effect("gives an issue's detail the live work its row has, matched by closing
     Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(IssueService.IssueService)({ detail: () => Effect.succeed(detail) }),
+        Layer.mock(IssueService.IssueService)({
+          refreshes: Stream.empty,
+          detail: () => Effect.succeed(detail),
+        }),
         Layer.mock(IssueLinks.IssueLinks)({
           enrich: (value) => {
             enrichedRefs = value.issues[0]?.pullRequestRefs;
@@ -187,7 +197,7 @@ it.effect(
             IssueRoadmap.layer.pipe(
               Layer.provide(
                 Layer.mergeAll(
-                  Layer.mock(IssueService.IssueService)({}),
+                  Layer.mock(IssueService.IssueService)({ refreshes: Stream.empty }),
                   Layer.mock(IssueLinks.IssueLinks)({ refreshes: Stream.make(0) }),
                   Layer.mock(Orchestrator.OrchestratorV2)({
                     streamDomainEvents: Stream.fromQueue(changes),
@@ -208,6 +218,7 @@ it.effect(
           Stream.runCollect,
           Effect.forkChild,
         );
+        yield* TestClock.adjust(0);
         const thread = idleThreadProjection(liveThreadShell(ThreadId.make("root"))).thread;
         for (const id of ["ownership", "queue"]) {
           yield* Queue.offer(changes, {
@@ -336,7 +347,7 @@ it.effect("refreshes held queue release and every run admission and activity tra
           IssueRoadmap.layer.pipe(
             Layer.provide(
               Layer.mergeAll(
-                Layer.mock(IssueService.IssueService)({}),
+                Layer.mock(IssueService.IssueService)({ refreshes: Stream.empty }),
                 Layer.succeed(IssueLinks.IssueLinks, links),
                 Layer.mock(Orchestrator.OrchestratorV2)({
                   streamDomainEvents: Stream.fromQueue(changes),
@@ -355,6 +366,7 @@ it.effect("refreshes held queue release and every run admission and activity tra
         ),
         Effect.forkChild,
       );
+      yield* TestClock.adjust(0);
       const workInput = { repository: input, issues: [{ number: 13, state: "open" as const }] };
       const state = Effect.gen(function* () {
         const enriched = yield* links.enrich(workInput);
@@ -470,4 +482,41 @@ it.effect("refreshes held queue release and every run admission and activity tra
       ),
     ),
   ),
+);
+
+it.effect(
+  "pushes completed GitHub background reads through the existing Issues refresh stream",
+  () =>
+    Effect.gen(function* () {
+      const revisions = yield* SubscriptionRef.make(0);
+      const roadmap = yield* IssueRoadmap.IssueRoadmap.pipe(
+        Effect.provide(
+          IssueRoadmap.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mock(IssueService.IssueService)({
+                  refreshes: SubscriptionRef.changes(revisions),
+                }),
+                Layer.mock(IssueLinks.IssueLinks)({ refreshes: Stream.make(0) }),
+                Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty }),
+              ),
+            ),
+          ),
+        ),
+      );
+      const observed: number[] = [];
+      yield* roadmap.linkRefreshes.pipe(
+        Stream.runForEach((revision) =>
+          Effect.sync(() => {
+            observed.push(revision);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(0);
+      assert.deepEqual(observed, [0]);
+      yield* SubscriptionRef.update(revisions, (revision) => revision + 1);
+      yield* TestClock.adjust("250 millis");
+      assert.deepEqual(observed, [0, 1]);
+    }),
 );

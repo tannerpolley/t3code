@@ -1,9 +1,12 @@
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as RcMap from "effect/RcMap";
 import type * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
@@ -11,6 +14,7 @@ import * as Schema from "effect/Schema";
 import {
   IsoDateTime,
   IssueMilestone,
+  IssueListResult,
   IssueReadError,
   NonNegativeInt,
   TrimmedNonEmptyString,
@@ -33,6 +37,7 @@ import {
   type ThreadLinkedIssue as ThreadLinkedIssueType,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
@@ -50,6 +55,7 @@ const MAX_PAGE = 1_000_000;
 const CURSOR_MAX_LENGTH = 4_096;
 const GITHUB_HOST = "github.com";
 const decodeLinkedIssue = Schema.decodeEffect(ThreadLinkedIssue);
+const sameIssueList = Schema.toEquivalence(IssueListResult);
 const isIssueReadError = Schema.is(IssueReadError);
 // ponytail: 10 pages (1,000 repos) caps the repository scan; raise it if an account outgrows it.
 const REPOSITORY_MAX_PAGES = 10;
@@ -385,7 +391,25 @@ interface ApiResponse {
 interface PageResult<A> {
   readonly items: ReadonlyArray<A>;
   readonly nextPage: number | null;
+  readonly etag?: string | undefined;
+  readonly fetchedAt?: string;
+  readonly generation?: number;
 }
+
+type ListMetadata = Effect.Success<ReturnType<typeof readIssueListMetadata>>;
+interface IssuePageResult extends PageResult<IssueSummaryType> {
+  readonly metadata?: Partial<Record<"projects" | "roadmap", ListMetadata>> | undefined;
+}
+
+const issueListEndpoint = (
+  scope: IssueRepositoryScope,
+  state: IssueListState,
+  page: number,
+  milestoneNumber?: number,
+) =>
+  `repos/${encodeRepositoryPath(scope.repository)}/issues?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}${milestoneNumber === undefined ? "" : `&milestone=${milestoneNumber}`}`;
+const milestoneListEndpoint = (scope: IssueRepositoryScope, state: IssueListState, page: number) =>
+  `repos/${encodeRepositoryPath(scope.repository)}/milestones?state=${state}&per_page=100&page=${page}`;
 
 function readError(
   operation: IssueOperation,
@@ -787,6 +811,7 @@ export class IssueService extends Context.Service<
       readonly action: "add" | "remove";
     }) => Effect.Effect<void, IssueReadError>;
     readonly repositories: () => Effect.Effect<IssueRepositoriesResultType, IssueReadError>;
+    readonly refreshes: Stream.Stream<number>;
     readonly list: (
       input: IssueListInputType,
     ) => Effect.Effect<IssueListResultType, IssueReadError>;
@@ -862,8 +887,19 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
   const api = yield* GitHubApi.GitHubApi;
   const githubPullRequests = yield* GitHubPullRequestApi.GitHubPullRequestApi;
   const homeDirectory = yield* HostProcess.HomeDirectory;
+  const serviceScope = yield* Effect.scope;
+  const refreshes = yield* SubscriptionRef.make(0);
+  const repositoryGenerations = new Map<string, number>();
+  const repositoryKey = (scope: IssueRepositoryScope) =>
+    JSON.stringify([scope.host, scope.repository]);
+  const repositoryGeneration = (scope: IssueRepositoryScope) =>
+    repositoryGenerations.get(repositoryKey(scope)) ?? 0;
+  const advanceRepositoryGeneration = (scope: IssueRepositoryScope) => {
+    repositoryGenerations.set(repositoryKey(scope), repositoryGeneration(scope) + 1);
+  };
   const makePageCaches = () => ({
-    issues: new IssueListPageCache<PageResult<IssueSummaryType>>(),
+    issues: new IssueListPageCache<IssuePageResult>(),
+    refreshing: new Set<string>(),
     milestones: new IssueListPageCache<PageResult<IssueMilestone>>(),
   });
   // List subscriptions have no server-side lifetime signal. Release a repository after five
@@ -964,6 +1000,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         ),
       ),
     );
+    if (input.requestMethod !== undefined) advanceRepositoryGeneration(input.scope);
     if (response === null) {
       return yield* readError(
         input.operation,
@@ -1400,12 +1437,12 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
 
   const listIssuePage = Effect.fn("IssueService.listIssuePage")(function* (
     scope: IssueRepositoryScope,
-    cache: IssueListPageCache<PageResult<IssueSummaryType>>,
+    cache: IssueListPageCache<IssuePageResult>,
     state: IssueListState,
     page: number,
     milestoneNumber?: number,
-  ): Effect.fn.Return<PageResult<IssueSummaryType>, IssueReadError> {
-    const endpoint = `repos/${encodeRepositoryPath(scope.repository)}/issues?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}${milestoneNumber === undefined ? "" : `&milestone=${milestoneNumber}`}`;
+  ): Effect.fn.Return<IssuePageResult, IssueReadError> {
+    const endpoint = issueListEndpoint(scope, state, page, milestoneNumber);
     const cached = cache.get(endpoint);
     const response = yield* executeApi({
       operation: "list",
@@ -1426,8 +1463,11 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       );
     }
     if (response.status === 304 && cached !== undefined) {
-      const result = { ...cached.page, nextPage };
-      cache.set(endpoint, response.headers["etag"] ?? cached.etag, result);
+      const result = {
+        ...cached.page,
+        nextPage,
+        etag: response.headers["etag"] ?? cached.etag,
+      };
       return result;
     }
     const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawIssueSchema)))(
@@ -1443,8 +1483,12 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         .map((issue) => normalizeIssue(scope.host, scope.repository, issue)),
       nextPage,
     };
-    cache.set(endpoint, response.headers["etag"], result);
-    return result;
+    const pageResult = {
+      ...result,
+      etag: response.headers["etag"],
+      metadata: cached?.page.metadata,
+    };
+    return pageResult;
   });
 
   const listMilestonePage = Effect.fn("IssueService.listMilestonePage")(function* (
@@ -1453,7 +1497,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     state: IssueListState,
     page: number,
   ): Effect.fn.Return<PageResult<IssueMilestone>, IssueReadError> {
-    const endpoint = `repos/${encodeRepositoryPath(scope.repository)}/milestones?state=${state}&per_page=100&page=${page}`;
+    const endpoint = milestoneListEndpoint(scope, state, page);
     const cached = cache.get(endpoint);
     const response = yield* executeApi({
       operation: "list",
@@ -1474,8 +1518,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       );
     }
     if (response.status === 304 && cached !== undefined) {
-      const result = { ...cached.page, nextPage };
-      cache.set(endpoint, response.headers["etag"] ?? cached.etag, result);
+      const result = { ...cached.page, nextPage, etag: response.headers["etag"] ?? cached.etag };
       return result;
     }
     const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawMilestoneSchema)))(
@@ -1489,8 +1532,8 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       items: raw.map((milestone) => normalizeMilestone(scope.host, scope.repository, milestone)),
       nextPage,
     };
-    cache.set(endpoint, response.headers["etag"], result);
-    return result;
+    const pageResult = { ...result, etag: response.headers["etag"] };
+    return pageResult;
   });
 
   const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
@@ -1528,51 +1571,137 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               );
             }
             const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
+            const generation = repositoryGeneration(scope);
             const issuePage = cursor === null ? 1 : cursor.issuePage;
             const milestonePage = cursor === null ? 1 : cursor.milestonePage;
-            const issueResult =
-              issuePage === null
-                ? { items: [], nextPage: null }
-                : yield* listIssuePage(scope, pages.issues, state, issuePage);
-            const [milestoneResult, projects] = yield* Effect.all(
-              [
+            const issueEndpoint =
+              issuePage === null ? null : issueListEndpoint(scope, state, issuePage);
+            const milestoneEndpoint =
+              milestonePage === null ? null : milestoneListEndpoint(scope, state, milestonePage);
+            const mode = input.roadmap === true ? "roadmap" : "projects";
+            const cachedIssues =
+              issueEndpoint === null ? undefined : pages.issues.get(issueEndpoint)?.page;
+            const cachedMilestones =
+              milestoneEndpoint === null
+                ? undefined
+                : pages.milestones.get(milestoneEndpoint)?.page;
+            const cachedMetadata = issuePage === null ? new Map() : cachedIssues?.metadata?.[mode];
+            const assemble = Effect.fn("IssueService.assembleList")(function* (
+              issueResult: IssuePageResult,
+              milestoneResult: PageResult<IssueMilestone>,
+              projects: ListMetadata,
+              fetchedAt?: string,
+            ) {
+              const nextCursor =
+                issueResult.nextPage === null && milestoneResult.nextPage === null
+                  ? null
+                  : encodeCursor({
+                      v: 2,
+                      state,
+                      host: scope.host,
+                      repository: scope.repository,
+                      accountId: identity.accountId,
+                      issuePage: issueResult.nextPage,
+                      milestonePage: milestoneResult.nextPage,
+                    });
+              return {
+                repository: { host: scope.host, repository: scope.repository },
+                viewer: { accountId: identity.accountId, login: identity.viewer },
+                fetchedAt: fetchedAt ?? DateTime.formatIso(yield* DateTime.now),
+                issues: issueResult.items.map((issue) => ({
+                  ...issue,
+                  ...projects.get(issue.number),
+                  projects: projects.get(issue.number)?.projects ?? [],
+                })),
+                milestones: milestoneResult.items,
+                nextCursor,
+                issuesComplete: issueResult.nextPage === null,
+                milestonesComplete: milestoneResult.nextPage === null,
+              } satisfies IssueListResultType;
+            });
+            const read = Effect.gen(function* () {
+              const issueRead = yield* (
+                issuePage === null
+                  ? Effect.succeed<IssuePageResult>({ items: [], nextPage: null })
+                  : listIssuePage(scope, pages.issues, state, issuePage)
+              ).pipe(Effect.forkChild);
+              const milestoneRead = yield* (
                 milestonePage === null
-                  ? Effect.succeed({ items: [], nextPage: null })
-                  : listMilestonePage(scope, pages.milestones, state, milestonePage),
-                readIssueListMetadata(
-                  scope,
-                  issueResult.items.map((issue) => issue.number),
-                  input.roadmap === true,
-                ).pipe(Effect.provideService(GitHubApi.GitHubApi, api)),
-              ],
-              { concurrency: "unbounded" },
+                  ? Effect.succeed<PageResult<IssueMilestone>>({ items: [], nextPage: null })
+                  : listMilestonePage(scope, pages.milestones, state, milestonePage)
+              ).pipe(Effect.forkChild);
+              const issueResult = yield* Fiber.join(issueRead);
+              const [milestoneResult, projects] = yield* Effect.all(
+                [
+                  Fiber.join(milestoneRead),
+                  readIssueListMetadata(
+                    scope,
+                    issueResult.items.map((issue) => issue.number),
+                    input.roadmap === true,
+                  ).pipe(Effect.provideService(GitHubApi.GitHubApi, api)),
+                ],
+                { concurrency: "unbounded" },
+              );
+              const result = yield* assemble(issueResult, milestoneResult, projects);
+              // Commit only a complete read, so a failed refresh keeps the last good page.
+              if (generation !== repositoryGeneration(scope)) return result;
+              if (issueEndpoint !== null)
+                pages.issues.set(issueEndpoint, issueResult.etag, {
+                  ...issueResult,
+                  generation,
+                  fetchedAt: result.fetchedAt,
+                  metadata: {
+                    ...(pages.issues.get(issueEndpoint)?.page.generation === generation
+                      ? pages.issues.get(issueEndpoint)?.page.metadata
+                      : undefined),
+                    [mode]: projects,
+                  },
+                });
+              if (milestoneEndpoint !== null)
+                pages.milestones.set(milestoneEndpoint, milestoneResult.etag, {
+                  ...milestoneResult,
+                  generation,
+                  fetchedAt: result.fetchedAt,
+                });
+              return result;
+            });
+            if (
+              (issuePage !== null && cachedIssues?.generation !== generation) ||
+              (milestonePage !== null && cachedMilestones?.generation !== generation) ||
+              cachedMetadata === undefined
+            ) {
+              return yield* read;
+            }
+            const cached = yield* assemble(
+              cachedIssues ?? { items: [], nextPage: null },
+              cachedMilestones ?? { items: [], nextPage: null },
+              cachedMetadata,
+              cachedIssues?.fetchedAt ?? cachedMilestones?.fetchedAt,
             );
-            const nextCursor =
-              issueResult.nextPage === null && milestoneResult.nextPage === null
-                ? null
-                : encodeCursor({
-                    v: 2,
-                    state,
-                    host: scope.host,
-                    repository: scope.repository,
-                    accountId: identity.accountId,
-                    issuePage: issueResult.nextPage,
-                    milestonePage: milestoneResult.nextPage,
-                  });
-            return {
-              repository: { host: scope.host, repository: scope.repository },
-              viewer: { accountId: identity.accountId, login: identity.viewer },
-              fetchedAt: DateTime.formatIso(yield* DateTime.now),
-              issues: issueResult.items.map((issue) => ({
-                ...issue,
-                ...projects.get(issue.number),
-                projects: projects.get(issue.number)?.projects ?? [],
-              })),
-              milestones: milestoneResult.items,
-              nextCursor,
-              issuesComplete: issueResult.nextPage === null,
-              milestonesComplete: milestoneResult.nextPage === null,
-            } satisfies IssueListResultType;
+            const refreshKey = `${generation}:${state}:${issuePage}:${milestonePage}:${mode}`;
+            if (!pages.refreshing.has(refreshKey)) {
+              pages.refreshing.add(refreshKey);
+              yield* Effect.gen(function* () {
+                // Hold the repository lease until refresh completes, beyond this RPC's scope.
+                yield* repositoryPages(scope, identity.credentialFingerprint);
+                const fresh = yield* read;
+                if (
+                  generation === repositoryGeneration(scope) &&
+                  !sameIssueList(cached, { ...fresh, fetchedAt: cached.fetchedAt })
+                ) {
+                  yield* SubscriptionRef.update(refreshes, (revision) => revision + 1);
+                }
+              }).pipe(
+                Effect.scoped,
+                Effect.provideService(SourceControlRateLimit.Interactive, false),
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not refresh cached issue list", error),
+                ),
+                Effect.ensuring(Effect.sync(() => pages.refreshing.delete(refreshKey))),
+                Effect.forkIn(serviceScope),
+              );
+            }
+            return cached;
           }).pipe(Effect.scoped),
       )
       .pipe(
@@ -1753,6 +1882,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, (identity) =>
         Effect.gen(function* () {
           const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
+          const generation = repositoryGeneration(scope);
           const issues: IssueSummaryType[] = [];
           let page: number | null = 1;
           for (let count = 0; count < 10 && page !== null; count++) {
@@ -1763,6 +1893,12 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               page,
               input.milestoneNumber,
             );
+            if (generation === repositoryGeneration(scope))
+              pages.issues.set(
+                issueListEndpoint(scope, "all", page, input.milestoneNumber),
+                result.etag,
+                { ...result, generation },
+              );
             issues.push(...result.items);
             page = result.nextPage;
           }
@@ -2048,6 +2184,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
           ),
         ),
     );
+    if (input.method !== undefined) advanceRepositoryGeneration(scope);
     if (response.truncated)
       return yield* readError(
         "detail",
@@ -2069,6 +2206,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     };
   });
   return IssueService.of({
+    refreshes: SubscriptionRef.changes(refreshes),
     repositoryRest,
     readChangeState,
     createIssue,

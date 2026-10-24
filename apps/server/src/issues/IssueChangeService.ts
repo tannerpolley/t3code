@@ -14,6 +14,7 @@ import {
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -567,6 +568,7 @@ const make = Effect.gen(function* () {
         ? sql<Row>`SELECT * FROM issue_changes WHERE requesting_thread_id = ${input.threadId} ORDER BY decision = 'pending' DESC, rowid DESC LIMIT 100`
         : sql<Row>`SELECT change.* FROM issue_changes change JOIN issue_change_targets target ON target.change_id = change.change_id WHERE target.host = ${input.host.toLowerCase()} AND target.repository = ${input.repository.toLowerCase()} AND target.issue_number = ${input.number} ORDER BY change.decision = 'pending' DESC, change.rowid DESC LIMIT 100`
       ).pipe(
+        NodeSqliteClient.readOnly,
         Effect.mapError(storageError),
         Effect.flatMap((rows) => Effect.forEach(rows, fromRow)),
       ),

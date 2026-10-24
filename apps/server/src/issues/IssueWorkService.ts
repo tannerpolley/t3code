@@ -32,6 +32,8 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Context from "effect/Context";
 import { agentWorktreeName } from "@t3tools/shared/git";
 import {
@@ -163,6 +165,7 @@ export const layer = Layer.effect(
     const projects = yield* ProjectService;
     const issues = yield* IssueService;
     const store = yield* IssueWorkStore;
+    const sql = yield* SqlClient.SqlClient;
     const launch = yield* ThreadLaunchService;
     const threads = yield* ThreadManagementService;
     const settings = yield* ServerSettingsService;
@@ -670,8 +673,10 @@ export const layer = Layer.effect(
         };
       });
 
-    const repositoryStatus: IssueWorkService["Service"]["repositoryStatus"] = (input) =>
-      Effect.gen(function* () {
+    const repositoryStatus: IssueWorkService["Service"]["repositoryStatus"] = Effect.fn(
+      "IssueWorkService.repositoryStatus",
+    )(
+      function* (input) {
         const owner = yield* store.repositoryOwnerByRef(input);
         return {
           rootThreadId: owner?.rootThreadId ?? null,
@@ -681,7 +686,10 @@ export const layer = Layer.effect(
             owner === null ? 0 : yield* store.readOnlySlotsInUse(owner.rootThreadId),
           queue: yield* store.queue(input),
         };
-      });
+      },
+      (reads) => sql.withTransaction(reads).pipe(NodeSqliteClient.readOnly),
+      Effect.mapError(mapError),
+    );
     const deliverQueuedIssue = (rootThreadId: ThreadId, key: string) =>
       threads
         .dispatch({
