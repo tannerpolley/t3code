@@ -17,7 +17,16 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { CommandId, EnvironmentId, MessageId, ProviderDriverKind, ProviderInstanceId, ScheduledTaskId, ThreadId, type ServerProvider } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ScheduledTaskId,
+  ThreadId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -37,7 +46,15 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { adapter, decodeIssueCancellation, decodeIssueRequest, makeHarness, modelSelection, otherProjectId, projectId } from "./ThreadLaunchService.testHarness.ts";
+import {
+  adapter,
+  decodeIssueCancellation,
+  decodeIssueRequest,
+  makeHarness,
+  modelSelection,
+  otherProjectId,
+  projectId,
+} from "./ThreadLaunchService.testHarness.ts";
 
 describe("fresh-thread repository handoff", () => {
   const reference = { host: "github.com", repository: "tannerpolley/t3code" };
@@ -2365,7 +2382,7 @@ describe("fresh-thread repository handoff", () => {
         );
         const inventory = (yield* threads.getThreadRecords(nextId, ["messages"])).messages[0]!.text;
         assert.include(inventory, "Completed attempts:");
-        assert.include(inventory, "Evidence retained.");
+        assert.notInclude(inventory, "Evidence retained.");
         assert.include(inventory, "#9 Issue 9");
         const milestone = yield* mcp
           .workMilestone(scope(rootId), {

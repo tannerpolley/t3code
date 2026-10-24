@@ -334,13 +334,17 @@ export const layer = Layer.effect(
         sql<{ section: string; detail: string }>`
           SELECT 'Completed attempts' AS section,
             '#' || json_extract(child.payload_json, '$.linkedIssue.number') || ' — ' || task.status
-            || ' — thread ' || child.thread_id || char(10)
-            || COALESCE(substr(json_extract(task.payload_json, '$.result'), 1, 6000), '') AS detail
+            || ' — thread ' || child.thread_id AS detail
           FROM orchestration_v2_projection_subagents task
           JOIN orchestration_v2_projection_threads child ON child.thread_id = task.child_thread_id
           WHERE task.origin = 'app_owned' AND task.status IN ('completed', 'failed', 'cancelled', 'interrupted')
             AND json_extract(child.payload_json, '$.linkedIssue.host') = ${repository.host}
             AND json_extract(child.payload_json, '$.linkedIssue.repositoryId') = ${repository.repositoryId}
+            AND EXISTS (
+              SELECT 1 FROM json_each(child.payload_json, '$.pullRequests') pr
+              WHERE json_extract(pr.value, '$.source') <> 'stack-dismissed'
+                AND json_extract(pr.value, '$.snapshot.state') = 'open'
+            )
           UNION ALL
           SELECT 'Remaining issue requests', '#' || request.issue_number || ' — ' || json_extract(request.payload_json, '$.issue.title')
           FROM orchestration_v2_projection_issue_work_requests request
