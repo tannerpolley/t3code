@@ -93,6 +93,7 @@ const adapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 interface HarnessOptions {
+  readonly databaseLayer?: ReturnType<typeof SqlitePersistence.layerFromPath>;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly projectRepositoryIdentity?: import("@t3tools/contracts").RepositoryIdentity;
@@ -119,7 +120,7 @@ interface HarnessOptions {
 }
 
 function makeHarness(options: HarnessOptions = {}) {
-  const layerDatabase = SqlitePersistence.layerMemory;
+  const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(options.adapters ?? [adapter]);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "thread-launch" },

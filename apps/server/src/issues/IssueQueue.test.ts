@@ -19,6 +19,13 @@ import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Fiber from "effect/Fiber";
+import * as Statement from "effect/sql/Statement";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { sourceMarker } from "./IssueInboxRules.ts";
 import * as TestClock from "effect/testing/TestClock";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -82,8 +89,13 @@ const projectRepositoryIdentity = {
     remoteUrl: "https://github.com/owner/repo.git",
   },
 };
-function harness(issueReads = reads, candidateScan?: Deferred.Deferred<void>) {
+function harness(
+  issueReads = reads,
+  candidateScan?: Deferred.Deferred<void>,
+  databaseLayer?: ReturnType<typeof SqlitePersistence.layerFromPath>,
+) {
   const base = makeHarness({
+    databaseLayer,
     issueServiceLayer: issueReads,
     projectRepositoryIdentity,
     localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
@@ -127,6 +139,102 @@ function harness(issueReads = reads, candidateScan?: Deferred.Deferred<void>) {
     ),
   ).pipe(Layer.provideMerge(dependencies));
 }
+
+it.effect("hands SQLite connections to waiting queue calls before new borrows", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-issue-141-" });
+    const observations: Record<string, string | undefined> = {};
+    for (const connection of ["reader", "writer"] as const) {
+      yield* Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const sql = yield* SqlClient.SqlClient;
+        yield* createRoot(false);
+        const held = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const waiting = yield* Deferred.make<void>();
+        let arrivals = 0;
+        const order: string[] = [];
+        const onConnection = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          connection === "reader" ? effect.pipe(NodeSqliteClient.readOnly) : effect;
+        const producer = yield* sql
+          .withTransaction(
+            Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release))),
+          )
+          .pipe(
+            onConnection,
+            Effect.andThen(
+              Effect.gen(function* () {
+                for (let i = 0; i < 20; i++) {
+                  yield* sql`SELECT 1`.pipe(onConnection);
+                  order.push(`producer:${i}`);
+                }
+              }),
+            ),
+            Effect.forkChild,
+          );
+        yield* Deferred.await(held);
+        const queues = yield* Effect.forEach([1, 2, 3], (number) => {
+          let arrived = false;
+          let acquired = false;
+          const observe: Statement.Transformer = (statement, _sql, _fiber, span) => {
+            const end = span.end.bind(span);
+            span.end = (time, exit) => {
+              if (!acquired && span.attributes.get("db.connection") === connection) {
+                acquired = true;
+                order.push(`queue:${number}`);
+              }
+              end(time, exit);
+            };
+            const query = statement.compile()[0];
+            if (
+              !arrived &&
+              (connection === "reader" ||
+                query.includes("SELECT root_thread_id, project_id, paused, revision"))
+            ) {
+              arrived = true;
+              arrivals++;
+              if (arrivals === 3)
+                return Deferred.succeed(waiting, undefined).pipe(Effect.as(statement));
+            }
+            return Effect.succeed(statement);
+          };
+          return service
+            .queueIssue(input(number))
+            .pipe(
+              Effect.provideService(Statement.CurrentTransformer, observe),
+              Effect.provideService(Statement.SpanPropagationEnabled, true),
+              (effect) => Effect.forkChild(effect, { startImmediately: true }),
+            );
+        });
+        yield* Deferred.await(waiting);
+        const cancelled = yield* sql
+          .withTransaction(sql`SELECT 1`)
+          .pipe(onConnection, (effect) => Effect.forkChild(effect, { startImmediately: true }));
+        yield* Fiber.interrupt(cancelled);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(producer);
+        yield* Effect.forEach(queues, Fiber.join);
+        observations[connection] = order[0]?.split(":")[0];
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const root = yield* threads.getThreadRecords(rootId, ["runs"]);
+        assert.lengthOf(root.runs, 1);
+        assert.lengthOf((yield* service.repositoryStatus(reference)).queue!, 3);
+        yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+      }).pipe(
+        Effect.provide(
+          harness(
+            reads,
+            undefined,
+            SqlitePersistence.layerFromPath(path.join(directory, `${connection}.sqlite`)),
+          ),
+        ),
+      );
+    }
+    assert.deepEqual(observations, { reader: "queue", writer: "queue" });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 const rootId = ThreadId.make("queue-root");
 const input = (number: number, key = `enqueue:${number}`) => ({
   ...reference,
@@ -1291,13 +1399,14 @@ it.effect("rebuilds the same queue from notice, terminal, claim, retry and remov
     const threads = yield* ThreadManagement.ThreadManagementService;
     const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
     const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
     const run = yield* deliverFirst;
     yield* worker.drain();
     const verify = Effect.gen(function* () {
       const before = yield* store.queue(reference);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* store.queue(reference), before);
-    });
+    }).pipe(sql.withTransaction);
     yield* verify;
     yield* finish(run, "rebuild-failed-notice", "failed");
     yield* worker.drain();

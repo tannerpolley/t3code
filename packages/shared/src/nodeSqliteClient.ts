@@ -16,7 +16,7 @@ import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
+import * as PartitionedSemaphore from "effect/PartitionedSemaphore";
 import * as Context from "effect/Context";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
@@ -1142,11 +1142,12 @@ const make = Effect.fn("makeWithDatabase")(function* (
     });
   });
 
-  const semaphore = yield* Semaphore.make(1);
+  // One partition reserves released permits for waiters; new borrows must not steal them.
+  const semaphore = yield* PartitionedSemaphore.make<void>({ permits: 1 });
   const connection = yield* makeConnection;
   const acquireReader =
     options.readerWorker && isFileDatabase ? yield* makeReader(options) : undefined;
-  const readerSemaphore = yield* Semaphore.make(1);
+  const readerSemaphore = yield* PartitionedSemaphore.make<void>({ permits: 1 });
 
   const writer = { name: "writer" as const, lock: semaphore, connection };
   let activeWriter: ConnectionOwner | undefined;
@@ -1197,7 +1198,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
               )
             : useConnection;
         if (!options.checkpointWorker || target.name !== "writer") {
-          return target.lock.withPermits(1)(useOwnedConnection);
+          return target.lock.withPermit(undefined)(useOwnedConnection);
         }
         const writerUse = Effect.onExit(useOwnedConnection, (exit) =>
           Effect.sync(() => {
@@ -1209,7 +1210,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
         return Effect.flatMap(target.lock.withPermitsIfAvailable(1)(writerUse), (result) =>
           Option.isSome(result)
             ? Effect.succeed(result.value)
-            : target.lock.withPermits(1)(
+            : target.lock.withPermit(undefined)(
                 Effect.andThen(
                   // Failed SQL also consumes the batch; cancellation hands off immediately.
                   Effect.suspend(() => {
@@ -1235,19 +1236,22 @@ const make = Effect.fn("makeWithDatabase")(function* (
       const pending = fiber.getRef(TransactionAcquire);
       const ownerAtWaitStart = target.name === "writer" ? activeWriter : undefined;
       const owner = target.name === "writer" ? connectionOwner(fiber) : undefined;
-      const acquire = Effect.tap((pending?.restore ?? restore)(target.lock.take(1)), () => {
-        if (target.name === "writer") activeWriter = owner;
-        if (pending !== undefined) {
-          pending.acquired = acquired(target, clock, start);
-          pending.ownerAtWaitStart = ownerAtWaitStart;
-        }
-        return Scope.addFinalizer(
-          scope,
-          Effect.sync(() => {
-            if (target.name === "writer" && activeWriter === owner) activeWriter = undefined;
-          }).pipe(Effect.andThen(target.lock.release(1))),
-        );
-      });
+      const acquire = Effect.tap(
+        (pending?.restore ?? restore)(target.lock.take(undefined, 1)),
+        () => {
+          if (target.name === "writer") activeWriter = owner;
+          if (pending !== undefined) {
+            pending.acquired = acquired(target, clock, start);
+            pending.ownerAtWaitStart = ownerAtWaitStart;
+          }
+          return Scope.addFinalizer(
+            scope,
+            Effect.sync(() => {
+              if (target.name === "writer" && activeWriter === owner) activeWriter = undefined;
+            }).pipe(Effect.andThen(target.lock.release(1))),
+          );
+        },
+      );
       return Effect.as(
         // A scheduler yield after taking the permit must not precede its release finalizer.
         Effect.provideService(acquire, Scheduler.PreventSchedulerYield, true),
