@@ -393,6 +393,7 @@ interface PageResult<A> {
   readonly nextPage: number | null;
   readonly etag?: string | undefined;
   readonly fetchedAt?: string;
+  readonly generation?: number;
 }
 
 type ListMetadata = Effect.Success<ReturnType<typeof readIssueListMetadata>>;
@@ -888,6 +889,14 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const serviceScope = yield* Effect.scope;
   const refreshes = yield* SubscriptionRef.make(0);
+  const repositoryGenerations = new Map<string, number>();
+  const repositoryKey = (scope: IssueRepositoryScope) =>
+    JSON.stringify([scope.host, scope.repository]);
+  const repositoryGeneration = (scope: IssueRepositoryScope) =>
+    repositoryGenerations.get(repositoryKey(scope)) ?? 0;
+  const advanceRepositoryGeneration = (scope: IssueRepositoryScope) => {
+    repositoryGenerations.set(repositoryKey(scope), repositoryGeneration(scope) + 1);
+  };
   const makePageCaches = () => ({
     issues: new IssueListPageCache<IssuePageResult>(),
     refreshing: new Set<string>(),
@@ -991,6 +1000,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         ),
       ),
     );
+    if (input.requestMethod !== undefined) advanceRepositoryGeneration(input.scope);
     if (response === null) {
       return yield* readError(
         input.operation,
@@ -1431,7 +1441,6 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     state: IssueListState,
     page: number,
     milestoneNumber?: number,
-    commit = true,
   ): Effect.fn.Return<IssuePageResult, IssueReadError> {
     const endpoint = issueListEndpoint(scope, state, page, milestoneNumber);
     const cached = cache.get(endpoint);
@@ -1454,8 +1463,11 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       );
     }
     if (response.status === 304 && cached !== undefined) {
-      const result = { ...cached.page, nextPage, etag: response.headers["etag"] ?? cached.etag };
-      if (commit) cache.set(endpoint, result.etag, result);
+      const result = {
+        ...cached.page,
+        nextPage,
+        etag: response.headers["etag"] ?? cached.etag,
+      };
       return result;
     }
     const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawIssueSchema)))(
@@ -1476,7 +1488,6 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       etag: response.headers["etag"],
       metadata: cached?.page.metadata,
     };
-    if (commit) cache.set(endpoint, pageResult.etag, pageResult);
     return pageResult;
   });
 
@@ -1560,6 +1571,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               );
             }
             const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
+            const generation = repositoryGeneration(scope);
             const issuePage = cursor === null ? 1 : cursor.issuePage;
             const milestonePage = cursor === null ? 1 : cursor.milestonePage;
             const issueEndpoint =
@@ -1611,7 +1623,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               const issueRead = yield* (
                 issuePage === null
                   ? Effect.succeed<IssuePageResult>({ items: [], nextPage: null })
-                  : listIssuePage(scope, pages.issues, state, issuePage, undefined, false)
+                  : listIssuePage(scope, pages.issues, state, issuePage)
               ).pipe(Effect.forkChild);
               const milestoneRead = yield* (
                 milestonePage === null
@@ -1632,22 +1644,30 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               );
               const result = yield* assemble(issueResult, milestoneResult, projects);
               // Commit only a complete read, so a failed refresh keeps the last good page.
+              if (generation !== repositoryGeneration(scope)) return result;
               if (issueEndpoint !== null)
                 pages.issues.set(issueEndpoint, issueResult.etag, {
                   ...issueResult,
+                  generation,
                   fetchedAt: result.fetchedAt,
-                  metadata: { ...pages.issues.get(issueEndpoint)?.page.metadata, [mode]: projects },
+                  metadata: {
+                    ...(pages.issues.get(issueEndpoint)?.page.generation === generation
+                      ? pages.issues.get(issueEndpoint)?.page.metadata
+                      : undefined),
+                    [mode]: projects,
+                  },
                 });
               if (milestoneEndpoint !== null)
                 pages.milestones.set(milestoneEndpoint, milestoneResult.etag, {
                   ...milestoneResult,
+                  generation,
                   fetchedAt: result.fetchedAt,
                 });
               return result;
             });
             if (
-              (issuePage !== null && cachedIssues === undefined) ||
-              (milestonePage !== null && cachedMilestones === undefined) ||
+              (issuePage !== null && cachedIssues?.generation !== generation) ||
+              (milestonePage !== null && cachedMilestones?.generation !== generation) ||
               cachedMetadata === undefined
             ) {
               return yield* read;
@@ -1658,14 +1678,17 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               cachedMetadata,
               cachedIssues?.fetchedAt ?? cachedMilestones?.fetchedAt,
             );
-            const refreshKey = `${state}:${issuePage}:${milestonePage}:${mode}`;
+            const refreshKey = `${generation}:${state}:${issuePage}:${milestonePage}:${mode}`;
             if (!pages.refreshing.has(refreshKey)) {
               pages.refreshing.add(refreshKey);
               yield* Effect.gen(function* () {
                 // Hold the repository lease until refresh completes, beyond this RPC's scope.
                 yield* repositoryPages(scope, identity.credentialFingerprint);
                 const fresh = yield* read;
-                if (!sameIssueList(cached, { ...fresh, fetchedAt: cached.fetchedAt })) {
+                if (
+                  generation === repositoryGeneration(scope) &&
+                  !sameIssueList(cached, { ...fresh, fetchedAt: cached.fetchedAt })
+                ) {
                   yield* SubscriptionRef.update(refreshes, (revision) => revision + 1);
                 }
               }).pipe(
@@ -1859,6 +1882,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, (identity) =>
         Effect.gen(function* () {
           const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
+          const generation = repositoryGeneration(scope);
           const issues: IssueSummaryType[] = [];
           let page: number | null = 1;
           for (let count = 0; count < 10 && page !== null; count++) {
@@ -1869,6 +1893,12 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               page,
               input.milestoneNumber,
             );
+            if (generation === repositoryGeneration(scope))
+              pages.issues.set(
+                issueListEndpoint(scope, "all", page, input.milestoneNumber),
+                result.etag,
+                { ...result, generation },
+              );
             issues.push(...result.items);
             page = result.nextPage;
           }
@@ -2154,6 +2184,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
           ),
         ),
     );
+    if (input.method !== undefined) advanceRepositoryGeneration(scope);
     if (response.truncated)
       return yield* readError(
         "detail",

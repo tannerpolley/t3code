@@ -755,6 +755,83 @@ it.effect.each([
     }),
 );
 
+it.effect(
+  "waits for post-mutation pages and discards an older in-flight refresh across credentials",
+  () =>
+    Effect.gen(function* () {
+      const oldStarted = yield* Deferred.make<void>();
+      const releaseOld = yield* Deferred.make<void>();
+      const freshStarted = yield* Deferred.make<void>();
+      const releaseFresh = yield* Deferred.make<void>();
+      let metadataReads = 0;
+      let credential = "reader";
+      const harness = makeHarness({
+        credentialFingerprint: () => credential,
+        responses: [
+          httpResponse([rawIssue(7)], { etag: '"open"' }),
+          httpResponse([]),
+          httpResponse({ data: {} }),
+          httpResponse([rawIssue(7)], { etag: '"open"' }),
+          httpResponse([]),
+          httpResponse({ data: {} }),
+          httpResponse({}),
+          httpResponse([rawIssue(7, { state: "closed" })], { etag: '"closed"' }),
+          httpResponse([]),
+          httpResponse({ data: {} }),
+          httpResponse([rawIssue(7, { state: "closed" })], { etag: '"closed"' }),
+          httpResponse([]),
+          httpResponse({ data: {} }),
+        ],
+        onRequest: (call) => {
+          if (!call.url.endsWith("/graphql")) return Effect.void;
+          metadataReads++;
+          if (metadataReads === 2)
+            return Deferred.succeed(oldStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseOld)),
+            );
+          if (metadataReads === 3)
+            return Deferred.succeed(freshStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseFresh)),
+            );
+          return Effect.void;
+        },
+      });
+      const issues = yield* service(harness);
+      const revisions: number[] = [];
+      yield* issues.refreshes.pipe(
+        Stream.runForEach((revision) =>
+          Effect.sync(() => {
+            revisions.push(revision);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      const input = { ...listInput, state: "all" as const };
+      const first = yield* issues.list(input);
+      assert.deepEqual(yield* issues.list(input), first);
+      yield* Deferred.await(oldStarted);
+      credential = "writer";
+      yield* issues.setState({ ...listInput, number: 7, state: "closed" });
+      credential = "reader";
+      const afterClose = yield* issues.list(input).pipe(Effect.forkChild);
+      yield* TestClock.adjust(0);
+      assert.isUndefined(afterClose.pollUnsafe(), "a post-mutation list must wait for fresh pages");
+      yield* Deferred.await(freshStarted);
+      yield* Deferred.succeed(releaseFresh, undefined);
+      assert.equal((yield* Fiber.join(afterClose)).issues[0]?.state, "closed");
+      assert.equal(harness.calls.filter((call) => call.url.includes("/issues?")).length, 3);
+      yield* Deferred.succeed(releaseOld, undefined);
+      yield* TestClock.adjust(0);
+      assert.equal(
+        (yield* issues.list(input)).issues[0]?.state,
+        "closed",
+        "an obsolete refresh must not replace fresh pages",
+      );
+      yield* TestClock.adjust(0);
+      assert.deepEqual(revisions, [0], "an obsolete refresh must not publish a change");
+    }),
+);
+
 it.effect("keeps the last good pages and emits no change when a background refresh fails", () =>
   Effect.gen(function* () {
     const metadataRead = yield* Deferred.make<void>();
