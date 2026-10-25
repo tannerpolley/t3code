@@ -1,3 +1,4 @@
+import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
 import { RegistryContext } from "@effect/atom-react";
 
 import * as DateTime from "effect/DateTime";
@@ -5,7 +6,7 @@ import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { render, stubGlobal, type Screen } from "../../test/render";
+import { fakeTimers, render, stubGlobal, type Screen } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
@@ -207,18 +208,23 @@ it("uses bounded tags across threads and environments, replaces repeat alerts, a
   state.shells.set(environmentId, shell({ id: threadId }, { id: otherThreadId }));
   state.shells.set(otherEnvironmentId, shell({ id: threadId }));
   await app.render();
+  using _timers = fakeTimers();
+  const renderAndFlush = async () => {
+    await app.render();
+    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+  };
   state.shells.set(environmentId, shell(completed(threadId), { id: otherThreadId }));
-  await app.render();
+  await renderAndFlush();
   expect(state.badge).toHaveBeenLastCalledWith(1);
   state.shells.set(environmentId, shell(completed(threadId), completed(otherThreadId)));
   state.shells.set(otherEnvironmentId, shell(completed(threadId)));
-  await app.render();
+  await renderAndFlush();
   expect(state.badge).toHaveBeenLastCalledWith(3);
   state.shells.set(
     environmentId,
     shell(completed(threadId, "2026-09-13T08:01:00Z"), completed(otherThreadId)),
   );
-  await app.render();
+  await renderAndFlush();
   expect(state.badge).toHaveBeenLastCalledWith(3);
   expect(TestNotification.sent).toHaveLength(4);
   const [first, otherThread, otherEnvironment, replacement] = TestNotification.sent;
@@ -237,20 +243,12 @@ it("uses bounded tags across threads and environments, replaces repeat alerts, a
   expect(otherThread!.close).not.toHaveBeenCalled();
   expect(otherEnvironment!.close).not.toHaveBeenCalled();
   expect(replacement!.close).not.toHaveBeenCalled();
-  await expect
-    .poll(
-      () =>
-        [otherThread, otherEnvironment, replacement].every(
-          (notification) => notification!.close.mock.calls.length > 0,
-        ),
-      { timeout: 2_000 },
-    )
-    .toBe(true);
+  await vi.advanceTimersByTimeAsync(1_000);
   expect(
     TestNotification.sent.every((notification) => notification.close.mock.calls.length > 0),
   ).toBe(true);
   focused = false;
   state.shells.set(otherEnvironmentId, shell(completed(threadId, "2026-09-13T08:02:00Z")));
-  await app.render();
+  await renderAndFlush();
   expect(state.badge).toHaveBeenLastCalledWith(1);
 });

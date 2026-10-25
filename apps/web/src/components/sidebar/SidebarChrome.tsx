@@ -173,7 +173,8 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
-  const issuesSupported = useIssuesSupported();
+  const issuesPageEnabled = useClientSettings((settings) => settings.issuesPage);
+  const issuesSupported = useIssuesSupported() && issuesPageEnabled;
   const issuePageScope = useIssuePageScope();
   const closeMobileSidebar = () => {
     if (isMobile) {

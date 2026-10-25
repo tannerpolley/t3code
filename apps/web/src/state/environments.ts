@@ -9,7 +9,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { environmentCatalog } from "../connection/catalog";
-import { useClientSettings } from "../hooks/useSettings";
 import {
   environmentPresentations,
   environmentSummaries,
@@ -99,10 +98,8 @@ export function usePullRequestsSupported() {
   return useAtomValue(environmentSummaries.pullRequestsSupportedAtom);
 }
 
-/** Whether the sidebar offers the Issues page: an environment supports it and the user kept it on. */
 export function useIssuesSupported() {
-  const supported = useAtomValue(environmentSummaries.issuesSupportedAtom);
-  return useClientSettings((settings) => settings.issuesPage) && supported;
+  return useAtomValue(environmentSummaries.issuesSupportedAtom);
 }
 
 export function useEnvironmentMachines() {

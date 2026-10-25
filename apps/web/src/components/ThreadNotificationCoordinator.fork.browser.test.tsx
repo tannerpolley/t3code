@@ -236,7 +236,8 @@ describe("thread notifications", () => {
     state.mode = "notifications";
     state.focused = false;
     await app.render();
-    await app.complete();
+    state.input = true;
+    await app.render();
     const notification: EventTarget = state.notification.mock.results[0]?.value;
     notification.dispatchEvent(new Event("click"));
     expect(revealWindow).toHaveBeenCalledTimes(1);

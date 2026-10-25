@@ -137,7 +137,9 @@ describe("groupRunningSubagentsByParent", () => {
     environmentId: localEnvironmentId,
     source: { creationSource: overrides.native ? ("provider" as const) : ("mcp" as const) },
     pendingBackgroundTasks: [
-      ...(overrides.backgroundWork ? [{ taskId: "bash-1", kind: "monitor" as const }] : []),
+      ...(overrides.backgroundWork
+        ? [{ taskId: "bash-1", kind: "monitor" as const, awaited: true as const }]
+        : []),
       ...(overrides.pendingTaskFor
         ? [
             {
@@ -171,7 +173,12 @@ describe("groupRunningSubagentsByParent", () => {
     const parent = {
       ...child("parent"),
       pendingBackgroundTasks: [
-        { taskId: "monitor", kind: "monitor" as const, ownerThreadId: finished.id },
+        {
+          taskId: "monitor",
+          kind: "monitor" as const,
+          awaited: true as const,
+          ownerThreadId: finished.id,
+        },
       ],
     };
     expect(
