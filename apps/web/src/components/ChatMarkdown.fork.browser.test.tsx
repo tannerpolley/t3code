@@ -223,18 +223,18 @@ describe("ChatMarkdown streaming", () => {
     expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith("echo hello");
     onRunShellCommand.mockClear();
 
-    for (const [fence, command] of [
-      ["```bash\necho hello\n```", "echo hello"],
-      ["~~~bash\necho tilde\n~~~", "echo tilde"],
-      ["> ```bash\n> echo quote\n> ```", "echo quote"],
-      ["````bash\necho four\n````", "echo four"],
-      ["```bash\necho one\necho two\n```", "echo one\necho two"],
-      ["```bash\necho trailing\n\n```", "echo trailing"],
-    ]) {
+    for (const [fence, command, terminalEnabled] of [
+      ["```bash\necho hello\n```", "echo hello", true],
+      ["~~~bash\necho tilde\n~~~", "echo tilde", true],
+      ["> ```bash\n> echo quote\n> ```", "echo quote", true],
+      ["````bash\necho four\n````", "echo four", true],
+      ["```bash\necho one\necho two\n```", "echo one\necho two", false],
+      ["```bash\necho trailing\n\n```", "echo trailing", false],
+    ] as const) {
       inlineMocks.output = { ...emptyInlineShellOutput, status: "running" };
       await rerender(message(fence!));
       expect(inlineButtons()).toHaveLength(1);
-      expect(terminalButtons()).toHaveLength(command!.includes("\n") ? 0 : 1);
+      expect(terminalButtons()).toHaveLength(terminalEnabled ? 1 : 0);
       await act(async () => inlineButtons()[0]!.click());
       expect(inlineMocks.run.mock.calls.at(-1)?.[0]).toMatchObject({
         environmentId,

@@ -4,7 +4,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Check, Copy } from "lucide";
 import { PlayIcon, WrapTextIcon } from "lucide-react";
 import { toHtml } from "hast-util-to-html";
-import React, { use, useEffect, useRef, useState, type ReactNode } from "react";
+import React, { use, useEffect, useState, type ReactNode } from "react";
 
 import { getClientSettings } from "../../hooks/useSettings";
 import type { DiffThemeName } from "../../lib/diffRendering";
@@ -28,7 +28,6 @@ import {
   estimateHighlightedSize,
   extractFenceLanguage,
 } from "./MarkdownCodeBlock.logic";
-import { reportMarkdownActionFailure } from "./markdownActionFailure";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
@@ -175,7 +174,7 @@ export function MarkdownCodeBlock({
     // Control and invisible format characters (bidi overrides, zero-width) can
     // make the rendered command differ from what the terminal would receive.
     !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1).replace(/[\n\t]/g, ""));
-  const canRunInTerminal = canRun && !/[\p{Cc}\p{Cf}]/u.test(command);
+  const canRunInTerminal = canRun && !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
 
   const copyButton = (
     <Tooltip>
