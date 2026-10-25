@@ -93,44 +93,44 @@ export function mergeShellSnapshotProjects(
 
   if (isEnrichment) {
     const nextById = new Map(next.projects.map((project) => [project.id, project] as const));
-    return {
-      ...previous,
-      projects: previous.projects.map((project) => {
-        const candidate = nextById.get(project.id);
-        if (candidate === undefined || candidate.workspaceRoot !== project.workspaceRoot) {
+    const projects = previous.projects.map((project) => {
+      const candidate = nextById.get(project.id);
+      if (candidate === undefined || candidate.workspaceRoot !== project.workspaceRoot) {
+        return project;
+      }
+      if (resolvedRootSet?.has(project.workspaceRoot) === true) {
+        if (
+          sameRepositoryIdentity(project.repositoryIdentity, candidate.repositoryIdentity) &&
+          (candidate.repositoryIdentityResolved === undefined ||
+            candidate.repositoryIdentityResolved === project.repositoryIdentityResolved)
+        ) {
           return project;
         }
-        if (resolvedRootSet?.has(project.workspaceRoot) === true) {
-          if (
-            sameRepositoryIdentity(project.repositoryIdentity, candidate.repositoryIdentity) &&
-            (candidate.repositoryIdentityResolved === undefined ||
-              candidate.repositoryIdentityResolved === project.repositoryIdentityResolved)
-          ) {
-            return project;
-          }
-          return {
-            ...project,
-            repositoryIdentity: candidate.repositoryIdentity,
-            ...(candidate.repositoryIdentityResolved === undefined
-              ? {}
-              : { repositoryIdentityResolved: candidate.repositoryIdentityResolved }),
-          };
-        }
-        if (project.repositoryIdentity == null && candidate.repositoryIdentity != null) {
-          return {
-            ...project,
-            repositoryIdentity: candidate.repositoryIdentity,
-            ...(candidate.repositoryIdentityResolved === undefined
-              ? {}
-              : { repositoryIdentityResolved: candidate.repositoryIdentityResolved }),
-          };
-        }
-        return candidate.repositoryIdentityResolved === true &&
-          project.repositoryIdentityResolved !== true
-          ? { ...project, repositoryIdentityResolved: true }
-          : project;
-      }),
-    };
+        return {
+          ...project,
+          repositoryIdentity: candidate.repositoryIdentity,
+          ...(candidate.repositoryIdentityResolved === undefined
+            ? {}
+            : { repositoryIdentityResolved: candidate.repositoryIdentityResolved }),
+        };
+      }
+      if (project.repositoryIdentity == null && candidate.repositoryIdentity != null) {
+        return {
+          ...project,
+          repositoryIdentity: candidate.repositoryIdentity,
+          ...(candidate.repositoryIdentityResolved === undefined
+            ? {}
+            : { repositoryIdentityResolved: candidate.repositoryIdentityResolved }),
+        };
+      }
+      return candidate.repositoryIdentityResolved === true &&
+        project.repositoryIdentityResolved !== true
+        ? { ...project, repositoryIdentityResolved: true }
+        : project;
+    });
+    return projects.every((project, index) => project === previous.projects[index])
+      ? previous
+      : { ...previous, projects };
   }
 
   const previousById = new Map(previous.projects.map((project) => [project.id, project] as const));

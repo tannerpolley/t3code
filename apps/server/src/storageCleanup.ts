@@ -70,8 +70,7 @@ const decodePnpmModulesManifest = Schema.decodeUnknownEffect(
 );
 
 const DAY_MS = 86_400_000;
-// After a settle, the project's settle script needs time to open its
-// terminal, which then protects the worktree.
+// Give settle scripts time to open terminals that protect the worktree.
 const SETTLE_SCRIPT_GRACE_MS = 60_000;
 // Worktree creation can precede its thread row, including review-guide checkouts.
 const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
@@ -176,11 +175,7 @@ function worktreeOwner<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineag
   return owner;
 }
 
-/**
- * Whether the host's pull request proves this worktree's head was merged. A
- * squash or rebase merge leaves the head outside the default branch, so the
- * merged pull request then has to name this exact commit.
- */
+/** Squash/rebase merges require the merged PR to name this exact head commit. */
 export function storageCleanupPullRequestMerged(
   pullRequest: Pick<
     GitManager.GitBranchPullRequest,
@@ -357,8 +352,7 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => null),
   );
 
-  // The snapshot takes seconds on large databases, so it runs on the reader
-  // worker instead of the event loop.
+  // Large snapshots take seconds; use the reader worker instead of blocking the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
     const snapshot = yield* projections.getShellSnapshot().pipe(NodeSqliteClient.readOnly);
     const projects = yield* projectStore.listShells();
@@ -383,7 +377,6 @@ const make = Effect.gen(function* () {
     entries: StorageCleanupReportEntry[],
     canonicalPath: ReturnType<typeof makeCanonicalPath>,
   ) {
-    // Include deleted and archived threads, even those without a branch or project.
     const rows = yield* sql<{ worktreePath: string }>`
       SELECT DISTINCT json_extract(payload_json, '$.worktreePath') AS "worktreePath"
       FROM orchestration_v2_projection_threads
@@ -435,9 +428,7 @@ const make = Effect.gen(function* () {
       }
       return result;
     });
-    // Let the first walk reach its own limit so unmeasurable folders get cached.
-    // Later walks share the remaining sweep budget.
-    // Unmeasured folders still appear with an unknown size.
+    // Let the first walk time out and cache unmeasurable folders; later walks share the remaining budget.
     const now = yield* Clock.currentTimeMillis;
     const measurementDeadline = now + 30_000;
     let firstMeasurement = true;
@@ -503,9 +494,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // Whether cwd stopped being a checkout of this branch. Two small Git reads,
-  // since every worktree in a sweep is asked; statusDetailsLocal also diffs and
-  // counts.
+  // Use two small Git reads: statusDetailsLocal also diffs and counts for every worktree.
   const branchChanged = Effect.fn("StorageCleanup.branchChanged")(function* (
     cwd: string,
     branch: string | null,
@@ -517,8 +506,7 @@ const make = Effect.gen(function* () {
         cwd,
         detail,
       });
-    // Null when cwd is not a repository, or is gone. Git's own messages are
-    // matched, so they must not be translated.
+    // Return null for missing/non-repository cwd; force untranslated git diagnostics for matching.
     const read = Effect.fnUntraced(function* (args: string[], allowedExitCode?: number) {
       const result = yield* git
         .execute({
@@ -548,8 +536,7 @@ const make = Effect.gen(function* () {
       return yield* failure(
         "Git index is locked. Status will resume when the index lock is removed.",
       );
-    // Exits 1 for a detached HEAD. Reads the full ref name, which is never
-    // shortened to "heads/<branch>" when a tag shares the branch name.
+    // Detached HEAD exits 1; full refs avoid shortening when a tag shares the branch name.
     const head = yield* read(["symbolic-ref", "--quiet", "HEAD"], 1);
     if (head === null) return true;
     const ref = head.exitCode === 0 ? head.stdout.trim() : "";

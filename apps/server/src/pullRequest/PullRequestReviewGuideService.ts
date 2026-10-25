@@ -23,7 +23,7 @@ import {
 } from "@t3tools/contracts";
 import type { ReviewGuideStackLayer } from "@t3tools/provider-core/server/textGeneration";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -72,8 +72,7 @@ const make = Effect.gen(function* () {
   const serviceScope = yield* Effect.scope;
   const runs = yield* Ref.make<ReadonlyMap<string, PullRequestReviewGuideRun>>(new Map());
   let runCounter = 0;
-  // Claiming a run and storing a finished guide take turns, so a run that still owns its pull
-  // request when it checks is the one whose guide is stored: a newer claim cannot land between.
+  // Serialize claims and guide writes so a newer claim cannot steal ownership between checking and storing.
   const ownership = yield* Semaphore.make(1);
 
   const keyFor = Effect.fn("PullRequestReviewGuideService.keyFor")(function* (
@@ -101,7 +100,7 @@ const make = Effect.gen(function* () {
               {
                 projectId: ProjectId.make("own"),
                 number: key.number,
-                repository: sourceControlRepositorySelector(identity) ?? "",
+                repository: sourceControlDefinitions.repositorySelector(identity) ?? "",
               },
               identity,
             );
@@ -192,8 +191,7 @@ const make = Effect.gen(function* () {
         args: ["fetch", "--quiet", "--no-tags", "--", remote, ...args],
         timeoutMs: 5 * 60_000,
       });
-    // The host names the base branch. A name git rejects, or one that would change the refspec
-    // (a leading `+`, a `:`), is refused before it reaches `git fetch`.
+    // Reject invalid branch names and refspec operators before fetching host-provided names.
     yield* git
       .execute({
         operation: "PullRequestReviewGuideService.checkBaseBranch",
@@ -210,8 +208,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    // Fetched into a ref of this run's own: FETCH_HEAD is shared by every fetch in the
-    // workspace, so a concurrent run could otherwise measure this change from its base.
+    // FETCH_HEAD is workspace-global; isolate this run's base from concurrent fetches.
     const baseRef = `refs/t3/review-guide/${runId}/base`;
     yield* fetch([`+refs/heads/${detail.baseBranch}:${baseRef}`]);
     yield* Effect.addFinalizer(() =>
@@ -236,7 +233,7 @@ const make = Effect.gen(function* () {
           detail: `The host reported a head for #${number} that is not a commit hash.`,
         });
       }
-      // Not redundant: rev-parse prefers a branch or tag named like a short hash over the commit.
+      // rev-parse prefers same-named branches/tags over short hashes.
       const resolveHead = git.resolveCommit({ cwd: workspaceRoot, revision: sha }).pipe(
         Effect.filterOrFail(
           ({ commitSha }) => commitSha.startsWith(sha),
@@ -248,6 +245,7 @@ const make = Effect.gen(function* () {
         ),
       );
       const fetchAndResolve = (ref: string) => fetch([ref]).pipe(Effect.andThen(resolveHead));
+      const headRef = sourceControlDefinitions.get(detail.provider).changeRequestHeadRef?.(number);
       const branchRef = `refs/heads/${branch}`;
       const checkBranch = git.execute({
         operation: "PullRequestReviewGuideService.checkHeadBranch",
@@ -263,11 +261,7 @@ const make = Effect.gen(function* () {
           source: `branch ${branch}`,
           head: checkBranch.pipe(Effect.andThen(fetchAndResolve(branchRef))),
         },
-        { source: `refs/pull/${number}/head`, head: fetchAndResolve(`refs/pull/${number}/head`) },
-        {
-          source: `refs/merge-requests/${number}/head`,
-          head: fetchAndResolve(`refs/merge-requests/${number}/head`),
-        },
+        ...(headRef === undefined ? [] : [{ source: headRef, head: fetchAndResolve(headRef) }]),
       ];
       const failures: Array<string> = [];
       for (const { source, head } of sources) {
@@ -328,8 +322,7 @@ const make = Effect.gen(function* () {
         .execute({
           operation: "PullRequestReviewGuideService.readChange",
           cwd,
-          // Fixed prefixes: a user's diff.noPrefix or custom prefixes would hide the headers the
-          // parser reads.
+          // Override user diff prefixes so the parser can find headers.
           args: [
             "-c",
             "core.quotePath=false",
@@ -458,9 +451,7 @@ const make = Effect.gen(function* () {
       headSha: currentHeadSha,
       startedAt: yield* nowIso,
     };
-    // Claimed atomically, so two readers pressing Generate start one run between them. The head
-    // is read again under the claim: a press that read an older head before a push must not
-    // replace a run another press started for the new one, so it asks to be pressed again.
+    // Claim atomically and re-read the head so stale clicks cannot replace a newer head's run.
     const claimed = yield* ownership.withPermits(1)(
       pullRequests.detail(input).pipe(
         Effect.flatMap((latest) =>

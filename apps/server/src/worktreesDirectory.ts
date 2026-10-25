@@ -9,14 +9,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ServerConfig from "./config.ts";
 import * as ServerSettings from "./serverSettings.ts";
 
-/**
- * Directory new worktrees are created under: the `worktreesDirectory`
- * setting (`~` expands to `home`), or `defaultDir` (`<T3 home>/worktrees`)
- * when it is empty. Project-local mode uses `repositoryRoot/.worktrees`. Null when
- * the setting is not an absolute path on this machine, such as `D:\worktrees`
- * configured for a Windows server and synced to a Linux one, or when it is a
- * filesystem root, which would make every path on that drive look managed.
- */
+/** Null for filesystem roots or settings not absolute on this host, including synced foreign-platform paths. */
 export function resolveWorktreesDirectory(
   setting: string,
   defaultDir: string,
@@ -83,19 +76,14 @@ export function managedWorktreesDirectories(
   return [...directories];
 }
 
-/**
- * A thread's path and branch can come from a client, so a missing worktree is
- * only recreated where the server would have put it:
- * `<managed worktrees folder>/<repo>/<branch>`, compared by real path.
- */
+// Client paths/branches are untrusted; recreate only real paths matching managed-folder/repo/branch.
 export const makeIsManagedWorktreePath = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
 
-  // Where git would create `target`: the real path of its nearest existing
-  // ancestor plus the missing rest, since git follows symlinks on the way.
+  // Match Git's symlink-following location: nearest real ancestor plus missing path components.
   const realLocation = (target: string): Effect.Effect<string> =>
     fileSystem.realPath(target).pipe(
       Effect.catch(() => {
@@ -109,8 +97,7 @@ export const makeIsManagedWorktreePath = Effect.gen(function* () {
   return Effect.fn("worktreesDirectory.isManagedWorktreePath")(function* (worktreePath: string) {
     // git resolves a relative path against the project, not the server cwd.
     if (!path.isAbsolute(worktreePath)) return false;
-    // Server-made paths are normalized. A `..` would be applied after git
-    // follows a symlink but before realPath does, so the two disagree.
+    // Require normalized paths; Git and realPath disagree on .. after symlink traversal.
     if (path.resolve(worktreePath) !== worktreePath) return false;
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.orElseSucceed(() => ({

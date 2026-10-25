@@ -275,8 +275,6 @@ export function getReasoningTraitStep(input: {
           input.reportedModelSelection,
         );
   const ordered = input.direction > 0 ? descriptor.options : descriptor.options.toReversed();
-  // A reported value outside the catalog, such as OpenCode's "default", steps
-  // from the catalog default, or from the end when there is none.
   const position =
     [current, getDescriptorStringValue(descriptor)]
       .map((value) => ordered.findIndex((option) => option.id === value))

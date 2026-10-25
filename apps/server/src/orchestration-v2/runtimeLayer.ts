@@ -6,6 +6,7 @@ import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as IssueInbox from "../issues/IssueInbox.ts";
 import * as DontAskModeWorker from "./DontAskModeWorker.ts";
 import * as UsageLimitProviderSwitchWorker from "./UsageLimitProviderSwitchWorker.ts";
+import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as ThreadTitleRefreshWorker from "./ThreadTitleRefreshWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -241,8 +242,7 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       IdAllocator.layer,
       ProjectStore.layer,
       layerProviderAdapterRegistryProvided,
-      // Same layer reference as the continuation worker and the adapter
-      // infrastructure so layer memoization yields one shared request queue.
+      // Reuse the continuation worker's layer reference so memoization shares one request queue.
       ProviderContinuationRequests.layer,
       layerProviderEventIngestorProvided,
       layerRuntimePolicyProvided,
@@ -437,6 +437,9 @@ export const layerProduction = Layer.mergeAll(
         layerEventSinkProvided,
       ),
     ),
+  ),
+  GuestShareService.layer.pipe(
+    Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
   ),
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(

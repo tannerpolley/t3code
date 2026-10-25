@@ -3,6 +3,7 @@ import { type ServerSettingsPatch, requiredScopesForServerSettingsPatch } from "
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
@@ -77,6 +78,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.issuesUnqueue]: AuthOrchestrationOperateScope,
   [WS_METHODS.ownerDecisionsChoose]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesInboxMarkRead]: AuthOrchestrationOperateScope,
+  // A guest link hands thread access to someone outside, like a pairing link.
+  [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

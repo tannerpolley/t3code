@@ -11,7 +11,6 @@ import * as Predicate from "effect/Predicate";
 
 import { classifyShellCommand } from "./shellCommand.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
-import { threadPullRequestKeyOf } from "./threadPullRequests.ts";
 
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "command_execution",
@@ -36,12 +35,7 @@ const TERMINAL_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "rolled_back",
 ]);
 
-/**
- * Includes `waiting`: a successful turn persists as waiting until checkpoint capture flips it to
- * completed, and waiting is only set from completed. Excludes `rolled_back`: the provider-thread
- * roster is not run-tied, so a rolled-back latest run must fail the gate entirely (not only item
- * filter).
- */
+// waiting is completed work awaiting checkpoints; exclude rolled_back entirely because provider threads are not run-tied.
 const SETTLED_FOR_BACKGROUND_WAIT_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "cancelled",
   "completed",
@@ -99,17 +93,21 @@ export function deriveBlockedOnThreadWait(input: {
 }
 
 export function backgroundWorkHoldsCompletion(
-  tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind">>,
+  tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind" | "awaited">>,
 ): boolean {
-  return tasks.some((task) => backgroundWorkKindHoldsCompletion(task.kind));
+  return tasks.some(
+    (task) => task.awaited === true || backgroundWorkKindHoldsCompletion(task.kind),
+  );
 }
 
+// Commands and monitors are as often a dev server or its watchdog as a wait, so they hold
+// only when the agent marks them awaited.
 function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind"]): boolean {
   switch (kind) {
     case "command":
+    case "monitor":
       return false;
     case "subagent":
-    case "monitor":
     case "background_task":
       return true;
   }
@@ -140,6 +138,7 @@ type PendingBackgroundWorkTurnItem = {
   } | null;
   readonly input?: unknown;
   readonly startedAt?: OrchestrationV2PendingBackgroundTask["startedAt"] | null;
+  readonly monitor?: boolean | undefined;
   readonly prompt?: string | undefined;
   readonly childThreadId?: ThreadId | null;
 };
@@ -204,7 +203,7 @@ function pendingTaskFromTurnItem(
     case "command_execution":
       return {
         ...named,
-        kind: "command",
+        kind: item.monitor === true ? "monitor" : "command",
         ...(typeof item.input === "string"
           ? { commandKind: classifyShellCommand(item.input), command: item.input.trim() }
           : {}),
@@ -222,10 +221,7 @@ function nativeTaskIdFromTurnItem(item: PendingBackgroundWorkTurnItem): string {
   return String(item.id);
 }
 
-/**
- * The turn items the pending-work list names, without its settled-run gate.
- * Stop ends exactly these, so the list and Stop cannot disagree.
- */
+/** Items Stop ends, without the pending list's settled-run gate. */
 export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTurnItem>(input: {
   readonly turnItems: ReadonlyArray<Item>;
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
@@ -250,11 +246,7 @@ export function derivePendingBackgroundWork(input: {
   readonly turnItems: ReadonlyArray<PendingBackgroundWorkTurnItem>;
   readonly activeProviderThreadId?: string | null;
   readonly hasActiveRun?: boolean;
-  /**
-   * Run rows used to exclude items owned by rolled_back runs. Optional for
-   * callers that already filtered (SQL shell path); in-memory callers should
-   * pass projection runs so policy cannot drift.
-   */
+  /** Excludes rolled-back runs; optional only when the caller already filtered them, as SQL shell reads do. */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
   readonly pullRequests?: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined;
 }): ReadonlyArray<PendingBackgroundWorkTask> {
@@ -343,9 +335,12 @@ function pullRequestWatchTasks(
       ? []
       : [
           {
-            taskId: `pull-request-watch:${threadPullRequestKeyOf(link)}`,
+            // Links store their normalized identity, and this id only has to be unique within the
+            // thread, so it reads those fields instead of parsing the URL.
+            taskId: `pull-request-watch:${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`,
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
+            awaited: true as const,
           },
         ],
   );

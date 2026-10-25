@@ -48,6 +48,9 @@ export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.searchThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
@@ -101,8 +104,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,
-  // Load-balancing new threads reads host load; that is part of operating
-  // threads, not of inspecting diagnostics.
+  // Thread load balancing reads host load, so it needs thread scope rather than diagnostics scope.
   [WS_METHODS.serverGetHostResources]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessResourceHistory]: AuthDiagnosticsReadScope,
   // Background-task rows show their own usage beside the task, like host load above.
@@ -150,6 +152,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.issuesInboxSubscribeUnread]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsFilterOptions]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSummary]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRouting]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRoutingIdentity]: AuthOrchestrationReadScope,

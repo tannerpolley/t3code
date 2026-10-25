@@ -126,7 +126,6 @@ describe("GitHubRest", () => {
         "github.request.queue_ms": 0,
         "github.request.send_ms": 0,
       });
-      // Nothing recorded carries the query string or the token.
       const everything = spans
         .flatMap((span) => [...span.attributes].map(([key, value]) => `${key}=${String(value)}`))
         .join("\n");

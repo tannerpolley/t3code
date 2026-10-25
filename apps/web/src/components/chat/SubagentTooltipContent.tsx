@@ -32,7 +32,6 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { shortModelName } from "./providerIconUtils";
 import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
 
-/** Geometry and preview limits stay identical in lineage and timeline tooltips. */
 export function SubagentTooltipContent(props: {
   title: string;
   model: string | null;
