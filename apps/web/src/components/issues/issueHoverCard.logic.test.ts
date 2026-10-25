@@ -1,5 +1,5 @@
 import type { IssueDetailResult, IssuePullRequest, IssueSummary } from "@t3tools/contracts";
-import { resolveThreadPullRequestChains } from "@t3tools/shared/threadPullRequests";
+import { resolveThreadPullRequestChains } from "@t3tools/client-runtime/thread-pull-requests";
 import { expect, it } from "vite-plus/test";
 
 import { issueHoverPullRequests } from "./issueHoverCard.logic";

@@ -1,3 +1,5 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
+import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
 import { OwnerDecisionCards } from "./OwnerDecisionCards";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
@@ -697,7 +699,13 @@ export function IssueDetailPanel({
       </header>
 
       <PullRequestMarkdownContext
-        value={{ repositoryUrl: `https://${repository.host}/${repository.repository}`, threadRef }}
+        value={{
+          autolinks: changeRequestReferenceAutolinker({
+            provider: SourceControlProviderKind.make("github"),
+            url: `https://${repository.host}/${repository.repository}/issues/${issue.number}`,
+          }),
+          threadRef,
+        }}
       >
         <div className="min-h-0 flex-1 overflow-y-auto" data-pull-request-summary-scroll>
           <OwnerDecisionCards environmentId={environmentId} input={reference} />

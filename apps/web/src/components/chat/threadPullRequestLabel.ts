@@ -1,5 +1,5 @@
 import type { RepositoryIdentity } from "@t3tools/contracts";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 /**
  * How the thread details card names a pull request: `#N` when it belongs to the thread's own
@@ -11,7 +11,7 @@ export function threadPullRequestLabel(
   threadRepository: RepositoryIdentity | null | undefined,
 ): string {
   const own = [
-    sourceControlRepositorySelector(threadRepository),
+    sourceControlClients.repositorySelector(threadRepository),
     threadRepository?.origin?.displayName,
   ]
     .filter((repository) => typeof repository === "string")

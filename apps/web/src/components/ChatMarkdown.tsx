@@ -1125,7 +1125,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       // way a generated `#n` is: a pull request opens in its pane, anything else as an issue.
       const authoredIssuePage =
         pullRequestAutolink === "" && href
-          ? pullRequestCandidateUrlFromReferenceAutolink(href) !== null
+          ? sourceControlClients.changeRequestUrlFromReferenceAutolink(href) !== null
           : false;
       const confirmBeforeOpen = pullRequestAutolink === "reference" || authoredIssuePage;
       const pullRequestCandidateUrl =

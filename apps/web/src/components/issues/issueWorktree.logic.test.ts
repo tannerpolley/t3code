@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { EnvironmentId, ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -8,7 +9,7 @@ describe("findIssueProject", () => {
   const fork: RepositoryIdentity = {
     canonicalKey: "github.com/acme/app",
     locator: { source: "git-remote", remoteName: "upstream", remoteUrl: "git@github.com:acme/app" },
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     displayName: "acme/app",
     origin: { canonicalKey: "github.com/me/app", displayName: "me/app" },
   };

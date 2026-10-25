@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -99,7 +100,7 @@ it("matches projects in the selected environment, including fork and upstream", 
   const environmentId = EnvironmentId.make("selected");
   const repositoryIdentity: RepositoryIdentity = {
     canonicalKey: "github.com/upstream/repo",
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     displayName: "upstream/repo",
     locator: {
       source: "git-remote",

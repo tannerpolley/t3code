@@ -22,8 +22,8 @@ import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentP
 import {
   legacyThreadPullRequestKey,
   threadPullRequestsOf,
-} from "@t3tools/shared/threadPullRequests";
-import { issuePullRequests } from "@t3tools/shared/issuePullRequests";
+} from "../sourceControl/threadPullRequests.ts";
+import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -362,6 +362,7 @@ function workState(
   )
     return "waiting_on_you";
   if (
+    !thread.pendingBackgroundTasks?.some((task) => task.kind === "monitor") &&
     !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
     ["queued", "preparing", "starting", "running", "waiting"].includes(
       thread.activityRunStatus ?? thread.status,

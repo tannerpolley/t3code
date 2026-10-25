@@ -25,16 +25,13 @@ const decodeModelRoles = Schema.decodeUnknownSync(ModelRoles);
 describe("T3 orchestration provider instructions", () => {
   it("distinguishes delegated subagents from ordinary top-level threads", () => {
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "Use `delegate_task`");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "ordinary top-level T3 conversations");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "Never use them merely");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "cross-provider");
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "make new top-level threads");
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "never mean one");
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "another provider");
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "t3_request_user_input");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "only supports single selection");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "call `delegate_task` again");
-    assert.include(
-      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "Do not use `t3_thread_send` on `childThreadId`",
-    );
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "Multiple selections:");
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "new `delegate_task`");
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "never a `t3_thread_send`");
   });
 
   it("lists each model role on one line with its exact delegate_task target", () => {

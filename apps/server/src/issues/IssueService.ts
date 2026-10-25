@@ -38,7 +38,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import { readIssueListMetadata } from "./IssueProjects.ts";
@@ -453,7 +453,9 @@ function safeRepository(host: string, value: string): string | null {
   if (parts.length !== 2 || parts.some((part) => part.length === 0 || /[\s\\?#]/u.test(part))) {
     return null;
   }
-  const key = canonicalRepositoryKey(`${host}/${parts.join("/")}`).toLowerCase();
+  const key = sourceControlDefinitions
+    .canonicalRepositoryKey(`${host}/${parts.join("/")}`)
+    .toLowerCase();
   const prefix = `${host.toLowerCase()}/`;
   const repository = key.startsWith(prefix) ? key.slice(prefix.length) : null;
   return repository !== null && repository.split("/").length === 2 ? repository : null;

@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -10,7 +11,7 @@ const forkCheckout: RepositoryIdentity = {
     remoteName: "upstream",
     remoteUrl: "https://github.com/pingdotgg/t3code.git",
   },
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   owner: "pingdotgg",
   name: "t3code",
   origin: { canonicalKey: "github.com/tannerpolley/t3code", displayName: "tannerpolley/t3code" },

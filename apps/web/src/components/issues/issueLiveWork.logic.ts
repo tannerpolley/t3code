@@ -6,7 +6,7 @@ import type {
   IssueSummary,
   IssuePullRequestStatus,
 } from "@t3tools/contracts";
-import { issuePullRequests } from "@t3tools/shared/issuePullRequests";
+import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 
 const scopeKey = (environmentId: EnvironmentId, scope: IssueRepositoryRef) =>

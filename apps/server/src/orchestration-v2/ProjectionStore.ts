@@ -435,7 +435,6 @@ export interface ProjectionTimelinePage {
 }
 
 export interface ShellSnapshotOptions {
-  readonly threadIds?: ReadonlyArray<ThreadId>;
   readonly location?: "active" | "archive";
   readonly projectId?: ProjectId;
   readonly unsettledOnly?: boolean;

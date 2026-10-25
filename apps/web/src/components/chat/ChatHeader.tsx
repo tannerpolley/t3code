@@ -1,4 +1,3 @@
-import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadShells } from "../../state/threads";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import {
@@ -32,7 +31,6 @@ import {
 } from "../../logicalProject";
 import { useProjectFolderAppearance } from "../../projectFolderAppearance";
 import { threadEnvironment } from "../../state/threads";
-import { serverEnvironment } from "../../state/server";
 import { canShareWithGuestAtom } from "./guestShareAvailability";
 import { useAtomValue } from "@effect/atom-react";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";

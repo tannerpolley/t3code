@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -80,7 +81,7 @@ const reads = Layer.mock(IssueService.IssueService)({
   repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
 });
 const projectRepositoryIdentity = {
-  provider: "github" as const,
+  provider: SourceControlProviderKind.make("github"),
   canonicalKey: "github.com/owner/repo",
   displayName: "owner/repo",
   locator: {

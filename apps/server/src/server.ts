@@ -1,3 +1,4 @@
+import { services as gitHubServices } from "@t3tools/source-control-github/server/driver";
 import * as ResetCreditExpiry from "./provider/ResetCreditExpiry.ts";
 import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -380,7 +381,7 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 // GitHub quota and rate-limit pause (the built-in drivers' layer, memoized by reference) with them.
 const layerIssueService = IssueService.layer.pipe(
   Layer.provide(IssueGitHubApi.layer),
-  Layer.provide(SourceControlBuiltInDrivers.layer),
+  Layer.provide(gitHubServices),
 );
 
 const layerGitManager = GitManager.layer.pipe(
@@ -748,7 +749,7 @@ const layerRouterServices = Layer.mergeAll(
     Layer.provide(ProjectionStoreV2.layer),
     Layer.provide(ProjectStore.layer),
     Layer.provide(GitVcsDriver.layer),
-    Layer.provide(SourceControlBuiltInDrivers.layer),
+    Layer.provide(gitHubServices),
   ),
 );
 const layerRouterRequestContext = Layer.effectContext(

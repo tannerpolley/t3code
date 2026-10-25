@@ -191,9 +191,7 @@ export const make = Effect.gen(function* () {
 
   const hydrate = Effect.fn("ProjectService.hydrate")(function* (row: ProjectStore.ProjectRow) {
     const enrichment =
-      row.deletedAt === null
-        ? yield* projectEnrichment.getAvailable(row.workspaceRoot)
-        : yield* projectEnrichment.peek(row.workspaceRoot);
+      row.deletedAt === null ? yield* projectEnrichment.getAvailable(row.workspaceRoot) : null;
     const project = toProject(row, enrichment);
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError(

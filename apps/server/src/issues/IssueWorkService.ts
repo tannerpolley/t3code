@@ -44,8 +44,7 @@ import {
 } from "../orchestration-v2/Orchestrator.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
-import { pullRequestHostOf } from "@t3tools/contracts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import * as Layer from "effect/Layer";
 import { IssueService } from "./IssueService.ts";
@@ -188,51 +187,49 @@ export const layer = Layer.effect(
                 : "orchestration-error",
             message: cause instanceof Error ? cause.message : String(cause),
           });
-    const assertRootCheckout = (input: {
+    const assertRootCheckout = Effect.fn("IssueWorkService.assertRootCheckout")(function* (input: {
       projectId: ProjectId;
       commandId: CommandId;
       worktreePath: string | null;
-    }) =>
-      Effect.gen(function* () {
-        const expectedBranch = yield* launch
-          .readDefaultBranch(input)
-          .pipe(Effect.mapError(mapError));
-        if (
-          input.worktreePath !== null ||
-          (yield* launch.readCheckoutBranch(input).pipe(Effect.mapError(mapError))) !==
-            expectedBranch
-        )
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: `The repository orchestrator requires the main checkout on the default branch (${expectedBranch}).`,
-          });
-        return expectedBranch;
-      });
-    const progressFor = (threadId: Parameters<typeof threads.getThreadShell>[0], paused: boolean) =>
-      Effect.gen(function* () {
-        const shell = yield* threads.getThreadShell(threadId);
-        const projection = yield* threads.getThreadRecords(threadId, [
-          "runs",
-          "messages",
-          "subagents",
-          "runtimeRequests",
-        ]);
-        const progress = delegatedTaskProgress({
-          ...projection,
-          pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
+    }) {
+      const expectedBranch = yield* launch.readDefaultBranch(input).pipe(Effect.mapError(mapError));
+      if (
+        input.worktreePath !== null ||
+        (yield* launch.readCheckoutBranch(input).pipe(Effect.mapError(mapError))) !== expectedBranch
+      )
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: `The repository orchestrator requires the main checkout on the default branch (${expectedBranch}).`,
         });
-        return {
+      return expectedBranch;
+    });
+    const progressFor = Effect.fn("IssueWorkService.progressFor")(function* (
+      threadId: Parameters<typeof threads.getThreadShell>[0],
+      paused: boolean,
+    ) {
+      const shell = yield* threads.getThreadShell(threadId);
+      const projection = yield* threads.getThreadRecords(threadId, [
+        "runs",
+        "messages",
+        "subagents",
+        "runtimeRequests",
+      ]);
+      const progress = delegatedTaskProgress({
+        ...projection,
+        pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
+      });
+      return {
+        shell,
+        progress,
+        status: deriveIssueWorkStatus({
           shell,
-          progress,
-          status: deriveIssueWorkStatus({
-            shell,
-            paused,
-            runtimeRequests: projection.runtimeRequests,
-            waitingOnSubIssues: progress.state === "waiting_for_children",
-            resultAvailable: progress.state === "result_available",
-          }),
-        };
-      }).pipe(Effect.mapError(mapError));
+          paused,
+          runtimeRequests: projection.runtimeRequests,
+          waitingOnSubIssues: progress.state === "waiting_for_children",
+          resultAvailable: progress.state === "result_available",
+        }),
+      };
+    }, Effect.mapError(mapError));
 
     const assertProjectRepository = Effect.fn("IssueWorkService.assertProjectRepository")(
       function* (
@@ -242,12 +239,13 @@ export const layer = Layer.effect(
         const project = yield* projects.getById(projectId).pipe(Effect.mapError(mapError));
         const identity = Option.isSome(project) ? project.value.repositoryIdentity : null;
         const repository =
-          identity?.origin?.displayName ?? sourceControlRepositorySelector(identity);
-        const upstream = sourceControlRepositorySelector(identity);
+          identity?.origin?.displayName ?? sourceControlDefinitions.repositorySelector(identity);
+        const upstream = sourceControlDefinitions.repositorySelector(identity);
         if (
           identity?.provider !== "github" ||
-          pullRequestHostOf(identity, SourceControlProviderKind.make("github")).toLowerCase() !==
-            repositoryRef.host.toLowerCase() ||
+          sourceControlDefinitions
+            .changeRequestHost(identity, SourceControlProviderKind.make("github"))
+            .toLowerCase() !== repositoryRef.host.toLowerCase() ||
           (repository?.toLowerCase() !== repositoryRef.repository.toLowerCase() &&
             upstream?.toLowerCase() !== repositoryRef.repository.toLowerCase())
         )
@@ -258,7 +256,7 @@ export const layer = Layer.effect(
       },
     );
 
-    const ensureRoot = (
+    const ensureRoot = Effect.fn("IssueWorkService.ensureRoot")(function* (
       input: Pick<
         IssueWorkStartInput,
         | "projectId"
@@ -269,92 +267,163 @@ export const layer = Layer.effect(
       >,
       issue: Pick<ThreadLinkedIssue, "host" | "repository" | "repositoryId">,
       requireExplicitRoot = false,
-    ) =>
-      Effect.gen(function* () {
-        if (input.orchestratorThreadId !== undefined && input.createOrchestrator === true)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "Choose either an existing orchestrator or creation of the first one.",
-          });
-        let root = yield* store.repositoryOwner(issue);
-        if (root !== null && root.projectId !== input.projectId)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message:
-              "This repository already uses another project. Select the registered orchestrator project.",
-          });
-        if (
-          root !== null &&
-          input.orchestratorThreadId !== undefined &&
-          input.orchestratorThreadId !== root.rootThreadId
-        )
+    ) {
+      if (input.orchestratorThreadId !== undefined && input.createOrchestrator === true)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Choose either an existing orchestrator or creation of the first one.",
+        });
+      let root = yield* store.repositoryOwner(issue);
+      if (root !== null && root.projectId !== input.projectId)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message:
+            "This repository already uses another project. Select the registered orchestrator project.",
+        });
+      if (
+        root !== null &&
+        input.orchestratorThreadId !== undefined &&
+        input.orchestratorThreadId !== root.rootThreadId
+      )
+        return yield* new IssueWorkError({
+          code: "repository-owner-conflict",
+          message:
+            "A different repository orchestrator is already registered. Use it, or explicitly restore ownership first.",
+        });
+      if (root?.paused)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Repository work is paused.",
+        });
+      const serverSettings = yield* settings.getSettings.pipe(Effect.mapError(mapError));
+      const roles = serverSettings.modelRoles;
+      const role = roles.find((entry) => entry.id === input.modelRoleId);
+      if (role === undefined)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "The selected model role no longer exists.",
+        });
+      const availableProviders = yield* providers.getProviders;
+      const capableIds = new Set<import("@t3tools/contracts").ProviderInstanceId>();
+      for (const instanceId of yield* adapters.list()) {
+        const adapter = yield* adapters.get(instanceId).pipe(Effect.mapError(mapError));
+        if (supportsManagedIssueWork(adapter.driver)) capableIds.add(instanceId);
+      }
+      let selection: ModelSelection | undefined;
+      let rejection: string | undefined;
+      const checkedTargets = new Map(
+        role.targets.map((target) => [
+          target,
+          checkDelegateTarget({
+            providers: availableProviders,
+            orchestrationCapableInstanceIds: capableIds,
+            instanceId: target.providerInstanceId,
+            requestedModel: target.model,
+            inheritedModel: undefined,
+            options: target.options,
+          }),
+        ]),
+      );
+      const preferred = workerProviderTargets(
+        role,
+        availableProviders,
+        serverSettings.workerProvider,
+        (target) => typeof checkedTargets.get(target) === "string",
+      );
+      for (const target of role.targets) {
+        const model = checkedTargets.get(target)!;
+        if (typeof model === "string") {
+          selection = {
+            instanceId: target.providerInstanceId,
+            model,
+            ...(target.options === undefined ? {} : { options: target.options }),
+          };
+          break;
+        }
+        rejection = model.message;
+      }
+      if (selection === undefined)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: `Managed issue work requires an available Codex or Claude target in the selected model role${rejection === undefined ? "" : ` (${rejection})`}.`,
+        });
+      const fallbackSelection = selection;
+      for (const target of preferred) {
+        const model = checkedTargets.get(target)!;
+        if (typeof model === "string") {
+          selection = {
+            instanceId: target.providerInstanceId,
+            model,
+            ...(target.options === undefined ? {} : { options: target.options }),
+          };
+          break;
+        }
+      }
+      if (
+        root === null &&
+        requireExplicitRoot &&
+        input.orchestratorThreadId === undefined &&
+        input.createOrchestrator !== true
+      )
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message:
+            "Select an existing repository orchestrator or explicitly create the first one before starting issue work.",
+        });
+      if (root === null && input.orchestratorThreadId !== undefined) {
+        const selectedLead = input.orchestratorThreadId;
+        // Scoped to this Start request, so a fresh request re-checks a corrected lead.
+        yield* restoreRoot({
+          ...issue,
+          projectId: input.projectId,
+          expectedRootThreadId: null,
+          expectedRevision: null,
+          targetThreadId: selectedLead,
+          reason: "User selected this existing lead for issue work",
+          clientRequestId: CommandId.make(`${input.clientRequestId}:adopt-root`),
+        }).pipe(
+          // A concurrent Start that registered the same lead is this request's success too.
+          Effect.catch((error) =>
+            store
+              .repositoryOwner(issue)
+              .pipe(
+                Effect.flatMap((owner) =>
+                  owner?.rootThreadId === selectedLead ? Effect.void : Effect.fail(error),
+                ),
+              ),
+          ),
+        );
+        root = yield* store.repositoryOwner(issue);
+        if (root?.rootThreadId !== input.orchestratorThreadId)
           return yield* new IssueWorkError({
             code: "repository-owner-conflict",
-            message:
-              "A different repository orchestrator is already registered. Use it, or explicitly restore ownership first.",
+            message: "Repository ownership changed while registering the selected lead.",
           });
-        if (root?.paused)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "Repository work is paused.",
+      }
+      let createdRoot = false;
+      if (root === null) {
+        yield* assertProjectRepository(input.projectId, issue);
+        const rootBranch = yield* assertRootCheckout({
+          projectId: input.projectId,
+          commandId: input.clientRequestId,
+          worktreePath: null,
+        });
+        // All projects pointing at this repository share a command identity. The
+        // serialized receipt and unique projected repository key are the lock.
+        const commandId = CommandId.make(`issue-root:${issue.host}:${issue.repositoryId}`);
+        const orchestratorRole = roles.find((entry) => entry.id === "orchestrator");
+        let rootSelection = fallbackSelection;
+        for (const target of orchestratorRole?.targets ?? []) {
+          const model = checkDelegateTarget({
+            providers: availableProviders,
+            orchestrationCapableInstanceIds: capableIds,
+            instanceId: target.providerInstanceId,
+            requestedModel: target.model,
+            inheritedModel: undefined,
+            options: target.options,
           });
-        const serverSettings = yield* settings.getSettings.pipe(Effect.mapError(mapError));
-        const roles = serverSettings.modelRoles;
-        const role = roles.find((entry) => entry.id === input.modelRoleId);
-        if (role === undefined)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "The selected model role no longer exists.",
-          });
-        const availableProviders = yield* providers.getProviders;
-        const capableIds = new Set<import("@t3tools/contracts").ProviderInstanceId>();
-        for (const instanceId of yield* adapters.list()) {
-          const adapter = yield* adapters.get(instanceId).pipe(Effect.mapError(mapError));
-          if (supportsManagedIssueWork(adapter.driver)) capableIds.add(instanceId);
-        }
-        let selection: ModelSelection | undefined;
-        let rejection: string | undefined;
-        const checkedTargets = new Map(
-          role.targets.map((target) => [
-            target,
-            checkDelegateTarget({
-              providers: availableProviders,
-              orchestrationCapableInstanceIds: capableIds,
-              instanceId: target.providerInstanceId,
-              requestedModel: target.model,
-              inheritedModel: undefined,
-              options: target.options,
-            }),
-          ]),
-        );
-        const preferred = workerProviderTargets(
-          role,
-          availableProviders,
-          serverSettings.workerProvider,
-          (target) => typeof checkedTargets.get(target) === "string",
-        );
-        for (const target of role.targets) {
-          const model = checkedTargets.get(target)!;
           if (typeof model === "string") {
-            selection = {
-              instanceId: target.providerInstanceId,
-              model,
-              ...(target.options === undefined ? {} : { options: target.options }),
-            };
-            break;
-          }
-          rejection = model.message;
-        }
-        if (selection === undefined)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: `Managed issue work requires an available Codex or Claude target in the selected model role${rejection === undefined ? "" : ` (${rejection})`}.`,
-          });
-        const fallbackSelection = selection;
-        for (const target of preferred) {
-          const model = checkedTargets.get(target)!;
-          if (typeof model === "string") {
-            selection = {
+            rootSelection = {
               instanceId: target.providerInstanceId,
               model,
               ...(target.options === undefined ? {} : { options: target.options }),
@@ -362,129 +431,57 @@ export const layer = Layer.effect(
             break;
           }
         }
-        if (
-          root === null &&
-          requireExplicitRoot &&
-          input.orchestratorThreadId === undefined &&
-          input.createOrchestrator !== true
-        )
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message:
-              "Select an existing repository orchestrator or explicitly create the first one before starting issue work.",
-          });
-        if (root === null && input.orchestratorThreadId !== undefined) {
-          const selectedLead = input.orchestratorThreadId;
-          // Scoped to this Start request, so a fresh request re-checks a corrected lead.
-          yield* restoreRoot({
-            ...issue,
+        const launched = yield* launch
+          .launch({
+            commandId,
+            threadId: ids.derive.delegatedTaskThread({ commandId }),
             projectId: input.projectId,
-            expectedRootThreadId: null,
-            expectedRevision: null,
-            targetThreadId: selectedLead,
-            reason: "User selected this existing lead for issue work",
-            clientRequestId: CommandId.make(`${input.clientRequestId}:adopt-root`),
-          }).pipe(
-            // A concurrent Start that registered the same lead is this request's success too.
-            Effect.catch((error) =>
-              store
-                .repositoryOwner(issue)
-                .pipe(
-                  Effect.flatMap((owner) =>
-                    owner?.rootThreadId === selectedLead ? Effect.void : Effect.fail(error),
-                  ),
-                ),
-            ),
-          );
-          root = yield* store.repositoryOwner(issue);
-          if (root?.rootThreadId !== input.orchestratorThreadId)
-            return yield* new IssueWorkError({
-              code: "repository-owner-conflict",
-              message: "Repository ownership changed while registering the selected lead.",
-            });
-        }
-        let createdRoot = false;
-        if (root === null) {
-          yield* assertProjectRepository(input.projectId, issue);
-          const rootBranch = yield* assertRootCheckout({
-            projectId: input.projectId,
-            commandId: input.clientRequestId,
-            worktreePath: null,
-          });
-          // All projects pointing at this repository share a command identity. The
-          // serialized receipt and unique projected repository key are the lock.
-          const commandId = CommandId.make(`issue-root:${issue.host}:${issue.repositoryId}`);
-          const orchestratorRole = roles.find((entry) => entry.id === "orchestrator");
-          let rootSelection = fallbackSelection;
-          for (const target of orchestratorRole?.targets ?? []) {
-            const model = checkDelegateTarget({
-              providers: availableProviders,
-              orchestrationCapableInstanceIds: capableIds,
-              instanceId: target.providerInstanceId,
-              requestedModel: target.model,
-              inheritedModel: undefined,
-              options: target.options,
-            });
-            if (typeof model === "string") {
-              rootSelection = {
-                instanceId: target.providerInstanceId,
-                model,
-                ...(target.options === undefined ? {} : { options: target.options }),
-              };
-              break;
-            }
-          }
-          const launched = yield* launch
-            .launch({
-              commandId,
-              threadId: ids.derive.delegatedTaskThread({ commandId }),
+            title: `${issue.repository} orchestrator`,
+            modelSelection: rootSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspaceStrategy: { type: "root", branch: rootBranch },
+            repositoryOrchestration: {
+              host: issue.host,
+              repository: issue.repository,
+              repositoryId: issue.repositoryId,
               projectId: input.projectId,
-              title: `${issue.repository} orchestrator`,
-              modelSelection: rootSelection,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              workspaceStrategy: { type: "root", branch: rootBranch },
-              repositoryOrchestration: {
-                host: issue.host,
-                repository: issue.repository,
-                repositoryId: issue.repositoryId,
-                projectId: input.projectId,
-                launchCommandId: commandId,
-                revision: 1,
-                paused: false,
-                ...DEFAULT_REPOSITORY_WORK_SETTINGS,
-                milestones: [],
-                suspendedIssues: [],
-              },
-              createdBy: "user",
-              creationSource: "web",
-            })
-            .pipe(
-              Effect.catch((error) =>
-                Effect.gen(function* () {
-                  const recovered = yield* store.repositoryOwner(issue);
-                  if (recovered === null) return yield* mapError(error);
-                  return { threadId: recovered.rootThreadId, resumed: true };
-                }),
-              ),
-              Effect.mapError(mapError),
-            );
-          root = yield* store.repositoryOwner(issue);
-          if (root === null)
-            return yield* new IssueWorkError({
-              code: "orchestration-error",
-              message: "Root creation did not record repository ownership.",
-            });
-          if (root.projectId !== input.projectId)
-            return yield* new IssueWorkError({
-              code: "invalid-request",
-              message:
-                "A concurrent start registered another project. Select the registered orchestrator project.",
-            });
-          createdRoot = !launched.resumed;
-        }
-        return { root, selection, createdRoot };
-      });
+              launchCommandId: commandId,
+              revision: 1,
+              paused: false,
+              ...DEFAULT_REPOSITORY_WORK_SETTINGS,
+              milestones: [],
+              suspendedIssues: [],
+            },
+            createdBy: "user",
+            creationSource: "web",
+          })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.gen(function* () {
+                const recovered = yield* store.repositoryOwner(issue);
+                if (recovered === null) return yield* mapError(error);
+                return { threadId: recovered.rootThreadId, resumed: true };
+              }),
+            ),
+            Effect.mapError(mapError),
+          );
+        root = yield* store.repositoryOwner(issue);
+        if (root === null)
+          return yield* new IssueWorkError({
+            code: "orchestration-error",
+            message: "Root creation did not record repository ownership.",
+          });
+        if (root.projectId !== input.projectId)
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message:
+              "A concurrent start registered another project. Select the registered orchestrator project.",
+          });
+        createdRoot = !launched.resumed;
+      }
+      return { root, selection, createdRoot };
+    });
 
     // Every issue admission prepares its own default-branch worktree after commit.
     const startWorker: IssueWorkService["Service"]["startWorker"] = Effect.fn(
@@ -550,130 +547,126 @@ export const layer = Layer.effect(
       return dispatched;
     });
 
-    const start = (
+    const start = Effect.fn("IssueWorkService.start")(function* (
       input: IssueWorkStartInput,
-    ): Effect.Effect<IssueWorkStartResult, IssueWorkError> =>
-      Effect.gen(function* () {
-        // An accepted operation remains replayable even if GitHub changed afterward.
-        const accepted = yield* store.request(input.clientRequestId);
-        if (accepted === null) {
-          const read = yield* issues.workRead(input).pipe(Effect.mapError(mapError));
-          if (issueEligibility(read) !== "eligible")
-            return yield* new IssueWorkError({
-              code: "issue-unavailable",
-              message: "Issue work is closed, blocked, or its eligibility is unknown.",
-            });
-          const seen = new Set([read.issue.id]);
-          let ancestor = read;
-          const ancestors: IssueWorkRead[] = [];
-          while (ancestor.parent !== null) {
-            if (!sameIssueRepository(ancestor.parent, read.issue))
-              return yield* new IssueWorkError({
-                code: "invalid-request",
-                message: issueScopeExpansionError,
-              });
-            // An ancestor owned only by a retired root's subtree gets a successor under the current root.
-            if ((yield* store.currentIssueOwner(ancestor.parent)) !== null) break;
-            ancestor = yield* issues.workRead(ancestor.parent).pipe(Effect.mapError(mapError));
-            if (
-              seen.has(ancestor.issue.id) ||
-              seen.size > 32 ||
-              ancestor.issue.host !== read.issue.host ||
-              ancestor.issue.repositoryId !== read.issue.repositoryId ||
-              ancestor.milestoneNumber !== read.milestoneNumber
-            )
-              return yield* new IssueWorkError({
-                code: "invalid-request",
-                message: issueScopeExpansionError,
-              });
-            seen.add(ancestor.issue.id);
-            ancestors.push(ancestor);
-          }
-          for (const parent of ancestors.reverse())
-            yield* start({
-              ...input,
-              number: parent.issue.number,
-              clientRequestId: CommandId.make(
-                `${input.clientRequestId}:ancestor:${parent.issue.id}`,
-              ),
-            });
-        }
-        return yield* startAccepted(input);
-      });
-    const startAccepted = (
-      input: IssueWorkStartInput,
-    ): Effect.Effect<IssueWorkStartResult, IssueWorkError> =>
-      Effect.gen(function* () {
-        const accepted = yield* store.request(input.clientRequestId);
-        if (accepted !== null) {
-          const repository = yield* store.repositoryOwner(accepted.issue);
-          if (repository !== null && repository.projectId !== input.projectId)
+    ): Effect.fn.Return<IssueWorkStartResult, IssueWorkError> {
+      // An accepted operation remains replayable even if GitHub changed afterward.
+      const accepted = yield* store.request(input.clientRequestId);
+      if (accepted === null) {
+        const read = yield* issues.workRead(input).pipe(Effect.mapError(mapError));
+        if (issueEligibility(read) !== "eligible")
+          return yield* new IssueWorkError({
+            code: "issue-unavailable",
+            message: "Issue work is closed, blocked, or its eligibility is unknown.",
+          });
+        const seen = new Set([read.issue.id]);
+        let ancestor = read;
+        const ancestors: IssueWorkRead[] = [];
+        while (ancestor.parent !== null) {
+          if (!sameIssueRepository(ancestor.parent, read.issue))
             return yield* new IssueWorkError({
               code: "invalid-request",
-              message:
-                "This repository already uses another project. Select the registered orchestrator project.",
+              message: issueScopeExpansionError,
             });
+          // An ancestor owned only by a retired root's subtree gets a successor under the current root.
+          if ((yield* store.currentIssueOwner(ancestor.parent)) !== null) break;
+          ancestor = yield* issues.workRead(ancestor.parent).pipe(Effect.mapError(mapError));
           if (
-            accepted.issue.host.toLowerCase() !== input.host.toLowerCase() ||
-            accepted.issue.repository.toLowerCase() !== input.repository.toLowerCase() ||
-            accepted.issue.number !== input.number
+            seen.has(ancestor.issue.id) ||
+            seen.size > 32 ||
+            ancestor.issue.host !== read.issue.host ||
+            ancestor.issue.repositoryId !== read.issue.repositoryId ||
+            ancestor.milestoneNumber !== read.milestoneNumber
           )
             return yield* new IssueWorkError({
               code: "invalid-request",
-              message: "This request id was already used for a different issue.",
+              message: issueScopeExpansionError,
             });
-          return {
-            rootThreadId: accepted.rootThreadId,
-            issueThreadId: accepted.issueThreadId,
-            status: accepted.cancellation === undefined ? "queued_preparing" : "cancelled",
-            createdRoot: false,
-          };
+          seen.add(ancestor.issue.id);
+          ancestors.push(ancestor);
         }
-        const detail = yield* issues.detail(input).pipe(Effect.mapError(mapError));
-        if (detail.issue.state !== "open")
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "Only open issues can start work.",
+        for (const parent of ancestors.reverse())
+          yield* start({
+            ...input,
+            number: parent.issue.number,
+            clientRequestId: CommandId.make(`${input.clientRequestId}:ancestor:${parent.issue.id}`),
           });
-        const issue = yield* issues.resolveLinkedIssue(input).pipe(Effect.mapError(mapError));
-        const { root, selection, createdRoot } = yield* ensureRoot(input, issue, true);
-        const rootShell = yield* threads
-          .getThreadShell(root.rootThreadId)
-          .pipe(Effect.mapError(mapError));
-        if (rootShell === null || rootShell.archivedAt !== null || rootShell.deletedAt !== null)
+      }
+      return yield* startAccepted(input);
+    });
+    const startAccepted = Effect.fn("IssueWorkService.startAccepted")(function* (
+      input: IssueWorkStartInput,
+    ): Effect.fn.Return<IssueWorkStartResult, IssueWorkError> {
+      const accepted = yield* store.request(input.clientRequestId);
+      if (accepted !== null) {
+        const repository = yield* store.repositoryOwner(accepted.issue);
+        if (repository !== null && repository.projectId !== input.projectId)
           return yield* new IssueWorkError({
             code: "invalid-request",
             message:
-              "The registered repository orchestrator is unavailable. Restore it to resume issue work.",
+              "This repository already uses another project. Select the registered orchestrator project.",
           });
-        const dispatched = yield* startWorker({
-          type: "issue.work.start",
-          commandId: input.clientRequestId,
-          threadId: root.rootThreadId,
-          issue,
-          workerModelSelection: selection,
-          createdBy: "user",
-          creationSource: "web",
-        }).pipe(Effect.mapError(mapError));
-        const requestEvent = dispatched.storedEvents.find(
-          (stored) => stored.event.type === "issue.work.requested",
-        );
-        if (requestEvent?.event.type !== "issue.work.requested")
+        if (
+          accepted.issue.host.toLowerCase() !== input.host.toLowerCase() ||
+          accepted.issue.repository.toLowerCase() !== input.repository.toLowerCase() ||
+          accepted.issue.number !== input.number
+        )
           return yield* new IssueWorkError({
-            code: "orchestration-error",
-            message: "Start did not record its accepted request.",
+            code: "invalid-request",
+            message: "This request id was already used for a different issue.",
           });
-        const issueThreadId = requestEvent.event.payload.issueThreadId;
         return {
-          rootThreadId: root.rootThreadId,
-          issueThreadId,
-          status:
-            issueThreadId === null
-              ? "queued_preparing"
-              : (yield* progressFor(issueThreadId, false)).status,
-          createdRoot,
+          rootThreadId: accepted.rootThreadId,
+          issueThreadId: accepted.issueThreadId,
+          status: accepted.cancellation === undefined ? "queued_preparing" : "cancelled",
+          createdRoot: false,
         };
-      });
+      }
+      const detail = yield* issues.detail(input).pipe(Effect.mapError(mapError));
+      if (detail.issue.state !== "open")
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Only open issues can start work.",
+        });
+      const issue = yield* issues.resolveLinkedIssue(input).pipe(Effect.mapError(mapError));
+      const { root, selection, createdRoot } = yield* ensureRoot(input, issue, true);
+      const rootShell = yield* threads
+        .getThreadShell(root.rootThreadId)
+        .pipe(Effect.mapError(mapError));
+      if (rootShell === null || rootShell.archivedAt !== null || rootShell.deletedAt !== null)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message:
+            "The registered repository orchestrator is unavailable. Restore it to resume issue work.",
+        });
+      const dispatched = yield* startWorker({
+        type: "issue.work.start",
+        commandId: input.clientRequestId,
+        threadId: root.rootThreadId,
+        issue,
+        workerModelSelection: selection,
+        createdBy: "user",
+        creationSource: "web",
+      }).pipe(Effect.mapError(mapError));
+      const requestEvent = dispatched.storedEvents.find(
+        (stored) => stored.event.type === "issue.work.requested",
+      );
+      if (requestEvent?.event.type !== "issue.work.requested")
+        return yield* new IssueWorkError({
+          code: "orchestration-error",
+          message: "Start did not record its accepted request.",
+        });
+      const issueThreadId = requestEvent.event.payload.issueThreadId;
+      return {
+        rootThreadId: root.rootThreadId,
+        issueThreadId,
+        status:
+          issueThreadId === null
+            ? "queued_preparing"
+            : (yield* progressFor(issueThreadId, false)).status,
+        createdRoot,
+      };
+    });
 
     const repositoryStatus: IssueWorkService["Service"]["repositoryStatus"] = Effect.fn(
       "IssueWorkService.repositoryStatus",
@@ -912,357 +905,351 @@ export const layer = Layer.effect(
           .pipe(Effect.mapError(mapError));
       }),
     );
-    const continueLocal = (
+    const continueLocal = Effect.fn("IssueWorkService.continueLocal")(function* (
       rootThreadId: ThreadId,
       refreshRequests = false,
       eventSequence?: number,
-    ) =>
-      Effect.gen(function* () {
-        const config = yield* store.configuration(rootThreadId);
-        if (config === null || config.retiredToThreadId !== undefined) return;
-        const draining = config.handoff?.status === "draining";
-        if (config.paused && !draining) return;
-        const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry.reason]));
-        for (const threadId of yield* store.admissionThreads(rootThreadId)) {
-          const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
-          if (shell == null || shell.activeRunId === null) continue;
-          if (
-            !isReadOnlyIssueRole(shell.role) &&
-            (shell.linkedIssue === undefined ||
-              !(yield* store.canAdmit(shell.linkedIssue, threadId)))
-          )
-            continue;
-          const run = (yield* threads
-            .getThreadRecords(threadId, ["runs"], { runIds: [shell.activeRunId] })
-            .pipe(Effect.mapError(mapError))).runs[0];
-          if (run?.status === "preparing" && run.workspacePreparation !== undefined)
-            yield* launch.prepareRun({
-              commandId:
-                run.workspacePreparationCommandId ?? CommandId.make(`issue-prepare:${run.id}`),
-              threadId,
-              runId: run.id,
-            });
-        }
-        if (draining) return yield* drainHandoff(rootThreadId);
-        if ((yield* store.queue(config)).length > 0)
-          yield* deliverQueuedIssue(
-            rootThreadId,
-            eventSequence === undefined
-              ? `reconcile:${yield* ids.allocate.command({ fixtureName: "issue-queue", commandName: "reconcile" }).pipe(Effect.mapError(mapError))}`
-              : String(eventSequence),
-          );
-        // Once an ancestor has a durable thread, deliver its selected sub-issues there.
-        for (const request of yield* store.pendingRequests(rootThreadId)) {
-          const read = refreshRequests
-            ? yield* issues.workRead(request.issue).pipe(Effect.option)
-            : Option.none();
-          if (
-            refreshRequests &&
-            (Option.isNone(read) || issueEligibility(read.value) !== "eligible")
-          )
-            continue;
-          const parent = Option.isSome(read) ? read.value.parent : request.parent;
-          if (parent == null || !sameIssueRepository(parent, request.issue)) continue;
-          if (suspended.has(request.issue.id) || suspended.has(parent.id)) continue;
-          const parentOwner = yield* store.currentIssueOwner(parent);
-          if (parentOwner === null) {
-            // The parent's last attempt drained under a retired root. Start its successor here;
-            // this request is delivered once that successor owns the parent.
-            if ((yield* store.issueOwner(parent)) !== null)
-              yield* startWorker({
-                type: "issue.work.start",
-                commandId: CommandId.make(
-                  `issue-ancestor-successor:${request.requestId}:${rootThreadId}:${config.revision}`,
-                ),
-                threadId: rootThreadId,
-                issue: parent,
-                workerModelSelection: request.modelSelection,
-                createdBy: "agent",
-                creationSource: "server",
-              }).pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning("Could not start the successor parent attempt", { cause }),
-                ),
-              );
-            continue;
-          }
-          yield* startWorker({
-            type: "issue.work.start",
-            commandId: CommandId.make(`issue-child-start:${request.requestId}:${parentOwner}`),
-            threadId: rootThreadId,
-            issue: request.issue,
-            workerModelSelection: request.modelSelection,
-            createdBy: "agent",
-            creationSource: "server",
-          }).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Could not start the pending sub-issue", { cause }),
-            ),
-          );
-        }
-        yield* threads
-          .dispatch({
-            type: "repository.work.continue",
-            threadId: rootThreadId,
-            commandId: CommandId.make(
-              `issue-admission:${rootThreadId}:${config.revision}${eventSequence === undefined ? "" : `:event:${eventSequence}`}`,
-            ),
-          })
-          .pipe(Effect.mapError(mapError));
-      });
-
-    const reconcilePass = (rootThreadId: ThreadId) =>
-      Effect.gen(function* () {
-        let config = yield* store.configuration(rootThreadId);
+    ) {
+      const config = yield* store.configuration(rootThreadId);
+      if (config === null || config.retiredToThreadId !== undefined) return;
+      const draining = config.handoff?.status === "draining";
+      if (config.paused && !draining) return;
+      const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry.reason]));
+      for (const threadId of yield* store.admissionThreads(rootThreadId)) {
+        const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
+        if (shell == null || shell.activeRunId === null) continue;
         if (
-          config === null ||
-          config.retiredToThreadId !== undefined ||
-          (config.paused && config.handoff?.status !== "draining")
+          !isReadOnlyIssueRole(shell.role) &&
+          (shell.linkedIssue === undefined || !(yield* store.canAdmit(shell.linkedIssue, threadId)))
         )
-          return;
-        const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry.reason]));
-        for (const threadId of yield* store.workerThreads(rootThreadId)) {
-          const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
+          continue;
+        const run = (yield* threads
+          .getThreadRecords(threadId, ["runs"], { runIds: [shell.activeRunId] })
+          .pipe(Effect.mapError(mapError))).runs[0];
+        if (run?.status === "preparing" && run.workspacePreparation !== undefined)
+          yield* launch.prepareRun({
+            commandId:
+              run.workspacePreparationCommandId ?? CommandId.make(`issue-prepare:${run.id}`),
+            threadId,
+            runId: run.id,
+          });
+      }
+      if (draining) return yield* drainHandoff(rootThreadId);
+      if ((yield* store.queue(config)).length > 0)
+        yield* deliverQueuedIssue(
+          rootThreadId,
+          eventSequence === undefined
+            ? `reconcile:${yield* ids.allocate.command({ fixtureName: "issue-queue", commandName: "reconcile" }).pipe(Effect.mapError(mapError))}`
+            : String(eventSequence),
+        );
+      // Once an ancestor has a durable thread, deliver its selected sub-issues there.
+      for (const request of yield* store.pendingRequests(rootThreadId)) {
+        const read = refreshRequests
+          ? yield* issues.workRead(request.issue).pipe(Effect.option)
+          : Option.none();
+        if (refreshRequests && (Option.isNone(read) || issueEligibility(read.value) !== "eligible"))
+          continue;
+        const parent = Option.isSome(read) ? read.value.parent : request.parent;
+        if (parent == null || !sameIssueRepository(parent, request.issue)) continue;
+        if (suspended.has(request.issue.id) || suspended.has(parent.id)) continue;
+        const parentOwner = yield* store.currentIssueOwner(parent);
+        if (parentOwner === null) {
+          // The parent's last attempt drained under a retired root. Start its successor here;
+          // this request is delivered once that successor owns the parent.
+          if ((yield* store.issueOwner(parent)) !== null)
+            yield* startWorker({
+              type: "issue.work.start",
+              commandId: CommandId.make(
+                `issue-ancestor-successor:${request.requestId}:${rootThreadId}:${config.revision}`,
+              ),
+              threadId: rootThreadId,
+              issue: parent,
+              workerModelSelection: request.modelSelection,
+              createdBy: "agent",
+              creationSource: "server",
+            }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not start the successor parent attempt", { cause }),
+              ),
+            );
+          continue;
+        }
+        yield* startWorker({
+          type: "issue.work.start",
+          commandId: CommandId.make(`issue-child-start:${request.requestId}:${parentOwner}`),
+          threadId: rootThreadId,
+          issue: request.issue,
+          workerModelSelection: request.modelSelection,
+          createdBy: "agent",
+          creationSource: "server",
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not start the pending sub-issue", { cause }),
+          ),
+        );
+      }
+      yield* threads
+        .dispatch({
+          type: "repository.work.continue",
+          threadId: rootThreadId,
+          commandId: CommandId.make(
+            `issue-admission:${rootThreadId}:${config.revision}${eventSequence === undefined ? "" : `:event:${eventSequence}`}`,
+          ),
+        })
+        .pipe(Effect.mapError(mapError));
+    });
+
+    const reconcilePass = Effect.fn("IssueWorkService.reconcilePass")(function* (
+      rootThreadId: ThreadId,
+    ) {
+      let config = yield* store.configuration(rootThreadId);
+      if (
+        config === null ||
+        config.retiredToThreadId !== undefined ||
+        (config.paused && config.handoff?.status !== "draining")
+      )
+        return;
+      const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry.reason]));
+      for (const threadId of yield* store.workerThreads(rootThreadId)) {
+        const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
+        if (
+          shell?.linkedIssue === undefined ||
+          (!isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) &&
+            shell.activeRunId === null &&
+            shell.status !== "queued" &&
+            (shell.pendingBackgroundTasks?.length ?? 0) === 0 &&
+            ((yield* store.resultAvailable(threadId)) ||
+              (yield* progressFor(threadId, false)).progress.state === "result_available"))
+        )
+          continue;
+        // Closed and re-parented attempts still require an explicit Resume decision.
+        const priorReason = suspended.get(shell.linkedIssue.id);
+        if (priorReason !== undefined && !isAutomaticIssueSuspension(priorReason)) continue;
+        const read = yield* issues.workRead(shell.linkedIssue).pipe(Effect.result);
+        let reason: string | null = null;
+        if (read._tag === "Failure" || issueEligibility(read.success) === "unknown")
+          reason = unreadableRelationshipsSuspensionReason;
+        else if (read.success.state === "closed") reason = CLOSED_ISSUE_SUSPENSION_REASON;
+        else if (issueEligibility(read.success) === "blocked") reason = openBlockerSuspensionReason;
+        else {
+          const parent =
+            read.success.parent === null
+              ? rootThreadId
+              : yield* store.issueOwner(read.success.parent);
+          if (parent !== shell.lineage.parentThreadId)
+            reason =
+              "Issue was re-parented. Cancel or finish this attempt before starting a successor under its new parent.";
+        }
+        if (reason === null) {
           if (
-            shell?.linkedIssue === undefined ||
-            (!isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) &&
-              shell.activeRunId === null &&
-              shell.status !== "queued" &&
-              (shell.pendingBackgroundTasks?.length ?? 0) === 0 &&
-              ((yield* store.resultAvailable(threadId)) ||
-                (yield* progressFor(threadId, false)).progress.state === "result_available"))
+            !isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) ||
+            config.paused ||
+            config.handoff?.status === "draining"
           )
             continue;
-          // Closed and re-parented attempts still require an explicit Resume decision.
-          const priorReason = suspended.get(shell.linkedIssue.id);
-          if (priorReason !== undefined && !isAutomaticIssueSuspension(priorReason)) continue;
-          const read = yield* issues.workRead(shell.linkedIssue).pipe(Effect.result);
-          let reason: string | null = null;
-          if (read._tag === "Failure" || issueEligibility(read.success) === "unknown")
-            reason = unreadableRelationshipsSuspensionReason;
-          else if (read.success.state === "closed") reason = CLOSED_ISSUE_SUSPENSION_REASON;
-          else if (issueEligibility(read.success) === "blocked")
-            reason = openBlockerSuspensionReason;
-          else {
-            const parent =
-              read.success.parent === null
-                ? rootThreadId
-                : yield* store.issueOwner(read.success.parent);
-            if (parent !== shell.lineage.parentThreadId)
-              reason =
-                "Issue was re-parented. Cancel or finish this attempt before starting a successor under its new parent.";
-          }
-          if (reason === null) {
-            if (
-              !isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) ||
-              config.paused ||
-              config.handoff?.status === "draining"
-            )
-              continue;
-            const resumedIssueId = shell.linkedIssue.id;
-            suspended.delete(resumedIssueId);
-            yield* update(
-              rootThreadId,
-              {
-                ...config,
-                suspendedIssues: config.suspendedIssues.filter(
-                  (entry) => entry.id !== resumedIssueId,
-                ),
-              },
-              CommandId.make(`issue-resume:${rootThreadId}:${config.revision}:${resumedIssueId}`),
-              resumedIssueId,
-            );
-            config = (yield* store.configuration(rootThreadId))!;
-            continue;
-          }
-          if (suspended.get(shell.linkedIssue.id) === reason) continue;
-          suspended.set(shell.linkedIssue.id, reason);
-          config = {
-            ...config,
-            suspendedIssues: [...suspended].map(([id, reason]) => ({ id, reason })),
-          };
+          const resumedIssueId = shell.linkedIssue.id;
+          suspended.delete(resumedIssueId);
           yield* update(
             rootThreadId,
-            config,
-            CommandId.make(
-              `issue-suspend:${rootThreadId}:${config.revision}:${shell.linkedIssue.id}`,
-            ),
+            {
+              ...config,
+              suspendedIssues: config.suspendedIssues.filter(
+                (entry) => entry.id !== resumedIssueId,
+              ),
+            },
+            CommandId.make(`issue-resume:${rootThreadId}:${config.revision}:${resumedIssueId}`),
+            resumedIssueId,
           );
           config = (yield* store.configuration(rootThreadId))!;
+          continue;
         }
-        yield* continueLocal(rootThreadId, true);
-        if (config.handoff?.status === "draining" || config.milestones.length === 0) return;
-        const plans: RepositoryOrchestration["milestones"][number][] = [];
-        for (const plan of config.milestones) {
-          const listing = yield* issues
-            .milestoneIssues({
-              host: config.host,
-              repository: config.repository,
-              milestoneNumber: plan.number,
-            })
-            .pipe(Effect.result);
-          if (listing._tag === "Success" && listing.success.missing) {
-            yield* update(
-              rootThreadId,
-              { ...config, milestones: config.milestones.filter((p) => p.number !== plan.number) },
-              CommandId.make(`milestone-drop:${rootThreadId}:${config.revision}:${plan.number}`),
-            );
-            config = (yield* store.configuration(rootThreadId))!;
-            continue;
-          }
-          if (listing._tag === "Failure" || !listing.success.complete) {
-            plans.push({ ...plan, status: "unreadable", fingerprint: "unreadable" });
-            continue;
-          }
-          const selected = listing.success.issues.filter(
-            (issue) => issue.milestone?.number === plan.number && issue.state === "open",
+        if (suspended.get(shell.linkedIssue.id) === reason) continue;
+        suspended.set(shell.linkedIssue.id, reason);
+        config = {
+          ...config,
+          suspendedIssues: [...suspended].map(([id, reason]) => ({ id, reason })),
+        };
+        yield* update(
+          rootThreadId,
+          config,
+          CommandId.make(
+            `issue-suspend:${rootThreadId}:${config.revision}:${shell.linkedIssue.id}`,
+          ),
+        );
+        config = (yield* store.configuration(rootThreadId))!;
+      }
+      yield* continueLocal(rootThreadId, true);
+      if (config.handoff?.status === "draining" || config.milestones.length === 0) return;
+      const plans: RepositoryOrchestration["milestones"][number][] = [];
+      for (const plan of config.milestones) {
+        const listing = yield* issues
+          .milestoneIssues({
+            host: config.host,
+            repository: config.repository,
+            milestoneNumber: plan.number,
+          })
+          .pipe(Effect.result);
+        if (listing._tag === "Success" && listing.success.missing) {
+          yield* update(
+            rootThreadId,
+            { ...config, milestones: config.milestones.filter((p) => p.number !== plan.number) },
+            CommandId.make(`milestone-drop:${rootThreadId}:${config.revision}:${plan.number}`),
           );
-          let unreadable = false,
-            blocked = false,
-            awaiting = false,
-            running = false;
-          const fingerprint: string[] = [];
-          for (const issue of selected) {
-            const readResult = yield* issues
-              .workRead({
-                host: config.host,
-                repository: config.repository,
-                number: issue.number,
-              })
-              .pipe(Effect.result);
-            if (readResult._tag === "Failure") {
-              unreadable = true;
-              fingerprint.push(`${issue.number}:unknown`);
-              continue;
-            }
-            const read = readResult.success;
-            const eligibility = issueEligibility(read);
-            const owner = yield* store.issueOwner(read.issue);
-            fingerprint.push(
-              `${read.issue.id}:${eligibility}:${read.parent?.id ?? "root"}:${owner ?? "unclaimed"}`,
-            );
-            if (eligibility === "unknown") {
-              unreadable = true;
-              continue;
-            }
-            if (eligibility === "blocked") {
-              blocked = true;
-              continue;
-            }
-            if (eligibility === "closed") continue;
-            if (suspended.has(read.issue.id)) {
-              awaiting = true;
-              continue;
-            }
-            if (owner !== null) {
-              const shell = yield* threads.getThreadShell(owner).pipe(Effect.mapError(mapError));
-              if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) {
-                unreadable = true;
-                continue;
-              }
-              if (shell.status === "queued") running = true;
-              else if (shell.pendingRuntimeRequest !== null) awaiting = true;
-              else if (shell.activeRunId === null && (yield* store.resultAvailable(owner)))
-                awaiting = true;
-              else running = true;
-              continue;
-            }
-            const firstCommandId = `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`;
-            let clientRequestId = CommandId.make(firstCommandId);
-            // Rejected commands are immutable; only a rejected attempt gets a new identity. Retries
-            // wait 1 minute after a rejection, doubling up to a day, so a lasting rejection (a
-            // deleted model role, an unavailable provider) adds a few receipts, not one per pass.
-            const now = yield* Clock.currentTimeMillis;
-            for (let retry = 1; ; retry++) {
-              const receipt = yield* commandReceipts
-                .getByCommandId(clientRequestId)
-                .pipe(Effect.mapError(mapError));
-              if (Option.isNone(receipt) || receipt.value.status !== "rejected") break;
-              const waitMs = Math.min(2 ** (retry - 1), 1440) * 60_000;
-              if (now < receipt.value.acceptedAt.epochMilliseconds + waitMs) break;
-              clientRequestId = CommandId.make(`${firstCommandId}:retry:${retry}`);
-            }
-            const started = yield* start({
+          config = (yield* store.configuration(rootThreadId))!;
+          continue;
+        }
+        if (listing._tag === "Failure" || !listing.success.complete) {
+          plans.push({ ...plan, status: "unreadable", fingerprint: "unreadable" });
+          continue;
+        }
+        const selected = listing.success.issues.filter(
+          (issue) => issue.milestone?.number === plan.number && issue.state === "open",
+        );
+        let unreadable = false,
+          blocked = false,
+          awaiting = false,
+          running = false;
+        const fingerprint: string[] = [];
+        for (const issue of selected) {
+          const readResult = yield* issues
+            .workRead({
               host: config.host,
               repository: config.repository,
               number: issue.number,
-              projectId: config.projectId,
-              modelRoleId: plan.modelRoleId,
-              clientRequestId,
-            }).pipe(Effect.result);
-            if (started._tag === "Failure") {
-              if (started.failure.code === "invalid-request") awaiting = true;
-              else unreadable = true;
-            } else running = true;
+            })
+            .pipe(Effect.result);
+          if (readResult._tag === "Failure") {
+            unreadable = true;
+            fingerprint.push(`${issue.number}:unknown`);
+            continue;
           }
-          const status = unreadable
-            ? "unreadable"
-            : running
-              ? "running"
-              : awaiting
-                ? "awaiting_approval"
-                : blocked
-                  ? "blocked"
-                  : "complete";
-          plans.push({ ...plan, status, fingerprint: fingerprint.sort().join("|") });
-        }
-        if (
-          plans.some(
-            (plan, index) =>
-              plan.fingerprint !== config!.milestones[index]?.fingerprint ||
-              plan.status !== config!.milestones[index]?.status,
-          )
-        )
-          yield* update(
-            rootThreadId,
-            { ...config, milestones: plans },
-            CommandId.make(`milestone-reconcile:${rootThreadId}:${config.revision}`),
+          const read = readResult.success;
+          const eligibility = issueEligibility(read);
+          const owner = yield* store.issueOwner(read.issue);
+          fingerprint.push(
+            `${read.issue.id}:${eligibility}:${read.parent?.id ?? "root"}:${owner ?? "unclaimed"}`,
           );
-      });
+          if (eligibility === "unknown") {
+            unreadable = true;
+            continue;
+          }
+          if (eligibility === "blocked") {
+            blocked = true;
+            continue;
+          }
+          if (eligibility === "closed") continue;
+          if (suspended.has(read.issue.id)) {
+            awaiting = true;
+            continue;
+          }
+          if (owner !== null) {
+            const shell = yield* threads.getThreadShell(owner).pipe(Effect.mapError(mapError));
+            if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) {
+              unreadable = true;
+              continue;
+            }
+            if (shell.status === "queued") running = true;
+            else if (shell.pendingRuntimeRequest !== null) awaiting = true;
+            else if (shell.activeRunId === null && (yield* store.resultAvailable(owner)))
+              awaiting = true;
+            else running = true;
+            continue;
+          }
+          const firstCommandId = `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`;
+          let clientRequestId = CommandId.make(firstCommandId);
+          // Rejected commands are immutable; only a rejected attempt gets a new identity. Retries
+          // wait 1 minute after a rejection, doubling up to a day, so a lasting rejection (a
+          // deleted model role, an unavailable provider) adds a few receipts, not one per pass.
+          const now = yield* Clock.currentTimeMillis;
+          for (let retry = 1; ; retry++) {
+            const receipt = yield* commandReceipts
+              .getByCommandId(clientRequestId)
+              .pipe(Effect.mapError(mapError));
+            if (Option.isNone(receipt) || receipt.value.status !== "rejected") break;
+            const waitMs = Math.min(2 ** (retry - 1), 1440) * 60_000;
+            if (now < receipt.value.acceptedAt.epochMilliseconds + waitMs) break;
+            clientRequestId = CommandId.make(`${firstCommandId}:retry:${retry}`);
+          }
+          const started = yield* start({
+            host: config.host,
+            repository: config.repository,
+            number: issue.number,
+            projectId: config.projectId,
+            modelRoleId: plan.modelRoleId,
+            clientRequestId,
+          }).pipe(Effect.result);
+          if (started._tag === "Failure") {
+            if (started.failure.code === "invalid-request") awaiting = true;
+            else unreadable = true;
+          } else running = true;
+        }
+        const status = unreadable
+          ? "unreadable"
+          : running
+            ? "running"
+            : awaiting
+              ? "awaiting_approval"
+              : blocked
+                ? "blocked"
+                : "complete";
+        plans.push({ ...plan, status, fingerprint: fingerprint.sort().join("|") });
+      }
+      if (
+        plans.some(
+          (plan, index) =>
+            plan.fingerprint !== config!.milestones[index]?.fingerprint ||
+            plan.status !== config!.milestones[index]?.status,
+        )
+      )
+        yield* update(
+          rootThreadId,
+          { ...config, milestones: plans },
+          CommandId.make(`milestone-reconcile:${rootThreadId}:${config.revision}`),
+        );
+    });
 
     const reconcile = coalescedPerRoot(reconcilePass);
 
-    const workMilestone: IssueWorkService["Service"]["workMilestone"] = (input) =>
-      Effect.gen(function* () {
-        const listing = yield* issues.milestoneIssues(input).pipe(Effect.result);
-        if (listing._tag === "Success" && listing.success.missing)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: `Milestone #${input.milestoneNumber} does not exist in ${input.repository}.`,
-          });
-        let owner = yield* store.repositoryOwnerByRef(input);
-        if (owner === null) {
-          const repository = yield* issues
-            .repositoryIdentity(input)
-            .pipe(Effect.mapError(mapError));
-          owner = (yield* ensureRoot(input, repository)).root;
-        }
-        if (owner.projectId !== input.projectId)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "Select the registered repository orchestrator's project.",
-          });
-        const config = (yield* store.configuration(owner.rootThreadId))!;
-        if (!config.milestones.some((plan) => plan.number === input.milestoneNumber))
-          yield* update(
-            owner.rootThreadId,
-            {
-              ...config,
-              milestones: [
-                ...config.milestones,
-                {
-                  number: input.milestoneNumber,
-                  modelRoleId: input.modelRoleId,
-                  status: "running",
-                  fingerprint: "",
-                },
-              ],
-            },
-            input.clientRequestId,
-          );
-        yield* reconcile(owner.rootThreadId);
-        return yield* repositoryStatus(input);
-      });
+    const workMilestone = Effect.fn("IssueWorkService.workMilestone")(function* (
+      input: Parameters<IssueWorkService["Service"]["workMilestone"]>[0],
+    ) {
+      const listing = yield* issues.milestoneIssues(input).pipe(Effect.result);
+      if (listing._tag === "Success" && listing.success.missing)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: `Milestone #${input.milestoneNumber} does not exist in ${input.repository}.`,
+        });
+      let owner = yield* store.repositoryOwnerByRef(input);
+      if (owner === null) {
+        const repository = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
+        owner = (yield* ensureRoot(input, repository)).root;
+      }
+      if (owner.projectId !== input.projectId)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Select the registered repository orchestrator's project.",
+        });
+      const config = (yield* store.configuration(owner.rootThreadId))!;
+      if (!config.milestones.some((plan) => plan.number === input.milestoneNumber))
+        yield* update(
+          owner.rootThreadId,
+          {
+            ...config,
+            milestones: [
+              ...config.milestones,
+              {
+                number: input.milestoneNumber,
+                modelRoleId: input.modelRoleId,
+                status: "running",
+                fingerprint: "",
+              },
+            ],
+          },
+          input.clientRequestId,
+        );
+      yield* reconcile(owner.rootThreadId);
+      return yield* repositoryStatus(input);
+    });
     const setLimit = Effect.fn("IssueWorkService.setLimit")(function* (
       input: RepositoryWorkerLimitInput | RepositoryReadOnlyLimitInput,
     ) {
@@ -1561,90 +1548,92 @@ export const layer = Layer.effect(
             return yield* repositoryStatus(input);
           });
 
-    const cancelRequest: IssueWorkService["Service"]["cancelRequest"] = (input) =>
-      Effect.gen(function* () {
-        const request = yield* store.request(input.requestId);
-        const config = yield* store.configuration(input.expectedRootThreadId);
-        if (
-          request === null ||
-          config?.projectId !== input.projectId ||
-          request.rootThreadId !== input.expectedRootThreadId ||
-          request.issue.host.toLowerCase() !== input.host.toLowerCase() ||
-          request.issue.repository.toLowerCase() !== input.repository.toLowerCase()
+    const cancelRequest = Effect.fn("IssueWorkService.cancelRequest")(function* (
+      input: Parameters<IssueWorkService["Service"]["cancelRequest"]>[0],
+    ) {
+      const request = yield* store.request(input.requestId);
+      const config = yield* store.configuration(input.expectedRootThreadId);
+      if (
+        request === null ||
+        config?.projectId !== input.projectId ||
+        request.rootThreadId !== input.expectedRootThreadId ||
+        request.issue.host.toLowerCase() !== input.host.toLowerCase() ||
+        request.issue.repository.toLowerCase() !== input.repository.toLowerCase()
+      )
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "The request does not belong to the selected repository, project and root.",
+        });
+      const dispatched = yield* threads
+        .dispatch({
+          type: "issue.work.cancel",
+          commandId: input.clientRequestId,
+          threadId: input.expectedRootThreadId,
+          projectId: input.projectId,
+          requestId: input.requestId,
+          reason: input.reason,
+        })
+        .pipe(Effect.mapError(mapError));
+      if (
+        !dispatched.storedEvents.some(
+          (stored) =>
+            stored.event.type === "issue.work.cancelled" &&
+            stored.event.payload.requestedRequestId === input.requestId,
         )
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "The request does not belong to the selected repository, project and root.",
-          });
-        const dispatched = yield* threads
-          .dispatch({
-            type: "issue.work.cancel",
-            commandId: input.clientRequestId,
-            threadId: input.expectedRootThreadId,
-            projectId: input.projectId,
-            requestId: input.requestId,
-            reason: input.reason,
-          })
-          .pipe(Effect.mapError(mapError));
-        if (
-          !dispatched.storedEvents.some(
-            (stored) =>
-              stored.event.type === "issue.work.cancelled" &&
-              stored.event.payload.requestedRequestId === input.requestId,
-          )
-        )
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "This command id was already used for another recovery operation.",
-          });
-        return (yield* store.request(input.requestId))!;
-      });
+      )
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "This command id was already used for another recovery operation.",
+        });
+      return (yield* store.request(input.requestId))!;
+    });
 
-    const restoreRoot: IssueWorkService["Service"]["restoreRoot"] = (input) =>
-      Effect.gen(function* () {
-        yield* validateLead(input);
-        if (input.expectedRootThreadId === null) {
-          const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
-          if (
-            identity.host !== input.host ||
-            identity.repositoryId !== input.repositoryId ||
-            identity.repository.toLowerCase() !== input.repository.toLowerCase()
-          )
-            return yield* new IssueWorkError({
-              code: "invalid-request",
-              message: "The selected repository identity does not match this registration.",
-            });
-        }
-        const dispatched = yield* threads
-          .dispatch({
-            type: "repository.work.restore",
-            commandId: input.clientRequestId,
-            threadId: input.expectedRootThreadId ?? input.targetThreadId,
-            expectedRootThreadId: input.expectedRootThreadId,
-            projectId: input.projectId,
-            host: input.host,
-            repository: input.repository,
-            repositoryId: input.repositoryId,
-            expectedRevision: input.expectedRevision,
-            targetThreadId: input.targetThreadId,
-            reason: input.reason,
-          })
-          .pipe(Effect.mapError(mapError));
+    const restoreRoot = Effect.fn("IssueWorkService.restoreRoot")(function* (
+      input: Parameters<IssueWorkService["Service"]["restoreRoot"]>[0],
+    ) {
+      yield* validateLead(input);
+      if (input.expectedRootThreadId === null) {
+        const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
         if (
-          !dispatched.storedEvents.some(
-            (stored) =>
-              stored.event.type === "repository.work.restored" &&
-              stored.event.payload.targetThreadId === input.targetThreadId &&
-              stored.event.payload.previousRootThreadId === input.expectedRootThreadId &&
-              stored.event.payload.expectedRevision === input.expectedRevision,
-          )
+          identity.host !== input.host ||
+          identity.repositoryId !== input.repositoryId ||
+          identity.repository.toLowerCase() !== input.repository.toLowerCase()
         )
           return yield* new IssueWorkError({
             code: "invalid-request",
-            message: "This command id was already used for another recovery operation.",
+            message: "The selected repository identity does not match this registration.",
           });
-        return yield* repositoryStatus(input);
-      });
+      }
+      const dispatched = yield* threads
+        .dispatch({
+          type: "repository.work.restore",
+          commandId: input.clientRequestId,
+          threadId: input.expectedRootThreadId ?? input.targetThreadId,
+          expectedRootThreadId: input.expectedRootThreadId,
+          projectId: input.projectId,
+          host: input.host,
+          repository: input.repository,
+          repositoryId: input.repositoryId,
+          expectedRevision: input.expectedRevision,
+          targetThreadId: input.targetThreadId,
+          reason: input.reason,
+        })
+        .pipe(Effect.mapError(mapError));
+      if (
+        !dispatched.storedEvents.some(
+          (stored) =>
+            stored.event.type === "repository.work.restored" &&
+            stored.event.payload.targetThreadId === input.targetThreadId &&
+            stored.event.payload.previousRootThreadId === input.expectedRootThreadId &&
+            stored.event.payload.expectedRevision === input.expectedRevision,
+        )
+      )
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "This command id was already used for another recovery operation.",
+        });
+      return yield* repositoryStatus(input);
+    });
 
     const assignOrchestrator = Effect.fn("IssueWorkService.assignOrchestrator")(
       function* (input: RepositoryOrchestratorInput) {
@@ -1688,11 +1677,15 @@ export const layer = Layer.effect(
         const candidates = [];
         for (const project of yield* projects.listShells().pipe(Effect.mapError(mapError))) {
           const identity = project.repositoryIdentity;
-          const names = [identity?.origin?.displayName, sourceControlRepositorySelector(identity)];
+          const names = [
+            identity?.origin?.displayName,
+            sourceControlDefinitions.repositorySelector(identity),
+          ];
           if (
             identity?.provider !== "github" ||
-            pullRequestHostOf(identity, SourceControlProviderKind.make("github")).toLowerCase() !==
-              input.host.toLowerCase() ||
+            sourceControlDefinitions
+              .changeRequestHost(identity, SourceControlProviderKind.make("github"))
+              .toLowerCase() !== input.host.toLowerCase() ||
             !names.some((name) => name?.toLowerCase() === input.repository.toLowerCase())
           )
             continue;
@@ -1757,77 +1750,78 @@ export const layer = Layer.effect(
     const service = IssueWorkService.of({
       assignOrchestrator,
       ensureOrchestrator,
-      workStatus: (input) =>
-        Effect.gen(function* () {
-          const request = yield* store.latestRequest(input);
-          const issue = (yield* store.linkedIssue(input)) ?? request?.issue ?? null;
-          if (issue === null) {
-            const repository = yield* store.repositoryOwnerByRef(input);
-            return {
-              issue: input,
-              projectId: repository?.projectId ?? null,
-              rootThreadId: repository?.rootThreadId ?? null,
-              threadId: null,
-              status: null,
-              publishing: "absent",
-            };
-          }
-          const root = yield* store.repositoryOwner(issue);
-          const owner = yield* store.issueOwner(issue);
-          const suspended =
-            root !== null &&
-            (yield* store.configuration(root.rootThreadId))?.suspendedIssues.some(
-              (entry) => entry.id === issue.id,
-            ) === true;
-          if (owner === null || request?.attemptKey === owner) {
-            const rootShell =
-              root === null
+      workStatus: Effect.fn("IssueWorkService.workStatus")(function* (
+        input: Parameters<IssueWorkService["Service"]["workStatus"]>[0],
+      ) {
+        const request = yield* store.latestRequest(input);
+        const issue = (yield* store.linkedIssue(input)) ?? request?.issue ?? null;
+        if (issue === null) {
+          const repository = yield* store.repositoryOwnerByRef(input);
+          return {
+            issue: input,
+            projectId: repository?.projectId ?? null,
+            rootThreadId: repository?.rootThreadId ?? null,
+            threadId: null,
+            status: null,
+            publishing: "absent",
+          };
+        }
+        const root = yield* store.repositoryOwner(issue);
+        const owner = yield* store.issueOwner(issue);
+        const suspended =
+          root !== null &&
+          (yield* store.configuration(root.rootThreadId))?.suspendedIssues.some(
+            (entry) => entry.id === issue.id,
+          ) === true;
+        if (owner === null || request?.attemptKey === owner) {
+          const rootShell =
+            root === null
+              ? null
+              : yield* threads.getThreadShell(root.rootThreadId).pipe(Effect.mapError(mapError));
+          const rootRequests =
+            root === null || rootShell === null
+              ? []
+              : (yield* threads
+                  .getThreadRecords(root.rootThreadId, ["runtimeRequests"])
+                  .pipe(Effect.mapError(mapError))).runtimeRequests;
+          const status =
+            request?.cancellation !== undefined
+              ? "cancelled"
+              : root === null || request === null
                 ? null
-                : yield* threads.getThreadShell(root.rootThreadId).pipe(Effect.mapError(mapError));
-            const rootRequests =
-              root === null || rootShell === null
-                ? []
-                : (yield* threads
-                    .getThreadRecords(root.rootThreadId, ["runtimeRequests"])
-                    .pipe(Effect.mapError(mapError))).runtimeRequests;
-            const status =
-              request?.cancellation !== undefined
-                ? "cancelled"
-                : root === null || request === null
-                  ? null
-                  : deriveIssueWorkStatus({
-                      shell: rootShell,
-                      paused: root.paused,
-                      runtimeRequests: rootRequests,
-                      waitingOnSubIssues: false,
-                      queued: true,
-                    });
-            return {
-              issue: input,
-              projectId: root?.projectId ?? null,
-              rootThreadId: root?.rootThreadId ?? null,
-              threadId: null,
-              status,
-              publishing:
-                root === null ? "absent" : yield* store.publishing(root.rootThreadId, issue),
-              pendingRequestId:
-                request !== null &&
-                request.cancellation === undefined &&
-                request.issueThreadId === null &&
-                request.rootThreadId === root?.rootThreadId
-                  ? request.requestId
-                  : null,
-            };
-          }
+                : deriveIssueWorkStatus({
+                    shell: rootShell,
+                    paused: root.paused,
+                    runtimeRequests: rootRequests,
+                    waitingOnSubIssues: false,
+                    queued: true,
+                  });
           return {
             issue: input,
             projectId: root?.projectId ?? null,
             rootThreadId: root?.rootThreadId ?? null,
-            threadId: owner,
-            status: (yield* progressFor(owner, (root?.paused ?? false) || suspended)).status,
-            publishing: yield* store.publishing(owner, issue),
+            threadId: null,
+            status,
+            publishing:
+              root === null ? "absent" : yield* store.publishing(root.rootThreadId, issue),
+            pendingRequestId:
+              request !== null &&
+              request.cancellation === undefined &&
+              request.issueThreadId === null &&
+              request.rootThreadId === root?.rootThreadId
+                ? request.requestId
+                : null,
           };
-        }),
+        }
+        return {
+          issue: input,
+          projectId: root?.projectId ?? null,
+          rootThreadId: root?.rootThreadId ?? null,
+          threadId: owner,
+          status: (yield* progressFor(owner, (root?.paused ?? false) || suspended)).status,
+          publishing: yield* store.publishing(owner, issue),
+        };
+      }),
       queueIssue: (input) => changeQueue(input, true),
       unqueueIssue: (input) => changeQueue(input, false),
       start: (input) => start(input),

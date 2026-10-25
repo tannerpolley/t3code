@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Queue from "effect/Queue";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -213,7 +214,7 @@ describe("fresh-thread repository handoff", () => {
                 remoteName: "origin",
                 remoteUrl: "https://github.com/tannerpolley/t3code.git",
               },
-              provider: "github" as const,
+              provider: SourceControlProviderKind.make("github"),
               owner: "tannerpolley",
               name: "t3code",
               displayName: "tannerpolley/t3code",

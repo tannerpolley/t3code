@@ -1,5 +1,4 @@
 import { issueContextReference } from "./components/issues/issueComposerContext";
-import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { composerFileAttachmentMimeType } from "./components/chat/composerAttachmentFiles";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {

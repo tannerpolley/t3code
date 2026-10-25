@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -105,7 +106,7 @@ describe("managed issue work", () => {
           remoteName: "origin",
           remoteUrl: "https://github.com/tannerpolley/t3code.git",
         },
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         owner: "tannerpolley",
         name: "t3code",
         displayName: "tannerpolley/t3code",
@@ -1300,7 +1301,7 @@ it.effect(
           remoteName: "origin",
           remoteUrl: "https://github.com/tannerpolley/t3code.git",
         },
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         owner: "tannerpolley",
         name: "t3code",
         displayName: "tannerpolley/t3code",

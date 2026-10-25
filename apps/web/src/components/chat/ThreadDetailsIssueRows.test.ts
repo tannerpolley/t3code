@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { IssueMilestone, IssueSummary, RepositoryIdentity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -11,7 +12,7 @@ const identity = (overrides: Partial<RepositoryIdentity>): RepositoryIdentity =>
     remoteName: "origin",
     remoteUrl: "git@github.com:acme/frontend",
   },
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   owner: "acme",
   name: "frontend",
   ...overrides,
@@ -33,7 +34,12 @@ describe("threadIssueRepository", () => {
         remoteUrl: "git@github.com:acme/frontend",
       },
     });
-    expect(threadIssueRepository({ ...upstream, origin: { canonicalKey: "github.com/me/frontend", displayName: "me/frontend" } })).toEqual({
+    expect(
+      threadIssueRepository({
+        ...upstream,
+        origin: { canonicalKey: "github.com/me/frontend", displayName: "me/frontend" },
+      }),
+    ).toEqual({
       host: "github.com",
       repository: "me/frontend",
     });
@@ -42,7 +48,9 @@ describe("threadIssueRepository", () => {
 
   it("skips repositories the issue browser cannot read", () => {
     expect(threadIssueRepository(null)).toBeNull();
-    expect(threadIssueRepository(identity({ provider: "gitlab" }))).toBeNull();
+    expect(
+      threadIssueRepository(identity({ provider: SourceControlProviderKind.make("gitlab") })),
+    ).toBeNull();
     expect(
       threadIssueRepository(identity({ canonicalKey: "github.example.com/acme/frontend" })),
     ).toBeNull();
@@ -50,7 +58,7 @@ describe("threadIssueRepository", () => {
       threadIssueRepository({
         canonicalKey: "github.com/acme",
         locator: identity({}).locator,
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
       }),
     ).toBeNull();
   });

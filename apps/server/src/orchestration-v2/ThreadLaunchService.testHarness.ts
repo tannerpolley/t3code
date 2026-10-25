@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -478,7 +479,7 @@ function reviewHarness(
     issueServiceLayer: reads,
     projectRepositoryIdentity: {
       canonicalKey: "github.com/tannerpolley/t3code",
-      provider: "github",
+      provider: SourceControlProviderKind.make("github"),
       owner: "tannerpolley",
       name: "t3code",
       displayName: "tannerpolley/t3code",

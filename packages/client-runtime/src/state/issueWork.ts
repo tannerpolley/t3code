@@ -1,6 +1,5 @@
 import {
   ISSUE_WORK_STATUS_LABELS,
-  pullRequestHostOf,
   type EnvironmentId,
   type IssueWorkStartResult,
   type IssueWorkStatusResult,
@@ -8,13 +7,17 @@ import {
   type RepositoryIdentity,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import { sourceControlClients } from "../sourceControlClients.ts";
 
 /** Issues belong to the checkout's origin, including when pull requests target upstream. */
 export function threadIssueRepository(identity: RepositoryIdentity | null | undefined) {
   if (identity?.provider !== "github") return null;
-  const repository = identity.origin?.displayName ?? sourceControlRepositorySelector(identity);
-  const host = pullRequestHostOf(identity, SourceControlProviderKind.make("github"));
+  const repository =
+    identity.origin?.displayName ?? sourceControlClients.repositorySelector(identity);
+  const host = sourceControlClients.changeRequestHost(
+    identity,
+    SourceControlProviderKind.make("github"),
+  );
   return repository === null || host !== "github.com" ? null : { host, repository };
 }
 
@@ -38,7 +41,7 @@ export function findIssueProject<
     if (project.environmentId !== issue.environmentId) return false;
     const fork = threadIssueRepository(project.repositoryIdentity);
     if (fork === null || fork.host.toLowerCase() !== issue.host.toLowerCase()) return false;
-    const upstream = sourceControlRepositorySelector(project.repositoryIdentity);
+    const upstream = sourceControlClients.repositorySelector(project.repositoryIdentity);
     const wanted = issue.repository.toLowerCase();
     return fork.repository.toLowerCase() === wanted || upstream?.toLowerCase() === wanted;
   });

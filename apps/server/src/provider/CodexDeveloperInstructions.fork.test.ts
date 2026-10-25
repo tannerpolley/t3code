@@ -4,7 +4,6 @@ import { describe, it } from "vite-plus/test";
 
 import {
   buildCodexAdditionalContext,
-  buildCodexDeveloperInstructions,
   CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
 } from "./CodexDeveloperInstructions.ts";
 
@@ -33,18 +32,5 @@ describe("buildCodexAdditionalContext", () => {
         `${key} exceeds Codex's per-entry context cap`,
       );
     }
-  });
-});
-
-describe("buildCodexDeveloperInstructions", () => {
-  it("routes unresolved Default mode questions through the native question tool", () => {
-    const instructions = buildCodexDeveloperInstructions("default");
-
-    NodeAssert.match(instructions, /Use the `request_user_input` tool only when it is listed/);
-    NodeAssert.match(
-      instructions,
-      /When a missing answer would materially change the task[\s\S]*ask with `request_user_input` and wait for the answer/,
-    );
-    NodeAssert.match(instructions, /If the tool is unavailable or fails, report the blocker/);
   });
 });

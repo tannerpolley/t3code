@@ -968,7 +968,9 @@ it.effect("ProviderSessionManagerV2 idle release clears a Monitor that holds com
       });
       const providerThread = {
         ...makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
-        pendingBackgroundTasks: [{ taskId: "bbcaa29ff", kind: "monitor" as const }],
+        pendingBackgroundTasks: [
+          { taskId: "bbcaa29ff", kind: "monitor" as const, awaited: true as const },
+        ],
       };
       yield* eventSink.write({
         events: [

@@ -1101,13 +1101,7 @@ export function threadLocationKey(
   return `${thread.environmentId}:${thread.worktreePath ?? ""}`;
 }
 
-/**
- * The one thread per location that carries its location icon. A worktree is led by its
- * implementor; the main checkout by its orchestrator, else its implementor. Without either, the
- * top-level thread leads, else the first. Ties go to the earliest row. A native subagent never
- * leads: its location cell holds its robot mark. `rows` lists every shown thread in display order,
- * each thread before its children.
- */
+/** Choose one location lead: orchestrator for root, implementor for worktree, then top-level/earliest. Native subagents never lead. */
 export function resolveLocationLeads<
   TThread extends Pick<SidebarThreadSummary, "environmentId" | "worktreePath"> & {
     readonly source: Pick<

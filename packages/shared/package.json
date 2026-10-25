@@ -491,10 +491,6 @@
       "types": "./src/markdownMath.ts",
       "import": "./src/markdownMath.ts"
     },
-    "./issuePullRequests": {
-      "types": "./src/issuePullRequests.ts",
-      "import": "./src/issuePullRequests.ts"
-    },
     "./interfaceZoom": {
       "types": "./src/interfaceZoom.ts",
       "import": "./src/interfaceZoom.ts"

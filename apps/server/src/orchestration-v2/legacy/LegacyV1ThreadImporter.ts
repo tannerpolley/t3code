@@ -694,9 +694,6 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // transcript_imported_at never resets; cache confirmed imports for the process lifetime to skip repeated locks and reads.
-  const confirmedTranscriptThreadIds = new Set<ThreadId>();
-
   const ensureTranscriptBase = (threadId: ThreadId) =>
     transcriptImports.withLock(
       threadId,

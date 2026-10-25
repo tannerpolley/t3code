@@ -1,30 +1,5 @@
-/**
- * In-process PortScanner implementation.
- *
- * macOS/Linux: parses `lsof -iTCP -sTCP:LISTEN -P -n -F pcn` (-F output is a
- * stable line-prefixed field format; this is the only `lsof` flag set we rely
- * on).
- *
- * Linux without lsof: reads listening sockets from `/proc/net/tcp{,6}` and
- * finds their processes through `/proc/<pid>/fd`.
- *
- * Windows: enumerates listeners with PowerShell. Without a listener list, only
- * configured URLs are probed.
- *
- * Only configured URLs and listeners with a reason to be a dev server are probed:
- * T3-owned processes, common dev ports, and on Linux a user systemd service
- * (`/proc/<pid>/cgroup`) or a working directory inside a registered project's
- * workspace root (`/proc/<pid>/cwd`). Each published server carries that reason.
- * Listeners and configured URLs the environment's hide rules cover are dropped
- * before any of this, so they are never sent a request.
- * Listening ports are published only after a bounded HTTP(S) probe finds a
- * successful HTML document or a redirect to one.
- * Positive and negative results are cached briefly by candidate URL and listener identity,
- * limiting repeated requests without leaving stale classifications around.
- *
- * Polling is reference-counted via scoped `retain`. A single layer-scoped fiber
- * polls forever, but each tick is a no-op when the retain count is zero.
- */
+/** Probe configured URLs and recognized dev listeners only; unknown protocols can crash when sent HTTP.
+ * Hide rules exclude candidates before probing. Retain counts control one cached polling fiber. */
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,

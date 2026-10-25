@@ -65,7 +65,7 @@ export function useOpenChangeRequestLink(
       capabilities: (environmentId) => serverConfigs.get(environmentId)?.environment.capabilities,
       environmentId: resolvedThreadRef?.environmentId ?? targetEnvironmentId,
       primaryEnvironmentId,
-      lendHostProject: resolvedPanelRef !== undefined,
+      lendHostProject: resolvedPanelRef !== undefined || targetEnvironmentId !== undefined,
     });
     if (target === null) return false;
     const { project, repository, number, host } = target;

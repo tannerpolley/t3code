@@ -4,7 +4,7 @@ import type {
   IssueSummary,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { issuePullRequests } from "@t3tools/shared/issuePullRequests";
+import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
 
 /** Issue reads lack branch topology; empty branches keep the thread list from inferring chains. */
 function miniListLink(pr: IssuePullRequest, observedAt: string): ThreadPullRequestLink {

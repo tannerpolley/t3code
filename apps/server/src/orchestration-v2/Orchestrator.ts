@@ -13365,6 +13365,7 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
         cause: "Orchestration V2 live runtime is not configured.",
       }),
     ),
+    dispatchDelegatedRequestWake: () => Effect.void,
     recoverDelegatedTasks: Effect.void,
     recoverDelegatedTask: () => Effect.void,
     delegatedTaskResultPending: () => Effect.succeed(false),

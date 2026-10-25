@@ -1,6 +1,6 @@
 import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { fileBasename } from "@t3tools/shared/path";
-import { resolveThreadPullRequestBadge } from "@t3tools/shared/threadPullRequests";
+import { resolveThreadPullRequestBadge } from "@t3tools/client-runtime/thread-pull-requests";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
 
 /** Checkout assignment from stored paths; preparation never claims the project root. */

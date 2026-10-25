@@ -540,14 +540,12 @@ export const make = Effect.gen(function* () {
         ...options,
         picks: false,
       }),
-    )
-      .slice(0, limit)
-      .map(({ item }) => ({
-        threadId: item.thread.id,
-        projectId: item.thread.projectId,
-        title: item.thread.title,
-        source: "title",
-      }));
+    ).map(({ item }) => ({
+      threadId: item.thread.id,
+      projectId: item.thread.projectId,
+      title: item.thread.title,
+      source: "title",
+    }));
     const shown = new Set(titleHits.map((hit) => hit.threadId));
     const { matches } = yield* searchMessages({
       query: input.query,

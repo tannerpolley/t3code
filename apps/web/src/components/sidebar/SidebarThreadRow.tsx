@@ -6,7 +6,6 @@ import type { ProjectFolderAppearance } from "../../projectFolderAppearance";
 import { useProjectFolderAppearance } from "../../projectFolderAppearance";
 import { shortModelName } from "../chat/providerIconUtils";
 import { SidebarThreadTime } from "./SidebarThreadTime";
-import { useNowSecond } from "../../hooks/useNowSecond";
 import { IssueInboxBadge } from "../issues/IssueInbox";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
@@ -23,10 +22,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import {
-  formatWorkingDurationLabel,
-  resolveThreadProviderStack,
-} from "@t3tools/client-runtime/state/models";
+import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
@@ -142,20 +138,6 @@ function JumpHintBadge(props: { label: string }) {
   );
 }
 
-function WorkingDuration(props: { startedAt: string | null }) {
-  const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
-  if (Number.isNaN(startedMs)) return null;
-  return <WorkingDurationLabel startedMs={startedMs} />;
-}
-
-// Self-ticking so only this span re-renders each second, not the whole row;
-// the shared tick lands every working row's update in the same frame.
-function WorkingDurationLabel(props: { startedMs: number }) {
-  const nowMs = useNowSecond();
-  return (
-    <span className="tabular-nums">{formatWorkingDurationLabel(nowMs - props.startedMs)}</span>
-  );
-}
 function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }

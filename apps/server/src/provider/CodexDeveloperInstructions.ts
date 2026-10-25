@@ -1,4 +1,4 @@
-import type { OrchestratorMcpModelRole, ProviderInteractionMode } from "@t3tools/contracts";
+import type { OrchestratorMcpModelRole } from "@t3tools/contracts";
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
 import type { ManagedIssueRole } from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";

@@ -416,17 +416,17 @@ describe("web thread lineage ordering", () => {
   });
 });
 
-it("keeps a finished child waiting for its shared-session monitor, while a command leaves it done", () => {
+it("keeps a finished child waiting only for awaited shared-session work", () => {
   const parent = ThreadId.make("parent"),
     child = ThreadId.make("child");
-  const statusWith = (kind: "monitor" | "command") => {
+  const statusWith = (kind: "monitor" | "command", awaited?: true) => {
     const graph = deriveThreadRelationshipGraph({
       threads: [
         {
           id: parent,
           status: "completed",
           lineage: { parentThreadId: null },
-          pendingBackgroundTasks: [{ taskId: "shell", kind, ownerThreadId: child }],
+          pendingBackgroundTasks: [{ taskId: "shell", kind, awaited, ownerThreadId: child }],
         },
         {
           id: child,
@@ -439,6 +439,8 @@ it("keeps a finished child waiting for its shared-session monitor, while a comma
     });
     return threadRelationshipRowStatus(graph, immediateThreadRelationships(graph, parent)[0]!);
   };
-  expect(statusWith("monitor")).toBe("waiting");
+  expect(statusWith("monitor", true)).toBe("waiting");
+  expect(statusWith("command", true)).toBe("waiting");
+  expect(statusWith("monitor")).toBe("completed");
   expect(statusWith("command")).toBe("completed");
 });

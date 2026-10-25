@@ -3,7 +3,11 @@ import type {
   IssuePullRequestStatus,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { threadPullRequestKeyOf, visibleThreadPullRequests } from "./threadPullRequests.ts";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import { makeThreadPullRequests } from "@t3tools/source-control-core/shared/threadPullRequests";
+import { builtInSourceControlDefinitions } from "./registry.ts";
+
+const { threadPullRequestKeyOf } = makeThreadPullRequests(builtInSourceControlDefinitions);
 
 /** Order host observations by update time, with terminal states winning when time is unknown. */
 export function issuePullRequests(

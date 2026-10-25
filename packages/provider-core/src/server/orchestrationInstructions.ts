@@ -85,13 +85,7 @@ function modelRoleLine(role: OrchestratorMcpModelRole, maxLength: number): strin
   return line + suffix;
 }
 
-/**
- * The user's model roles as one line each: name, when to use it, and
- * exact `delegate_task` targets, or why choices are unavailable. Only when the
- * full list exceeds the budget does each role get an equal share; long
- * descriptions and choices are then shortened without cutting a Target JSON
- * value or dropping a role entirely.
- */
+/** Budget model-role lines without cutting target JSON or omitting a role. */
 export function t3ModelRolesInstructions(roles: ReadonlyArray<OrchestratorMcpModelRole>): string {
   if (roles.length === 0) return "";
   const budget = MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH - MODEL_ROLES_HEADER.length - roles.length - 1;

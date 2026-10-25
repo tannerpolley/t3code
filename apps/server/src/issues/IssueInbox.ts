@@ -6,7 +6,6 @@
 import {
   CommandId,
   IssueReadError,
-  pullRequestHostOf,
   SourceControlProviderKind,
   IssueWorkError,
   MessageId,
@@ -27,7 +26,7 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -189,11 +188,11 @@ export const make = Effect.gen(function* () {
         sameRepositoryIdentity(cached.identity, identity);
       if (!unchanged) discoveryIdentities.delete(project.id);
       if (identity?.provider !== "github") continue;
-      const host = pullRequestHostOf(
-        identity,
-        SourceControlProviderKind.make("github"),
-      ).toLowerCase();
-      const repository = identity.origin?.displayName ?? sourceControlRepositorySelector(identity);
+      const host = sourceControlDefinitions
+        .changeRequestHost(identity, SourceControlProviderKind.make("github"))
+        .toLowerCase();
+      const repository =
+        identity.origin?.displayName ?? sourceControlDefinitions.repositorySelector(identity);
       if (
         repository === null ||
         repositories.some(
@@ -486,12 +485,14 @@ export const make = Effect.gen(function* () {
         });
       const own = [
         identity?.origin?.displayName,
-        sourceControlRepositorySelector(identity),
+        sourceControlDefinitions.repositorySelector(identity),
       ].flatMap((name) => (name == null ? [] : [name.toLowerCase()]));
       const ownHost =
         identity === null
           ? null
-          : pullRequestHostOf(identity, SourceControlProviderKind.make("github")).toLowerCase();
+          : sourceControlDefinitions
+              .changeRequestHost(identity, SourceControlProviderKind.make("github"))
+              .toLowerCase();
       const crossProject = !(
         identity?.provider === "github" &&
         ownHost === target.host &&

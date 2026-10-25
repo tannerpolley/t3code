@@ -163,6 +163,7 @@ const createMenu = () =>
   useThreadActionMenu({
     threadRef: target,
     projectCwd: "/project",
+    canShareWithGuest: false,
     onStartRename: () => recordEffect("rename"),
   });
 
