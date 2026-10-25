@@ -212,6 +212,30 @@ function setup() {
 
 describe("thread notifications", () => {
   it.each([true, false])(
+    "retracts an owner-visible child alert after a shell refresh and an answer, focus=%s",
+    async (focused) => {
+      await using app = setup();
+      state.subagent = true;
+      state.focused = focused;
+      state.mode = "notifications-and-sound";
+      await app.render();
+      state.input = true;
+      await app.render();
+      expect(state.sound).toHaveBeenCalledTimes(1);
+      if (focused) expect(state.add).toHaveBeenCalledTimes(1);
+      else expect(state.notification).toHaveBeenCalledTimes(1);
+      await app.render();
+      expect(state.sound).toHaveBeenCalledTimes(1);
+      if (focused) expect(state.close).not.toHaveBeenCalled();
+      else expect(state.notification.mock.results[0]?.value.close).not.toHaveBeenCalled();
+      state.input = false;
+      await app.render();
+      if (focused) expect(state.close).toHaveBeenCalledWith("toast-1");
+      else expect(state.notification.mock.results[0]?.value.close).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([true, false])(
     "keeps a routed child request silent while its parent works, focus=%s",
     async (focused) => {
       await using app = setup();

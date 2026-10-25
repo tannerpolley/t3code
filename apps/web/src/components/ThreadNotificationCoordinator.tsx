@@ -360,9 +360,7 @@ function EnvironmentNotifications({
         toasts.current.delete(thread.id);
         onRetract(threadNotificationTag(environmentId, thread.id));
       }
-      if (child && attention !== null && prior?.notifiedAttention?.has(attention) === true)
-        state.attention = null;
-      else if (child && attention !== null)
+      if (child && attention !== null)
         state.notifiedAttention = new Set([...(prior?.notifiedAttention ?? []), attention]);
       next.set(thread.id, state);
       changed.push([prior, state]);
@@ -370,10 +368,17 @@ function EnvironmentNotifications({
     previous.current = next;
     pendingCompletions.retain(new Set(next.keys()));
     for (const [prior, state] of changed) {
-      pendingCompletions.observe(state.thread.id, prior, state, {
-        archived: state.thread.archivedAt !== null,
-        quiet: state.raw.latestRunStopRequested === true || state.raw.latestRunSilent === true,
-      });
+      pendingCompletions.observe(
+        state.thread.id,
+        prior,
+        state.attention !== null && prior?.notifiedAttention?.has(state.attention) === true
+          ? { ...state, attention: null }
+          : state,
+        {
+          archived: state.thread.archivedAt !== null,
+          quiet: state.raw.latestRunStopRequested === true || state.raw.latestRunSilent === true,
+        },
+      );
     }
     initialized.current = true;
     if (nextAlertDelay !== Infinity) {
