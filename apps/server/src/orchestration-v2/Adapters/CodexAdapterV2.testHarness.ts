@@ -265,141 +265,124 @@ function makeCodexReplayTranscript(input: {
   };
 }
 
-const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < 5000; attempt++) {
-      if (predicate()) {
-        return;
-      }
-      yield* Effect.yieldNow;
-    }
-    return yield* Effect.die(`Timed out waiting for ${label}.`);
-  });
-
-const makeCodexReplayHarness = (
+const makeCodexReplayHarness = Effect.fn("CodexReplay.makeCodexReplayHarness")(function* (
   transcript: CodexReplay.CodexAppServerReplayTranscript,
   onEvent: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<unknown> = () =>
     Effect.void,
   onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
   readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
-) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
-    const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
-      [];
-    const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
-      open: (openInput) =>
-        Layer.build(CodexReplay.layerReplay(transcript)).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapter.ProviderAdapterOpenSessionError({
-                driver: CodexAdapterV2.CODEX_DRIVER_KIND,
-                providerSessionId: openInput.providerSessionId,
-                cause,
-              }),
-          ),
-          Effect.flatMap((context) =>
-            Effect.service(CodexClient.CodexAppServerClient).pipe(
-              Effect.map((client) =>
-                withCodexReplayChildMetadata(client, transcript, readChildMetadata),
-              ),
-              Effect.map(
-                (client) =>
-                  ({
-                    ...client,
-                    request: (method, params) =>
-                      onRequest(method, params).pipe(
-                        Effect.andThen(client.request(method, params)),
-                      ),
-                  }) satisfies CodexClient.CodexAppServerClient["Service"],
-              ),
-              Effect.provide(context),
-            ),
-          ),
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
+  const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+  const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
+    open: (openInput) =>
+      Layer.build(CodexReplay.layerReplay(transcript)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapter.ProviderAdapterOpenSessionError({
+              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+              providerSessionId: openInput.providerSessionId,
+              cause,
+            }),
         ),
-    };
-    const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
-      instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_CODEX_SETTINGS,
-      environment: {},
-      clientFactory,
-      crypto: yield* Crypto.Crypto,
-      fileSystem,
-      idAllocator,
-      serverConfig,
-      continuationRequests: {
-        offer: (request) =>
-          Effect.sync(() => {
-            continuationRequests.push(request);
-          }),
-      },
-    });
-    const threadId = ThreadId.make(`thread-${transcript.scenario}`);
-    const runtime = yield* adapter.openSession({
-      threadId,
-      providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
-      modelSelection: CODEX_TEST_MODEL_SELECTION,
-      runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-    });
-    const providerThread = yield* runtime.ensureThread({
-      threadId,
-      modelSelection: CODEX_TEST_MODEL_SELECTION,
-      runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-    });
-    const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-    const firstTerminal = yield* Deferred.make<void>();
-    const eventStreamEnded = yield* Deferred.make<Exit.Exit<void, unknown>>();
-    yield* runtime.events.pipe(
-      Stream.runForEach((event) =>
-        Effect.sync(() => {
-          events.push(event);
-        }).pipe(
-          Effect.andThen(
-            event.type === "turn.terminal"
-              ? Deferred.succeed(firstTerminal, undefined)
-              : Effect.void,
+        Effect.flatMap((context) =>
+          Effect.service(CodexClient.CodexAppServerClient).pipe(
+            Effect.map((client) =>
+              withCodexReplayChildMetadata(client, transcript, readChildMetadata),
+            ),
+            Effect.map(
+              (client) =>
+                ({
+                  ...client,
+                  request: (method, params) =>
+                    onRequest(method, params).pipe(Effect.andThen(client.request(method, params))),
+                }) satisfies CodexClient.CodexAppServerClient["Service"],
+            ),
+            Effect.provide(context),
           ),
-          Effect.andThen(onEvent(event)),
         ),
       ),
-      Effect.exit,
-      Effect.flatMap((exit) => Deferred.succeed(eventStreamEnded, exit)),
-      Effect.forkScoped,
-    );
-    if (runtime.hasPendingBackgroundWork === undefined) {
-      return yield* Effect.die("Codex adapter runtime must expose hasPendingBackgroundWork.");
-    }
-    const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
-    const terminalEvents = () =>
-      events.filter(
-        (
-          event,
-        ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
-          event.type === "turn.terminal",
-      );
-    const subagentUpdates = () =>
-      events.filter(
-        (
-          event,
-        ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }> =>
-          event.type === "subagent.updated",
-      );
-    return {
-      runtime,
-      providerThread,
-      threadId,
-      serverConfig,
-      events,
-      continuationRequests,
-      terminalEvents,
-      subagentUpdates,
-      hasPendingBackgroundWork,
-      firstTerminal: Deferred.await(firstTerminal),
-      eventStreamExit: Deferred.await(eventStreamEnded),
-    };
+  };
+  const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+    instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+    settings: DEFAULT_CODEX_SETTINGS,
+    environment: {},
+    clientFactory,
+    crypto: yield* Crypto.Crypto,
+    fileSystem,
+    idAllocator,
+    serverConfig,
+    continuationRequests: {
+      offer: (request) =>
+        Effect.sync(() => {
+          continuationRequests.push(request);
+        }),
+    },
   });
+  const threadId = ThreadId.make(`thread-${transcript.scenario}`);
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
+    modelSelection: CODEX_TEST_MODEL_SELECTION,
+    runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+  });
+  const providerThread = yield* runtime.ensureThread({
+    threadId,
+    modelSelection: CODEX_TEST_MODEL_SELECTION,
+    runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+  });
+  const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+  const firstTerminal = yield* Deferred.make<void>();
+  const eventStreamEnded = yield* Deferred.make<Exit.Exit<void, unknown>>();
+  yield* runtime.events.pipe(
+    Stream.runForEach((event) =>
+      Effect.sync(() => {
+        events.push(event);
+      }).pipe(
+        Effect.andThen(
+          event.type === "turn.terminal" ? Deferred.succeed(firstTerminal, undefined) : Effect.void,
+        ),
+        Effect.andThen(onEvent(event)),
+      ),
+    ),
+    Effect.exit,
+    Effect.flatMap((exit) => Deferred.succeed(eventStreamEnded, exit)),
+    Effect.forkScoped,
+  );
+  if (runtime.hasPendingBackgroundWork === undefined) {
+    return yield* Effect.die("Codex adapter runtime must expose hasPendingBackgroundWork.");
+  }
+  const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
+  const terminalEvents = () =>
+    events.filter(
+      (
+        event,
+      ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+        event.type === "turn.terminal",
+    );
+  const subagentUpdates = () =>
+    events.filter(
+      (
+        event,
+      ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+        event.type === "subagent.updated",
+    );
+  return {
+    runtime,
+    providerThread,
+    threadId,
+    serverConfig,
+    events,
+    continuationRequests,
+    terminalEvents,
+    subagentUpdates,
+    hasPendingBackgroundWork,
+    firstTerminal: Deferred.await(firstTerminal),
+    eventStreamExit: Deferred.await(eventStreamEnded),
+  };
+});
 
 const finalAnswerTranscript = (
   scenario: string,
@@ -883,34 +866,32 @@ const subagentWakeTranscript = (
   };
 };
 
-const runSubagentWakeCase = (
+const runSubagentWakeCase = Effect.fn("CodexReplay.runSubagentWakeCase")(function* (
   scenario: string,
   children: ReadonlyArray<{ readonly name: string; readonly endsInTurn: boolean }>,
-) =>
-  Effect.gen(function* () {
-    const { transcript, markerTurn } = subagentWakeTranscript(scenario, children);
-    const received = yield* Deferred.make<void>();
-    const harness = yield* makeCodexReplayHarness(transcript, (event) =>
-      event.type === "provider_turn.updated" &&
-      event.providerTurn.nativeTurnRef?.nativeId === markerTurn
-        ? Deferred.succeed(received, undefined).pipe(Effect.asVoid)
-        : Effect.void,
-    );
-    yield* harness.runtime.startTurn(
-      makeCodexTestTurnInput({
-        threadId: harness.threadId,
-        providerThread: harness.providerThread,
-        now: yield* DateTime.now,
-        attemptId: RunAttemptId.make(scenario),
-        text: RESUME_PROMPT,
-      }),
-    );
-    yield* Deferred.await(received);
-    assert.equal(harness.terminalEvents()[0]?.status, "completed");
-    return harness;
-  });
+) {
+  const { transcript, markerTurn } = subagentWakeTranscript(scenario, children);
+  const received = yield* Deferred.make<void>();
+  const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+    event.type === "provider_turn.updated" &&
+    event.providerTurn.nativeTurnRef?.nativeId === markerTurn
+      ? Deferred.succeed(received, undefined).pipe(Effect.asVoid)
+      : Effect.void,
+  );
+  yield* harness.runtime.startTurn(
+    makeCodexTestTurnInput({
+      threadId: harness.threadId,
+      providerThread: harness.providerThread,
+      now: yield* DateTime.now,
+      attemptId: RunAttemptId.make(scenario),
+      text: RESUME_PROMPT,
+    }),
+  );
+  yield* Deferred.await(received);
+  assert.equal(harness.terminalEvents()[0]?.status, "completed");
+  return harness;
+});
 export {
-  awaitUntil,
   backgroundCommandItem,
   backgroundExecTranscript,
   BG_COMMAND,

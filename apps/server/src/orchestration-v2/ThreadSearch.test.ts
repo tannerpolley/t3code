@@ -829,12 +829,12 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
-      const project = ProjectId.make("project:petrel");
+      const project = ProjectId.make("project:notes");
       yield* createProject(project);
       const messageOnly = ThreadId.make("thread:petrel-message");
       yield* Effect.forEach(
         [
-          thread(messageOnly, project),
+          thread(messageOnly, project, { title: "Notes" }),
           // The oldest message, so a cut taken before titles drop would lose it.
           message(messageOnly, "petrel-old", "user", "a petrel note", { minute: 1 }),
           ...Array.from({ length: 50 }, (_, index) => {
