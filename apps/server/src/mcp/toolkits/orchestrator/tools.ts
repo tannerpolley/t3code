@@ -87,7 +87,7 @@ const ProposeIssueChangeTool = Tool.make("propose_issue_change", {
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
-    "List providers, models, options, and runtime modes for `delegate_task`. Short list. `search` finds others. Any catalog model works. Includes model roles ordered by quota headroom and inherited options.",
+    "List providers, models, options, and runtime modes for `delegate_task`. Short list. `search` finds others. Any catalog model works. Includes model roles in configured order with low-headroom choices demoted, and inherited options.",
   parameters: OrchestratorMcpCapabilitiesInput,
   success: OrchestratorMcpCapabilitiesResult,
   failure: OrchestratorMcpFailure,

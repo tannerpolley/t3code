@@ -160,7 +160,7 @@ describe("usage-limit target selection", () => {
     };
     const providers = [
       provider(codex, "codex", "sol"),
-      provider(claude, "claudeAgent", "opus", 80),
+      provider(claude, "claudeAgent", "opus", 60),
       provider(otherClaude, "claudeAgent", "opus", 20),
     ];
     const result = usageLimitSwitchTarget(

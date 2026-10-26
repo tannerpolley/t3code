@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import { modelRoleStatuses } from "../mcp/delegateTaskTarget.ts";
+import { modelRoleStatuses, modelWeeklyHeadroom } from "../mcp/delegateTaskTarget.ts";
 
 type UsageLimitThread = Pick<
   OrchestrationV2AppThread,
@@ -77,7 +77,19 @@ export function usageLimitSwitchTarget(
     now,
   );
   const choice = ranked
-    .flatMap((candidate) => candidate.targets)
+    .flatMap((candidate) =>
+      [...candidate.targets].sort((left, right) => {
+        const headroom = (target: typeof left) => {
+          const provider = providers.find(
+            (entry) => entry.instanceId === target.providerInstanceId,
+          );
+          return provider === undefined
+            ? undefined
+            : modelWeeklyHeadroom(provider, target.model, now);
+        };
+        return (headroom(right) ?? -Infinity) - (headroom(left) ?? -Infinity) || 0;
+      }),
+    )
     .find((target) => {
       const provider = providers.find(
         (provider) => provider.instanceId === target.providerInstanceId,

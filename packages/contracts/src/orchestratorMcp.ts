@@ -618,8 +618,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
   /**
-   * The user's model roles: alternatives for delegated work, ordered by
-   * current weekly headroom. Task fit and explicit user instructions take priority.
+   * The user's model roles in configured order, with low-headroom choices demoted
+   * and unavailable choices last. Task fit and explicit user instructions take priority.
    */
   modelRoles: Schema.Array(OrchestratorMcpModelRole),
   features: Schema.Struct({

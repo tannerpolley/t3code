@@ -591,7 +591,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     assert.deepEqual(modelRoleStatuses(roles, providers, capable, modelRoleStatusNow), mixed);
   });
 
-  it("orders role choices by weekly headroom, keeping unknown and unavailable choices last", () => {
+  it("keeps configured order unless headroom is below the threshold", () => {
     const instance = (id: string) => ProviderInstanceId.make(id);
     const configured = [
       "expired",
@@ -648,9 +648,8 @@ describe("OrchestratorMcpService provider resolution", () => {
     const statuses = modelRoleStatuses(
       roles,
       [
-        // A kept snapshot that reset yesterday says nothing about today's quota.
-        provider("expired", weekly(99, -1 / 7)),
-        provider("balanced", weekly(20, 0.8)),
+        provider("expired", weekly(8, 0.98)),
+        provider("balanced", weekly(40, 0.8)),
         provider("unknown"),
         provider("roomy", weekly(40, 0.2)),
         provider("missing-reset", weekly(10)),
@@ -663,26 +662,38 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     assert.deepEqual(
       choices.map((choice) => choice.model),
-      ["roomy", "balanced", "expired", "unknown", "missing-reset", "blocked"],
+      ["expired", "unknown", "roomy", "missing-reset", "balanced", "blocked"],
     );
     assert.deepEqual(choices[0]!.weeklyUsage, {
-      remainingPercent: 60,
-      resetsAt: modelRoleStatusResetAt(0.2),
-      pace: "under",
+      remainingPercent: 92,
+      resetsAt: modelRoleStatusResetAt(0.98),
+      pace: "ahead",
     });
-    assert.deepEqual(choices[1]!.weeklyUsage, {
-      remainingPercent: 80,
-      resetsAt: modelRoleStatusResetAt(0.8),
-      pace: "on",
-    });
-    assert.equal(choices[2]!.weeklyUsage, undefined);
-    assert.equal(choices[3]!.weeklyUsage, undefined);
+    assert.equal(choices[1]!.weeklyUsage, undefined);
     assert.deepEqual(choices[4]!.weeklyUsage, {
-      remainingPercent: 90,
-      resetsAt: null,
-      pace: null,
+      remainingPercent: 60,
+      resetsAt: modelRoleStatusResetAt(0.8),
+      pace: "ahead",
     });
     assert.include(choices[5]!.unavailableReason!, "not authenticated");
+
+    const demoted = modelRoleStatuses(
+      roles,
+      [
+        provider("expired", weekly(60, 0.8)),
+        provider("balanced", weekly(40, 0.8)),
+        provider("unknown"),
+        provider("roomy", weekly(36, 0.8)),
+        provider("missing-reset", weekly(10)),
+        provider("blocked", weekly(0, 0.01), true),
+      ],
+      new Set(configured.map(instance)),
+      modelRoleStatusNow,
+    )[0]!.targets;
+    assert.deepEqual(
+      demoted.map((choice) => choice.model),
+      ["unknown", "roomy", "missing-reset", "balanced", "expired", "blocked"],
+    );
   });
 
   it("caps Sonnet's weekly headroom at the all-models allowance", () => {

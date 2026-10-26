@@ -171,6 +171,8 @@ export function workerProviderTargets<T extends ModelRoleTarget>(
   return first === undefined ? role.targets : [first, ...rest];
 }
 
+const MIN_WEEKLY_HEADROOM = 0.8;
+
 /** Each role's choices with why `delegate_task` would reject each right now, or null. */
 export function modelRoleStatuses(
   roles: ReadonlyArray<ModelRole>,
@@ -196,10 +198,8 @@ export function modelRoleStatuses(
       const window = [...windows].sort(
         (left, right) => remainingPercent(left) - remainingPercent(right),
       )[0];
-      const headrooms = windows.flatMap((window) => {
-        const headroom = weeklyHeadroom(window, now);
-        return headroom === undefined ? [] : [headroom];
-      });
+      const headroom =
+        provider === undefined ? undefined : modelWeeklyHeadroom(provider, target.model, now);
       const weeklyUsage =
         window === undefined
           ? undefined
@@ -216,17 +216,22 @@ export function modelRoleStatuses(
         },
         configuredOrder,
         unavailable: typeof checked !== "string",
-        headroom: headrooms.length === 0 ? undefined : Math.min(...headrooms),
+        headroom,
       };
     });
     const sortedChoices = Arr.sort(
       choices,
       Order.make<(typeof choices)[number]>((left, right) => {
         const rank = (choice: (typeof choices)[number]) =>
-          choice.unavailable ? 2 : choice.headroom === undefined ? 1 : 0;
+          choice.unavailable
+            ? 2
+            : choice.headroom !== undefined && choice.headroom + Number.EPSILON < MIN_WEEKLY_HEADROOM
+              ? 1
+              : 0;
         const byAvailability = rank(left) - rank(right);
         if (byAvailability !== 0) return byAvailability < 0 ? -1 : 1;
         if (
+          rank(left) === 1 &&
           left.headroom !== undefined &&
           right.headroom !== undefined &&
           left.headroom !== right.headroom
@@ -250,6 +255,18 @@ export function modelRoleStatuses(
       ),
     };
   });
+}
+
+export function modelWeeklyHeadroom(
+  provider: ServerProvider,
+  model: string,
+  now: number,
+): number | undefined {
+  const headrooms = weeklyWindowsForModel(provider, model, now).flatMap((window) => {
+    const headroom = weeklyHeadroom(window, now);
+    return headroom === undefined ? [] : [headroom];
+  });
+  return headrooms.length === 0 ? undefined : Math.min(...headrooms);
 }
 
 function weeklyHeadroom(window: ServerProviderUsageWindow, now: number): number | undefined {

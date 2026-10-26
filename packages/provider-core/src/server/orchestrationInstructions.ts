@@ -41,7 +41,7 @@ const MODEL_ROLES_HEADER = `
 
 The user can switch worker providers (All Claude / Mixed / All Codex) at any time, so read \`orchestrator_capabilities\` before choosing a worker model because its roles are current.
 
-The user's choices for delegated work are equal alternatives, ordered by current weekly headroom, with more quota left relative to time remaining first. You may override this order for task fit; explicit user instructions win. Unknown usage keeps the configured order after known choices, and unavailable targets go last. Weekly usage shows quota left, reset time, and pace against elapsed window time when reported. Pass a choice's Target JSON as \`delegate_task\`'s \`target\` (not its \`role\` field); \`orchestrator_capabilities\` lists all choices and their availability again.
+The user's choices for delegated work follow configured order, with the Default first. Choices with weekly headroom below 0.8 are demoted behind the others, ordered by headroom. Unknown usage is not demoted, and unavailable targets go last. You may override this order for task fit; explicit user instructions win. Weekly usage shows quota left, reset time, and pace against elapsed window time when reported. Pass a choice's Target JSON as \`delegate_task\`'s \`target\` (not its \`role\` field); \`orchestrator_capabilities\` lists all choices and their availability again.
 
 `;
 

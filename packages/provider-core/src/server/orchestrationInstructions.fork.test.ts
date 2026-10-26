@@ -55,7 +55,7 @@ describe("T3 orchestration provider instructions", () => {
     const text = t3ModelRolesInstructions(roles);
     assert.include(
       text,
-      "The user's choices for delegated work are equal alternatives, ordered by current weekly headroom, with more quota left relative to time remaining first. You may override this order for task fit; explicit user instructions win.",
+      "The user's choices for delegated work follow configured order, with the Default first. Choices with weekly headroom below 0.8 are demoted behind the others, ordered by headroom. Unknown usage is not demoted, and unavailable targets go last. You may override this order for task fit; explicit user instructions win.",
     );
     assert.include(
       text,
@@ -65,7 +65,6 @@ describe("T3 orchestration provider instructions", () => {
       text,
       '- Investigator (role: investigator): Gather evidence and investigate questions. gpt-6-luna max (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-6-luna","options":{"reasoningEffort":"max"}}`',
     );
-    assert.notInclude(text, "The first choice is the default");
     const fastBuilder = text
       .split("\n")
       .find((line) => line.startsWith("- Implementor · Fast (role: implementor):"))!;
