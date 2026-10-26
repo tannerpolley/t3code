@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  NodeId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -31,9 +32,103 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import { makeIssueWorkDispatch } from "./IssueWorkDispatch.ts";
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
   Layer.provide(SqlitePersistence.layerMemory),
+);
+
+it.effect("a workflow Stop waiting on its provider leaves sibling dispatch available", () =>
+  Effect.gen(function* () {
+    const rootThreadId = ThreadId.make("workflow-stop-root");
+    const threadId = ThreadId.make("workflow-stop-child");
+    const siblingId = ThreadId.make("workflow-stop-sibling");
+    const subagentId = NodeId.make("workflow-stop-task");
+    const providerThreadId = ProviderThreadId.make("workflow-stop-provider-thread");
+    const providerSessionId = ProviderSessionId.make("workflow-stop-session");
+    const providerInstanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const providerEntered = yield* Deferred.make<void>();
+    const releaseProvider = yield* Deferred.make<void>();
+    let providerFinished = false;
+    const dependencies = Layer.mergeAll(
+      ThreadCommandExecutor.layer,
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        getThreadShell: (id) =>
+          Effect.succeed({
+            id,
+            role: "reviewer",
+            lineage: {
+              rootThreadId,
+              parentThreadId: rootThreadId,
+              relationshipToParent: "subagent",
+            },
+          } as never),
+      }),
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: { id: threadId, deletedAt: null },
+            subagents: [
+              {
+                id: subagentId,
+                threadId,
+                origin: "provider_native",
+                driver,
+                providerInstanceId,
+                providerThreadId,
+                status: "running",
+                workflow: {},
+                nativeTaskRef: { nativeId: "workflow-native-task" },
+              },
+            ],
+            runs: [],
+            providerThreads: [
+              {
+                id: providerThreadId,
+                appThreadId: threadId,
+                providerInstanceId,
+                driver,
+                providerSessionId,
+              },
+            ],
+          } as unknown as OrchestrationV2ThreadProjection),
+      }),
+      Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+        get: () =>
+          Effect.succeed(
+            Option.some({
+              stopTask: () =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(providerEntered, undefined);
+                  yield* Deferred.await(releaseProvider);
+                  providerFinished = true;
+                }),
+            } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+          ),
+      }),
+      ServerSettings.layerTest(),
+      layerReceiptsTest,
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      const { threadDispatch } = yield* makeIssueWorkDispatch;
+      const stopping = yield* service.stopWorkflow({ threadId, subagentId }).pipe(Effect.forkChild);
+      yield* Deferred.await(providerEntered);
+      yield* threadDispatch.withLock(siblingId, Effect.void);
+      expect(providerFinished).toBe(false);
+      yield* Deferred.succeed(releaseProvider, undefined);
+      yield* Fiber.join(stopping);
+      expect(providerFinished).toBe(true);
+    }).pipe(
+      Effect.provide(
+        dependencies.pipe(
+          Layer.provideMerge(ThreadManagementService.layer.pipe(Layer.provide(dependencies))),
+        ),
+      ),
+    );
+  }),
 );
 
 const layerDispatchChokepointTest =

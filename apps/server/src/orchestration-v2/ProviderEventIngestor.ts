@@ -439,9 +439,10 @@ export const layer: Layer.Layer<
           ),
           Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
         );
-        if ((yield* staleThread) === null) return [];
+        const initialThread = yield* staleThread;
+        if (initialThread === null) return [];
         return yield* threadCommands.withLock(
-          childThreadId,
+          threadDispatchLockKey(childThreadId, initialThread),
           Effect.gen(function* () {
             const thread = yield* staleThread;
             if (thread === null) return [];
@@ -894,18 +895,20 @@ export const layer: Layer.Layer<
               (effect) => {
                 if (input.event.type !== "app_thread.created") return effect;
                 const thread = input.event.appThread;
-                const childLocked = threadCommands.withLock(thread.id, effect);
-                const parentId = thread.lineage.parentThreadId;
-                if (
-                  !isProviderNativeSubagentThread(thread) ||
-                  parentId === null ||
-                  parentId === thread.id
-                )
-                  return childLocked;
                 return Effect.gen(function* () {
+                  const existing = yield* projections.getThreadShell(thread.id).pipe(Effect.orDie);
+                  const childKey = threadDispatchLockKey(thread.id, existing);
+                  const childLocked = threadCommands.withLock(childKey, effect);
+                  const parentId = thread.lineage.parentThreadId;
+                  if (
+                    !isProviderNativeSubagentThread(thread) ||
+                    parentId === null ||
+                    parentId === thread.id
+                  )
+                    return yield* childLocked;
                   const parent = yield* projections.getThreadShell(parentId).pipe(Effect.orDie);
                   const key = threadDispatchLockKey(parentId, parent);
-                  return yield* key === thread.id
+                  return yield* key === childKey
                     ? childLocked
                     : threadCommands.withLock(key, childLocked);
                 });

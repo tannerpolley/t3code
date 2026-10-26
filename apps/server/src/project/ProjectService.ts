@@ -33,6 +33,7 @@ import {
 } from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
+import { threadDispatchLockKey } from "../orchestration-v2/IssueWorkDispatch.ts";
 import {
   isRegisteredRepositoryRoot,
   planThreadDeletion,
@@ -600,7 +601,7 @@ export const make = Effect.gen(function* () {
       projectThreads,
       (thread) =>
         threadCommands
-          .withLock(thread.id, deleteChildThread(input, thread.id))
+          .withLock(threadDispatchLockKey(thread.id, thread), deleteChildThread(input, thread.id))
           .pipe(
             Effect.mapError(
               (cause) =>

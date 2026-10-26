@@ -3,7 +3,7 @@ import type {
   IssueWorkRead,
   ThreadId,
   ThreadLinkedIssue,
-  OrchestrationV2ThreadShell,
+  OrchestrationV2AppThread,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -47,12 +47,15 @@ class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
   },
 ) {}
 
-// ponytail: Unlinked managers lock themselves, so concurrent read-only delegations can go one over
-// the cap (#91); rollback and model-sync key mismatches on root-keyed threads remain in #97.
+// shortcut: Unlinked managers lock themselves, so concurrent read-only delegations can exceed the cap (#91).
 export function threadDispatchLockKey(
   threadId: ThreadId,
-  shell: OrchestrationV2ThreadShell | null,
+  shell: Pick<
+    OrchestrationV2AppThread,
+    "linkedIssue" | "role" | "lineage" | "creationSource"
+  > | null,
 ) {
+  // Registration can change while a command waits; only thread identity determines its key.
   return shell?.linkedIssue !== undefined ||
     (isReadOnlyIssueRole(shell?.role) &&
       shell?.lineage.relationshipToParent === "subagent" &&

@@ -372,7 +372,7 @@ layer("ProviderEventIngestorV2", (it) => {
   );
 });
 
-it.effect("preserves a native child's rename and runtime mode during model sync", () => {
+function syncModelDuringThreadChanges(issueLinked: boolean) {
   const harness = makeHarness();
   const dependencies = Layer.mergeAll(
     harness.layer,
@@ -443,6 +443,20 @@ it.effect("preserves a native child's rename and runtime mode during model sync"
         title: "review design",
         creationSource: "provider",
         role: "reviewer",
+        ...(issueLinked
+          ? {
+              linkedIssue: {
+                host: "github.com",
+                repository: "owner/repo",
+                repositoryId: "repo:model-sync",
+                id: "issue:model-sync",
+                nodeId: "node:model-sync",
+                number: 97,
+                url: "https://github.com/owner/repo/issues/97",
+                title: "Model sync",
+              },
+            }
+          : {}),
         modelSelection: {
           ...modelSelection,
           options: [{ id: "reasoningEffort", value: "xhigh" }],
@@ -491,7 +505,6 @@ it.effect("preserves a native child's rename and runtime mode during model sync"
     const modelReady = yield* Deferred.make<void>();
     const releaseModel = yield* Deferred.make<void>();
     const updateBlocked = yield* Deferred.make<void>();
-    const updateComplete = yield* Deferred.make<void>();
     let modelLockKey: ThreadId | null = null;
     const withLock = locks.withLock.bind(locks);
     using _locks = vi
@@ -521,24 +534,24 @@ it.effect("preserves a native child's rename and runtime mode during model sync"
       }),
     );
     const publishing = yield* ingest(subagentUpdated).pipe(Effect.forkChild);
-    yield* Deferred.await(modelReady);
+    yield* Effect.raceFirst(Deferred.await(modelReady), Fiber.join(publishing));
     const editing = yield* Effect.gen(function* () {
-      yield* threads.dispatch({
-        type: "thread.metadata.update",
-        commandId: CommandId.make("rename-native-child"),
-        threadId: childThreadId,
-        title: "New user title",
-      });
+      if (!issueLinked)
+        yield* threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("rename-native-child"),
+          threadId: childThreadId,
+          title: "New user title",
+        });
       yield* threads.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("reduce-native-child-permissions"),
         threadId: childThreadId,
         runtimeMode: "approval-required",
       });
-      yield* Deferred.succeed(updateComplete, undefined);
     }).pipe(Effect.provideService(UserUpdate, true), Effect.forkChild);
     // A shared lock queues the edit; separate locks let it commit before model sync.
-    yield* Effect.raceFirst(Deferred.await(updateBlocked), Deferred.await(updateComplete));
+    yield* Effect.raceFirst(Deferred.await(updateBlocked), Fiber.join(editing));
     yield* Deferred.succeed(releaseModel, undefined);
     yield* Fiber.join(publishing);
     yield* Fiber.join(editing);
@@ -546,10 +559,18 @@ it.effect("preserves a native child's rename and runtime mode during model sync"
     assert.deepEqual(
       { title: after.title, runtimeMode: after.runtimeMode, model: after.modelSelection.model },
       {
-        title: "New user title",
+        title: issueLinked ? "review design" : "New user title",
         runtimeMode: "approval-required",
         model: "gpt-6.1-sol",
       },
     );
   }).pipe(Effect.provide(testLayer));
-});
+}
+
+it.effect("preserves a native child's rename and runtime mode during model sync", () =>
+  syncModelDuringThreadChanges(false),
+);
+
+it.effect("preserves an issue-linked child's runtime mode during model sync", () =>
+  syncModelDuringThreadChanges(true),
+);

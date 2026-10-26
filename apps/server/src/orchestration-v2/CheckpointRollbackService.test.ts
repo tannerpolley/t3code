@@ -3,6 +3,7 @@ import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointId,
   CheckpointRef,
+  CommandId,
   EventId,
   MessageId,
   NodeId,
@@ -19,6 +20,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Deferred from "effect/Deferred";
@@ -45,6 +47,8 @@ import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import { makeHarness } from "./ThreadLaunchService.testHarness.ts";
 
 const unrelatedProject = Option.some({
   workspaceRoot: "/nonexistent/t3-rollback-project",
@@ -621,6 +625,9 @@ const seedRollbackHistory = Effect.gen(function* () {
     store,
     now,
     threadId,
+    providerThread,
+    providerThreadId,
+    scopeId,
     runId,
     nodeId,
     checkpointId,
@@ -630,6 +637,159 @@ const seedRollbackHistory = Effect.gen(function* () {
     deletedRefs,
     committed,
   };
+});
+
+it.effect("keeps an issue-linked thread's rewound head after a concurrent message commits", () => {
+  const harness = makeHarness();
+  const dependencies = Layer.mergeAll(
+    harness.layer,
+    ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
+    ThreadCommandExecutor.layer,
+    IdAllocator.layer,
+  );
+  return Effect.gen(function* () {
+    const history = yield* seedRollbackHistory;
+    const { store, threadId, providerThreadId, providerThread, scopeId, now } = history;
+    const rootThreadId = ThreadId.make("rollback-lineage-root");
+    const thread = yield* store.getThread(threadId);
+    yield* store.apply({
+      id: EventId.make("rollback-root-created"),
+      type: "thread.created",
+      threadId: rootThreadId,
+      occurredAt: now,
+      payload: {
+        ...thread,
+        id: rootThreadId,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId },
+      },
+    });
+    yield* store.apply({
+      id: EventId.make("rollback-issue-link"),
+      type: "thread.metadata-updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...thread,
+        lineage: {
+          parentThreadId: rootThreadId,
+          relationshipToParent: "subagent",
+          rootThreadId,
+        },
+        linkedIssue: {
+          host: "github.com",
+          repository: "owner/repo",
+          repositoryId: "repo:rollback",
+          id: "issue:rollback",
+          nodeId: "node:rollback",
+          number: 97,
+          url: "https://github.com/owner/repo/issues/97",
+          title: "Rollback",
+        },
+      },
+    });
+    const eventSink = yield* EventSink.EventSinkV2;
+    const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const ids = yield* IdAllocator.IdAllocatorV2;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const rollback = yield* CheckpointRollbackService.CheckpointRollbackServiceV2.pipe(
+      Effect.provide(
+        Layer.fresh(layerCheckpointRollbackService).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(ProjectionStore.ProjectionStoreV2, store),
+              Layer.succeed(EventSink.EventSinkV2, eventSink),
+              Layer.succeed(ThreadCommandExecutor.ThreadCommandExecutor, locks),
+              Layer.succeed(IdAllocator.IdAllocatorV2, ids),
+              Layer.mock(CheckpointService.CheckpointServiceV2)({
+                deleteStaleRefs: () => Effect.void,
+              }),
+              Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+                open: () =>
+                  Effect.succeed({
+                    rollbackThread: () =>
+                      Effect.succeed({
+                        providerThread: {
+                          ...providerThread,
+                          nativeConversationHeadRef: {
+                            driver: providerThread.driver,
+                            nativeId: "rewound-turn-2",
+                            strength: "strong",
+                          },
+                        },
+                      }),
+                  } as never),
+              }),
+              Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+                resolve: () => Effect.succeed({} as never),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    class RollingBack extends Context.Reference<boolean>("test/rolling-back", {
+      defaultValue: () => false,
+    }) {}
+    const messageReady = yield* Deferred.make<void>();
+    const releaseMessage = yield* Deferred.make<void>();
+    const rollbackBlocked = yield* Deferred.make<void>();
+    const withLock = locks.withLock.bind(locks);
+    using _locks = vi
+      .spyOn(locks, "withLock")
+      .mockImplementation(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) =>
+        Effect.gen(function* () {
+          if ((yield* RollingBack) && key === rootThreadId)
+            yield* Deferred.succeed(rollbackBlocked, undefined);
+          return yield* withLock(key, effect);
+        }),
+      );
+    const commit = eventSink.commitCommand.bind(eventSink);
+    const commandId = CommandId.make("message-during-rollback");
+    using _commit = vi.spyOn(eventSink, "commitCommand").mockImplementation((input) =>
+      Effect.gen(function* () {
+        if (input.commandId === commandId) {
+          yield* Deferred.succeed(messageReady, undefined);
+          yield* Deferred.await(releaseMessage);
+        }
+        return yield* commit(input);
+      }),
+    );
+    const messaging = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId,
+        threadId,
+        messageId: MessageId.make("message-during-rollback"),
+        text: "Continue from the rewound turn",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.forkChild);
+    yield* Effect.raceFirst(Deferred.await(messageReady), Fiber.join(messaging));
+    const rewinding = yield* rollback
+      .execute({
+        threadId,
+        providerThreadId,
+        scopeId,
+        checkpointId: history.checkpointId(2),
+        restoreFiles: false,
+      })
+      .pipe(Effect.provideService(RollingBack, true), Effect.forkChild);
+    yield* Effect.raceFirst(Deferred.await(rollbackBlocked), Fiber.join(rewinding));
+    yield* Deferred.succeed(releaseMessage, undefined);
+    yield* Fiber.join(messaging);
+    yield* Fiber.join(rewinding);
+    const records = yield* store.getThreadRecords(threadId, ["providerThreads"]);
+    assert.equal(
+      records.providerThreads.find((candidate) => candidate.id === providerThreadId)
+        ?.nativeConversationHeadRef?.nativeId,
+      "rewound-turn-2",
+    );
+  }).pipe(Effect.provide(dependencies));
 });
 
 it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))(
