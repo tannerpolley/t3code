@@ -1815,6 +1815,95 @@ it.effect(
   },
 );
 
+it.effect.each(["blocker", "unreadable"] as const)(
+  "keeps %s suspension cycles quiet and visible without an active root run",
+  (suspension) => {
+    let suspended = false;
+    const harness = reviewHarness((input) =>
+      Effect.succeed({
+        ...reviewRead(reviewIssue(input.number)),
+        blockersComplete: suspension !== "unreadable" || !suspended,
+        blockedBy:
+          suspension === "blocker" && suspended
+            ? [{ issue: reviewIssue(99), state: "open" as const }]
+            : [],
+      }),
+    );
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const sql = yield* SqlClient.SqlClient;
+      const root = yield* createReviewRoot();
+      yield* delegateReviewIssue(root, reviewIssue(1), "quiet-worker");
+      const initial = yield* threads.getThreadRecords(root, ["runs", "messages"]);
+      const run = initial.runs[0]!;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("quiet-root-finished"),
+            type: "run.updated",
+            threadId: root,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      assert.isNull((yield* threads.getThreadShell(root))!.activeRunId);
+      let noticeId: string | undefined;
+      let ordinal: number | undefined;
+      let reason = "";
+      let cycle = 0;
+      for (const paused of [true, false, true, false]) {
+        suspended = paused;
+        yield* service.reconcile(root);
+        if (paused) reason = (yield* store.configuration(root))!.suspendedIssues[0]!.reason;
+        // Replayed automatic outbox entries from an older server must also stay quiet.
+        yield* outbox.enqueue([
+          {
+            id: `legacy-suspension:${cycle++}`,
+            commandId: CommandId.make(`legacy-suspension:${cycle}`),
+            threadId: root,
+            request: {
+              type: "issue.suspension.notify",
+              projectId,
+              issue: reviewIssue(1),
+              reason,
+              resumed: !paused,
+            },
+          },
+        ]);
+        yield* worker.drain();
+        const projection = yield* threads.getThreadProjection(root);
+        const notices = projection.visibleTurnItems.filter(
+          (row) => row.item.type === "system_notice",
+        );
+        assert.lengthOf(notices, 1);
+        const notice = notices[0]!.item;
+        assert.equal(notice.type, "system_notice");
+        if (notice.type !== "system_notice") return;
+        assert.include(notice.message, paused ? "paused:" : "resumed:");
+        assert.isNull(notice.runId);
+        noticeId ??= notice.id;
+        ordinal ??= notice.ordinal;
+        assert.equal(notice.id, noticeId);
+        assert.equal(notice.ordinal, ordinal);
+        assert.lengthOf(projection.runs, initial.runs.length);
+        assert.lengthOf(projection.messages, initial.messages.length);
+      }
+      const dispatched = yield* sql<{ command_id: string }>`SELECT command_id
+        FROM orchestration_command_receipts
+        WHERE aggregate_id = ${root} AND command_type = 'message.dispatch'`;
+      assert.deepEqual(dispatched, [{ command_id: `review-start:tannerpolley/t3code` }]);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
 it.effect(
   "resumes only blocker-suspended workers once, retains other suspensions, and survives notification replay",
   () => {
@@ -1864,11 +1953,13 @@ it.effect(
       yield* service.reconcile(root);
       yield* worker.drain();
       assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 1);
-      const pauseNotice = (yield* threads.getThreadRecords(root, ["messages"])).messages.find(
-        (message) => message.text.startsWith("Issue #1 paused:"),
-      )!;
-      assert.include(pauseNotice.text, "resumes automatically");
-      assert.notInclude(pauseNotice.text, "Ask through t3_request_user_input");
+      const pauseNotice = (yield* threads.getThreadRecords(root, ["turnItems"])).turnItems.find(
+        (item) => item.type === "system_notice" && item.message.startsWith("Issue #1 paused:"),
+      );
+      assert.equal(pauseNotice?.type, "system_notice");
+      if (pauseNotice?.type !== "system_notice") return;
+      assert.include(pauseNotice.message, "resumes automatically");
+      assert.notInclude(pauseNotice.message, "Ask through t3_request_user_input");
       const otherNotice = (yield* threads.getThreadRecords(root, ["messages"])).messages.find(
         (message) => message.text.startsWith("Issue #2 paused:"),
       )!;
@@ -1893,13 +1984,19 @@ it.effect(
         1,
       );
       assert.lengthOf((yield* threads.getThreadRecords(other, ["runs"])).runs, 1);
-      const rootState = yield* threads.getThreadRecords(root, ["messages", "subagents"]);
+      const rootState = yield* threads.getThreadRecords(root, [
+        "messages",
+        "subagents",
+        "turnItems",
+      ]);
       assert.isTrue(
         rootState.subagents.some((task) => task.id === resumed.runs.at(-1)!.delegatedTaskId),
       );
       assert.lengthOf(
-        rootState.messages.filter(
-          (message) => message.text === "Issue #1 resumed: its GitHub blockers are closed.",
+        rootState.turnItems.filter(
+          (item) =>
+            item.type === "system_notice" &&
+            item.message === "Issue #1 resumed: its GitHub blockers are closed.",
         ),
         1,
       );
@@ -1921,7 +2018,7 @@ it.effect(
 
       // Simulate process loss after the notice committed but before the outbox acknowledged it.
       yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'running'
-        WHERE effect_type = 'issue.suspension.notify' AND effect_id LIKE '%issue-resumed:%'`;
+        WHERE effect_type = 'issue.suspension.notify'`;
       yield* outbox.reconcileAfterProcessLoss;
       yield* worker.drain();
       yield* service.reconcile(root);
@@ -1929,8 +2026,8 @@ it.effect(
       yield* worker.drain();
       assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 2);
       assert.lengthOf(
-        (yield* threads.getThreadRecords(root, ["messages"])).messages.filter((message) =>
-          message.text.startsWith("Issue #1 resumed:"),
+        (yield* threads.getThreadRecords(root, ["turnItems"])).turnItems.filter(
+          (item) => item.type === "system_notice" && item.message.startsWith("Issue #1 resumed:"),
         ),
         1,
       );
@@ -1947,10 +2044,10 @@ it.effect(
       yield* worker.drain();
       assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 3);
       assert.lengthOf(
-        (yield* threads.getThreadRecords(root, ["messages"])).messages.filter((message) =>
-          message.text.startsWith("Issue #1 resumed:"),
+        (yield* threads.getThreadRecords(root, ["turnItems"])).turnItems.filter(
+          (item) => item.type === "system_notice" && item.message.startsWith("Issue #1 resumed:"),
         ),
-        2,
+        1,
       );
     }).pipe(Effect.provide(harness.layer));
   },
@@ -2220,15 +2317,14 @@ it.effect(
       const pendingQueue = yield* store.queue(reviewIssue(1));
       assert.lengthOf(pendingQueue, 1);
       assert.isUndefined(pendingQueue[0]!.noticeRunId);
+      assert.equal(pendingQueue[0]!.issue.id, reviewIssue(1).id);
+      assert.equal(pendingQueue[0]!.state, "queued");
       yield* worker.drain();
-      yield* service.reconcile(root);
-      yield* worker.drain();
-      const queue = yield* store.queue(reviewIssue(1));
       const runs = (yield* threads.getThreadRecords(child, ["runs"])).runs;
       assert.equal(runs[0]!.status, "interrupted");
-      assert.lengthOf(queue, 1);
-      assert.equal(queue[0]!.issue.id, reviewIssue(1).id);
-      assert.equal(queue[0]!.state, "queued");
+      const rootState = yield* threads.getThreadRecords(root, ["runs", "messages"]);
+      assert.lengthOf(rootState.runs, 1);
+      assert.lengthOf(rootState.messages, 1);
     }).pipe(Effect.provide(harness.layer));
   },
 );
@@ -2332,8 +2428,8 @@ it.effect(
       assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 2);
       assert.isTrue(yield* store.canAdmit(reviewIssue(1), child));
       assert.isTrue(
-        (yield* threads.getThreadRecords(root, ["messages"])).messages.some((message) =>
-          message.text.startsWith("Issue #1 resumed:"),
+        (yield* threads.getThreadRecords(root, ["turnItems"])).turnItems.some(
+          (item) => item.type === "system_notice" && item.message.startsWith("Issue #1 resumed:"),
         ),
       );
 
@@ -2350,7 +2446,7 @@ it.effect(
 );
 
 it.effect(
-  "does not announce a resumed worker that finished before the suspension interrupt",
+  "updates the resumed issue notice without restarting a worker that finished before its interrupt",
   () => {
     let blocked = false;
     const harness = reviewHarness((input) =>
@@ -2401,6 +2497,11 @@ it.effect(
           message.text.startsWith("Issue #1 resumed:"),
         ),
       );
+      const notices = (yield* threads.getThreadRecords(root, ["turnItems"])).turnItems.filter(
+        (item) => item.type === "system_notice",
+      );
+      assert.lengthOf(notices, 1);
+      assert.equal(notices[0]!.title, "Issue #1 resumed");
       assert.isEmpty(
         yield* sql`SELECT 1 FROM orchestration_v2_effect_outbox
       WHERE effect_type = 'issue.suspension.notify' AND json_extract(payload_json, '$.resumed') = 1`,
@@ -2545,8 +2646,8 @@ it.effect.each(["paused", "draining"] as const)(
       // A draining handoff may transfer ownership, but cannot restart the retained worker.
       assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 1);
       assert.lengthOf(
-        (yield* threads.getThreadRecords(root, ["messages"])).messages.filter((message) =>
-          message.text.startsWith("Issue #1 resumed:"),
+        (yield* threads.getThreadRecords(root, ["turnItems"])).turnItems.filter(
+          (item) => item.type === "system_notice" && item.message.startsWith("Issue #1 resumed:"),
         ),
         0,
       );
