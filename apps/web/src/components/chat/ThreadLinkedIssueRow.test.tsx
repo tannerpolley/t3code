@@ -23,19 +23,33 @@ vi.mock("@t3tools/client-runtime/state/issues", async () => {
   );
   return { createIssueEnvironmentAtoms: () => ({ detail: () => state.detail }) };
 });
-vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: undefined }));
+vi.mock("../../connection/runtime", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const Layer = await import("effect/Layer");
+  return { connectionAtomRuntime: Atom.runtime(Layer.empty) };
+});
 vi.mock("../../state/entities", async () => {
   const { appAtomRegistry } = await import("../../rpc/atomRegistry");
   return {
     useThreadShell: () => appAtomRegistry.get(state.shells!)[0],
     useAllEnvironmentShellsBootstrapped: () => true,
+    useProjects: () => [],
   };
 });
 vi.mock("../issues/IssuePullRequests", () => ({ IssuePullRequests: () => null }));
+vi.mock("../issues/IssueQueueAction", () => ({
+  IssueQueueAction: () => null,
+  useIssueQueued: () => false,
+}));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ render, children }: { render?: ReactNode; children?: ReactNode }) => (
+    <>
+      {render}
+      {children}
+    </>
+  ),
   TooltipPopup: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
@@ -127,7 +141,7 @@ it("updates the linked row and detail glyph from the shell stream while cached d
       ),
     ).toHaveLength(2);
     await act(async () => {
-      appAtomRegistry.set(state.shells!, [{ ...working, hasPendingUserInput: true }]);
+      appAtomRegistry.set(state.shells!, [thread]);
     });
     expect(displayed()).not.toContain("In progress");
     expect(appAtomRegistry.get(state.detail!)).toBe(cached);
