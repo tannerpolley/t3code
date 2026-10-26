@@ -222,12 +222,6 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
-    id: "top-back-button",
-    title: "Back button at the top",
-    to: "/settings/appearance",
-    searchTerms: ["customization fork back button settings sidebar top left"],
-  },
-  {
     id: "onboarding-codex-settings",
     title: "Codex settings during onboarding",
     to: "/settings/general",

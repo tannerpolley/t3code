@@ -32,7 +32,6 @@ import {
   type IssueListTarget,
 } from "~/state/issues";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
-import { PageBackButton } from "../PageBackButton";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -833,7 +832,6 @@ export function IssueBrowser({
         )}
       >
         <div className="flex items-center gap-2">
-          {variant === "page" ? <PageBackButton /> : null}
           <IssueStateIcon issue={{ state: "open" }} />
           <Heading
             ref={headingRef}

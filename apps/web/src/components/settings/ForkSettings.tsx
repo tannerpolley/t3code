@@ -100,13 +100,6 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "When you open a thread by any route (a link, Lineage, search, a notification, a shortcut, Back or Forward), open the sections and project that hold it and scroll its row into view. A subagent reveals its parent's row. It runs when you open a thread, so a project you collapse afterwards stays collapsed.",
   },
   {
-    key: "topBackButton",
-    searchId: "top-back-button",
-    section: "appearance",
-    description:
-      "Shows a Back button at the top-left of the Settings, Pull Requests, Issues and Usage pages, in addition to the one at the bottom of the sidebar.",
-  },
-  {
     key: "onboardingCodexSettings",
     searchId: "onboarding-codex-settings",
     section: "sidebar",
