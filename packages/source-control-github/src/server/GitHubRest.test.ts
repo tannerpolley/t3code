@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -183,6 +184,62 @@ describe("GitHubRest", () => {
         });
       }).pipe(Effect.provide(layer), Effect.withTracer(tracer));
     }),
+  );
+
+  it.effect(
+    "logs rate-limit response metadata once without logging locally paused requests",
+    () => {
+      const messages: unknown[] = [];
+      const logger = Logger.make(({ message }) => {
+        messages.push(message);
+      });
+      const { layer, requests } = harness(() =>
+        json(
+          { message: "Secondary rate limit" },
+          {
+            status: 403,
+            headers: {
+              "x-ratelimit-resource": "core",
+              "x-ratelimit-remaining": "4321",
+              "x-ratelimit-reset": String(NOW / 1_000 + 600),
+              "retry-after": "60",
+            },
+          },
+        ),
+      );
+      return Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const api = yield* GitHubRest.GitHubRest;
+        const read = {
+          host: "github.com",
+          operation: "listIssues",
+          path: "repos/acme/web/issues?labels=private-label",
+        };
+        expect((yield* Effect.flip(api.rest(read)))._tag).toBe("GitHubApiRateLimitError");
+        expect((yield* Effect.flip(api.rest(read)))._tag).toBe("SourceControlRateLimitPausedError");
+        expect(requests).toHaveLength(1);
+        expect(messages).toEqual([
+          [
+            "Source control rate limit recorded",
+            JSON.stringify({
+              provider: "github",
+              host: "github.com",
+              operation: "listIssues",
+              method: "GET",
+              path: "/repos/acme/web/issues",
+              status: 403,
+              "x-ratelimit-resource": "core",
+              "x-ratelimit-remaining": "4321",
+              "x-ratelimit-reset": String(NOW / 1_000 + 600),
+              "retry-after": "60",
+              retryAt: NOW + 60_000,
+            }),
+          ],
+        ]);
+      }).pipe(
+        Effect.provide(Layer.merge(layer, Logger.layer([logger], { mergeWithExisting: false }))),
+      );
+    },
   );
 
   it.effect("lets an interactive request through a pause a background read recorded", () => {

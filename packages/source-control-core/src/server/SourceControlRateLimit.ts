@@ -12,6 +12,7 @@ import {
 
 const FALLBACK_COOLDOWN = Duration.seconds(30);
 const MAX_FALLBACK_COOLDOWN = Duration.minutes(15);
+const encodeRateLimitLog = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export const CredentialScope = Context.Reference<string>(
   "@t3tools/source-control-core/server/SourceControlRateLimit/CredentialScope",
@@ -66,7 +67,16 @@ export class SourceControlRateLimit extends Context.Service<
       options?: { readonly allowPaused: boolean },
     ) => Effect.Effect<number, SourceControlRateLimitPausedError>;
     readonly recordRateLimit: (
-      input: RateLimitLease & { readonly retryAt?: number | undefined },
+      input: RateLimitLease & {
+        readonly retryAt?: number | undefined;
+        readonly response?: {
+          readonly operation: string;
+          readonly method: string;
+          readonly path: string;
+          readonly status: number | undefined;
+          readonly headers: Readonly<Record<string, string | undefined>>;
+        };
+      },
     ) => Effect.Effect<void>;
     readonly recordSuccess: (input: RateLimitLease) => Effect.Effect<void>;
   }
@@ -120,7 +130,7 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const now = yield* Clock.currentTimeMillis;
     const key = normalizedKey(input, yield* CredentialScope);
-    yield* Ref.update(entries, (current) => {
+    const current = yield* Ref.updateAndGet(entries, (current) => {
       const previous = current.get(key);
       if (previous !== undefined && previous.generation > input.lease) {
         if (previous.retryAt <= now && (input.retryAt === undefined || input.retryAt <= now)) {
@@ -153,6 +163,22 @@ export const make = Effect.gen(function* () {
       });
       return next;
     });
+    yield* Effect.logWarning(
+      "Source control rate limit recorded",
+      yield* encodeRateLimitLog({
+        provider: input.provider,
+        host: input.host.trim().toLowerCase(),
+        operation: input.response?.operation ?? null,
+        method: input.response?.method ?? null,
+        path: input.response?.path ?? null,
+        status: input.response?.status ?? null,
+        "x-ratelimit-resource": input.response?.headers["x-ratelimit-resource"] ?? null,
+        "x-ratelimit-remaining": input.response?.headers["x-ratelimit-remaining"] ?? null,
+        "x-ratelimit-reset": input.response?.headers["x-ratelimit-reset"] ?? null,
+        "retry-after": input.response?.headers["retry-after"] ?? null,
+        retryAt: current.get(key)!.retryAt,
+      }).pipe(Effect.orDie),
+    );
   });
 
   const recordSuccess: SourceControlRateLimit["Service"]["recordSuccess"] = Effect.fn(

@@ -1880,14 +1880,31 @@ it.effect.each([
         assert.equal(error.retryAt, now + 10_000);
       }
       assert.deepEqual(harness.invalidatedHosts, status === 401 ? [HOST] : []);
-      const backoff = { provider: "github", host: HOST, lease: 0, retryAt: now + 10_000 };
+      const backoff = {
+        provider: "github",
+        host: HOST,
+        lease: 0,
+        retryAt: now + 10_000,
+        response: {
+          operation: "fixture",
+          method: "POST",
+          path: "/api/graphql",
+          status,
+          headers: { "retry-after": "10" },
+        },
+      };
       assert.deepEqual(harness.rateLimitRecords, status === 429 ? [backoff] : []);
 
       const issues = yield* IssueService.make();
       const issueError = yield* issues.detail({ ...listInput, number: 7 }).pipe(Effect.flip);
       assert.equal(issueError.code, code);
       assert.deepEqual(harness.invalidatedHosts, status === 401 ? [HOST, HOST] : []);
-      assert.deepEqual(harness.rateLimitRecords, status === 429 ? [backoff, backoff] : []);
+      assert.deepEqual(
+        harness.rateLimitRecords,
+        status === 429
+          ? [backoff, { ...backoff, response: { ...backoff.response, operation: "issues.detail" } }]
+          : [],
+      );
       assert.equal(harness.calls.length, 2);
     }).pipe(Effect.provide(harness.layer));
   },

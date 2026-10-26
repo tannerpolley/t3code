@@ -174,6 +174,8 @@ export type GitHubAnswer<A> = {
 
 export interface GitHubRequest {
   readonly host: string;
+  readonly method: string;
+  readonly path: string;
   readonly operation: string;
   /** The quota the request spends: `core` for REST, `graphql` for GraphQL. */
   readonly resource: string;
@@ -255,7 +257,18 @@ export const make = Effect.gen(function* () {
           return answer.value;
         case "RateLimited": {
           const retryAt = retryAtFrom(answer.headers, yield* Clock.currentTimeMillis);
-          yield* limits.recordRateLimit({ ...key, lease, retryAt });
+          yield* limits.recordRateLimit({
+            ...key,
+            lease,
+            retryAt,
+            response: {
+              operation: input.operation,
+              method: input.method,
+              path: input.path,
+              status: answer.status,
+              headers: answer.headers,
+            },
+          });
           yield* Effect.annotateCurrentSpan({
             "github.rate_limited": true,
             ...(retryAt === undefined ? {} : { "github.retry_at": retryAt }),
