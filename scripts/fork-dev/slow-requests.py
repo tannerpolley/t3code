@@ -14,6 +14,15 @@ WINDOW_SECONDS = 15 * 60
 MAX_SPANS = 100_000
 MAX_LOG_BYTES = 20 * 1024 * 1024
 RETENTION_SECONDS = 14 * 24 * 60 * 60
+# Subscription RPCs whose names do not contain a subscribe-prefixed segment.
+LONG_LIVED_RPC_SPANS = {
+    'ws.rpc.terminal.attach',
+    'ws.rpc.terminal.observe',
+    'ws.rpc.terminal.watchInlineRun',
+    'ws.rpc.server.getStorageCleanupReport',
+    'ws.rpc.server.getDatabaseStorage',
+    'ws.rpc.orchestration.searchThreadStream',
+}
 
 
 class SpanWindow:
@@ -65,6 +74,7 @@ class SpanWindow:
             if expired in self.spans:
                 self.discard(expired)
         if (not name.startswith('ws.rpc.') or duration <= 10_000
+                or name in LONG_LIVED_RPC_SPANS
                 or any(part.lower().startswith('subscribe')
                        for part in name.split('.')[2:])):
             return None
