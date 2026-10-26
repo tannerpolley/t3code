@@ -18,7 +18,7 @@ import * as Handlers from "./handlers.ts";
 import { ProjectArtifactsToolkit } from "./tools.ts";
 
 it.effect(
-  "lists, pins with agent attribution, moves, and removes through the calling project's service",
+  "lists, pins with descriptions and agent attribution, updates, moves, and removes through the project's service",
   () =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("science");
@@ -30,6 +30,7 @@ it.effect(
         resolvedPath: "/science/paper.qmd",
         name: "paper.qmd",
         label: null,
+        description: null,
         section: "Documents",
         addedBy: "agent",
         available: true,
@@ -66,6 +67,10 @@ it.effect(
             Effect.sync(() => {
               calls.push(["move", input]);
             }),
+          update: (input) =>
+            Effect.sync(() => {
+              calls.push(["update", input]);
+            }),
           remove: (input) =>
             Effect.sync(() => {
               calls.push(["remove", input]);
@@ -82,9 +87,19 @@ it.effect(
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
       expect(list.at(-1)?.result).toEqual([artifact]);
       const add = yield* toolkit
-        .handle("t3_project_artifacts_add", { path: "paper.qmd" })
+        .handle("t3_project_artifacts_add", { path: "paper.qmd", description: "Draft" })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
       expect(add.at(-1)?.result).toEqual(artifact);
+      yield* toolkit
+        .handle("t3_project_artifacts_update", { id: "paper", label: "Paper", description: null })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      yield* toolkit
+        .handle("t3_project_artifacts_update", {
+          projectId: explicitProject,
+          id: "paper",
+          description: "Review",
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
       yield* toolkit
         .handle("t3_project_artifacts_move", { id: "paper", section: "Manuscript" })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
@@ -93,7 +108,9 @@ it.effect(
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
       expect(calls).toEqual([
         ["list", projectId],
-        ["add", { projectId, path: "paper.qmd" }, "agent"],
+        ["add", { projectId, path: "paper.qmd", description: "Draft" }, "agent"],
+        ["update", { projectId, id: "paper", label: "Paper", description: null }],
+        ["update", { projectId: explicitProject, id: "paper", description: "Review" }],
         ["move", { projectId, id: "paper", section: "Manuscript" }],
         ["remove", { projectId: explicitProject, id: "paper" }],
       ]);

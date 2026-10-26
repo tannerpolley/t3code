@@ -21,6 +21,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [PROJECT_ARTIFACT_METHODS.add]: AuthOrchestrationOperateScope,
   [PROJECT_ARTIFACT_METHODS.remove]: AuthOrchestrationOperateScope,
   [PROJECT_ARTIFACT_METHODS.move]: AuthOrchestrationOperateScope,
+  [PROJECT_ARTIFACT_METHODS.update]: AuthOrchestrationOperateScope,
   [PROJECT_ARTIFACT_METHODS.renameSection]: AuthOrchestrationOperateScope,
   [PROJECT_ARTIFACT_METHODS.reorderSections]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,

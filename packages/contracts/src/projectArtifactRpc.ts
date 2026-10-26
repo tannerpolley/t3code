@@ -6,6 +6,7 @@ import {
   ProjectArtifactScope,
   ProjectArtifactAddInput,
   ProjectArtifactRemoveInput,
+  ProjectArtifactUpdateInput,
   ProjectArtifactMoveInput,
   ProjectArtifactRenameSectionInput,
   ProjectArtifactReorderSectionsInput,
@@ -17,6 +18,7 @@ export const PROJECT_ARTIFACT_METHODS = {
   list: "projectArtifacts.list",
   add: "projectArtifacts.add",
   remove: "projectArtifacts.remove",
+  update: "projectArtifacts.update",
   move: "projectArtifacts.move",
   renameSection: "projectArtifacts.renameSection",
   reorderSections: "projectArtifacts.reorderSections",
@@ -41,6 +43,11 @@ export const projectArtifactRpcs = [
   }),
   Rpc.make(PROJECT_ARTIFACT_METHODS.move, {
     payload: ProjectArtifactMoveInput,
+    success: Schema.Void,
+    error,
+  }),
+  Rpc.make(PROJECT_ARTIFACT_METHODS.update, {
+    payload: ProjectArtifactUpdateInput,
     success: Schema.Void,
     error,
   }),

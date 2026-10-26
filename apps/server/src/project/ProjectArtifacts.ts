@@ -5,6 +5,7 @@ import {
   type ProjectArtifactAddInput,
   type ProjectArtifactMoveInput,
   type ProjectArtifactRemoveInput,
+  type ProjectArtifactUpdateInput,
   type ProjectArtifactRenameSectionInput,
   type ProjectArtifactReorderSectionsInput,
   type ProjectId,
@@ -36,6 +37,9 @@ export class ProjectArtifacts extends Context.Service<
       input: ProjectArtifactRemoveInput,
     ) => Effect.Effect<void, ProjectArtifactError>;
     readonly move: (input: ProjectArtifactMoveInput) => Effect.Effect<void, ProjectArtifactError>;
+    readonly update: (
+      input: ProjectArtifactUpdateInput,
+    ) => Effect.Effect<void, ProjectArtifactError>;
     readonly renameSection: (
       input: ProjectArtifactRenameSectionInput,
     ) => Effect.Effect<void, ProjectArtifactError>;
@@ -93,6 +97,7 @@ const make = Effect.gen(function* () {
     id: string;
     path: string;
     label: string | null;
+    description: string | null;
     section: string;
     added_by: "user" | "agent";
   }
@@ -102,6 +107,7 @@ const make = Effect.gen(function* () {
       id: row.id,
       path: row.path,
       label: row.label,
+      description: row.description,
       section: row.section,
       addedBy: row.added_by,
       name: path.basename(row.path),
@@ -112,7 +118,7 @@ const make = Effect.gen(function* () {
   const list = Effect.fn("ProjectArtifacts.list")(function* (projectId: ProjectId) {
     const root = yield* rootFor(projectId);
     const rows =
-      yield* sql<Row>`SELECT a.id, a.path, a.label, a.section, a.added_by FROM project_artifacts a
+      yield* sql<Row>`SELECT a.id, a.path, a.label, a.description, a.section, a.added_by FROM project_artifacts a
         LEFT JOIN project_artifact_sections s ON s.project_id = a.project_id AND s.name = a.section
         WHERE a.project_id = ${projectId}
         ORDER BY s.position IS NULL, s.position, a.section, a.rowid`.pipe(
@@ -151,12 +157,12 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const resolved = yield* resolve(root, input.path.trim());
         const section = input.section ?? defaultArtifactSection(resolved.stored);
-        // A repeated pin keeps its label, section and attribution.
+        // A repeated pin keeps its metadata and attribution.
         const rows =
-          yield* sql<Row>`INSERT INTO project_artifacts (id, project_id, path, label, section, added_by)
-        VALUES (lower(hex(randomblob(16))), ${input.projectId}, ${resolved.stored}, ${input.label?.trim() || null}, ${section}, ${addedBy})
+          yield* sql<Row>`INSERT INTO project_artifacts (id, project_id, path, label, description, section, added_by)
+        VALUES (lower(hex(randomblob(16))), ${input.projectId}, ${resolved.stored}, ${input.label?.trim() || null}, ${input.description?.trim() || null}, ${section}, ${addedBy})
         ON CONFLICT(project_id, path) DO UPDATE SET path = excluded.path
-        RETURNING id, path, label, section, added_by`;
+        RETURNING id, path, label, description, section, added_by`;
         yield* ensureSection(input.projectId, rows[0]!.section);
         return yield* present(root, rows[0]!);
       }),
@@ -180,6 +186,18 @@ const make = Effect.gen(function* () {
         yield* ensureSection(input.projectId, input.section);
         yield* pruneSections(input.projectId);
       }),
+    );
+  });
+  const update = Effect.fn("ProjectArtifacts.update")(function* (
+    input: ProjectArtifactUpdateInput,
+  ) {
+    yield* write(
+      input.projectId,
+      () =>
+        sql`UPDATE project_artifacts SET
+        label = CASE WHEN ${input.label !== undefined} THEN ${input.label?.trim() || null} ELSE label END,
+        description = CASE WHEN ${input.description !== undefined} THEN ${input.description?.trim() || null} ELSE description END
+        WHERE project_id = ${input.projectId} AND id = ${input.id}`,
     );
   });
   const renameSection = Effect.fn("ProjectArtifacts.renameSection")(function* (
@@ -234,6 +252,7 @@ const make = Effect.gen(function* () {
     add,
     remove,
     move,
+    update,
     renameSection,
     reorderSections,
     subscribe,

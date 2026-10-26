@@ -66,11 +66,13 @@ export const defaultArtifactSection = (path: string): string => {
 };
 
 const SectionName = TrimmedNonEmptyString.check(Schema.isMaxLength(100));
+const ArtifactText = TrimmedNonEmptyString.check(Schema.isMaxLength(200));
 export const ProjectArtifactScope = Schema.Struct({ projectId: ProjectId });
 export const ProjectArtifactAddInput = Schema.Struct({
   projectId: ProjectId,
   path: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
-  label: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
+  label: Schema.optional(ArtifactText),
+  description: Schema.optional(ArtifactText),
   section: Schema.optional(
     SectionName.annotate({ description: "Defaults to a section named after the file type." }),
   ),
@@ -81,6 +83,13 @@ export const ProjectArtifactRemoveInput = Schema.Struct({
   id: Schema.String,
 });
 export type ProjectArtifactRemoveInput = typeof ProjectArtifactRemoveInput.Type;
+export const ProjectArtifactUpdateInput = Schema.Struct({
+  projectId: ProjectId,
+  id: Schema.String,
+  label: Schema.optional(Schema.NullOr(ArtifactText)),
+  description: Schema.optional(Schema.NullOr(ArtifactText)),
+});
+export type ProjectArtifactUpdateInput = typeof ProjectArtifactUpdateInput.Type;
 export const ProjectArtifactMoveInput = Schema.Struct({
   projectId: ProjectId,
   id: Schema.String,
@@ -104,6 +113,9 @@ export const ProjectArtifact = Schema.Struct({
   resolvedPath: Schema.String,
   name: Schema.String,
   label: Schema.NullOr(Schema.String),
+  description: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   /**
    * Lists return artifacts grouped by section, in the project's section order. Servers from
    * before sections omit it; their pins read as one "Files" section instead of failing to decode.

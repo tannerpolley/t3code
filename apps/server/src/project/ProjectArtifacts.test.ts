@@ -39,6 +39,32 @@ const setup = Effect.gen(function* () {
 });
 
 it.layer(layer)("project artifacts", (it) => {
+  it.effect("persists descriptions, updates only supplied metadata, and clears fields", () =>
+    Effect.gen(function* () {
+      const { artifacts, projectId } = yield* setup;
+      const added = yield* artifacts.add(
+        { projectId, path: "paper.qmd", label: "Paper", description: "Draft manuscript" },
+        "agent",
+      );
+      expect(added.description).toBe("Draft manuscript");
+      expect(
+        yield* artifacts.add({ projectId, path: "paper.qmd", description: "Ignored" }, "user"),
+      ).toEqual(added);
+      const other = yield* setup;
+      yield* artifacts.update({ projectId: other.projectId, id: added.id, label: "Wrong project" });
+      expect(yield* artifacts.list(projectId)).toEqual([added]);
+      yield* artifacts.update({ projectId, id: added.id, label: "Revised paper" });
+      expect(yield* artifacts.list(projectId)).toEqual([{ ...added, label: "Revised paper" }]);
+      yield* artifacts.update({ projectId, id: added.id, description: "Ready for review" });
+      expect(yield* artifacts.list(projectId)).toEqual([
+        { ...added, label: "Revised paper", description: "Ready for review" },
+      ]);
+      yield* artifacts.update({ projectId, id: added.id, label: null, description: null });
+      expect(yield* artifacts.list(projectId)).toEqual([
+        { ...added, label: null, description: null },
+      ]);
+    }),
+  );
   it.effect(
     "persists project pins, normalizes inside paths, preserves attribution on duplicates, and removes only the pin",
     () =>
@@ -216,13 +242,15 @@ it.layer(layer)("project artifacts", (it) => {
         expect(yield* sections).toEqual(["Manuscript:paper.qmd", "Figures:results.csv"]);
       }),
   );
-  it.effect("streams the initial list and committed add/remove changes", () =>
+  it.effect("streams the initial list and committed add/update/remove changes", () =>
     Effect.gen(function* () {
       const { artifacts, projectId } = yield* setup;
       const observed = yield* Stream.toPull(artifacts.subscribe(projectId));
       expect(yield* observed).toEqual([[]]);
       const added = yield* artifacts.add({ projectId, path: "paper.qmd" }, "agent");
       expect(yield* observed).toEqual([[added]]);
+      yield* artifacts.update({ projectId, id: added.id, description: "Updated draft" });
+      expect(yield* observed).toEqual([[{ ...added, description: "Updated draft" }]]);
       yield* artifacts.remove({ projectId, id: added.id });
       expect(yield* observed).toEqual([[]]);
     }),

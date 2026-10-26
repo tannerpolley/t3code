@@ -62,6 +62,7 @@ const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         [PROJECT_ARTIFACT_METHODS.add]: (input) => artifacts.add(input, "user"),
         [PROJECT_ARTIFACT_METHODS.remove]: (input) => artifacts.remove(input),
         [PROJECT_ARTIFACT_METHODS.move]: (input) => artifacts.move(input),
+        [PROJECT_ARTIFACT_METHODS.update]: (input) => artifacts.update(input),
         [PROJECT_ARTIFACT_METHODS.renameSection]: (input) => artifacts.renameSection(input),
         [PROJECT_ARTIFACT_METHODS.reorderSections]: (input) => artifacts.reorderSections(input),
         [PROJECT_ARTIFACT_METHODS.subscribe]: (input) => artifacts.subscribe(input.projectId),

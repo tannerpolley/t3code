@@ -16,6 +16,7 @@ const RPC_AGGREGATES = {
   [PROJECT_ARTIFACT_METHODS.add]: "projectArtifacts",
   [PROJECT_ARTIFACT_METHODS.remove]: "projectArtifacts",
   [PROJECT_ARTIFACT_METHODS.move]: "projectArtifacts",
+  [PROJECT_ARTIFACT_METHODS.update]: "projectArtifacts",
   [PROJECT_ARTIFACT_METHODS.renameSection]: "projectArtifacts",
   [PROJECT_ARTIFACT_METHODS.reorderSections]: "projectArtifacts",
   [PROJECT_ARTIFACT_METHODS.subscribe]: "projectArtifacts",

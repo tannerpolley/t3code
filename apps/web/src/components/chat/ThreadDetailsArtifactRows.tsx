@@ -94,6 +94,66 @@ function SectionNameForm({
   );
 }
 
+function ArtifactMetadataForm({
+  artifact,
+  canUpdate,
+  onSave,
+  onCancel,
+}: {
+  artifact: ProjectArtifact;
+  canUpdate: boolean;
+  onSave: (label: string | null, description: string | null) => Promise<boolean>;
+  onCancel: () => void;
+}) {
+  const [label, setLabel] = useState(artifact.label ?? "");
+  const [description, setDescription] = useState(artifact.description ?? "");
+  const [saving, setSaving] = useState(false);
+  return (
+    <form
+      className="flex flex-col gap-2 px-2.5 py-1.5"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !saving) onCancel();
+      }}
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setSaving(true);
+        const saved = await onSave(label.trim() || null, description.trim() || null).finally(() =>
+          setSaving(false),
+        );
+        if (saved) onCancel();
+      }}
+    >
+      <Input
+        size="sm"
+        aria-label="Artifact label (optional)"
+        placeholder={artifact.name}
+        value={label}
+        onChange={(event) => setLabel(event.target.value)}
+        maxLength={200}
+        disabled={saving}
+        autoFocus
+      />
+      <Input
+        size="sm"
+        aria-label="Artifact description (optional)"
+        placeholder="Description (optional)"
+        value={description}
+        onChange={(event) => setDescription(event.target.value)}
+        maxLength={200}
+        disabled={saving}
+      />
+      <div className="flex gap-1">
+        <Button size="xs" type="submit" disabled={saving || !canUpdate}>
+          Save
+        </Button>
+        <Button size="xs" variant="ghost-muted" disabled={saving} onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 export function ThreadDetailsArtifactRows({
   environmentId,
   projectId,
@@ -112,11 +172,13 @@ export function ThreadDetailsArtifactRows({
   const canAdd = useAtomValue(projectArtifacts.add.permissionAtom(environmentId));
   const canRemove = useAtomValue(projectArtifacts.remove.permissionAtom(environmentId));
   const canMove = useAtomValue(projectArtifacts.move.permissionAtom(environmentId));
+  const canUpdate = useAtomValue(projectArtifacts.update.permissionAtom(environmentId));
   const canRename = useAtomValue(projectArtifacts.renameSection.permissionAtom(environmentId));
   const canReorder = useAtomValue(projectArtifacts.reorderSections.permissionAtom(environmentId));
   const add = useAtomCommand(projectArtifacts.add);
   const remove = useAtomCommand(projectArtifacts.remove);
   const move = useAtomCommand(projectArtifacts.move);
+  const update = useAtomCommand(projectArtifacts.update);
   const renameSection = useAtomCommand(projectArtifacts.renameSection);
   const reorderSections = useAtomCommand(projectArtifacts.reorderSections);
   const read = useAtomQueryRunner(projectArtifacts.list, { refresh: true });
@@ -128,6 +190,7 @@ export function ThreadDetailsArtifactRows({
   const [adding, setAdding] = useState(false);
   const [path, setPath] = useState("");
   const [label, setLabel] = useState("");
+  const [description, setDescription] = useState("");
   // Null follows the typed path's file type until the user edits the section.
   const [section, setSection] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useLocalStorage(
@@ -137,6 +200,7 @@ export function ThreadDetailsArtifactRows({
   );
   const [renaming, setRenaming] = useState<string | null>(null);
   const [moving, setMoving] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const sectionListId = useId();
   const sections = groupBySection(artifacts ?? []);
   const sectionNames = sections.map((group) => group.name);
@@ -222,12 +286,14 @@ export function ThreadDetailsArtifactRows({
                     projectId,
                     path: path.trim(),
                     ...(label.trim() ? { label: label.trim() } : {}),
+                    ...(description.trim() ? { description: description.trim() } : {}),
                     ...(sectionValue.trim() ? { section: sectionValue.trim() } : {}),
                   },
                 }).finally(() => setBusy(false));
                 if (saved._tag === "Success") {
                   setPath("");
                   setLabel("");
+                  setDescription("");
                   setSection(null);
                   setAdding(false);
                 }
@@ -247,6 +313,14 @@ export function ThreadDetailsArtifactRows({
                 placeholder="Label (optional)"
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
+                maxLength={200}
+              />
+              <Input
+                size="sm"
+                aria-label="Artifact description (optional)"
+                placeholder="Description (optional)"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
                 maxLength={200}
               />
               <Input
@@ -356,13 +430,13 @@ export function ThreadDetailsArtifactRows({
                       const missing = !(availability.get(artifact.id) ?? artifact.available);
                       return (
                         <Fragment key={artifact.id}>
-                          <div className="flex min-w-0 items-center gap-1 px-1.5">
+                          <div className="flex min-w-0 flex-col px-1.5">
                             <Tooltip>
                               <TooltipTrigger
                                 render={
                                   <button
                                     type="button"
-                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-sm px-1 py-1.5 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                                    className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-sm px-1 py-1.5 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                                     onClick={() => {
                                       void open(artifact);
                                     }}
@@ -375,54 +449,88 @@ export function ThreadDetailsArtifactRows({
                                   theme={resolvedTheme}
                                   className="size-3.5 shrink-0"
                                 />
-                                <span className="min-w-0 truncate">
-                                  {artifact.label
-                                    ? `${artifact.label} · ${artifact.name}`
-                                    : artifact.name}
+                                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                                  <span className="block whitespace-normal">
+                                    {artifact.label
+                                      ? `${artifact.label} · ${artifact.name}`
+                                      : artifact.name}
+                                  </span>
+                                  {artifact.description ? (
+                                    <span className="mt-0.5 block whitespace-normal text-2xs text-muted-foreground">
+                                      {artifact.description}
+                                    </span>
+                                  ) : null}
                                 </span>
-                                {missing ? (
-                                  <span className="shrink-0 text-2xs text-muted-foreground">
-                                    File missing
-                                  </span>
-                                ) : null}
-                                {artifact.addedBy === "agent" ? (
-                                  <span aria-label="Added by an agent">
-                                    <BotIcon
-                                      aria-hidden
-                                      className="size-3 shrink-0 text-muted-foreground"
-                                    />
-                                  </span>
-                                ) : null}
                               </TooltipTrigger>
                               <TooltipPopup>
                                 {artifact.resolvedPath}
                                 {artifact.addedBy === "agent" ? " · Added by an agent" : ""}
                               </TooltipPopup>
                             </Tooltip>
-                            <Button
-                              variant="ghost-muted"
-                              size="icon-xs"
-                              disabled={!canMove}
-                              aria-label={`Move ${artifact.label ?? artifact.name} to another section`}
-                              onClick={() => setMoving(moving === artifact.id ? null : artifact.id)}
-                            >
-                              <FolderInputIcon aria-hidden className="size-3" />
-                            </Button>
-                            <Button
-                              variant="ghost-muted"
-                              size="icon-xs"
-                              disabled={!canRemove}
-                              aria-label={`Remove ${artifact.label ?? artifact.name}`}
-                              onClick={() => {
-                                void remove({
-                                  environmentId,
-                                  input: { projectId, id: artifact.id },
-                                });
-                              }}
-                            >
-                              <XIcon aria-hidden className="size-3" />
-                            </Button>
+                            <div className="flex items-center gap-1 px-1">
+                              {missing ? (
+                                <span className="text-2xs text-muted-foreground">File missing</span>
+                              ) : null}
+                              {artifact.addedBy === "agent" ? (
+                                <span aria-label="Added by an agent">
+                                  <BotIcon aria-hidden className="size-3 text-muted-foreground" />
+                                </span>
+                              ) : null}
+                              <div className="flex flex-1 justify-end">
+                                <Button
+                                  variant="ghost-muted"
+                                  size="icon-xs"
+                                  disabled={!canUpdate}
+                                  aria-label={`Edit ${artifact.label ?? artifact.name}`}
+                                  aria-expanded={editing === artifact.id}
+                                  onClick={() =>
+                                    setEditing(editing === artifact.id ? null : artifact.id)
+                                  }
+                                >
+                                  <PencilIcon aria-hidden className="size-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost-muted"
+                                  size="icon-xs"
+                                  disabled={!canMove}
+                                  aria-label={`Move ${artifact.label ?? artifact.name} to another section`}
+                                  onClick={() =>
+                                    setMoving(moving === artifact.id ? null : artifact.id)
+                                  }
+                                >
+                                  <FolderInputIcon aria-hidden className="size-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost-muted"
+                                  size="icon-xs"
+                                  disabled={!canRemove}
+                                  aria-label={`Remove ${artifact.label ?? artifact.name}`}
+                                  onClick={() => {
+                                    void remove({
+                                      environmentId,
+                                      input: { projectId, id: artifact.id },
+                                    });
+                                  }}
+                                >
+                                  <XIcon aria-hidden className="size-3" />
+                                </Button>
+                              </div>
+                            </div>
                           </div>
+                          {editing === artifact.id ? (
+                            <ArtifactMetadataForm
+                              artifact={artifact}
+                              canUpdate={canUpdate}
+                              onCancel={() => setEditing(null)}
+                              onSave={async (label, description) => {
+                                const saved = await update({
+                                  environmentId,
+                                  input: { projectId, id: artifact.id, label, description },
+                                });
+                                return saved._tag === "Success";
+                              }}
+                            />
+                          ) : null}
                           {moving === artifact.id ? (
                             <div className="flex px-1.5">
                               <SectionNameForm

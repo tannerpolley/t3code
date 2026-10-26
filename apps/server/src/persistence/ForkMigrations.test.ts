@@ -51,6 +51,7 @@ describe("fork migration ledger", () => {
           { migration_id: 22, name: "OwnerDecisionDelivery" },
           { migration_id: 23, name: "ProjectArtifactSections" },
           { migration_id: 24, name: "RetireTurnItemCounts" },
+          { migration_id: 25, name: "ProjectArtifactDescriptions" },
         ],
       );
       const columns = yield* sql<{ name: string }>`PRAGMA table_info(owner_decisions)`;
@@ -188,7 +189,7 @@ describe("fork migration ledger", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("backfills existing artifact pins with their file-type section", () =>
+  it.effect("backfills existing artifact sections and initializes descriptions to null", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toForkMigrationInclusive: 22 });
@@ -204,6 +205,9 @@ describe("fork migration ledger", () => {
       ])
         yield* sql`INSERT INTO project_artifacts (id, project_id, path, added_by) VALUES (${id}, ${project}, ${path}, 'user')`;
       yield* runMigrations();
+      assert.deepEqual(yield* sql`SELECT DISTINCT description FROM project_artifacts`, [
+        { description: null },
+      ]);
       assert.deepEqual(yield* sql`SELECT id, section FROM project_artifacts ORDER BY id`, [
         { id: "1", section: "Documents" },
         { id: "2", section: "Data" },
@@ -255,6 +259,7 @@ describe("fork migration ledger", () => {
           { migration_id: 22, name: "OwnerDecisionDelivery" },
           { migration_id: 23, name: "ProjectArtifactSections" },
           { migration_id: 24, name: "RetireTurnItemCounts" },
+          { migration_id: 25, name: "ProjectArtifactDescriptions" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

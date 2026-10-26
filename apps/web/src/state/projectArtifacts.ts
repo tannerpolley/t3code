@@ -28,6 +28,10 @@ export const projectArtifacts = {
     label: "project-artifacts:move",
     tag: PROJECT_ARTIFACT_METHODS.move,
   }),
+  update: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-artifacts:update",
+    tag: PROJECT_ARTIFACT_METHODS.update,
+  }),
   renameSection: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "project-artifacts:rename-section",
     tag: PROJECT_ARTIFACT_METHODS.renameSection,

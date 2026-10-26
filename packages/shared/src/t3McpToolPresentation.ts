@@ -383,6 +383,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Move", "Moving", "Moved", "project artifact"],
     "project-update",
   ),
+  t3_project_artifacts_update: tool(
+    ["Update", "Updating", "Updated", "project artifact"],
+    "project-update",
+  ),
   t3_project_artifacts_remove: tool(
     ["Remove", "Removing", "Removed", "project artifact"],
     "project-update",
