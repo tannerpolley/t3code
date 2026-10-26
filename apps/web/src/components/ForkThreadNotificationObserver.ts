@@ -62,15 +62,17 @@ export function createForkThreadNotificationObserver(
           ? undefined
           : index.get(rawThread.pendingRuntimeRequest.routedTo);
       const child = rawThread.lineage.relationshipToParent === "subagent";
+      const prior = previous.get(rawThread.id);
       if (
         child &&
         rawThread.pendingRuntimeRequest?.routedTo === undefined &&
         rawThread.lineage.parentThreadId !== null &&
         index.has(rawThread.lineage.parentThreadId)
-      )
+      ) {
+        if (prior?.attention) retract(rawThread.id);
         continue;
+      }
       const ownerVisible = runtimeRequestIsOwnerVisible(rawThread.pendingRuntimeRequest, parent);
-      const prior = previous.get(rawThread.id);
       const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
       const request = rawThread.pendingRuntimeRequest;
       const ownerVisibleSince =

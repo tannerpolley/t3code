@@ -103,6 +103,64 @@ layer("OrchestrationEventStore", (it) => {
     ),
   );
 
+  it.effect("bounds cumulative streaming snapshots before periodic compaction", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:streaming-bound");
+      const events = Array.from({ length: 100 }, (_, index) => ({
+        id: EventId.make(`event:streaming-bound:${index}`),
+        type: "turn-item.updated" as const,
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("item:streaming-bound"),
+          type: "command_execution" as const,
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "running" as const,
+          title: "Streaming output",
+          input: "stream-output",
+          output: "x".repeat((index + 1) * 1024),
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        },
+      }));
+      for (const event of events) yield* store.appendAgentEvents({ events: [event] });
+      const retained = yield* store.readAgentEvents({ threadId }).pipe(Stream.runCollect);
+      assert.lengthOf(retained, 2);
+      assert.deepEqual(
+        retained.map((stored) => stored.event),
+        [events[0]!, events[99]!],
+      );
+      const [size] = yield* sql<{ readonly bytes: number }>`
+        SELECT SUM(octet_length(payload_json)) AS bytes FROM orchestration_events
+        WHERE stream_id = ${threadId}
+      `;
+      assert.isBelow(size!.bytes, 110 * 1024);
+      const completed = {
+        ...events[99]!,
+        id: EventId.make("event:streaming-bound:completed"),
+        payload: { ...events[99]!.payload, status: "completed" as const, completedAt: now },
+      };
+      yield* store.appendAgentEvents({ events: [completed] });
+      assert.deepEqual(
+        (yield* store.readAgentEvents({ threadId }).pipe(Stream.runCollect)).map(
+          (row) => row.event,
+        ),
+        [events[0]!, completed],
+      );
+    }),
+  );
+
   it.effect("stores an unchanged subagent prompt once and replays it on every update", () =>
     Effect.gen(function* () {
       const store = yield* OrchestrationEventStore.OrchestrationEventStore;

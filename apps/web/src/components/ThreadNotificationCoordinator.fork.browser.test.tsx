@@ -5,7 +5,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { stubGlobal } from "../../test/render";
+import { fakeTimers, stubGlobal } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   settingsListeners: new Set<() => void>(),
@@ -24,12 +24,13 @@ const state = vi.hoisted(() => ({
   limited: false,
   subagent: false,
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
-  delegatedChild: null as "running" | "approval" | null,
+  delegatedChild: null as "running" | "approval" | "idle" | null,
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
   ),
   close: vi.fn(),
+  badge: vi.fn(),
   navigate: vi.fn(),
   sound: vi.fn(),
   notification: vi.fn(function (_title: string, options: NotificationOptions) {
@@ -96,6 +97,7 @@ function mockThreads() {
   if (state.delegatedChild === null) return [mockThreadShell()];
   stableParent ??= {
     ...mockThreadShell(),
+    status: state.delegatedChild === "idle" ? "completed" : "running",
     lineage: {
       rootThreadId: "thread-1",
       parentThreadId: null,
@@ -162,7 +164,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => ({
 vi.mock(import("../threadNotifications"), async (original) => ({
   ...(await original()),
   playNotificationSound: state.sound,
-  setNotificationBadge: vi.fn(),
+  setNotificationBadge: state.badge,
 }));
 vi.mock(import("./ui/toast"), async (original) => {
   const actual = await original();
@@ -241,16 +243,25 @@ function setup() {
 }
 
 describe("thread notifications", () => {
-  it.each([true, false])(
-    "retracts an owner-visible child alert after a shell refresh and an answer, focus=%s",
-    async (focused) => {
+  it.each([
+    { focused: true, parentPresent: false },
+    { focused: false, parentPresent: false },
+    { focused: true, parentPresent: true },
+    { focused: false, parentPresent: true },
+  ])(
+    "retracts an owner-visible child alert after an answer, focus=$focused parent=$parentPresent",
+    async ({ focused, parentPresent }) => {
       await using app = setup();
+      using _timers = fakeTimers();
       state.subagent = true;
+      state.delegatedChild = parentPresent ? "idle" : null;
       state.focused = focused;
       state.mode = "notifications-and-sound";
       await app.render();
       state.input = true;
       await app.render();
+      if (parentPresent) await vi.advanceTimersByTimeAsync(3_000);
+      expect(state.badge).toHaveBeenLastCalledWith(focused ? 0 : 1);
       expect(state.sound).toHaveBeenCalledTimes(1);
       if (focused) expect(state.add).toHaveBeenCalledTimes(1);
       else expect(state.notification).toHaveBeenCalledTimes(1);
@@ -260,6 +271,7 @@ describe("thread notifications", () => {
       else expect(state.notification.mock.results[0]?.value.close).not.toHaveBeenCalled();
       state.input = false;
       await app.render();
+      expect(state.badge).toHaveBeenLastCalledWith(0);
       if (focused) expect(state.close).toHaveBeenCalledWith("toast-1");
       else expect(state.notification.mock.results[0]?.value.close).toHaveBeenCalledTimes(1);
     },

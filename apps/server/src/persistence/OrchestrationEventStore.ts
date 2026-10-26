@@ -285,6 +285,9 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const committedEvents = yield* PubSub.unbounded<ApplicationStoredEvent>();
+  // shortcut: Keep at most 4096 active items; evictions and rollbacks rely on periodic compaction.
+  const streamingSnapshots = new Map<string, { first: number; latest: number }>();
+
   const promptHints = new Map<string, number>();
   const restoredPayloadJson = sql`CASE
     WHEN orchestration_events.event_type IN ('subagent.updated', 'turn-item.updated')
@@ -508,6 +511,58 @@ const makeEventStore = Effect.gen(function* () {
                 : sql`, json_type(payload_json, '$.promptSequence') IS NULL AS stores_full_prompt`
             }
           `;
+          const sequence = rows[0]?.sequence;
+          // Never coalesce subagent rows: later rows may point at their prompts.
+          if (
+            event.type === "turn-item.updated" &&
+            subagent === undefined &&
+            input.commandId === undefined &&
+            sequence !== undefined
+          ) {
+            const key = `${event.threadId}\u0000${event.payload.id}`;
+            const previous = streamingSnapshots.get(key);
+            if (
+              previous !== undefined &&
+              previous.latest !== previous.first &&
+              previous.latest < sequence
+            ) {
+              // Preserve the first ordinal for catch-up; validate cached sequences after rollbacks.
+              yield* sql`
+                DELETE FROM orchestration_events
+                WHERE sequence = ${previous.latest}
+                  AND application_event_version = 2
+                  AND event_type = 'turn-item.updated'
+                  AND stream_id = ${event.threadId}
+                  AND command_id IS NULL
+                  AND json_extract(payload_json, '$.id') = ${event.payload.id}
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_events AS first_snapshot
+                    WHERE first_snapshot.sequence = ${previous.first}
+                      AND first_snapshot.sequence < ${previous.latest}
+                      AND first_snapshot.application_event_version = 2
+                      AND first_snapshot.event_type = 'turn-item.updated'
+                      AND first_snapshot.stream_id = ${event.threadId}
+                      AND json_extract(first_snapshot.payload_json, '$.id') = ${event.payload.id}
+                  )
+              `;
+            }
+            if (
+              event.payload.status === "pending" ||
+              event.payload.status === "running" ||
+              event.payload.status === "waiting"
+            ) {
+              if (streamingSnapshots.size >= 4096 && !streamingSnapshots.has(key)) {
+                const oldest = streamingSnapshots.keys().next().value;
+                if (oldest !== undefined) streamingSnapshots.delete(oldest);
+              }
+              streamingSnapshots.set(key, {
+                first: previous?.first ?? sequence,
+                latest: sequence,
+              });
+            } else {
+              streamingSnapshots.delete(key);
+            }
+          }
           const row = rows[0];
           if (promptKey !== undefined && row !== undefined) {
             promptHints.delete(promptKey);
@@ -521,7 +576,7 @@ const makeEventStore = Effect.gen(function* () {
             }
           }
           return yield* decodeV2StoredEvent({
-            sequence: rows[0]?.sequence,
+            sequence,
             commandId: input.commandId ?? null,
             event,
           });

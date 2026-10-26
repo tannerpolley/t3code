@@ -13045,10 +13045,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     const dispatch = threadDispatch.withLock(commandThreadId(command), dispatchEffect);
-    if (
-      command.type !== "message.dispatch" ||
-      (command.createdBy !== "user" && command.creationSource !== "mcp")
-    )
+    if (command.type !== "message.dispatch" || !mayStartSubagentFollowup(command))
       return yield* dispatch;
     const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(
       Effect.mapError(
