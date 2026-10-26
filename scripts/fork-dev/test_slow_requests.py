@@ -8,14 +8,15 @@ import unittest
 SCRIPT = Path(__file__).with_name('slow-requests.py')
 
 
+def span(name, span_id, parent, duration, attributes=None):
+    return dict(type='effect-span', name=name, traceId='trace', spanId=span_id,
+                parentSpanId=parent, startTimeUnixNano='100000000000',
+                endTimeUnixNano=str(100_000_000_000 + int(duration * 1e6)),
+                durationMs=duration, attributes=attributes or {})
+
+
 class SlowRequestsTest(unittest.TestCase):
     def test_slow_request_keeps_children_and_fast_request_is_ignored(self):
-        def span(name, span_id, parent, duration, attributes=None):
-            return dict(type='effect-span', name=name, traceId='trace', spanId=span_id,
-                        parentSpanId=parent, startTimeUnixNano='100000000000',
-                        endTimeUnixNano=str(100_000_000_000 + int(duration * 1e6)),
-                        durationMs=duration, attributes=attributes or {})
-
         with tempfile.TemporaryDirectory() as directory:
             trace = Path(directory) / 'trace.ndjson'
             out = Path(directory) / 'slow.ndjson'
@@ -45,6 +46,35 @@ class SlowRequestsTest(unittest.TestCase):
             self.assertEqual(record['topQueries'], [dict(
                 query='SELECT 1', durationMs=11000, lockWaitMs=9500, connection='writer')])
             self.assertEqual(len(record['loadAverage']), 3)
+
+    def test_long_lived_streams_are_excluded_but_slow_commands_are_recorded(self):
+        streams = [
+            'terminal.attach',
+            'terminal.observe',
+            'terminal.watchInlineRun',
+            'server.getStorageCleanupReport',
+            'server.getDatabaseStorage',
+            'orchestration.searchThreadStream',
+            'subscribeTerminalEvents',
+            'orchestration.subscribeThread',
+            'provider.auth.subscribe',
+            'issues.subscribeLinkRefreshes',
+        ]
+        commands = ['terminal.open', 'attachments.createUploadUrl',
+                    'server.read', 'git.runStackedAction',
+                    'server.updateServerWithProgress', 'cloud.installRelayClient']
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / 'trace.ndjson'
+            out = Path(directory) / 'slow.ndjson'
+            trace.write_text('\n'.join(
+                json.dumps(span('ws.rpc.' + method, str(index), None, 319000))
+                for index, method in enumerate(streams + commands)
+            ) + '\n')
+            subprocess.run([sys.executable, str(SCRIPT), '--trace', str(trace),
+                            '--out', str(out), '--once'], check=True)
+            records = [json.loads(line) for line in out.read_text().splitlines()]
+            self.assertEqual([record['request'] for record in records],
+                             ['ws.rpc.' + method for method in commands])
 
 
 if __name__ == '__main__':

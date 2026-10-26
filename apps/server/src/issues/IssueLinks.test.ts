@@ -223,6 +223,82 @@ it.effect(
   },
 );
 
+it.effect("acquires the reader once for a multi-repository status batch", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-issue-status-batch-" });
+    const statuses = [ref, { ...ref, repository: "owner/other", number: 14 }].map((issue) => ({
+      ...issue,
+      nodeId: `I_${issue.number}`,
+      state: "open" as const,
+      stateReason: null,
+      blockedBy: [],
+      pullRequests: [],
+    }));
+    const database = SqlitePersistence.layerFromPath(`${directory}/state.sqlite`);
+    const layer = IssueRoadmap.layer.pipe(
+      Layer.provideMerge(IssueLinks.layer.pipe(Layer.provide(ProjectionStore.layer))),
+      Layer.provide(
+        Layer.mock(IssueService.IssueService)({
+          refreshes: Stream.empty,
+          statusBatch: () => Effect.succeed(statuses),
+        }),
+      ),
+      Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
+      Layer.provideMerge(database),
+    );
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      for (const issue of statuses) {
+        const thread = idleThreadProjection(liveThreadShell(ThreadId.make(issue.nodeId))).thread;
+        const linkedIssue = {
+          ...issue,
+          repositoryId: issue.repository,
+          id: issue.nodeId,
+          title: "Issue work",
+          url: `https://${issue.host}/${issue.repository}/issues/${issue.number}`,
+        };
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_threads(
+            thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            created_at, updated_at, archived_at, deleted_at, payload_json
+          ) VALUES (${thread.id}, ${thread.projectId}, ${thread.title}, 'codex', 'full-access', 'default',
+            '2026-10-13', '2026-10-13', NULL, NULL, ${JSON.stringify({ ...thread, linkedIssue })})`;
+      }
+      const acquisitions: unknown[] = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (time, exit) => {
+            end(time, exit);
+            const connection = span.attributes.get("db.connection");
+            if (connection !== undefined) acquisitions.push(connection);
+          };
+          return span;
+        },
+      });
+      const roadmap = yield* IssueRoadmap.IssueRoadmap;
+      const result = yield* roadmap
+        .statusBatch({ issues: statuses })
+        .pipe(
+          Effect.provideService(Statement.SpanPropagationEnabled, true),
+          Effect.withTracer(tracer),
+        );
+      assert.deepEqual(
+        result,
+        statuses.map(({ repository: _repository, number: _number, ...status }) => ({
+          ...status,
+          suspensionReason: undefined,
+          closingPullRequests: [],
+          liveWork: [{ threadId: ThreadId.make(status.nodeId), inherited: false, status: "idle" }],
+        })),
+      );
+      assert.deepEqual(acquisitions, ["reader"]);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect(
   "rejects malformed or conflicting targets and unavailable threads before saving a link",
   () => {
