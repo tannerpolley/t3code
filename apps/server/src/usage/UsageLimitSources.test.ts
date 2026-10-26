@@ -176,7 +176,7 @@ it.effect(
           getProviders: Effect.succeed([]),
         }),
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-          getInstance: () => Effect.succeed(undefined),
+          getInstance: () => Effect.sync(() => undefined),
         }),
         Layer.succeed(UsageLimitSources.UsageLimitSources, {
           ...sources,
@@ -314,7 +314,7 @@ it.effect("keeps auto-use scheduled without reporting used when hub credit-list 
         getProviders: Effect.succeed([]),
       }),
       Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-        getInstance: () => Effect.succeed(undefined),
+        getInstance: () => Effect.sync(() => undefined),
       }),
       Layer.succeed(UsageLimitSources.UsageLimitSources, {
         ...sources,

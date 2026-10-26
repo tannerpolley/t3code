@@ -123,45 +123,42 @@ const STATUS_EVENTS = new Set([
 ]);
 
 /** Runs after projection updates inside the sink transaction, for every provider and command path. */
-export const enqueueIssueStatusEffects = (input: {
+export const enqueueIssueStatusEffects = Effect.fn("enqueueIssueStatusEffects")(function* (input: {
   readonly sql: SqlClient.SqlClient;
   readonly projections: ProjectionStoreV2Shape;
   readonly outbox: EffectOutboxV2Shape;
   readonly events: ReadonlyArray<OrchestrationV2StoredEvent>;
-}) =>
-  Effect.gen(function* () {
-    const { sql, projections, outbox } = input;
-    const relevant = input.events.filter(
-      (stored) =>
-        STATUS_EVENTS.has(stored.event.type) ||
-        (stored.event.type === "turn-item.updated" &&
-          ["command_execution", "dynamic_tool", "subagent"].includes(stored.event.payload.type) &&
-          ["completed", "failed", "cancelled", "interrupted"].includes(
-            stored.event.payload.status,
-          )),
-    );
-    if (relevant.length === 0) return 0;
-    const managedThreads = yield* sql<{ thread_id: string }>`
+}) {
+  const { sql, projections, outbox } = input;
+  const relevant = input.events.filter(
+    (stored) =>
+      STATUS_EVENTS.has(stored.event.type) ||
+      (stored.event.type === "turn-item.updated" &&
+        ["command_execution", "dynamic_tool", "subagent"].includes(stored.event.payload.type) &&
+        ["completed", "failed", "cancelled", "interrupted"].includes(stored.event.payload.status)),
+  );
+  if (relevant.length === 0) return 0;
+  const managedThreads = yield* sql<{ thread_id: string }>`
     SELECT thread_id FROM orchestration_v2_projection_threads
     WHERE thread_id IN ${sql.in([...new Set(relevant.map((stored) => stored.event.threadId))])}
       AND (json_type(payload_json, '$.linkedIssue') = 'object' OR json_type(payload_json, '$.repositoryOrchestration') = 'object')
   `;
-    if (managedThreads.length === 0) return 0;
-    const issues = new Map<string, ThreadLinkedIssue>();
-    const add = (issue: ThreadLinkedIssue) =>
-      issues.set(`${issue.host}:${issue.repositoryId}:${issue.id}`, issue);
-    for (const stored of relevant)
-      if (stored.event.type === "issue.work.cancelled") add(stored.event.payload.issue);
-    for (const row of managedThreads) {
-      const threadId = ThreadId.make(row.thread_id);
-      const thread = yield* projections.getThread(threadId);
-      if (thread.linkedIssue !== undefined) add(thread.linkedIssue);
-      if (
-        thread.repositoryOrchestration === undefined ||
-        thread.repositoryOrchestration.retiredToThreadId !== undefined
-      )
-        continue;
-      const queued = yield* sql<{ payload_json: string }>`
+  if (managedThreads.length === 0) return 0;
+  const issues = new Map<string, ThreadLinkedIssue>();
+  const add = (issue: ThreadLinkedIssue) =>
+    issues.set(`${issue.host}:${issue.repositoryId}:${issue.id}`, issue);
+  for (const stored of relevant)
+    if (stored.event.type === "issue.work.cancelled") add(stored.event.payload.issue);
+  for (const row of managedThreads) {
+    const threadId = ThreadId.make(row.thread_id);
+    const thread = yield* projections.getThread(threadId);
+    if (thread.linkedIssue !== undefined) add(thread.linkedIssue);
+    if (
+      thread.repositoryOrchestration === undefined ||
+      thread.repositoryOrchestration.retiredToThreadId !== undefined
+    )
+      continue;
+    const queued = yield* sql<{ payload_json: string }>`
       SELECT request.payload_json FROM orchestration_v2_projection_issue_work_requests request
       LEFT JOIN orchestration_v2_projection_issue_work work
         ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
@@ -171,127 +168,126 @@ export const enqueueIssueStatusEffects = (input: {
         AND request.rowid = (SELECT max(latest.rowid) FROM orchestration_v2_projection_issue_work_requests latest
           WHERE latest.host = request.host AND latest.repository_id = request.repository_id AND latest.issue_id = request.issue_id AND latest.queue_state IS NULL)
     `;
-      for (const row of queued) add((yield* decodeRequest(row.payload_json)).issue);
-    }
-    const revision = input.events.at(-1)?.sequence ?? 0;
-    for (const issue of issues.values()) {
-      const work = yield* projections.getIssueWorkCommentState({
-        threadId: relevant[0]!.event.threadId,
-        host: issue.host,
-        repositoryId: issue.repositoryId,
-        issueId: issue.id,
-      });
-      const threadId = work?.effectiveStatusThreadId;
-      if (threadId == null) continue;
-      yield* sql`
+    for (const row of queued) add((yield* decodeRequest(row.payload_json)).issue);
+  }
+  const revision = input.events.at(-1)?.sequence ?? 0;
+  for (const issue of issues.values()) {
+    const work = yield* projections.getIssueWorkCommentState({
+      threadId: relevant[0]!.event.threadId,
+      host: issue.host,
+      repositoryId: issue.repositoryId,
+      issueId: issue.id,
+    });
+    const threadId = work?.effectiveStatusThreadId;
+    if (threadId == null) continue;
+    yield* sql`
         UPDATE orchestration_v2_effect_outbox SET status = 'cancelled', last_error = 'Superseded issue refresh'
         WHERE thread_id = ${threadId} AND effect_type = 'issue.status.refresh' AND status IN ('pending', 'failed')
           AND json_extract(payload_json, '$.issue.host') = ${issue.host}
           AND json_extract(payload_json, '$.issue.repositoryId') = ${issue.repositoryId}
           AND json_extract(payload_json, '$.issue.id') = ${issue.id}
       `;
-      const key = `issue-status-refresh:${issue.host}:${issue.repositoryId}:${issue.id}:${revision}`;
-      yield* outbox.enqueue([
-        {
-          id: `effect:${key}`,
-          commandId: CommandId.make(`command:${key}`),
-          threadId,
-          request: { type: "issue.status.refresh", issue, revision },
-        },
-      ]);
-    }
-    return issues.size;
-  });
+    const key = `issue-status-refresh:${issue.host}:${issue.repositoryId}:${issue.id}:${revision}`;
+    yield* outbox.enqueue([
+      {
+        id: `effect:${key}`,
+        commandId: CommandId.make(`command:${key}`),
+        threadId,
+        request: { type: "issue.status.refresh", issue, revision },
+      },
+    ]);
+  }
+  return issues.size;
+});
 
 /** History-dependent derivation runs in the comment lane, outside the event transaction. */
-export const refreshIssueStatus = (input: {
+export const refreshIssueStatus = Effect.fn("refreshIssueStatus")(function* (input: {
   readonly sql: SqlClient.SqlClient;
   readonly projections: ProjectionStoreV2Shape;
   readonly outbox: EffectOutboxV2Shape;
   readonly threadId: ThreadId;
   readonly issue: ThreadLinkedIssue;
   readonly revision: number;
-}) =>
-  Effect.gen(function* () {
-    const { sql, projections, outbox, issue, revision } = input;
-    const policy = yield* sql<{ root_thread_id: string; paused: number }>`
+}) {
+  const { sql, projections, outbox, issue, revision } = input;
+  const policy = yield* sql<{ root_thread_id: string; paused: number }>`
       SELECT root_thread_id, paused FROM orchestration_v2_projection_repository_orchestration
       WHERE host = ${issue.host} AND repository_id = ${issue.repositoryId} AND publish_status_comments = 1
     `;
-    if (policy[0] === undefined) return;
-    const work = yield* projections.getIssueWorkCommentState({
-      threadId: input.threadId,
-      host: issue.host,
-      repositoryId: issue.repositoryId,
-      issueId: issue.id,
+  if (policy[0] === undefined) return;
+  const work = yield* projections.getIssueWorkCommentState({
+    threadId: input.threadId,
+    host: issue.host,
+    repositoryId: issue.repositoryId,
+    issueId: issue.id,
+  });
+  if (work?.effectiveStatusThreadId == null) return;
+  const threadId = work.effectiveStatusThreadId;
+  const shell = yield* projections.getThreadShell(threadId);
+  const thread = yield* projections.getThread(threadId);
+  const queued = work.ownerThreadId !== threadId;
+  const paused = policy[0].paused === 1;
+  // A busy thread's status needs only its runtime requests: the shell keeps just the newest,
+  // and an older approval may still wait on the user. Messages, runs and children matter only
+  // once it settles, so a working agent's tool steps don't reread its history.
+  const fromShell = deriveIssueWorkStatus({ shell, paused, waitingOnSubIssues: false, queued });
+  const busy =
+    shell !== null &&
+    // Idle and completed fall through to the child and result checks.
+    shell.status !== "completed" &&
+    shell.status !== "idle" &&
+    (fromShell === "working" || fromShell === "queued_preparing");
+  const requestsOnly =
+    busy && shell !== null
+      ? yield* projections.getThreadRecords(threadId, ["runtimeRequests"])
+      : null;
+  const projection =
+    shell === null || requestsOnly !== null
+      ? null
+      : yield* projections.getThreadRecords(threadId, [
+          "runs",
+          "messages",
+          "subagents",
+          "runtimeRequests",
+        ]);
+  let status: IssueWorkStatus;
+  if (queued && work.requestCancelled) {
+    status = "cancelled";
+  } else if (requestsOnly !== null) {
+    status = deriveIssueWorkStatus({
+      shell,
+      runtimeRequests: requestsOnly.runtimeRequests,
+      paused,
+      waitingOnSubIssues: false,
+      queued,
     });
-    if (work?.effectiveStatusThreadId == null) return;
-    const threadId = work.effectiveStatusThreadId;
-    const shell = yield* projections.getThreadShell(threadId);
-    const thread = yield* projections.getThread(threadId);
-    const queued = work.ownerThreadId !== threadId;
-    const paused = policy[0].paused === 1;
-    // A busy thread's status needs only its runtime requests: the shell keeps just the newest,
-    // and an older approval may still wait on the user. Messages, runs and children matter only
-    // once it settles, so a working agent's tool steps don't reread its history.
-    const fromShell = deriveIssueWorkStatus({ shell, paused, waitingOnSubIssues: false, queued });
-    const busy =
-      shell !== null &&
-      // Idle and completed fall through to the child and result checks.
-      shell.status !== "completed" &&
-      shell.status !== "idle" &&
-      (fromShell === "working" || fromShell === "queued_preparing");
-    const requestsOnly =
-      busy && shell !== null
-        ? yield* projections.getThreadRecords(threadId, ["runtimeRequests"])
-        : null;
-    const projection =
-      shell === null || requestsOnly !== null
-        ? null
-        : yield* projections.getThreadRecords(threadId, [
-            "runs",
-            "messages",
-            "subagents",
-            "runtimeRequests",
-          ]);
-    let status: IssueWorkStatus;
-    if (queued && work.requestCancelled) {
-      status = "cancelled";
-    } else if (requestsOnly !== null) {
-      status = deriveIssueWorkStatus({
-        shell,
-        runtimeRequests: requestsOnly.runtimeRequests,
-        paused,
-        waitingOnSubIssues: false,
-        queued,
-      });
-    } else if (projection === null) {
-      status = "unavailable";
-    } else if (queued) {
-      status = deriveIssueWorkStatus({
-        shell,
-        runtimeRequests: projection.runtimeRequests,
-        paused,
-        waitingOnSubIssues: false,
-        queued: true,
-      });
-    } else {
-      const progress = delegatedTaskProgress({
-        ...projection,
-        pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
-      });
-      status = deriveIssueWorkStatus({
-        shell,
-        runtimeRequests: projection.runtimeRequests,
-        paused,
-        waitingOnSubIssues: progress.state === "waiting_for_children",
-        resultAvailable: progress.state === "result_available",
-      });
-    }
-    // Only outbox bookkeeping is transactional; all thread reads are above.
-    const enqueued = yield* sql.withTransaction(
-      Effect.gen(function* () {
-        const previous = yield* sql<{ payload_json: string; thread_id: string }>`
+  } else if (projection === null) {
+    status = "unavailable";
+  } else if (queued) {
+    status = deriveIssueWorkStatus({
+      shell,
+      runtimeRequests: projection.runtimeRequests,
+      paused,
+      waitingOnSubIssues: false,
+      queued: true,
+    });
+  } else {
+    const progress = delegatedTaskProgress({
+      ...projection,
+      pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
+    });
+    status = deriveIssueWorkStatus({
+      shell,
+      runtimeRequests: projection.runtimeRequests,
+      paused,
+      waitingOnSubIssues: progress.state === "waiting_for_children",
+      resultAvailable: progress.state === "result_available",
+    });
+  }
+  // Only outbox bookkeeping is transactional; all thread reads are above.
+  const enqueued = yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const previous = yield* sql<{ payload_json: string; thread_id: string }>`
           SELECT payload_json, thread_id FROM orchestration_v2_effect_outbox
           WHERE effect_type = 'issue.github.comment' AND json_extract(payload_json, '$.operation') = 'status_sync'
             AND json_extract(payload_json, '$.issue.host') = ${issue.host}
@@ -299,23 +295,23 @@ export const refreshIssueStatus = (input: {
             AND json_extract(payload_json, '$.issue.id') = ${issue.id}
           ORDER BY coalesce(json_extract(payload_json, '$.revision'), 0) DESC, rowid DESC LIMIT 1
         `;
-        if (previous[0] !== undefined) {
-          const desired = yield* decodeCommentEffect(previous[0].payload_json);
-          if (desired.type === "issue.github.comment" && (desired.revision ?? 0) > revision)
-            return false;
-          if (
-            desired.type === "issue.github.comment" &&
-            desired.status === status &&
-            previous[0].thread_id === threadId &&
-            desired.model === thread.modelSelection.model &&
-            desired.branch === thread.branch &&
-            desired.issue.title === issue.title
-          )
-            return false;
-        }
-        // Older pending revisions have no useful work left. A running write finishes
-        // under the executor's issue lock; any later retry checks the latest key.
-        yield* sql`
+      if (previous[0] !== undefined) {
+        const desired = yield* decodeCommentEffect(previous[0].payload_json);
+        if (desired.type === "issue.github.comment" && (desired.revision ?? 0) > revision)
+          return false;
+        if (
+          desired.type === "issue.github.comment" &&
+          desired.status === status &&
+          previous[0].thread_id === threadId &&
+          desired.model === thread.modelSelection.model &&
+          desired.branch === thread.branch &&
+          desired.issue.title === issue.title
+        )
+          return false;
+      }
+      // Older pending revisions have no useful work left. A running write finishes
+      // under the executor's issue lock; any later retry checks the latest key.
+      yield* sql`
           UPDATE orchestration_v2_effect_outbox SET status = 'cancelled', last_error = 'Superseded issue status'
           WHERE effect_type = 'issue.github.comment' AND status IN ('pending', 'failed')
             AND json_extract(payload_json, '$.operation') = 'status_sync'
@@ -323,19 +319,19 @@ export const refreshIssueStatus = (input: {
             AND json_extract(payload_json, '$.issue.repositoryId') = ${issue.repositoryId}
             AND json_extract(payload_json, '$.issue.id') = ${issue.id}
         `;
-        yield* outbox.enqueue([
-          statusCommentEffect({
-            issue,
-            threadId,
-            status,
-            revision,
-            model: thread.modelSelection.model,
-            branch: thread.branch,
-            updatedAt: yield* DateTime.now,
-          }),
-        ]);
-        return true;
-      }),
-    );
-    if (enqueued) yield* outbox.notifyAvailable();
-  });
+      yield* outbox.enqueue([
+        statusCommentEffect({
+          issue,
+          threadId,
+          status,
+          revision,
+          model: thread.modelSelection.model,
+          branch: thread.branch,
+          updatedAt: yield* DateTime.now,
+        }),
+      ]);
+      return true;
+    }),
+  );
+  if (enqueued) yield* outbox.notifyAvailable();
+});

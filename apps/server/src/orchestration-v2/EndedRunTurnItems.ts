@@ -1,11 +1,5 @@
-/**
- * Turn items that cannot outlive their run end with it. A provider normally ends
- * them before its turn ends, but not when its session detaches or crashes
- * mid-turn, and some never send an end (Codex's turn plan). Commands, dynamic
- * tools and subagents can keep running as background work after the turn, so
- * they keep their own endings: provider events, Stop, session release and
- * startup recovery.
- */
+// Commands, tools and subagents may outlive a run; their own lifecycle ends them.
+// Other turn items must end even when a provider detaches without terminal events.
 import {
   EventId,
   type OrchestrationV2DomainEvent,
@@ -57,86 +51,84 @@ function endTurnItem(
  * Appends an end for every turn-bound item a run in `events` leaves running as
  * it ends, so the run and its items commit together whichever path ended it.
  */
-export const endTurnItemsOfEndedRuns = (
+export const endTurnItemsOfEndedRuns = Effect.fn("endTurnItemsOfEndedRuns")(function* (
   projections: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
   events: ReadonlyArray<OrchestrationV2DomainEvent>,
-) =>
-  Effect.gen(function* () {
-    const endedRuns = events.flatMap((event) =>
-      event.type === "run.updated" && isEndedRunStatus(event.payload.status)
-        ? [{ event, run: event.payload, status: event.payload.status }]
-        : [],
-    );
-    if (endedRuns.length === 0) return events;
-    // The newest version of each item, this batch's writes over stored rows.
-    const written = new Map<TurnItemId, OrchestrationV2TurnItem>();
-    for (const event of events) {
-      if (event.type === "turn-item.updated") written.set(event.payload.id, event.payload);
+) {
+  const endedRuns = events.flatMap((event) =>
+    event.type === "run.updated" && isEndedRunStatus(event.payload.status)
+      ? [{ event, run: event.payload, status: event.payload.status }]
+      : [],
+  );
+  if (endedRuns.length === 0) return events;
+  // The newest version of each item, this batch's writes over stored rows.
+  const written = new Map<TurnItemId, OrchestrationV2TurnItem>();
+  for (const event of events) {
+    if (event.type === "turn-item.updated") written.set(event.payload.id, event.payload);
+  }
+  const ended: Array<OrchestrationV2DomainEvent> = [];
+  for (const { event, run, status } of endedRuns) {
+    const stored = yield* projections
+      .getThreadRecords(run.threadId, ["turnItems"], {
+        turnItemRunId: run.id,
+        turnItemStatuses: ["running"],
+      })
+      .pipe(
+        Effect.map(({ turnItems }) => turnItems),
+        // A thread created in this same batch has no stored items yet.
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed([]) }),
+      );
+    const candidates = new Map(stored.map((item) => [item.id, item]));
+    for (const item of written.values()) if (item.runId === run.id) candidates.set(item.id, item);
+    for (const candidate of candidates.values()) {
+      const item = written.get(candidate.id) ?? candidate;
+      if (item.runId !== run.id || !isTurnBoundItemOpen(item)) continue;
+      const payload = endTurnItem(item, status, event.occurredAt);
+      written.set(item.id, payload);
+      ended.push({
+        id: EventId.make(`${event.id}:turn-item-ended:${item.id}`),
+        type: "turn-item.updated",
+        threadId: run.threadId,
+        runId: run.id,
+        ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: event.occurredAt,
+        payload,
+      });
     }
-    const ended: Array<OrchestrationV2DomainEvent> = [];
-    for (const { event, run, status } of endedRuns) {
-      const stored = yield* projections
-        .getThreadRecords(run.threadId, ["turnItems"], {
-          turnItemRunId: run.id,
-          turnItemStatuses: ["running"],
-        })
-        .pipe(
-          Effect.map(({ turnItems }) => turnItems),
-          // A thread created in this same batch has no stored items yet.
-          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed([]) }),
-        );
-      const candidates = new Map(stored.map((item) => [item.id, item]));
-      for (const item of written.values()) if (item.runId === run.id) candidates.set(item.id, item);
-      for (const candidate of candidates.values()) {
-        const item = written.get(candidate.id) ?? candidate;
-        if (item.runId !== run.id || !isTurnBoundItemOpen(item)) continue;
-        const payload = endTurnItem(item, status, event.occurredAt);
-        written.set(item.id, payload);
-        ended.push({
-          id: EventId.make(`${event.id}:turn-item-ended:${item.id}`),
-          type: "turn-item.updated",
-          threadId: run.threadId,
-          runId: run.id,
-          ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: event.occurredAt,
-          payload,
-        });
-      }
-    }
-    return ended.length === 0 ? events : [...events, ...ended];
-  });
+  }
+  return ended.length === 0 ? events : [...events, ...ended];
+});
 
 /**
  * Ends the turn-bound items a run left running although it already ended, as an
  * older build or a provider update arriving after the run ended can. Startup
  * recovery runs it.
  */
-export const endTurnItemsLeftRunning = <E>(input: {
+export const endTurnItemsLeftRunning = Effect.fn("endTurnItemsLeftRunning")(function* <E>(input: {
   readonly projection: {
     readonly runs: ReadonlyArray<OrchestrationV2Run>;
     readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
   };
   readonly now: DateTime.Utc;
   readonly allocateEventId: () => Effect.Effect<EventId, E>;
-}) =>
-  Effect.gen(function* () {
-    const events: Array<OrchestrationV2DomainEvent> = [];
-    for (const item of input.projection.turnItems) {
-      const run = input.projection.runs.find((candidate) => candidate.id === item.runId);
-      if (run === undefined || !isEndedRunStatus(run.status) || !isTurnBoundItemOpen(item)) {
-        continue;
-      }
-      events.push({
-        id: yield* input.allocateEventId(),
-        type: "turn-item.updated",
-        threadId: item.threadId,
-        runId: run.id,
-        ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: input.now,
-        payload: endTurnItem(item, run.status, input.now),
-      });
+}) {
+  const events: Array<OrchestrationV2DomainEvent> = [];
+  for (const item of input.projection.turnItems) {
+    const run = input.projection.runs.find((candidate) => candidate.id === item.runId);
+    if (run === undefined || !isEndedRunStatus(run.status) || !isTurnBoundItemOpen(item)) {
+      continue;
     }
-    return events;
-  });
+    events.push({
+      id: yield* input.allocateEventId(),
+      type: "turn-item.updated",
+      threadId: item.threadId,
+      runId: run.id,
+      ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: input.now,
+      payload: endTurnItem(item, run.status, input.now),
+    });
+  }
+  return events;
+});

@@ -1,11 +1,12 @@
-import { InlineShellBlock } from "./InlineShellRun";
 import { toastCopyFailure } from "./ForkMarkdownActions";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { reportMarkdownActionFailure } from "./markdownActionFailure";
+import { InlineShellBlock } from "./InlineShellRun";
 import { Check, Copy } from "lucide";
 import { PlayIcon, WrapTextIcon } from "lucide-react";
 import { toHtml } from "hast-util-to-html";
 import React, { use, useEffect, useState, type ReactNode } from "react";
 
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { getClientSettings } from "../../hooks/useSettings";
 import type { DiffThemeName } from "../../lib/diffRendering";
 import {
@@ -159,7 +160,10 @@ export function MarkdownCodeBlock({
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
     target: "code",
     timeout: 1200,
-    onError: toastCopyFailure,
+    onError: (cause) => {
+      reportMarkdownActionFailure({ operation: "copy-code-block", target: language }, cause);
+      toastCopyFailure(cause);
+    },
   });
   const [wrapped, setWrapped] = useState(() => getClientSettings().wordWrap);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
@@ -353,32 +357,33 @@ function UncachedShikiCodeBlock({
     : null;
   useEffect(() => () => incrementalHighlight?.dispose(), [incrementalHighlight]);
   const highlighted = (() => {
-    try {
-      if (incrementalHighlight) return incrementalHighlight(code);
-      return preserveLines
-        ? highlightCodeToHast(highlighter, code, language, themeName)
-        : highlighter.codeToHtml(code, { lang: language, theme: themeName });
-    } catch (error) {
-      console.warn(
-        `Code highlighting failed for language "${language}", falling back to plain text.`,
-        error instanceof Error ? error.message : error,
-      );
-      return preserveLines
-        ? highlightCodeToHast(highlighter, code, "text", themeName)
-        : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
-    }
-  })();
-
-  useEffect(() => {
+    const result = (() => {
+      try {
+        if (incrementalHighlight) return incrementalHighlight(code);
+        return preserveLines
+          ? highlightCodeToHast(highlighter, code, language, themeName)
+          : highlighter.codeToHtml(code, { lang: language, theme: themeName });
+      } catch (error) {
+        console.warn(
+          `Code highlighting failed for language "${language}", falling back to plain text.`,
+          error instanceof Error ? error.message : error,
+        );
+        return preserveLines
+          ? highlightCodeToHast(highlighter, code, "text", themeName)
+          : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
+      }
+    })();
+    // A finished block is cached for the next mount; a streaming one is still changing.
     if (!isStreaming) {
-      const highlightedHtml = typeof highlighted === "string" ? highlighted : toHtml(highlighted);
+      const highlightedHtml = typeof result === "string" ? result : toHtml(result);
       highlightedCodeCache.set(
         cacheKey,
         highlightedHtml,
         estimateHighlightedSize(highlightedHtml, code),
       );
     }
-  }, [cacheKey, code, highlighted, isStreaming]);
+    return result;
+  })();
 
   return typeof highlighted === "string" ? (
     <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlighted }} />

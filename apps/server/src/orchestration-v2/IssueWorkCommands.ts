@@ -80,8 +80,8 @@ export function makeIssueWorkCommands({
     Effect.map(IssueReadSnapshots, (reads) =>
       reads.find((read) => sameIssueRepository(read.issue, issue) && read.issue.id === issue.id),
     );
-  const canStartIssueRun = (thread: OrchestrationV2AppThread) =>
-    Effect.gen(function* () {
+  const canStartIssueRun = Effect.fn("canStartIssueRun")(
+    function* (thread: OrchestrationV2AppThread) {
       if (isReadOnlyIssueRole(thread.role) && thread.lineage.relationshipToParent === "subagent") {
         if (Option.isNone(issueWorkStore)) return true;
         const store = issueWorkStore.value;
@@ -109,50 +109,45 @@ export function makeIssueWorkCommands({
           ? (yield* store.repositoryOwner(issue))?.rootThreadId
           : yield* store.issueOwner(read.parent);
       return parent === thread.lineage.parentThreadId;
-    }).pipe(Effect.catch(() => Effect.succeed(false)));
-  // An issue has one current worker, and only it is admitted to run. A message
-  // from a person or agent to a former worker would queue for an admission that
-  // never comes, so it is refused with the current worker's name instead.
-  // Usage-limit resumes send as the user but retry every tick, so a refusal
-  // would only repeat; they are left to the scheduler as before.
-  const guardFormerWorkerMessage = (
+    },
+    Effect.orElseSucceed(() => false),
+  );
+  // Former workers cannot accept new work; usage-limit retries remain quiet until admission.
+  const guardFormerWorkerMessage = Effect.fn("guardFormerWorkerMessage")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
     thread: OrchestrationV2AppThread,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) =>
-    Effect.gen(function* () {
-      const issue = thread.linkedIssue;
-      if (
-        issue === undefined ||
-        isReadOnlyIssueRole(thread.role) ||
-        Option.isNone(issueWorkStore) ||
-        command.delegatedCompletion !== undefined ||
-        command.usageLimitContinuationOfRunId !== undefined ||
-        command.automaticProviderContinuationOfRunId !== undefined ||
-        (command.createdBy !== "user" && command.creationSource !== "mcp")
-      )
-        return;
-      // A worker created earlier in this command owns its issue before the store records it.
-      const createdOwner = (yield* Ref.get(events)).findLast(
-        (event) =>
-          event.type === "thread.created" &&
-          event.payload.linkedIssue !== undefined &&
-          sameIssueRepository(event.payload.linkedIssue, issue) &&
-          event.payload.linkedIssue.id === issue.id,
-      )?.threadId;
-      const owner =
-        createdOwner ??
-        (yield* issueWorkStore.value.issueOwner(issue).pipe(mapDispatchError(command)));
-      if (owner === null || owner === thread.id) return;
-      const ownerShell = yield* projectionStore
-        .getThreadShell(owner)
-        .pipe(mapDispatchError(command));
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        detail: `Issue #${issue.number} is now worked by another thread${ownerShell ? ` ("${ownerShell.title}")` : ""}, ${owner}. Delegate a new task for the issue, or send this to that thread if it should do the work.`,
-      });
+  ) {
+    const issue = thread.linkedIssue;
+    if (
+      issue === undefined ||
+      isReadOnlyIssueRole(thread.role) ||
+      Option.isNone(issueWorkStore) ||
+      command.delegatedCompletion !== undefined ||
+      command.usageLimitContinuationOfRunId !== undefined ||
+      command.automaticProviderContinuationOfRunId !== undefined ||
+      (command.createdBy !== "user" && command.creationSource !== "mcp")
+    )
+      return;
+    // A worker created earlier in this command owns its issue before the store records it.
+    const createdOwner = (yield* Ref.get(events)).findLast(
+      (event) =>
+        event.type === "thread.created" &&
+        event.payload.linkedIssue !== undefined &&
+        sameIssueRepository(event.payload.linkedIssue, issue) &&
+        event.payload.linkedIssue.id === issue.id,
+    )?.threadId;
+    const owner =
+      createdOwner ??
+      (yield* issueWorkStore.value.issueOwner(issue).pipe(mapDispatchError(command)));
+    if (owner === null || owner === thread.id) return;
+    const ownerShell = yield* projectionStore.getThreadShell(owner).pipe(mapDispatchError(command));
+    return yield* new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      detail: `Issue #${issue.number} is now worked by another thread${ownerShell ? ` ("${ownerShell.title}")` : ""}, ${owner}. Delegate a new task for the issue, or send this to that thread if it should do the work.`,
     });
+  });
   const start = Effect.fn("orchestrationV2.dispatch.issueWorkStart")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "issue.work.start" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -288,133 +283,132 @@ export function makeIssueWorkCommands({
     );
   });
 
-  const reuseManagedChild = (
+  const reuseManagedChild = Effect.fn("reuseManagedChild")(function* (
     request: DelegatedTaskRequest,
     parentProjection: ProjectionRecords<
       "runs" | "nodes" | "subagents" | "providerThreads" | "providerTurns" | "attempts"
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     command: OrchestrationV2ServerCommand,
-  ) =>
-    Effect.gen(function* () {
-      if (isReadOnlyIssueRole(request.role)) return false;
-      const parent = parentProjection.thread;
-      const root =
-        parent.lineage.rootThreadId === parent.id
-          ? parent
-          : yield* projectionStore
-              .getThread(parent.lineage.rootThreadId)
-              .pipe(mapDispatchError(command));
-      const managed = requiresManagedIssueAdmission(request.role, parent, root);
-      if (managed && request.issue === undefined)
+  ) {
+    if (isReadOnlyIssueRole(request.role)) return false;
+    const parent = parentProjection.thread;
+    const root =
+      parent.lineage.rootThreadId === parent.id
+        ? parent
+        : yield* projectionStore
+            .getThread(parent.lineage.rootThreadId)
+            .pipe(mapDispatchError(command));
+    const managed = requiresManagedIssueAdmission(request.role, parent, root);
+    if (managed && request.issue === undefined)
+      return yield* new OrchestratorDispatchError({
+        commandId: request.commandId,
+        commandType: request.type,
+        cause: "Repository-managed children require an explicit issue.",
+      });
+    if (request.issue !== undefined) {
+      if (Option.isNone(issueWorkStore))
         return yield* new OrchestratorDispatchError({
           commandId: request.commandId,
           commandType: request.type,
-          cause: "Repository-managed children require an explicit issue.",
+          cause: "Issue ownership service is unavailable.",
         });
-      if (request.issue !== undefined) {
-        if (Option.isNone(issueWorkStore))
-          return yield* new OrchestratorDispatchError({
-            commandId: request.commandId,
-            commandType: request.type,
-            cause: "Issue ownership service is unavailable.",
-          });
-        const issueStore = issueWorkStore.value;
-        const repositoryOwner = yield* issueStore
-          .repositoryOwner(request.issue)
+      const issueStore = issueWorkStore.value;
+      const repositoryOwner = yield* issueStore
+        .repositoryOwner(request.issue)
+        .pipe(mapDispatchError(command));
+      if (repositoryOwner === null || repositoryOwner.paused)
+        return yield* new OrchestratorDispatchError({
+          commandId: request.commandId,
+          commandType: request.type,
+          cause: "The repository is paused or issue relationships are unavailable.",
+        });
+      const read = yield* issueSnapshot(request.issue);
+      if (read === undefined)
+        return yield* new OrchestratorDispatchError({
+          commandId: request.commandId,
+          commandType: request.type,
+          cause: "Issue relationships are unavailable; eligibility is unknown.",
+        });
+      if (read.parent !== null && !sameIssueRepository(read.parent, request.issue))
+        return yield* new OrchestratorDispatchError({
+          commandId: request.commandId,
+          commandType: request.type,
+          detail: issueScopeExpansionError,
+        });
+      if (parentProjection.thread.lineage.rootThreadId !== repositoryOwner.rootThreadId)
+        return yield* new OrchestratorDispatchError({
+          commandId: request.commandId,
+          commandType: request.type,
+          cause: `This repository issue subtree has retired. Delegate through the current root ${repositoryOwner.rootThreadId}.`,
+        });
+      const expectedParent =
+        read.parent === null
+          ? repositoryOwner.rootThreadId
+          : yield* issueStore.issueOwner(read.parent).pipe(mapDispatchError(command));
+      if (
+        issueEligibility(read) !== "eligible" ||
+        read.issue.id !== request.issue.id ||
+        read.issue.repositoryId !== request.issue.repositoryId ||
+        expectedParent !== request.parentThreadId ||
+        parentProjection.thread.lineage.rootThreadId !== repositoryOwner.rootThreadId
+      )
+        return yield* new OrchestratorDispatchError({
+          commandId: request.commandId,
+          commandType: request.type,
+          cause:
+            "Issue work must be eligible and delegated by the current owner of its immediate GitHub parent (or the repository root for a top-level issue).",
+        });
+      const currentOwner = yield* issueStore
+        .issueOwner(request.issue)
+        .pipe(mapDispatchError(command));
+      if (currentOwner !== null) {
+        const current = yield* projectionStore
+          .getThreadRecords(currentOwner, ["runs", "messages", "subagents"])
           .pipe(mapDispatchError(command));
-        if (repositoryOwner === null || repositoryOwner.paused)
-          return yield* new OrchestratorDispatchError({
-            commandId: request.commandId,
-            commandType: request.type,
-            cause: "The repository is paused or issue relationships are unavailable.",
-          });
-        const read = yield* issueSnapshot(request.issue);
-        if (read === undefined)
-          return yield* new OrchestratorDispatchError({
-            commandId: request.commandId,
-            commandType: request.type,
-            cause: "Issue relationships are unavailable; eligibility is unknown.",
-          });
-        if (read.parent !== null && !sameIssueRepository(read.parent, request.issue))
-          return yield* new OrchestratorDispatchError({
-            commandId: request.commandId,
-            commandType: request.type,
-            detail: issueScopeExpansionError,
-          });
-        if (parentProjection.thread.lineage.rootThreadId !== repositoryOwner.rootThreadId)
-          return yield* new OrchestratorDispatchError({
-            commandId: request.commandId,
-            commandType: request.type,
-            cause: `This repository issue subtree has retired. Delegate through the current root ${repositoryOwner.rootThreadId}.`,
-          });
-        const expectedParent =
-          read.parent === null
-            ? repositoryOwner.rootThreadId
-            : yield* issueStore.issueOwner(read.parent).pipe(mapDispatchError(command));
+        const shell = yield* projectionStore
+          .getThreadShell(currentOwner)
+          .pipe(mapDispatchError(command));
         if (
-          issueEligibility(read) !== "eligible" ||
-          read.issue.id !== request.issue.id ||
-          read.issue.repositoryId !== request.issue.repositoryId ||
-          expectedParent !== request.parentThreadId ||
-          parentProjection.thread.lineage.rootThreadId !== repositoryOwner.rootThreadId
-        )
-          return yield* new OrchestratorDispatchError({
-            commandId: request.commandId,
-            commandType: request.type,
-            cause:
-              "Issue work must be eligible and delegated by the current owner of its immediate GitHub parent (or the repository root for a top-level issue).",
-          });
-        const currentOwner = yield* issueStore
-          .issueOwner(request.issue)
-          .pipe(mapDispatchError(command));
-        if (currentOwner !== null) {
-          const current = yield* projectionStore
-            .getThreadRecords(currentOwner, ["runs", "messages", "subagents"])
-            .pipe(mapDispatchError(command));
-          const shell = yield* projectionStore
-            .getThreadShell(currentOwner)
-            .pipe(mapDispatchError(command));
-          if (
-            delegatedTaskProgress({
-              ...current,
-              pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
-            }).state !== "result_available"
-          ) {
-            const ownerThread = shell;
-            const parent = ownerThread?.lineage.parentThreadId;
-            const existing =
-              parent === null || parent === undefined
-                ? undefined
-                : (yield* projectionStore
-                    .getThreadRecords(parent, ["subagents"])
-                    .pipe(mapDispatchError(command))).subagents.findLast(
-                    (task) => task.childThreadId === currentOwner,
-                  );
-            if (existing === undefined || existing.threadId !== request.parentThreadId)
-              return yield* new OrchestratorDispatchError({
-                commandId: request.commandId,
-                commandType: request.type,
-                cause:
-                  "This issue already has a current worker under another parent. Read its issue status and use that parent thread to manage it.",
-              });
-            yield* emit(
-              events,
-              command,
-            )({
-              type: "subagent.updated",
-              threadId: existing.threadId,
-              nodeId: existing.id,
-              occurredAt: yield* DateTime.now,
-              payload: existing,
+          delegatedTaskProgress({
+            ...current,
+            pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
+          }).state !== "result_available"
+        ) {
+          const ownerThread = shell;
+          const parent = ownerThread?.lineage.parentThreadId;
+          const existing =
+            parent === null || parent === undefined
+              ? undefined
+              : (yield* projectionStore
+                  .getThreadRecords(parent, ["subagents"])
+                  .pipe(mapDispatchError(command))).subagents.findLast(
+                  (task) => task.childThreadId === currentOwner,
+                );
+          if (existing === undefined || existing.threadId !== request.parentThreadId)
+            return yield* new OrchestratorDispatchError({
+              commandId: request.commandId,
+              commandType: request.type,
+              cause:
+                "This issue already has a current worker under another parent. Read its issue status and use that parent thread to manage it.",
             });
-            return true;
-          }
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "subagent.updated",
+            threadId: existing.threadId,
+            nodeId: existing.id,
+            occurredAt: yield* DateTime.now,
+            payload: existing,
+          });
+          return true;
         }
       }
+    }
 
-      return false;
-    });
+    return false;
+  });
 
   const childIssueFields = (request: DelegatedTaskRequest) => ({
     ...(request.issue === undefined || isReadOnlyIssueRole(request.role)
@@ -447,14 +441,13 @@ export function makeIssueWorkCommands({
       yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
   });
 
-  const cancel = (
+  const cancel = Effect.fn("cancel")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "issue.work.cancel" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) =>
-    Effect.gen(function* () {
-      for (const event of yield* issueWorkRecovery.cancel(command).pipe(mapDispatchError(command)))
-        yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
-    });
+  ) {
+    for (const event of yield* issueWorkRecovery.cancel(command).pipe(mapDispatchError(command)))
+      yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
+  });
 
   return {
     canStartRun: canStartIssueRun,

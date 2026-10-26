@@ -565,7 +565,7 @@ it("shows the matching child agent details and refreshes them when the agent set
   };
   await update();
   expect(heading()).toBe("Lineage");
-  expect(text()).toContain("Previous agents (1)");
+  expect(text()).toMatch(/Previous agents\s+1/);
   expect(text()).not.toContain("Checker");
   await click(sectionToggle(false));
   expect(text()).toContain("Checker");
@@ -577,7 +577,7 @@ it("shows the matching child agent details and refreshes them when the agent set
   expect(text()).not.toContain("Worker");
   await click(sectionToggle(true));
   expect(text()).not.toContain("Checker");
-  expect(text()).toContain("Previous agents (1)");
+  expect(text()).toMatch(/Previous agents\s+1/);
   await click(sectionToggle(false));
   expect(text()).toContain("Checker");
   await click(byLabel("Clear previous agents"));

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { formatElapsedSeconds, formatRelativeTimeUntilLabel } from "./timestampFormat";
+import { formatElapsedSeconds, formatExpiresInLabel } from "./timestampFormat";
 
-describe("formatRelativeTimeUntilLabel", () => {
+describe("formatExpiresInLabel", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-07T12:00:00.000Z"));
@@ -13,7 +13,7 @@ describe("formatRelativeTimeUntilLabel", () => {
   });
 
   it("returns Expired when the instant is in the past", () => {
-    expect(formatRelativeTimeUntilLabel("2026-04-07T11:59:00.000Z")).toBe("Expired");
+    expect(formatExpiresInLabel("2026-04-07T11:59:00.000Z")).toBe("Expired");
   });
 });
 

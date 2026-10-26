@@ -189,23 +189,24 @@ export const layer = Layer.effect(
         }
         return result;
       }),
-      list: (input) =>
+      list: Effect.fn("IssueRoadmap.list")((input) =>
         issues.list(input).pipe(
-          Effect.flatMap((list) =>
-            input.roadmap !== true
-              ? Effect.succeed(list)
-              : links.enrich(list).pipe(
-                  Effect.orElseSucceed(() => ({
-                    ...list,
-                    issues: list.issues.map(({ pullRequestRefs: _refs, ...issue }) => ({
-                      ...issue,
-                      liveWork: [],
-                    })),
+          Effect.filterOrElse(
+            () => input.roadmap !== true,
+            (list) =>
+              links.enrich(list).pipe(
+                Effect.orElseSucceed(() => ({
+                  ...list,
+                  issues: list.issues.map(({ pullRequestRefs: _refs, ...issue }) => ({
+                    ...issue,
+                    liveWork: [],
                   })),
-                ),
+                })),
+              ),
           ),
         ),
-      detail: (input) =>
+      ),
+      detail: Effect.fn("IssueRoadmap.detail")((input) =>
         issues.detail(input).pipe(
           Effect.flatMap((detail) =>
             links
@@ -238,6 +239,7 @@ export const layer = Layer.effect(
               ),
           ),
         ),
+      ),
     });
   }),
 );

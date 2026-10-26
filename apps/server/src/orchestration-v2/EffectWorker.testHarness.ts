@@ -7,7 +7,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -51,26 +50,45 @@ function layerExecutorFor(input: {
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
         interrupt: input.interrupt ?? (() => Effect.void),
-        steer: () => Effect.void,
-        interruptAndAwaitTerminal: (request) =>
+        steer: Effect.fn("ProviderTurnControlService.ProviderTurnControlServiceV2.steer")(
+          () => Effect.void,
+        ),
+        interruptAndAwaitTerminal: Effect.fn(
+          "ProviderTurnControlService.ProviderTurnControlServiceV2.interruptAndAwaitTerminal",
+        )((request) =>
           record(
             request.replacementProviderSessionId === undefined
               ? "interrupt"
               : `interrupt:${request.replacementProviderSessionId}`,
           ),
+        ),
       }),
     ),
     Layer.succeed(
       ProviderSessionManager.ProviderSessionManagerV2,
       ProviderSessionManager.ProviderSessionManagerV2.of({
         shutdown: Effect.void,
-        open: () => Effect.die("unused open"),
-        get: () => Effect.succeed(Option.none()),
-        isLive: () => Effect.succeed(false),
-        close: () => Effect.void,
-        closeInstance: () => Effect.void,
-        release: () => record("release"),
-        detach: () => record("detach"),
+        open: Effect.fn("ProviderSessionManager.ProviderSessionManagerV2.open")(() =>
+          Effect.die("unused open"),
+        ),
+        get: Effect.fn("ProviderSessionManager.ProviderSessionManagerV2.get")(
+          () => Effect.succeedNone,
+        ),
+        isLive: Effect.fn("ProviderSessionManager.ProviderSessionManagerV2.isLive")(() =>
+          Effect.succeed(false),
+        ),
+        close: Effect.fn("ProviderSessionManager.ProviderSessionManagerV2.close")(
+          () => Effect.void,
+        ),
+        closeInstance: Effect.fn("ProviderSessionManager.ProviderSessionManagerV2.closeInstance")(
+          () => Effect.void,
+        ),
+        release: Effect.fn("ProviderSessionManager.ProviderSessionManagerV2.release")(() =>
+          record("release"),
+        ),
+        detach: Effect.fn("ProviderSessionManager.ProviderSessionManagerV2.detach")(() =>
+          record("detach"),
+        ),
       }),
     ),
     Layer.succeed(
@@ -92,7 +110,11 @@ function layerExecutorFor(input: {
     ),
     Layer.succeed(
       RunFinalizationService.RunFinalizationService,
-      RunFinalizationService.RunFinalizationService.of({ finalize: () => Effect.void }),
+      RunFinalizationService.RunFinalizationService.of({
+        finalize: Effect.fn("RunFinalizationService.RunFinalizationService.finalize")(
+          () => Effect.void,
+        ),
+      }),
     ),
     Layer.succeed(
       CheckpointRollbackService.CheckpointRollbackServiceV2,
@@ -102,12 +124,18 @@ function layerExecutorFor(input: {
     ),
     Layer.succeed(
       RuntimeRequestService.RuntimeRequestServiceV2,
-      RuntimeRequestService.RuntimeRequestServiceV2.of({ respond: () => Effect.void }),
+      RuntimeRequestService.RuntimeRequestServiceV2.of({
+        respond: Effect.fn("RuntimeRequestService.RuntimeRequestServiceV2.respond")(
+          () => Effect.void,
+        ),
+      }),
     ),
     Layer.succeed(
       ThreadTitleRegenerationService.ThreadTitleRegenerationService,
       ThreadTitleRegenerationService.ThreadTitleRegenerationService.of({
-        execute: () => Effect.void,
+        execute: Effect.fn("ThreadTitleRegenerationService.ThreadTitleRegenerationService.execute")(
+          () => Effect.void,
+        ),
       }),
     ),
   );

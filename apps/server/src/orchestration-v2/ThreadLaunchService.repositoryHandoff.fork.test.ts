@@ -547,7 +547,7 @@ describe("fresh-thread repository handoff", () => {
         assert.include(completion.text, notifiedRoot.subagents[0]!.id);
         assert.equal(notifiedRoot.subagents[0]!.completionDelivery?.state, "claimed");
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-        yield* maintenance.compactEventStore;
+        yield* maintenance.compactEventStore();
         assert.isTrue((yield* maintenance.rebuild).valid);
         assert.deepEqual(
           (yield* threads.getThreadRecords(rootId, [])).thread.delegatedCompletion,
@@ -941,7 +941,7 @@ describe("fresh-thread repository handoff", () => {
         assert.lengthOf(committed.runs, 0);
         assert.isNotNull(committed.thread.delegatedCompletion!.delivery);
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-        yield* maintenance.compactEventStore;
+        yield* maintenance.compactEventStore();
         assert.isTrue((yield* maintenance.rebuild).valid);
         // A fresh continuation consumer represents the process after restart.
         const queue =
@@ -1592,7 +1592,7 @@ describe("fresh-thread repository handoff", () => {
           (yield* store.request(CommandId.make("wrong-root:duplicate-start")))!.cancellation,
         );
         yield* worker.drain();
-        yield* maintenance.compactEventStore;
+        yield* maintenance.compactEventStore();
         assert.isTrue((yield* maintenance.rebuild).valid);
         assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, originalLeadId);
         assert.equal((yield* store.request(cancelInput.requestId))!.rootThreadId, rootId);
@@ -2001,7 +2001,7 @@ describe("fresh-thread repository handoff", () => {
       });
       yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
       // Compaction drops the adopted lead's registration snapshot and keeps its retired one.
-      yield* maintenance.compactEventStore;
+      yield* maintenance.compactEventStore();
       assert.isTrue((yield* maintenance.rebuild).valid);
       const rebuilt = yield* store.repositoryOwner(config);
       assert.equal(rebuilt?.rootThreadId, successor);
@@ -2199,8 +2199,9 @@ describe("fresh-thread repository handoff", () => {
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
         const store = yield* IssueWorkStore.IssueWorkStore;
         yield* createRoot;
-        const results = yield* Effect.all(
-          ["one", "two"].map((key) =>
+        const results = yield* Effect.forEach(
+          ["one", "two"],
+          (key) =>
             service
               .handoff({
                 ...reference,
@@ -2210,7 +2211,6 @@ describe("fresh-thread repository handoff", () => {
                 clientRequestId: CommandId.make(`handoff:${key}`),
               })
               .pipe(Effect.result),
-          ),
           { concurrency: 2 },
         );
         assert.equal(results.filter((result) => result._tag === "Success").length, 1);
@@ -2268,7 +2268,7 @@ describe("fresh-thread repository handoff", () => {
           threadId: second.rootThreadId!,
           commandId: CommandId.make("restore-latest-root"),
         });
-        yield* maintenance.compactEventStore;
+        yield* maintenance.compactEventStore();
         assert.isTrue((yield* maintenance.rebuild).valid);
         const rebuilt = yield* service.repositoryStatus(reference);
         assert.equal(rebuilt.rootThreadId, second.rootThreadId);
@@ -2832,7 +2832,18 @@ describe("fresh-thread repository handoff", () => {
         const beforeParent = yield* sink.latestSequence();
         yield* finish(oldParent, "successor-old-parent");
         yield* awaitFollowup(rootId, beforeParent);
+        const beforeDelivery = yield* sink.latestSequence();
         yield* finish(rootId, "successor-root-delivery");
+        yield* sink.stream({ afterSequence: beforeDelivery }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.threadId === rootId &&
+              stored.event.payload.completionDelivery?.state === "delivered",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
         const moved = yield* service.handoff({
           ...reference,
           action: "approve",

@@ -195,11 +195,11 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
     Layer.succeed(ProjectService.ProjectService, {
-      create: () => Effect.die("unused"),
-      bootstrap: () => Effect.die("unused"),
-      update: () => Effect.die("unused"),
-      delete: () => Effect.die("unused"),
-      getById: (id) =>
+      create: Effect.fn("ProjectService.ProjectService.create")(() => Effect.die("unused")),
+      bootstrap: Effect.fn("ProjectService.ProjectService.bootstrap")(() => Effect.die("unused")),
+      update: Effect.fn("ProjectService.ProjectService.update")(() => Effect.die("unused")),
+      delete: Effect.fn("ProjectService.ProjectService.delete")(() => Effect.die("unused")),
+      getById: Effect.fn("ProjectService.ProjectService.getById")((id) =>
         Effect.succeed(
           id === projectId
             ? Option.some(
@@ -215,16 +215,20 @@ function makeHarness(options: HarnessOptions = {}) {
                 )
               : Option.none(),
         ),
-      getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
+      ),
+      getByWorkspaceRoot: Effect.fn("ProjectService.ProjectService.getByWorkspaceRoot")(() =>
+        Effect.succeedSome(project),
+      ),
       snapshot: Effect.die("unused"),
-      getShell: () => Effect.die("unused"),
-      listShells: () =>
+      getShell: Effect.fn("ProjectService.ProjectService.getShell")(() => Effect.die("unused")),
+      listShells: Effect.fn("ProjectService.ProjectService.listShells")(() =>
         Effect.succeed(
           [project, otherProject].map((entry) => ({
             ...entry,
             repositoryIdentity: options.projectRepositoryIdentity ?? entry.repositoryIdentity,
           })),
         ),
+      ),
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
@@ -258,7 +262,7 @@ function makeHarness(options: HarnessOptions = {}) {
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
-        folderForThread: () => Effect.succeed(Option.none()),
+        folderForThread: () => Effect.succeedNone,
       }),
   );
   const layerLaunch = ThreadLaunch.layer.pipe(
@@ -344,18 +348,20 @@ function suspensionWorkerLayer(
     Effect.gen(function* () {
       const real = yield* EffectWorker.OrchestrationEffectExecutorV2;
       return EffectWorker.OrchestrationEffectExecutorV2.of({
-        execute: (effect, options) =>
-          effect.request.type === "issue.suspension.interrupt" && failInterrupt?.(effect.threadId)
-            ? Effect.fail(
-                new EffectWorker.OrchestrationEffectExecutionError({
-                  effectId: effect.id,
-                  effectType: effect.request.type,
-                  cause: "Injected interrupt failure",
-                }),
-              )
-            : effect.request.type.startsWith("issue.suspension.")
-              ? real.execute(effect, options)
-              : Effect.void,
+        execute: Effect.fn("EffectWorker.OrchestrationEffectExecutorV2.execute")(
+          (effect, options) =>
+            effect.request.type === "issue.suspension.interrupt" && failInterrupt?.(effect.threadId)
+              ? Effect.fail(
+                  new EffectWorker.OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause: "Injected interrupt failure",
+                  }),
+                )
+              : effect.request.type.startsWith("issue.suspension.")
+                ? real.execute(effect, options)
+                : Effect.void,
+        ),
       });
     }),
   ).pipe(Layer.provide(realExecutor));

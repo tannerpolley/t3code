@@ -286,12 +286,10 @@ describe("BackgroundTasks", () => {
     }),
     Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
       get: () =>
-        Effect.succeed(
-          Option.some({
-            driver: "claudeAgent",
-            backgroundTaskOutputDir: () => Effect.sync(() => sessionTasksDir),
-          } as never),
-        ),
+        Effect.succeedSome({
+          driver: "claudeAgent",
+          backgroundTaskOutputDir: () => Effect.sync(() => sessionTasksDir),
+        } as never),
     }),
   ).pipe(Layer.provideMerge(NodeServices.layer));
   const layer = backgroundTasksLayer.pipe(Layer.provideMerge(dependencies));

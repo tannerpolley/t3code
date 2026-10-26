@@ -200,14 +200,17 @@ open.
 
 ### Fold working threads (beta)
 
-Turn on **Settings → Beta → Working section** on web and desktop, or **Settings →
-Thread behavior → Working section** on iOS and Android, to move threads that are working or
-waiting on work they will resume from into a collapsed **Working** section below the active list.
+Threads that are working or waiting on work they will resume from move into a collapsed
+**Working** section below the active list.
 That includes subagents, watched pull requests, and background commands or monitors the agent
 says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
 there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
-the pinned section. Each device keeps its own choice.
+the pinned section.
+
+This is on by default. Turn it off with **Settings → Beta → Working section** on web and desktop,
+or **Settings → Thread behavior → Working section** on iOS and Android. Each device keeps its own
+choice.
 
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
@@ -299,8 +302,8 @@ the continuation finishes. If the queue was held by a restart, resume it then.
 On web and desktop, choose **Usage limit recovery** in **Settings → General**:
 
 When the provider reports a reset time, choose **Resume at reset** to schedule a
-continuation. You can cancel it from the thread. Enable **Auto-resume limited
-threads** in **Settings → General** on web and desktop, or **Settings → Thread
+continuation. You can cancel it from the thread. Enable **Resume after
+usage limits** in **Settings → General** on web and desktop, or **Settings → Thread
 behavior** on mobile, to schedule limit stops by default.
 The environment must be running when the reset arrives; it resumes overdue
 continuations after a restart. Stopping the thread, sending a new message,
@@ -319,6 +322,18 @@ uses the fallback model configured for that provider.
 Set each fallback's effort separately; efforts are not translated.
 If no alternative is available, the thread says so and waits for reset. Without a reported reset
 time, retry manually.
+Choose **Snooze until reset** to hide the thread until its allowance returns.
+Snooze and auto-resume are independent: snooze alone wakes the thread without
+sending a message; enabling both wakes and continues it. **Wake now** cancels
+the snooze. Enable **Snooze until limits reset** in thread behavior settings to
+snooze limit stops by default. Providers without a reset time offer manual
+retry and the normal snooze choices.
+
+On web and desktop, use **Agents** to follow work delegated to subagents.
+On mobile, open a subagent from its conversation card or **Agents**. On iOS
+layouts with an inspector, its thread opens beside the parent. Maximize it to
+fill the screen; close the full-screen view to return to the parent and inspector.
+Stop on a thread also stops the subagents it delegated to.
 
 The thread stays on its new provider after the original allowance returns. Its recovery notice
 has **Switch back** to restore the original model and effort. You can also change the provider

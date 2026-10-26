@@ -285,11 +285,6 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const committedEvents = yield* PubSub.unbounded<ApplicationStoredEvent>();
-  // This cache only identifies obsolete snapshots; it never buffers provider data.
-  // A rollback or eviction can leave extra history, which automatic compaction removes.
-  // ponytail: cap active items at 4096; evicted items rely on periodic compaction.
-  const streamingSnapshots = new Map<string, { first: number; latest: number }>();
-
   const promptHints = new Map<string, number>();
   const restoredPayloadJson = sql`CASE
     WHEN orchestration_events.event_type IN ('subagent.updated', 'turn-item.updated')
@@ -513,60 +508,6 @@ const makeEventStore = Effect.gen(function* () {
                 : sql`, json_type(payload_json, '$.promptSequence') IS NULL AS stores_full_prompt`
             }
           `;
-          const sequence = rows[0]?.sequence;
-          // Never coalesce subagent rows: later rows may point at their prompts.
-          if (
-            event.type === "turn-item.updated" &&
-            subagent === undefined &&
-            input.commandId === undefined &&
-            sequence !== undefined
-          ) {
-            const key = `${event.threadId}\u0000${event.payload.id}`;
-            const previous = streamingSnapshots.get(key);
-            if (
-              previous !== undefined &&
-              previous.latest !== previous.first &&
-              previous.latest < sequence
-            ) {
-              // Partial client catch-up needs the first snapshot before later
-              // items advance its ordinal watermark. Validate the cache in SQL:
-              // rolled-back AUTOINCREMENT values can be reused by other events.
-              yield* sql`
-                DELETE FROM orchestration_events
-                WHERE sequence = ${previous.latest}
-                  AND application_event_version = 2
-                  AND event_type = 'turn-item.updated'
-                  AND stream_id = ${event.threadId}
-                  AND command_id IS NULL
-                  AND json_extract(payload_json, '$.id') = ${event.payload.id}
-                  AND EXISTS (
-                    SELECT 1 FROM orchestration_events AS first_snapshot
-                    WHERE first_snapshot.sequence = ${previous.first}
-                      AND first_snapshot.sequence < ${previous.latest}
-                      AND first_snapshot.application_event_version = 2
-                      AND first_snapshot.event_type = 'turn-item.updated'
-                      AND first_snapshot.stream_id = ${event.threadId}
-                      AND json_extract(first_snapshot.payload_json, '$.id') = ${event.payload.id}
-                  )
-              `;
-            }
-            if (
-              event.payload.status === "pending" ||
-              event.payload.status === "running" ||
-              event.payload.status === "waiting"
-            ) {
-              if (streamingSnapshots.size >= 4096 && !streamingSnapshots.has(key)) {
-                const oldest = streamingSnapshots.keys().next().value;
-                if (oldest !== undefined) streamingSnapshots.delete(oldest);
-              }
-              streamingSnapshots.set(key, {
-                first: previous?.first ?? sequence,
-                latest: sequence,
-              });
-            } else {
-              streamingSnapshots.delete(key);
-            }
-          }
           const row = rows[0];
           if (promptKey !== undefined && row !== undefined) {
             promptHints.delete(promptKey);
@@ -580,14 +521,13 @@ const makeEventStore = Effect.gen(function* () {
             }
           }
           return yield* decodeV2StoredEvent({
-            sequence,
+            sequence: rows[0]?.sequence,
             commandId: input.commandId ?? null,
             event,
           });
         }),
       { concurrency: 1 },
     ).pipe(
-      sql.withTransaction,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "OrchestrationEventStore.appendAgentEvents:insert",

@@ -469,7 +469,7 @@ it.effect(
         );
         yield* Effect.gen(function* () {
           const projections = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-          yield* projections.compactEventStore;
+          yield* projections.compactEventStore();
           yield* projections.rebuild;
         }).pipe(Effect.provide(maintenance));
         const saved = (yield* service.list({ threadId }))[0]!;

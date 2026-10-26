@@ -534,7 +534,7 @@ const make = Effect.gen(function* () {
           sql`UPDATE issue_changes SET status = ${error.createOutcome === "unresolved" ? "needs_attention" : "failed"}, result = ${error.message}, in_flight_step = CASE WHEN ${error.createOutcome === "rejected" ? 1 : 0} THEN NULL ELSE in_flight_step END WHERE change_id = ${id}`.pipe(
             Effect.andThen(get(id)),
             Effect.flatMap(notify),
-            Effect.catch(() => Effect.void),
+            Effect.ignore,
           ),
         ),
       ),
@@ -563,7 +563,7 @@ const make = Effect.gen(function* () {
           );
         }),
       ),
-    list: (input) =>
+    list: Effect.fn("IssueChangeService.list")((input) =>
       ("threadId" in input
         ? sql<Row>`SELECT * FROM issue_changes WHERE requesting_thread_id = ${input.threadId} ORDER BY decision = 'pending' DESC, rowid DESC LIMIT 100`
         : sql<Row>`SELECT change.* FROM issue_changes change JOIN issue_change_targets target ON target.change_id = change.change_id WHERE target.host = ${input.host.toLowerCase()} AND target.repository = ${input.repository.toLowerCase()} AND target.issue_number = ${input.number} ORDER BY change.decision = 'pending' DESC, change.rowid DESC LIMIT 100`
@@ -572,6 +572,7 @@ const make = Effect.gen(function* () {
         Effect.mapError(storageError),
         Effect.flatMap((rows) => Effect.forEach(rows, fromRow)),
       ),
+    ),
   });
 });
 export const layer = Layer.effect(IssueChangeService, make);

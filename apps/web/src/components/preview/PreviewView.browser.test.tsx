@@ -127,6 +127,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
   })) as never,
 }));
 vi.mock(import("~/state/environments"), () => ({
+  readPrimaryEnvironmentId: () => null,
   useEnvironmentIdentities: () => [],
   useEnvironmentMachines: () => new Map(),
   useEnvironmentIds: () => [],
@@ -174,6 +175,7 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
 
 const TEST_THREAD_REF = {
@@ -284,5 +286,19 @@ describe("PreviewView", () => {
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));
     expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, sent);
     expect(mocks.addImage).not.toHaveBeenCalled();
+  });
+
+  it("focuses the address bar each time the focus-url shortcut fires", async () => {
+    setup();
+    await using _screen = await render(view());
+    const address = page.getByRole("textbox");
+
+    act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
+
+    (address.element() as HTMLInputElement).blur();
+    await expect.element(address).not.toHaveFocus();
+    act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
   });
 });

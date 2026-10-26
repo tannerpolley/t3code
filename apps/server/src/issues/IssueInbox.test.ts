@@ -6,7 +6,6 @@ import * as Fiber from "effect/Fiber";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -177,17 +176,15 @@ const projects = Layer.mergeAll(
   Layer.mock(ProjectService.ProjectService)({
     listShells: () => Effect.succeed([]),
     getById: (projectId) =>
-      Effect.succeed(
-        Option.some({
-          title: projectId === "project-b" ? "B" : "Amine Thermodynamics",
-          repositoryIdentity: {
-            provider: "github",
-            canonicalKey: projectId === "project-b" ? "github.com/acme/b" : "github.com/acme/a",
-            displayName: projectId === "project-b" ? "acme/b" : "acme/a",
-            locator: { source: "git-remote", remoteName: "origin", remoteUrl: "git@github.com:x" },
-          },
-        } as never),
-      ),
+      Effect.succeedSome({
+        title: projectId === "project-b" ? "B" : "Amine Thermodynamics",
+        repositoryIdentity: {
+          provider: "github",
+          canonicalKey: projectId === "project-b" ? "github.com/acme/b" : "github.com/acme/a",
+          displayName: projectId === "project-b" ? "acme/b" : "acme/a",
+          locator: { source: "git-remote", remoteName: "origin", remoteUrl: "git@github.com:x" },
+        },
+      } as never),
   }),
 );
 
@@ -622,8 +619,7 @@ it.effect("t3_issue_post refuses an unresolved repository identity before any Gi
           fakeThreads().service,
           Layer.mock(IssueWorkService.IssueWorkService)({}),
           Layer.mock(ProjectService.ProjectService)({
-            getById: () =>
-              Effect.succeed(Option.some({ title: "B", repositoryIdentity: null } as never)),
+            getById: () => Effect.succeedSome({ title: "B", repositoryIdentity: null } as never),
           }),
         ),
       ),

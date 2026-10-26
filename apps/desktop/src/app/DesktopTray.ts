@@ -20,11 +20,8 @@ const { logInfo, logWarning } = makeComponentLogger("desktop-tray");
 
 const STATUS_NOTIFIER_WATCHER = "org.kde.StatusNotifierWatcher";
 
-/**
- * Whether a session bus address names a plain socket. dbus-next runs the program
- * named by a `unixexec:` address and never reaps it, so anything else counts as
- * no bus, and closing the window quits.
- */
+// Linux checks the tray host at startup and each close. If it disappears while hidden,
+// a second launch reveals the window; no background watcher keeps the host alive.
 export function isSocketBusAddress(address: string | undefined): address is string {
   return address !== undefined && /^unix:(?:[^;,]*,)*(?:path|abstract)=[^;]*$/.test(address);
 }
@@ -78,16 +75,8 @@ export const showMainWindow = Effect.gen(function* () {
   yield* desktopWindow.activate;
 }).pipe(Effect.withSpan("desktop.tray.showMainWindow"));
 
-/**
- * Shows a tray icon on Linux and Windows. While it is shown, closing the main
- * window hides it instead of quitting, so the built-in server, agents, and
- * remote connections keep running. Reopening goes through the tray, a second
- * launch (`second-instance` reveals the hidden window), or `t3 app`.
- *
- * On Linux the tray host is checked at startup and again on each close; a
- * missing host quits as before. Nothing watches the host while the window is
- * hidden: if it vanishes then, launching T3 Code again brings the window back.
- */
+// Closing hides the window while a tray host exists, keeping remote agents and connections alive.
+// If Linux loses its host while hidden, a second launch reveals the window.
 export const start: Effect.Effect<
   void,
   never,
@@ -139,8 +128,8 @@ export const start: Effect.Effect<
     ),
     Effect.orElseSucceed(() => DEFAULT_CLIENT_SETTINGS.keepRunningInBackground),
   );
-  const closeToTray = (window: Electron.BrowserWindow) =>
-    Effect.gen(function* () {
+  const closeToTray = Effect.fn("closeToTray")(
+    function* (window: Electron.BrowserWindow) {
       const hide =
         (yield* keepRunningInBackground) &&
         (busAddress === undefined || (yield* statusNotifierHostPresent(busAddress, "1 second")));
@@ -149,9 +138,9 @@ export const start: Effect.Effect<
       if (hide) return window.hide();
       yield* destroyTray;
       yield* electronApp.quit;
-    }).pipe(
-      Effect.catchCause((cause) => logWarning("failed to handle the window close", { cause })),
-    );
+    },
+    Effect.catchCause((cause) => logWarning("failed to handle the window close", { cause })),
+  );
 
   // Electron needs the close cancelled synchronously, so hold the window open
   // while the setting and the tray host are checked, then hide it or quit.

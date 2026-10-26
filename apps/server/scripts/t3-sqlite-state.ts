@@ -244,7 +244,7 @@ const compactCopiedDatabase = Effect.fn("compactCopiedSqliteDatabase")(function*
       });
     }
 
-    const summary = yield* maintenance.compactEventStore;
+    const summary = yield* maintenance.compactEventStore();
     yield* sql`VACUUM`;
     const checkpoint = yield* sql<{ readonly busy: number }>`PRAGMA wal_checkpoint(TRUNCATE)`;
     if ((checkpoint[0]?.busy ?? 0) !== 0) {

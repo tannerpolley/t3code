@@ -1,28 +1,18 @@
-import {
-  ROUTED_REQUEST_ALERT_SETTLE_MS,
-  runtimeRequestIsOwnerVisible,
-  runtimeRequestOwnerAlertIsSettled,
-} from "@t3tools/shared/delegatedRequestVisibility";
-import {
-  type EnvironmentThreadShell,
-  type PendingSubagentRequest,
-  presentThreadShell,
-} from "@t3tools/client-runtime/state/models";
-import { pendingSubagentRequestsByThread } from "@t3tools/client-runtime/state/threads";
-import { useAtomValue } from "@effect/atom-react";
-import { useNavigate, useParams } from "@tanstack/react-router";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import type { AnyRouter } from "@tanstack/react-router";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
+import type { AtomRegistry } from "effect/reactivity";
 import {
   CircleAlertIcon,
   CircleCheckIcon,
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { getClientSettings, useClientSettings } from "../hooks/useSettings";
-import { useEnvironmentIds } from "../state/environments";
+import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
+import { isWindowsPlatform } from "../lib/utils";
+import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import {
   focusAppWindow,
@@ -33,136 +23,68 @@ import {
   threadNotificationTag,
   unlockNotificationAudio,
 } from "../threadNotifications";
-import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
+import { type ThreadNotificationKind } from "./ThreadNotificationCoordinator.logic";
 import {
-  createThreadNotificationGate,
-  type ThreadNotificationKind,
-  type ThreadNotificationObservation,
-} from "./ThreadNotificationCoordinator.logic";
+  createForkThreadNotificationObserver,
+  type ForkNotificationState as NotificationState,
+} from "./ForkThreadNotificationObserver";
 import { toastManager } from "./ui/toast";
 
-// A click on a system notification can raise the window, and the focus it causes can
-// arrive before the click itself. A notification closed in between drops the click.
-const CLICK_AFTER_FOCUS_GRACE_MS = 1_000;
-
-export function ThreadNotificationCoordinator() {
-  const environmentIds = useEnvironmentIds();
-  const mode = useClientSettings((settings) => settings.notificationMode);
-  const inAppNotificationsEnabled = useClientSettings(
-    (settings) => settings.inAppNotificationsEnabled,
-  );
-  const pending = useRef(
-    new Map<string, { environmentId: EnvironmentId; notification: Notification }>(),
-  );
-  const onNotification = (environmentId: EnvironmentId, notification: Notification) => {
-    pending.current.get(notification.tag)?.notification.close();
-    pending.current.set(notification.tag, { environmentId, notification });
-    setNotificationBadge(pending.current.size);
-  };
-  const onRetract = (tag: string) => {
-    const entry = pending.current.get(tag);
-    if (!entry) return;
-    entry.notification.close();
-    pending.current.delete(tag);
-    setNotificationBadge(pending.current.size);
-  };
-
-  useEffect(() => {
-    const activeIds = new Set(environmentIds);
-    const count = pending.current.size;
-    for (const [tag, entry] of pending.current) {
-      if (activeIds.has(entry.environmentId)) continue;
-      entry.notification.close();
-      pending.current.delete(tag);
-    }
-    if (count !== pending.current.size) setNotificationBadge(pending.current.size);
-  }, [environmentIds]);
-
-  useEffect(() => {
-    const clear = (closeAfterMs?: number) => {
-      const delivered = [...pending.current.values()];
-      pending.current.clear();
-      setNotificationBadge(0);
-      const close = () => {
-        for (const { notification } of delivered) notification.close();
-      };
-      if (closeAfterMs === undefined) close();
-      else setTimeout(close, closeAfterMs);
-    };
-    const clearOnFocus = () => clear(CLICK_AFTER_FOCUS_GRACE_MS);
-    clear();
-    if (!hasDesktopNotifications(mode)) return;
-    const unsubscribe = window.desktopBridge?.onNotificationBadgeClear?.(clearOnFocus);
-    window.addEventListener("focus", clearOnFocus);
-    return () => {
-      unsubscribe?.();
-      window.removeEventListener("focus", clearOnFocus);
-      clear();
-    };
-  }, [mode]);
-
-  useEffect(() => {
-    if (!hasNotificationSound(mode)) return;
-    document.addEventListener("pointerdown", unlockNotificationAudio);
-    document.addEventListener("keydown", unlockNotificationAudio);
-    return () => {
-      document.removeEventListener("pointerdown", unlockNotificationAudio);
-      document.removeEventListener("keydown", unlockNotificationAudio);
-    };
-  }, [mode]);
-
-  if (mode === "off" && !inAppNotificationsEnabled) return null;
-
-  return environmentIds.map((environmentId) => (
-    <EnvironmentNotifications
-      key={environmentId}
-      environmentId={environmentId}
-      onNotification={onNotification}
-      onRetract={onRetract}
-    />
-  ));
+interface WatchedEnvironment {
+  unsubscribe: () => void;
+  readonly observer: ReturnType<typeof createForkThreadNotificationObserver>;
 }
 
-interface NotificationState extends ThreadNotificationObservation {
-  readonly raw: OrchestrationV2ThreadShell;
-  readonly parent: OrchestrationV2ThreadShell | undefined;
-  readonly notifiedAttention: ReadonlySet<string> | null;
-  readonly subagentRequest: PendingSubagentRequest | null;
-  readonly thread: EnvironmentThreadShell;
-  readonly status: SidebarThreadStatus;
-  readonly ownerVisibleSince: number | null;
-}
+/**
+ * Turns thread status transitions in every connected environment into sounds, in-app toasts,
+ * and desktop notifications, and keeps the dock badge in step with the unread ones.
+ */
+export function startThreadNotifications(
+  registry: AtomRegistry.AtomRegistry,
+  router: AnyRouter,
+): () => void {
+  const pending = new Map<string, { environmentId: EnvironmentId; notification: Notification }>();
+  const watched = new Map<EnvironmentId, WatchedEnvironment>();
+  const toasts = new Map<string, string>();
+  const retract = (environmentId: EnvironmentId, threadId: ThreadId) => {
+    const tag = threadNotificationTag(environmentId, threadId);
+    const toastId = toasts.get(tag);
+    if (toastId !== undefined) toastManager.close(toastId);
+    toasts.delete(tag);
+    pending.get(tag)?.notification.close();
+    pending.delete(tag);
+    setNotificationBadge(pending.size);
+  };
 
-function EnvironmentNotifications({
-  environmentId,
-  onNotification,
-  onRetract,
-}: {
-  environmentId: EnvironmentId;
-  onNotification: (environmentId: EnvironmentId, notification: Notification) => void;
-  onRetract: (tag: string) => void;
-}) {
-  const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
-  const threads =
-    shell.status === "live" && Option.isSome(shell.snapshot) ? shell.snapshot.value.threads : null;
-  const mode = useClientSettings((settings) => settings.notificationMode);
-  const inAppNotificationsEnabled = useClientSettings(
-    (settings) => settings.inAppNotificationsEnabled,
-  );
-  const navigate = useNavigate();
-  const { environmentId: activeEnvironmentId, threadId: activeThreadId } = useParams({
-    strict: false,
-  });
-  const previous = useRef(new Map<ThreadId, NotificationState>());
-  const toasts = useRef(new Map<ThreadId, string>());
-  const initialized = useRef(false);
-  const [alertTime, setAlertTime] = useState(0);
+  const trackNotification = (environmentId: EnvironmentId, notification: Notification) => {
+    pending.get(notification.tag)?.notification.close();
+    pending.set(notification.tag, { environmentId, notification });
+    setNotificationBadge(pending.size);
+  };
+  const clearPending = (delay?: number) => {
+    const delivered = [...pending.values()];
+    pending.clear();
+    setNotificationBadge(0);
+    const close = () => {
+      for (const { notification } of delivered) notification.close();
+    };
+    if (delay === undefined) close();
+    else setTimeout(close, delay);
+  };
+  const clearOnFocus = () => clearPending(1_000);
 
   // Completions fire from a timer, so read settings, focus and route when presenting.
-  const present = useEffectEvent((threadId: ThreadId, kind: ThreadNotificationKind) => {
-    const entry = previous.current.get(threadId);
-    if (!entry) return;
-    const { thread, status } = entry;
+  const present = (
+    environmentId: EnvironmentId,
+    state: NotificationState,
+    kind: ThreadNotificationKind,
+  ) => {
+    const { thread, status } = state;
+    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const active = (router.state.matches.at(-1)?.params ?? {}) as {
+      environmentId?: string;
+      threadId?: string;
+    };
     const title =
       kind === "completion"
         ? "Thread completed"
@@ -184,7 +106,7 @@ function EnvironmentNotifications({
       inAppNotificationsEnabled &&
       document.visibilityState === "visible" &&
       document.hasFocus() &&
-      (activeEnvironmentId !== environmentId || activeThreadId !== thread.id)
+      (active.environmentId !== environmentId || active.threadId !== thread.id)
     ) {
       const toastId = toastManager.add({
         type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
@@ -207,14 +129,14 @@ function EnvironmentNotifications({
           children: "Open thread",
           onClick: () => {
             toastManager.close(toastId);
-            void navigate({
+            void router.navigate({
               to: "/$environmentId/$threadId",
               params: { environmentId, threadId: thread.id },
             });
           },
         },
       });
-      toasts.current.set(thread.id, toastId);
+      toasts.set(threadNotificationTag(environmentId, thread.id), toastId);
       return;
     }
     if (
@@ -229,13 +151,15 @@ function EnvironmentNotifications({
         body: thread.title,
         tag: threadNotificationTag(environmentId, thread.id),
         silent: true,
+        // Windows drops clicks after a toast moves into Notification Center.
+        requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
       });
-      onNotification(environmentId, notification);
+      trackNotification(environmentId, notification);
       notification.addEventListener("click", () => {
         notification.close();
         focusAppWindow();
         void window.desktopBridge?.revealWindow?.().catch(() => undefined);
-        void navigate({
+        void router.navigate({
           to: "/$environmentId/$threadId",
           params: { environmentId, threadId: thread.id },
         });
@@ -243,149 +167,116 @@ function EnvironmentNotifications({
     } catch {
       // Some browsers expose Notification but reject desktop presentation.
     }
-  });
-  const gate = useRef<ReturnType<typeof createThreadNotificationGate<ThreadId>>>(null);
-  useEffect(() => {
-    const created = createThreadNotificationGate<ThreadId>((threadId, kind) =>
-      present(threadId, kind),
-    );
-    gate.current = created;
-    return () => {
-      created.clear();
-      gate.current = null;
-      // A new gate has no pending completions, so forget the states they compared against.
-      previous.current.clear();
+  };
+
+  const watchEnvironment = (environmentId: EnvironmentId): WatchedEnvironment => {
+    const entry: WatchedEnvironment = {
+      unsubscribe: () => {},
+      observer: createForkThreadNotificationObserver(
+        environmentId,
+        (state, kind) => present(environmentId, state, kind),
+        (threadId) => retract(environmentId, threadId),
+      ),
     };
-  }, []);
-
-  useEffect(() => {
-    const pendingCompletions = gate.current;
-    if (!pendingCompletions) return;
-    if (threads === null) {
-      pendingCompletions.clear();
-      previous.current.clear();
-      initialized.current = false;
-      return;
-    }
-    const next = new Map<ThreadId, NotificationState>();
-    const now = Math.max(Date.now(), alertTime);
-    let nextAlertDelay = Infinity;
-    const index = new Map(threads.map((thread) => [thread.id, thread]));
-
-    const subagentRequests = pendingSubagentRequestsByThread(
-      threads.filter((thread) => thread.pendingRuntimeRequest?.routedTo === undefined),
+    const unsubscribeShell = registry.subscribe(
+      environmentShell.stateValueAtom(environmentId),
+      (shell) => {
+        const threads =
+          shell.status === "live" && Option.isSome(shell.snapshot)
+            ? shell.snapshot.value.threads
+            : null;
+        if (threads !== null) {
+          entry.observer.observe(threads);
+          return;
+        }
+        entry.observer.clear();
+      },
+      { immediate: true },
     );
-    const changed: Array<[NotificationState | undefined, NotificationState]> = [];
-    for (const rawThread of threads) {
-      const parent =
-        rawThread.pendingRuntimeRequest?.routedTo === undefined
-          ? undefined
-          : index.get(rawThread.pendingRuntimeRequest.routedTo);
-      const child = rawThread.lineage.relationshipToParent === "subagent";
-      if (
-        child &&
-        rawThread.pendingRuntimeRequest?.routedTo === undefined &&
-        rawThread.lineage.parentThreadId !== null &&
-        index.has(rawThread.lineage.parentThreadId)
-      )
-        continue;
-      const ownerVisible = runtimeRequestIsOwnerVisible(rawThread.pendingRuntimeRequest, parent);
-      const prior = previous.current.get(rawThread.id);
-      const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
-      const request = rawThread.pendingRuntimeRequest;
-      const ownerVisibleSince =
-        ownerVisible && rawThread.archivedAt === null
-          ? prior !== undefined &&
-            prior.raw.pendingRuntimeRequest?.id === request?.id &&
-            prior.ownerVisibleSince !== null
-            ? prior.ownerVisibleSince
-            : now
-          : null;
-      const unsettled =
-        request !== null &&
-        ownerVisibleSince !== null &&
-        !runtimeRequestOwnerAlertIsSettled(request, ownerVisibleSince, now);
-      if (unsettled)
-        nextAlertDelay = Math.min(
-          nextAlertDelay,
-          ROUTED_REQUEST_ALERT_SETTLE_MS - (now - ownerVisibleSince),
-        );
-      // Parent activity can change attention even when the child object is unchanged.
-      if (
-        prior?.raw === rawThread &&
-        prior.parent === parent &&
-        prior.subagentRequest === subagentRequest &&
-        (ownerVisibleSince === null ||
-          request === null ||
-          request.routedTo === undefined ||
-          prior.attention !== null ||
-          unsettled)
-      ) {
-        next.set(rawThread.id, prior);
-        continue;
-      }
-      const thread = presentThreadShell(environmentId, rawThread, subagentRequest, parent);
-      let status = resolveSidebarThreadStatus(thread);
-      if (!child && status === "ready" && thread.latestRun?.status === "failed") status = "failed";
-      const attention =
-        !unsettled &&
-        (!child || ownerVisible) &&
-        (status === "input" ||
-          status === "request" ||
-          status === "approval" ||
-          (!child && (status === "failed" || status === "limited")))
-          ? `${rawThread.pendingRuntimeRequest?.id ?? thread.latestRun?.runId ?? ""}:${status}`
-          : null;
-      const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-      const settled = !child && status === "ready" && thread.latestRun?.status === "completed";
-      const state = {
-        parent,
-        ownerVisibleSince,
-        notifiedAttention:
-          prior?.notifiedAttention ??
-          (!initialized.current && child && unsettled && request !== null
-            ? new Set([`${request.id}:${status}`])
-            : null),
-        raw: rawThread,
-        subagentRequest,
-        thread,
-        status,
-        attention,
-        settled,
-        completedAt: settled && Number.isFinite(completedAt) ? completedAt : null,
-      };
-      if (prior?.attention && attention !== prior.attention) {
-        const toastId = toasts.current.get(thread.id);
-        if (toastId !== undefined) toastManager.close(toastId);
-        toasts.current.delete(thread.id);
-        onRetract(threadNotificationTag(environmentId, thread.id));
-      }
-      if (child && attention !== null)
-        state.notifiedAttention = new Set([...(prior?.notifiedAttention ?? []), attention]);
-      next.set(thread.id, state);
-      changed.push([prior, state]);
-    }
-    previous.current = next;
-    pendingCompletions.retain(new Set(next.keys()));
-    for (const [prior, state] of changed) {
-      pendingCompletions.observe(
-        state.thread.id,
-        prior,
-        state.attention !== null && prior?.notifiedAttention?.has(state.attention) === true
-          ? { ...state, attention: null }
-          : state,
-        {
-          archived: state.thread.archivedAt !== null,
-          quiet: state.raw.latestRunStopRequested === true || state.raw.latestRunSilent === true,
-        },
-      );
-    }
-    initialized.current = true;
-    if (nextAlertDelay !== Infinity) {
-      const timer = setTimeout(() => setAlertTime(Date.now()), nextAlertDelay);
-      return () => clearTimeout(timer);
-    }
-  }, [environmentId, threads, alertTime, onRetract]);
+    entry.unsubscribe = () => {
+      unsubscribeShell();
+      entry.observer.clear();
+    };
+    return entry;
+  };
 
-  return null;
+  const syncEnvironments = () => {
+    const { notificationMode, inAppNotificationsEnabled } = getClientSettings();
+    const enabled = notificationMode !== "off" || inAppNotificationsEnabled;
+    const environmentIds = enabled ? registry.get(environmentSummaries.environmentIdsAtom) : [];
+    const activeIds = new Set(environmentIds);
+    for (const [environmentId, entry] of watched) {
+      if (activeIds.has(environmentId)) continue;
+      entry.unsubscribe();
+      watched.delete(environmentId);
+    }
+    for (const environmentId of environmentIds) {
+      if (!watched.has(environmentId)) watched.set(environmentId, watchEnvironment(environmentId));
+    }
+  };
+
+  const pruneRemovedEnvironments = () => {
+    const activeIds = new Set(registry.get(environmentSummaries.environmentIdsAtom));
+    const count = pending.size;
+    for (const [tag, entry] of pending) {
+      if (activeIds.has(entry.environmentId)) continue;
+      entry.notification.close();
+      pending.delete(tag);
+    }
+    if (count !== pending.size) setNotificationBadge(pending.size);
+  };
+
+  // Listeners that only exist for some notification modes, rebuilt when the mode changes.
+  let appliedMode: ClientSettings["notificationMode"] | null = null;
+  let stopModeListeners = () => {};
+  const applyMode = () => {
+    const nextMode = getClientSettings().notificationMode;
+    if (nextMode === appliedMode) return;
+    appliedMode = nextMode;
+    stopModeListeners();
+    clearPending();
+    const stops: Array<() => void> = [];
+    if (hasDesktopNotifications(nextMode)) {
+      const unsubscribeBadgeClear = window.desktopBridge?.onNotificationBadgeClear?.(clearOnFocus);
+      window.addEventListener("focus", clearOnFocus);
+      stops.push(() => {
+        unsubscribeBadgeClear?.();
+        window.removeEventListener("focus", clearOnFocus);
+        clearPending();
+      });
+    }
+    if (hasNotificationSound(nextMode)) {
+      document.addEventListener("pointerdown", unlockNotificationAudio);
+      document.addEventListener("keydown", unlockNotificationAudio);
+      stops.push(() => {
+        document.removeEventListener("pointerdown", unlockNotificationAudio);
+        document.removeEventListener("keydown", unlockNotificationAudio);
+      });
+    }
+    stopModeListeners = () => {
+      for (const stop of stops) stop();
+    };
+  };
+
+  const onSettings = () => {
+    applyMode();
+    syncEnvironments();
+  };
+  const unsubscribeSettings = subscribeClientSettings(onSettings);
+  const unsubscribeEnvironmentIds = registry.subscribe(
+    environmentSummaries.environmentIdsAtom,
+    () => {
+      pruneRemovedEnvironments();
+      syncEnvironments();
+    },
+  );
+  onSettings();
+
+  return () => {
+    unsubscribeSettings();
+    unsubscribeEnvironmentIds();
+    for (const entry of watched.values()) entry.unsubscribe();
+    watched.clear();
+    stopModeListeners();
+  };
 }

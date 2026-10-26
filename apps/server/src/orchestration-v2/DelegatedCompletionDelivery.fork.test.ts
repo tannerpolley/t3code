@@ -1,7 +1,19 @@
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import { assert, it, vi } from "@effect/vitest";
-import { CheckpointScopeId, CommandId, EventId, MessageId, NodeId, ProviderInstanceId, ProjectId, RunId, RuntimeRequestId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import {
+  CheckpointScopeId,
+  CommandId,
+  EventId,
+  MessageId,
+  NodeId,
+  ProviderInstanceId,
+  ProjectId,
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -31,7 +43,17 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
-import { childQuestionNotices, childQuestionWake, endParentRuns, layerTest, ownerCanSee, reconcileCommandId, seedChildWaitingOnUser, seedParentWithTerminalTask, wakeChildQuestion } from "./DelegatedCompletionDelivery.testHarness.ts";
+import {
+  childQuestionNotices,
+  childQuestionWake,
+  endParentRuns,
+  layerTest,
+  ownerCanSee,
+  reconcileCommandId,
+  seedChildWaitingOnUser,
+  seedParentWithTerminalTask,
+  wakeChildQuestion,
+} from "./DelegatedCompletionDelivery.testHarness.ts";
 
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "thread-owned completion recovery",
@@ -396,7 +418,7 @@ it.layer(layerTest)("delegated request routing", (it) => {
         yield* endParentRuns(routed.parentThreadId, "completed");
         assert.isTrue(yield* ownerCanSee(routed));
         assert.isTrue(yield* ownerCanSee(fallback));
-        yield* maintenance.compactEventStore;
+        yield* maintenance.compactEventStore();
         assert.isTrue((yield* maintenance.rebuild).valid);
         assert.equal(
           (yield* orchestrator.getThreadShell(routed.childThreadId))?.pendingRuntimeRequest

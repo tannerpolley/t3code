@@ -130,7 +130,7 @@ export const layerExecutor: Layer.Layer<
         )
         .pipe(Effect.flatMap((lock) => lock.withPermit(use)));
     return OrchestrationEffectExecutorV2.of({
-      execute: (effect, options) => {
+      execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
           case "issue.change.execute":
@@ -294,14 +294,14 @@ export const layerExecutor: Layer.Layer<
                         cause,
                       }),
                 ),
-                Effect.catch((cause) =>
-                  request.subagent === undefined &&
-                  isNonRetryableProviderTurnControlFailure(
-                    request.type,
-                    Cause.pretty(Cause.fail(cause)),
-                  )
-                    ? Effect.void
-                    : Effect.fail(cause),
+                Effect.catchIf(
+                  (cause) =>
+                    request.subagent === undefined &&
+                    isNonRetryableProviderTurnControlFailure(
+                      request.type,
+                      Cause.pretty(Cause.fail(cause)),
+                    ),
+                  () => Effect.void,
                 ),
                 Effect.andThen((outcome) =>
                   request.subagent !== undefined && outcome === undefined
@@ -800,7 +800,7 @@ export const layerExecutor: Layer.Layer<
             );
           }
         }
-      },
+      }),
     });
   }),
 );
@@ -1084,9 +1084,9 @@ export const layerWithOptions = (
       );
 
       return OrchestrationEffectWorkerV2.of({
-        runOnceInLane: (lane) => runOnce(false, lane),
+        runOnceInLane: Effect.fn("OrchestrationEffectWorkerV2.runOnceInLane")((lane) => runOnce(false, lane)),
         awaitWorkInLane: outbox.awaitAvailableInLane,
-        nextClaimableAtInLane: (lane) =>
+        nextClaimableAtInLane: Effect.fn("OrchestrationEffectWorkerV2.nextClaimableAtInLane")((lane) =>
           outbox
             .nextClaimableAtInLane(lane)
             .pipe(
@@ -1094,7 +1094,7 @@ export const layerWithOptions = (
                 (cause) =>
                   new OrchestrationEffectWorkerError({ operation: "next-claimable", cause }),
               ),
-            ),
+            )),
         awaitWork: outbox.awaitAvailable,
         runOnce: runOnce(),
         runRecoveryOnce: runOnce(true),
@@ -1204,7 +1204,3 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
   );
 
 export const runDaemon = runDaemonWithOptions();
-
-const layerDaemon: Layer.Layer<never, never, OrchestrationEffectWorkerV2> = Layer.effectDiscard(
-  runDaemon.pipe(Effect.forkScoped),
-);

@@ -1822,9 +1822,11 @@ export const layer = Layer.effect(
           publishing: yield* store.publishing(owner, issue),
         };
       }),
-      queueIssue: (input) => changeQueue(input, true),
-      unqueueIssue: (input) => changeQueue(input, false),
-      start: (input) => start(input),
+      queueIssue: Effect.fn("IssueWorkService.queueIssue")((input) => changeQueue(input, true)),
+      unqueueIssue: Effect.fn("IssueWorkService.unqueueIssue")((input) =>
+        changeQueue(input, false),
+      ),
+      start: Effect.fn("IssueWorkService.start")((input) => start(input)),
       startWorker,
       cancelRequest,
       restoreRoot,
@@ -1835,7 +1837,9 @@ export const layer = Layer.effect(
       setWorkerLimit: setLimit,
       setReadOnlyLimit: setLimit,
       assertCurrentCaller,
-      requestHandoff: (threadId, input) => prepareHandoff(input, "awaiting_approval", threadId),
+      requestHandoff: Effect.fn("IssueWorkService.requestHandoff")((threadId, input) =>
+        prepareHandoff(input, "awaiting_approval", threadId),
+      ),
       handoff,
       reconcile,
     });

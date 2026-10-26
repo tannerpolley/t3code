@@ -768,11 +768,20 @@ export function selectIssueRepositories(
   return selected;
 }
 
+const decodeIssueCursor = Schema.decodeUnknownOption(IssueCursorSchema);
+const decodeRawIssueList = Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawIssueSchema)));
+const decodeRawMilestoneList = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Array(RawMilestoneSchema)),
+);
+const decodeRawRepositoryList = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Array(RawRepositorySchema)),
+);
+
 function decodeCursor(raw: string): IssueCursor | null {
   if (raw.length === 0 || raw.length > CURSOR_MAX_LENGTH) return null;
   try {
     const parsed: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    return Option.getOrNull(Schema.decodeUnknownOption(IssueCursorSchema)(parsed));
+    return Option.getOrNull(decodeIssueCursor(parsed));
   } catch {
     return null;
   }
@@ -1409,7 +1418,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               updated = currentComment.success;
             } else {
               if (currentComment.failure.code !== "inaccessible") {
-                return yield* Effect.fail(currentComment.failure);
+                return yield* currentComment.failure;
               }
               const existing = yield* findByMarker();
               updated =
@@ -1472,9 +1481,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       };
       return result;
     }
-    const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawIssueSchema)))(
-      response.body,
-    ).pipe(
+    const raw = yield* decodeRawIssueList(response.body).pipe(
       Effect.mapError(() =>
         readError("list", "invalid-response", "GitHub returned an invalid issue list."),
       ),
@@ -1523,9 +1530,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       const result = { ...cached.page, nextPage, etag: response.headers["etag"] ?? cached.etag };
       return result;
     }
-    const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawMilestoneSchema)))(
-      response.body,
-    ).pipe(
+    const raw = yield* decodeRawMilestoneList(response.body).pipe(
       Effect.mapError(() =>
         readError("list", "invalid-response", "GitHub returned an invalid milestone list."),
       ),
@@ -1708,7 +1713,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       )
       .pipe(
         Effect.mapError((error) =>
-          Schema.is(IssueReadError)(error) ? error : mapGitHubError("list", error),
+          isIssueReadError(error) ? error : mapGitHubError("list", error),
         ),
       );
   });
@@ -1796,7 +1801,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         )
         .pipe(
           Effect.mapError((error) =>
-            Schema.is(IssueReadError)(error) ? error : mapGitHubError("detail", error),
+            isIssueReadError(error) ? error : mapGitHubError("detail", error),
           ),
         );
     },
@@ -1812,9 +1817,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       endpoint: `user/repos?affiliation=owner,organization_member&sort=pushed&per_page=100&page=${page}`,
       maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     });
-    const items = yield* Schema.decodeEffect(
-      Schema.fromJsonString(Schema.Array(RawRepositorySchema)),
-    )(response.body).pipe(
+    const items = yield* decodeRawRepositoryList(response.body).pipe(
       Effect.mapError(() =>
         readError(
           "repositories",
@@ -1871,7 +1874,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       )
       .pipe(
         Effect.mapError((error) =>
-          Schema.is(IssueReadError)(error) ? error : mapGitHubError("repositories", error),
+          isIssueReadError(error) ? error : mapGitHubError("repositories", error),
         ),
       );
   });
@@ -2212,9 +2215,15 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     repositoryRest,
     readChangeState,
     createIssue,
-    updateBody: (input) => patchIssue(input, { body: input.body }),
-    setMilestone: (input) => patchIssue(input, { milestone: input.milestoneNumber }),
-    setState: (input) => patchIssue(input, { state: input.state }),
+    updateBody: Effect.fn("IssueService.updateBody")((input) =>
+      patchIssue(input, { body: input.body }),
+    ),
+    setMilestone: Effect.fn("IssueService.setMilestone")((input) =>
+      patchIssue(input, { milestone: input.milestoneNumber }),
+    ),
+    setState: Effect.fn("IssueService.setState")((input) =>
+      patchIssue(input, { state: input.state }),
+    ),
     setSubIssue,
     repositories,
     list,

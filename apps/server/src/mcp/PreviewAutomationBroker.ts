@@ -654,14 +654,14 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         input.updateCurrentTab === false ? timeoutMs : timeoutMs + HOST_RESPONSE_GRACE_MS;
       const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(responseTimeoutMs));
       return yield* Option.match(result, {
-        onNone: () =>
-          Effect.gen(function* () {
-            // Never replay possibly applied actions; slow metadata reads must not evict the host.
-            if (input.updateCurrentTab !== false) {
-              yield* disconnect(connection.clientId, connection.queue, true);
-            }
-            return yield* new PreviewAutomationTimeoutError(requestContext);
-          }),
+        // The enclosing operation owns the span for this inline handler.
+        onNone: Effect.fnUntraced(function* () {
+          // Never replay possibly applied actions; slow metadata reads must not evict the host.
+          if (input.updateCurrentTab !== false) {
+            yield* disconnect(connection.clientId, connection.queue, true);
+          }
+          return yield* new PreviewAutomationTimeoutError(requestContext);
+        }),
         onSome: (value) => Effect.succeed(value as A),
       });
     });
@@ -711,8 +711,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       },
     }).pipe(
       Effect.catchTags({
-        PreviewAutomationTimeoutError: (error) =>
-          Effect.gen(function* () {
+        PreviewAutomationTimeoutError: Effect.fn("PreviewAutomationTimeoutError")(function*(error) {
             const stuckTabId = targetTabId;
             const reusesTab =
               request.operation === "navigate" ||
