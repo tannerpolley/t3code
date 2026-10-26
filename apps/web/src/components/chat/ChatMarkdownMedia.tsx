@@ -6,8 +6,6 @@ import { TriangleAlertIcon } from "lucide-react";
 import {
   createContext,
   memo,
-  useEffect,
-  useRef,
   useState,
   type ComponentProps,
   type CSSProperties,
@@ -18,7 +16,6 @@ import {
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { cn } from "../../lib/utils";
 import { useRightPanelStore } from "../../rightPanelStore";
-import { usePreparedConnection } from "../../state/session";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -102,10 +99,15 @@ function expandableMarkdownImageProps(
 
 function ChatMarkdownMediaUnavailableLabel(props: {
   readonly alt: string;
-  readonly kind?: "image" | "video" | undefined;
+  readonly kind?: "image" | "video" | "audio" | undefined;
   readonly detail?: string | undefined;
 }) {
-  const label = props.kind === "video" ? "Video unavailable" : "Image unavailable";
+  const label =
+    props.kind === "audio"
+      ? "Audio unavailable"
+      : props.kind === "video"
+        ? "Video unavailable"
+        : "Image unavailable";
   return (
     <span data-thread-find-ignore className="inline-flex items-center gap-1.5">
       <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
@@ -117,7 +119,7 @@ function ChatMarkdownMediaUnavailableLabel(props: {
 export function ChatMarkdownImageFallback(props: {
   readonly alt: string;
   readonly copyMarkdown?: string | undefined;
-  readonly kind?: "image" | "video" | undefined;
+  readonly kind?: "image" | "video" | "audio" | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
   readonly unavailableLabel?: string | undefined;
 }) {
@@ -148,19 +150,8 @@ const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
 );
 
-/**
- * A standalone image holds a 16:9 slot (or its authored size) until it has
- * decoded, showing the image as it arrives (a bare `<img>` is zero height
- * until then). A failure replaces it with a small chip naming the path and
- * the reason. Once decoded the image renders bare again so its box, hit area, and
- * alignment are exactly the image's own. Inline images (badges, icons in a
- * sentence) skip the slot: a placeholder taller than the image would move the
- * page more than the image does.
- *
- * Callers key this on the file's identity, not its URL: a re-signed URL for
- * the same file keeps the decoded image on screen while the new bytes arrive,
- * and a different file starts from the slot again.
- */
+// Standalone images reserve space until decoded; inline badges skip it to avoid shifting text.
+// Key by file identity so re-signed URLs keep the decoded image while a different file resets it.
 export function ChatMarkdownImage(props: {
   readonly src: string | null;
   readonly sourcePath?: string | undefined;
@@ -227,6 +218,7 @@ export function ChatMarkdownImage(props: {
           alt={props.alt}
           data-markdown-copy={props.copyMarkdown}
           decoding="async"
+          loading="lazy"
           draggable={false}
           className={cn(
             CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
@@ -272,6 +264,7 @@ export function ChatMarkdownImage(props: {
             src={src}
             alt={props.alt}
             decoding="async"
+            loading="lazy"
             draggable={false}
             className="absolute inset-0 size-full object-contain"
             {...imageEvents(src)}
@@ -352,44 +345,17 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly workspaceMutationId?: string | null | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
-  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
-  const connectionReady = usePreparedConnection(props.environmentId)._tag === "Some";
   const resource = props.resource;
-  const refreshToken = JSON.stringify([props.environmentId, resource, props.workspaceMutationId]);
-  const handledRefreshToken = useRef<string | null | undefined>(undefined);
-  const assetLoading = assetUrl._tag === "Loading" || assetUrl.waiting === true;
-  useEffect(() => {
-    if (!connectionReady) {
-      handledRefreshToken.current = null;
-      return;
-    }
-    if (
-      props.workspaceMutationId === undefined ||
-      props.kind === "video" ||
-      (resource._tag !== "media-file" && resource._tag !== "workspace-file") ||
-      handledRefreshToken.current === refreshToken
-    ) {
-      return;
-    }
-    if (assetLoading) {
-      // Only the initial mount shares a pending request; edits and reconnects need a new one.
-      if (handledRefreshToken.current === undefined) {
-        handledRefreshToken.current = refreshToken;
-      }
-      return;
-    }
-    handledRefreshToken.current = refreshToken;
-    void refreshAssetUrl().catch(() => undefined);
-  }, [
-    assetLoading,
-    connectionReady,
-    props.kind,
-    props.workspaceMutationId,
-    refreshAssetUrl,
-    refreshToken,
-    resource._tag,
-  ]);
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    resource,
+    props.workspaceMutationId !== undefined &&
+      props.kind !== "video" &&
+      (resource._tag === "media-file" || resource._tag === "workspace-file")
+      ? props.workspaceMutationId
+      : undefined,
+  );
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const path =
     resource._tag === "media-file"
       ? resource.path

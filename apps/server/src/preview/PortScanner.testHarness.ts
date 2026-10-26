@@ -64,7 +64,7 @@ const makeLsofScannerWithoutSettings = (input: {
       Layer.mergeAll(
         Path.layer,
         Layer.succeed(ProcessRunner.ProcessRunner, {
-          run: (command) => {
+          run: Effect.fn("ProcessRunner.ProcessRunner.run")((command) => {
             const parentProbe =
               command.command === "ps" || command.args.at(-1)?.includes("Get-CimInstance");
             if (parentProbe && input.parentFailure) return processProbeFailure(command);
@@ -87,7 +87,7 @@ const makeLsofScannerWithoutSettings = (input: {
               stdoutInvalidUtf8: false,
               stderrInvalidUtf8: false,
             });
-          },
+          }),
         }),
         makeProjectStore(input.projects),
         Layer.succeed(

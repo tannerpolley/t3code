@@ -22,7 +22,6 @@ import * as DateTime from "effect/DateTime";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Foreign comment fixtures compute hashes independently of the service under test.
 import * as NodeCrypto from "node:crypto";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as SqlClient from "effect/sql/SqlClient";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -133,21 +132,19 @@ const setup = (
       }),
       Layer.mock(ProjectService.ProjectService)({
         getById: () =>
-          Effect.succeed(
-            Option.some({
-              title: "Science",
-              repositoryIdentity: {
-                provider: "github",
-                canonicalKey: "github.com/acme/repo",
-                displayName: "acme/repo",
-                locator: {
-                  source: "git-remote",
-                  remoteName: "origin",
-                  remoteUrl: "git@github.com:acme/repo",
-                },
+          Effect.succeedSome({
+            title: "Science",
+            repositoryIdentity: {
+              provider: "github",
+              canonicalKey: "github.com/acme/repo",
+              displayName: "acme/repo",
+              locator: {
+                source: "git-remote",
+                remoteName: "origin",
+                remoteUrl: "git@github.com:acme/repo",
               },
-            } as never),
-          ),
+            },
+          } as never),
       }),
       Layer.mock(IssueService.IssueService)({
         repositoryRest: (input) =>
@@ -358,10 +355,9 @@ it.effect(
             .code,
           "forbidden",
         );
-      const choices = yield* Effect.all(
-        ["adopt", "defer"].map((optionId) =>
-          service.choose({ id: decision.id, optionId }, owner).pipe(Effect.result),
-        ),
+      const choices = yield* Effect.forEach(
+        ["adopt", "defer"],
+        (optionId) => service.choose({ id: decision.id, optionId }, owner).pipe(Effect.result),
         { concurrency: "unbounded" },
       );
       assert.lengthOf(choices.filter(Result.isSuccess), 1);

@@ -116,6 +116,7 @@ vi.mock(import("./chat/MermaidDiagram"), async (original) => {
 
 const settingsOverrides = vi.hoisted(() => ({ mathRenderingEnabled: false }));
 vi.mock(import("../state/environments"), () => ({
+  readPrimaryEnvironmentId: () => null,
   useEnvironments: (() => ({
     isReady: false,
     networkStatus: null,

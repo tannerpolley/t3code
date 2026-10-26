@@ -1,5 +1,5 @@
 import { RegistryProvider } from "@effect/atom-react";
-import { EnvironmentId, MessageId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef, type ComponentProps, type ReactElement } from "react";
@@ -9,7 +9,7 @@ import "~/index.css";
 
 import { serverEnvironment } from "../../state/server";
 
-import { act, render } from "../../../test/render";
+import { render } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
 
 const pullRequestQuery = vi.hoisted(() => ({ error: "Pull request not found" }));
@@ -63,29 +63,6 @@ function baseProps(): Omit<TimelineProps, "timelineEntries"> {
     emptyPlaceholderInset: 0,
     liveFollowEnabled: true,
     onIsAtEndChange: () => {},
-    onManualNavigation: () => {},
-  };
-}
-
-function message(
-  text: string,
-  overrides: Partial<Extract<Entry, { kind: "message" }>["message"]> = {},
-  id = "message-1",
-): Entry {
-  return {
-    id: `entry-${id}`,
-    kind: "message",
-    createdAt: CREATED_AT,
-    message: {
-      id: MessageId.make(id),
-      role: "user",
-      text,
-      runId: null,
-      createdAt: CREATED_AT,
-      updatedAt: CREATED_AT,
-      streaming: false,
-      ...overrides,
-    },
   };
 }
 
@@ -135,10 +112,6 @@ async function renderElement(element: ReactElement) {
       return match;
     },
   });
-}
-
-async function click(element: HTMLElement) {
-  await act(async () => element.click());
 }
 
 describe("MessagesTimeline history and thread links", () => {

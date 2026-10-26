@@ -431,7 +431,7 @@ const requestCodexSkillsAndPlugins = Effect.fn("requestCodexSkillsAndPlugins")(f
 ) {
   const skillsRequest = client.request("skills/list", { cwds: [cwd] });
   const installedRequest = client.request("plugin/installed", { cwds: [cwd] }).pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catch((error) =>
       Effect.logDebug("Codex plugin/installed failed.", { cause: error }).pipe(
         Effect.as(Option.none<CodexSchema.V2PluginInstalledResponse>()),
@@ -665,7 +665,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
       input.skipNativeUsage
-        ? Effect.succeed(undefined)
+        ? // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+          Effect.succeed(undefined)
         : withCodexDiscoveryDeadline(
             client.request("account/rateLimits/read", null),
             deadlineMs,

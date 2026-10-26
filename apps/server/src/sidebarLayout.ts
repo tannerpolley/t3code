@@ -77,16 +77,15 @@ export const make = Effect.gen(function* () {
           layout: yield* decodeLayout(row.layout_json),
         };
   }).pipe(Effect.mapError(error));
-  const save = (record: SidebarLayoutRecord) =>
-    Effect.gen(function* () {
-      const encoded = yield* encodeLayout(record.layout);
-      yield* sql`
+  const save = Effect.fn("save")(function* (record: SidebarLayoutRecord) {
+    const encoded = yield* encodeLayout(record.layout);
+    yield* sql`
     INSERT INTO sidebar_layout (id, revision, legacy_imported_at, legacy_import_id, layout_json)
     VALUES (1, ${record.revision}, ${record.legacyImportedAt}, ${record.legacyImportId}, ${encoded})
     ON CONFLICT (id) DO UPDATE SET revision = excluded.revision,
       legacy_imported_at = excluded.legacy_imported_at, legacy_import_id = excluded.legacy_import_id, layout_json = excluded.layout_json
   `.pipe(Effect.asVoid);
-    }).pipe(Effect.mapError(error));
+  }, Effect.mapError(error));
   const same = (a: SidebarLayoutRecord, b: SidebarLayoutRecord) =>
     a.legacyImportedAt === b.legacyImportedAt &&
     JSON.stringify(a.layout) === JSON.stringify(b.layout);
@@ -159,7 +158,7 @@ export const make = Effect.gen(function* () {
     lock.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* get;
-        let next = current;
+        const next = { ...current };
         const rows = yield* projectRows;
         const ids = new Set(rows.map((row) => row.projectId as string));
         for (const operation of input.operations) {
@@ -172,12 +171,11 @@ export const make = Effect.gen(function* () {
               Object.keys(layout.projectExpandedById).length === 0
             )
               continue;
-            next = {
-              ...next,
+            Object.assign(next, {
               layout: applySidebarLayoutMutation(next.layout, { type: "migrate", layout })!,
               legacyImportedAt: DateTime.formatIso(yield* DateTime.now),
               legacyImportId: operation.importId ?? null,
-            };
+            });
           } else {
             let mutation: SidebarLayoutMutation = operation;
             if ("projectKeys" in mutation)
@@ -193,10 +191,9 @@ export const make = Effect.gen(function* () {
                 targetProjectIds: mutation.targetProjectIds.filter((id) => ids.has(id)),
               };
             if (mutation.type === "organize") {
-              next = {
-                ...next,
+              Object.assign(next, {
                 layout: organize(next.layout, rows, mutation.root, mutation.onlyUnsorted),
-              };
+              });
             } else {
               if (
                 mutation.type === "move" &&
@@ -211,12 +208,12 @@ export const make = Effect.gen(function* () {
                 });
                 continue;
               }
-              next = { ...next, layout: applySidebarLayoutMutation(next.layout, mutation)! };
+              Object.assign(next, { layout: applySidebarLayoutMutation(next.layout, mutation)! });
             }
           }
         }
         if (same(current, next)) return current;
-        next = { ...next, revision: current.revision + 1 };
+        Object.assign(next, { revision: current.revision + 1 });
         yield* sql.withTransaction(save(next)).pipe(Effect.mapError(error));
         yield* PubSub.publish(changes, next);
         return next;

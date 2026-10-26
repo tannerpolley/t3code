@@ -34,8 +34,6 @@ import * as Deferred from "effect/Deferred";
 
 import * as Layer from "effect/Layer";
 
-import * as Option from "effect/Option";
-
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -108,7 +106,7 @@ const layerGitWorkflowTest = Layer.mock(GitWorkflow.GitWorkflowService)({
   createWorktree: () => Effect.succeed({} as never),
 });
 const layerProjectServiceTest = Layer.mock(ProjectService.ProjectService)({
-  getById: () => Effect.succeed(Option.none()),
+  getById: () => Effect.succeedNone,
 });
 
 const driver = ProviderDriverKind.make("codex");
@@ -522,18 +520,16 @@ it.layer(layerTest)("thread workspace handoffs", (it) => {
         Layer.mergeAll(
           Layer.mock(ProjectService.ProjectService)({
             getById: () =>
-              Effect.succeed(
-                Option.some({
-                  id: projectId,
-                  title: "Workspace return",
-                  workspaceRoot,
-                  scripts: [],
-                  defaultModelSelection: null,
-                  deletedAt: null,
-                  createdAt: "2026-10-13T00:00:00.000Z",
-                  updatedAt: "2026-10-13T00:00:00.000Z",
-                } as Project),
-              ),
+              Effect.succeedSome({
+                id: projectId,
+                title: "Workspace return",
+                workspaceRoot,
+                scripts: [],
+                defaultModelSelection: null,
+                deletedAt: null,
+                createdAt: "2026-10-13T00:00:00.000Z",
+                updatedAt: "2026-10-13T00:00:00.000Z",
+              } as Project),
           }),
           Layer.mock(GitWorkflow.GitWorkflowService)({
             localStatus: (input) => {

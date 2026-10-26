@@ -112,13 +112,13 @@ it.effect(
             { id: "empty", name: "Empty", projectKeys: [], collapsed: false },
           ],
         });
-        yield* Effect.all(
-          ["first", "second"].map((id) =>
+        yield* Effect.forEach(
+          ["first", "second"],
+          (id) =>
             service.update({
               revision: 0,
               operations: [{ type: "migrate", layout: candidate(id), importId: id }],
             }),
-          ),
           { concurrency: "unbounded" },
         );
         const winner = yield* service.get;

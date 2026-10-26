@@ -69,8 +69,8 @@ describe("restoring V2 settings", () => {
       "Usage limit fallback models",
       [{ instanceId: "codex", model: "gpt-6.1-sol" }],
     ],
-    ["autoResumeLimitedThreads", "Auto-resume limited threads", true],
-    ["snoozeLimitedThreads", "Snooze limited threads", true],
+    ["autoResumeLimitedThreads", "Resume after usage limits", true],
+    ["snoozeLimitedThreads", "Snooze until limits reset", true],
   ] as const)("restores %s when it is the only changed setting", async (key, label, value) => {
     setup();
     state.settings = { ...DEFAULT_UNIFIED_SETTINGS, [key]: value };

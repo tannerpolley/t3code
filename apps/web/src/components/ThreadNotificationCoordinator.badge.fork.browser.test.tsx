@@ -1,12 +1,11 @@
 import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
-import { RegistryContext } from "@effect/atom-react";
-
+import type { AnyRouter } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { fakeTimers, render, stubGlobal, type Screen } from "../../test/render";
+import { fakeTimers, stubGlobal } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
@@ -17,11 +16,7 @@ const state = vi.hoisted(() => ({
   sound: vi.fn(),
   badge: vi.fn(),
   environmentIds: ["one", "two"],
-}));
-vi.mock(import("@tanstack/react-router"), async (original) => ({
-  ...(await original()),
-  useNavigate: (() => state.navigate) as never,
-  useParams: (() => ({})) as never,
+  settingsListeners: new Set<() => void>(),
 }));
 vi.mock(import("./ui/toast"), async (original) => {
   const actual = await original();
@@ -37,14 +32,29 @@ vi.mock(import("../state/shell"), async (original) => {
     },
   };
 });
-vi.mock(import("../state/environments"), () => ({
-  useEnvironmentIds: (() => state.environmentIds) as never,
-}));
-vi.mock(import("../hooks/useSettings"), () => ({
-  useClientSettings: ((
-    select: (settings: { notificationMode: string; inAppNotificationsEnabled: boolean }) => unknown,
-  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp })) as never,
-  getClientSettings: (() => ({ notificationMode: state.mode })) as never,
+vi.mock(import("../state/presentation"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentSummaries: {
+      ...actual.environmentSummaries,
+      // Read lazily: the factory runs before this module's own bindings exist.
+      get environmentIdsAtom() {
+        return environmentIdsAtom as never;
+      },
+    },
+  };
+});
+vi.mock(import("../hooks/useSettings"), async (original) => ({
+  ...(await original()),
+  subscribeClientSettings: ((listener: () => void) => {
+    state.settingsListeners.add(listener);
+    return () => state.settingsListeners.delete(listener);
+  }) as never,
+  getClientSettings: (() => ({
+    notificationMode: state.mode,
+    inAppNotificationsEnabled: state.inApp,
+  })) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
   ...(await original()),
@@ -53,10 +63,11 @@ vi.mock(import("../threadNotifications"), async (original) => ({
   setNotificationBadge: state.badge,
 }));
 
-import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
+import { startThreadNotifications } from "./ThreadNotificationCoordinator";
 
 let registry: AtomRegistry.AtomRegistry;
 const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
+const environmentIdsAtom = Atom.make<ReadonlyArray<string>>([]);
 state.shells = { set: (id, value) => registry.set(shellAtom(id), value) };
 
 class TestNotification extends EventTarget {
@@ -153,8 +164,8 @@ function shell(overrides: Partial<typeof thread> = {}, ...others: Partial<typeof
     }),
   };
 }
-// The mocked modules read `state`, the registry and the focus flags, so every test starts by
-// resetting them. The first render is left to the test because some tests change state first.
+// The mocked modules read `state` and the focus flags, so every test resets them before
+// starting the service.
 function setup() {
   vi.clearAllMocks();
   const stack = new AsyncDisposableStack();
@@ -163,7 +174,8 @@ function setup() {
   stack.defer(() => testRegistry.dispose());
   state.mode = "notifications";
   state.inApp = false;
-  state.environmentIds = ["one", "two"];
+  state.settingsListeners.clear();
+  registry.set(environmentIdsAtom, ["one", "two"]);
   state.shells.set("one", shell());
   state.shells.set("two", shell());
   focused = false;
@@ -178,18 +190,23 @@ function setup() {
       .spyOn(document, "visibilityState", "get")
       .mockImplementation(() => visibility as DocumentVisibilityState),
   );
-  const ui = () => (
-    <RegistryContext.Provider value={testRegistry}>
-      <ThreadNotificationCoordinator />
-    </RegistryContext.Provider>
-  );
-  let screen: Screen | undefined;
+  const router = {
+    state: { matches: [{ params: {} }] },
+    navigate: state.navigate,
+  } as unknown as AnyRouter;
+  let started = false;
   return {
-    async render() {
-      if (screen) await screen.rerender(ui());
-      else screen = stack.use(await render(ui()));
+    render: async () => {
+      if (!started) {
+        stack.defer(startThreadNotifications(testRegistry, router));
+        started = true;
+      }
+      for (const listener of state.settingsListeners) listener();
     },
-    unmount: () => screen!.unmount(),
+    setEnvironmentIds: (ids: ReadonlyArray<string>) => testRegistry.set(environmentIdsAtom, ids),
+    changeSettings: () => {
+      for (const listener of state.settingsListeners) listener();
+    },
     [Symbol.asyncDispose]: () => stack.disposeAsync(),
   };
 }
@@ -207,6 +224,7 @@ it("uses bounded tags across threads and environments, replaces repeat alerts, a
   state.environmentIds = [environmentId, otherEnvironmentId];
   state.shells.set(environmentId, shell({ id: threadId }, { id: otherThreadId }));
   state.shells.set(otherEnvironmentId, shell({ id: threadId }));
+  app.setEnvironmentIds(state.environmentIds);
   await app.render();
   using _timers = fakeTimers();
   const renderAndFlush = async () => {

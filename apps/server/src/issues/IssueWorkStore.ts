@@ -209,7 +209,7 @@ export const layer = Layer.effect(
           ? "working"
           : "available";
       }),
-      readOnlySlotsInUse: (rootThreadId) =>
+      readOnlySlotsInUse: Effect.fn("IssueWorkStore.readOnlySlotsInUse")((rootThreadId) =>
         sql<{
           active: number;
         }>`SELECT count(*) AS active FROM orchestration_v2_projection_threads thread
@@ -218,7 +218,8 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows[0]!.active),
           Effect.mapError(mapError),
         ),
-      canAdmitReadOnly: (rootThreadId, threadId) =>
+      ),
+      canAdmitReadOnly: Effect.fn("IssueWorkStore.canAdmitReadOnly")((rootThreadId, threadId) =>
         sql<{ allowed: number }>`
           SELECT (
             (SELECT count(*) FROM orchestration_v2_projection_threads thread
@@ -236,7 +237,8 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows[0]?.allowed === 1),
           Effect.mapError(mapError),
         ),
-      admissionThreads: (rootThreadId) =>
+      ),
+      admissionThreads: Effect.fn("IssueWorkStore.admissionThreads")((rootThreadId) =>
         sql<{ thread_id: string }>`
           SELECT thread.thread_id FROM orchestration_v2_projection_threads thread
           LEFT JOIN (${readOnlyQueue(rootThreadId)}) queued ON queued.thread_id = thread.thread_id
@@ -251,17 +253,20 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
           Effect.mapError(mapError),
         ),
-      isQueueNoticeRun: (threadId, runId) =>
+      ),
+      isQueueNoticeRun: Effect.fn("IssueWorkStore.isQueueNoticeRun")((threadId, runId) =>
         isIssueQueueNoticeRun(threadId, runId).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
           Effect.mapError(mapError),
         ),
-      queueNotice: (threadId, runId) =>
+      ),
+      queueNotice: Effect.fn("IssueWorkStore.queueNotice")((threadId, runId) =>
         readIssueQueueNotice(threadId, runId).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
           Effect.mapError(mapError),
         ),
-      queueRootIdle: (threadId) =>
+      ),
+      queueRootIdle: Effect.fn("IssueWorkStore.queueRootIdle")((threadId) =>
         sql`
         SELECT 1 FROM orchestration_v2_projection_threads thread
         WHERE thread.thread_id = ${threadId} AND thread.archived_at IS NULL AND thread.deleted_at IS NULL
@@ -273,7 +278,8 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows.length > 0),
           Effect.mapError(mapError),
         ),
-      queuedRoots: () =>
+      ),
+      queuedRoots: Effect.fn("IssueWorkStore.queuedRoots")(() =>
         sql<{ root_thread_id: string }>`
         SELECT DISTINCT owner.root_thread_id FROM orchestration_v2_projection_repository_orchestration owner
         JOIN orchestration_v2_projection_issue_work_requests request
@@ -283,8 +289,11 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.root_thread_id))),
           Effect.mapError(mapError),
         ),
-      queue: (input) => readIssueQueue(input).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
-      slotsInUse: (rootThreadId) =>
+      ),
+      queue: Effect.fn("IssueWorkStore.queue")((input) =>
+        readIssueQueue(input).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+      ),
+      slotsInUse: Effect.fn("IssueWorkStore.slotsInUse")((rootThreadId) =>
         sql<{ active: number }>`
           SELECT count(*) AS active FROM orchestration_v2_projection_issue_work work
           JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
@@ -295,7 +304,8 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows[0]!.active),
           Effect.mapError(mapError),
         ),
-      subtreeDrained: (rootThreadId) =>
+      ),
+      subtreeDrained: Effect.fn("IssueWorkStore.subtreeDrained")((rootThreadId) =>
         sql<{ thread_id: string }>`
           WITH subtree AS MATERIALIZED (
             SELECT thread_id FROM orchestration_v2_projection_threads
@@ -323,6 +333,7 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows.length === 0),
           Effect.mapError(mapError),
         ),
+      ),
       hasUnsettledRestartContinuation: Effect.fn("IssueWorkStore.hasUnsettledRestartContinuation")(
         (threadId) =>
           sql`SELECT 1 FROM (${unsettledRestartContinuations}) WHERE thread_id = ${threadId} LIMIT 1`.pipe(
@@ -330,11 +341,11 @@ export const layer = Layer.effect(
             Effect.mapError(mapError),
           ),
       ),
-      recoveryInventory: (repository) =>
+      recoveryInventory: Effect.fn("IssueWorkStore.recoveryInventory")((repository) =>
         sql<{ section: string; detail: string }>`
           SELECT 'Completed attempts' AS section,
-            '#' || json_extract(child.payload_json, '$.linkedIssue.number') || ' — ' || task.status
-            || ' — thread ' || child.thread_id AS detail
+            '#' || json_extract(child.payload_json, '$.linkedIssue.number') || '. ' || task.status
+            || '. thread ' || child.thread_id AS detail
           FROM orchestration_v2_projection_subagents task
           JOIN orchestration_v2_projection_threads child ON child.thread_id = task.child_thread_id
           WHERE task.origin = 'app_owned' AND task.status IN ('completed', 'failed', 'cancelled', 'interrupted')
@@ -346,7 +357,7 @@ export const layer = Layer.effect(
                 AND json_extract(pr.value, '$.snapshot.state') = 'open'
             )
           UNION ALL
-          SELECT 'Remaining issue requests', '#' || request.issue_number || ' — ' || json_extract(request.payload_json, '$.issue.title')
+          SELECT 'Remaining issue requests', '#' || request.issue_number || '. ' || json_extract(request.payload_json, '$.issue.title')
           FROM orchestration_v2_projection_issue_work_requests request
           LEFT JOIN orchestration_v2_projection_issue_work work
             ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
@@ -354,21 +365,22 @@ export const layer = Layer.effect(
             AND request.queue_state IS NULL AND json_type(request.payload_json, '$.cancellation') IS NULL
             AND (work.owner_thread_id IS NULL OR request.attempt_key = work.owner_thread_id)
           UNION ALL
-          SELECT 'Pending changes', effect.effect_type || ' — ' || effect.status || ' — ' || COALESCE(effect.last_error, 'awaiting writeback')
+          SELECT 'Pending changes', effect.effect_type || '. ' || effect.status || '. ' || COALESCE(effect.last_error, 'awaiting writeback')
           FROM orchestration_v2_effect_outbox effect
           WHERE effect.effect_type LIKE 'issue.%' AND effect.status IN ('pending', 'running', 'failed')
             AND json_extract(effect.payload_json, '$.issue.host') = ${repository.host}
             AND json_extract(effect.payload_json, '$.issue.repositoryId') = ${repository.repositoryId}
           UNION ALL
-          SELECT 'Pending changes', 'Issue change ' || change.change_id || ' — '
+          SELECT 'Pending changes', 'Issue change ' || change.change_id || '. '
             || json_extract(change.proposal_json, '$.operation.type')
-            || COALESCE(' #' || change.issue_number, '') || ' — ' || change.decision || ', ' || change.status
+            || COALESCE(' #' || change.issue_number, '') || '. ' || change.decision || ', ' || change.status
           FROM issue_changes change
           WHERE change.host = ${repository.host} AND lower(change.repository) = lower(${repository.repository})
             AND change.status IN ('pending', 'queued', 'executing', 'failed', 'conflict')
           ORDER BY section, detail
         `.pipe(Effect.mapError(mapError)),
-      resultAvailable: (threadId) =>
+      ),
+      resultAvailable: Effect.fn("IssueWorkStore.resultAvailable")((threadId) =>
         sql<{
           status: string;
         }>`SELECT status FROM orchestration_v2_projection_subagents WHERE child_thread_id = ${threadId} AND origin = 'app_owned' LIMIT 1`.pipe(
@@ -379,7 +391,8 @@ export const layer = Layer.effect(
           ),
           Effect.mapError(mapError),
         ),
-      pendingRequests: (rootThreadId) =>
+      ),
+      pendingRequests: Effect.fn("IssueWorkStore.pendingRequests")((rootThreadId) =>
         sql<{ payload_json: string }>`
         SELECT request.payload_json FROM orchestration_v2_projection_issue_work_requests request
         LEFT JOIN orchestration_v2_projection_issue_work work
@@ -393,7 +406,8 @@ export const layer = Layer.effect(
           Effect.flatMap((rows) => Effect.forEach(rows, (row) => decodeRequest(row.payload_json))),
           Effect.mapError(mapError),
         ),
-      configuration: (rootThreadId) =>
+      ),
+      configuration: Effect.fn("IssueWorkStore.configuration")((rootThreadId) =>
         sql<{ configuration: string }>`
         SELECT json_extract(payload_json, '$.repositoryOrchestration') AS configuration
         FROM orchestration_v2_projection_threads WHERE thread_id = ${rootThreadId}
@@ -406,8 +420,10 @@ export const layer = Layer.effect(
           ),
           Effect.mapError(mapError),
         ),
-      isRepositoryOrchestrator: (rootThreadId) =>
-        sql<{ registered: number }>`
+      ),
+      isRepositoryOrchestrator: Effect.fn("IssueWorkStore.isRepositoryOrchestrator")(
+        (rootThreadId) =>
+          sql<{ registered: number }>`
           SELECT EXISTS (
             SELECT 1 FROM orchestration_v2_projection_repository_orchestration owner
             JOIN orchestration_v2_projection_threads root ON root.thread_id = owner.root_thread_id
@@ -415,10 +431,11 @@ export const layer = Layer.effect(
               AND json_type(root.payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
           ) AS registered
         `.pipe(
-          Effect.map((rows) => rows[0]!.registered === 1),
-          Effect.mapError(mapError),
-        ),
-      activeRoots: () =>
+            Effect.map((rows) => rows[0]!.registered === 1),
+            Effect.mapError(mapError),
+          ),
+      ),
+      activeRoots: Effect.fn("IssueWorkStore.activeRoots")(() =>
         sql<{ root_thread_id: string }>`
         SELECT root_thread_id FROM orchestration_v2_projection_repository_orchestration owner
         JOIN orchestration_v2_projection_threads thread ON thread.thread_id = owner.root_thread_id
@@ -442,7 +459,8 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.root_thread_id))),
           Effect.mapError(mapError),
         ),
-      workerThreads: (rootThreadId) =>
+      ),
+      workerThreads: Effect.fn("IssueWorkStore.workerThreads")((rootThreadId) =>
         sql<{ thread_id: string }>`
         SELECT thread.thread_id FROM orchestration_v2_projection_threads thread
         JOIN orchestration_v2_projection_issue_work work ON work.owner_thread_id = thread.thread_id
@@ -456,16 +474,16 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
           Effect.mapError(mapError),
         ),
-      canAdmit: (issue, threadId) =>
-        Effect.gen(function* () {
-          const rows = yield* sql<{
-            paused: number;
-            worker_limit: number;
-            active: number;
-            suspended: number;
-            draining: number;
-            lineage_valid: number;
-          }>`
+      ),
+      canAdmit: Effect.fn("IssueWorkStore.canAdmit")(function* (issue, threadId) {
+        const rows = yield* sql<{
+          paused: number;
+          worker_limit: number;
+          active: number;
+          suspended: number;
+          draining: number;
+          lineage_valid: number;
+        }>`
           SELECT owner.paused, owner.worker_limit,
             COALESCE(json_extract(root.payload_json, '$.repositoryOrchestration.handoff.status') = 'draining', 0) AS draining,
             EXISTS (SELECT 1 FROM orchestration_v2_projection_threads candidate
@@ -490,16 +508,16 @@ export const layer = Layer.effect(
               WHERE worker.thread_id = ${threadId}
                 AND json_extract(worker.payload_json, '$.lineage.rootThreadId') = owner.root_thread_id)
         `;
-          const row = rows[0];
-          return (
-            row !== undefined &&
-            row.lineage_valid === 1 &&
-            (row.paused === 0 || row.draining === 1) &&
-            row.suspended === 0 &&
-            row.active < row.worker_limit
-          );
-        }).pipe(Effect.mapError(mapError)),
-      request: (requestId) =>
+        const row = rows[0];
+        return (
+          row !== undefined &&
+          row.lineage_valid === 1 &&
+          (row.paused === 0 || row.draining === 1) &&
+          row.suspended === 0 &&
+          row.active < row.worker_limit
+        );
+      }, Effect.mapError(mapError)),
+      request: Effect.fn("IssueWorkStore.request")((requestId) =>
         sql<{ payload_json: string }>`
       SELECT payload_json FROM orchestration_v2_projection_issue_work_requests WHERE request_id = ${requestId} AND queue_state IS NULL
     `.pipe(
@@ -508,7 +526,8 @@ export const layer = Layer.effect(
           ),
           Effect.mapError(mapError),
         ),
-      requestsForAttempt: (request) =>
+      ),
+      requestsForAttempt: Effect.fn("IssueWorkStore.requestsForAttempt")((request) =>
         sql<{ payload_json: string }>`
           SELECT payload_json FROM orchestration_v2_projection_issue_work_requests
           WHERE host = ${request.issue.host} AND repository_id = ${request.issue.repositoryId}
@@ -519,7 +538,8 @@ export const layer = Layer.effect(
           Effect.flatMap((rows) => Effect.forEach(rows, (row) => decodeRequest(row.payload_json))),
           Effect.mapError(mapError),
         ),
-      latestRequest: (issue) =>
+      ),
+      latestRequest: Effect.fn("IssueWorkStore.latestRequest")((issue) =>
         sql<{ payload_json: string }>`
       SELECT payload_json FROM orchestration_v2_projection_issue_work_requests
       WHERE lower(host) = lower(${issue.host}) AND lower(repository) = lower(${issue.repository}) AND issue_number = ${issue.number} AND queue_state IS NULL
@@ -530,7 +550,8 @@ export const layer = Layer.effect(
           ),
           Effect.mapError(mapError),
         ),
-      hasAttempt: (issue, attemptKey) =>
+      ),
+      hasAttempt: Effect.fn("IssueWorkStore.hasAttempt")((issue, attemptKey) =>
         sql<{ request_id: string }>`
       SELECT request_id FROM orchestration_v2_projection_issue_work_requests
       WHERE host = ${issue.host} AND repository_id = ${issue.repositoryId} AND issue_id = ${issue.id} AND attempt_key = ${attemptKey} AND queue_state IS NULL AND json_type(payload_json, '$.cancellation') IS NULL LIMIT 1
@@ -538,7 +559,8 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows.length > 0),
           Effect.mapError(mapError),
         ),
-      linkedIssue: (issue) =>
+      ),
+      linkedIssue: Effect.fn("IssueWorkStore.linkedIssue")((issue) =>
         sql<{
           host: string;
           repository_id: string;
@@ -569,12 +591,14 @@ export const layer = Layer.effect(
           ),
           Effect.mapError(mapError),
         ),
-      repositoryOwner: (issue) =>
+      ),
+      repositoryOwner: Effect.fn("IssueWorkStore.repositoryOwner")((issue) =>
         sql<RepositoryOwnerRow>`
       SELECT root_thread_id, project_id, paused, revision FROM orchestration_v2_projection_repository_orchestration
       WHERE host = ${issue.host} AND repository_id = ${issue.repositoryId}
     `.pipe(Effect.map(ownerFromRows), Effect.mapError(mapError)),
-      repositoryOwnerByRef: (issue) =>
+      ),
+      repositoryOwnerByRef: Effect.fn("IssueWorkStore.repositoryOwnerByRef")((issue) =>
         sql<RepositoryOwnerRow>`
       SELECT root_thread_id, project_id, paused, revision FROM orchestration_v2_projection_repository_orchestration owner
       WHERE lower(owner.host) = lower(${issue.host})
@@ -585,7 +609,8 @@ export const layer = Layer.effect(
         ))
       LIMIT 1
     `.pipe(Effect.map(ownerFromRows), Effect.mapError(mapError)),
-      issueOwner: (issue) =>
+      ),
+      issueOwner: Effect.fn("IssueWorkStore.issueOwner")((issue) =>
         sql<{ owner_thread_id: string | null }>`
       SELECT owner_thread_id FROM orchestration_v2_projection_issue_work
       WHERE host = ${issue.host} AND repository_id = ${issue.repositoryId} AND issue_id = ${issue.id}
@@ -595,7 +620,8 @@ export const layer = Layer.effect(
           ),
           Effect.mapError(mapError),
         ),
-      currentIssueOwner: (issue) =>
+      ),
+      currentIssueOwner: Effect.fn("IssueWorkStore.currentIssueOwner")((issue) =>
         sql<{ owner_thread_id: string }>`
       SELECT work.owner_thread_id FROM orchestration_v2_projection_issue_work work
       JOIN orchestration_v2_projection_repository_orchestration repository
@@ -609,7 +635,8 @@ export const layer = Layer.effect(
           ),
           Effect.mapError(mapError),
         ),
-      hasUnclaimedRequests: (rootThreadId) =>
+      ),
+      hasUnclaimedRequests: Effect.fn("IssueWorkStore.hasUnclaimedRequests")((rootThreadId) =>
         sql<{ request_id: string }>`
       SELECT requests.request_id FROM orchestration_v2_projection_issue_work_requests requests
       LEFT JOIN orchestration_v2_projection_issue_work work
@@ -619,7 +646,8 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows.length > 0),
           Effect.mapError(mapError),
         ),
-      publishing: (threadId, issue) =>
+      ),
+      publishing: Effect.fn("IssueWorkStore.publishing")((threadId, issue) =>
         sql<{ status: string; last_error: string | null }>`
       SELECT status, last_error FROM orchestration_v2_effect_outbox
       WHERE thread_id = ${threadId} AND (effect_type = 'issue.github.comment'
@@ -646,6 +674,7 @@ export const layer = Layer.effect(
           }),
           Effect.mapError(mapError),
         ),
+      ),
     });
     return store;
   }),

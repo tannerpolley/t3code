@@ -587,7 +587,9 @@ export const make = Effect.gen(function* () {
       (reads) => sql.withTransaction(reads).pipe(NodeSqliteClient.readOnly),
       Effect.mapError(storageError),
     ),
-    markRead: (input) => markRead(input).pipe(Effect.mapError(storageError)),
+    markRead: Effect.fn("IssueInbox.markRead")((input) =>
+      markRead(input).pipe(Effect.mapError(storageError)),
+    ),
     unread: Stream.unwrap(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changes);

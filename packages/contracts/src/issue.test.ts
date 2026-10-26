@@ -10,6 +10,14 @@ const decodeListInput = Schema.decodeUnknownSync(IssueListInput);
 const decodeListResult = Schema.decodeUnknownSync(IssueListResult);
 const decodeDetailResult = Schema.decodeUnknownSync(IssueDetailResult);
 
+const listRpc = WsRpcGroup.requests.get(WS_METHODS.issuesList)!;
+const detailRpc = WsRpcGroup.requests.get(WS_METHODS.issuesDetail)!;
+const decodeListrpcPayloadschema = Schema.decodeSync(listRpc.payloadSchema);
+const decodeDetailrpcPayloadschema = Schema.decodeSync(detailRpc.payloadSchema);
+const decodeListrpcSuccessschema = Schema.decodeSync(listRpc.successSchema);
+const decodeListrpcErrorschema = Schema.decodeSync(listRpc.errorSchema);
+const decodeDetailrpcErrorschema = Schema.decodeSync(detailRpc.errorSchema);
+
 const repository = {
   host: "github.com",
   repository: "owner/repo",
@@ -121,7 +129,7 @@ describe("GitHub issue contract boundaries", () => {
     const codec = Schema.toCodecJson(IssueListResult);
     const encoded = Schema.encodeUnknownSync(codec)(listResult);
 
-    expect(Schema.decodeUnknownSync(codec)(encoded)).toStrictEqual(listResult);
+    expect(Schema.decodeSync(codec)(encoded)).toStrictEqual(listResult);
   });
 
   it("validates Project metadata while accepting summaries from older servers", () => {
@@ -131,9 +139,7 @@ describe("GitHub issue contract boundaries", () => {
     ];
     const result = { ...listResult, issues: [{ ...issue, projects }] };
     const codec = Schema.toCodecJson(IssueListResult);
-    expect(Schema.decodeUnknownSync(codec)(Schema.encodeUnknownSync(codec)(result))).toEqual(
-      result,
-    );
+    expect(Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(result))).toEqual(result);
     expect(() =>
       decodeListResult({
         ...listResult,
@@ -145,19 +151,17 @@ describe("GitHub issue contract boundaries", () => {
   });
 
   it("registers issue RPC payload, result, and error codecs", () => {
-    const listRpc = WsRpcGroup.requests.get(WS_METHODS.issuesList);
-    const detailRpc = WsRpcGroup.requests.get(WS_METHODS.issuesDetail);
     expect(listRpc).toBeDefined();
     expect(detailRpc).toBeDefined();
     if (listRpc === undefined || detailRpc === undefined) return;
 
-    expect(Schema.decodeUnknownSync(listRpc.payloadSchema)(repository)).toEqual(repository);
-    expect(() => Schema.decodeUnknownSync(listRpc.payloadSchema)({ host: "github.com" })).toThrow();
-    expect(Schema.decodeUnknownSync(detailRpc.payloadSchema)(ref)).toMatchObject(ref);
-    expect(Schema.decodeUnknownSync(listRpc.successSchema)(listResult)).toMatchObject(listResult);
+    expect(decodeListrpcPayloadschema(repository)).toEqual(repository);
+    expect(() => decodeListrpcPayloadschema({ host: "github.com" })).toThrow();
+    expect(decodeDetailrpcPayloadschema(ref)).toMatchObject(ref);
+    expect(decodeListrpcSuccessschema(listResult)).toMatchObject(listResult);
 
     expect(
-      Schema.decodeUnknownSync(listRpc.errorSchema)({
+      decodeListrpcErrorschema({
         _tag: "IssueReadError",
         code: "invalid-cursor",
         operation: "list",
@@ -165,7 +169,7 @@ describe("GitHub issue contract boundaries", () => {
       }),
     ).toMatchObject({ _tag: "IssueReadError", code: "invalid-cursor" });
     expect(
-      Schema.decodeUnknownSync(detailRpc.errorSchema)({
+      decodeDetailrpcErrorschema({
         _tag: "EnvironmentAuthorizationError",
         message: "Read access is required.",
         requiredScope: "orchestration:read",

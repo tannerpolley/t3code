@@ -177,11 +177,14 @@ const make = Effect.gen(function* () {
                   prRefsJson,
                   prRefs.length > 0,
                   list.issues.some((issue) => issue.state === "closed"),
-                ).pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError));
-          return yield* projections
-            .getIssueWorkThreads(candidates.map(({ thread_id }) => ThreadId.make(thread_id)))
-            .pipe(Effect.mapError(storageError));
-        }).pipe(Effect.tapError(() => Effect.sync(() => queries.delete(queryKey)))),
+                ).pipe(NodeSqliteClient.readOnly);
+          return yield* projections.getIssueWorkThreads(
+            candidates.map(({ thread_id }) => ThreadId.make(thread_id)),
+          );
+        }).pipe(
+          Effect.mapError(storageError),
+          Effect.tapError(() => Effect.sync(() => queries.delete(queryKey))),
+        ),
       );
       // Keep only recent issue pages for this revision, rather than every search ever opened.
       if (memo.queries.size >= 32) memo.queries.delete(memo.queries.keys().next().value!);

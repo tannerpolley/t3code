@@ -458,7 +458,7 @@ it.effect(
                 })),
             }),
             Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-              get: () => Effect.succeed(Option.some(runtime)),
+              get: () => Effect.succeedSome(runtime),
             }),
           ),
         ),

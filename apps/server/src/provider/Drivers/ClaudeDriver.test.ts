@@ -143,7 +143,7 @@ const claudeLayer = layerTest.pipe(
   Layer.provideMerge(
     Layer.mock(ModelCatalog.ModelCatalog)({
       bundled: () => undefined,
-      current: () => Effect.succeed(undefined),
+      current: () => Effect.sync(() => undefined),
       refreshInBackground: Effect.void,
     }),
   ),

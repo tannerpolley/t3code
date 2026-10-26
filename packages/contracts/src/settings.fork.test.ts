@@ -316,7 +316,6 @@ describe("fork sidebar preferences", () => {
       sectionFolderColors: false,
       projectIconFallback: "initials",
       sidebarTogglePosition: "right",
-      topBackButton: false,
       revealOpenThreadInSidebar: false,
       lineageDetailsExpanded: true,
       lineageAutoClearMinutes: 5,

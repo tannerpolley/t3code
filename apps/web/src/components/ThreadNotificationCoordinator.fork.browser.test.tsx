@@ -1,11 +1,14 @@
+import type { AnyRouter } from "@tanstack/react-router";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render, stubGlobal, type Screen } from "../../test/render";
+import { fakeTimers, stubGlobal } from "../../test/render";
 
 const state = vi.hoisted(() => ({
+  settingsListeners: new Set<() => void>(),
   mode: "off" as ClientSettings["notificationMode"],
   inApp: true,
   active: { environmentId: "env-1", threadId: "other-thread" },
@@ -21,12 +24,13 @@ const state = vi.hoisted(() => ({
   limited: false,
   subagent: false,
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
-  delegatedChild: null as "running" | "approval" | null,
+  delegatedChild: null as "running" | "approval" | "idle" | null,
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
   ),
   close: vi.fn(),
+  badge: vi.fn(),
   navigate: vi.fn(),
   sound: vi.fn(),
   notification: vi.fn(function (_title: string, options: NotificationOptions) {
@@ -93,6 +97,7 @@ function mockThreads() {
   if (state.delegatedChild === null) return [mockThreadShell()];
   stableParent ??= {
     ...mockThreadShell(),
+    status: state.delegatedChild === "idle" ? "completed" : "running",
     lineage: {
       rootThreadId: "thread-1",
       parentThreadId: null,
@@ -124,33 +129,42 @@ function mockThreads() {
   return [stableParent, child];
 }
 
-vi.mock(import("@effect/atom-react"), async (original) => ({
+const shellAtom = Atom.make<unknown>(null);
+const idsAtom = Atom.make(["env-1"]);
+vi.mock(import("../state/shell"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentShell: { ...actual.environmentShell, stateValueAtom: (() => shellAtom) as never },
+  };
+});
+vi.mock(import("../state/presentation"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentSummaries: {
+      ...actual.environmentSummaries,
+      get environmentIdsAtom() {
+        return idsAtom as never;
+      },
+    },
+  };
+});
+vi.mock(import("../hooks/useSettings"), async (original) => ({
   ...(await original()),
-  useAtomValue: (() => ({
-    status: state.live ? "live" : "disconnected",
-    snapshot: Option.some({ threads: mockThreads() }),
+  subscribeClientSettings: ((listener: () => void) => {
+    state.settingsListeners.add(listener);
+    return () => state.settingsListeners.delete(listener);
+  }) as never,
+  getClientSettings: (() => ({
+    notificationMode: state.mode,
+    inAppNotificationsEnabled: state.inApp,
   })) as never,
-}));
-vi.mock(import("@tanstack/react-router"), async (original) => ({
-  ...(await original()),
-  useNavigate: (() => state.navigate) as never,
-  useParams: (() => state.active) as never,
-}));
-vi.mock(import("../hooks/useSettings"), () => ({
-  useClientSettings: ((
-    select: (
-      settings: Pick<ClientSettings, "notificationMode" | "inAppNotificationsEnabled">,
-    ) => unknown,
-  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp })) as never,
-  getClientSettings: (() => ({ notificationMode: state.mode })) as never,
-}));
-vi.mock(import("../state/environments"), () => ({
-  useEnvironmentIds: (() => ["env-1"]) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
   ...(await original()),
   playNotificationSound: state.sound,
-  setNotificationBadge: vi.fn(),
+  setNotificationBadge: state.badge,
 }));
 vi.mock(import("./ui/toast"), async (original) => {
   const actual = await original();
@@ -160,7 +174,7 @@ vi.mock(import("./ui/toast"), async (original) => {
   };
 });
 
-import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
+import { startThreadNotifications } from "./ThreadNotificationCoordinator";
 
 // The mocked modules read `state`, so every test starts by resetting all of it. The first
 // render is left to the test because some tests change state before the coordinator mounts.
@@ -195,10 +209,28 @@ function setup() {
   stack.use(
     stubGlobal("Notification", Object.assign(state.notification, { permission: "granted" })),
   );
-  let screen: Screen | undefined;
+  state.settingsListeners.clear();
+  const registry = AtomRegistry.make();
+  stack.defer(() => registry.dispose());
+  const router = {
+    state: {
+      get matches() {
+        return [{ params: state.active }];
+      },
+    },
+    navigate: state.navigate,
+  } as unknown as AnyRouter;
+  let started = false;
   const renderCoordinator = async () => {
-    if (screen) await screen.rerender(<ThreadNotificationCoordinator />);
-    else screen = stack.use(await render(<ThreadNotificationCoordinator />));
+    registry.set(shellAtom, {
+      status: state.live ? "live" : "disconnected",
+      snapshot: Option.some({ threads: mockThreads() }),
+    });
+    if (!started) {
+      stack.defer(startThreadNotifications(registry, router));
+      started = true;
+    }
+    for (const listener of state.settingsListeners) listener();
   };
   return {
     render: renderCoordinator,
@@ -211,16 +243,25 @@ function setup() {
 }
 
 describe("thread notifications", () => {
-  it.each([true, false])(
-    "retracts an owner-visible child alert after a shell refresh and an answer, focus=%s",
-    async (focused) => {
+  it.each([
+    { focused: true, parentPresent: false },
+    { focused: false, parentPresent: false },
+    { focused: true, parentPresent: true },
+    { focused: false, parentPresent: true },
+  ])(
+    "retracts an owner-visible child alert after an answer, focus=$focused parent=$parentPresent",
+    async ({ focused, parentPresent }) => {
       await using app = setup();
+      using _timers = fakeTimers();
       state.subagent = true;
+      state.delegatedChild = parentPresent ? "idle" : null;
       state.focused = focused;
       state.mode = "notifications-and-sound";
       await app.render();
       state.input = true;
       await app.render();
+      if (parentPresent) await vi.advanceTimersByTimeAsync(3_000);
+      expect(state.badge).toHaveBeenLastCalledWith(focused ? 0 : 1);
       expect(state.sound).toHaveBeenCalledTimes(1);
       if (focused) expect(state.add).toHaveBeenCalledTimes(1);
       else expect(state.notification).toHaveBeenCalledTimes(1);
@@ -230,6 +271,7 @@ describe("thread notifications", () => {
       else expect(state.notification.mock.results[0]?.value.close).not.toHaveBeenCalled();
       state.input = false;
       await app.render();
+      expect(state.badge).toHaveBeenLastCalledWith(0);
       if (focused) expect(state.close).toHaveBeenCalledWith("toast-1");
       else expect(state.notification.mock.results[0]?.value.close).toHaveBeenCalledTimes(1);
     },

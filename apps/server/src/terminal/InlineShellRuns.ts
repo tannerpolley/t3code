@@ -213,7 +213,9 @@ export const layer = Layer.effect(
       return (yield* store.get(input.threadId, input.runId)) ?? record;
     });
     return InlineShellRuns.of({
-      latest: (input) => Deferred.await(recovered).pipe(Effect.andThen(store.latest(input))),
+      latest: Effect.fn("InlineShellRuns.latest")((input) =>
+        Deferred.await(recovered).pipe(Effect.andThen(store.latest(input))),
+      ),
       recovered: Deferred.await(recovered),
       observe: (input) =>
         Stream.unwrap(
@@ -232,7 +234,7 @@ export const layer = Layer.effect(
             );
           }),
         ),
-      run: (input) =>
+      run: Effect.fn("InlineShellRuns.run")((input) =>
         launches
           .withLock(input.threadId, run(input))
           .pipe(
@@ -240,6 +242,7 @@ export const layer = Layer.effect(
               (cause) => new InlineShellRunError({ threadId: input.threadId, cause }),
             ),
           ),
+      ),
     });
   }),
 );

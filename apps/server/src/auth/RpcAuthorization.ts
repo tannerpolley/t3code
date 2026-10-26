@@ -268,6 +268,7 @@ const requiredScopesForSettingsUpdate = (payload: unknown) =>
   clientRpcRequiredScopes(WS_METHODS.serverUpdateSettings, payload);
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
 const requiredScopesForRpcCall = (
   method: string,
@@ -277,7 +278,7 @@ const requiredScopesForRpcCall = (
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
   }
   if (method === WS_METHODS.assetsCreateUrl) {
-    const { resource } = Schema.decodeUnknownSync(AssetCreateUrlInput)(payload);
+    const { resource } = decodeAssetCreateUrlInput(payload);
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||

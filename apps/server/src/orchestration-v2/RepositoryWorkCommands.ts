@@ -116,43 +116,43 @@ export function makeRepositoryWorkCommands({
       });
   });
 
-  const guardDelegationParent = (request: DelegatedTaskRequest, thread: OrchestrationV2AppThread) =>
-    Effect.gen(function* () {
-      if (thread.repositoryOrchestration?.retiredToThreadId !== undefined)
-        return yield* new OrchestratorDispatchError({
-          commandId: request.commandId,
-          commandType: request.type,
-          cause: `This repository root has retired. Delegate through ${thread.repositoryOrchestration.retiredToThreadId}.`,
-        });
-    });
+  const guardDelegationParent = Effect.fn("guardDelegationParent")(function* (
+    request: DelegatedTaskRequest,
+    thread: OrchestrationV2AppThread,
+  ) {
+    if (thread.repositoryOrchestration?.retiredToThreadId !== undefined)
+      return yield* new OrchestratorDispatchError({
+        commandId: request.commandId,
+        commandType: request.type,
+        cause: `This repository root has retired. Delegate through ${thread.repositoryOrchestration.retiredToThreadId}.`,
+      });
+  });
 
-  const guardScheduledMessage = (
+  const guardScheduledMessage = Effect.fn("guardScheduledMessage")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
     thread: OrchestrationV2AppThread,
-  ) =>
-    Effect.gen(function* () {
-      // Schedules resolve the repository owner before sending; a handoff can commit in between.
-      if (
-        command.scheduledTaskId !== undefined &&
-        thread.repositoryOrchestration?.retiredToThreadId !== undefined
-      )
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `This repository root has retired. Route scheduled work to ${thread.repositoryOrchestration.retiredToThreadId}.`,
-        });
-    });
+  ) {
+    // Schedules resolve the repository owner before sending; a handoff can commit in between.
+    if (
+      command.scheduledTaskId !== undefined &&
+      thread.repositoryOrchestration?.retiredToThreadId !== undefined
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `This repository root has retired. Route scheduled work to ${thread.repositoryOrchestration.retiredToThreadId}.`,
+      });
+  });
 
-  const restore = (
+  const restore = Effect.fn("restore")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "repository.work.restore" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) =>
-    Effect.gen(function* () {
-      const restored = yield* issueWorkRecovery.restore(command).pipe(mapDispatchError(command));
-      if (restored.retiringRoot !== null) yield* guardRootLifecycle(command, restored.retiringRoot);
-      for (const event of restored.events)
-        yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
-    });
+  ) {
+    const restored = yield* issueWorkRecovery.restore(command).pipe(mapDispatchError(command));
+    if (restored.retiringRoot !== null) yield* guardRootLifecycle(command, restored.retiringRoot);
+    for (const event of restored.events)
+      yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
+  });
 
   const update = Effect.fn("orchestrationV2.updateRepositoryWork")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "repository.work.update" }>,
@@ -347,150 +347,148 @@ export function makeRepositoryWorkCommands({
     }
   });
 
-  const continueWork = (
+  const continueWork = Effect.fn("continueWork")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "repository.work.continue" }>,
-  ) =>
-    Effect.gen(function* () {
-      const projection = yield* projectionStore
-        .getThreadRecords(command.threadId, [])
-        .pipe(mapDispatchError(command));
-      if (
-        projection.thread.repositoryOrchestration === undefined ||
-        projection.thread.repositoryOrchestration.retiredToThreadId !== undefined
-      )
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "This thread is not a repository orchestrator.",
-        });
-    });
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, [])
+      .pipe(mapDispatchError(command));
+    if (
+      projection.thread.repositoryOrchestration === undefined ||
+      projection.thread.repositoryOrchestration.retiredToThreadId !== undefined
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "This thread is not a repository orchestrator.",
+      });
+  });
 
-  const handoff = (
+  const handoff = Effect.fn("handoff")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "repository.work.handoff" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-  ) =>
-    Effect.gen(function* () {
-      const shell = yield* projectionStore
-        .getThread(command.threadId)
-        .pipe(mapDispatchError(command));
-      const config = shell.repositoryOrchestration;
-      if (
-        config?.handoff?.status !== "draining" ||
-        config.revision !== command.expectedRevision ||
-        config.retiredToThreadId !== undefined
-      )
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "Repository ownership or the handoff changed. Refresh before transferring.",
-        });
-      const owner = Option.isNone(issueWorkStore)
-        ? null
-        : yield* issueWorkStore.value.repositoryOwner(config).pipe(mapDispatchError(command));
-      if (owner?.rootThreadId !== command.threadId || owner.revision !== command.expectedRevision)
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "Repository ownership revision conflict during handoff.",
-        });
-      if (
-        Option.isNone(issueWorkStore) ||
-        !(yield* issueWorkStore.value
-          .subtreeDrained(command.threadId)
-          .pipe(mapDispatchError(command)))
-      )
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "Handoff is waiting for the active issue subtree and final deliveries to drain.",
-        });
-      const now = yield* DateTime.now;
-      const nextThreadId = config.handoff.nextThreadId;
-      const existing = yield* projectionStore
-        .getThreadShell(nextThreadId)
-        .pipe(mapDispatchError(command));
-      if (existing === null)
-        yield* dispatchThreadCreate(
-          {
-            type: "thread.create",
-            commandId: command.commandId,
-            threadId: nextThreadId,
-            projectId: shell.projectId,
-            title: shell.title,
-            modelSelection: config.handoff.modelSelection,
-            runtimeMode: shell.runtimeMode,
-            interactionMode: shell.interactionMode,
-            branch: shell.branch,
-            worktreePath: shell.worktreePath,
-            createdBy: "user",
-            creationSource: "server",
-          },
-          events,
-        );
-      const next = (yield* getProjectionWithPendingEvents(nextThreadId, events)).thread;
-      const adapter = yield* providerAdapters
-        .get(next.modelSelection.instanceId)
-        .pipe(mapDispatchError(command));
-      if (next.id === shell.id || !isRepositoryOrchestratorEligible(next, adapter.driver, config))
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause:
-            "Select an existing active top-level Orchestrator thread in the same repository project using Codex or Claude.",
-        });
-      const emitEvent = emit(events, command);
-      yield* emitEvent({
-        type: "thread.metadata-updated",
-        threadId: command.threadId,
-        occurredAt: now,
-        payload: {
-          ...shell,
-          repositoryOrchestration: {
-            ...config,
-            handoff: undefined,
-            retiredToThreadId: nextThreadId,
-          },
-          updatedAt: now,
-        },
+  ) {
+    const shell = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(mapDispatchError(command));
+    const config = shell.repositoryOrchestration;
+    if (
+      config?.handoff?.status !== "draining" ||
+      config.revision !== command.expectedRevision ||
+      config.retiredToThreadId !== undefined
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Repository ownership or the handoff changed. Refresh before transferring.",
       });
-      yield* emitEvent({
-        type: "thread.metadata-updated",
-        threadId: nextThreadId,
-        occurredAt: now,
-        payload: {
-          ...next,
-          role: "orchestrator",
-          repositoryOrchestration: {
-            ...config,
-            handoff: undefined,
-            paused: config.handoff.wasPaused,
-            revision: config.revision + 1,
-            launchCommandId: command.commandId,
-            handoffHistory: [
-              ...(config.handoffHistory ?? []),
-              { threadId: command.threadId, transferredAt: DateTime.formatIso(now) },
-            ],
-          },
-          updatedAt: now,
-        },
+    const owner = Option.isNone(issueWorkStore)
+      ? null
+      : yield* issueWorkStore.value.repositoryOwner(config).pipe(mapDispatchError(command));
+    if (owner?.rootThreadId !== command.threadId || owner.revision !== command.expectedRevision)
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Repository ownership revision conflict during handoff.",
       });
-      yield* dispatchMessage(
+    if (
+      Option.isNone(issueWorkStore) ||
+      !(yield* issueWorkStore.value
+        .subtreeDrained(command.threadId)
+        .pipe(mapDispatchError(command)))
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Handoff is waiting for the active issue subtree and final deliveries to drain.",
+      });
+    const now = yield* DateTime.now;
+    const nextThreadId = config.handoff.nextThreadId;
+    const existing = yield* projectionStore
+      .getThreadShell(nextThreadId)
+      .pipe(mapDispatchError(command));
+    if (existing === null)
+      yield* dispatchThreadCreate(
         {
-          type: "message.dispatch",
+          type: "thread.create",
           commandId: command.commandId,
           threadId: nextThreadId,
-          messageId: idAllocator.derive.delegatedTaskMessage({ commandId: command.commandId }),
-          text: `You now own repository orchestration for ${config.repository}. The previous root ${command.threadId} has drained; its children and history retain their original lineage.\n\nHandoff summary:\n${config.handoff.summary}\n\nServer recovery inventory:\n${command.inventory}\n\nContinue the approved repository work through the existing issue tools. Review completed attempts and pending changes before admitting successors. ${config.handoff.wasPaused ? "Repository work remains paused until the user resumes it." : "Repository admissions may resume under this root."}`,
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
+          projectId: shell.projectId,
+          title: shell.title,
+          modelSelection: config.handoff.modelSelection,
+          runtimeMode: shell.runtimeMode,
+          interactionMode: shell.interactionMode,
+          branch: shell.branch,
+          worktreePath: shell.worktreePath,
           createdBy: "user",
           creationSource: "server",
         },
         events,
-        effects,
       );
+    const next = (yield* getProjectionWithPendingEvents(nextThreadId, events)).thread;
+    const adapter = yield* providerAdapters
+      .get(next.modelSelection.instanceId)
+      .pipe(mapDispatchError(command));
+    if (next.id === shell.id || !isRepositoryOrchestratorEligible(next, adapter.driver, config))
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause:
+          "Select an existing active top-level Orchestrator thread in the same repository project using Codex or Claude.",
+      });
+    const emitEvent = emit(events, command);
+    yield* emitEvent({
+      type: "thread.metadata-updated",
+      threadId: command.threadId,
+      occurredAt: now,
+      payload: {
+        ...shell,
+        repositoryOrchestration: {
+          ...config,
+          handoff: undefined,
+          retiredToThreadId: nextThreadId,
+        },
+        updatedAt: now,
+      },
     });
+    yield* emitEvent({
+      type: "thread.metadata-updated",
+      threadId: nextThreadId,
+      occurredAt: now,
+      payload: {
+        ...next,
+        role: "orchestrator",
+        repositoryOrchestration: {
+          ...config,
+          handoff: undefined,
+          paused: config.handoff.wasPaused,
+          revision: config.revision + 1,
+          launchCommandId: command.commandId,
+          handoffHistory: [
+            ...(config.handoffHistory ?? []),
+            { threadId: command.threadId, transferredAt: DateTime.formatIso(now) },
+          ],
+        },
+        updatedAt: now,
+      },
+    });
+    yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: nextThreadId,
+        messageId: idAllocator.derive.delegatedTaskMessage({ commandId: command.commandId }),
+        text: `You now own repository orchestration for ${config.repository}. The previous root ${command.threadId} has drained; its children and history retain their original lineage.\n\nHandoff summary:\n${config.handoff.summary}\n\nServer recovery inventory:\n${command.inventory}\n\nContinue the approved repository work through the existing issue tools. Review completed attempts and pending changes before admitting successors. ${config.handoff.wasPaused ? "Repository work remains paused until the user resumes it." : "Repository admissions may resume under this root."}`,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "server",
+      },
+      events,
+      effects,
+    );
+  });
 
   return {
     guardRootLifecycle,

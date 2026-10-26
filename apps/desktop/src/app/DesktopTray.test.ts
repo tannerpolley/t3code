@@ -107,13 +107,13 @@ function makeHarness() {
       quit: Effect.sync(quit),
     } as unknown as ElectronApp.ElectronApp["Service"]),
     Layer.succeed(ElectronWindow.ElectronWindow, {
-      main: Effect.succeed(Option.some(window)),
+      main: Effect.succeedSome(window),
     } as unknown as ElectronWindow.ElectronWindow["Service"]),
     Layer.succeed(DesktopWindow.DesktopWindow, {
       activate: Effect.void,
     } as unknown as DesktopWindow.DesktopWindow["Service"]),
     Layer.succeed(DesktopClientSettings.DesktopClientSettings, {
-      get: Effect.succeed(Option.none()),
+      get: Effect.succeedNone,
       set: () => Effect.void,
     }),
     Layer.succeed(DesktopAssets.DesktopAssets, {
@@ -122,7 +122,7 @@ function makeHarness() {
         icns: Option.none(),
         png: Option.some("/icon.png"),
       }),
-      resolveResourcePath: () => Effect.succeed(Option.none()),
+      resolveResourcePath: () => Effect.succeedNone,
     }),
     DesktopState.layer,
     Logger.layer(

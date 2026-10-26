@@ -1,25 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * Live, read-only output of a thread's background shell or Claude monitor, for the output popup.
- *
- * Claude runs `run_in_background` Bash commands with output redirected to a file and reports the
- * path in the tool result ("Output is being written to: <path>"), which a subagent thread's
- * command_execution turn item stores as text. The SDK's background task messages carry ids only
- * until `task_notification.output_file` at the end.
- *
- * A Claude Monitor is a background shell too (`task_type` "local_bash") whose events are the
- * lines it prints to that same `<session tasks dir>/<taskId>.output`. The SDK never streams those
- * events (each one only wakes the agent with a `task-notification` result that names no task)
- * and the Monitor tool result names no file. A top-level Claude shell's item also keeps the
- * structured tool result, which has no path. So the live Claude session remembers the tasks
- * directory Claude last reported (a Bash notice, or any task's final `output_file`).
- *
- * Codex streams command output as `item/commandExecution/outputDelta` notifications; the Codex
- * adapter appends them to a server-owned log per command (`makeBackgroundTaskLogWriter`).
- *
- * In every case the server re-finds the file from the thread's own items or running tasks, so a
- * client can only name a task, never a path.
- */
+// Claude shell and monitor output lives in task files; Codex deltas use server-owned logs.
+// Resolve paths from the thread's own items and tasks, never from client-supplied paths.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeStringDecoder from "node:string_decoder";
@@ -533,9 +514,12 @@ const make = Effect.gen(function* () {
     };
   });
   return BackgroundTasks.of({
-    subscribeOutput: (input) =>
+    subscribeOutput: Effect.fn("BackgroundTasks.subscribeOutput")((input) =>
       subscribeBackgroundTaskOutput(input).pipe(Effect.provideContext(context)),
-    stop: (input) => stopBackgroundTask(input).pipe(Effect.provideContext(context)),
+    ),
+    stop: Effect.fn("BackgroundTasks.stop")((input) =>
+      stopBackgroundTask(input).pipe(Effect.provideContext(context)),
+    ),
     resourceUsage,
     processes,
   });

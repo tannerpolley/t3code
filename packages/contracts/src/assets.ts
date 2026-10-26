@@ -27,6 +27,7 @@ export const AssetResource = Schema.Union([
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     /** Markdown embeds permit only bounded image and video files. */
     mediaOnly: Schema.optionalKey(Schema.Boolean),
+    disposition: Schema.optionalKey(Schema.Literal("attachment")),
   }),
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),

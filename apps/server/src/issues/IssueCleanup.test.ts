@@ -12,7 +12,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Option from "effect/Option";
 import * as ServerConfig from "../config.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -128,22 +127,20 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (legacyPr = true
         }),
         Layer.mock(ProjectStore.ProjectStoreV2)({
           get: () =>
-            Effect.succeed(
-              Option.some({
-                projectId: thread.projectId,
-                title: "Repo",
-                workspaceRoot: cwd,
-                defaultModelSelection: null,
-                defaultThreadEnvMode: null,
-                autoPull: false,
-                faviconPath: null,
-                projectIcon: null,
-                scripts: [],
-                createdAt: detail.fetchedAt,
-                updatedAt: detail.fetchedAt,
-                deletedAt: null,
-              }),
-            ),
+            Effect.succeedSome({
+              projectId: thread.projectId,
+              title: "Repo",
+              workspaceRoot: cwd,
+              defaultModelSelection: null,
+              defaultThreadEnvMode: null,
+              autoPull: false,
+              faviconPath: null,
+              projectIcon: null,
+              scripts: [],
+              createdAt: detail.fetchedAt,
+              updatedAt: detail.fetchedAt,
+              deletedAt: null,
+            }),
         }),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
           getPullRequestDetail: () =>

@@ -33,7 +33,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as Schema from "effect/Schema";
@@ -451,7 +450,7 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(Option.some({ workspaceRoot: "/tmp/native-account-project" } as never)),
+            Effect.succeedSome({ workspaceRoot: "/tmp/native-account-project" } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords,

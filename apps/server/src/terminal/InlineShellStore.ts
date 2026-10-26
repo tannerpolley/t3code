@@ -170,10 +170,18 @@ export const layer = Layer.effect(
         }),
       );
     return InlineShellStore.of({
-      get: (threadId, runId) => get(threadId, runId).pipe(wrap(threadId)),
-      latest: (input) => latest(input).pipe(wrap(input.threadId)),
-      insert: (record) => insert(record).pipe(wrap(record.threadId)),
-      update: (record) => update(record).pipe(wrap(record.threadId)),
+      get: Effect.fn("InlineShellStore.get")((threadId, runId) =>
+        get(threadId, runId).pipe(wrap(threadId)),
+      ),
+      latest: Effect.fn("InlineShellStore.latest")((input) =>
+        latest(input).pipe(wrap(input.threadId)),
+      ),
+      insert: Effect.fn("InlineShellStore.insert")((record) =>
+        insert(record).pipe(wrap(record.threadId)),
+      ),
+      update: Effect.fn("InlineShellStore.update")((record) =>
+        update(record).pipe(wrap(record.threadId)),
+      ),
       recover,
       deliver,
     });
@@ -184,11 +192,11 @@ export const layer = Layer.effect(
 export const layerEmpty = Layer.succeed(
   InlineShellStore,
   InlineShellStore.of({
-    get: () => Effect.succeed(null),
-    latest: () => Effect.succeed(null),
-    insert: (record) => Effect.succeed(record),
-    update: () => Effect.succeed(true),
-    recover: () => Effect.succeed(0),
-    deliver: (input, send) => send(input.text),
+    get: Effect.fn("InlineShellStore.get")(() => Effect.succeed(null)),
+    latest: Effect.fn("InlineShellStore.latest")(() => Effect.succeed(null)),
+    insert: Effect.fn("InlineShellStore.insert")((record) => Effect.succeed(record)),
+    update: Effect.fn("InlineShellStore.update")(() => Effect.succeed(true)),
+    recover: Effect.fn("InlineShellStore.recover")(() => Effect.succeed(0)),
+    deliver: Effect.fn("InlineShellStore.deliver")((input, send) => send(input.text)),
   }),
 );

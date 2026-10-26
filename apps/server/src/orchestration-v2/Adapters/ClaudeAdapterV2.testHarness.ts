@@ -286,18 +286,17 @@ const wakeResult = makeResultFrame({
   origin: { kind: "task-notification" },
 });
 
-const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < 5000; attempt++) {
-      if (predicate()) {
-        return;
-      }
-      yield* Effect.yieldNow;
+const awaitUntil = Effect.fn("awaitUntil")(function* (predicate: () => boolean, label: string) {
+  for (let attempt = 0; attempt < 5000; attempt++) {
+    if (predicate()) {
+      return;
     }
-    return yield* Effect.die(`Timed out waiting for ${label}.`);
-  });
+    yield* Effect.yieldNow;
+  }
+  return yield* Effect.die(`Timed out waiting for ${label}.`);
+});
 
-const makeWakeHarnessWithOptions = (options?: {
+const makeWakeHarnessWithOptions = Effect.fn("makeWakeHarnessWithOptions")(function* (options?: {
   readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
   readonly interrupt?: Effect.Effect<void>;
   readonly stopTask?: (
@@ -313,219 +312,215 @@ const makeWakeHarnessWithOptions = (options?: {
   // A CLI process opened after the first streams from its own queue, so the
   // first one can exit (Queue.shutdown) and a later turn can start another.
   readonly freshQueueOnReopen?: boolean;
-}) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "t3-claude-v2-wake-",
-    });
-    const sdkMessages = yield* Queue.unbounded<SDKMessage>();
-    const rosterReceipts =
-      yield* Queue.unbounded<
-        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
-      >();
-    const processQueues: Array<Queue.Queue<SDKMessage>> = [];
-    const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
-    const offerAndWait = Effect.fnUntraced(function* (
-      message: SDKMessage,
-      offered?: Deferred.Deferred<void>,
-    ) {
-      const processed = yield* Deferred.make<void>();
-      processedMessages.set(message, processed);
-      yield* Queue.offer(sdkMessages, message);
-      if (offered !== undefined) yield* Deferred.succeed(offered, undefined);
-      yield* Deferred.await(processed);
-    });
-    const offeredMessages: Array<SDKUserMessage> = [];
-    const stoppedTaskIds: Array<string> = [];
-    const permissionModeChanges: Array<string> = [];
-    // setModel and applyFlagSettings calls on the first process, in order.
-    const liveSelectionChanges: Array<unknown> = [];
-    const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
-      [];
-    const continuationReceipts =
-      yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
-    const requestReceipts =
-      yield* Queue.unbounded<
-        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
-      >();
-    const terminalReceipts =
-      yield* Queue.unbounded<
-        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
-      >();
-    const subagentReceipts =
-      yield* Queue.unbounded<
-        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }>
-      >();
-    const systemNoticeReceipts =
-      yield* Queue.unbounded<
-        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>
-      >();
-    let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
-    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-      settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
-      environment: options?.environment ?? {},
-      attachmentsDir,
-      fileSystem,
-      path: yield* Path.Path,
-      crypto: yield* Crypto.Crypto,
-      idAllocator,
-      continuationRequests: {
-        offer: (request) =>
-          Effect.sync(() => {
-            continuationRequests.push(request);
-          }).pipe(Effect.andThen(Queue.offer(continuationReceipts, request))),
-      },
-      queryRunner: {
-        allocateSessionId: Effect.succeed(options?.nativeSessionId ?? WAKE_NATIVE_SESSION),
-        open: (input) =>
-          Effect.gen(function* () {
-            openedOptions = input.options;
-            if (options?.freshQueueOnReopen === true && processQueues.length > 0) {
-              const processMessages = yield* Queue.unbounded<SDKMessage>();
-              processQueues.push(processMessages);
-              return {
-                messages: Stream.fromQueue(processMessages),
-                offer: (message: SDKUserMessage) =>
-                  Effect.sync(() => {
-                    offeredMessages.push(message);
-                  }),
-                setModel: () => Effect.void,
-                applyFlagSettings: () => Effect.void,
-                setPermissionMode: () => Effect.void,
-                backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
-                stopTask: options?.stopTask ?? (() => Effect.void),
-                interrupt: Effect.void,
-                close: Queue.shutdown(processMessages),
-              };
-            }
-            processQueues.push(sdkMessages);
-            return {
-              messages: Stream.fromQueue(sdkMessages).pipe(
-                Stream.flatMap((message) =>
-                  Stream.make(message).pipe(
-                    // The next pull happens after runForEach finishes handling this frame.
-                    Stream.concat(
-                      Stream.fromEffect(
-                        Effect.suspend(() => {
-                          const processed = processedMessages.get(message);
-                          return processed === undefined
-                            ? Effect.void
-                            : Deferred.succeed(processed, undefined);
-                        }),
-                      ).pipe(Stream.drain),
-                    ),
-                  ),
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+    prefix: "t3-claude-v2-wake-",
+  });
+  const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+  const rosterReceipts =
+    yield* Queue.unbounded<
+      Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
+    >();
+  const processQueues: Array<Queue.Queue<SDKMessage>> = [];
+  const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
+  const offerAndWait = Effect.fnUntraced(function* (
+    message: SDKMessage,
+    offered?: Deferred.Deferred<void>,
+  ) {
+    const processed = yield* Deferred.make<void>();
+    processedMessages.set(message, processed);
+    yield* Queue.offer(sdkMessages, message);
+    if (offered !== undefined) yield* Deferred.succeed(offered, undefined);
+    yield* Deferred.await(processed);
+  });
+  const offeredMessages: Array<SDKUserMessage> = [];
+  const stoppedTaskIds: Array<string> = [];
+  const permissionModeChanges: Array<string> = [];
+  // setModel and applyFlagSettings calls on the first process, in order.
+  const liveSelectionChanges: Array<unknown> = [];
+  const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+  const continuationReceipts =
+    yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+  const requestReceipts =
+    yield* Queue.unbounded<
+      Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
+    >();
+  const terminalReceipts =
+    yield* Queue.unbounded<
+      Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
+    >();
+  const subagentReceipts =
+    yield* Queue.unbounded<
+      Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }>
+    >();
+  const systemNoticeReceipts =
+    yield* Queue.unbounded<
+      Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>
+    >();
+  let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+  const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+    instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+    settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
+    environment: options?.environment ?? {},
+    attachmentsDir,
+    fileSystem,
+    path: yield* Path.Path,
+    crypto: yield* Crypto.Crypto,
+    idAllocator,
+    continuationRequests: {
+      offer: (request) =>
+        Effect.sync(() => {
+          continuationRequests.push(request);
+        }).pipe(Effect.andThen(Queue.offer(continuationReceipts, request))),
+    },
+    queryRunner: {
+      allocateSessionId: Effect.succeed(options?.nativeSessionId ?? WAKE_NATIVE_SESSION),
+      open: Effect.fn("open")(function* (input) {
+        openedOptions = input.options;
+        if (options?.freshQueueOnReopen === true && processQueues.length > 0) {
+          const processMessages = yield* Queue.unbounded<SDKMessage>();
+          processQueues.push(processMessages);
+          return {
+            messages: Stream.fromQueue(processMessages),
+            offer: (message: SDKUserMessage) =>
+              Effect.sync(() => {
+                offeredMessages.push(message);
+              }),
+            setModel: () => Effect.void,
+            applyFlagSettings: () => Effect.void,
+            setPermissionMode: () => Effect.void,
+            backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+            stopTask: options?.stopTask ?? (() => Effect.void),
+            interrupt: Effect.void,
+            close: Queue.shutdown(processMessages),
+          };
+        }
+        processQueues.push(sdkMessages);
+        return {
+          messages: Stream.fromQueue(sdkMessages).pipe(
+            Stream.flatMap((message) =>
+              Stream.make(message).pipe(
+                // The next pull happens after runForEach finishes handling this frame.
+                Stream.concat(
+                  Stream.fromEffect(
+                    Effect.suspend(() => {
+                      const processed = processedMessages.get(message);
+                      return processed === undefined
+                        ? Effect.void
+                        : Deferred.succeed(processed, undefined);
+                    }),
+                  ).pipe(Stream.drain),
                 ),
               ),
-              offer: (message) =>
-                Effect.sync(() => {
-                  offeredMessages.push(message);
-                }),
-              setModel: (model) =>
-                Effect.sync(() => {
-                  liveSelectionChanges.push({ model });
-                }),
-              applyFlagSettings: (settings) =>
-                Effect.sync(() => {
-                  liveSelectionChanges.push(settings);
-                }),
-              setPermissionMode: (mode) =>
-                Effect.sync(() => {
-                  permissionModeChanges.push(mode);
-                }),
-              backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
-              stopTask:
-                options?.stopTask ??
-                ((taskId) => Effect.sync(() => void stoppedTaskIds.push(taskId))),
-              interrupt: options?.interrupt ?? Effect.void,
-              close: options?.close?.(sdkMessages) ?? Effect.void,
-            };
-          }),
-        forkSession: () => Effect.die("unused forkSession"),
-        subagentLaunchToolUseId: () => Effect.succeed(options?.subagentLaunchToolUseId ?? null),
-        assertComplete: Effect.void,
-      },
-    });
-    const threadId = ThreadId.make("thread-claude-wake");
-    const runtime = yield* adapter.openSession({
-      threadId,
-      providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
-      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
-    });
-    const providerThread = yield* runtime.ensureThread({
-      threadId,
-      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
-    });
-    const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-    yield* runtime.events.pipe(
-      Stream.runForEach((event) =>
-        Effect.gen(function* () {
-          events.push(event);
-          if (
-            event.type === "provider_thread.updated" &&
-            (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0
-          )
-            yield* Queue.offer(rosterReceipts, event);
-          if (event.type === "runtime_request.updated") yield* Queue.offer(requestReceipts, event);
-          if (event.type === "subagent.updated") {
-            yield* Queue.offer(subagentReceipts, event);
-          }
-          if (event.type === "turn.terminal") {
-            yield* Queue.offer(terminalReceipts, event);
-          }
-          if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") {
-            yield* Queue.offer(systemNoticeReceipts, event);
-          }
-        }),
-      ),
-      Effect.forkScoped,
-    );
-    if (runtime.hasPendingBackgroundWork === undefined) {
-      throw new Error("Claude adapter runtime must expose hasPendingBackgroundWork.");
-    }
-    const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
-    const terminalEvents = () =>
-      events.filter(
-        (
-          event,
-        ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
-          event.type === "turn.terminal",
-      );
-    return {
-      runtime,
-      providerThread,
-      threadId,
-      sdkMessages,
-      processQueues,
-      offerAndWait,
-      rosterReceipts,
-      offeredMessages,
-      // The uuid Claude echoes on the turn answering the nth offered prompt.
-      promptUuid: (index: number) => {
-        const uuid = offeredMessages[index]?.uuid;
-        if (uuid === undefined) throw new Error(`No prompt offered at index ${index}.`);
-        return uuid;
-      },
-      permissionModeChanges,
-      liveSelectionChanges,
-      stoppedTaskIds,
-      continuationRequests,
-      continuationReceipts,
-      events,
-      terminalReceipts,
-      requestReceipts,
-      subagentReceipts,
-      systemNoticeReceipts,
-      getOpenedOptions: () => openedOptions,
-      terminalEvents,
-      hasPendingBackgroundWork,
-    };
+            ),
+          ),
+          offer: (message) =>
+            Effect.sync(() => {
+              offeredMessages.push(message);
+            }),
+          setModel: (model) =>
+            Effect.sync(() => {
+              liveSelectionChanges.push({ model });
+            }),
+          applyFlagSettings: (settings) =>
+            Effect.sync(() => {
+              liveSelectionChanges.push(settings);
+            }),
+          setPermissionMode: (mode) =>
+            Effect.sync(() => {
+              permissionModeChanges.push(mode);
+            }),
+          backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+          stopTask:
+            options?.stopTask ?? ((taskId) => Effect.sync(() => void stoppedTaskIds.push(taskId))),
+          interrupt: options?.interrupt ?? Effect.void,
+          close: options?.close?.(sdkMessages) ?? Effect.void,
+        };
+      }),
+      forkSession: () => Effect.die("unused forkSession"),
+      subagentLaunchToolUseId: () => Effect.succeed(options?.subagentLaunchToolUseId ?? null),
+      assertComplete: Effect.void,
+    },
   });
+  const threadId = ThreadId.make("thread-claude-wake");
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+  });
+  const providerThread = yield* runtime.ensureThread({
+    threadId,
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+  });
+  const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+  yield* runtime.events.pipe(
+    Stream.runForEach((event) =>
+      Effect.gen(function* () {
+        events.push(event);
+        if (
+          event.type === "provider_thread.updated" &&
+          (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0
+        )
+          yield* Queue.offer(rosterReceipts, event);
+        if (event.type === "runtime_request.updated") yield* Queue.offer(requestReceipts, event);
+        if (event.type === "subagent.updated") {
+          yield* Queue.offer(subagentReceipts, event);
+        }
+        if (event.type === "turn.terminal") {
+          yield* Queue.offer(terminalReceipts, event);
+        }
+        if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") {
+          yield* Queue.offer(systemNoticeReceipts, event);
+        }
+      }),
+    ),
+    Effect.forkScoped,
+  );
+  if (runtime.hasPendingBackgroundWork === undefined) {
+    throw new Error("Claude adapter runtime must expose hasPendingBackgroundWork.");
+  }
+  const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
+  const terminalEvents = () =>
+    events.filter(
+      (
+        event,
+      ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+        event.type === "turn.terminal",
+    );
+  return {
+    runtime,
+    providerThread,
+    threadId,
+    sdkMessages,
+    processQueues,
+    offerAndWait,
+    rosterReceipts,
+    offeredMessages,
+    // The uuid Claude echoes on the turn answering the nth offered prompt.
+    promptUuid: (index: number) => {
+      const uuid = offeredMessages[index]?.uuid;
+      if (uuid === undefined) throw new Error(`No prompt offered at index ${index}.`);
+      return uuid;
+    },
+    permissionModeChanges,
+    liveSelectionChanges,
+    stoppedTaskIds,
+    continuationRequests,
+    continuationReceipts,
+    events,
+    terminalReceipts,
+    requestReceipts,
+    subagentReceipts,
+    systemNoticeReceipts,
+    getOpenedOptions: () => openedOptions,
+    terminalEvents,
+    hasPendingBackgroundWork,
+  };
+});
 
 const makeWakeHarness = makeWakeHarnessWithOptions();
 

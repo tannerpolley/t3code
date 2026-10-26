@@ -97,16 +97,14 @@ it.effect("a workflow Stop waiting on its provider leaves sibling dispatch avail
       }),
       Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
-          Effect.succeed(
-            Option.some({
-              stopTask: () =>
-                Effect.gen(function* () {
-                  yield* Deferred.succeed(providerEntered, undefined);
-                  yield* Deferred.await(releaseProvider);
-                  providerFinished = true;
-                }),
-            } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime),
-          ),
+          Effect.succeedSome({
+            stopTask: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(providerEntered, undefined);
+                yield* Deferred.await(releaseProvider);
+                providerFinished = true;
+              }),
+          } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime),
       }),
       ServerSettings.layerTest(),
       layerReceiptsTest,

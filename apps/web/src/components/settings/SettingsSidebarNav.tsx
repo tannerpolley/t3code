@@ -43,6 +43,7 @@ import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
   isSettingsOverviewVisible,
+  revealSettingsSearchTarget,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
@@ -105,9 +106,14 @@ const SETTINGS_NAV_ITEMS: ReadonlyArray<{
     icon: SETTINGS_SECTION_ICONS[to],
   }));
 
+// Attached only to the highlighted result, so it runs whenever the highlight lands on a row.
+function scrollResultIntoView(row: HTMLElement | null) {
+  row?.scrollIntoView({ block: "nearest" });
+}
+
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
-  return <Icon className="size-3.5 h-5 shrink-0 text-sidebar-muted-foreground/60" />;
+  return <Icon className="size-4 shrink-0 text-(--sidebar-icon-color)" />;
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
@@ -132,14 +138,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   if (activeResultIndex > maxResultIndex) {
     setActiveResultIndex(maxResultIndex);
   }
-
-  useEffect(() => {
-    const result = results[activeResultIndex];
-    if (!result) return;
-    document
-      .getElementById(`settings-search-result-${result.id}`)
-      ?.scrollIntoView({ block: "nearest" });
-  }, [activeResultIndex, results]);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -197,6 +195,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     clearSearch();
     setCompactSearchOpen(false);
     const targetId = item.targetId ?? item.id;
+    revealSettingsSearchTarget(targetId);
     if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
       scrollToSettingsTarget(targetId);
       return;
@@ -314,7 +313,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 aria-label={hasResults ? "Settings search results" : undefined}
               >
                 {results.map((item, index) => (
-                  <SidebarMenuItem key={item.id} role="presentation">
+                  <SidebarMenuItem
+                    key={item.id}
+                    role="presentation"
+                    ref={index === activeResultIndex ? scrollResultIntoView : undefined}
+                  >
                     <SidebarMenuButton
                       id={`settings-search-result-${item.id}`}
                       role="option"

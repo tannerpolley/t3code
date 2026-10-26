@@ -1,4 +1,3 @@
-import { cn } from "../../lib/utils";
 import {
   SidebarCaretToggle,
   SidebarThreadColumns,
@@ -22,7 +21,7 @@ import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
+import { SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -69,6 +68,8 @@ import {
   CornerDownRightIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
+  BotIcon,
+  ChevronDownIcon,
   CornerLeftUpIcon,
   GitForkIcon,
   LoaderCircleIcon,
@@ -109,7 +110,11 @@ import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { cn } from "~/lib/utils";
 import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
@@ -173,17 +178,29 @@ function ThreadLineageGroup(props: {
   return (
     <div>
       {props.label && props.rows.length > 0 ? (
-        <CollapsibleSectionHeader
-          variant="panel"
-          expanded={expanded}
+        <ThreadDetailsControl
+          aria-expanded={expanded}
           onClick={props.onToggle ?? (() => setLocalExpanded(!localExpanded))}
-          accessory={
-            failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null
-          }
         >
-          {props.label}
-          {!expanded && ` (${props.rows.length})`}
-        </CollapsibleSectionHeader>
+          <BotIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+          <span className={cn(THREAD_DETAILS_PANEL_LABEL_CLASS, "min-w-0 flex-1 truncate")}>
+            {props.label}
+          </span>
+          {failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null}
+          {expanded ? null : (
+            <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
+              {props.rows.length}
+            </span>
+          )}
+          <ChevronDownIcon
+            aria-hidden
+            className={cn(
+              THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+              "transition-transform",
+              !expanded && "rotate-180 redesign:-rotate-90",
+            )}
+          />
+        </ThreadDetailsControl>
       ) : null}
       {expanded ? (
         <ThreadLineageRowList

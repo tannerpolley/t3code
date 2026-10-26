@@ -106,10 +106,10 @@ it.effect(
       const inventory = yield* store.recoveryInventory(repository);
       assert.notInclude(JSON.stringify(inventory), report);
       assert.deepEqual(inventory, [
-        { section: "Completed attempts", detail: "#1 — completed — thread worker-0" },
-        { section: "Completed attempts", detail: "#2 — failed — thread worker-1" },
-        { section: "Completed attempts", detail: "#3 — cancelled — thread worker-2" },
-        { section: "Completed attempts", detail: "#4 — interrupted — thread worker-3" },
+        { section: "Completed attempts", detail: "#1. completed. thread worker-0" },
+        { section: "Completed attempts", detail: "#2. failed. thread worker-1" },
+        { section: "Completed attempts", detail: "#3. cancelled. thread worker-2" },
+        { section: "Completed attempts", detail: "#4. interrupted. thread worker-3" },
       ]);
     }).pipe(Effect.provide(dependencies)),
 );

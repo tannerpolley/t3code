@@ -285,9 +285,7 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const committedEvents = yield* PubSub.unbounded<ApplicationStoredEvent>();
-  // This cache only identifies obsolete snapshots; it never buffers provider data.
-  // A rollback or eviction can leave extra history, which automatic compaction removes.
-  // ponytail: cap active items at 4096; evicted items rely on periodic compaction.
+  // shortcut: Keep at most 4096 active items; evictions and rollbacks rely on periodic compaction.
   const streamingSnapshots = new Map<string, { first: number; latest: number }>();
 
   const promptHints = new Map<string, number>();
@@ -528,9 +526,7 @@ const makeEventStore = Effect.gen(function* () {
               previous.latest !== previous.first &&
               previous.latest < sequence
             ) {
-              // Partial client catch-up needs the first snapshot before later
-              // items advance its ordinal watermark. Validate the cache in SQL:
-              // rolled-back AUTOINCREMENT values can be reused by other events.
+              // Preserve the first ordinal for catch-up; validate cached sequences after rollbacks.
               yield* sql`
                 DELETE FROM orchestration_events
                 WHERE sequence = ${previous.latest}
@@ -587,7 +583,6 @@ const makeEventStore = Effect.gen(function* () {
         }),
       { concurrency: 1 },
     ).pipe(
-      sql.withTransaction,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "OrchestrationEventStore.appendAgentEvents:insert",
