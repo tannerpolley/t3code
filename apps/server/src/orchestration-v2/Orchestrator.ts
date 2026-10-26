@@ -12226,6 +12226,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     recordSubagentFollowup: (command, events) =>
       recordSubagentFollowup(command, events).pipe(mapDispatchError(command)),
     ...forkCommandHooks,
+    nextTurnItemOrdinal,
     providerAdapters,
     dispatchThreadCreate,
     dispatchMessage,

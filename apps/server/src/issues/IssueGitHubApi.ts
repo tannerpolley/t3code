@@ -44,12 +44,14 @@ const make = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
   return GitHubApi.of({
     ...rest,
-    graphql: Effect.fn("GitHubApi.graphql")(function* (input) {
+    graphql: Effect.fn("IssueGitHubApi.graphql")(function* (input) {
       const host = GitHubRequestPolicy.normalizeHost(input.host);
       return yield* policy.request(
         {
           host,
           operation: input.operation,
+          method: "POST",
+          path: new URL(GitHubRequestPolicy.gitHubApiUrls(host).graphql).pathname,
           resource: "graphql",
           allowReserve: yield* SourceControlRateLimit.Interactive,
         },

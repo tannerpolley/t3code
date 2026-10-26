@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import { IssueReadError } from "@t3tools/contracts";
+import { IssueReadError, ThreadId } from "@t3tools/contracts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
@@ -19,6 +19,10 @@ import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
 
 import * as IssueService from "./IssueService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as IssueRoadmap from "./IssueRoadmap.ts";
+import * as IssueLinks from "./IssueLinks.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 
 const HOST = "github.enterprise.test";
 const REPOSITORY = "acme/web";
@@ -191,6 +195,201 @@ const listInput = {
 };
 
 it.effect(
+  "reuses live status reads until expiry, explicit refresh, credential change or a write",
+  () =>
+    Effect.gen(function* () {
+      const status = (state = "OPEN") =>
+        httpResponse({
+          data: {
+            nodes: [
+              {
+                __typename: "Issue",
+                id: "I_7",
+                number: 7,
+                repository: { nameWithOwner: REPOSITORY },
+                state,
+                stateReason: null,
+                blockedBy: { nodes: [], pageInfo: { hasNextPage: false } },
+                closedByPullRequestsReferences: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            ],
+          },
+        });
+      let credential = "reader";
+      const harness = makeHarness({
+        credentialFingerprint: () => credential,
+        responses: [status(), status(), status(), status(), httpResponse({}), status("CLOSED")],
+      });
+      const issues = yield* service(harness);
+      let working = false;
+      let enrichments = 0;
+      const roadmapContext = yield* Layer.build(
+        IssueRoadmap.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(IssueService.IssueService, issues),
+              Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty }),
+              SqlitePersistence.layerMemory,
+              Layer.mock(IssueLinks.IssueLinks)({
+                refreshes: Stream.empty,
+                enrich: (list) =>
+                  Effect.sync(() => {
+                    enrichments++;
+                    return {
+                      ...list,
+                      issues: list.issues.map((issue) => ({
+                        ...issue,
+                        liveWork: [
+                          {
+                            threadId: ThreadId.make("builder"),
+                            inherited: false,
+                            status: working ? ("working" as const) : ("idle" as const),
+                            title: "Builder",
+                            branch: null,
+                            worktreePath: null,
+                            pullRequests: [],
+                          },
+                        ],
+                      })),
+                    };
+                  }),
+              }),
+            ),
+          ),
+        ),
+      );
+      const roadmap = yield* IssueRoadmap.IssueRoadmap.pipe(Effect.provideContext(roadmapContext));
+      const input = { issues: [{ host: HOST, nodeId: "I_7" }], refresh: false };
+      const first = yield* roadmap.statusBatch(input);
+      assert.equal(first[0]?.liveWork?.[0]?.status, "idle");
+      for (let index = 0; index < 10; index++) {
+        working = index % 2 === 0;
+        const result = yield* roadmap.statusBatch(input);
+        assert.equal(result[0]?.state, "open");
+        assert.equal(result[0]?.liveWork?.[0]?.status, working ? "working" : "idle");
+      }
+      assert.equal(harness.calls.length, 1, "local link refreshes must reuse GitHub states");
+      assert.equal(enrichments, 11);
+      yield* TestClock.adjust("59999 millis");
+      yield* issues.statusBatch(input);
+      assert.equal(harness.calls.length, 1);
+      yield* TestClock.adjust("1 millis");
+      yield* issues.statusBatch(input);
+      assert.equal(harness.calls.length, 2);
+      yield* issues.statusBatch({ ...input, refresh: true });
+      yield* issues.statusBatch(input);
+      assert.equal(harness.calls.length, 3);
+      credential = "writer";
+      yield* issues.statusBatch(input);
+      assert.equal(harness.calls.length, 4);
+      yield* issues.setState({ ...listInput, number: 7, state: "closed" });
+      credential = "reader";
+      assert.equal((yield* issues.statusBatch(input))[0]?.state, "closed");
+      assert.equal(harness.calls.length, 6);
+    }),
+);
+
+it.effect("shares an in-flight status read between concurrent link refreshes", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      responses: [httpResponse({ data: { nodes: [] } })],
+      onRequest: () =>
+        Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))),
+    });
+    const issues = yield* service(harness);
+    const input = { issues: [{ host: HOST, nodeId: "I_7" }], refresh: false };
+    const reads = yield* Effect.all(
+      Array.from({ length: 10 }, () => issues.statusBatch(input)),
+      { concurrency: "unbounded" },
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* TestClock.adjust(0);
+    assert.equal(harness.calls.length, 1);
+    yield* Deferred.succeed(release, undefined);
+    assert.deepEqual(
+      yield* Fiber.join(reads),
+      Array.from({ length: 10 }, () => []),
+    );
+  }),
+);
+
+it.effect(
+  "reuses live issue lists and details while explicit refreshes and writes stay fresh",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        responses: [
+          httpResponse([rawIssue(7)]),
+          httpResponse([]),
+          httpResponse({ data: {} }),
+          httpResponse(graphQlDetail(graphQlIssue({ state: "OPEN" }))),
+          httpResponse({ data: {} }),
+          httpResponse([rawIssue(8)]),
+          httpResponse([]),
+          httpResponse({ data: {} }),
+          httpResponse(graphQlDetail(graphQlIssue({ title: "Updated" }))),
+          httpResponse({ data: {} }),
+          httpResponse({}),
+          httpResponse([rawIssue(8, { state: "closed" })]),
+          httpResponse([]),
+          httpResponse({ data: {} }),
+          httpResponse(graphQlDetail(graphQlIssue({ title: "After write" }))),
+          httpResponse({ data: {} }),
+        ],
+      });
+      const issues = yield* service(harness);
+      const list = { ...listInput, refresh: false };
+      const detail = { ...list, number: 7 };
+      const firstList = yield* issues.list(list);
+      const firstDetail = yield* issues.detail(detail);
+      for (let index = 0; index < 10; index++) {
+        assert.deepEqual(yield* issues.list(list), firstList);
+        assert.deepEqual(yield* issues.detail(detail), firstDetail);
+      }
+      assert.equal(harness.calls.length, 5);
+      assert.equal((yield* issues.list({ ...list, refresh: true })).issues[0]?.number, 8);
+      assert.equal((yield* issues.detail({ ...detail, refresh: true })).issue.title, "Updated");
+      yield* issues.list(list);
+      yield* issues.detail(detail);
+      assert.equal(harness.calls.length, 10);
+      yield* issues.setState({ ...listInput, number: 7, state: "closed" });
+      assert.equal((yield* issues.list(list)).issues[0]?.state, "closed");
+      assert.equal((yield* issues.detail(detail)).issue.title, "After write");
+      assert.equal(harness.calls.length, 16);
+    }),
+);
+
+it.effect("revalidates live lists once the live interval expires", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(7)]),
+        httpResponse([]),
+        httpResponse({ data: {} }),
+        httpResponse([rawIssue(8)]),
+        httpResponse([]),
+        httpResponse({ data: {} }),
+      ],
+    });
+    const issues = yield* service(harness);
+    const input = { ...listInput, refresh: false };
+    const first = yield* issues.list(input);
+    yield* TestClock.adjust("1 minute");
+    const changed = yield* issues.refreshes.pipe(
+      Stream.filter((revision) => revision > 0),
+      Stream.runHead,
+      Effect.forkChild,
+    );
+    assert.deepEqual(yield* issues.list(input), first);
+    yield* Fiber.join(changed);
+    assert.equal((yield* issues.list(input)).issues[0]?.number, 8);
+    assert.equal(harness.calls.length, 6);
+  }),
+);
+
+it.effect(
   "batches sidebar status reads, preserving accessible nodes and omitting incomplete ones",
   () =>
     Effect.gen(function* () {
@@ -252,7 +451,8 @@ it.effect(
         host: HOST,
         nodeId: `I_${index}`,
       }));
-      const result = yield* (yield* service(harness)).statusBatch({ issues: [...refs, refs[0]!] });
+      const issues = yield* service(harness);
+      const result = yield* issues.statusBatch({ issues: [...refs, refs[0]!] });
       assert.deepEqual(result, [
         {
           host: HOST,
@@ -290,6 +490,13 @@ it.effect(
           ],
         },
       ]);
+      assert.deepEqual(
+        yield* issues.statusBatch({
+          issues: refs.toReversed().map((ref) => ({ ...ref, host: ref.host.toUpperCase() })),
+          refresh: false,
+        }),
+        result,
+      );
       const decodeRequest = Schema.decodeEffect(
         Schema.fromJsonString(
           Schema.Struct({
@@ -755,9 +962,9 @@ it.effect.each([
     }),
 );
 
-it.effect(
-  "waits for post-mutation pages and discards an older in-flight refresh across credentials",
-  () =>
+it.effect.each(["write", "explicit refresh"] as const)(
+  "waits for fresh pages after %s and discards an older in-flight refresh across credentials",
+  (change) =>
     Effect.gen(function* () {
       const oldStarted = yield* Deferred.make<void>();
       const releaseOld = yield* Deferred.make<void>();
@@ -774,7 +981,7 @@ it.effect(
           httpResponse([rawIssue(7)], { etag: '"open"' }),
           httpResponse([]),
           httpResponse({ data: {} }),
-          httpResponse({}),
+          ...(change === "write" ? [httpResponse({})] : []),
           httpResponse([rawIssue(7, { state: "closed" })], { etag: '"closed"' }),
           httpResponse([]),
           httpResponse({ data: {} }),
@@ -811,9 +1018,11 @@ it.effect(
       assert.deepEqual(yield* issues.list(input), first);
       yield* Deferred.await(oldStarted);
       credential = "writer";
-      yield* issues.setState({ ...listInput, number: 7, state: "closed" });
+      if (change === "write") yield* issues.setState({ ...listInput, number: 7, state: "closed" });
       credential = "reader";
-      const afterClose = yield* issues.list(input).pipe(Effect.forkChild);
+      const afterClose = yield* issues
+        .list({ ...input, ...(change === "explicit refresh" ? { refresh: true } : {}) })
+        .pipe(Effect.forkChild);
       yield* TestClock.adjust(0);
       assert.isUndefined(afterClose.pollUnsafe(), "a post-mutation list must wait for fresh pages");
       yield* Deferred.await(freshStarted);
@@ -1880,14 +2089,31 @@ it.effect.each([
         assert.equal(error.retryAt, now + 10_000);
       }
       assert.deepEqual(harness.invalidatedHosts, status === 401 ? [HOST] : []);
-      const backoff = { provider: "github", host: HOST, lease: 0, retryAt: now + 10_000 };
+      const backoff = {
+        provider: "github",
+        host: HOST,
+        lease: 0,
+        retryAt: now + 10_000,
+        response: {
+          operation: "fixture",
+          method: "POST",
+          path: "/api/graphql",
+          status,
+          headers: { "retry-after": "10" },
+        },
+      };
       assert.deepEqual(harness.rateLimitRecords, status === 429 ? [backoff] : []);
 
       const issues = yield* IssueService.make();
       const issueError = yield* issues.detail({ ...listInput, number: 7 }).pipe(Effect.flip);
       assert.equal(issueError.code, code);
       assert.deepEqual(harness.invalidatedHosts, status === 401 ? [HOST, HOST] : []);
-      assert.deepEqual(harness.rateLimitRecords, status === 429 ? [backoff, backoff] : []);
+      assert.deepEqual(
+        harness.rateLimitRecords,
+        status === 429
+          ? [backoff, { ...backoff, response: { ...backoff.response, operation: "issues.detail" } }]
+          : [],
+      );
       assert.equal(harness.calls.length, 2);
     }).pipe(Effect.provide(harness.layer));
   },

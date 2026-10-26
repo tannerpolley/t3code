@@ -7,6 +7,7 @@ import {
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
   WS_METHODS,
+  type IssueStatusBatchInput,
   type IssueDetailInput,
   type IssueListInput,
   type IssueListResult,
@@ -346,6 +347,7 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
     Effect.gen(function* () {
       const environmentId = EnvironmentId.make("local");
       const reads: string[] = [];
+      const refreshModes: boolean[] = [];
       const linkChanges = yield* SubscriptionRef.make(0);
       const turnFinished = yield* SubscriptionRef.make(0);
       const linkDetailRead = yield* Deferred.make<void>();
@@ -360,14 +362,16 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
       const client = {
         [WS_METHODS.issuesSubscribeLinkRefreshes]: () => SubscriptionRef.changes(linkChanges),
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => SubscriptionRef.changes(turnFinished),
-        [WS_METHODS.issuesDetail]: () =>
+        [WS_METHODS.issuesDetail]: (input: IssueDetailInput) =>
           Effect.gen(function* () {
+            refreshModes.push(input.refresh!);
             if (++detailReads === 2) yield* Deferred.succeed(linkDetailRead, undefined);
             return {} as IssueDetailResult;
           }),
         [WS_METHODS.issuesList]: (input: IssueListInput) =>
           Effect.gen(function* () {
             reads.push(input.roadmap ? "roadmap" : input.repository);
+            refreshModes.push(input.refresh!);
             if (reads.length === 6) yield* Deferred.succeed(secondRead, undefined);
             return {
               repository: { host: input.host, repository: input.repository },
@@ -455,6 +459,14 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
         "owner/repo",
         "owner/live",
       ]);
+      expect(refreshModes).toEqual(Array.from({ length: 8 }, () => false));
+      for (const atom of lists) {
+        registry.refresh(atom);
+        yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+      }
+      registry.refresh(detail);
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+      expect(refreshModes.slice(8)).toEqual([true, true, true, true]);
     }),
   ),
 );
@@ -466,8 +478,10 @@ it.effect("coalesces repository consumers and refreshes once on a link change", 
       const linkChanges = yield* SubscriptionRef.make(0);
       const started = yield* Deferred.make<void>();
       const refreshed = yield* Deferred.make<void>();
+      const batchRefreshed = yield* Deferred.make<void>();
       let listReads = 0;
       let batchReads = 0;
+      const batchRefreshModes: boolean[] = [];
       const response = yield* Deferred.make<{}>();
       let reads = 0;
       const target = new PrimaryConnectionTarget({
@@ -482,9 +496,11 @@ it.effect("coalesces repository consumers and refreshes once on a link change", 
             listReads++;
             return {} as IssueListResult;
           }),
-        [WS_METHODS.issuesStatusBatch]: () =>
-          Effect.sync(() => {
+        [WS_METHODS.issuesStatusBatch]: (input: IssueStatusBatchInput) =>
+          Effect.gen(function* () {
             batchReads++;
+            batchRefreshModes.push(input.refresh!);
+            if (batchReads === 2) yield* Deferred.succeed(batchRefreshed, undefined);
             return [];
           }),
         [WS_METHODS.issuesSubscribeLinkRefreshes]: () => SubscriptionRef.changes(linkChanges),
@@ -564,9 +580,18 @@ it.effect("coalesces repository consumers and refreshes once on a link change", 
       expect(batchReads).toBe(1);
       yield* SubscriptionRef.set(linkChanges, 1);
       yield* Deferred.await(refreshed);
+      yield* Deferred.await(batchRefreshed);
       for (const atom of atoms)
         yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
       expect(reads).toBe(2);
+      expect(batchRefreshModes).toEqual([false, false]);
+      const statuses = queries.statusBatch({
+        environmentId,
+        input: { issues: [secondIssue, firstIssue] },
+      });
+      registry.refresh(statuses);
+      yield* AtomRegistry.getResult(registry, statuses, { suspendOnWaiting: true });
+      expect(batchRefreshModes).toEqual([false, false, true]);
     }),
   ),
 );

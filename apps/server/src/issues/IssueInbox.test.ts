@@ -1,5 +1,10 @@
 import { assert, it } from "@effect/vitest";
-import { ProjectId, ThreadId, type OrchestrationV2ServerCommand } from "@t3tools/contracts";
+import {
+  IssueReadError,
+  ProjectId,
+  ThreadId,
+  type OrchestrationV2ServerCommand,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -80,6 +85,7 @@ interface Request {
  * small pages and ETags.
  */
 function fakeGitHub(pageSize = 2) {
+  let identityError: IssueReadError | null = null;
   const requests: Request[] = [];
   const identityReads: Array<{ host: string; repository: string }> = [];
   const data = {
@@ -92,9 +98,11 @@ function fakeGitHub(pageSize = 2) {
     String(right[key]).localeCompare(String(left[key]));
   const service = Layer.mock(IssueService.IssueService)({
     repositoryIdentity: (input) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         identityReads.push(input);
-        return { ...input, repositoryId: input.repository };
+        return identityError === null
+          ? Effect.succeed({ ...input, repositoryId: input.repository })
+          : Effect.fail(identityError);
       }),
     repositoryRest: (input) =>
       Effect.sync(() => {
@@ -141,7 +149,15 @@ function fakeGitHub(pageSize = 2) {
           : { status: 200, body, etag, nextPage: page * pageSize < list.length ? page + 1 : null };
       }),
   });
-  return { requests, identityReads, data, service };
+  return {
+    requests,
+    identityReads,
+    data,
+    service,
+    setIdentityError: (error: IssueReadError | null) => {
+      identityError = error;
+    },
+  };
 }
 
 function fakeThreads(onDispatch: () => Effect.Effect<void> = () => Effect.void) {
@@ -207,55 +223,123 @@ const setup = (github = fakeGitHub(), threads = fakeThreads()) =>
     return { inbox, github, threads };
   });
 
-const setupDiscovery = Effect.gen(function* () {
-  const github = fakeGitHub();
-  const threads = fakeThreads();
-  let repository: string | null = "acme/discovery";
-  let present = true;
-  const inbox = yield* IssueInbox.make.pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        github.service,
-        threads.service,
-        Layer.mock(ProjectService.ProjectService)({
-          listShells: () =>
-            Effect.sync(() =>
-              !present
-                ? []
-                : [
-                    {
-                      id: ProjectId.make("discovery"),
-                      repositoryIdentity:
-                        repository === null
-                          ? null
-                          : {
-                              provider: "github",
-                              canonicalKey: `github.com/${repository}`,
-                              displayName: repository,
-                              locator: {
-                                source: "git-remote",
-                                remoteName: "origin",
-                                remoteUrl: "git@github.com:x",
-                              },
-                            },
-                    } as never,
-                  ],
-            ),
-        }),
-        Layer.mock(IssueWorkService.IssueWorkService)({
-          repositoryStatus: () => Effect.succeed({ rootThreadId: null } as never),
-        }),
+const setupDiscovery = (github = fakeGitHub(), count = 1) =>
+  Effect.gen(function* () {
+    const threads = fakeThreads();
+    let repository: string | null = "acme/discovery";
+    let present = true;
+    const inbox = yield* IssueInbox.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          github.service,
+          threads.service,
+          Layer.mock(ProjectService.ProjectService)({
+            listShells: () =>
+              Effect.sync(() =>
+                !present
+                  ? []
+                  : Array.from(
+                      { length: count },
+                      (_, index) =>
+                        ({
+                          id: ProjectId.make(`discovery-${index}`),
+                          repositoryIdentity:
+                            repository === null
+                              ? null
+                              : {
+                                  provider: "github",
+                                  canonicalKey: `github.com/${repository}-${index}`,
+                                  displayName: count === 1 ? repository : `${repository}-${index}`,
+                                  locator: {
+                                    source: "git-remote",
+                                    remoteName: "origin",
+                                    remoteUrl: "git@github.com:x",
+                                  },
+                                },
+                        }) as never,
+                    ),
+              ),
+          }),
+          Layer.mock(IssueWorkService.IssueWorkService)({
+            repositoryStatus: () => Effect.succeed({ rootThreadId: null } as never),
+          }),
+        ),
       ),
-    ),
-  );
-  yield* inbox.pollDue;
-  return {
-    inbox,
-    github,
-    setRepository: (value: string | null) => void (repository = value),
-    setPresent: (value: boolean) => void (present = value),
-  };
-});
+    );
+    yield* inbox.pollDue;
+    return {
+      inbox,
+      github,
+      setRepository: (value: string | null) => void (repository = value),
+      setPresent: (value: boolean) => void (present = value),
+    };
+  });
+
+it.effect("defers failed discovery through the pause and staggers retries", () =>
+  Effect.gen(function* () {
+    const github = fakeGitHub();
+    github.setIdentityError(
+      new IssueReadError({
+        operation: "detail",
+        code: "rate-limited",
+        message: "Paused",
+        retryAt: 60_000,
+      }),
+    );
+    const { inbox } = yield* setupDiscovery(github, 2);
+    assert.equal(github.identityReads.length, 2);
+    for (let tick = 0; tick < 3; tick++) {
+      yield* TestClock.adjust("5 seconds");
+      yield* inbox.pollDue;
+      assert.equal(github.identityReads.length, 2);
+    }
+    github.setIdentityError(null);
+    yield* TestClock.setTime(59_999);
+    yield* inbox.pollDue;
+    assert.equal(github.identityReads.length, 2);
+    yield* TestClock.adjust("1 millis");
+    yield* inbox.pollDue;
+    assert.equal(github.identityReads.length, 3);
+    yield* TestClock.adjust("5 seconds");
+    yield* inbox.pollDue;
+    assert.equal(github.identityReads.length, 4);
+    yield* inbox.pollDue;
+    assert.equal(github.identityReads.length, 4);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "backs off discovery without a retry deadline and invalidates it on identity changes",
+  () =>
+    Effect.gen(function* () {
+      const github = fakeGitHub();
+      github.setIdentityError(
+        new IssueReadError({
+          operation: "detail",
+          code: "inaccessible",
+          message: "Unavailable",
+        }),
+      );
+      const { inbox, setRepository, setPresent } = yield* setupDiscovery(github);
+      for (let tick = 0; tick < 3; tick++) {
+        yield* TestClock.adjust("5 seconds");
+        yield* inbox.pollDue;
+        assert.equal(github.identityReads.length, 1);
+      }
+      yield* TestClock.setTime(15 * 60_000);
+      yield* inbox.pollDue;
+      assert.equal(github.identityReads.length, 2);
+      setRepository("acme/renamed");
+      yield* inbox.pollDue;
+      assert.equal(github.identityReads.length, 3);
+      setPresent(false);
+      yield* inbox.pollDue;
+      setPresent(true);
+      github.setIdentityError(null);
+      yield* inbox.pollDue;
+      assert.equal(github.identityReads.length, 4);
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
 
 it.effect("polls registered repositories every five minutes", () =>
   Effect.gen(function* () {
@@ -280,7 +364,7 @@ it.effect("polls registered repositories every five minutes", () =>
 
 it.effect("polls discovery-only repositories every fifteen minutes", () =>
   Effect.gen(function* () {
-    const { inbox, github } = yield* setupDiscovery;
+    const { inbox, github } = yield* setupDiscovery();
     const polls = () =>
       github.requests.filter((request) => request.path.startsWith("issues/events")).length;
     assert.equal(polls(), 1);
@@ -302,7 +386,7 @@ it.effect(
   "reuses discovery identity across polls until the project's repository identity changes",
   () =>
     Effect.gen(function* () {
-      const { inbox, github, setRepository, setPresent } = yield* setupDiscovery;
+      const { inbox, github, setRepository, setPresent } = yield* setupDiscovery();
       for (let pass = 0; pass < 3; pass++) {
         yield* TestClock.adjust("15 minutes");
         yield* inbox.pollDue;

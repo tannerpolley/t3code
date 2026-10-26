@@ -2,12 +2,14 @@ import {
   CommandId,
   isRepositoryOrchestratorEligible,
   MessageId,
+  TurnItemId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
   type ThreadId,
+  type ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -24,6 +26,9 @@ import {
 } from "../issues/IssueEligibility.ts";
 
 interface RepositoryWorkCommandHooks extends ForkCommandHooks {
+  readonly nextTurnItemOrdinal: (
+    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems">,
+  ) => Effect.Effect<number, OrchestratorProjectionError>;
   readonly providerAdapters: ProviderAdapterRegistryV2["Service"];
   readonly dispatchThreadCreate: (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
@@ -58,6 +63,7 @@ export function makeRepositoryWorkCommands({
   dispatchMessage,
   recordSubagentFollowup,
   getProjectionWithPendingEvents,
+  nextTurnItemOrdinal,
 }: RepositoryWorkCommandHooks) {
   const guardRootLifecycle = Effect.fn("orchestrationV2.guardRepositoryRootLifecycle")(function* (
     command: Extract<
@@ -148,7 +154,7 @@ export function makeRepositoryWorkCommands({
       yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
   });
 
-  const update = Effect.fn("update")(function* (
+  const update = Effect.fn("orchestrationV2.updateRepositoryWork")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "repository.work.update" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
@@ -204,6 +210,71 @@ export function makeRepositoryWorkCommands({
         updatedAt: now,
       },
     });
+    // Notice emission is part of the repository update's command plan and span.
+    const notify = Effect.fnUntraced(function* (
+      issue: ThreadLinkedIssue,
+      reason: string,
+      resumed = false,
+    ) {
+      if (!isAutomaticIssueSuspension(reason)) {
+        yield* Ref.update(effects, (pending) => [
+          ...pending,
+          {
+            id: `effect:${command.commandId}:issue-decision:${issue.id}`,
+            commandId: command.commandId,
+            threadId: command.threadId,
+            request: {
+              type: "issue.suspension.notify",
+              projectId: prior.projectId,
+              issue,
+              reason,
+            },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+        return;
+      }
+      const id = TurnItemId.make(`issue-suspension:${command.threadId}:${issue.id}`);
+      const existing = yield* projectionStore
+        .getTurnItem({ threadId: command.threadId, itemId: id })
+        .pipe(mapDispatchError(command));
+      const pendingItems = (yield* Ref.get(events)).flatMap((event) =>
+        event.type === "turn-item.updated" && event.threadId === command.threadId
+          ? [event.payload]
+          : [],
+      );
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: {
+          id,
+          type: "system_notice",
+          threadId: command.threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal:
+            existing?.ordinal ??
+            (yield* nextTurnItemOrdinal({ thread: shell, turnItems: pendingItems })),
+          status: "completed",
+          title: `Issue #${issue.number} ${resumed ? "resumed" : "paused"}`,
+          message: resumed
+            ? reason === openBlockerSuspensionReason
+              ? `Issue #${issue.number} resumed: its GitHub blockers are closed.`
+              : `Issue #${issue.number} resumed: its GitHub relationships are readable again.`
+            : `Issue #${issue.number} paused: ${reason} Its workspace, link and results are retained. ${reason === openBlockerSuspensionReason ? "It resumes automatically when its GitHub blockers close; no user decision is needed." : "It resumes automatically once GitHub relationships are readable and the issue is eligible; no user decision is needed."}`,
+          startedAt: existing?.startedAt ?? now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+    });
     const changedSuspensions = command.orchestration.suspendedIssues.filter(
       (entry) =>
         !prior.suspendedIssues.some((old) => old.id === entry.id && old.reason === entry.reason),
@@ -238,20 +309,7 @@ export function makeRepositoryWorkCommands({
             } satisfies PendingOrchestrationEffectV2,
           ]);
         }
-        yield* Ref.update(effects, (pending) => [
-          ...pending,
-          {
-            id: `effect:${command.commandId}:issue-decision:${suspension.id}`,
-            commandId: command.commandId,
-            threadId: command.threadId,
-            request: {
-              type: "issue.suspension.notify",
-              projectId: prior.projectId,
-              issue: owner.linkedIssue!,
-              reason: suspension.reason,
-            },
-          } satisfies PendingOrchestrationEffectV2,
-        ]);
+        yield* notify(owner.linkedIssue, suspension.reason);
       }
       const owner = workers.find((worker) => worker?.linkedIssue?.id === resumedIssueId);
       if (resumedIssueId !== undefined && owner?.linkedIssue !== undefined) {
@@ -283,22 +341,8 @@ export function makeRepositoryWorkCommands({
           // The committed suspension still denies admission; this turn queues atomically with its removal.
           yield* dispatchMessage(message, events, effects);
           yield* recordSubagentFollowup(message, events);
-          yield* Ref.update(effects, (pending) => [
-            ...pending,
-            {
-              id: `effect:${command.commandId}:issue-resumed:${resumedIssueId}`,
-              commandId: command.commandId,
-              threadId: command.threadId,
-              request: {
-                type: "issue.suspension.notify",
-                projectId: prior.projectId,
-                issue: owner.linkedIssue!,
-                reason: resumeReason!,
-                resumed: true,
-              },
-            } satisfies PendingOrchestrationEffectV2,
-          ]);
         }
+        yield* notify(owner.linkedIssue, resumeReason!, true);
       }
     }
   });

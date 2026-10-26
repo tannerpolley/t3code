@@ -1,3 +1,5 @@
+import * as Clock from "effect/Clock";
+import * as Exit from "effect/Exit";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -13,6 +15,7 @@ import * as Schema from "effect/Schema";
 
 import {
   IsoDateTime,
+  LIVE_ISSUE_REFRESH_MS,
   IssueMilestone,
   IssueListResult,
   IssueReadError,
@@ -928,6 +931,29 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       ).pipe(Effect.catchTags({ ExceededCapacityError: () => Effect.sync(makePageCaches) })),
   );
 
+  const makeLiveReadCache = <A>() => {
+    const reads = new Map<string, Effect.Effect<A, IssueReadError>>();
+    return Effect.fn("IssueService.liveRead")(function* (
+      key: string,
+      read: Effect.Effect<A, IssueReadError>,
+      refresh: boolean | undefined,
+    ) {
+      let cached = refresh === false ? reads.get(key) : undefined;
+      if (cached === undefined) {
+        cached = yield* Effect.cachedWithTTL(read, (exit) =>
+          Exit.isSuccess(exit) ? LIVE_ISSUE_REFRESH_MS : 0,
+        );
+        reads.delete(key);
+        reads.set(key, cached);
+        if (reads.size > 256) reads.delete(reads.keys().next().value!);
+      }
+      return yield* cached;
+    });
+  };
+  const liveStatuses =
+    makeLiveReadCache<ReadonlyArray<IssueStatusBatchResult[number] & IssueRef>>();
+  const liveDetails = makeLiveReadCache<IssueDetailResultType>();
+
   const resolveScope = Effect.fn("IssueService.resolveScope")(function* (
     operation: IssueOperation,
     input: { readonly host: string; readonly repository: string },
@@ -1093,7 +1119,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       const result: Array<IssueStatusBatchResult[number] & IssueRef> = [];
       for (const [host, nodeIds] of byHost) {
         yield* githubPullRequests
-          .withVerifiedCredential({ cwd: homeDirectory, host }, () =>
+          .withVerifiedCredential({ cwd: homeDirectory, host }, (identity) =>
             Effect.gen(function* () {
               const statuses: typeof result = [];
               const ids = [...nodeIds];
@@ -1154,7 +1180,18 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 }
               }
               return statuses;
-            }),
+            }).pipe((read) =>
+              liveStatuses(
+                JSON.stringify([
+                  host,
+                  identity.credentialFingerprint,
+                  [...nodeIds].sort(),
+                  [...repositoryGenerations],
+                ]),
+                read,
+                input.refresh,
+              ),
+            ),
           )
           .pipe(
             Effect.tap((statuses) => Effect.sync(() => result.push(...statuses))),
@@ -1578,6 +1615,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               );
             }
             const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
+            if (input.refresh === true) advanceRepositoryGeneration(scope);
             const generation = repositoryGeneration(scope);
             const issuePage = cursor === null ? 1 : cursor.issuePage;
             const milestonePage = cursor === null ? 1 : cursor.milestonePage;
@@ -1685,6 +1723,13 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               cachedMetadata,
               cachedIssues?.fetchedAt ?? cachedMilestones?.fetchedAt,
             );
+            if (
+              input.refresh === false &&
+              (yield* Clock.currentTimeMillis) -
+                DateTime.toEpochMillis(DateTime.makeUnsafe(cached.fetchedAt)) <
+                LIVE_ISSUE_REFRESH_MS
+            )
+              return cached;
             const refreshKey = `${generation}:${state}:${issuePage}:${milestonePage}:${mode}`;
             if (!pages.refreshing.has(refreshKey)) {
               pages.refreshing.add(refreshKey);
@@ -1797,7 +1842,21 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 })),
                 linkedPullRequests: linkedPullRequests(raw),
               } satisfies IssueDetailResultType;
-            }),
+            }).pipe((read) =>
+              liveDetails(
+                JSON.stringify([
+                  scope.host,
+                  scope.repository,
+                  input.number,
+                  input.expectedAccountId,
+                  identity.accountId,
+                  identity.credentialFingerprint,
+                  repositoryGeneration(scope),
+                ]),
+                read,
+                input.refresh,
+              ),
+            ),
         )
         .pipe(
           Effect.mapError((error) =>

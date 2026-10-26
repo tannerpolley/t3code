@@ -63,6 +63,8 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
             {
               host,
               operation: target.operation,
+              method: "POST",
+              path: new URL(GitHubRequestPolicy.gitHubApiUrls(host).graphql).pathname,
               resource: "graphql",
               allowReserve: target.allowReserve ?? (yield* SourceControlRateLimit.Interactive),
             },

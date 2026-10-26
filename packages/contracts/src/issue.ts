@@ -6,6 +6,9 @@ import { ThreadLinkedIssue } from "./threadIssue.ts";
 import { PullRequestState } from "./pullRequest.ts";
 import { ThreadRole } from "./threadRole.ts";
 
+/** Maximum age of GitHub data reused by automatic issue reads. */
+export const LIVE_ISSUE_REFRESH_MS = 60_000;
+
 const IssueNumber = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
 );
@@ -154,7 +157,13 @@ export const IssuePullRequestStatus = Schema.Struct({
 });
 export type IssuePullRequestStatus = typeof IssuePullRequestStatus.Type;
 
+const IssueReadOptions = {
+  /** False permits reuse for live updates; omitted or true requests a fresh read. */
+  refresh: Schema.optional(Schema.Boolean),
+};
+
 export const IssueStatusBatchInput = Schema.Struct({
+  ...IssueReadOptions,
   issues: Schema.Array(
     Schema.Struct({
       host: ThreadLinkedIssue.fields.host,
@@ -183,6 +192,7 @@ export const IssueListState = Schema.Literals(["open", "all"]);
 export type IssueListState = typeof IssueListState.Type;
 
 export const IssueListInput = Schema.Struct({
+  ...IssueReadOptions,
   ...IssueRepositoryRef.fields,
   state: Schema.optional(IssueListState),
   roadmap: Schema.optional(Schema.Boolean),
@@ -228,6 +238,7 @@ export const IssueRepositoriesResult = Schema.Struct({
 export type IssueRepositoriesResult = typeof IssueRepositoriesResult.Type;
 
 export const IssueDetailInput = Schema.Struct({
+  ...IssueReadOptions,
   ...IssueRef.fields,
   expectedAccountId: Schema.optional(TrimmedNonEmptyString),
 });
