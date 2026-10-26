@@ -28,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { afterAll, assert, describe, it, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -702,6 +703,112 @@ describe("BackgroundTasks", () => {
       ),
     );
   });
+
+  effectIt.effect(
+    "keeps process lookup stages under each request, including cached sample waits",
+    () => {
+      const spans: Array<Tracer.Span> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const parentName = (span: Tracer.Span) =>
+        spans.find((parent) => parent.spanId === Option.getOrNull(span.parent)?.spanId)?.name;
+      let samples = 0;
+      const telemetry = Layer.mock(ResourceTelemetry.ResourceTelemetry)({
+        refresh: Effect.sync(() => {
+          samples += 1;
+          return {
+            health: { native: { status: "healthy" } },
+            processes: [],
+          } as never;
+        }).pipe(Effect.withSpan("test.telemetry.refresh")),
+      });
+      const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: { lineage: { parentThreadId: null }, activeProviderThreadId: null },
+            providerThreads: [
+              {
+                id: "provider-thread",
+                pendingBackgroundTasks: [{ taskId: "trace-task", kind: "command" }],
+              },
+            ],
+            turnItems: [],
+          } as never),
+      });
+      const tracedLayer = Layer.unwrap(
+        Layer.build(
+          backgroundTasksLayer.pipe(
+            Layer.provideMerge(Layer.mergeAll(dependencies, telemetry, threads)),
+          ),
+        ).pipe(Effect.map(Layer.succeedContext), Effect.withSpan("test.startup")),
+      );
+      return Effect.gen(function* () {
+        const tasks = yield* BackgroundTasks;
+        const threadId = ThreadId.make("thread-trace");
+        yield* insertItem(
+          "trace-task",
+          threadId,
+          JSON.stringify({
+            type: "command_execution",
+            input: "make all",
+            nativeItemRef: { nativeId: "trace-task" },
+          }),
+        );
+        const read = tasks
+          .processes({ threadId })
+          .pipe(Effect.withSpan("ws.rpc.server.getThreadProcesses"), Effect.withTracer(tracer));
+        const first = yield* read;
+        assert.deepEqual(yield* read, first);
+        assert.deepEqual(first, {
+          commands: [],
+          runningTaskIds: ["trace-task"],
+          processGroups: [],
+          hiddenProcessGroupCount: 0,
+          usage: { cpuPercent: 0, residentBytes: 0 },
+        });
+        assert.equal(samples, 1);
+        const lookups = spans.filter((span) => span.name === "BackgroundTasks.processes");
+        assert.equal(lookups.length, 2);
+        for (const lookup of lookups) {
+          assert.equal(parentName(lookup), "ws.rpc.server.getThreadProcesses");
+          const children = spans.filter(
+            (span) => Option.getOrNull(span.parent)?.spanId === lookup.spanId,
+          );
+          assert.sameMembers(
+            children.map((span) => span.name),
+            [
+              "orchestration.readRunningThreadWork",
+              "BackgroundTasks.sample",
+              "orchestration.withTaskCommands",
+              "BackgroundTasks.groupSpawnedProcesses",
+            ],
+          );
+          assert.isTrue(children.every((span) => span.traceId === lookup.traceId));
+        }
+        const refresh = spans.find((span) => span.name === "test.telemetry.refresh");
+        assert.isDefined(refresh);
+        assert.equal(parentName(refresh!), "BackgroundTasks.sampleProcesses");
+        const samplesTaken = spans.filter(
+          (span) => span.name === "BackgroundTasks.sampleProcesses",
+        );
+        assert.equal(samplesTaken.length, 1);
+        assert.equal(parentName(samplesTaken[0]!), "BackgroundTasks.sample");
+        assert.equal(samplesTaken[0]!.traceId, lookups[0]!.traceId);
+        const commandLookups = spans.filter(
+          (span) => span.name === "orchestration.findBackgroundTaskCommand",
+        );
+        assert.equal(commandLookups.length, 2);
+        assert.isTrue(
+          commandLookups.every((span) => parentName(span) === "orchestration.withTaskCommands"),
+        );
+      }).pipe(Effect.provide(tracedLayer));
+    },
+  );
 
   effectIt.effect(
     "reads a Claude task's file or a Codex task's log, and only the thread's own tasks",
