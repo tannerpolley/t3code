@@ -139,6 +139,8 @@ export const make = Effect.gen(function* () {
       {
         host,
         operation: input.operation,
+        method: input.request.method,
+        path: new URL(input.request.url).pathname,
         // All current paths spend `core`; search would need a different resource.
         resource: "core",
         allowReserve: input.allowReserve,

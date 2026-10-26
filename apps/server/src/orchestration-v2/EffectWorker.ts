@@ -34,10 +34,7 @@ import * as IssueService from "../issues/IssueService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
-import {
-  openBlockerSuspensionReason,
-  isAutomaticIssueSuspension,
-} from "../issues/IssueEligibility.ts";
+import { isAutomaticIssueSuspension } from "../issues/IssueEligibility.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -183,6 +180,8 @@ export const layerExecutor: Layer.Layer<
           }
           case "issue.suspension.notify": {
             const request = effect.request;
+            // Older outbox entries may predate quiet, event-sourced suspension notices.
+            if (isAutomaticIssueSuspension(request.reason)) return Effect.void;
             return Effect.gen(function* () {
               const messageId = MessageId.make(effect.id);
               const prior = yield* threads.getThreadRecords(effect.threadId, ["messages"], {
@@ -194,11 +193,7 @@ export const layerExecutor: Layer.Layer<
                 threadId: effect.threadId,
                 commandId: CommandId.make(`${effect.id}:attempt:${effect.attemptCount}`),
                 messageId,
-                text: request.resumed
-                  ? request.reason === openBlockerSuspensionReason
-                    ? `Issue #${request.issue.number} resumed: its GitHub blockers are closed.`
-                    : `Issue #${request.issue.number} resumed: its GitHub relationships are readable again.`
-                  : `Issue #${request.issue.number} paused: ${request.reason} Its workspace, link and results are retained. ${isAutomaticIssueSuspension(request.reason) ? (request.reason === openBlockerSuspensionReason ? "It resumes automatically when its GitHub blockers close; no user decision is needed." : "It resumes automatically once GitHub relationships are readable and the issue is eligible; no user decision is needed.") : "Ask through t3_request_user_input; do not reopen it or change the existing lineage."}`,
+                text: `Issue #${request.issue.number} paused: ${request.reason} Its workspace, link and results are retained. Ask through t3_request_user_input; do not reopen it or change the existing lineage.`,
                 attachments: [],
                 mode: "queue",
                 createdBy: "agent",

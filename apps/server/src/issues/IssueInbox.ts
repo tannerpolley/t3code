@@ -27,6 +27,7 @@ import {
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -57,6 +58,7 @@ import * as Watcher from "./IssueInboxWatcher.ts";
 
 const REGISTERED_POLL_INTERVAL_MS = 5 * 60_000;
 const DISCOVERY_POLL_INTERVAL_MS = 15 * 60_000;
+const DISCOVERY_RETRY_SPACING_MS = 5_000;
 const sameRepositoryIdentity = Schema.toEquivalence(RepositoryIdentity);
 const RawCreated = Schema.Struct({
   id: Schema.Number,
@@ -171,8 +173,9 @@ export const make = Effect.gen(function* () {
 
   const discoveryIdentities = new Map<
     string,
-    { identity: RepositoryIdentity; repository: Watcher.WatchedRepository }
+    { identity: RepositoryIdentity; repository: Watcher.WatchedRepository | null; retryAt: number }
   >();
+  let nextDiscoveryRetryAt = 0;
   const watched = Effect.gen(function* () {
     const repositories = [...(yield* registered)];
     const shells = yield* projects.listShells();
@@ -204,8 +207,14 @@ export const make = Effect.gen(function* () {
       // A paused or archived owner must not be replaced or woken by Inbox discovery.
       if ((yield* issueWork.repositoryStatus({ host, repository })).rootThreadId !== null) continue;
       if (cached !== undefined && unchanged) {
-        repositories.push(cached.repository);
-        continue;
+        if (cached.repository !== null) {
+          repositories.push(cached.repository);
+          continue;
+        }
+        const now = yield* Clock.currentTimeMillis;
+        if (now < Math.max(cached.retryAt, nextDiscoveryRetryAt)) continue;
+        // Retry failed discoveries on separate scheduler ticks after a shared pause.
+        nextDiscoveryRetryAt = now + DISCOVERY_RETRY_SPACING_MS;
       }
       yield* issues.repositoryIdentity({ host, repository }).pipe(
         Effect.tap((repo) =>
@@ -214,12 +223,27 @@ export const make = Effect.gen(function* () {
             discoveryIdentities.set(project.id, {
               identity,
               repository: watchedRepository,
+              retryAt: 0,
             });
             repositories.push(watchedRepository);
           }),
         ),
         Effect.catchCause((cause) =>
-          Effect.logWarning("Issue inbox repository discovery failed", { repository, cause }),
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis;
+            const error = Cause.squash(cause);
+            const retryAt = Math.max(
+              now + DISCOVERY_RETRY_SPACING_MS,
+              isIssueReadError(error) && error.retryAt !== undefined
+                ? error.retryAt
+                : now + DISCOVERY_POLL_INTERVAL_MS,
+            );
+            discoveryIdentities.set(project.id, { identity, repository: null, retryAt });
+            yield* Effect.logWarning("Issue inbox repository discovery failed", {
+              repository,
+              cause,
+            });
+          }),
         ),
       );
     }
