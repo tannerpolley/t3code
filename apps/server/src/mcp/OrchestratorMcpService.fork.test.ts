@@ -682,7 +682,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       [
         provider("expired", weekly(60, 0.8)),
         provider("balanced", weekly(40, 0.8)),
-        provider("unknown"),
+        // A kept snapshot that reset yesterday says nothing about today's quota.
+        provider("unknown", weekly(99, -1 / 7)),
         provider("roomy", weekly(36, 0.8)),
         provider("missing-reset", weekly(10)),
         provider("blocked", weekly(0, 0.01), true),
