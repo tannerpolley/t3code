@@ -22,6 +22,111 @@ const writeSkill = Effect.fn(function* (
 });
 
 it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
+  it.effect(
+    "shares repository walks and overlaps plugin and skill reads without stale results",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+        const configDir = path.join(tempDir, "claude-home");
+        const workspace = path.join(tempDir, "repo");
+        const projectPath = path.join(workspace, "nested");
+        yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
+        yield* fs.makeDirectory(projectPath);
+        const plugins = Object.fromEntries(
+          ["alpha", "beta"].map((name) => [
+            `${name}@shop`,
+            [{ scope: "project", projectPath, installPath: path.join(configDir, "plugins", name) }],
+          ]),
+        );
+        for (const name of ["alpha", "beta"]) {
+          const installPath = path.join(configDir, "plugins", name);
+          yield* writeSkill(
+            path.join(installPath, "skills"),
+            "review",
+            `---\ndescription: ${name}\n---\n`,
+          );
+          yield* writeSkill(path.join(installPath, "skills"), "build", "# Build");
+          yield* fs.makeDirectory(path.join(installPath, ".claude-plugin"));
+          yield* fs.writeFileString(
+            path.join(installPath, ".claude-plugin", "plugin.json"),
+            toJson({ name: "shared", skills: ["./skills", "./skills/"] }),
+          );
+        }
+        yield* fs.writeFileString(
+          path.join(configDir, "plugins", "installed_plugins.json"),
+          toJson({ plugins }),
+        );
+        yield* fs.writeFileString(
+          path.join(configDir, "settings.json"),
+          toJson({ enabledPlugins: { "alpha@shop": true, "beta@shop": true } }),
+        );
+        let repositoryWalks = 0;
+        const reads = new Map<string, number>();
+        const active = { plugin: 0, skill: 0 };
+        const peak = { plugin: 0, skill: 0 };
+        const measuredFs = {
+          ...fs,
+          exists: (file: string) => {
+            if (file === path.join(projectPath, ".git")) repositoryWalks++;
+            return fs.exists(file);
+          },
+          readFileString: (file: string) =>
+            Effect.suspend(() => {
+              const kind = file.endsWith("plugin.json")
+                ? "plugin"
+                : file.endsWith("SKILL.md")
+                  ? "skill"
+                  : undefined;
+              if (kind === undefined) return fs.readFileString(file);
+              reads.set(file, (reads.get(file) ?? 0) + 1);
+              peak[kind] = Math.max(peak[kind], ++active[kind]);
+              return fs.readFileString(file).pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    active[kind]--;
+                  }),
+                ),
+              );
+            }),
+        };
+        const discover = discoverClaudeSkillsAndPlugins({ homePath: configDir }, workspace).pipe(
+          Effect.provideService(FileSystem.FileSystem, measuredFs),
+        );
+        const first = yield* discover;
+        assert.equal(repositoryWalks, 1);
+        assert.isAbove(peak.plugin, 1);
+        assert.isAbove(peak.skill, 1);
+        assert.isTrue([...reads.values()].every((count) => count === 1));
+        assert.deepEqual(
+          first.skills.map((skill) => [skill.name, skill.description]),
+          [
+            ["shared:build", undefined],
+            ["shared:review", "alpha"],
+          ],
+        );
+        assert.deepEqual(
+          first.plugins.map((plugin) => [plugin.name, plugin.skillCount]),
+          [
+            ["alpha", 2],
+            ["beta", 2],
+          ],
+        );
+
+        yield* writeSkill(
+          path.join(configDir, "plugins", "alpha", "skills"),
+          "review",
+          "---\ndescription: updated\n---\n",
+        );
+        const second = yield* discover;
+        assert.equal(repositoryWalks, 2);
+        assert.equal(
+          second.skills.find((skill) => skill.name === "shared:review")?.description,
+          "updated",
+        );
+      }),
+  );
   it.effect("keeps plugin enablement when skill overrides are invalid", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

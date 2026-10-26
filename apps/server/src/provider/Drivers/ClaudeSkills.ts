@@ -1,4 +1,5 @@
 import type { ClaudeSettings, ServerProviderPlugin, ServerProviderSkill } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -24,6 +25,8 @@ type ClaudeSkillRoot = {
 type ClaudePluginDescriptor = Omit<ServerProviderPlugin, "skillCount"> & {
   readonly skillPrefix: string;
 };
+
+const DISCOVERY_CONCURRENCY = 8;
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
@@ -340,8 +343,6 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
       Effect.orElseSucceed(() => undefined),
     );
   if (installed === undefined) return { roots: [], plugins: [] };
-  const roots: Array<ClaudeSkillRoot> = [];
-  const plugins: Array<ClaudePluginDescriptor> = [];
   // The CLI's process.cwd() resolves symlinks; registry projectPath values remain lexical.
   const workspace =
     cwd === undefined
@@ -350,83 +351,113 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
   const repositoryRoot =
     workspace === undefined ? undefined : yield* findPluginRepositoryRoot(workspace);
 
-  for (const [key, entries] of Object.entries(installed.plugins).sort()) {
-    if (enabledPlugins.get(key) !== true) continue;
-    const applicable = yield* Effect.filter(
-      entries.flatMap((entry) => Option.toArray(decodeInstalledPlugin(entry))),
-      (record) =>
-        Effect.gen(function* () {
-          if (record.scope === "user" || record.scope === "managed") return true;
-          if (record.projectPath === undefined || workspace === undefined) return false;
-          if (path.resolve(record.projectPath) === workspace) return true;
-          return (
-            repositoryRoot !== undefined &&
-            (yield* findPluginRepositoryRoot(record.projectPath)) === repositoryRoot
+  // Reuse in-flight walks within this refresh; later refreshes must see filesystem changes.
+  const repositoryRoots = yield* Cache.makeWith(findPluginRepositoryRoot, { capacity: Infinity });
+  const discoveries = yield* Effect.forEach(
+    Object.entries(installed.plugins)
+      .sort()
+      .filter(([key]) => enabledPlugins.get(key) === true),
+    ([key, entries]) =>
+      Effect.gen(function* () {
+        const roots: Array<ClaudeSkillRoot> = [];
+        const plugins: Array<ClaudePluginDescriptor> = [];
+        const applicable = yield* Effect.filter(
+          entries.flatMap((entry) => Option.toArray(decodeInstalledPlugin(entry))),
+          (record) =>
+            Effect.gen(function* () {
+              if (record.scope === "user" || record.scope === "managed") return true;
+              if (record.projectPath === undefined || workspace === undefined) return false;
+              if (path.resolve(record.projectPath) === workspace) return true;
+              return (
+                repositoryRoot !== undefined &&
+                (yield* Cache.get(repositoryRoots, record.projectPath)) === repositoryRoot
+              );
+            }),
+        );
+        // The native loader keeps registry order, preferring the first install that exists.
+        const existing = yield* Effect.findFirst(applicable, (record) =>
+          fileSystem
+            .exists(path.resolve(cwd ?? ".", record.installPath))
+            .pipe(Effect.orElseSucceed(() => false)),
+        );
+        const install = Option.getOrElse(existing, () => applicable[0]);
+        if (!install) return { roots, plugins };
+        const scope = install.scope === "user" || install.scope === "managed" ? "user" : "project";
+        const installPath = path.resolve(cwd ?? ".", install.installPath);
+        const manifest = yield* fileSystem
+          .readFileString(path.join(installPath, ".claude-plugin", "plugin.json"))
+          .pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(PluginManifest)),
+            Effect.orElseSucceed(() => undefined),
           );
-        }),
-    );
-    // The native loader keeps registry order, preferring the first install that exists.
-    const existing = yield* Effect.findFirst(applicable, (record) =>
-      fileSystem
-        .exists(path.resolve(cwd ?? ".", record.installPath))
-        .pipe(Effect.orElseSucceed(() => false)),
-    );
-    const install = Option.getOrElse(existing, () => applicable[0]);
-    if (!install) continue;
-    const scope = install.scope === "user" || install.scope === "managed" ? "user" : "project";
-    const installPath = path.resolve(cwd ?? ".", install.installPath);
-    const manifest = yield* fileSystem
-      .readFileString(path.join(installPath, ".claude-plugin", "plugin.json"))
-      .pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(PluginManifest)),
-        Effect.orElseSucceed(() => undefined),
-      );
-    const prefix = manifest?.name ?? key.split("@")[0];
-    if (!prefix) continue;
-    const marketplaceSeparator = key.lastIndexOf("@");
-    const pluginName = (marketplaceSeparator > 0 ? key.slice(0, marketplaceSeparator) : key).trim();
-    if (!pluginName) continue;
-    plugins.push({
-      name: pluginName,
-      ...(marketplaceSeparator > 0 ? { marketplace: key.slice(marketplaceSeparator + 1) } : {}),
-      skillPrefix: prefix,
-    });
+        const prefix = manifest?.name ?? key.split("@")[0];
+        if (!prefix) return { roots, plugins };
+        const marketplaceSeparator = key.lastIndexOf("@");
+        const pluginName = (
+          marketplaceSeparator > 0 ? key.slice(0, marketplaceSeparator) : key
+        ).trim();
+        if (!pluginName) return { roots, plugins };
+        plugins.push({
+          name: pluginName,
+          ...(marketplaceSeparator > 0 ? { marketplace: key.slice(marketplaceSeparator + 1) } : {}),
+          skillPrefix: prefix,
+        });
 
-    const defaultDirectory = path.join(installPath, "skills");
-    const hasDefaultDirectory = yield* fileSystem
-      .exists(defaultDirectory)
-      .pipe(Effect.orElseSucceed(() => false));
-    if (hasDefaultDirectory)
-      roots.push({ directory: defaultDirectory, scope, prefix, pluginName: prefix });
-    const declared = manifest?.skills;
-    if (declared === undefined && !hasDefaultDirectory) {
-      const hasRootSkill = yield* fileSystem
-        .exists(path.join(installPath, "SKILL.md"))
-        .pipe(Effect.orElseSucceed(() => false));
-      if (hasRootSkill) roots.push({ directory: installPath, scope, prefix, pluginName: prefix });
-    }
+        const defaultDirectory = path.join(installPath, "skills");
+        const hasDefaultDirectory = yield* fileSystem
+          .exists(defaultDirectory)
+          .pipe(Effect.orElseSucceed(() => false));
+        if (hasDefaultDirectory)
+          roots.push({ directory: defaultDirectory, scope, prefix, pluginName: prefix });
+        const declared = manifest?.skills;
+        if (declared === undefined && !hasDefaultDirectory) {
+          const hasRootSkill = yield* fileSystem
+            .exists(path.join(installPath, "SKILL.md"))
+            .pipe(Effect.orElseSucceed(() => false));
+          if (hasRootSkill)
+            roots.push({ directory: installPath, scope, prefix, pluginName: prefix });
+        }
 
-    const canonicalInstallPath = yield* fileSystem
-      .realPath(installPath)
-      .pipe(Effect.orElseSucceed(() => undefined));
-    for (const relative of typeof declared === "string" ? [declared] : (declared ?? [])) {
-      const directory = path.resolve(installPath, relative);
-      if (!isInsideDirectory(path, installPath, directory) || canonicalInstallPath === undefined) {
-        continue;
-      }
-      const canonicalDirectory = yield* fileSystem
-        .realPath(directory)
-        .pipe(Effect.orElseSucceed(() => undefined));
-      // The native loader rejects manifest roots that escape through a symlink, too.
-      if (
-        canonicalDirectory !== undefined &&
-        isInsideDirectory(path, canonicalInstallPath, canonicalDirectory)
-      ) {
-        roots.push({ directory, scope, prefix, pluginName: prefix });
-      }
-    }
-  }
-  return { roots, plugins };
+        const canonicalInstallPath = yield* fileSystem
+          .realPath(installPath)
+          .pipe(Effect.orElseSucceed(() => undefined));
+        const declaredDirectories = [
+          ...new Set(
+            (typeof declared === "string" ? [declared] : (declared ?? [])).map((relative) =>
+              path.resolve(installPath, relative),
+            ),
+          ),
+        ].filter((directory) => !hasDefaultDirectory || directory !== defaultDirectory);
+        const declaredRoots = yield* Effect.forEach(
+          declaredDirectories,
+          (directory) =>
+            Effect.gen(function* () {
+              if (
+                !isInsideDirectory(path, installPath, directory) ||
+                canonicalInstallPath === undefined
+              ) {
+                return [];
+              }
+              const canonicalDirectory = yield* fileSystem
+                .realPath(directory)
+                .pipe(Effect.orElseSucceed(() => undefined));
+              // The native loader rejects manifest roots that escape through a symlink, too.
+              return canonicalDirectory !== undefined &&
+                isInsideDirectory(path, canonicalInstallPath, canonicalDirectory)
+                ? [{ directory, scope, prefix, pluginName: prefix } satisfies ClaudeSkillRoot]
+                : [];
+            }),
+          { concurrency: DISCOVERY_CONCURRENCY },
+        );
+        roots.push(...declaredRoots.flat());
+        return { roots, plugins };
+      }),
+    { concurrency: DISCOVERY_CONCURRENCY },
+  );
+  return {
+    roots: discoveries.flatMap((discovery) => discovery.roots),
+    plugins: discoveries.flatMap((discovery) => discovery.plugins),
+  };
 });
 
 const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(function* (
@@ -495,73 +526,86 @@ const discoverClaudeSkillData = Effect.fn("discoverClaudeSkillData")(function* (
     ...pluginDiscovery.roots,
   ];
 
+  const discoveredSkills = yield* Effect.forEach(
+    roots,
+    (root) =>
+      Effect.gen(function* () {
+        const singleSkill =
+          root.prefix !== undefined &&
+          (yield* fileSystem
+            .exists(path.join(root.directory, "SKILL.md"))
+            .pipe(Effect.orElseSucceed(() => false)));
+        const entries = singleSkill
+          ? [path.basename(root.directory)]
+          : yield* fileSystem
+              .readDirectory(root.directory)
+              .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+
+        return yield* Effect.forEach(
+          [...entries].sort(),
+          (entry) =>
+            Effect.gen(function* () {
+              const skillPath = singleSkill
+                ? path.join(root.directory, "SKILL.md")
+                : path.join(root.directory, entry, "SKILL.md");
+              const contents = yield* fileSystem
+                .readFileString(skillPath)
+                .pipe(Effect.orElseSucceed(() => undefined));
+              if (contents === undefined) {
+                return [];
+              }
+
+              const frontmatter = parseSkillFrontmatter(contents);
+              if (frontmatter.kind === "malformed") {
+                return [];
+              }
+
+              const directoryName = entry.trim();
+              if (!directoryName) return [];
+              let name = directoryName;
+              if (root.prefix) {
+                // Native folder skills use their folder; only a single SKILL.md uses its name field.
+                const declaredName =
+                  singleSkill && frontmatter.kind === "parsed" ? frontmatter.name : "";
+                const unprefixedName = declaredName?.startsWith(`${root.prefix}:`)
+                  ? declaredName.slice(root.prefix.length + 1)
+                  : declaredName;
+                name = `${root.prefix}:${(unprefixedName || entry).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+                // Advertise only exact native names the shared composer grammar can invoke.
+                const [mention] = `$${name}`.matchAll(SKILL_MENTION_PATTERN);
+                if (mention?.[2] !== name) return [];
+              }
+
+              const override = root.prefix ? undefined : skillOverrides.get(name);
+              const userInvocationOnly =
+                (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
+                override?.userInvocationOnly === true;
+              return [
+                {
+                  name,
+                  path: skillPath,
+                  enabled: override?.enabled ?? true,
+                  scope: root.scope,
+                  ...(frontmatter.kind === "parsed" && frontmatter.description
+                    ? { description: frontmatter.description }
+                    : {}),
+                  ...(root.pluginName ? { pluginName: root.pluginName } : {}),
+                  ...(userInvocationOnly ? { userInvocationOnly: true } : {}),
+                  ...(frontmatter.kind === "parsed" && frontmatter.userInvocable === false
+                    ? { userInvocable: false }
+                    : {}),
+                } satisfies ServerProviderSkill,
+              ];
+            }),
+          { concurrency: DISCOVERY_CONCURRENCY },
+        );
+      }),
+    { concurrency: DISCOVERY_CONCURRENCY },
+  ).pipe(Effect.withSpan("discoverClaudeSkillsFromRoots"));
+
   const skillsByName = new Map<string, ServerProviderSkill>();
-  for (const root of roots) {
-    const singleSkill =
-      root.prefix !== undefined &&
-      (yield* fileSystem
-        .exists(path.join(root.directory, "SKILL.md"))
-        .pipe(Effect.orElseSucceed(() => false)));
-    const entries = singleSkill
-      ? [path.basename(root.directory)]
-      : yield* fileSystem
-          .readDirectory(root.directory)
-          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-
-    for (const entry of [...entries].sort()) {
-      const skillPath = singleSkill
-        ? path.join(root.directory, "SKILL.md")
-        : path.join(root.directory, entry, "SKILL.md");
-      const contents = yield* fileSystem
-        .readFileString(skillPath)
-        .pipe(Effect.orElseSucceed(() => undefined));
-      if (contents === undefined) {
-        continue;
-      }
-
-      const frontmatter = parseSkillFrontmatter(contents);
-      if (frontmatter.kind === "malformed") {
-        continue;
-      }
-
-      const directoryName = entry.trim();
-      if (!directoryName) continue;
-      let name = directoryName;
-      if (root.prefix) {
-        // Native folder skills use their folder; only a single SKILL.md uses its name field.
-        const declaredName = singleSkill && frontmatter.kind === "parsed" ? frontmatter.name : "";
-        const unprefixedName = declaredName?.startsWith(`${root.prefix}:`)
-          ? declaredName.slice(root.prefix.length + 1)
-          : declaredName;
-        name = `${root.prefix}:${(unprefixedName || entry).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-        // Advertise only exact native names the shared composer grammar can invoke.
-        const [mention] = `$${name}`.matchAll(SKILL_MENTION_PATTERN);
-        if (mention?.[2] !== name) continue;
-      }
-
-      if (skillsByName.has(name)) {
-        continue;
-      }
-
-      const override = root.prefix ? undefined : skillOverrides.get(name);
-      const userInvocationOnly =
-        (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
-        override?.userInvocationOnly === true;
-      skillsByName.set(name, {
-        name,
-        path: skillPath,
-        enabled: override?.enabled ?? true,
-        scope: root.scope,
-        ...(frontmatter.kind === "parsed" && frontmatter.description
-          ? { description: frontmatter.description }
-          : {}),
-        ...(root.pluginName ? { pluginName: root.pluginName } : {}),
-        ...(userInvocationOnly ? { userInvocationOnly: true } : {}),
-        ...(frontmatter.kind === "parsed" && frontmatter.userInvocable === false
-          ? { userInvocable: false }
-          : {}),
-      });
-    }
+  for (const skill of discoveredSkills.flat(2)) {
+    if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
   }
 
   const skills = [...skillsByName.values()].sort((left, right) =>

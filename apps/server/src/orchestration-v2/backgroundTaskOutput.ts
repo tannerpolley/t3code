@@ -366,7 +366,7 @@ const sampleProcesses = Effect.gen(function* () {
   return Option.isNone(current) || current.value.health.native.status !== "healthy"
     ? null
     : current.value.processes;
-});
+}).pipe(Effect.withSpan("BackgroundTasks.sampleProcesses"));
 
 /** One sampled process tree for the running tasks of the requested threads. */
 const readBackgroundTaskResourceUsage = Effect.fn("orchestration.readBackgroundTaskResourceUsage")(
@@ -459,6 +459,7 @@ const NO_THREAD_PROCESSES: ThreadProcesses = {
 };
 
 const make = Effect.gen(function* () {
+  // Keep startup tracing state out of the dependencies merged into each request.
   const context = yield* Effect.context<
     | SqlClient.SqlClient
     | ServerConfig.ServerConfig
@@ -466,17 +467,28 @@ const make = Effect.gen(function* () {
     | ProviderSessionManager.ProviderSessionManagerV2
     | ResourceTelemetry.ResourceTelemetry
     | FileSystem.FileSystem
-  >();
+  >().pipe(
+    Effect.map(
+      Context.pick(
+        SqlClient.SqlClient,
+        ServerConfig.ServerConfig,
+        ThreadManagement.ThreadManagementService,
+        ProviderSessionManager.ProviderSessionManagerV2,
+        ResourceTelemetry.ResourceTelemetry,
+        FileSystem.FileSystem,
+      ),
+    ),
+  );
   // Every thread's poll would otherwise take its own sample, and the monitor samples one at a
   // time; callers within a poll interval share one, waiting on it while it is taken.
-  const sample = yield* Effect.cachedWithTTL(
-    sampleProcesses.pipe(Effect.provide(context)),
+  const sample = (yield* Effect.cachedWithTTL(
+    sampleProcesses.pipe(Effect.provideContext(context)),
     "4 seconds",
-  );
+  )).pipe(Effect.withSpan("BackgroundTasks.sample"));
   // A thread that cannot be read runs nothing the caller can show.
   const runningWork = (threadId: ThreadId) =>
     readRunningThreadWork(threadId).pipe(
-      Effect.provide(context),
+      Effect.provideContext(context),
       Effect.orElseSucceed(() => null),
     );
   const resourceUsage = Effect.fn("BackgroundTasks.resourceUsage")(function* (input: {
@@ -489,7 +501,7 @@ const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
     return yield* readBackgroundTaskResourceUsage({ threads: records, sample }).pipe(
-      Effect.provide(context),
+      Effect.provideContext(context),
     );
   });
   const processes = Effect.fn("BackgroundTasks.processes")(function* (input: ThreadProcessesInput) {
@@ -501,15 +513,17 @@ const make = Effect.gen(function* () {
         ? []
         : yield* withTaskCommands(
             work.tasks.map((task) => ({ threadId: input.threadId, task })),
-          ).pipe(Effect.provide(context));
-    const { groups, usage } = groupSpawnedProcesses({
-      processes: sampled ?? [],
-      serverPid: process.pid,
-      commands: commands.map(({ task, command }) => ({
-        command,
-        ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
-      })),
-    });
+          ).pipe(Effect.provideContext(context));
+    const { groups, usage } = yield* Effect.sync(() =>
+      groupSpawnedProcesses({
+        processes: sampled ?? [],
+        serverPid: process.pid,
+        commands: commands.map(({ task, command }) => ({
+          command,
+          ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
+        })),
+      }),
+    ).pipe(Effect.withSpan("BackgroundTasks.groupSpawnedProcesses"));
     return {
       commands: work.commands,
       runningTaskIds: work.tasks.map((task) => task.taskId),
@@ -519,8 +533,9 @@ const make = Effect.gen(function* () {
     };
   });
   return BackgroundTasks.of({
-    subscribeOutput: (input) => subscribeBackgroundTaskOutput(input).pipe(Effect.provide(context)),
-    stop: (input) => stopBackgroundTask(input).pipe(Effect.provide(context)),
+    subscribeOutput: (input) =>
+      subscribeBackgroundTaskOutput(input).pipe(Effect.provideContext(context)),
+    stop: (input) => stopBackgroundTask(input).pipe(Effect.provideContext(context)),
     resourceUsage,
     processes,
   });
