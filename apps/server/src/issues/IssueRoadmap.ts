@@ -18,6 +18,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as IssueService from "./IssueService.ts";
 import * as IssueLinks from "./IssueLinks.ts";
 
@@ -41,6 +43,7 @@ export const layer = Layer.effect(
     const issues = yield* IssueService.IssueService;
     const links = yield* IssueLinks.IssueLinks;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sql = yield* SqlClient.SqlClient;
     return IssueRoadmap.of({
       linkRefreshes: Stream.merge(
         links.refreshes.pipe(Stream.drop(1)),
@@ -135,14 +138,23 @@ export const layer = Layer.effect(
           group.push(status);
           repositories.set(key, group);
         }
+        const lists = Array.from(repositories.values(), (group) => ({
+          repository: { host: group[0]!.host, repository: group[0]!.repository },
+          issues: group.map((status) => ({ ...status, pullRequestRefs: status.pullRequests })),
+        }));
+        const enriched = yield* sql
+          .withTransaction(
+            Effect.forEach(lists, (list) =>
+              links.enrich(list).pipe(Effect.orElseSucceed(() => list)),
+            ),
+          )
+          .pipe(
+            NodeSqliteClient.readOnly,
+            Effect.orElseSucceed(() => lists),
+          );
         const result: Array<IssueStatusBatchResult[number]> = [];
-        for (const group of repositories.values()) {
-          const list = {
-            repository: { host: group[0]!.host, repository: group[0]!.repository },
-            issues: group.map((status) => ({ ...status, pullRequestRefs: status.pullRequests })),
-          };
-          const enriched = yield* links.enrich(list).pipe(Effect.orElseSucceed(() => list));
-          for (const status of enriched.issues) {
+        for (const list of enriched) {
+          for (const status of list.issues) {
             const compactPr = ({
               host,
               repository,

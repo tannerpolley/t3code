@@ -29,6 +29,11 @@ import * as Layer from "effect/Layer";
 import * as IssueService from "./IssueService.ts";
 import * as IssueLinks from "./IssueLinks.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+
+const roadmapLayer = IssueRoadmap.layer.pipe(
+  Layer.provide(NodeSqliteClient.layer({ filename: ":memory:" })),
+);
 
 const input = { host: "github.com", repository: "owner/repo" };
 const list: IssueListResult = {
@@ -65,7 +70,7 @@ it.effect(
   "skips local work for Milestones and keeps Roadmap issues when optional link storage fails",
   () => {
     let reads = 0;
-    const layer = IssueRoadmap.layer.pipe(
+    const layer = roadmapLayer.pipe(
       Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
       Layer.provide(
         Layer.mergeAll(
@@ -104,7 +109,7 @@ it.effect("preserves an underlying GitHub read failure", () => {
     operation: "list",
     message: "GitHub unavailable",
   });
-  const layer = IssueRoadmap.layer.pipe(
+  const layer = roadmapLayer.pipe(
     Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
     Layer.provide(
       Layer.mergeAll(
@@ -155,7 +160,7 @@ it.effect("gives an issue's detail the live work its row has, matched by closing
     ],
   };
   let enrichedRefs: IssueListResult["issues"][number]["pullRequestRefs"];
-  const layer = IssueRoadmap.layer.pipe(
+  const layer = roadmapLayer.pipe(
     Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
     Layer.provide(
       Layer.mergeAll(
@@ -194,7 +199,7 @@ it.effect(
         const changes = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
         const roadmap = yield* IssueRoadmap.IssueRoadmap.pipe(
           Effect.provide(
-            IssueRoadmap.layer.pipe(
+            roadmapLayer.pipe(
               Layer.provide(
                 Layer.mergeAll(
                   Layer.mock(IssueService.IssueService)({ refreshes: Stream.empty }),
@@ -344,7 +349,7 @@ it.effect("refreshes held queue release and every run admission and activity tra
       yield* apply(created);
       const roadmap = yield* IssueRoadmap.IssueRoadmap.pipe(
         Effect.provide(
-          IssueRoadmap.layer.pipe(
+          roadmapLayer.pipe(
             Layer.provide(
               Layer.mergeAll(
                 Layer.mock(IssueService.IssueService)({ refreshes: Stream.empty }),
@@ -491,7 +496,7 @@ it.effect(
       const revisions = yield* SubscriptionRef.make(0);
       const roadmap = yield* IssueRoadmap.IssueRoadmap.pipe(
         Effect.provide(
-          IssueRoadmap.layer.pipe(
+          roadmapLayer.pipe(
             Layer.provide(
               Layer.mergeAll(
                 Layer.mock(IssueService.IssueService)({
