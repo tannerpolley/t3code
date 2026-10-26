@@ -1,4 +1,5 @@
 import {
+  LIVE_ISSUE_REFRESH_MS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
   type IssueDetailInput,
@@ -9,6 +10,8 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { request, type EnvironmentRpcInput } from "../rpc/client.ts";
+
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createPullRequestRefreshAtomFamily } from "./pullRequests.ts";
 import {
@@ -18,8 +21,6 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 
-/** How often an issue someone is looking at re-reads GitHub, besides explicit refreshes. */
-const LIVE_ISSUE_REFRESH_MS = 60_000;
 /** An open issue's fallback re-read when none of its own threads finish a turn. */
 const DETAIL_POLL_MS = 5 * 60_000;
 
@@ -29,6 +30,54 @@ export function createIssueEnvironmentAtoms<R, E>(
   snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
   refreshes = createPullRequestRefreshAtomFamily(runtime),
 ) {
+  const liveQuery = <
+    TTag extends
+      | typeof WS_METHODS.issuesList
+      | typeof WS_METHODS.issuesDetail
+      | typeof WS_METHODS.issuesStatusBatch,
+  >(
+    options: Parameters<typeof createEnvironmentRpcQueryAtomFamily<R, E, TTag>>[1] & {
+      execute: NonNullable<
+        Parameters<typeof createEnvironmentRpcQueryAtomFamily<R, E, TTag>>[1]["execute"]
+      >;
+    },
+  ) => {
+    const family = Atom.family((key: string) => {
+      const [environmentId, input] = JSON.parse(key) as [EnvironmentId, EnvironmentRpcInput<TTag>];
+      const target = { environmentId, input };
+      let explicitRefresh = false;
+      const source = createEnvironmentRpcQueryAtomFamily(runtime, {
+        ...options,
+        execute: (input, emit) =>
+          Effect.suspend(() => {
+            const refresh = explicitRefresh || input.refresh === true;
+            explicitRefresh = false;
+            return options.execute({ ...input, refresh }, emit);
+          }),
+      })(target);
+      const exposed = Atom.family((view: typeof source) =>
+        Atom.readable(
+          (get) => get(view),
+          (refresh) => {
+            explicitRefresh = true;
+            refresh(view);
+          },
+        ).pipe(Atom.setIdleTTL(0)),
+      );
+      return { source, exposed };
+    });
+    return {
+      query: (target: { environmentId: EnvironmentId; input: EnvironmentRpcInput<TTag> }) =>
+        family(environmentRpcKey(target)).source,
+      expose: (
+        target: { environmentId: EnvironmentId; input: EnvironmentRpcInput<TTag> },
+        view?: ReturnType<ReturnType<typeof createEnvironmentRpcQueryAtomFamily<R, E, TTag>>>,
+      ) => {
+        const state = family(environmentRpcKey(target));
+        return state.exposed(view ?? state.source);
+      },
+    };
+  };
   const refreshTrigger = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
     refreshes({ environmentId, input: {} });
   const workStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -67,9 +116,10 @@ export function createIssueEnvironmentAtoms<R, E>(
   });
   // The slow poll picks up changes made outside T3, such as comments on GitHub; linked turns
   // below refresh sooner, at most once a minute.
-  const detail = createEnvironmentRpcQueryAtomFamily(runtime, {
+  const detail = liveQuery({
     label: "environment-data:issues:detail",
     tag: WS_METHODS.issuesDetail,
+    execute: (input) => request(WS_METHODS.issuesDetail, input),
     staleTimeMs: 60_000,
     refreshIntervalMs: DETAIL_POLL_MS,
     refreshTrigger: linkRefreshTrigger,
@@ -77,7 +127,7 @@ export function createIssueEnvironmentAtoms<R, E>(
   // The PR refresh stream has no thread identity; shell completions let each issue filter locally.
   const liveDetail = Atom.family((key: string) => {
     const [environmentId, input] = JSON.parse(key) as [EnvironmentId, IssueDetailInput];
-    const source = detail({ environmentId, input });
+    const source = detail.query({ environmentId, input });
     const snapshot = snapshotAtom(environmentId);
     return Atom.transform(
       source,
@@ -135,29 +185,31 @@ export function createIssueEnvironmentAtoms<R, E>(
       { initialValueTarget: source },
     ).pipe(Atom.setIdleTTL(0));
   });
-  const listQuery = createEnvironmentRpcQueryAtomFamily(runtime, {
+  const listQuery = liveQuery({
     label: "environment-data:issues:list",
     tag: WS_METHODS.issuesList,
+    execute: (input) => request(WS_METHODS.issuesList, input),
     staleTimeMs: LIVE_ISSUE_REFRESH_MS,
     refreshTrigger: linkRefreshTrigger,
   });
-  const list = ({
+  const listTarget = ({
     environmentId,
     input,
   }: {
     readonly environmentId: EnvironmentId;
     readonly input: IssueListInput;
-  }) =>
-    listQuery({
-      environmentId,
-      input: {
-        host: input.host.toLowerCase(),
-        repository: input.repository.toLowerCase(),
-        state: input.state ?? "open",
-        roadmap: input.roadmap ?? false,
-        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-      },
-    });
+  }) => ({
+    environmentId,
+    input: {
+      host: input.host.toLowerCase(),
+      repository: input.repository.toLowerCase(),
+      state: input.state ?? "open",
+      roadmap: input.roadmap ?? false,
+      ...(input.refresh === undefined ? {} : { refresh: input.refresh }),
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    },
+  });
+  const list = (target: Parameters<typeof listTarget>[0]) => listQuery.query(listTarget(target));
   // All visible first-page consumers share one poll and one underlying list request.
   const polledLists = Atom.family((source: ReturnType<typeof list>) =>
     Atom.transform(
@@ -174,7 +226,8 @@ export function createIssueEnvironmentAtoms<R, E>(
       { initialValueTarget: source },
     ).pipe(Atom.setIdleTTL(0)),
   );
-  const liveList = (target: Parameters<typeof list>[0]) => polledLists(list(target));
+  const liveList = (target: Parameters<typeof list>[0]) =>
+    listQuery.expose(listTarget(target), polledLists(list(target)));
   const repositoryStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:issues:repository-status",
     tag: WS_METHODS.issuesRepositoryStatus,
@@ -182,9 +235,10 @@ export function createIssueEnvironmentAtoms<R, E>(
     refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
     refreshTrigger: linkRefreshTrigger,
   });
-  const statusBatch = createEnvironmentRpcQueryAtomFamily(runtime, {
+  const statusBatch = liveQuery({
     label: "environment-data:issues:status-batch",
     tag: WS_METHODS.issuesStatusBatch,
+    execute: (input) => request(WS_METHODS.issuesStatusBatch, input),
     // Retired sidebar sets must stop polling as soon as their last row unsubscribes.
     idleTtlMs: 0,
     staleTimeMs: LIVE_ISSUE_REFRESH_MS,
@@ -306,25 +360,28 @@ export function createIssueEnvironmentAtoms<R, E>(
       tag: WS_METHODS.issuesRepositories,
       staleTimeMs: 5 * 60_000,
     }),
-    list,
+    list: (target: Parameters<typeof list>[0]) =>
+      listQuery.expose(listTarget(target), list(target)),
     liveList,
     roadmapList: liveList,
-    statusBatch: ({ environmentId, input }: Parameters<typeof statusBatch>[0]) => {
+    statusBatch: ({ environmentId, input }: Parameters<typeof statusBatch.query>[0]) => {
       const issues = new Map(
         input.issues.map(({ host, nodeId }) => {
           const ref = { host: host.toLowerCase(), nodeId };
           return [JSON.stringify(ref), ref] as const;
         }),
       );
-      return statusBatch({
+      return statusBatch.expose({
         environmentId,
         input: {
+          ...(input.refresh === undefined ? {} : { refresh: input.refresh }),
           issues: [...issues.entries()]
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([, ref]) => ref),
         },
       });
     },
-    detail: (target: Parameters<typeof detail>[0]) => liveDetail(environmentRpcKey(target)),
+    detail: (target: Parameters<typeof detail.query>[0]) =>
+      detail.expose(target, liveDetail(environmentRpcKey(target))),
   };
 }
