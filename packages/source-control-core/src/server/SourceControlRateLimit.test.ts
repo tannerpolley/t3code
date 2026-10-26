@@ -1,6 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
@@ -97,5 +98,55 @@ it.effect("keeps a fresh provider reset from an older request", () =>
     yield* limits.recordRateLimit({ ...github, lease: staleLease, retryAt: 61_000 });
 
     assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 61_000);
+  }).pipe(Effect.provide(SourceControlRateLimit.layer)),
+);
+
+it.effect("logs each recorded refusal with response details and the resulting pause deadline", () =>
+  Effect.gen(function* () {
+    const messages: unknown[] = [];
+    const logger = Logger.make(({ message, logLevel }) => {
+      messages.push({ message, logLevel });
+    });
+    yield* Effect.gen(function* () {
+      yield* TestClock.setTime(1_000);
+      const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+      const response = {
+        operation: "listIssues",
+        method: "GET",
+        path: "/repos/acme/app/issues",
+        status: 403,
+        headers: {
+          "x-ratelimit-resource": "core",
+          "x-ratelimit-remaining": "4321",
+          "x-ratelimit-reset": "60",
+          "retry-after": "30",
+          authorization: "secret",
+        },
+      };
+      yield* limits.recordRateLimit({ ...github, lease: 0, response });
+      yield* limits.recordRateLimit({ ...github, lease: 1, retryAt: 2_000, response });
+      assert.deepEqual(
+        messages,
+        [31_000, 31_000].map((retryAt) => ({
+          logLevel: "Warn",
+          message: [
+            "Source control rate limit recorded",
+            JSON.stringify({
+              provider: "github",
+              host: "github.com",
+              operation: "listIssues",
+              method: "GET",
+              path: "/repos/acme/app/issues",
+              status: 403,
+              "x-ratelimit-resource": "core",
+              "x-ratelimit-remaining": "4321",
+              "x-ratelimit-reset": "60",
+              "retry-after": "30",
+              retryAt,
+            }),
+          ],
+        })),
+      );
+    }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   }).pipe(Effect.provide(SourceControlRateLimit.layer)),
 );
