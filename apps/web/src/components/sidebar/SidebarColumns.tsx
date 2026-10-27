@@ -232,14 +232,18 @@ export function threadGroupHue(rootThreadId: string): number {
   return THREAD_GROUP_HUES[Math.abs(hash) % THREAD_GROUP_HUES.length]!;
 }
 
-/** A row's title (see `sidebarThreadTitle`) with the thread's own name on hover. */
-export function sidebarThreadName(name: string, title: string): ReactNode {
-  if (title === name) return name;
+/**
+ * A thread row's title after its role name. The role name gives up its width first and hides
+ * with role icons, so the title always shows.
+ */
+export function SidebarThreadTitle(props: { readonly role: string; readonly title: string }) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="block truncate" />}>{title}</TooltipTrigger>
-      <TooltipPopup side="top">{name}</TooltipPopup>
-    </Tooltip>
+    <span className="flex min-w-0 items-baseline gap-1.5">
+      <span className="sidebar-role-title min-w-0 shrink-[999] truncate text-muted-foreground">
+        {props.role}
+      </span>
+      <span className="min-w-0 truncate">{props.title}</span>
+    </span>
   );
 }
 

@@ -2,7 +2,7 @@ import { resolveForkSubagentMetadata } from "./ForkModelNames";
 import {
   SidebarCaretToggle,
   SidebarThreadColumns,
-  sidebarThreadName,
+  SidebarThreadTitle,
 } from "../sidebar/SidebarColumns";
 import {
   deriveProviderSubagentStatus,
@@ -16,7 +16,7 @@ import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
 import {
   childWorktreeLabel,
   describeSidebarBackgroundWork,
-  sidebarThreadTitle,
+  sidebarRoleLabel,
 } from "../sidebar/SidebarBackgroundWork.logic";
 import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -792,15 +792,15 @@ export function ThreadRelationshipsPanel(props: {
                       effort={effortLabel}
                       name={
                         <span className="flex min-w-0 items-center gap-1">
-                          <span
-                            className={cn(
-                              "min-w-0 flex-1 truncate",
-                              node?.thread && "sidebar-role-title",
+                          <span className="min-w-0 flex-1 truncate">
+                            {node?.thread ? (
+                              <SidebarThreadTitle
+                                role={sidebarRoleLabel(node.thread)}
+                                title={threadTitle}
+                              />
+                            ) : (
+                              threadTitle
                             )}
-                          >
-                            {node?.thread
-                              ? sidebarThreadName(threadTitle, sidebarThreadTitle(node.thread))
-                              : threadTitle}
                           </span>
                           <ThreadIssueBadge
                             environmentId={props.environmentId}

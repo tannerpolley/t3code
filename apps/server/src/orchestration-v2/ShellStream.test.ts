@@ -192,6 +192,24 @@ describe("omitIdleSubagentShells", () => {
     ]);
   });
 
+  it("keeps an idle child its parent's pending task still names", () => {
+    // After a restart a delegated child sits idle until it resumes, while its parent's task
+    // for it stays pending; without the child the parent's row shows only the task.
+    const threads = [
+      row("root", null, {
+        pendingBackgroundTasks: [
+          { taskId: "delegate", kind: "subagent", childThreadId: ThreadId.make("delegated") },
+        ],
+      }),
+      row("delegated", "root"),
+      row("idle", "root"),
+    ];
+    expect(omitIdleSubagentShells(threads).map((thread) => thread.id)).toEqual([
+      "root",
+      "delegated",
+    ]);
+  });
+
   it("still filters the transcript events of omitted children for a subscriber that opts in", () => {
     const threads = [row("root", null), row("idle", "root")];
     const omitted = activeShellRowsForSubscriber(threads, true);

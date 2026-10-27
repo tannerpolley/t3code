@@ -43,6 +43,7 @@ import {
   SidebarCaretToggle,
   SidebarCaretSlot,
   SidebarThreadColumns,
+  SidebarThreadTitle,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
 import { ThreadStatusMark } from "../ThreadStatusMark";
@@ -59,7 +60,7 @@ import {
   afterTasksIndex,
   childWorktreeLabel,
   resolveSidebarThreadModelLabel,
-  sidebarThreadTitle,
+  sidebarRoleLabel,
   type BackgroundWorkTaskRow,
 } from "./SidebarBackgroundWork.logic";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
@@ -266,9 +267,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   >
                     {row.kind === "subagent" && row.child ? (
                       <SidebarProjectThreadName thread={row.child} badges={false}>
-                        <span className="sidebar-role-title">
-                          {sidebarThreadTitle(row.child.source)}
-                        </span>
+                        <SidebarThreadTitle
+                          role={sidebarRoleLabel(row.child.source)}
+                          title={row.child.title}
+                        />
                       </SidebarProjectThreadName>
                     ) : (
                       name

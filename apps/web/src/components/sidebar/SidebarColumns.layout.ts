@@ -6,8 +6,8 @@ const titleCh = 11;
 // Optional columns stay until the title would shrink below this; a role name such as
 // "Orchestrator" truncates first, since its role icon and tooltip still name it.
 const titleReserveCh = 6;
-// With role icons, thread titles are empty, so only command and process labels need room: enough
-// for a short program name such as "node", which keeps icons from costing more than names.
+// With role icons no role name shares the title's cell, so it reserves enough for a short program
+// name such as "node", which keeps icons from costing more than names.
 const labelCh = 4;
 const modelStepCh = 0.5;
 
@@ -22,9 +22,9 @@ export const sidebarColumnLayout = {
     model: { ch: 8.4, minCh: 4.5 },
     // One column of 3px effort dots.
     effort: 0.5,
-    // A role-name title: "Orchestrator" is 10.625ch at 12px in OpenDyslexic Bold, plus a narrow
-    // space. Other titles take their text's width. Spare width goes to the spacer so
-    // badges, time and status stay right-aligned.
+    // A role name: "Orchestrator" is 10.625ch at 12px in OpenDyslexic Bold, plus a narrow space.
+    // The name cell takes its text's width; spare width goes to the spacer so badges, time and
+    // status stay right-aligned.
     name: { ch: titleCh },
     spacer: 0,
     // Every row reserves both badge slots, so issue and pull request icons line up whichever it has:
@@ -97,7 +97,7 @@ export function generateSidebarColumnLayoutCss() {
     .concat(chWidths.map(([name, ch]) => `  --sidebar-${name}: ${ch}ch;`))
     .join(
       "\n",
-    )}\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template};\n  column-gap: 0;\n}\n[data-sidebar-role-display="name"]:has(.sidebar-role-title) {\n  --sidebar-name-track: var(--sidebar-name-width);\n}\n`;
+    )}\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template};\n  column-gap: 0;\n}\n`;
   css += entries.map(([name]) => `.sidebar-thread-${name} { grid-column: ${name}; }\n`).join("");
   for (const roleDisplay of ["name", "icon"] as const) {
     const hidden = new Set<string>();
