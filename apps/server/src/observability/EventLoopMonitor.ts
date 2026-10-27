@@ -17,7 +17,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 import * as Metrics from "./Metrics.ts";
-import * as ForkHeapSnapshot from "./ForkHeapSnapshot.ts";
+import * as HeapSamplingProfile from "./HeapSamplingProfile.ts";
 
 // Subtract the histogram's timer resolution; this can undercount stalls by up to RESOLUTION_MS.
 const RESOLUTION_MS = 1000;
@@ -146,6 +146,7 @@ const layerWith = (
   Layer.effect(
     EventLoopMonitor,
     Effect.gen(function* () {
+      yield* HeapSamplingProfile.start;
       const sample = yield* makeSampler;
       // Clients sample on connect as well as the timer, and the sampler resets shared state.
       const sampling = yield* Semaphore.make(1);
@@ -171,7 +172,7 @@ const layerWith = (
       const tick = Effect.gen(function* () {
         const readings = yield* sample;
         yield* recordGauges(readings);
-        yield* ForkHeapSnapshot.check(readings.heapUsedBytes, logsDir);
+        yield* HeapSamplingProfile.check(readings.heapUsedBytes, logsDir);
         const delayMaxMs = stallMs(readings);
         if (delayMaxMs === undefined) return;
         const { utilization, usage, rssBytes, loadAverage, cpuCount } = readings;
