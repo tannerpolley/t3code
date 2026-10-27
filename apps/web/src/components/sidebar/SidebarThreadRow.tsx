@@ -1434,12 +1434,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {props.sweepAction !== null ? dragDestination : null}
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <ThreadRoleIcon thread={thread.source} />
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
                 </span>
               ) : null}
+              <IssueInboxBadge threadRef={threadRef} />
               {metaLineEmpty ? (
                 <span aria-hidden className="inline-flex shrink-0">
                   <SidebarProviderStack

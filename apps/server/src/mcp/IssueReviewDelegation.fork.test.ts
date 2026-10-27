@@ -405,7 +405,7 @@ it.effect(
         events: [
           {
             id: EventId.make("terminal-before-parent-result"),
-            type: "run.created",
+            type: "run.updated",
             threadId: owner,
             runId: run.id,
             occurredAt: now,
@@ -414,6 +414,7 @@ it.effect(
         ],
       });
       assert.isFalse(yield* store.resultAvailable(owner));
+      const beforeResume = yield* sink.latestSequence();
       harness.close();
       const result = yield* work.setPaused({
         host: "github.com",
@@ -424,6 +425,16 @@ it.effect(
       assert.isEmpty(result.orchestration!.suspendedIssues);
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       yield* worker.drain();
+      yield* sink.stream({ afterSequence: beforeResume, eventType: "subagent.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "subagent.updated" &&
+            stored.event.payload.childThreadId === owner &&
+            ["completed", "failed", "interrupted", "cancelled"].includes(stored.event.payload.status),
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
       assert.isTrue(yield* store.resultAvailable(owner));
       yield* work.setPaused({
         host: "github.com",

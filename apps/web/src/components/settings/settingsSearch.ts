@@ -132,6 +132,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: "Agents",
     paths: [
       "/settings/providers",
+      "/settings/customizations",
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
