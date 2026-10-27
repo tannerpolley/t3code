@@ -461,12 +461,11 @@ Choose **Family style → Colors** to tint each family instead, with deeper rows
 Turn off **Codex-style sidebar** in **Settings → General** to use the classic rows and flat child list.
 The Activity view keeps its cards.
 
-Rows are titled by what each thread does rather than its task name: its role
-(Orchestrator, Implementor, Reviewer, Investigator, Checker, or Worker), matching its role icon.
+Each row shows the thread's title after its role (Orchestrator, Implementor, Reviewer,
+Investigator, Checker, or Worker); in a narrow sidebar the role name shortens first.
 A thread working on an issue adds an issue icon with the issue's number, and a thread
 with pull requests adds a pull request icon in the color of their state; on an
-orchestrator's row that icon shows the state itself, such as a merge. Hover a title to
-see the thread's name.
+orchestrator's row that icon shows the state itself, such as a merge.
 
 Widen the sidebar to compare all columns. As it narrows, effort disappears
 first, followed by model. The caret, name, and work status remain.

@@ -97,8 +97,8 @@ export function resolveSidebarThreadModelLabel(
   return !includeEffort || effort === null ? modelLabel : `${modelLabel} · ${effort}`;
 }
 
-/** The role title matches the role icon; the thread's task name shows on hover. */
-export function sidebarThreadTitle(thread: RoleDisplayThread): string {
+/** The role name a row shows beside its title, matching its role icon. */
+export function sidebarRoleLabel(thread: RoleDisplayThread): string {
   return threadRoleDisplay(thread).label;
 }
 

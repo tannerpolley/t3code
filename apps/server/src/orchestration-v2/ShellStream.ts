@@ -77,23 +77,27 @@ export function buildActiveShellSnapshot(input: {
 
 /**
  * Idle subagent children have no sidebar row, so clients that opt in read them from their thread
- * family instead. A child stays while it is live or the parent of another child, so the request
- * and working walks over shell rows never meet a gap in a nested chain.
+ * family instead. A child stays while it is live, the parent of another child, or named by a
+ * pending task (its parent's row lists it), so walks over shell rows never meet a gap.
  */
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
-  const parentIds = new Set<string>();
+  const keptIds = new Set<string>();
   for (const thread of threads) {
     if (thread.lineage.relationshipToParent === "subagent" && thread.lineage.parentThreadId) {
-      parentIds.add(thread.lineage.parentThreadId);
+      keptIds.add(thread.lineage.parentThreadId);
+    }
+    for (const task of thread.pendingBackgroundTasks ?? []) {
+      const named = task.ownerThreadId ?? task.childThreadId;
+      if (named !== undefined) keptIds.add(named);
     }
   }
   return threads.filter(
     (thread) =>
       thread.lineage.relationshipToParent !== "subagent" ||
       isLiveSubagentShell(thread) ||
-      parentIds.has(thread.id),
+      keptIds.has(thread.id),
   );
 }
 

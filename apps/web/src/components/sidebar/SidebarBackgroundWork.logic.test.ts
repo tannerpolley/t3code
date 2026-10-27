@@ -14,7 +14,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { makeThreadFixture } from "../../test-fixtures";
 import {
   childWorktreeLabel,
-  sidebarThreadTitle,
+  sidebarRoleLabel,
   sidebarModelCellLabel,
   sameSidebarSubagentTree,
   describeSidebarBackgroundWork,
@@ -365,7 +365,7 @@ describe("background task metadata", () => {
   });
 });
 
-describe("sidebarThreadTitle", () => {
+describe("sidebarRoleLabel", () => {
   it("titles every thread by the role it works as, issue workers included", () => {
     const top = { relationshipToParent: null } as const;
     const child = { relationshipToParent: "subagent" } as const;
@@ -385,7 +385,7 @@ describe("sidebarThreadTitle", () => {
         worktreePath,
         linkedIssue,
       };
-      return sidebarThreadTitle(thread);
+      return sidebarRoleLabel(thread);
     };
     // The issue shows as its own badge, so it never replaces the role.
     expect(title("implementor", child, "/wt/x", issue)).toBe("Implementor");
@@ -398,7 +398,7 @@ describe("sidebarThreadTitle", () => {
     expect(title(undefined, top, "/wt/x")).toBe("Implementor");
     expect(title("reviewer", child, "/wt/x")).toBe("Reviewer");
     expect(
-      sidebarThreadTitle({
+      sidebarRoleLabel({
         role: undefined,
         creationSource: "provider",
         lineage: child,

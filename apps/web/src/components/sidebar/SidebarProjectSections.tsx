@@ -81,6 +81,7 @@ import {
   SidebarCaretToggle,
   SidebarTrailingColumns,
   SidebarThreadColumns,
+  SidebarThreadTitle,
   threadGroupHue,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
@@ -92,7 +93,7 @@ import {
   type BackgroundWorkTaskRow,
   resolveSidebarThreadModelLabel,
   sameSidebarSubagentTree,
-  sidebarThreadTitle,
+  sidebarRoleLabel,
 } from "./SidebarBackgroundWork.logic";
 import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
@@ -1411,7 +1412,7 @@ const SidebarProjectThreadRow = memo(
               type="button"
               aria-current={active ? "page" : undefined}
               aria-label={sidebarProjectThreadAccessibleName({
-                role: props.codexStyle ? sidebarThreadTitle(props.thread.source) : undefined,
+                role: props.codexStyle ? sidebarRoleLabel(props.thread.source) : undefined,
                 title: props.thread.title,
                 issueNumber: props.thread.source.linkedIssue?.number,
                 status,
@@ -1465,9 +1466,10 @@ const SidebarProjectThreadRow = memo(
                   effort={formatModelSelectionEffort(props.thread.modelSelection, provider?.models)}
                   name={
                     <SidebarProjectThreadName thread={props.thread} badges={false}>
-                      <span className="sidebar-role-title">
-                        {sidebarThreadTitle(props.thread.source)}
-                      </span>
+                      <SidebarThreadTitle
+                        role={sidebarRoleLabel(props.thread.source)}
+                        title={props.thread.title}
+                      />
                     </SidebarProjectThreadName>
                   }
                   issue={

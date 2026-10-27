@@ -2,8 +2,8 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useThreadShell } from "../../state/entities";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
-import { SidebarThreadColumns, sidebarThreadName } from "../sidebar/SidebarColumns";
-import { sidebarThreadTitle } from "../sidebar/SidebarBackgroundWork.logic";
+import { SidebarThreadColumns, SidebarThreadTitle } from "../sidebar/SidebarColumns";
+import { sidebarRoleLabel } from "../sidebar/SidebarBackgroundWork.logic";
 import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
 import { shortModelName } from "./providerIconUtils";
 import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
@@ -95,7 +95,7 @@ function WorkflowMemberRow({
               part="row"
               aria-label={
                 thread
-                  ? `Open ${sidebarThreadTitle(thread.source)} chat: ${member.title}${
+                  ? `Open ${sidebarRoleLabel(thread.source)} chat: ${member.title}${
                       thread.source.linkedIssue
                         ? `, issue #${thread.source.linkedIssue.number}`
                         : ""
@@ -115,10 +115,15 @@ function WorkflowMemberRow({
             effort={member.effort ?? null}
             name={
               <span className="flex min-w-0 items-center gap-1.5">
-                <span className={cn("min-w-0 flex-1 truncate", thread && "sidebar-role-title")}>
-                  {thread
-                    ? sidebarThreadName(member.title, sidebarThreadTitle(thread.source))
-                    : member.title}
+                <span className="min-w-0 flex-1 truncate">
+                  {thread ? (
+                    <SidebarThreadTitle
+                      role={sidebarRoleLabel(thread.source)}
+                      title={member.title}
+                    />
+                  ) : (
+                    member.title
+                  )}
                 </span>
                 <ThreadIssueBadge
                   environmentId={environmentId}

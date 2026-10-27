@@ -84,7 +84,7 @@
 .sidebar-thread-name-wide {
   grid-column: model / issue;
 }
-/* Icon role display hides a title that only repeats the role; the role icon names it on hover. */
+/* Icon role display hides the role name beside the title; the role icon names it on hover. */
 [data-sidebar-role-display="icon"] .sidebar-role-title {
   display: none;
 }

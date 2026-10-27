@@ -63,9 +63,6 @@
     );
   column-gap: 0;
 }
-[data-sidebar-role-display="name"]:has(.sidebar-role-title) {
-  --sidebar-name-track: var(--sidebar-name-width);
-}
 .sidebar-thread-caret {
   grid-column: caret;
 }
