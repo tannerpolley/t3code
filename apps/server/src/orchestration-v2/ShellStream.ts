@@ -89,8 +89,8 @@ export function omitIdleSubagentShells(
       keptIds.add(thread.lineage.parentThreadId);
     }
     for (const task of thread.pendingBackgroundTasks ?? []) {
-      const named = task.ownerThreadId ?? task.childThreadId;
-      if (named !== undefined) keptIds.add(named);
+      if (task.ownerThreadId !== undefined) keptIds.add(task.ownerThreadId);
+      if (task.childThreadId !== undefined) keptIds.add(task.childThreadId);
     }
   }
   return threads.filter(
