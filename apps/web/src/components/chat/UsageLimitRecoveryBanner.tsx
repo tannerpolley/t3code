@@ -33,7 +33,6 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
-    priority: "urgent",
     icon: <GaugeIcon />,
     title: "Usage limit reached",
     description: `${props.mode === undefined ? "" : props.mode === "off" ? "Automatic recovery is off. " : props.mode === "switch" ? "Automatic provider recovery is enabled. " : "Waiting for reset. "}${
@@ -115,7 +114,6 @@ export function automaticProviderSwitchBannerItem(
   return {
     id: `auto-provider-switch:${marker.runId}`,
     variant: marker.to === null ? "warning" : "info",
-    priority: "notice",
     icon: <GaugeIcon />,
     title: marker.to === null ? "Waiting for reset" : "Provider switched automatically",
     description: marker.message,

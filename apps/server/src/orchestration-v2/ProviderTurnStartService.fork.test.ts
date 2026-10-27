@@ -446,6 +446,7 @@ function makeLocalCommandHarness(input: {
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
         Layer.mock(GitWorkflow.GitWorkflowService)({
           pruneWorktrees: () => Effect.void,
+          listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
           createWorktree,
         }),
         Layer.mock(ProjectService.ProjectService)({

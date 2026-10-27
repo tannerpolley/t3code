@@ -9,8 +9,8 @@ import { DEFAULT_UNIFIED_SETTINGS, SidebarThreadSortOrder } from "@t3tools/contr
 import { isElectron } from "../../env";
 import { isMacPlatform } from "../../lib/utils";
 import { InterfaceZoomSettingsRow } from "./InterfaceZoomSettingsRow";
-import { UsageLimitRecoverySettings } from "./UsageLimitRecoverySettings";
 import { WorktreesDirectoryRow } from "./WorktreesDirectoryRow";
+import { UsageLimitRecoverySettings } from "./UsageLimitRecoverySettings";
 import {
   editLocalServerHideRules,
   type ClientSettings,
@@ -146,7 +146,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "short-model-names",
     section: "appearance",
     description:
-      "Model labels drop the company name the provider icon already shows and lead with the model's own name, then its version: Opus 5.5, Sonnet 5, Sol 6. Applies to the sidebar, Lineage, agent details and the composer's model button, always right after the icon; the model list keeps full names. Off restores the full names.",
+      "Model labels drop the company name the provider icon already shows and use each provider's short model name: Opus 5.5, Sonnet 5, 6 Sol. Applies to the sidebar, Lineage, agent details and the composer's model button, always right after the icon; the model list keeps full names. Off restores the full names.",
   },
   {
     key: "chatMath",
@@ -737,7 +737,7 @@ export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) 
       );
     case "/settings/providers":
       return <ModelRolesSection />;
-    case "/settings/integrations":
+    case "/settings/browser":
       return (
         <>
           <CustomizationsGroup title="Browser & preview" section="browser">
@@ -752,6 +752,8 @@ export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) 
           <ProviderPluginsSection />
         </>
       );
+    case "/settings/worktrees":
+      return <WorktreesDirectoryRow />;
     case "/settings/source-control":
       return (
         <CustomizationsGroup title="Version control & issues" section="versionControl">
@@ -762,7 +764,5 @@ export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) 
           />
         </CustomizationsGroup>
       );
-    case "/settings/storage":
-      return <WorktreesDirectoryRow />;
   }
 }

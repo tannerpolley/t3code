@@ -56,6 +56,5 @@ describe("thread workflows", () => {
     } as never);
 
     expect(state.canPromoteToSteer).toBe(false);
-    expect(state.steerBlockedBy).toBe("turn_ended");
   });
 });

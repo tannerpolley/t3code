@@ -26,7 +26,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "storage-worktrees-location",
     title: "Worktree location",
-    to: "/settings/storage",
+    to: "/settings/worktrees",
     scope: "environment-defaults",
     searchTerms: [
       "worktree location folder directory path drive external disk inside project local .worktrees customizations",
@@ -287,20 +287,20 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "agent-browser-in-panel",
     title: "Agent browser opens in the side panel",
-    to: "/settings/integrations",
+    to: "/settings/browser",
     searchTerms: ["customization fork browser preview agent side panel floating mini player"],
   },
   {
     id: "agent-browser-tab-limits",
     title: "Agent browser tab limits",
-    to: "/settings/integrations",
+    to: "/settings/browser",
     scope: "environment-defaults",
     searchTerms: ["customization fork browser preview agent tabs cap three stuck reload retry"],
   },
   {
     id: "local-server-hide-rules",
     title: "Hidden local servers",
-    to: "/settings/integrations",
+    to: "/settings/browser",
     scope: "environment-defaults",
     searchTerms: [
       "customization fork browser preview local servers hide hidden restore process port range serena",
@@ -336,7 +336,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "plugin-skills",
     title: "Plugin skills in the composer",
-    to: "/settings/integrations",
+    to: "/settings/browser",
     searchTerms: ["customization fork plugin skills claude code dollar menu composer badge"],
   },
   {

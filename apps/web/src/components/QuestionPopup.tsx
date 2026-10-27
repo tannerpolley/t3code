@@ -6,7 +6,7 @@ import type { RuntimeRequestId } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
 import { MessageCircleQuestionIcon, XIcon } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { useClientSettings } from "../hooks/useSettings";
@@ -65,10 +65,7 @@ function QuestionPopupQueue() {
   const { environmentId, threadId } = useParams({ strict: false });
   // Later and Close put questions off for this session; a new question has a new key.
   const [deferredKeys, setDeferredKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const queue = useMemo(
-    () => visibleQuestionQueue(questions, deferredKeys, { environmentId, threadId }),
-    [deferredKeys, environmentId, questions, threadId],
-  );
+  const queue = visibleQuestionQueue(questions, deferredKeys, { environmentId, threadId });
   const head = queue[0];
   if (!head) return null;
   const defer = (keys: ReadonlyArray<string>) =>
@@ -100,13 +97,10 @@ function QuestionPopupCard({
   const thread = useThreadShell(threadRef);
   const project = useProject(thread ? scopeProjectRef(environmentId, thread.projectId) : null);
   const requests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(threadRef));
-  const prompt = useMemo(
-    () =>
-      derivePendingUserInputs(requests?.userInputs ?? []).find(
-        (input) => input.requestId === requestId,
-      ) ?? null,
-    [requests, requestId],
-  );
+  const prompt =
+    derivePendingUserInputs(requests?.userInputs ?? []).find(
+      (input) => input.requestId === requestId,
+    ) ?? null;
   const navigate = useNavigate();
   // The same commands the thread's own question card sends.
   const respond = useAtomCommand(threadEnvironment.respondToUserInput, "answer question");
@@ -116,27 +110,17 @@ function QuestionPopupCard({
   const [responding, setResponding] = useState(false);
   const inFlight = useRef(false);
 
-  const onToggleOption = useCallback(
-    (questionId: string, optionValue: string) => {
-      const entry = prompt?.questions.find((candidate) => candidate.id === questionId);
-      if (!entry) return;
-      setAnswers((existing) => ({
-        ...existing,
-        [questionId]: togglePendingUserInputOptionSelection(
-          entry,
-          existing[questionId],
-          optionValue,
-        ),
-      }));
-    },
-    [prompt],
-  );
-  const onDismiss = useCallback(
-    (id: RuntimeRequestId) => {
-      void dismiss({ environmentId, input: { threadId, requestId: id } });
-    },
-    [dismiss, environmentId, threadId],
-  );
+  const onToggleOption = (questionId: string, optionValue: string) => {
+    const entry = prompt?.questions.find((candidate) => candidate.id === questionId);
+    if (!entry) return;
+    setAnswers((existing) => ({
+      ...existing,
+      [questionId]: togglePendingUserInputOptionSelection(entry, existing[questionId], optionValue),
+    }));
+  };
+  const onDismiss = (id: RuntimeRequestId) => {
+    void dismiss({ environmentId, input: { threadId, requestId: id } });
+  };
 
   // Until the thread's detail brings the question, the header and controls still show,
   // so a question that cannot load never blocks the ones behind it.
@@ -176,7 +160,7 @@ function QuestionPopupCard({
         onClose();
       }}
     >
-      <ComposerBanner.Root placement="floating" density="spacious" className="shadow-xl">
+      <ComposerBanner.Root density="spacious" className="shadow-xl">
         <div className="flex items-start gap-2 px-1 pb-2">
           <MessageCircleQuestionIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-info" />
           <div className="min-w-0 flex-1">

@@ -14,7 +14,8 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
-import { ModelEsque, getTriggerDisplayModelName } from "./providerIconUtils";
+import { ModelEsque, getDisplayModelName } from "./providerIconUtils";
+import { forkTriggerDisplayModelName } from "./ForkModelNames";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import {
   ComposerControl,
@@ -120,12 +121,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   // The trigger names the chosen model; the list below keeps full names to choose between.
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const triggerTitle = selectedModel
-    ? getTriggerDisplayModelName(selectedModel, shortModelNames)
+    ? forkTriggerDisplayModelName(selectedModel, activeEntry?.driverKind, shortModelNames)
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
       ? "Choose model"
       : props.model || "Choose model";
   const triggerLabel = selectedModel
-    ? `${getTriggerDisplayModelName(selectedModel, shortModelNames)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+    ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
     : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
@@ -155,12 +156,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       model: selection.model,
       options: props.modelOptionsByInstance.get(selection.instanceId) ?? [],
     });
+    const unavailable = model?.isUnavailable ? " (Unavailable)" : "";
     return {
       ...selection,
       entry,
       label: model
-        ? `${getTriggerDisplayModelName(model, shortModelNames)}${model.isUnavailable ? " (Unavailable)" : ""}`
+        ? `${forkTriggerDisplayModelName(model, entry?.driverKind, shortModelNames)}${unavailable}`
         : selection.model,
+      fullLabel: model ? `${getDisplayModelName(model)}${unavailable}` : selection.model,
     };
   });
   const multipleLabel = selectedEntries
@@ -172,7 +175,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           .join(", ")}${selectedEntries.length > 2 ? `, ${selectedEntries.length - 2} more` : ""}`
     : undefined;
   const allModelNames = selectedEntries
-    ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
+    ? selectedEntries.map((selection) => selection.fullLabel).join(", ") || "Choose models"
     : undefined;
   const triggerTooltipContent = shortcutLabel
     ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
@@ -192,7 +195,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       <PopoverTrigger
         render={
           <ComposerControl
-            aria-label={props.triggerAriaLabel ?? allModelNames}
+            aria-label={
+              props.triggerAriaLabel ?? props.triggerLabel ?? allModelNames ?? triggerLabel
+            }
             size={size}
             data-chat-provider-model-picker="true"
             className={cn(

@@ -169,7 +169,7 @@ describe("MessagesTimeline history and thread links", () => {
         }),
       );
       expect(screen.text()).toContain("Context handoff");
-      expect(screen.text()).toContain("GPT 5.6 Sol");
+      expect(screen.text()).toContain("5.6 Sol");
       expect(screen.text()).toMatch(/(?:Claude )?Fable 5/);
       expect(screen.text()).not.toContain("Full conversation context");
     }
@@ -191,7 +191,7 @@ describe("MessagesTimeline history and thread links", () => {
           },
         ] as never,
       });
-      expect(screen.text()).toContain("GPT 5.6 Sol");
+      expect(screen.text()).toContain("5.6 Sol");
       expect(screen.text()).toMatch(/(?:Claude )?Fable 5/);
     }
 

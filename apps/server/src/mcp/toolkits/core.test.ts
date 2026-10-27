@@ -1,3 +1,8 @@
+import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
+import { OrchestratorToolkit } from "./orchestrator/tools.ts";
+import { ThreadToolkit } from "./thread/tools.ts";
+import { ProjectArtifactsToolkit } from "./projectArtifacts/tools.ts";
+import { WorktreeToolkit } from "./worktree/tools.ts";
 import * as OwnerDecisions from "../../issues/OwnerDecisions.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -138,8 +143,8 @@ it.effect("an answered question reports already answered instead of not found", 
     const respond = (id: string) =>
       server
         .callTool({
-          name: "t3_pending_request_respond",
-          arguments: { requestId: id, answers: { size: "large" } },
+          name: "t3_pending_request",
+          arguments: { action: "respond", requestId: id, answers: { size: "large" } },
         })
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
@@ -472,8 +477,8 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     });
 
     const forked = yield* call(
-      "t3_thread_fork",
-      { sourcePoint: { type: "latest_stable" } },
+      "t3_thread_transfer",
+      { action: "fork", sourcePoint: { type: "latest_stable" } },
       clientScope("auto"),
     );
     expect(declaredFailure(forked)).toMatchObject({ code: "target_required" });
@@ -518,7 +523,7 @@ it.effect("a read-only client reads threads and is refused every write before it
           Effect.provideService(McpSchema.McpServerClient, client),
         );
 
-    const configuration = yield* call("t3_thread_configuration", {
+    const configuration = yield* call("t3_thread_configure", {
       threadId: "other-project-thread",
     });
     expect(configuration.isError).toBe(false);
@@ -617,18 +622,20 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
           Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-    const update = yield* call("update_scheduled_task", {
+    const update = yield* call("schedule_task", {
       scheduledTaskId: "task-full-access",
       prompt: "Run something else",
     });
     expect(declaredFailure(update)).toMatchObject({ code: "runtime_mode_escalation_denied" });
     const remove = yield* call("delete_scheduled_task", { scheduledTaskId: "task-full-access" });
     expect(declaredFailure(remove)).toMatchObject({ code: "runtime_mode_escalation_denied" });
-    const allowed = yield* call("update_scheduled_task", {
+    const allowed = yield* call("schedule_task", {
       scheduledTaskId: "task-auto",
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
+    const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
+    expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
@@ -890,3 +897,42 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
     ),
   ),
 );
+
+it("keeps fork tools in their toolkits with presentation labels", () => {
+  const tools = {
+    ...OrchestratorToolkit.tools,
+    ...ThreadToolkit.tools,
+    ...ProjectArtifactsToolkit.tools,
+    ...WorktreeToolkit.tools,
+  };
+  for (const name of [
+    "cancel_issue_request",
+    "close_out_issue_attempt",
+    "get_repository_orchestration",
+    "link_issue",
+    "list_owner_decisions",
+    "propose_issue_change",
+    "queue_issue",
+    "request_owner_decision",
+    "request_repository_handoff",
+    "restore_repository_root",
+    "set_repository_work_paused",
+    "set_repository_worker_limit",
+    "t3_issue_inbox",
+    "t3_issue_post",
+    "t3_project_artifacts_add",
+    "t3_project_artifacts_list",
+    "t3_project_artifacts_move",
+    "t3_project_artifacts_remove",
+    "t3_project_artifacts_update",
+    "t3_request_user_input",
+    "t3_worktree_return_to_root",
+    "unlink_issue",
+    "unqueue_issue",
+    "withdraw_owner_decision",
+    "work_through_milestone",
+  ]) {
+    expect(Object.hasOwn(tools, name), name).toBe(true);
+    expect(resolveT3McpToolDefinition(name), name).not.toBeNull();
+  }
+});

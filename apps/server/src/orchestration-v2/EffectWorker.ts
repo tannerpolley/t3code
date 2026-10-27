@@ -800,6 +800,29 @@ export const layerExecutor: Layer.Layer<
   }),
 );
 
+// A running effect blocks later work on its thread and its lease is never reclaimed in-process,
+// so a stop that hangs must give up and fall through to the normal retry/fail path.
+const DELEGATED_TASKS_STOP_TIMEOUT = Duration.seconds(30);
+
+const boundExecution =
+  (effect: EffectOutbox.OrchestrationEffectV2) =>
+  (execution: Effect.Effect<void, OrchestrationEffectExecutionError>) =>
+    effect.request.type === "delegated-tasks.stop"
+      ? execution.pipe(
+          Effect.timeoutOrElse({
+            duration: DELEGATED_TASKS_STOP_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  cause: `Timed out after ${Duration.format(DELEGATED_TASKS_STOP_TIMEOUT)}.`,
+                }),
+              ),
+          }),
+        )
+      : execution;
+
 export class OrchestrationEffectWorkerError extends Schema.TaggedError<OrchestrationEffectWorkerError>()(
   "OrchestrationEffectWorkerError",
   {
@@ -1000,10 +1023,8 @@ export const layerWithOptions = (
             (effect.request.type === "provider-turn.interrupt" &&
               effect.request.retryUntilDone === true);
           const execution = executor
-            .execute(effect, {
-              willRetry: retryUntilDone || effect.attemptCount < maxAttempts,
-            })
-            .pipe(Effect.as("executed" as const));
+            .execute(effect, { willRetry: retryUntilDone || effect.attemptCount < maxAttempts })
+            .pipe(boundExecution(effect), Effect.as("executed" as const));
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
             Effect.ensuring(outbox.clearCancellation(effect.id)),
           );
@@ -1079,17 +1100,21 @@ export const layerWithOptions = (
       );
 
       return OrchestrationEffectWorkerV2.of({
-        runOnceInLane: Effect.fn("OrchestrationEffectWorkerV2.runOnceInLane")((lane) => runOnce(false, lane)),
+        runOnceInLane: Effect.fn("OrchestrationEffectWorkerV2.runOnceInLane")((lane) =>
+          runOnce(false, lane),
+        ),
         awaitWorkInLane: outbox.awaitAvailableInLane,
-        nextClaimableAtInLane: Effect.fn("OrchestrationEffectWorkerV2.nextClaimableAtInLane")((lane) =>
-          outbox
-            .nextClaimableAtInLane(lane)
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectWorkerError({ operation: "next-claimable", cause }),
+        nextClaimableAtInLane: Effect.fn("OrchestrationEffectWorkerV2.nextClaimableAtInLane")(
+          (lane) =>
+            outbox
+              .nextClaimableAtInLane(lane)
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectWorkerError({ operation: "next-claimable", cause }),
+                ),
               ),
-            )),
+        ),
         awaitWork: outbox.awaitAvailable,
         runOnce: runOnce(),
         runRecoveryOnce: runOnce(true),

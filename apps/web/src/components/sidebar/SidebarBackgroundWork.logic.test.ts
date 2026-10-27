@@ -156,7 +156,7 @@ describe("describeSidebarBackgroundWork", () => {
       )[0]?.status;
 
     expect(describe("command")).toBe("ready");
-    expect(describe("monitor")).toBe("waiting");
+    expect(describe("monitor")).toBe("ready");
     expect(describe("background_task")).toBe("waiting");
 
     const idleWithoutRoster = {

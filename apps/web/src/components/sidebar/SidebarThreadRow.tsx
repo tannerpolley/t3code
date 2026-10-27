@@ -4,7 +4,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { withChildNeeds } from "../Sidebar.logic";
 import type { ProjectFolderAppearance } from "../../projectFolderAppearance";
 import { useProjectFolderAppearance } from "../../projectFolderAppearance";
-import { shortModelName } from "../chat/providerIconUtils";
+import { shortModelName } from "../chat/ForkModelNames";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { IssueInboxBadge } from "../issues/IssueInbox";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
@@ -105,7 +105,7 @@ import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getTriggerDisplayModelLabel } from "../chat/providerIconUtils";
+import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
 import { InlineButton } from "../ui/button";
@@ -751,7 +751,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     (model) => model.slug === thread.modelSelection.model,
   );
   const modelLabel = selectedModel
-    ? getTriggerDisplayModelLabel(selectedModel)
+    ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
     : thread.modelSelection.model;
 
   const showsScratchMachine = !thread.branch && props.scratchMachineLabel !== null;
@@ -892,9 +892,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
     variantAction === "unsettle" &&
       !props.isActive &&
-      "[&:not(:hover):not(:focus-within)_*]:text-secondary-label/70 redesign:[&:not(:hover):not(:focus-within)_*]:text-secondary-label",
+      "[&:not(:hover):not(:focus-within)_*]:text-secondary-label",
     props.isActive
-      ? "bg-sidebar-row-active text-sidebar-foreground light:shadow-xs light:ring-1 light:ring-inset light:ring-sidebar-border/70 redesign:light:shadow-none"
+      ? "bg-sidebar-row-active text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
       : isSelected || props.sweepAction !== null
         ? "bg-sidebar-row-selected text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
         : hasUnsentDraft
@@ -966,17 +966,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           ? cn(
               "truncate",
               shouldRecede
-                ? "text-secondary-label redesign:text-foreground/75 redesign:group-hover/sidebar-row:text-foreground redesign:group-focus-visible/sidebar-row:text-foreground"
-                : isUnread || isWoke || status === "input" || status === "request"
-                  ? "text-foreground"
-                  : status === "failed"
-                    ? "text-foreground/95"
-                    : "text-foreground/90 redesign:text-foreground",
+                ? "text-foreground/75 group-hover/sidebar-row:text-foreground group-focus-visible/sidebar-row:text-foreground"
+                : status === "failed" && !isUnread && !isWoke
+                  ? "text-foreground/95"
+                  : "text-foreground",
             )
           : cn(
               "truncate group-focus-within/sidebar-row:text-foreground group-hover/sidebar-row:text-foreground",
               shouldRecede
-                ? "text-secondary-label/70 redesign:text-secondary-label"
+                ? "text-secondary-label"
                 : props.isActive || isWoke || status === "input" || status === "request"
                   ? "text-foreground"
                   : isUnread
@@ -1127,8 +1125,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 Regenerating title
               </span>
             ) : null}
-            {/* Shelf rows are one line; the New design gives the title the room a PR number takes. */}
-            {prBadge ? <span className="contents redesign:hidden">{prBadge}</span> : null}
             <IssueInboxBadge threadRef={threadRef} />
             {sortable?.isDragging ? (
               dragDestination
@@ -1148,7 +1144,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                     <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
                       {/* The clock tells a wake time from an age at a glance. */}
-                      <AlarmClockIcon aria-hidden className="hidden size-3 redesign:block" />
+                      <AlarmClockIcon aria-hidden className="size-3" />
                       {props.snoozeWakeLabelText}
                     </span>
                   ) : isWoke ? (
@@ -1235,7 +1231,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   }
 
   const diff = latestRunDiff(thread);
-  // Only the provider icon would remain; the New design drops the line instead of leaving it blank.
+  // Only the provider icon would remain, so the row drops the line instead of leaving it blank.
   const metaLineEmpty =
     !thread.branch &&
     !showsScratchMachine &&
@@ -1251,7 +1247,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {...(fileDropHandlers ?? {})}
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
-        metaLineEmpty && "redesign:[contain-intrinsic-size:auto_58px]",
+        metaLineEmpty && "[contain-intrinsic-size:auto_58px]",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -1278,7 +1274,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <div
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
-              metaLineEmpty && "redesign:h-auto",
+              metaLineEmpty && "h-auto",
             )}
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
@@ -1295,10 +1291,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {pinIndicator}
               {props.projectDisplayName ? (
                 <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate text-secondary-label text-xs",
-                    shouldRecede ? "font-normal" : "font-medium redesign:font-normal",
-                  )}
+                  className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
                 >
                   {props.projectDisplayName}
                 </span>
@@ -1448,7 +1441,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 </span>
               ) : null}
               {metaLineEmpty ? (
-                <span aria-hidden className="hidden shrink-0 redesign:inline-flex">
+                <span aria-hidden className="inline-flex shrink-0">
                   <SidebarProviderStack
                     thread={thread}
                     providerEntryByInstanceId={props.providerEntryByInstanceId}
@@ -1456,52 +1449,59 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 </span>
               ) : null}
             </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              <ThreadRoleIcon thread={thread.source} />
-              {thread.branch ? (
-                <>
-                  <ThreadLocationIcon thread={thread} />
-                  <span className="flex min-w-0 flex-1 text-muted-foreground/40 redesign:text-inherit">
-                    <MiddleTruncate value={thread.branch} showTitle={false} />
+            {metaLineEmpty ? null : (
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+                {thread.branch ? (
+                  <>
+                    <ThreadLocationIcon thread={thread} />
+                    <span className="flex min-w-0 flex-1">
+                      <MiddleTruncate value={thread.branch} showTitle={false} />
+                    </span>
+                  </>
+                ) : showsScratchMachine ? (
+                  <>
+                    <EnvironmentMachineIcon
+                      aria-hidden
+                      kind={props.environmentMachine}
+                      className="size-3 shrink-0"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{props.scratchMachineLabel}</span>
+                  </>
+                ) : (
+                  <span className="flex-1" />
+                )}
+                {terminalStatusIcon}
+                {prBadge}
+                {diff ? (
+                  <span className="shrink-0 font-mono">
+                    <span className="text-diff-addition-foreground">
+                      +{formatDiffCount(diff.insertions)}
+                    </span>{" "}
+                    <span className="text-diff-deletion-foreground">
+                      −{formatDiffCount(diff.deletions)}
+                    </span>
                   </span>
-                </>
-              ) : showsScratchMachine ? (
-                <>
-                  <EnvironmentMachineIcon
-                    aria-hidden
-                    kind={props.environmentMachine}
-                    className="size-3 shrink-0 text-muted-foreground/40 redesign:text-inherit"
+                ) : null}
+                <span
+                  aria-hidden
+                  className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+                >
+                  {thread.environmentId !== props.currentEnvironmentId && !showsScratchMachine ? (
+                    <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                      <EnvironmentMachineIcon
+                        aria-hidden
+                        kind={props.environmentMachine}
+                        className="size-3.5"
+                      />
+                    </span>
+                  ) : null}
+                  <SidebarProviderStack
+                    thread={thread}
+                    providerEntryByInstanceId={props.providerEntryByInstanceId}
                   />
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground/40 redesign:text-inherit">
-                    {props.scratchMachineLabel}
-                  </span>
-                </>
-              ) : (
-                <span className="flex-1" />
-              )}
-              {terminalStatusIcon}
-              {prBadge}
-              <IssueInboxBadge threadRef={threadRef} />
-              {diff ? (
-                <span className="shrink-0 font-mono">
-                  <span className="text-diff-addition-foreground">
-                    +{formatDiffCount(diff.insertions)}
-                  </span>{" "}
-                  <span className="text-diff-deletion-foreground">
-                    −{formatDiffCount(diff.deletions)}
-                  </span>
                 </span>
-              ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
-                <SidebarProviderStack
-                  thread={thread}
-                  providerEntryByInstanceId={props.providerEntryByInstanceId}
-                />
-              </span>
-            </div>
+              </div>
+            )}
           </div>
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
         </TooltipTrigger>
@@ -1586,7 +1586,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     (model) => model.slug === thread.modelSelection.model,
   );
   const modelLabel = selectedModel
-    ? getTriggerDisplayModelLabel(selectedModel)
+    ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
     : thread.modelSelection.model;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,

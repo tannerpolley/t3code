@@ -5,7 +5,7 @@ import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { SidebarThreadColumns, sidebarThreadName } from "../sidebar/SidebarColumns";
 import { sidebarThreadTitle } from "../sidebar/SidebarBackgroundWork.logic";
 import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
-import { shortModelName } from "./providerIconUtils";
+import { shortModelName } from "./ForkModelNames";
 import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
 import type {
   SubagentWorkflowGroup,

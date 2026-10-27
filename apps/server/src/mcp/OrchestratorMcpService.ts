@@ -875,7 +875,7 @@ function threadTitle(input: {
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
 }
 
-function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
+export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
   return input.role === undefined || input.role === "general"
     ? input.task
     : `Act as the ${THREAD_ROLE_LABELS[resolveThreadRole(input.role)!]} sub-agent for this task.\n\n${input.task}`;

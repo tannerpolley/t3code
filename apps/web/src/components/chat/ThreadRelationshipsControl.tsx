@@ -1,3 +1,4 @@
+import { resolveForkSubagentMetadata } from "./ForkModelNames";
 import {
   SidebarCaretToggle,
   SidebarThreadColumns,
@@ -32,7 +33,6 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   formatSubagentDisplayTitle,
-  resolveSubagentMetadata,
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
 import {
@@ -96,7 +96,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useUiStateStore } from "../../uiStateStore";
 import { AgentElapsed } from "./AgentElapsed";
 import { useThreadContextPointerDrag } from "./threadContextDrag";
-import { shortModelName } from "./providerIconUtils";
+import { shortModelName } from "./ForkModelNames";
 import {
   canStopLineageSubagent,
   groupThreadLineageRows,
@@ -197,7 +197,7 @@ function ThreadLineageGroup(props: {
             className={cn(
               THREAD_DETAILS_PANEL_CHEVRON_CLASS,
               "transition-transform",
-              !expanded && "rotate-180 redesign:-rotate-90",
+              !expanded && "-rotate-90",
             )}
           />
         </ThreadDetailsControl>
@@ -695,7 +695,7 @@ export function ThreadRelationshipsPanel(props: {
                   const reportedModel = agent?.model ?? null;
                   const model = reportedModel ?? modelSelection?.model ?? null;
                   const modelLabel = "Selected model";
-                  const metadata = resolveSubagentMetadata({
+                  const metadata = resolveForkSubagentMetadata({
                     model,
                     provider,
                     parentThread: currentThread,

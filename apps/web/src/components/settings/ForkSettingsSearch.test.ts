@@ -6,7 +6,7 @@ describe("fork settings destinations", () => {
   it.each([
     ["organize by folder", "organize-by-folder", "/settings/general"],
     ["default project icon", "project-icon-fallback", "/settings/appearance"],
-    ["hidden local servers", "local-server-hide-rules", "/settings/integrations"],
+    ["hidden local servers", "local-server-hide-rules", "/settings/browser"],
     ["issues page", "issues-page", "/settings/source-control"],
     ["model roles", "model-roles", "/settings/providers"],
     ["role display", "sidebar-role-display", "/settings/appearance"],
@@ -22,7 +22,7 @@ describe("fork settings destinations", () => {
     ["ask mode", "dont-ask-mode", "/settings/general"],
     ["don't ask", "dont-ask-mode", "/settings/general"],
     ["don't ask mode", "dont-ask-mode", "/settings/general"],
-    ["inside project local .worktrees", "storage-worktrees-location", "/settings/storage"],
+    ["inside project local .worktrees", "storage-worktrees-location", "/settings/worktrees"],
   ])("finds %s on its settings page", (query, id, to) => {
     expect(searchSettings(query)).toContainEqual(expect.objectContaining({ id, to }));
   });
@@ -31,9 +31,9 @@ describe("fork settings destinations", () => {
       "/settings/general",
       "/settings/appearance",
       "/settings/providers",
-      "/settings/integrations",
+      "/settings/browser",
       "/settings/source-control",
-      "/settings/storage",
+      "/settings/worktrees",
     ]);
     expect(getSettingsSearchTargetScope("model-roles")).toMatchObject({
       scope: "environment-defaults",

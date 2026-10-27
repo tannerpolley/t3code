@@ -7,6 +7,7 @@ import {
 import { Tool } from "effect/ai";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -15,7 +16,6 @@ import * as OwnerDecisions from "./OwnerDecisions.ts";
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagement.ThreadManagementService,
-  OwnerDecisions.OwnerDecisions,
 ];
 export const RequestOwnerDecisionTool = Tool.make("request_owner_decision", {
   description:
@@ -70,19 +70,37 @@ const failure = (cause: { readonly code: string; readonly message: string }) =>
 export const ownerDecisionHandlers = {
   request_owner_decision: McpToolAccess.actsAsCaller((input: OwnerDecisionRequest) =>
     Effect.gen(function* () {
-      const service = yield* OwnerDecisions.OwnerDecisions;
+      const optionalService = yield* Effect.serviceOption(OwnerDecisions.OwnerDecisions);
+      if (Option.isNone(optionalService))
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "Owner decisions are unavailable in this environment.",
+        });
+      const service = optionalService.value;
       return yield* service.request(yield* caller, input).pipe(Effect.mapError(failure));
     }),
   ),
   list_owner_decisions: McpToolAccess.actsAsCaller(() =>
     Effect.gen(function* () {
-      const service = yield* OwnerDecisions.OwnerDecisions;
+      const optionalService = yield* Effect.serviceOption(OwnerDecisions.OwnerDecisions);
+      if (Option.isNone(optionalService))
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "Owner decisions are unavailable in this environment.",
+        });
+      const service = optionalService.value;
       return yield* service.listForCaller(yield* caller).pipe(Effect.mapError(failure));
     }),
   ),
   withdraw_owner_decision: McpToolAccess.actsAsCaller((input: OwnerDecisionWithdrawInput) =>
     Effect.gen(function* () {
-      const service = yield* OwnerDecisions.OwnerDecisions;
+      const optionalService = yield* Effect.serviceOption(OwnerDecisions.OwnerDecisions);
+      if (Option.isNone(optionalService))
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "Owner decisions are unavailable in this environment.",
+        });
+      const service = optionalService.value;
       return yield* service.withdraw(yield* caller, input).pipe(Effect.mapError(failure));
     }),
   ),

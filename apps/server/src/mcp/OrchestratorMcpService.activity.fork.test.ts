@@ -369,11 +369,11 @@ it("refuses delegated child messages, attachments, and queue sends to ancestors"
     );
     const queueTarget = { threadId: rootId, queuedRunId: RunId.make("run-parent-queued") };
     const edited = yield* toolkit
-      .handle("t3_queue_edit", { ...queueTarget, text: "child-injected text" })
+      .handle("t3_queue", { action: "edit", ...queueTarget, text: "child-injected text" })
       .pipe(Stream.unwrap, Stream.runCollect);
     expect(edited.at(-1)?.result).toMatchObject({ code: "ancestor_send_denied" });
     const promoted = yield* toolkit
-      .handle("t3_queue_promote_to_steer", { ...queueTarget, targetRunId: activeRunId })
+      .handle("t3_queue", { action: "promote_to_steer", ...queueTarget, targetRunId: activeRunId })
       .pipe(Stream.unwrap, Stream.runCollect);
     expect(promoted.at(-1)?.result).toMatchObject({ code: "ancestor_send_denied" });
     expect(dispatches).toBe(0);
@@ -400,7 +400,12 @@ it("refuses delegated child messages, attachments, and queue sends to ancestors"
     expect(dispatches).toBe(0);
 
     const unrelatedEdit = yield* toolkit
-      .handle("t3_queue_edit", { ...queueTarget, threadId: unrelatedId, text: "allowed message" })
+      .handle("t3_queue", {
+        action: "edit",
+        ...queueTarget,
+        threadId: unrelatedId,
+        text: "allowed message",
+      })
       .pipe(Stream.unwrap, Stream.runCollect);
     expect(unrelatedEdit.at(-1)?.result).toEqual({ sequence: 1 });
     expect(dispatches).toBe(1);

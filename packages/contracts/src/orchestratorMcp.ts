@@ -238,7 +238,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   ),
   hasPendingQuestion: Schema.Boolean.annotate({
     description:
-      "A question blocks the child and ends a wait. Answer via `t3_pending_request_*` on `childThreadId`, or the user does.",
+      "A question blocks the child and ends a wait. Answer via `t3_pending_request` on `childThreadId`, or the user does.",
   }),
   pendingApproval: Schema.NullOr(
     Schema.Struct({ requestId: RuntimeRequestId, kind: ProviderRequestKind, runId: RunId }),
@@ -650,6 +650,16 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
+
+/** `schedule_task` creates a task, or updates one when `scheduledTaskId` is given. */
+export const OrchestratorMcpSaveScheduledTaskInput = Schema.Struct({
+  ...OrchestratorMcpScheduleTaskInput.fields,
+  scheduledTaskId: Schema.optional(ScheduledTaskId),
+  prompt: Schema.optional(OrchestratorMcpPrompt),
+  schedule: Schema.optional(OrchestratorMcpSchedule),
+});
+export type OrchestratorMcpSaveScheduledTaskInput =
+  typeof OrchestratorMcpSaveScheduledTaskInput.Type;
 
 export const OrchestratorMcpScheduledTask = Schema.Struct({
   repositoryTarget: Schema.optional(Schema.NullOr(RepositoryWorkTarget)),

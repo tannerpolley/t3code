@@ -718,7 +718,6 @@ export function BranchToolbarBranchSelector({
       extraData={branchPickerCollapsedGroups}
       value={resolvedActiveBranch}
       query={branchQuery}
-      resultsQuery={deferredTrimmedBranchQuery}
       onQueryChange={setBranchQuery}
       hasNextPage={hasNextPage}
       isFetchingNextPage={isFetchingNextPage}

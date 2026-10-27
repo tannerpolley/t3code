@@ -1,8 +1,9 @@
+import { resolveForkSubagentMetadata } from "../chat/ForkModelNames";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { fileBasename } from "@t3tools/shared/path";
-import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
+
 import {
   effectiveThreadRole,
   type OrchestrationV2PendingBackgroundTask,
@@ -20,7 +21,7 @@ import { threadRoleDisplay, type RoleDisplayThread } from "../threadRoleDisplay"
 
 import type { SidebarThreadSummary } from "../../types";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
-import { shortModelName } from "../chat/providerIconUtils";
+import { shortModelName } from "../chat/ForkModelNames";
 
 type ChildThread = SidebarThreadSummary;
 type LinkedSubagentTask = Extract<OrchestrationV2PendingBackgroundTask, { kind: "subagent" }> & {
@@ -88,7 +89,7 @@ export function resolveSidebarThreadModelLabel(
   const modelSlug = provider
     ? resolveSelectableModel(provider.driver, model, provider.models)
     : model;
-  const fullLabel = resolveSubagentMetadata({ model, provider }).modelLabel;
+  const fullLabel = resolveForkSubagentMetadata({ model, provider }).modelLabel;
   const modelLabel = short ? shortModelName(fullLabel) : fullLabel;
   const effort = formatModelSelectionEffort(
     { ...thread.modelSelection, model: modelSlug ?? model },
@@ -120,14 +121,7 @@ export function groupBackgroundWorkTaskRows(rows: ReadonlyArray<BackgroundWorkTa
   };
 }
 
-/**
- * Joins provider-reported subagent tasks to their thread rows. Some providers omit a child id;
- * those roster entries pair with running children by count. Commands started by a child sit
- * beneath that child while staying on the parent provider's roster.
- *
- * A thread keeps its own background tasks first, then workers by role and newest creation.
- * Roster-only subagents have no role, so they follow the known workers.
- */
+/** Joins provider-reported subagents to their thread rows, matching roster-only tasks by count. */
 export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<ChildThread>,

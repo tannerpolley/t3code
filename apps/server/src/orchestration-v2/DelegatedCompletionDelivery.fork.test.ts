@@ -180,7 +180,7 @@ it.layer(layerTest)("child question wake", (it) => {
       assert.equal(notices.length, 1);
       assert.include(notices[0]!.text, "Should I also fix the lexer?");
       assert.include(notices[0]!.text, "Fix both parser and lexer");
-      assert.include(notices[0]!.text, "t3_pending_request_respond");
+      assert.include(notices[0]!.text, 't3_pending_request action="respond"');
       assert.include(notices[0]!.text, "waiting on you, its orchestrator");
       assert.isFalse(yield* ownerCanSee(question));
     }),

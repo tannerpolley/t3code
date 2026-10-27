@@ -3799,7 +3799,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           operation: "GitVcsDriver.createWorktree",
           command: "git worktree add",
           cwd: input.cwd,
-          detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Storage.`,
+          detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Worktrees.`,
         });
       }
       if (repositoryRoot !== undefined) {
@@ -4530,7 +4530,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "branch",
       "--list",
       "--no-column",
-      "--format=%(refname:short)",
+      "--format=%(refname:lstrip=2)",
     ]).pipe(
       Effect.map((stdout) => {
         const branchNames: Array<string> = [];

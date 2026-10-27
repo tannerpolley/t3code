@@ -14,7 +14,10 @@ import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 type Threads<E> = {
   readonly getThreadShell: (
     threadId: ThreadId,
-  ) => Effect.Effect<Pick<OrchestrationV2ThreadShell, "lineage" | "forkedFrom" | "archivedAt" | "deletedAt"> | null, E>;
+  ) => Effect.Effect<
+    Pick<OrchestrationV2ThreadShell, "lineage" | "forkedFrom" | "archivedAt" | "deletedAt"> | null,
+    E
+  >;
   readonly getThreadRecords: (
     threadId: ThreadId,
     fields: ReadonlyArray<"subagents">,
@@ -72,46 +75,52 @@ export const routeDelegatedRequests = Effect.fn("routeDelegatedRequests")(functi
   projections: Projections,
   events: ReadonlyArray<OrchestrationV2DomainEvent>,
 ) {
-    const inactiveParents = events.filter(
-      (event) =>
-        (event.type === "thread.archived" ||
-          event.type === "thread.deleted" ||
-          event.type === "thread.metadata-updated") &&
-        (event.payload.archivedAt !== null || event.payload.deletedAt !== null),
-    );
-    const inactiveParentIds = new Set(inactiveParents.map((event) => event.threadId));
-    const createdThreads = new Map(events.flatMap((event) => event.type === "thread.created" ? [[event.threadId, event.payload] as const] : []));
-    const batchThreads = {
-      ...projections,
-      getThreadShell: (threadId: ThreadId) => {
-        const created = createdThreads.get(threadId);
-        return created === undefined ? projections.getThreadShell(threadId) : Effect.succeed(created);
-      },
-    };
-    return yield* Effect.forEach(
-      events,
-      (event) =>
-        Effect.gen(function* () {
-          if (
-            event.type !== "runtime-request.updated" ||
-            event.payload.status !== "pending" ||
-            !runtimeRequestNeedsUser(event.payload.kind)
-          )
-            return event;
-          const existing = createdThreads.has(event.threadId) ? null : yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
-          const routedTo =
-            existing == null
-              ? (yield* delegatedRequestOwner(batchThreads, event.threadId, inactiveParentIds))
-                  ?.parentThreadId
-              : existing.routedTo;
-          return {
-            ...event,
-            payload: { ...event.payload, ...(routedTo === undefined ? {} : { routedTo }) },
-          };
-        }),
-      { concurrency: 1 },
-    );
-  });
+  const inactiveParents = events.filter(
+    (event) =>
+      (event.type === "thread.archived" ||
+        event.type === "thread.deleted" ||
+        event.type === "thread.metadata-updated") &&
+      (event.payload.archivedAt !== null || event.payload.deletedAt !== null),
+  );
+  const inactiveParentIds = new Set(inactiveParents.map((event) => event.threadId));
+  const createdThreads = new Map(
+    events.flatMap((event) =>
+      event.type === "thread.created" ? [[event.threadId, event.payload] as const] : [],
+    ),
+  );
+  const batchThreads = {
+    ...projections,
+    getThreadShell: (threadId: ThreadId) => {
+      const created = createdThreads.get(threadId);
+      return created === undefined ? projections.getThreadShell(threadId) : Effect.succeed(created);
+    },
+  };
+  return yield* Effect.forEach(
+    events,
+    (event) =>
+      Effect.gen(function* () {
+        if (
+          event.type !== "runtime-request.updated" ||
+          event.payload.status !== "pending" ||
+          !runtimeRequestNeedsUser(event.payload.kind)
+        )
+          return event;
+        const existing = createdThreads.has(event.threadId)
+          ? null
+          : yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
+        const routedTo =
+          existing == null
+            ? (yield* delegatedRequestOwner(batchThreads, event.threadId, inactiveParentIds))
+                ?.parentThreadId
+            : existing.routedTo;
+        return {
+          ...event,
+          payload: { ...event.payload, ...(routedTo === undefined ? {} : { routedTo }) },
+        };
+      }),
+    { concurrency: 1 },
+  );
+});
 
 export const isDelegatedDescendant = Effect.fn("isDelegatedDescendant")(function* <E>(
   threads: Threads<E>,
@@ -160,5 +169,5 @@ export function delegatedRequestResponseInstructions(
     request.kind === "user_input"
       ? 'answers: {questionId: "answer"}'
       : 'decision: "accept" or "decline"';
-  return `Answer with t3_pending_request_respond using threadId: ${childThreadId}, requestId: ${request.id}, and ${response}. If you need the owner's decision, ask with your own question tool and relay their answer with t3_pending_request_respond. Child questions and approvals are routed to you while you are active. Requests left unanswered become visible to the owner when you stop.`;
+  return `Answer with t3_pending_request action="respond" using threadId: ${childThreadId}, requestId: ${request.id}, and ${response}. If you need the owner's decision, ask with your own question tool and relay their answer with t3_pending_request action="respond". Child questions and approvals are routed to you while you are active. Requests left unanswered become visible to the owner when you stop.`;
 }

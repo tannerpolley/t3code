@@ -1,3 +1,4 @@
+import { resolveForkSubagentMetadata } from "./ForkModelNames";
 import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItemStatus,
@@ -7,10 +8,7 @@ import type {
   ProviderInstanceId,
   OrchestrationV2Subagent,
 } from "@t3tools/contracts";
-import {
-  resolveSubagentMetadata,
-  subagentDetailPreview,
-} from "@t3tools/client-runtime/state/subagent-display";
+import { subagentDetailPreview } from "@t3tools/client-runtime/state/subagent-display";
 import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/client-runtime/state/thread-execution";
 import { getModelSelectionStringOptionValue, resolveSelectableModel } from "@t3tools/shared/model";
 import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
@@ -29,7 +27,7 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
-import { shortModelName } from "./providerIconUtils";
+import { shortModelName } from "./ForkModelNames";
 import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
 
 export function SubagentTooltipContent(props: {
@@ -52,7 +50,7 @@ export function SubagentTooltipContent(props: {
   result?: string | null | undefined;
   progress?: string | null | undefined;
 }) {
-  const metadataResult = resolveSubagentMetadata(props);
+  const metadataResult = resolveForkSubagentMetadata(props);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const modelLabel = shortModelNames
     ? shortModelName(metadataResult.modelLabel)

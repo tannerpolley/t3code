@@ -9,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
-import * as ProjectArtifacts from "../../../project/ProjectArtifacts.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -17,7 +16,6 @@ const shared = {
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
   dependencies: [
-    ProjectArtifacts.ProjectArtifacts,
     ThreadManagement.ThreadManagementService,
     McpInvocationContext.McpInvocationContext,
   ],
