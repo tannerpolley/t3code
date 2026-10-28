@@ -423,7 +423,7 @@ describe("fresh-thread repository handoff", () => {
           clientRequestId: "managed-worktree",
         };
         const task = yield* mcp.delegateTask(scope(rootId), input);
-        yield* tracker.stream(task.childThreadId).pipe(
+        yield* tracker.stream(task.childThreadId!).pipe(
           Stream.filter((snapshot) => snapshot?.phase === "done"),
           Stream.runHead,
         );
@@ -432,7 +432,7 @@ describe("fresh-thread repository handoff", () => {
         assert.equal(created[0]!.newRefName, "issue-9-issue-9");
         assert.notEqual(created[0]!.newRefName, "trunk");
         assert.equal(yield* store.issueOwner(linked(9)), task.childThreadId);
-        const child = yield* threads.getThreadRecords(task.childThreadId, ["runs"]);
+        const child = yield* threads.getThreadRecords(task.childThreadId!, ["runs"]);
         assert.equal(child.thread.lineage.parentThreadId, rootId);
         assert.equal(child.thread.worktreePath, `/worktrees/${created[0]!.newRefName}`);
         assert.equal(child.thread.branch, created[0]!.newRefName);

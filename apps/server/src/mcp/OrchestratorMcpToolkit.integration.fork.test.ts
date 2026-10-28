@@ -1,3 +1,6 @@
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as OwnerDecisions from "../issues/OwnerDecisions.ts";
 import * as Queue from "effect/Queue";
 import * as IssueLinks from "../issues/IssueLinks.ts";
@@ -98,6 +101,9 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
+  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+  Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+  Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
   Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
@@ -2127,7 +2133,7 @@ describe("orchestrator MCP toolkit", () => {
               reason: "Signs release webhooks. Enter the same value in GitHub's webhook settings.",
               clientRequestId: "release-webhook-secret",
             });
-            expect(retried.structuredContent).toEqual(secretResult);
+            expect(retried.structuredContent, JSON.stringify(retried)).toEqual(secretResult);
             expect(
               (yield* orchestrator.getThreadProjection(parentThreadId)).turnItems.filter(
                 (item) => item.type === "secret_request",
@@ -2165,7 +2171,7 @@ describe("orchestrator MCP toolkit", () => {
               Effect.orDie,
             );
             const delegatedSource = yield* orchestrator.getThreadProjection(
-              delegated.childThreadId,
+              delegated.childThreadId!,
             );
             expect(delegatedSource.messages[0]).toMatchObject({
               senderThreadId: parentThreadId,
@@ -2206,7 +2212,7 @@ describe("orchestrator MCP toolkit", () => {
               status: "completed",
               result: delegatedResult,
             });
-            const child = yield* orchestrator.getThreadProjection(delegated.childThreadId);
+            const child = yield* orchestrator.getThreadProjection(delegated.childThreadId!);
             expect(child.thread.lineage).toEqual({
               parentThreadId,
               relationshipToParent: "subagent",
@@ -2313,7 +2319,7 @@ describe("orchestrator MCP toolkit", () => {
             const activeChildFollowup = yield* decodeThreadSendResult(
               activeChildFollowupCall.structuredContent,
             ).pipe(Effect.orDie);
-            yield* waitForProjection(orchestrator, delegated.childThreadId, (projection) =>
+            yield* waitForProjection(orchestrator, delegated.childThreadId!, (projection) =>
               projection.runs.some(
                 (run) => run.id === activeChildFollowup.runId && run.status === "running",
               ),
@@ -2362,7 +2368,7 @@ describe("orchestrator MCP toolkit", () => {
               result: delegatedResult,
               completionDelivery: { state: "disposed" },
             });
-            yield* waitForProjection(orchestrator, delegated.childThreadId, (projection) =>
+            yield* waitForProjection(orchestrator, delegated.childThreadId!, (projection) =>
               projection.runs.some(
                 (run) => run.id === activeChildFollowup.runId && run.status === "interrupted",
               ),
@@ -2388,7 +2394,7 @@ describe("orchestrator MCP toolkit", () => {
               ),
             );
             expect(
-              (yield* orchestrator.getThreadProjection(delegated.childThreadId)).runs.find(
+              (yield* orchestrator.getThreadProjection(delegated.childThreadId!)).runs.find(
                 (run) => run.id === heldFollowup.runId,
               ),
             ).toMatchObject({ status: "queued", queueHeld: true, startedAt: null });
@@ -2406,7 +2412,7 @@ describe("orchestrator MCP toolkit", () => {
               ),
             );
             expect(
-              (yield* orchestrator.getThreadProjection(delegated.childThreadId)).runs.find(
+              (yield* orchestrator.getThreadProjection(delegated.childThreadId!)).runs.find(
                 (run) => run.id === heldFollowup.runId,
               ),
             ).toMatchObject({ status: "cancelled", startedAt: null });
@@ -2445,7 +2451,7 @@ describe("orchestrator MCP toolkit", () => {
                   createdBy: "agent",
                   creationSource: "server",
                   commandId: CommandId.make(`command:mcp-child:${name}`),
-                  threadId: child.childThreadId,
+                  threadId: child.childThreadId!,
                   messageId,
                   text: cancellationPrompt,
                   attachments: [],
@@ -2454,7 +2460,7 @@ describe("orchestrator MCP toolkit", () => {
                 });
                 const running = yield* waitForProjection(
                   orchestrator,
-                  child.childThreadId,
+                  child.childThreadId!,
                   (projection) => {
                     const run = projection.runs.find((row) => row.userMessageId === messageId);
                     return (
@@ -2505,7 +2511,7 @@ describe("orchestrator MCP toolkit", () => {
               clientRequestId: "steer-untasked-run-interrupt",
             });
             yield* waitForChildRun(
-              steeredSend.child.childThreadId,
+              steeredSend.child.childThreadId!,
               steeredSend.sent.runId,
               "interrupted",
             );
@@ -2528,7 +2534,7 @@ describe("orchestrator MCP toolkit", () => {
             const restartedTaskId = restarted.sent.taskId;
             expect(restartedTaskId).toBeDefined();
             yield* waitForChildRun(
-              restarted.child.childThreadId,
+              restarted.child.childThreadId!,
               restarted.sent.runId,
               "completed",
             );
@@ -2538,7 +2544,7 @@ describe("orchestrator MCP toolkit", () => {
               ),
             );
             expect(
-              (yield* orchestrator.getThreadProjection(restarted.child.childThreadId)).runs.find(
+              (yield* orchestrator.getThreadProjection(restarted.child.childThreadId!)).runs.find(
                 (run) => run.id === restarted.sent.runId,
               )?.delegatedTaskId,
             ).toBe(restartedTaskId);
@@ -2616,7 +2622,7 @@ describe("orchestrator MCP toolkit", () => {
             ).pipe(Effect.orDie);
             expect(cancellable.status).toBe("running");
             expect(cancellable.hasPendingChildRuns).toBe(false);
-            yield* waitForProjection(orchestrator, cancellable.childThreadId, (projection) =>
+            yield* waitForProjection(orchestrator, cancellable.childThreadId!, (projection) =>
               projection.providerTurns.some((turn) => turn.status === "running"),
             );
             const statusWhileOriginalRunningCall = yield* invoke("task_status", {
@@ -2633,7 +2639,7 @@ describe("orchestrator MCP toolkit", () => {
               latestTerminalStatus: null,
             });
             const optionedChild = yield* orchestrator.getThreadProjection(
-              cancellable.childThreadId,
+              cancellable.childThreadId!,
             );
             expect(optionedChild.thread.modelSelection).toEqual({
               instanceId: codexInstanceId,
@@ -2649,7 +2655,7 @@ describe("orchestrator MCP toolkit", () => {
               Effect.orDie,
             );
             expect(cancelResult.status).toBe("cancel_requested");
-            yield* waitForProjection(orchestrator, cancellable.childThreadId, (projection) =>
+            yield* waitForProjection(orchestrator, cancellable.childThreadId!, (projection) =>
               projection.runs.some((run) => run.status === "interrupted"),
             );
             const cancelledStatusCall = yield* invoke("task_status", {
@@ -3315,7 +3321,7 @@ describe("orchestrator MCP toolkit", () => {
               upgradedCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(upgradedDelegated.status).toBe("running");
-            yield* waitForProjection(orchestrator, upgradedDelegated.childThreadId, (projection) =>
+            yield* waitForProjection(orchestrator, upgradedDelegated.childThreadId!, (projection) =>
               projection.providerTurns.some((turn) => turn.status === "running"),
             );
             expect(

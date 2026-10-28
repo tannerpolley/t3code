@@ -195,6 +195,9 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
     Layer.succeed(ProjectService.ProjectService, {
+      listPage: Effect.fn("ProjectService.ProjectService.listPage")(() =>
+        Effect.succeed({ projects: [], nextCursor: null }),
+      ),
       create: Effect.fn("ProjectService.ProjectService.create")(() => Effect.die("unused")),
       bootstrap: Effect.fn("ProjectService.ProjectService.bootstrap")(() => Effect.die("unused")),
       update: Effect.fn("ProjectService.ProjectService.update")(() => Effect.die("unused")),

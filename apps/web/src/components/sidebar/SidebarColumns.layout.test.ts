@@ -36,15 +36,15 @@ describe("sidebar width budget", () => {
     expect(optionalColumns(16)).toEqual([]);
     expect(optionalColumns(18.1)).toEqual([]);
     expect(optionalColumns(18.2)).toEqual(["badge"]);
-    expect(optionalColumns(21.1)).toEqual(["badge"]);
-    expect(optionalColumns(21.2)).toEqual(["model", "effort", "badge"]);
+    expect(optionalColumns(21.8)).toEqual(["badge"]);
+    expect(optionalColumns(21.9)).toEqual(["model", "effort", "badge"]);
   });
 
   it("never drops a column sooner with role icons", () => {
     expect(optionalColumns(18, "icon")).toEqual([]);
     expect(optionalColumns(18.2, "icon")).toEqual(["badge"]);
-    expect(optionalColumns(21, "icon")).toEqual(["badge"]);
-    expect(optionalColumns(21.1, "icon")).toEqual(["model", "effort", "badge"]);
+    expect(optionalColumns(21.6, "icon")).toEqual(["badge"]);
+    expect(optionalColumns(21.7, "icon")).toEqual(["model", "effort", "badge"]);
     for (let rem = 16; rem <= 30; rem += 0.1) {
       expect(optionalColumns(rem, "icon").length).toBeGreaterThanOrEqual(
         optionalColumns(rem).length,

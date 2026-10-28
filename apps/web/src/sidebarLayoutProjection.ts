@@ -6,7 +6,10 @@ import {
 } from "@t3tools/contracts";
 import type { SidebarProjectSnapshot } from "./sidebarProjectGrouping";
 import type { UiProjectState } from "./uiStateStore";
-import { derivePhysicalProjectKey, deriveLogicalProjectKeyFromSettings } from "./logicalProject";
+import {
+  derivePhysicalProjectKey,
+  deriveLogicalProjectKeyFromSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
 
 export function sidebarSectionKey(environmentId: EnvironmentId, sectionId: string): string {

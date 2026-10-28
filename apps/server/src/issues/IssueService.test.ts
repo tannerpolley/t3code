@@ -141,6 +141,8 @@ function makeHarness(input: {
   const credentials = Layer.succeed(
     GitHubCredentials.GitHubCredentials,
     GitHubCredentials.GitHubCredentials.of({
+      saved: () => Effect.succeedNone,
+      fingerprint: (host) => Effect.succeed(`${host}:token`),
       get: (host) =>
         Effect.succeed({
           host,

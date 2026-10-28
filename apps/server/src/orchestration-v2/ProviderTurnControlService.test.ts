@@ -225,6 +225,7 @@ it.effect(
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
           getRecentUsageLimitChildren: () => Effect.succeed([]),
           isUsageLimitFailureReleased: () => Effect.succeed(false),
+          getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
           countThreads: Effect.die("unused countThreads"),
           listActiveSubagentThreadIds: () => Effect.die("unused listActiveSubagentThreadIds"),

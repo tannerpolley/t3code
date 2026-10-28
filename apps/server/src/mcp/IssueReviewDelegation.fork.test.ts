@@ -1,6 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import { CommandId, EnvironmentId, EventId, ProviderSessionId, resolveThreadRole, type ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  EventId,
+  ProviderSessionId,
+  resolveThreadRole,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
@@ -18,7 +25,14 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
-import { createReviewRoot, delegateReviewIssue, modelSelection, reviewHarness, reviewIssue, reviewRead } from "../orchestration-v2/ThreadLaunchService.testHarness.ts";
+import {
+  createReviewRoot,
+  delegateReviewIssue,
+  modelSelection,
+  reviewHarness,
+  reviewIssue,
+  reviewRead,
+} from "../orchestration-v2/ThreadLaunchService.testHarness.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -114,7 +128,7 @@ it.effect(
             issue,
             clientRequestId: `${role}:${issue?.id ?? "no-issue"}`,
           });
-          const child = yield* threads.getThreadRecords(result.childThreadId, ["runs"]);
+          const child = yield* threads.getThreadRecords(result.childThreadId!, ["runs"]);
           assert.equal(child.thread.worktreePath, null);
           assert.equal(child.thread.branch, null);
           assert.isUndefined(child.thread.linkedIssue);
@@ -142,7 +156,7 @@ it.effect(
         isolation: "worktree",
         clientRequestId: "isolated-review",
       });
-      const separate = yield* threads.getThreadRecords(isolated.childThreadId, ["runs"]);
+      const separate = yield* threads.getThreadRecords(isolated.childThreadId!, ["runs"]);
       assert.equal(separate.runs[0]!.workspacePreparation?.type, "worktree");
       assert.isNull(yield* store.issueOwner(reviewIssue(3)));
       assert.equal((yield* store.queue(repository))[0]!.issue.id, reviewIssue(3).id);
@@ -165,7 +179,7 @@ it.effect(
         task: "Implement",
         clientRequestId: "queued-worker",
       });
-      const queued = yield* threads.getThreadRecords(worker.childThreadId, ["runs", "turnItems"]);
+      const queued = yield* threads.getThreadRecords(worker.childThreadId!, ["runs", "turnItems"]);
       assert.equal(queued.runs[0]!.status, "queued");
       assert.equal(queued.runs[0]!.workspacePreparation?.type, "worktree");
       assert.equal(yield* store.issueOwner(reviewIssue(2)), worker.childThreadId);
@@ -200,7 +214,7 @@ it.effect(
         task: "Implement",
         clientRequestId: "queued-cancel",
       });
-      const before = yield* threads.getThreadRecords(child.childThreadId, ["turnItems"]);
+      const before = yield* threads.getThreadRecords(child.childThreadId!, ["turnItems"]);
       assert.isTrue(
         before.turnItems.some(
           (item) =>
@@ -224,7 +238,7 @@ it.effect(
       const status = yield* mcp.taskStatus(scope, child.taskId);
       assert.equal(status.status, "cancelled");
       assert.equal(status.workState, "result_available");
-      const after = yield* threads.getThreadRecords(child.childThreadId, ["runs", "turnItems"]);
+      const after = yield* threads.getThreadRecords(child.childThreadId!, ["runs", "turnItems"]);
       assert.equal(after.runs[0]!.status, "cancelled");
       assert.isTrue(
         after.turnItems
@@ -254,7 +268,7 @@ it.effect(
           {
             id: EventId.make("legacy-waiting-preparation"),
             type: "turn-item.updated",
-            threadId: child.childThreadId,
+            threadId: child.childThreadId!,
             occurredAt: now,
             payload: { ...preparation, status: "waiting", completedAt: null },
           },
@@ -276,7 +290,7 @@ it.effect(
         expectedRevision: config.revision,
         clientRequestId: CommandId.make("close-legacy-attempt"),
       });
-      const recovered = yield* threads.getThreadRecords(child.childThreadId, ["turnItems"]);
+      const recovered = yield* threads.getThreadRecords(child.childThreadId!, ["turnItems"]);
       assert.isFalse(
         recovered.turnItems.some(
           (item) =>
@@ -430,7 +444,9 @@ it.effect(
           (stored) =>
             stored.event.type === "subagent.updated" &&
             stored.event.payload.childThreadId === owner &&
-            ["completed", "failed", "interrupted", "cancelled"].includes(stored.event.payload.status),
+            ["completed", "failed", "interrupted", "cancelled"].includes(
+              stored.event.payload.status,
+            ),
         ),
         Stream.take(1),
         Stream.runDrain,
@@ -470,7 +486,7 @@ it.effect("read-only descendants cannot bypass managed admission for implementor
         task: "Read only",
         clientRequestId: `descendant-${role}`,
       });
-      parent = child.childThreadId;
+      parent = child.childThreadId!;
       const projection = yield* threads.getThreadRecords(parent, ["runs"]);
       assert.isUndefined(projection.thread.linkedIssue);
       assert.isUndefined(projection.thread.repositoryOrchestration);
@@ -581,7 +597,6 @@ it.effect(
       assert.isFalse(yield* store.resultAvailable(child));
       const claimed = yield* outbox.claimNext({
         workerId: "restart-test",
-        leaseDurationMs: 60_000,
         lane: "lifecycle",
       });
       assert.equal(Option.getOrThrow(claimed).id, effectId);

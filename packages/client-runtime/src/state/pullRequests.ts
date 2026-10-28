@@ -521,7 +521,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           const { reviewers, requested } = target.input;
           const candidatesAtom = reviewerCandidates(target);
-          const candidates = Option.getOrNull(AsyncResult.value(registry.get(candidatesAtom)));
+          const candidates = AsyncResult.getOrElse(registry.get(candidatesAtom), () => null);
           const selected =
             candidates?.candidates.filter((candidate) =>
               reviewers.some(
@@ -607,7 +607,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           const { labels, applied } = target.input;
           const candidatesAtom = labelCandidates(target);
-          const candidates = Option.getOrNull(AsyncResult.value(registry.get(candidatesAtom)));
+          const candidates = AsyncResult.getOrElse(registry.get(candidatesAtom), () => null);
           const names = new Set(labels);
           updateCached(registry, candidatesAtom, (value) => ({
             ...value,

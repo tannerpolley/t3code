@@ -173,7 +173,7 @@ effectIt.effect.each(["linux", "darwin"] as const)(
       yield* scanner.retain;
       yield* TestClock.adjust("9 seconds");
       expect(yield* scanner.scan()).toEqual([]);
-      expect(listenerScans).toBe(0);
+      expect(listenerScans).toBe(1);
 
       yield* scanner.registerTerminalProcesses({
         threadId: "scanner-thread",
@@ -181,7 +181,7 @@ effectIt.effect.each(["linux", "darwin"] as const)(
         processIds: [1234],
       });
       expect(yield* scanner.scan()).toMatchObject([{ port: LSOF_TEST_PORT, pid: 1234 }]);
-      expect(listenerScans).toBe(1);
+      expect(listenerScans).toBe(2);
 
       yield* scanner.unregisterTerminal({
         threadId: "scanner-thread",
@@ -189,12 +189,12 @@ effectIt.effect.each(["linux", "darwin"] as const)(
       });
       yield* TestClock.adjust("9 seconds");
       expect(yield* scanner.scan()).toEqual([]);
-      expect(listenerScans).toBe(1);
+      expect(listenerScans).toBe(2);
 
       expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/docs`])).toMatchObject([
         { port: LSOF_TEST_PORT, url: `http://localhost:${LSOF_TEST_PORT}/docs` },
       ]);
-      expect(listenerScans).toBe(2);
+      expect(listenerScans).toBe(3);
     }).pipe(Effect.provide(layer));
   },
 );

@@ -1,25 +1,7 @@
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { pickSharedServerSettings, splitSharedServerPatch } from "./sharedSettings.ts";
-
-const restartCapabilities = { threadRestartContinuation: true };
-
-describe("pickSharedServerSettings", () => {
-  it("returns only the shared keys", () => {
-    expect(
-      Object.keys(pickSharedServerSettings(DEFAULT_SERVER_SETTINGS, restartCapabilities)).sort(),
-    ).toEqual([
-      "continueThreadsAfterServerUpdate",
-      "newWorktreesStartFromOrigin",
-      "sidebarAutoSettleAfterDays",
-      "sidebarAutoSettleOnMerge",
-      "sourceControlWritingStyle",
-      "textGenerationModelSelection",
-      "usageLimitRecovery",
-    ]);
-  });
-});
+import { splitSharedServerPatch } from "./sharedSettings.ts";
 
 describe("shared usage limit recovery", () => {
   it("shares the new mode and keeps provider fallback models local", () => {

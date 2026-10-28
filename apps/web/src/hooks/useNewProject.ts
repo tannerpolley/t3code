@@ -21,6 +21,7 @@ import { projectEnvironment } from "~/state/projects";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useNewThreadHandler } from "./useHandleNewThread";
+import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
@@ -69,6 +70,7 @@ export function useNewProject() {
         description: result.value.repository.nameWithOwner,
       }),
     );
+    void suggestAppAccessForRemote(input.environmentId, result.value.remoteUrl);
   };
 
   return async (input: {

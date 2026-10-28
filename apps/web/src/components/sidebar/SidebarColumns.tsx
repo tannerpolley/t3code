@@ -1,3 +1,4 @@
+import { EffortGlyph } from "../chat/EffortGlyph";
 import { ChevronRightIcon } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -233,9 +234,12 @@ export function threadGroupHue(rootThreadId: string): number {
 
 export function SidebarThreadTitle(props: { readonly role: string; readonly title: string }) {
   return (
-    <span className="sidebar-role-title" title={props.title}>
-      {props.role}
-    </span>
+    <Tooltip>
+      <TooltipTrigger render={<span className="sidebar-role-title block truncate" />}>
+        {props.role}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.title}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -261,17 +265,7 @@ function SidebarEffortMeter(props: { readonly effort: string | null | undefined 
       <TooltipTrigger
         render={<span className="sidebar-thread-effort" role="img" aria-label={name} />}
       >
-        {level === 0
-          ? null
-          : [1, 2, 3, 4, 5].map((dot) => (
-              <span
-                key={dot}
-                className={cn(
-                  "size-0.75 rounded-full",
-                  dot <= level ? "bg-success" : "bg-sidebar-muted-foreground/25",
-                )}
-              />
-            ))}
+        {level === 0 ? null : <EffortGlyph count={5} filled={level} size="xs" />}
       </TooltipTrigger>
       <TooltipPopup side="top">{name}</TooltipPopup>
     </Tooltip>

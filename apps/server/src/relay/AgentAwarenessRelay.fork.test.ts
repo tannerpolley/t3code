@@ -1,3 +1,4 @@
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
@@ -169,7 +170,6 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadTranscript: unused,
     getThreadSnapshotWindow: unused,
     getProjectThreadRecords: () => Effect.die("unused project record read"),
-    getProjectThread: unused,
     listProjectThreads: unused,
     sendToThread: unused,
     assertProviderInstanceEnabled: unused,
@@ -226,6 +226,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
       getDescriptor: unused(),
     }),
     Effect.provideService(ProjectService.ProjectService, {
+      listPage: unused,
       create: unused,
       bootstrap: unused,
       update: unused,
@@ -251,7 +252,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
       Layer.merge(
         NodeCrypto.layer,
         options.projectionStore === undefined
-          ? ProjectionStore.layerMemory
+          ? ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))
           : Layer.succeed(ProjectionStore.ProjectionStoreV2, options.projectionStore),
       ),
     ),
@@ -510,6 +511,9 @@ describe("AgentAwarenessRelay", () => {
           assert.equal(childPublications.length, 2);
           assert.isNull(childPublications[1]?.state);
         }
-      }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      ),
   );
 });
