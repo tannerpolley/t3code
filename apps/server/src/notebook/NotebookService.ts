@@ -232,10 +232,34 @@ const make = Effect.gen(function* () {
         if (session.snapshot.generation !== generation) return;
         const result = session.reducer.reduce(message);
         if (!result) return;
-        changed(session, result.cellId, result.patches);
+        const patches = [...result.patches];
+        if (
+          message.header.msg_type === "execute_reply" &&
+          result.cellId !== null &&
+          result.replyStatus !== undefined
+        ) {
+          const execution = session.snapshot.executions[result.cellId];
+          if (execution) {
+            const updated = { ...execution, replyStatus: result.replyStatus };
+            session.snapshot.executions = {
+              ...session.snapshot.executions,
+              [result.cellId]: updated,
+            };
+            const cell = session.reducer.document.cells.find((cell) => cell.id === result.cellId);
+            patches.push({
+              type: "execution",
+              cellId: result.cellId,
+              count: cell?.execution_count ?? null,
+              execution: updated,
+            });
+          }
+        }
+        changed(session, result.cellId, patches);
         const pending = session.pending;
-        if (result.complete && pending && pending.id === message.parent_header.msg_id)
+        if (result.complete && pending && pending.id === message.parent_header.msg_id) {
+          if (result.replyStatus === "aborted") session.cancelled = true;
           yield* Deferred.succeed(pending.done, result.failed);
+        }
       }),
     ).pipe(
       Effect.catch(() =>

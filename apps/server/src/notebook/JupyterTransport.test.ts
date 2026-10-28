@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
-import { NOTEBOOK_LIMITS } from "@t3tools/contracts";
+import { NOTEBOOK_LIMITS, type NotebookError } from "@t3tools/contracts";
 import * as JupyterTransport from "./JupyterTransport.ts";
 import { ExecutionReducer } from "./executionReducer.ts";
 import { parseNotebook, byteLength } from "./notebookDocument.ts";
@@ -114,6 +114,8 @@ it.live.each([
   "reply9-idleFirst",
   "reply64-replyFirst",
   "input64-replyFirst",
+  "aborted",
+  "aborted-replyFirst",
 ] as const)(
   "%s retains bounded data and normalized control fields across reordered, fragmented JSON",
   (variant) =>
@@ -160,9 +162,10 @@ it.live.each([
         );
       const idle = frame(json("request", "status", { execution_state: "idle" }));
       const error = mode === "reply64" || mode === "reply9";
+      const replyStatus = mode === "aborted" ? "aborted" : error ? "error" : "ok";
       const reply = json("request", "execute_reply", {
         traceback: error ? ["x".repeat(mode === "reply9" ? 9 * 1024 * 1024 : 65536)] : [],
-        status: error ? "error" : "ok",
+        status: replyStatus,
       });
       const split = Math.floor(reply.length / 2);
       const replies = Buffer.concat([
@@ -175,7 +178,7 @@ it.live.each([
           ? Buffer.concat([replies, idle])
           : Buffer.concat([idle, replies]),
       );
-      const complete = yield* Deferred.make<void>();
+      const complete = yield* Deferred.make<void, NotebookError>();
       let deliveredBytes = 0;
       const received: JupyterTransport.Message[] = [];
       yield* channels.messages.pipe(
@@ -186,6 +189,7 @@ it.live.each([
             if (reducer.reduce(message)?.complete) yield* Deferred.succeed(complete, undefined);
           }),
         ),
+        Effect.catch((error) => Deferred.fail(complete, error)),
         Effect.forkScoped,
       );
       yield* Deferred.await(complete);
@@ -197,7 +201,7 @@ it.live.each([
         execution_count: 7,
       });
       expect(received.find((m) => m.header.msg_type === "execute_reply")?.content).toEqual({
-        status: error ? "error" : "ok",
+        status: replyStatus,
       });
       expect(deliveredBytes).toBeLessThan(NOTEBOOK_LIMITS.frameBytes + 65536);
       expect(byteLength(document)).toBeLessThanOrEqual(NOTEBOOK_LIMITS.bytes);

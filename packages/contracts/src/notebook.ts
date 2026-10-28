@@ -49,6 +49,7 @@ export type NotebookControl = typeof NotebookControl.Type;
 export const NotebookInterrupt = Schema.Struct({ ...NotebookControl.fields, runId: Schema.String });
 export type NotebookInterrupt = typeof NotebookInterrupt.Type;
 const NotebookExecution = Schema.Struct({
+  replyStatus: Schema.optional(Schema.String),
   runId: Schema.String,
   generation: Schema.Int,
   sourceHash: Schema.String,

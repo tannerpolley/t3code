@@ -180,7 +180,7 @@ function messageReader(raw: Buffer) {
         };
       }
       if (e.type === "execute_reply") {
-        if (typeof e.status !== "string" || !["ok", "error", "abort"].includes(e.status))
+        if (typeof e.status !== "string" || !["ok", "error", "aborted"].includes(e.status))
           throw new Error();
         return { message: { ...base, content: { status: e.status } } as Message, lost: false };
       }

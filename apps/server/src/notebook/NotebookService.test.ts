@@ -102,6 +102,50 @@ const layer = Layer.mergeAll(NodeServices.layer, ProjectStore.layer).pipe(
   Layer.provideMerge(Sqlite.layerMemory),
 );
 
+it.effect.each([true, false])(
+  "preserves an aborted cell reply and stops remaining cells, reply first: %s",
+  (replyFirst) =>
+    Effect.gen(function* () {
+      const { service, opened, handle, requests, send, finished } = yield* setup();
+      const ready = yield* Deferred.make<void>();
+      const terminal = yield* Deferred.make<void>();
+      let replyStatus: string | undefined;
+      const observer = yield* service.subscribe(handle, caller).pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            if (event.type === "snapshot") yield* Deferred.succeed(ready, undefined);
+            if (event.type === "changed") {
+              for (const patch of event.patches)
+                if (patch.type === "execution") replyStatus = patch.execution.replyStatus;
+              if (event.outcome === "aborted" || event.outcome === "error")
+                yield* Deferred.succeed(terminal, undefined);
+            }
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(ready);
+      const runId = yield* service.execute(
+        { ...handle, revision: opened.revision, cellIds: ["a", "b"], requestId: "aborted" },
+        caller,
+      );
+      const request = yield* Queue.take(requests);
+      if (replyFirst) yield* send(request.id, "execute_reply", { status: "aborted" });
+      yield* send(request.id, "status", { execution_state: "idle" });
+      if (!replyFirst) yield* send(request.id, "execute_reply", { status: "aborted" });
+      yield* Deferred.await(terminal);
+      yield* finished(runId);
+      const result = yield* service.snapshot(handle, caller);
+      expect(result.outcome).toBe("aborted");
+      expect(result.executions.a?.replyStatus).toBe("aborted");
+      expect(replyStatus).toBe("aborted");
+      expect(result.executions.b).toBeUndefined();
+      expect(yield* Queue.size(requests)).toBe(0);
+      expect((result.document.cells as Array<{ outputs: unknown[] }>)[0]?.outputs).toEqual([]);
+      yield* Fiber.interrupt(observer);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.effect("project aliases share the canonical notebook owner and revalidate each project", () =>
   Effect.gen(function* () {
     const { service, opened, handle, sql, root, requests, send, finished } = yield* setup();

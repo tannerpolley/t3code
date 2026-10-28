@@ -2,7 +2,14 @@ import { NOTEBOOK_LIMITS, NotebookError, type NotebookOutputPatch } from "@t3too
 import type { Message } from "./JupyterTransport.ts";
 import { byteLength, type Document, type NotebookCell } from "./notebookDocument.ts";
 
-type Owner = { cell: NotebookCell; reply: boolean; idle: boolean; failed: boolean; clear: boolean };
+type Owner = {
+  cell: NotebookCell;
+  reply: boolean;
+  idle: boolean;
+  failed: boolean;
+  clear: boolean;
+  replyStatus?: string;
+};
 export class ExecutionReducer {
   readonly owners = new Map<string, Owner>();
   displays = new WeakMap<object, string>();
@@ -35,7 +42,7 @@ export class ExecutionReducer {
       message.parent_header.msg_id === undefined
     ) {
       this.truncated = true;
-      return { patches: [], cellId: null, complete: false, failed: false };
+      return { patches: [], cellId: null, complete: false, failed: false, replyStatus: undefined };
     }
     const owner = this.owners.get(message.parent_header.msg_id ?? "");
     if (!owner) return undefined;
@@ -47,6 +54,7 @@ export class ExecutionReducer {
     if (type === "execute_reply" && message.channel === "shell") {
       owner.reply = true;
       owner.failed = content.status !== "ok";
+      if (typeof content.status === "string") owner.replyStatus = content.status;
     }
     if (type === "status" && message.channel === "iopub" && content.execution_state === "idle")
       owner.idle = true;
@@ -148,6 +156,12 @@ export class ExecutionReducer {
         }
       }
     }
-    return { patches, cellId: cell.id, complete: owner.reply && owner.idle, failed: owner.failed };
+    return {
+      patches,
+      cellId: cell.id,
+      complete: owner.reply && owner.idle,
+      failed: owner.failed,
+      replyStatus: owner.replyStatus,
+    };
   }
 }
