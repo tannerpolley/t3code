@@ -21,6 +21,7 @@ export class NotebookError extends Schema.TaggedError<NotebookError>()("Notebook
     "kernel-failure",
     "output-limit",
     "invalid-path",
+    "save-conflict",
   ]),
 }) {
   override get message() {
@@ -61,6 +62,10 @@ export const NotebookSnapshot = Schema.Struct({
   sequence: Schema.Int,
   revision: Schema.Int,
   diskHash: Schema.String,
+  savedRevision: Schema.Int,
+  idleDeadline: Schema.NullOr(Schema.Number),
+  availability: Schema.Literals(["available", "unavailable"]),
+  environment: Schema.Literals(["unverified", "verified"]),
   executions: Schema.Record(Schema.String, NotebookExecution),
   generation: Schema.Int,
   document: NotebookDocument,
@@ -106,6 +111,11 @@ export const NotebookEvent = Schema.Union([
     kernel: NotebookSnapshot.fields.kernel,
     outcome: NotebookSnapshot.fields.outcome,
     truncated: Schema.Boolean,
+    savedRevision: Schema.Int,
+    diskHash: Schema.String,
+    idleDeadline: Schema.NullOr(Schema.Number),
+    availability: NotebookSnapshot.fields.availability,
+    environment: NotebookSnapshot.fields.environment,
     epoch: Schema.String,
     sequence: Schema.Int,
     revision: Schema.Int,
@@ -115,3 +125,29 @@ export const NotebookEvent = Schema.Union([
   }),
 ]);
 export type NotebookEvent = typeof NotebookEvent.Type;
+
+export const NotebookSave = Schema.Struct({
+  ...NotebookHandle.fields,
+  revision: Schema.Int,
+  diskHash: Schema.String,
+});
+export type NotebookSave = typeof NotebookSave.Type;
+export const NotebookEdit = Schema.Struct({
+  ...NotebookHandle.fields,
+  revision: Schema.Int,
+  document: NotebookDocument,
+});
+export type NotebookEdit = typeof NotebookEdit.Type;
+export const NotebookCreate = Schema.Struct({
+  ...NotebookIdentity.fields,
+  document: NotebookDocument,
+});
+export type NotebookCreate = typeof NotebookCreate.Type;
+export const NotebookLease = Schema.Struct({ ...NotebookHandle.fields, leaseId: Schema.String });
+export type NotebookLease = typeof NotebookLease.Type;
+
+export const NotebookSubscribe = Schema.Struct({
+  ...NotebookHandle.fields,
+  leaseId: Schema.optional(Schema.String),
+});
+export type NotebookSubscribe = typeof NotebookSubscribe.Type;

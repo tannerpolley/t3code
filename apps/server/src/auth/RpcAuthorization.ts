@@ -37,6 +37,8 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
+  [NOTEBOOK_METHODS.acquire]: AuthFilesystemReadScope,
+  [NOTEBOOK_METHODS.close]: AuthFilesystemReadScope,
   [NOTEBOOK_METHODS.open]: AuthFilesystemReadScope,
   [NOTEBOOK_METHODS.snapshot]: AuthFilesystemReadScope,
   [NOTEBOOK_METHODS.subscribe]: AuthFilesystemReadScope,

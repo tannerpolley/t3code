@@ -3,6 +3,7 @@
 import * as NodeCrypto from "node:crypto";
 import { fetch } from "undici";
 import { NOTEBOOK_LIMITS, NotebookError } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,12 +15,17 @@ import * as KernelMessageAdmission from "./KernelMessageAdmission.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeSpecs = Schema.decodeUnknownEffect(
+  Schema.Struct({ kernelspecs: Schema.Record(Schema.String, Schema.Unknown) }),
+);
 const decodeKernel = Schema.decodeUnknownEffect(Schema.Struct({ id: Schema.String }));
 export type { Message } from "./KernelMessageAdmission.ts";
 export type Endpoint = {
   readonly url: string;
   readonly token: string;
   readonly kernelName: string;
+  readonly interpreter?: string;
+  readonly imports?: readonly string[];
 };
 export type Channels = {
   readonly messages: Stream.Stream<KernelMessageAdmission.Message, NotebookError>;
@@ -29,6 +35,12 @@ export type Channels = {
 export class JupyterTransport extends Context.Service<
   JupyterTransport,
   {
+    readonly probe: (endpoint: Endpoint) => Effect.Effect<void, NotebookError>;
+    readonly verify: (
+      endpoint: Endpoint,
+      id: string,
+      cwd: string,
+    ) => Effect.Effect<void, NotebookError>;
     readonly create: (endpoint: Endpoint, cwd: string) => Effect.Effect<string, NotebookError>;
     readonly control: (
       endpoint: Endpoint,
@@ -42,9 +54,10 @@ export class JupyterTransport extends Context.Service<
   }
 >()("t3/notebook/JupyterTransport") {}
 
-function endpointUrl(endpoint: Endpoint, suffix: string) {
+export function endpointUrl(endpoint: Endpoint, suffix: string) {
   const url = new URL(endpoint.url);
   if (
+    !/^http:\/\/127\.0\.0\.1:[0-9]+(?:\/|$)/.test(endpoint.url) ||
     url.protocol !== "http:" ||
     url.hostname !== "127.0.0.1" ||
     url.username ||
@@ -54,7 +67,7 @@ function endpointUrl(endpoint: Endpoint, suffix: string) {
     !endpoint.token
   )
     throw new Error();
-  url.pathname = `${url.pathname.replace(/\/$/, "")}/api/kernels${suffix}`;
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/api/${suffix === "specs" ? "kernelspecs" : `kernels${suffix}`}`;
   return url;
 }
 const request = Effect.fn("JupyterTransport.request")(function* (
@@ -72,6 +85,10 @@ const request = Effect.fn("JupyterTransport.request")(function* (
         signal,
         ...(body === undefined ? {} : { body: encodeJson(body) }),
       });
+      if (method === "DELETE" && response.status === 404) {
+        await response.body?.cancel();
+        return undefined;
+      }
       if (!response.ok) {
         await response.body?.cancel();
         throw new Error();
@@ -160,5 +177,57 @@ export const layer = Layer.sync(JupyterTransport, () => {
     });
     return { messages: admission.messages, execute, close };
   });
-  return JupyterTransport.of({ create, control, connect });
+  const probe = Effect.fn("JupyterTransport.probe")(function* (endpoint: Endpoint) {
+    const value = yield* request(endpoint, "specs", "GET");
+    const result = yield* decodeSpecs(value).pipe(
+      Effect.mapError(() => new NotebookError({ reason: "unavailable" })),
+    );
+    if (!Object.hasOwn(result.kernelspecs, endpoint.kernelName))
+      return yield* new NotebookError({ reason: "unavailable" });
+  });
+  const verify = Effect.fn("JupyterTransport.verify")(function* (
+    endpoint: Endpoint,
+    id: string,
+    cwd: string,
+  ) {
+    if (!endpoint.interpreter) return yield* new NotebookError({ reason: "unavailable" });
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const channels = yield* connect(endpoint, id);
+        const requestId = NodeCrypto.randomUUID();
+        const result = yield* Deferred.make<string, NotebookError>();
+        yield* channels.messages.pipe(
+          Stream.runForEach((message) => {
+            if (message.parent_header.msg_id !== requestId) return Effect.void;
+            if (message.header.msg_type === "stream" && typeof message.content.text === "string")
+              return Deferred.succeed(result, message.content.text).pipe(Effect.asVoid);
+            if (message.header.msg_type === "error")
+              return Deferred.fail(result, new NotebookError({ reason: "unavailable" })).pipe(
+                Effect.asVoid,
+              );
+            return Effect.void;
+          }),
+          Effect.catch(() => Deferred.fail(result, new NotebookError({ reason: "disconnected" }))),
+          Effect.forkScoped,
+        );
+        yield* channels.execute(
+          requestId,
+          `import sys, os, json, importlib
+for name in json.loads(${encodeJson(encodeJson(endpoint.imports ?? []))}): importlib.import_module(name)
+print(json.dumps([os.path.realpath(sys.executable), os.path.realpath(os.getcwd())]))`,
+        );
+        const text = yield* Deferred.await(result).pipe(
+          Effect.timeout("15 seconds"),
+          Effect.mapError(() => new NotebookError({ reason: "unavailable" })),
+        );
+        const actual = yield* Effect.try({
+          try: () => decodeJson(text),
+          catch: () => new NotebookError({ reason: "unavailable" }),
+        });
+        if (!Array.isArray(actual) || actual[0] !== endpoint.interpreter || actual[1] !== cwd)
+          return yield* new NotebookError({ reason: "unavailable" });
+      }),
+    );
+  });
+  return JupyterTransport.of({ create, control, connect, probe, verify });
 });

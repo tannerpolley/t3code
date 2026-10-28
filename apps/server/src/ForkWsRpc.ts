@@ -61,6 +61,11 @@ const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const artifacts = yield* ProjectArtifacts.ProjectArtifacts;
       const notebook = yield* NotebookService.NotebookService;
       return {
+        [NOTEBOOK_METHODS.save]: (input) => notebook.save(input, currentSession),
+        [NOTEBOOK_METHODS.edit]: (input) => notebook.edit(input, currentSession),
+        [NOTEBOOK_METHODS.create]: (input) => notebook.create(input, currentSession),
+        [NOTEBOOK_METHODS.acquire]: (input) => notebook.acquire(input, currentSession),
+        [NOTEBOOK_METHODS.close]: (input) => notebook.close(input, currentSession),
         [NOTEBOOK_METHODS.open]: (input) => notebook.open(input, currentSession),
         [NOTEBOOK_METHODS.snapshot]: (input) => notebook.snapshot(input, currentSession),
         [NOTEBOOK_METHODS.execute]: (input) => notebook.execute(input, currentSession),

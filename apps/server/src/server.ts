@@ -1,3 +1,5 @@
+import * as NotebookConfiguration from "./notebook/NotebookConfiguration.ts";
+import * as NotebookJupyterTransport from "./notebook/JupyterTransport.ts";
 import * as NotebookService from "./notebook/NotebookService.ts";
 import { services as gitHubServices } from "@t3tools/source-control-github/server/driver";
 import * as ResetCreditExpiry from "./provider/ResetCreditExpiry.ts";
@@ -761,7 +763,11 @@ const layerIssueRoadmap = IssueRoadmap.layer.pipe(
 );
 const layerRouterServices = Layer.mergeAll(
   ProjectArtifacts.layer,
-  NotebookService.layerDisabled,
+  NotebookService.layer.pipe(
+    Layer.provide(NotebookConfiguration.layer),
+    Layer.provide(NotebookJupyterTransport.layer),
+    Layer.provide(ServerSecretStore.layer),
+  ),
   ThreadWorkspaceService.layer,
   layerIssueRoadmap,
   IssueCleanup.layer.pipe(
