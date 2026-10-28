@@ -313,3 +313,25 @@ describe("ChatMarkdown inline code copying", () => {
     expect(writeText.mock.calls).toEqual([["vp test run"], ["vp test run"]]);
   });
 });
+
+describe("ChatMarkdown provider math delimiters", () => {
+  it.each([true, false])(
+    "renders \\( \\) and \\[ \\] as math only with Render math on: %s",
+    async (on) => {
+      setup();
+      settingsOverrides.mathRenderingEnabled = on;
+      await using screen = await renderText("Inline \\(x^2\\) here.\n\n\\[\n\\sum_i a_i\n\\]");
+      const { container } = screen;
+      await act(async () => {
+        await import("./chat/MathTypeset");
+      });
+      expect(
+        [...container.querySelectorAll("[data-markdown-math]")].map((node) =>
+          node.getAttribute("data-markdown-math"),
+        ),
+      ).toEqual(on ? ["inline", "display"] : []);
+      expect(container.querySelectorAll(".katex").length).toBe(on ? 2 : 0);
+      if (!on) expect(container.textContent).toContain("(x^2)");
+    },
+  );
+});

@@ -332,8 +332,6 @@ export const ForkClientSettingsFields = {
   threadDetailsRedesign: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** The quicker running-activity shimmer. */
   fastShimmer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** Render $…$, $$…$$, \( \) and \[ \] math in chat messages with KaTeX. */
-  chatMath: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 };
 
 const WorkerProvider = Schema.Literals(["mixed", "claude", "codex"]);
@@ -419,7 +417,6 @@ export const ForkClientSettingsPatchFields = {
   lineageInDetails: Schema.optionalKey(Schema.Boolean),
   threadDetailsRedesign: Schema.optionalKey(Schema.Boolean),
   fastShimmer: Schema.optionalKey(Schema.Boolean),
-  chatMath: Schema.optionalKey(Schema.Boolean),
 };
 
 export const ForkServerSettingsPatchFields = {

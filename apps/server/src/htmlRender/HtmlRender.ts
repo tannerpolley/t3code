@@ -33,6 +33,7 @@ import { createAttachmentId } from "../attachmentStore.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
 import * as HeadlessChrome from "./headlessChrome.ts";
+import { renderHtmlMath } from "./htmlMath.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 
@@ -398,7 +399,9 @@ const make = Effect.gen(function* () {
 
   // The bootstrap goes in first so its head scan never runs over inlined image data.
   const inline = (html: string) =>
-    inlineLocalImages(injectHtmlRenderBootstrap(html)).pipe(Effect.provideContext(services));
+    inlineLocalImages(injectHtmlRenderBootstrap(renderHtmlMath(html))).pipe(
+      Effect.provideContext(services),
+    );
 
   const prepare = Effect.fn("HtmlRender.prepare")(function* (html: string) {
     yield* rejectViewportHeight(html);

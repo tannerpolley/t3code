@@ -328,12 +328,6 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork github issues page browser sidebar repositories filters pin"],
   },
   {
-    id: "chat-math",
-    title: "Math in chat",
-    to: "/settings/general",
-    searchTerms: ["customization fork latex katex math formulas equations markdown dollar"],
-  },
-  {
     id: "plugin-skills",
     title: "Plugin skills in the composer",
     to: "/settings/browser",
