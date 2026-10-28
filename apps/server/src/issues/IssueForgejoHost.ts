@@ -112,6 +112,10 @@ const Timeline = Schema.Struct({
   ref_action: Schema.optional(Schema.String),
   pull_request_url: Schema.optional(Schema.String),
 });
+const PullRequest = Schema.Struct({
+  merged: Schema.Boolean,
+  body: Schema.optional(Schema.NullOr(Schema.String)),
+});
 type RawIssue = typeof Issue.Type;
 const failure = (
   operation: IssueReadError["operation"],
@@ -124,6 +128,15 @@ export function parseParentMarker(body: string): number | null {
   const number = Number(markers[0]?.[1]);
   return markers.length === 1 && Number.isSafeInteger(number) ? number : null;
 }
+// GitHub's closing keywords, limited to same-repository `#N` references.
+const closingIssueNumbers = (body: string) => [
+  ...new Set(
+    Array.from(
+      body.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#([1-9]\d*)\b/gi),
+      (match) => Number(match[1]),
+    ).filter(Number.isSafeInteger),
+  ),
+];
 const actor = (user: typeof Actor.Type | null | undefined, original?: string) =>
   original
     ? { login: original, avatarUrl: null }
@@ -781,6 +794,36 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
     setState: Effect.fn("IssueForgejoHost.setState")((input) =>
       patchIssue(input, { state: input.state }),
     ),
+    // Forgejo closes issues only from pushed commit messages, not from a merged pull request's body.
+    closeIssuesFixedBy: Effect.fn("IssueForgejoHost.closeIssuesFixedBy")(function* (ref) {
+      const scope = yield* context.resolveScope("detail", ref);
+      const pullRequest = (yield* request(
+        scope,
+        `${repositoryPath(scope.repository)}/pulls/${ref.number}`,
+        PullRequest,
+      )).value;
+      if (!pullRequest.merged) return;
+      yield* Effect.forEach(
+        closingIssueNumbers(pullRequest.body ?? ""),
+        (number) =>
+          Effect.gen(function* () {
+            const issue = { ...ref, number };
+            if ((yield* readIssue(issue)).state === "closed") return;
+            yield* patchIssue(issue, { state: "closed" });
+            yield* transport.postComment(issue, `Closed by #${ref.number}, which merged.`);
+          }).pipe(
+            Effect.catchTags({
+              IssueReadError: (error) =>
+                Effect.logWarning("closing an issue a merged pull request names failed", {
+                  issue: number,
+                  pullRequest: ref.number,
+                  reason: error.message,
+                }),
+            }),
+          ),
+        { discard: true },
+      );
+    }),
     setParent: Effect.fn("IssueForgejoHost.setParent")(function* ({ parent, child, action }) {
       if (
         parent.host !== child.host ||

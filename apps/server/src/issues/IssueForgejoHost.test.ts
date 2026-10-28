@@ -409,6 +409,34 @@ it.effect("explains dependency-blocked close failures", () =>
   }),
 );
 
+it.effect("closes the open same-repository issues a merged pull request names", () =>
+  Effect.gen(function* () {
+    const writes: Array<{ path: string; method: string; body: unknown }> = [];
+    const body = "Closes #3 and FIXES: #4.\nAlso closes other/repo#5, fixed #9, prefixes #6.";
+    const fixture = setup((path, method, payload) => {
+      if (method !== "GET") {
+        writes.push({ path, method, body: payload });
+        return { id: 1, html_url: "https://x" };
+      }
+      if (path === "repos/owner/repo/pulls/12") return { number: 12, merged: true, body };
+      if (path === "repos/owner/repo/pulls/13") return { number: 13, merged: false, body };
+      const number = Number(path.split("/").at(-1));
+      return issue(number, { state: number === 9 ? "closed" : "open" });
+    });
+    const transport = yield* fixture.make;
+    yield* transport.closeIssuesFixedBy!({ ...scope, number: 13 });
+    expect(writes).toEqual([]);
+    yield* transport.closeIssuesFixedBy!({ ...scope, number: 12 });
+    const comment = { body: "Closed by #12, which merged." };
+    expect(writes).toEqual([
+      { path: "repos/owner/repo/issues/3", method: "PATCH", body: { state: "closed" } },
+      { path: "repos/owner/repo/issues/3/comments", method: "POST", body: comment },
+      { path: "repos/owner/repo/issues/4", method: "PATCH", body: { state: "closed" } },
+      { path: "repos/owner/repo/issues/4/comments", method: "POST", body: comment },
+    ]);
+  }),
+);
+
 it.effect("creates with a durable receipt and recovers by marker without duplicate writes", () =>
   Effect.gen(function* () {
     const marker = "<!-- t3-issue-change:key -->";

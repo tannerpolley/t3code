@@ -20,8 +20,9 @@ are read at server start, so restart T3 after adding one.
 Forgejo has no sub-issues: T3 writes `Part of #N <!-- t3:parent=N -->` in the child body,
 within the same repository. Blockers use Forgejo issue dependencies; Forgejo refuses to close
 an issue with open dependencies (HTTP 412). A fast-forward push marks a pull request merged
-when manual merge detection is enabled, but `Closes #N` in its body does not close the issue.
-Put it in a pushed commit message or close the issue explicitly.
+when manual merge detection is enabled, but Forgejo does not close the issues its body names.
+T3 closes them, with a comment, once it sees a pull request linked to a thread merge; for an
+unlinked pull request, put `Closes #N` in a pushed commit message or close the issue explicitly.
 
 The pilot `tannerpolley/process-monitor` lives on Forgejo, with HTTPS `origin` at
 `https://chromebox.taila72856.ts.net:3000/tannerpolley/process-monitor.git` and a read-only
