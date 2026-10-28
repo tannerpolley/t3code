@@ -1,3 +1,5 @@
+import { NOTEBOOK_METHODS } from "@t3tools/contracts";
+import * as NotebookService from "./notebook/NotebookService.ts";
 /**
  * WebSocket handlers for the fork's own RPCs (`ForkWsRpcGroup`): issues, issue work, issue
  * changes and background-task output. This module joins them with upstream handlers for `ws.ts`.
@@ -57,7 +59,15 @@ const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const decisions = yield* OwnerDecisions.OwnerDecisions;
       const inbox = yield* IssueInbox.IssueInbox;
       const artifacts = yield* ProjectArtifacts.ProjectArtifacts;
+      const notebook = yield* NotebookService.NotebookService;
       return {
+        [NOTEBOOK_METHODS.open]: (input) => notebook.open(input, currentSession),
+        [NOTEBOOK_METHODS.snapshot]: (input) => notebook.snapshot(input, currentSession),
+        [NOTEBOOK_METHODS.execute]: (input) => notebook.execute(input, currentSession),
+        [NOTEBOOK_METHODS.interrupt]: (input) => notebook.interrupt(input, currentSession),
+        [NOTEBOOK_METHODS.restart]: (input) => notebook.restart(input, currentSession),
+        [NOTEBOOK_METHODS.shutdown]: (input) => notebook.shutdown(input, currentSession),
+        [NOTEBOOK_METHODS.subscribe]: (input) => notebook.subscribe(input, currentSession),
         [PROJECT_ARTIFACT_METHODS.list]: (input) => artifacts.list(input.projectId),
         [PROJECT_ARTIFACT_METHODS.add]: (input) => artifacts.add(input, "user"),
         [PROJECT_ARTIFACT_METHODS.remove]: (input) => artifacts.remove(input),

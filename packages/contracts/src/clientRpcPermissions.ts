@@ -1,9 +1,11 @@
+import { NOTEBOOK_METHODS } from "./notebookRpc.ts";
 import { PROJECT_ARTIFACT_METHODS } from "./projectArtifactRpc.ts";
 import { type ServerSettingsPatch, requiredScopesForServerSettingsPatch } from "./settings.ts";
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
@@ -18,6 +20,10 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [NOTEBOOK_METHODS.execute]: AuthTerminalOperateScope,
+  [NOTEBOOK_METHODS.interrupt]: AuthTerminalOperateScope,
+  [NOTEBOOK_METHODS.restart]: AuthTerminalOperateScope,
+  [NOTEBOOK_METHODS.shutdown]: AuthTerminalOperateScope,
   [PROJECT_ARTIFACT_METHODS.add]: AuthOrchestrationOperateScope,
   [PROJECT_ARTIFACT_METHODS.remove]: AuthOrchestrationOperateScope,
   [PROJECT_ARTIFACT_METHODS.move]: AuthOrchestrationOperateScope,
@@ -103,6 +109,14 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (
+    method === NOTEBOOK_METHODS.execute ||
+    method === NOTEBOOK_METHODS.interrupt ||
+    method === NOTEBOOK_METHODS.restart ||
+    method === NOTEBOOK_METHODS.shutdown
+  ) {
+    return [AuthFilesystemReadScope, AuthTerminalOperateScope];
+  }
   if (method === WS_METHODS.serverUpdateSettings && input !== undefined) {
     const payload = (typeof input === "object" && input !== null ? input : {}) as {
       patch?: unknown;

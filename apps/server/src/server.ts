@@ -1,3 +1,4 @@
+import * as NotebookService from "./notebook/NotebookService.ts";
 import { services as gitHubServices } from "@t3tools/source-control-github/server/driver";
 import * as ResetCreditExpiry from "./provider/ResetCreditExpiry.ts";
 import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
@@ -758,6 +759,7 @@ const layerIssueRoadmap = IssueRoadmap.layer.pipe(
 );
 const layerRouterServices = Layer.mergeAll(
   ProjectArtifacts.layer,
+  NotebookService.layerDisabled,
   ThreadWorkspaceService.layer,
   layerIssueRoadmap,
   IssueCleanup.layer.pipe(

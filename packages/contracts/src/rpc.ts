@@ -1,3 +1,4 @@
+import { NOTEBOOK_METHODS, notebookRpcs } from "./notebookRpc.ts";
 import {
   OwnerDecision,
   OwnerDecisionsListInput,
@@ -2276,6 +2277,7 @@ const WsTerminalWatchInlineRunRpc = Rpc.make(WS_METHODS.terminalWatchInlineRun, 
 });
 
 const forkWsRpcs = [
+  ...notebookRpcs,
   ...projectArtifactRpcs,
   WsSidebarLayoutUpdateRpc,
   WsSubscribeSidebarLayoutRpc,
@@ -2527,6 +2529,7 @@ export const WsRpcGroup = RpcGroup.make(
 ).middleware(RpcScopeAuthorization);
 export const ForkWsRpcGroup = RpcGroup.make(...forkWsRpcs).middleware(RpcScopeAuthorization);
 export const UpstreamWsRpcGroup = WsRpcGroup.omit(
+  ...Object.values(NOTEBOOK_METHODS),
   ...Object.values(PROJECT_ARTIFACT_METHODS),
   WS_METHODS.sidebarLayoutUpdate,
   WS_METHODS.subscribeSidebarLayout,

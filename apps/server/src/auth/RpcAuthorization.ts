@@ -1,3 +1,4 @@
+import { NOTEBOOK_METHODS } from "@t3tools/contracts";
 import { PROJECT_ARTIFACT_METHODS } from "@t3tools/contracts";
 import {
   CLIENT_GUARDED_RPC_SCOPES,
@@ -36,6 +37,9 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
+  [NOTEBOOK_METHODS.open]: AuthFilesystemReadScope,
+  [NOTEBOOK_METHODS.snapshot]: AuthFilesystemReadScope,
+  [NOTEBOOK_METHODS.subscribe]: AuthFilesystemReadScope,
   [PROJECT_ARTIFACT_METHODS.list]: AuthFilesystemReadScope,
   [PROJECT_ARTIFACT_METHODS.subscribe]: AuthFilesystemReadScope,
   ...CLIENT_GUARDED_RPC_SCOPES,

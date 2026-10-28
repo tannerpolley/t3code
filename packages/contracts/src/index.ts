@@ -89,3 +89,6 @@ export * from "./ownerDecision.ts";
 export * from "./repositoryOrchestrator.ts";
 
 export * from "./ResetCreditExpiry.ts";
+
+export * from "./notebook.ts";
+export * from "./notebookRpc.ts";

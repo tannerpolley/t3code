@@ -1,3 +1,4 @@
+import { NOTEBOOK_METHODS } from "@t3tools/contracts";
 import { PROJECT_ARTIFACT_METHODS } from "@t3tools/contracts";
 import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -12,6 +13,13 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 // Trace queries and dashboards depend on these labels, including deviations from method prefixes.
 const RPC_AGGREGATES = {
+  [NOTEBOOK_METHODS.open]: "notebook",
+  [NOTEBOOK_METHODS.snapshot]: "notebook",
+  [NOTEBOOK_METHODS.execute]: "notebook",
+  [NOTEBOOK_METHODS.interrupt]: "notebook",
+  [NOTEBOOK_METHODS.restart]: "notebook",
+  [NOTEBOOK_METHODS.shutdown]: "notebook",
+  [NOTEBOOK_METHODS.subscribe]: "notebook",
   [PROJECT_ARTIFACT_METHODS.list]: "projectArtifacts",
   [PROJECT_ARTIFACT_METHODS.add]: "projectArtifacts",
   [PROJECT_ARTIFACT_METHODS.remove]: "projectArtifacts",
