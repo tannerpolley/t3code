@@ -38,8 +38,8 @@ Compare counts, then `PATCH` the repository with `autodetect_manual_merge: true`
 credential, then run `gh repo edit --enable-issues=false` on the GitHub copy.
 
 Migrated issues and comments show `Ghost` and an empty `original_author`; the migrator retained
-no GitHub authorship. Forgejo has no Projects or conditional requests (ETags), so lists are
-re-read. The `state_reason` “not planned” is represented by a close and a comment.
+no GitHub authorship. T3's Forgejo host reads no Projects, and Forgejo sends no ETags, so lists
+are plain re-reads. The `state_reason` “not planned” is represented by a close and a comment.
 
 ## Branches and worktrees
 
