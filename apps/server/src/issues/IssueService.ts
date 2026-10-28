@@ -957,7 +957,11 @@ export class IssueService extends Context.Service<
     >;
     readonly listComments: (
       ref: IssueRef,
-      options?: { readonly maxPages?: number },
+      options?: {
+        readonly maxPages?: number;
+        /** Stops reading further pages once the comments read so far satisfy it. */
+        readonly until?: (comments: ReadonlyArray<typeof InboxListedComment.Type>) => boolean;
+      },
     ) => Effect.Effect<
       {
         readonly comments: ReadonlyArray<typeof InboxListedComment.Type>;
@@ -2445,7 +2449,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       `issues/${ref.number}/comments?per_page=100`,
       InboxListedComment,
       null,
-      () => false,
+      options?.until,
       options?.maxPages ?? Infinity,
     );
     return { comments: result.items, complete: result.complete };

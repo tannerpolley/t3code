@@ -359,7 +359,9 @@ const make = Effect.gen(function* () {
     function* (decision: OwnerDecision, body: string) {
       const expected = parseDecisionComment(body)!;
       const identity = commentIdentity(decision.pendingPublish!, decision.id);
-      const { comments } = yield* issues.listComments(decision);
+      const { comments } = yield* issues.listComments(decision, {
+        until: (read) => read.some((comment) => comment.body?.includes(identity)),
+      });
       for (const comment of comments) {
         if (!comment.body?.includes(identity)) continue;
         const actual = parseDecisionComment(comment.body);

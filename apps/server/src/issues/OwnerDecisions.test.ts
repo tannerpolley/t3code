@@ -452,6 +452,24 @@ it.effect("reconciles paged markers after lost request and choice responses acro
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
+it.effect("reconciliation stops reading pages once it finds the publication", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    h.setPageSize(2);
+    yield* h.service.request(threadId, request);
+    h.loseComment();
+    yield* h.service.drain;
+    h.comments.push(
+      ...[2, 3].map((id) => ({ id, body: "Unrelated", html_url: "https://github.com/acme/repo" })),
+    );
+    const before = h.pages();
+    const restarted = yield* h.start;
+    yield* restarted.drain;
+    assert.equal((yield* restarted.listForCaller(threadId))[0]!.state, "awaiting_choice");
+    assert.equal(h.pages() - before, 1);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
 it.effect.each(["missing", "deleted", "archived"] as const)(
   "a %s requester without a successor ends in visible delivery failure",
   (status) =>
