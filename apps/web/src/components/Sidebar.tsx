@@ -1369,7 +1369,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const sidebarProjectThreadsByKey = (() => {
     const grouped = new Map<string, EnvironmentThreadShell[]>();
     for (const thread of orchestratorsFirst(
-      sortThreads(filterSidebarV2VisibleThreads(threads, null), sidebarThreadSortOrder),
+      sortThreads(
+        filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent),
+        sidebarThreadSortOrder,
+      ),
     )) {
       const projectKey = logicalProjectKeyByScopedProjectRef.get(
         `${thread.environmentId}:${thread.projectId}`,
