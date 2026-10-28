@@ -1,5 +1,8 @@
 import {
   AuthEnvironmentMaintainScope,
+  AuthFilesystemWriteScope,
+  NOTEBOOK_METHODS,
+  clientRpcRequiredScopes,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthProvidersManageScope,
@@ -80,6 +83,16 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.issuesSetWorkerLimit)).toBe(
       AuthOrchestrationOperateScope,
     );
+  });
+
+  it("requires read and write authority for notebook document mutations", () => {
+    for (const method of [NOTEBOOK_METHODS.save, NOTEBOOK_METHODS.edit, NOTEBOOK_METHODS.create]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemWriteScope);
+      expect(clientRpcRequiredScopes(method, {})).toEqual([
+        AuthFilesystemReadScope,
+        AuthFilesystemWriteScope,
+      ]);
+    }
   });
 
   it("declares exactly one scope for every RPC in the server group", () => {

@@ -6,6 +6,7 @@ import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./gi
 import {
   AuthAccessWriteScope,
   AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
@@ -20,6 +21,9 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [NOTEBOOK_METHODS.save]: AuthFilesystemWriteScope,
+  [NOTEBOOK_METHODS.edit]: AuthFilesystemWriteScope,
+  [NOTEBOOK_METHODS.create]: AuthFilesystemWriteScope,
   [NOTEBOOK_METHODS.execute]: AuthTerminalOperateScope,
   [NOTEBOOK_METHODS.interrupt]: AuthTerminalOperateScope,
   [NOTEBOOK_METHODS.restart]: AuthTerminalOperateScope,
@@ -117,6 +121,12 @@ export function clientRpcRequiredScopes(
   ) {
     return [AuthFilesystemReadScope, AuthTerminalOperateScope];
   }
+  if (
+    method === NOTEBOOK_METHODS.save ||
+    method === NOTEBOOK_METHODS.edit ||
+    method === NOTEBOOK_METHODS.create
+  )
+    return [AuthFilesystemReadScope, AuthFilesystemWriteScope];
   if (method === WS_METHODS.serverUpdateSettings && input !== undefined) {
     const payload = (typeof input === "object" && input !== null ? input : {}) as {
       patch?: unknown;

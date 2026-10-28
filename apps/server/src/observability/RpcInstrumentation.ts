@@ -13,6 +13,11 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 // Trace queries and dashboards depend on these labels, including deviations from method prefixes.
 const RPC_AGGREGATES = {
+  [NOTEBOOK_METHODS.save]: "notebook",
+  [NOTEBOOK_METHODS.edit]: "notebook",
+  [NOTEBOOK_METHODS.create]: "notebook",
+  [NOTEBOOK_METHODS.acquire]: "notebook",
+  [NOTEBOOK_METHODS.close]: "notebook",
   [NOTEBOOK_METHODS.open]: "notebook",
   [NOTEBOOK_METHODS.snapshot]: "notebook",
   [NOTEBOOK_METHODS.execute]: "notebook",

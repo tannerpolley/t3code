@@ -4,6 +4,7 @@ import { NotebookError, ProjectId, type AuthEnvironmentScope } from "@t3tools/co
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,7 +17,13 @@ import * as NotebookService from "./NotebookService.ts";
 import * as JupyterTransport from "./JupyterTransport.ts";
 import { parseNotebook } from "./notebookDocument.ts";
 
-const caller = { scopes: ["filesystem:read", "terminal:operate"] satisfies AuthEnvironmentScope[] };
+const caller = {
+  scopes: [
+    "filesystem:read",
+    "filesystem:write",
+    "terminal:operate",
+  ] satisfies AuthEnvironmentScope[],
+};
 const fixture = {
   nbformat: 4,
   nbformat_minor: 5,
@@ -38,6 +45,8 @@ const setup = Effect.fn("Test.setup")(function* (
   const requests = yield* Queue.unbounded<{ id: string; code: string }>();
   const controls: string[] = [];
   const transport = JupyterTransport.JupyterTransport.of({
+    probe: Effect.fn("Fake.probe")(() => Effect.void),
+    verify: Effect.fn("Fake.verify")(() => Effect.void),
     create: Effect.fn("Fake.create")(() => Effect.succeed("owned")),
     connect: Effect.fn("Fake.connect")(() =>
       Effect.succeed({
@@ -67,6 +76,8 @@ const setup = Effect.fn("Test.setup")(function* (
       Layer.provide(Layer.succeed(JupyterTransport.JupyterTransport, transport)),
       Layer.provide(
         Layer.succeed(NotebookService.NotebookConfiguration, {
+          owned: Effect.fn("Fake.owned")(() => Effect.void),
+          released: Effect.fn("Fake.released")(() => Effect.void),
           endpoint: Effect.fn("Fake.endpoint")(() =>
             Effect.succeed({ url: "http://127.0.0.1:1", token: "test", kernelName: "python3" }),
           ),
@@ -543,5 +554,197 @@ it.effect(
           .open({ projectId: handle.projectId, relativePath: "escape.ipynb" }, caller)
           .pipe(Effect.flip),
       ).toMatchObject({ reason: "invalid-path" });
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect(
+  "serializes edits and saves, preserves conflicts and unknown JSON, and rejects path replacement",
+  () =>
+    Effect.gen(function* () {
+      const { service, opened, handle, fs, root } = yield* setup();
+      const edited = yield* service.edit(
+        { ...handle, revision: opened.revision, document: { ...opened.document, extra: "draft" } },
+        caller,
+      );
+      const results = yield* Effect.forEach(
+        [1, 2],
+        () =>
+          service
+            .save({ ...handle, revision: edited.revision, diskHash: opened.diskHash }, caller)
+            .pipe(Effect.result),
+        { concurrency: "unbounded" },
+      );
+      expect(results.filter((r) => r._tag === "Success")).toHaveLength(1);
+      const saved = yield* service.snapshot(handle, caller);
+      expect(saved.savedRevision).toBe(saved.revision);
+      expect(JSON.parse(yield* fs.readFileString(`${root}/test.ipynb`))).toMatchObject({
+        unknown: "retain",
+        extra: "draft",
+        metadata: fixture.metadata,
+      });
+      yield* fs.writeFileString(
+        `${root}/test.ipynb`,
+        JSON.stringify({ ...fixture, external: true }),
+      );
+      expect(
+        yield* service
+          .save({ ...handle, revision: saved.revision, diskHash: saved.diskHash }, caller)
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "save-conflict" });
+      expect((yield* service.snapshot(handle, caller)).document.extra).toBe("draft");
+      expect(
+        yield* service
+          .edit(
+            {
+              ...handle,
+              revision: saved.revision,
+              document: {
+                ...fixture,
+                cells: Array.from({ length: 501 }, (_, i) => ({
+                  ...fixture.cells[0],
+                  id: String(i),
+                })),
+              },
+            },
+            caller,
+          )
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "invalid-document" });
+      const outside = yield* fs.makeTempDirectoryScoped();
+      yield* fs.writeFileString(`${outside}/other.ipynb`, JSON.stringify(fixture));
+      yield* fs.remove(`${root}/test.ipynb`);
+      yield* fs.symlink(`${outside}/other.ipynb`, `${root}/test.ipynb`);
+      expect(
+        yield* service
+          .save({ ...handle, revision: saved.revision, diskHash: saved.diskHash }, caller)
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "invalid-path" });
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("viewer leases, disconnect grace and headless runs respect active execution", () =>
+  Effect.gen(function* () {
+    const { service, opened, handle, requests, send, finished, controls } = yield* setup();
+    yield* service.acquire({ ...handle, leaseId: "A" }, caller);
+    yield* service.acquire({ ...handle, leaseId: "B" }, caller);
+    const runId = yield* service.execute(
+      { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "lifecycle" },
+      caller,
+    );
+    const request = yield* Queue.take(requests);
+    yield* service.close({ ...handle, leaseId: "A" }, caller);
+    yield* TestClock.adjust("20 minutes");
+    expect(controls).toEqual([]);
+    yield* send(request.id, "execute_reply", { status: "ok" });
+    yield* send(request.id, "status", { execution_state: "idle" });
+    yield* finished(runId);
+    yield* TestClock.adjust(1);
+    expect((yield* service.snapshot(handle, caller)).kernel).toBe("stopped");
+    const current = yield* service.snapshot(handle, caller);
+    const runB = yield* service.execute(
+      { ...handle, revision: current.revision, cellIds: ["b"], requestId: "headless" },
+      caller,
+    );
+    const b = yield* Queue.take(requests);
+    yield* service.close({ ...handle, leaseId: "B" }, caller);
+    yield* send(b.id, "execute_reply", { status: "ok" });
+    yield* send(b.id, "status", { execution_state: "idle" });
+    yield* finished(runB);
+    yield* TestClock.adjust("59 seconds");
+    expect(controls).toEqual(["shutdown"]);
+    yield* TestClock.adjust("1 second");
+    expect(controls).toEqual(["shutdown", "shutdown"]);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect(
+  "opening never creates a kernel, environment failure never dispatches code, and create never clobbers",
+  () =>
+    Effect.gen(function* () {
+      let created = 0;
+      const { service, handle, opened, requests, controls, fs, root } = yield* setup({
+        create: Effect.fn("Verify.create")(() =>
+          Effect.sync(() => {
+            created++;
+            return "owned";
+          }),
+        ),
+        verify: Effect.fn("Verify.mismatch")(() =>
+          Effect.fail(new NotebookError({ reason: "unavailable" })),
+        ),
+      });
+      expect(created).toBe(0);
+      expect(opened.environment).toBe("unverified");
+      expect(
+        yield* service
+          .execute(
+            { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "mismatch" },
+            caller,
+          )
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "unavailable" });
+      expect(yield* Queue.size(requests)).toBe(0);
+      const unknown = yield* service.snapshot(handle, caller);
+      expect(unknown.outcome).toBe("unknown");
+      yield* service.shutdown({ ...handle, generation: unknown.generation }, caller);
+      expect(controls).toEqual(["shutdown"]);
+      const createdNotebook = yield* service.create(
+        { projectId: handle.projectId, relativePath: "new.ipynb", document: fixture },
+        caller,
+      );
+      expect(createdNotebook.savedRevision).toBe(0);
+      expect(
+        yield* service
+          .create(
+            {
+              projectId: handle.projectId,
+              relativePath: "new.ipynb",
+              document: { ...fixture, changed: true },
+            },
+            caller,
+          )
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "save-conflict" });
+      expect(JSON.parse(yield* fs.readFileString(`${root}/new.ipynb`))).not.toHaveProperty(
+        "changed",
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect(
+  "a reconnect replaces the same viewer lease and explicit close releases its live subscription",
+  () =>
+    Effect.gen(function* () {
+      const { service, opened, handle, requests, send, finished, controls } = yield* setup();
+      const lease = { ...handle, leaseId: "viewer" };
+      const readyA = yield* Deferred.make<void>();
+      const readyB = yield* Deferred.make<void>();
+      const observe = (ready: Deferred.Deferred<void>) =>
+        service.subscribe(lease, caller).pipe(
+          Stream.tap((event) =>
+            event.type === "snapshot" ? Deferred.succeed(ready, undefined) : Effect.void,
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+      const a = yield* observe(readyA);
+      yield* Deferred.await(readyA);
+      const b = yield* observe(readyB);
+      yield* Deferred.await(readyB);
+      yield* Fiber.interrupt(a);
+      const runId = yield* service.execute(
+        { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "reconnect" },
+        caller,
+      );
+      const request = yield* Queue.take(requests);
+      yield* send(request.id, "execute_reply", { status: "ok" });
+      yield* send(request.id, "status", { execution_state: "idle" });
+      yield* finished(runId);
+      yield* TestClock.adjust("60 seconds");
+      expect(controls).toEqual([]);
+      yield* service.close(lease, caller);
+      yield* TestClock.adjust(0);
+      expect(controls).toEqual(["shutdown"]);
+      yield* Fiber.interrupt(b);
     }).pipe(Effect.scoped, Effect.provide(layer)),
 );
