@@ -24,6 +24,9 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { openFileInPreview } from "~/browser/openFileInPreview";
 import { useTheme } from "~/hooks/useTheme";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { useProjects } from "~/state/entities";
+import { ArtifactFilePickerDialog } from "./ArtifactFilePickerDialog";
+import { artifactLabelSuggestion } from "./artifactLabelSuggestion";
 import { projectArtifacts } from "~/state/projectArtifacts";
 import { assetEnvironment } from "~/state/assets";
 import { previewEnvironment } from "~/state/preview";
@@ -165,6 +168,10 @@ export function ThreadDetailsArtifactRows({
   /** The thread's checkout; HTML inside it opens as a workspace page so its CSS and images load. */
   workspaceRoot: string | null;
 }) {
+  const project = useProjects().find(
+    (item) => item.environmentId === environmentId && item.id === projectId,
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
   const target = { environmentId, input: { projectId } };
   const result = useAtomValue(projectArtifacts.live(target));
   const artifacts = Option.getOrNull(AsyncResult.value(result));
@@ -298,14 +305,35 @@ export function ThreadDetailsArtifactRows({
                 }
               }}
             >
-              <Input
-                size="sm"
-                aria-label="Artifact file path"
-                placeholder="Project-relative or absolute file path"
-                value={path}
-                onChange={(event) => setPath(event.target.value)}
-                required
-              />
+              <div className="flex gap-1">
+                <Input
+                  size="sm"
+                  aria-label="Artifact file path"
+                  placeholder="Project-relative or absolute file path"
+                  value={path}
+                  onChange={(event) => setPath(event.target.value)}
+                  required
+                />
+                <Button
+                  type="button"
+                  size="xs"
+                  disabled={!project}
+                  onClick={() => setPickerOpen(true)}
+                >
+                  Browse
+                </Button>
+              </div>
+              {project && pickerOpen ? (
+                <ArtifactFilePickerDialog
+                  cwd={project.workspaceRoot}
+                  environmentId={environmentId}
+                  onOpenChange={setPickerOpen}
+                  onSelect={(selected) => {
+                    setPath(selected);
+                    setLabel(artifactLabelSuggestion(selected));
+                  }}
+                />
+              ) : null}
               <Input
                 size="sm"
                 aria-label="Artifact label (optional)"
