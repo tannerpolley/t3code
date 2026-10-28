@@ -1,3 +1,4 @@
+import { sidebarBadgeKind } from "./SidebarColumns.logic";
 import { sidebarSectionChildOrder } from "@t3tools/shared/sidebarLayout";
 import { useSidebarWorkExpansion } from "./useSidebarWorkExpansion";
 import {
@@ -1472,6 +1473,11 @@ const SidebarProjectThreadRow = memo(
                       />
                     </SidebarProjectThreadName>
                   }
+                  badgeKind={sidebarBadgeKind(
+                    sidebarRoleLabel(props.thread.source),
+                    !!props.thread.source.linkedIssue,
+                    props.thread.pullRequests.length > 0,
+                  )}
                   issue={
                     <ThreadIssueBadge
                       environmentId={props.thread.environmentId}

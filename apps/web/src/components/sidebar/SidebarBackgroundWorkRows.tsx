@@ -1,3 +1,4 @@
+import { sidebarBadgeKind } from "./SidebarColumns.logic";
 import {
   sidebarSubagentRowKey,
   sidebarWorkSeparator,
@@ -279,6 +280,15 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 </span>
               }
               wideName={row.kind !== "subagent"}
+              badgeKind={
+                row.kind === "subagent" && row.child
+                  ? sidebarBadgeKind(
+                      sidebarRoleLabel(row.child.source),
+                      !!row.child.source.linkedIssue,
+                      row.child.pullRequests.length > 0,
+                    )
+                  : undefined
+              }
               issue={
                 row.kind === "subagent" && row.child ? (
                   <ThreadIssueBadge

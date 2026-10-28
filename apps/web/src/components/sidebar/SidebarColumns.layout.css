@@ -15,8 +15,7 @@
   --sidebar-role-width: 0.75rem;
   --sidebar-provider-width: 1rem;
   --sidebar-effort-width: 0.5rem;
-  --sidebar-issue-width: 2.25rem;
-  --sidebar-pr-width: 2.25rem;
+  --sidebar-badge-width: 2.25rem;
   --sidebar-time-width: 4.4375rem;
   --sidebar-work-width: 0.875rem;
   --sidebar-model-width: 8.4ch;
@@ -27,203 +26,84 @@
   font-size: 0.75rem;
 }
 @utility sidebar-thread-columns {
-  grid-template-columns: [caret] var(--sidebar-caret-track, var(--sidebar-caret-width)) var(
-      --sidebar-caret-gap,
-      var(--sidebar-column-gap)
-    ) [location] var(--sidebar-location-track, var(--sidebar-location-width)) var(
-      --sidebar-location-gap,
-      var(--sidebar-column-gap)
-    ) [role] var(--sidebar-role-track, var(--sidebar-role-width)) var(
-      --sidebar-role-gap,
-      var(--sidebar-column-gap)
-    ) [provider] var(--sidebar-provider-track, var(--sidebar-provider-width)) var(
-      --sidebar-provider-gap,
-      var(--sidebar-column-gap)
-    ) [model] var(--sidebar-model-track, var(--sidebar-model-step, var(--sidebar-model-width))) var(
-      --sidebar-model-gap,
-      var(--sidebar-column-gap)
-    ) [effort] var(--sidebar-effort-track, var(--sidebar-effort-width)) var(
-      --sidebar-effort-gap,
-      var(--sidebar-column-gap)
-    ) [name] minmax(0, var(--sidebar-name-track, max-content)) var(
-      --sidebar-name-gap,
-      var(--sidebar-column-gap)
-    ) [spacer] minmax(0, 1fr) var(--sidebar-spacer-gap, var(--sidebar-column-gap)) [issue] var(
-      --sidebar-issue-track,
-      var(--sidebar-issue-width)
-    ) var(--sidebar-issue-gap, var(--sidebar-column-gap)) [pr] var(
-      --sidebar-pr-track,
-      var(--sidebar-pr-width)
-    ) var(--sidebar-pr-gap, var(--sidebar-column-gap)) [time] var(
-      --sidebar-time-track,
-      var(--sidebar-time-width)
-    ) var(--sidebar-time-gap, var(--sidebar-column-gap)) [work] var(
-      --sidebar-work-track,
-      var(--sidebar-work-width)
-    );
+  grid-template-columns: [caret] var(--sidebar-caret-track, var(--sidebar-caret-width)) var(--sidebar-caret-gap, var(--sidebar-column-gap)) [location] var(--sidebar-location-track, var(--sidebar-location-width)) var(--sidebar-location-gap, var(--sidebar-column-gap)) [role] var(--sidebar-role-track, var(--sidebar-role-width)) var(--sidebar-role-gap, var(--sidebar-column-gap)) [provider] var(--sidebar-provider-track, var(--sidebar-provider-width)) var(--sidebar-provider-gap, var(--sidebar-column-gap)) [model] var(--sidebar-model-track, var(--sidebar-model-step, var(--sidebar-model-width))) var(--sidebar-model-gap, var(--sidebar-column-gap)) [effort] var(--sidebar-effort-track, var(--sidebar-effort-width)) var(--sidebar-effort-gap, var(--sidebar-column-gap)) [name] minmax(0, var(--sidebar-name-track, max-content)) var(--sidebar-name-gap, var(--sidebar-column-gap)) [spacer] minmax(0, 1fr) var(--sidebar-spacer-gap, var(--sidebar-column-gap)) [badge] var(--sidebar-badge-track, var(--sidebar-badge-width)) var(--sidebar-badge-gap, var(--sidebar-column-gap)) [time] var(--sidebar-time-track, var(--sidebar-time-width)) var(--sidebar-time-gap, var(--sidebar-column-gap)) [work] var(--sidebar-work-track, var(--sidebar-work-width));
   column-gap: 0;
 }
-.sidebar-thread-caret {
-  grid-column: caret;
+[data-sidebar-role-display="name"]:has(.sidebar-role-title) {
+  --sidebar-name-track: var(--sidebar-name-width);
 }
-.sidebar-thread-location {
-  grid-column: location;
+.sidebar-thread-caret { grid-column: caret; }
+.sidebar-thread-location { grid-column: location; }
+.sidebar-thread-role { grid-column: role; }
+.sidebar-thread-provider { grid-column: provider; }
+.sidebar-thread-model { grid-column: model; }
+.sidebar-thread-effort { grid-column: effort; }
+.sidebar-thread-name { grid-column: name; }
+.sidebar-thread-spacer { grid-column: spacer; }
+.sidebar-thread-badge { grid-column: badge; }
+.sidebar-thread-time { grid-column: time; }
+.sidebar-thread-work { grid-column: work; }
+@container sidebar-columns-name (width < calc(12.3125rem + 18px + 14.4ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.9405); }
 }
-.sidebar-thread-role {
-  grid-column: role;
+@container sidebar-columns-name (width < calc(12.3125rem + 18px + 13.9ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.881); }
 }
-.sidebar-thread-provider {
-  grid-column: provider;
+@container sidebar-columns-name (width < calc(12.3125rem + 18px + 13.4ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.8214); }
 }
-.sidebar-thread-model {
-  grid-column: model;
+@container sidebar-columns-name (width < calc(12.3125rem + 18px + 12.9ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7619); }
 }
-.sidebar-thread-effort {
-  grid-column: effort;
+@container sidebar-columns-name (width < calc(12.3125rem + 18px + 12.4ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7024); }
 }
-.sidebar-thread-name {
-  grid-column: name;
+@container sidebar-columns-name (width < calc(12.3125rem + 18px + 11.9ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.6429); }
 }
-.sidebar-thread-spacer {
-  grid-column: spacer;
+@container sidebar-columns-name (width < calc(12.3125rem + 18px + 11.4ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5833); }
 }
-.sidebar-thread-issue {
-  grid-column: issue;
+@container sidebar-columns-name (width < calc(12.3125rem + 18px + 10.9ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5357); }
 }
-.sidebar-thread-pr {
-  grid-column: pr;
+@container sidebar-columns-name (width < calc(12.3125rem + 18px + 10.5ch)) {
+  .sidebar-thread-columns { --sidebar-model-track: 0px; --sidebar-model-gap: 0px; --sidebar-effort-track: 0px; --sidebar-effort-gap: 0px; }
+  .sidebar-thread-model, .sidebar-thread-effort { display: none; }
 }
-.sidebar-thread-time {
-  grid-column: time;
+@container sidebar-columns-name (width < calc(11.8125rem + 14px + 6ch)) {
+  .sidebar-thread-columns { --sidebar-badge-track: 0px; --sidebar-badge-gap: 0px; }
+  .sidebar-thread-badge { display: none; }
 }
-.sidebar-thread-work {
-  grid-column: work;
+@container sidebar-columns (width < calc(13.0625rem + 20px + 12.4ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.9405); }
 }
-@container sidebar-columns-name (width < calc(14.5625rem + 20px + 14.4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.9405);
-  }
+@container sidebar-columns (width < calc(13.0625rem + 20px + 11.9ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.881); }
 }
-@container sidebar-columns-name (width < calc(14.5625rem + 20px + 13.9ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.881);
-  }
+@container sidebar-columns (width < calc(13.0625rem + 20px + 11.4ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.8214); }
 }
-@container sidebar-columns-name (width < calc(14.5625rem + 20px + 13.4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.8214);
-  }
+@container sidebar-columns (width < calc(13.0625rem + 20px + 10.9ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7619); }
 }
-@container sidebar-columns-name (width < calc(14.5625rem + 20px + 12.9ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7619);
-  }
+@container sidebar-columns (width < calc(13.0625rem + 20px + 10.4ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7024); }
 }
-@container sidebar-columns-name (width < calc(14.5625rem + 20px + 12.4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7024);
-  }
+@container sidebar-columns (width < calc(13.0625rem + 20px + 9.9ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.6429); }
 }
-@container sidebar-columns-name (width < calc(14.5625rem + 20px + 11.9ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.6429);
-  }
+@container sidebar-columns (width < calc(13.0625rem + 20px + 9.4ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5833); }
 }
-@container sidebar-columns-name (width < calc(14.5625rem + 20px + 11.4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5833);
-  }
+@container sidebar-columns (width < calc(13.0625rem + 20px + 8.9ch)) {
+  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5357); }
 }
-@container sidebar-columns-name (width < calc(14.5625rem + 20px + 10.9ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5357);
-  }
+@container sidebar-columns (width < calc(13.0625rem + 20px + 8.5ch)) {
+  .sidebar-thread-columns { --sidebar-model-track: 0px; --sidebar-model-gap: 0px; --sidebar-effort-track: 0px; --sidebar-effort-gap: 0px; }
+  .sidebar-thread-model, .sidebar-thread-effort { display: none; }
 }
-@container sidebar-columns-name (width < calc(14.5625rem + 20px + 10.5ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-track: 0px;
-    --sidebar-model-gap: 0px;
-    --sidebar-effort-track: 0px;
-    --sidebar-effort-gap: 0px;
-  }
-  .sidebar-thread-model,
-  .sidebar-thread-effort {
-    display: none;
-  }
-}
-@container sidebar-columns-name (width < calc(14.0625rem + 16px + 6ch)) {
-  .sidebar-thread-columns {
-    --sidebar-issue-track: 0px;
-    --sidebar-issue-gap: 0px;
-    --sidebar-pr-track: 0px;
-    --sidebar-pr-gap: 0px;
-  }
-  .sidebar-thread-issue,
-  .sidebar-thread-pr {
-    display: none;
-  }
-}
-@container sidebar-columns (width < calc(15.3125rem + 22px + 12.4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.9405);
-  }
-}
-@container sidebar-columns (width < calc(15.3125rem + 22px + 11.9ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.881);
-  }
-}
-@container sidebar-columns (width < calc(15.3125rem + 22px + 11.4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.8214);
-  }
-}
-@container sidebar-columns (width < calc(15.3125rem + 22px + 10.9ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7619);
-  }
-}
-@container sidebar-columns (width < calc(15.3125rem + 22px + 10.4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7024);
-  }
-}
-@container sidebar-columns (width < calc(15.3125rem + 22px + 9.9ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.6429);
-  }
-}
-@container sidebar-columns (width < calc(15.3125rem + 22px + 9.4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5833);
-  }
-}
-@container sidebar-columns (width < calc(15.3125rem + 22px + 8.9ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5357);
-  }
-}
-@container sidebar-columns (width < calc(15.3125rem + 22px + 8.5ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-track: 0px;
-    --sidebar-model-gap: 0px;
-    --sidebar-effort-track: 0px;
-    --sidebar-effort-gap: 0px;
-  }
-  .sidebar-thread-model,
-  .sidebar-thread-effort {
-    display: none;
-  }
-}
-@container sidebar-columns (width < calc(14.8125rem + 18px + 4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-issue-track: 0px;
-    --sidebar-issue-gap: 0px;
-    --sidebar-pr-track: 0px;
-    --sidebar-pr-gap: 0px;
-  }
-  .sidebar-thread-issue,
-  .sidebar-thread-pr {
-    display: none;
-  }
+@container sidebar-columns (width < calc(12.5625rem + 16px + 4ch)) {
+  .sidebar-thread-columns { --sidebar-badge-track: 0px; --sidebar-badge-gap: 0px; }
+  .sidebar-thread-badge { display: none; }
 }

@@ -13,7 +13,6 @@ import * as Schema from "effect/Schema";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
-  BotIcon,
   ChevronDownIcon,
   FolderInputIcon,
   PencilIcon,
@@ -430,13 +429,13 @@ export function ThreadDetailsArtifactRows({
                       const missing = !(availability.get(artifact.id) ?? artifact.available);
                       return (
                         <Fragment key={artifact.id}>
-                          <div className="flex min-w-0 flex-col px-1.5">
+                          <div className="group flex min-w-0 items-center px-1.5">
                             <Tooltip>
                               <TooltipTrigger
                                 render={
                                   <button
                                     type="button"
-                                    className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-sm px-1 py-1.5 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                                    className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-sm px-1 py-1.5 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                                     onClick={() => {
                                       void open(artifact);
                                     }}
@@ -449,72 +448,59 @@ export function ThreadDetailsArtifactRows({
                                   theme={resolvedTheme}
                                   className="size-3.5 shrink-0"
                                 />
-                                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-                                  <span className="block whitespace-normal">
-                                    {artifact.label
-                                      ? `${artifact.label} · ${artifact.name}`
-                                      : artifact.name}
-                                  </span>
-                                  {artifact.description ? (
-                                    <span className="mt-0.5 block whitespace-normal text-2xs text-muted-foreground">
-                                      {artifact.description}
-                                    </span>
-                                  ) : null}
+                                <span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]">
+                                  {artifact.label ?? artifact.name}
                                 </span>
                               </TooltipTrigger>
                               <TooltipPopup>
-                                {artifact.resolvedPath}
-                                {artifact.addedBy === "agent" ? " · Added by an agent" : ""}
+                                {artifact.description ? <div>{artifact.description}</div> : null}
+                                <div>{artifact.resolvedPath}</div>
+                                {artifact.addedBy === "agent" ? <div>Added by an agent</div> : null}
                               </TooltipPopup>
                             </Tooltip>
-                            <div className="flex items-center gap-1 px-1">
-                              {missing ? (
-                                <span className="text-2xs text-muted-foreground">File missing</span>
-                              ) : null}
-                              {artifact.addedBy === "agent" ? (
-                                <span aria-label="Added by an agent">
-                                  <BotIcon aria-hidden className="size-3 text-muted-foreground" />
-                                </span>
-                              ) : null}
-                              <div className="flex flex-1 justify-end">
-                                <Button
-                                  variant="ghost-muted"
-                                  size="icon-xs"
-                                  disabled={!canUpdate}
-                                  aria-label={`Edit ${artifact.label ?? artifact.name}`}
-                                  aria-expanded={editing === artifact.id}
-                                  onClick={() =>
-                                    setEditing(editing === artifact.id ? null : artifact.id)
-                                  }
-                                >
-                                  <PencilIcon aria-hidden className="size-3" />
-                                </Button>
-                                <Button
-                                  variant="ghost-muted"
-                                  size="icon-xs"
-                                  disabled={!canMove}
-                                  aria-label={`Move ${artifact.label ?? artifact.name} to another section`}
-                                  onClick={() =>
-                                    setMoving(moving === artifact.id ? null : artifact.id)
-                                  }
-                                >
-                                  <FolderInputIcon aria-hidden className="size-3" />
-                                </Button>
-                                <Button
-                                  variant="ghost-muted"
-                                  size="icon-xs"
-                                  disabled={!canRemove}
-                                  aria-label={`Remove ${artifact.label ?? artifact.name}`}
-                                  onClick={() => {
-                                    void remove({
-                                      environmentId,
-                                      input: { projectId, id: artifact.id },
-                                    });
-                                  }}
-                                >
-                                  <XIcon aria-hidden className="size-3" />
-                                </Button>
-                              </div>
+                            {missing ? (
+                              <span className="shrink-0 text-2xs text-muted-foreground">
+                                File missing
+                              </span>
+                            ) : null}
+                            <div className={HOVER_REVEAL}>
+                              <Button
+                                variant="ghost-muted"
+                                size="icon-xs"
+                                disabled={!canUpdate}
+                                aria-label={`Edit ${artifact.label ?? artifact.name}`}
+                                aria-expanded={editing === artifact.id}
+                                onClick={() =>
+                                  setEditing(editing === artifact.id ? null : artifact.id)
+                                }
+                              >
+                                <PencilIcon aria-hidden className="size-3" />
+                              </Button>
+                              <Button
+                                variant="ghost-muted"
+                                size="icon-xs"
+                                disabled={!canMove}
+                                aria-label={`Move ${artifact.label ?? artifact.name} to another section`}
+                                onClick={() =>
+                                  setMoving(moving === artifact.id ? null : artifact.id)
+                                }
+                              >
+                                <FolderInputIcon aria-hidden className="size-3" />
+                              </Button>
+                              <Button
+                                variant="ghost-muted"
+                                size="icon-xs"
+                                disabled={!canRemove}
+                                aria-label={`Remove ${artifact.label ?? artifact.name}`}
+                                onClick={() => {
+                                  void remove({
+                                    environmentId,
+                                    input: { projectId, id: artifact.id },
+                                  });
+                                }}
+                              >
+                                <XIcon aria-hidden className="size-3" />
+                              </Button>
                             </div>
                           </div>
                           {editing === artifact.id ? (
