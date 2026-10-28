@@ -1,4 +1,4 @@
-import { EffortGlyph } from "../chat/EffortGlyph";
+import { effortBarHeights } from "../chat/EffortGlyph";
 import { ChevronRightIcon } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -200,9 +200,11 @@ export function SidebarThreadColumns(props: {
         <span className="sidebar-thread-icon sidebar-thread-provider">{props.provider}</span>
       ) : null}
       {columns.model !== false && !props.wideName ? (
-        <SidebarThreadModel label={props.model} />
-      ) : null}
-      {columns.effort !== false && !props.wideName ? (
+        <SidebarThreadModel
+          label={props.model}
+          effort={columns.effort !== false ? props.effort : undefined}
+        />
+      ) : columns.effort !== false && !props.wideName ? (
         <SidebarEffortMeter effort={props.effort} />
       ) : null}
       <span className={cn("sidebar-thread-name", props.wideName && "sidebar-thread-name-wide")}>
@@ -243,20 +245,30 @@ export function SidebarThreadTitle(props: { readonly role: string; readonly titl
   );
 }
 
-/** The model's name and version in one cell, with the whole label on hover. */
-function SidebarThreadModel(props: { readonly label: string | undefined }) {
-  if (!props.label) return <span className="sidebar-thread-model" />;
+/**
+ * The model's name and version, with the whole label on hover, and its effort bars right after it.
+ * The cell spans the effort track, so the bars follow the label instead of the role name.
+ */
+function SidebarThreadModel(props: {
+  readonly label: string | undefined;
+  readonly effort: string | null | undefined;
+}) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="sidebar-thread-model" />}>
-        {sidebarModelCellLabel(props.label)}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.label}</TooltipPopup>
-    </Tooltip>
+    <span className="sidebar-thread-model">
+      {props.label ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="min-w-0 truncate" />}>
+            {sidebarModelCellLabel(props.label)}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{props.label}</TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {props.effort ? <SidebarEffortMeter effort={props.effort} /> : null}
+    </span>
   );
 }
 
-/** Five dots filling from the bottom, one per effort level; an effort off that scale shows none. */
+/** Rising bars, one per effort level, filled up to the current one; an effort off that scale shows none. */
 function SidebarEffortMeter(props: { readonly effort: string | null | undefined }) {
   if (!props.effort) return <span className="sidebar-thread-effort" />;
   const { level, name } = modelSelectionEffortLevel(props.effort);
@@ -265,9 +277,29 @@ function SidebarEffortMeter(props: { readonly effort: string | null | undefined 
       <TooltipTrigger
         render={<span className="sidebar-thread-effort" role="img" aria-label={name} />}
       >
-        {level === 0 ? null : <EffortGlyph count={5} filled={level} size="xs" />}
+        {level === 0 ? null : <SidebarEffortBars filled={level} />}
       </TooltipTrigger>
       <TooltipPopup side="top">{name}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+// Upstream's xs EffortGlyph is 18px wide; these 14px bars read as part of the 11px model label.
+function SidebarEffortBars(props: { readonly filled: number }) {
+  const maxBar = 8;
+  return (
+    <svg aria-hidden="true" width={14} height={maxBar} viewBox={`0 0 14 ${maxBar}`}>
+      {effortBarHeights(5, maxBar).map((barHeight, index) => (
+        <rect
+          key={`bar-${barHeight}`}
+          x={index * 3}
+          y={maxBar - barHeight}
+          width={2}
+          height={barHeight}
+          fill="currentColor"
+          opacity={index < props.filled ? 1 : 0.4}
+        />
+      ))}
+    </svg>
   );
 }

@@ -20,7 +20,7 @@ export const sidebarColumnLayout = {
     // "Sonnet 5.5" at the 11px model size in OpenDyslexic (7.98ch) plus a narrow space. A narrowing
     // sidebar shrinks it to `minCh`, truncating the label, before the column drops.
     model: { ch: 8.4, minCh: 4.5 },
-    // Upstream's five effort bars: 18px wide.
+    // The model cell spans this track: room for its 14px effort bars and a gap before the name.
     effort: 1.125,
     // A role name: "Orchestrator" is 10.625ch at 12px in OpenDyslexic Bold, plus a narrow space.
     // The name cell takes its text's width; spare width goes to the spacer so badges, time and
@@ -92,7 +92,13 @@ export function generateSidebarColumnLayoutCss() {
     .join(
       "\n",
     )}\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template};\n  column-gap: 0;\n}\n[data-sidebar-role-display="name"]:has(.sidebar-role-title) {\n  --sidebar-name-track: var(--sidebar-name-width);\n}\n`;
-  css += entries.map(([name]) => `.sidebar-thread-${name} { grid-column: ${name}; }\n`).join("");
+  // The model cell spans the effort track, so its effort bars follow the label.
+  css += entries
+    .map(
+      ([name]) =>
+        `.sidebar-thread-${name} { grid-column: ${name === "model" ? "model / name" : name}; }\n`,
+    )
+    .join("");
   for (const roleDisplay of ["name", "icon"] as const) {
     const hidden = new Set<string>();
     const container = roleDisplay === "name" ? "sidebar-columns-name" : "sidebar-columns";

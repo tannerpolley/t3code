@@ -535,6 +535,12 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       Effect.forkScoped,
     );
   }
+  // A long migration on a large database can outlast a readiness probe; that is not a failed start.
+  const migrating = yield* Ref.make(false);
+  const onMigrationStatus = (running: boolean) =>
+    Ref.set(migrating, running).pipe(
+      Effect.andThen(options.onMigrationStatus?.(running) ?? Effect.void),
+    );
   if (options.captureOutput) {
     const outputContext = {
       executablePath: options.executablePath,
@@ -551,7 +557,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         handle.stdout,
         onOutput,
         onOutputFailure,
-        options.onMigrationStatus,
+        onMigrationStatus,
       ).pipe(Effect.forkScoped),
       yield* drainBackendOutput(
         outputContext,
@@ -559,7 +565,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         handle.stderr,
         onOutput,
         onOutputFailure,
-        options.onMigrationStatus,
+        onMigrationStatus,
       ).pipe(Effect.forkScoped),
     );
   }
@@ -576,7 +582,12 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       Effect.as(true),
       Effect.catchTags({
         BackendReadinessTimeoutError: (error) =>
-          (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(false)),
+          Ref.get(migrating).pipe(
+            Effect.flatMap((running) =>
+              running ? Effect.void : (options.onReadinessFailure?.(error) ?? Effect.void),
+            ),
+            Effect.as(false),
+          ),
       }),
     ),
   );
