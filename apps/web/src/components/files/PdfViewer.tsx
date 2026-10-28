@@ -375,7 +375,7 @@ export default function PdfViewer(props: { src: string; title: string }) {
               <ul>
                 {outline.map((entry, index) => (
                   <li
-                    key={`${entry.title}-${entry.page}-${entry.depth}`}
+                    key={entry.id}
                     style={{ paddingLeft: `${entry.depth * 16}px` }}
                   >
                     <Button

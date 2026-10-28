@@ -121,7 +121,7 @@ export function pdfFindMatchRuns(runs: readonly string[], query: string) {
   return hits;
 }
 
-export type PdfOutlineEntry = { title: string; page: number | null; depth: number };
+export type PdfOutlineEntry = { id: number; title: string; page: number | null; depth: number };
 
 type OutlineItem = { title: string; dest: string | unknown[] | null; items: OutlineItem[] };
 
@@ -141,7 +141,7 @@ export async function resolvePdfOutline(pdf: PDFDocumentProxy): Promise<PdfOutli
       } catch {
         // Invalid bookmarks should not prevent the rest of the outline from loading.
       }
-      entries.push({ title: item.title, page, depth });
+      entries.push({ id: entries.length, title: item.title, page, depth });
       await visit(item.items, depth + 1);
     }
   }

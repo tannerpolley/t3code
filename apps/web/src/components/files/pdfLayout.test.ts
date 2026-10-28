@@ -157,8 +157,8 @@ describe("PDF outline", () => {
     try {
       const entries = await resolvePdfOutline(await task.promise);
       expect(entries).toEqual([
-        { title: "Chapter", page: 0, depth: 0 },
-        { title: "Section", page: 1, depth: 1 },
+        { id: 0, title: "Chapter", page: 0, depth: 0 },
+        { id: 1, title: "Section", page: 1, depth: 1 },
       ]);
       expect(currentPdfSection(entries, 0)).toBe(0);
       expect(currentPdfSection(entries, 1)).toBe(1);
