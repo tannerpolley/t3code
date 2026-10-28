@@ -30,6 +30,13 @@ export class ExecutionReducer {
     this.owners.set(id, { cell, reply: false, idle: false, failed: false, clear: false });
   }
   reduce(message: Message) {
+    if (
+      message.header.msg_type === "t3_output_lost" &&
+      message.parent_header.msg_id === undefined
+    ) {
+      this.truncated = true;
+      return { patches: [], cellId: null, complete: false, failed: false };
+    }
     const owner = this.owners.get(message.parent_header.msg_id ?? "");
     if (!owner) return undefined;
     const { cell } = owner;

@@ -1,12 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off
-// Streaming frame admission must discard oversized messages before allocating their declared length.
+// Frame payloads stream to the message owner without buffering their declared length.
 import * as NodeHttp from "node:http";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import { NotebookError, NOTEBOOK_LIMITS } from "@t3tools/contracts";
 
 export const connectKernelSocket = Effect.fn("JupyterTransport.connectSocket")(
-  (url: URL, token: string, receive: (text: string | null) => void, fail: () => void) =>
+  (
+    url: URL,
+    token: string,
+    receive: { write: (bytes: Uint8Array) => void; end: () => void },
+    fail: () => void,
+  ) =>
     Effect.callback<{ send: (text: string) => void; close: () => void }, NotebookError>(
       (resume) => {
         const key = NodeCrypto.randomBytes(16).toString("base64");
@@ -43,16 +48,13 @@ export const connectKernelSocket = Effect.fn("JupyterTransport.connectSocket")(
             return;
           }
           const capacity = NOTEBOOK_LIMITS.bytes + 65536;
-          const message = Buffer.allocUnsafe(capacity);
           const header = Buffer.alloc(10);
           let headerSize = 0,
             headerNeeded = 2,
             remaining = 0n,
             opcode = 0,
             final = false;
-          let messageSize = 0,
-            fragmented = false,
-            discarded = false;
+          let fragmented = false;
           const ping = Buffer.alloc(125);
           let pingSize = 0;
           let closed = false;
@@ -94,15 +96,7 @@ export const connectKernelSocket = Effect.fn("JupyterTransport.connectSocket")(
               sendFrame(10, ping.subarray(0, pingSize));
             }
             if ((opcode === 0 || opcode === 1) && final) {
-              if (discarded) receive(null);
-              else
-                receive(
-                  new TextDecoder("utf-8", { fatal: true }).decode(
-                    message.subarray(0, messageSize),
-                  ),
-                );
-              messageSize = 0;
-              discarded = false;
+              receive.end();
               fragmented = false;
             }
             headerSize = 0;
@@ -149,7 +143,6 @@ export const connectKernelSocket = Effect.fn("JupyterTransport.connectSocket")(
                   }
                   if (opcode === 1) fragmented = !final;
                   if (opcode >= 8) pingSize = 0;
-                  if (opcode < 8 && remaining > BigInt(capacity - messageSize)) discarded = true;
                   if (remaining === 0n) {
                     finish();
                     continue;
@@ -163,10 +156,7 @@ export const connectKernelSocket = Effect.fn("JupyterTransport.connectSocket")(
                 if (opcode === 9) {
                   chunk.copy(ping, pingSize, offset, offset + count);
                   pingSize += count;
-                } else if (opcode < 8 && !discarded) {
-                  chunk.copy(message, messageSize, offset, offset + count);
-                  messageSize += count;
-                }
+                } else if (opcode < 8) receive.write(chunk.subarray(offset, offset + count));
                 offset += count;
                 remaining -= BigInt(count);
                 if (remaining === 0n) finish();
