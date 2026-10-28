@@ -164,11 +164,12 @@ it.effect(
       });
       const parent = yield* transport.workRead({ ...scope, number: 7 });
       expect(parent.subIssues.map((child) => child.number)).toEqual([8]);
-      const metadata = yield* transport.listMetadata(scope, [7], true);
+      const metadata = yield* transport.listMetadata(scope, [7, 8], true);
       expect(metadata.get(7)).toMatchObject({
         subIssues: { total: 1, completed: 1 },
         relationshipsComplete: true,
       });
+      expect(metadata.get(8)?.subIssues).toBeUndefined();
       const statuses = yield* transport.statuses(host, ["12/8"]);
       expect(statuses).toMatchObject([
         {

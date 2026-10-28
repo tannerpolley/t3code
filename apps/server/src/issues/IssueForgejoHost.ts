@@ -515,12 +515,13 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
               raw.number !== number &&
               parseParentMarker(raw.body ?? "") === number,
           );
-          result.set(number, {
-            subIssues: {
-              total: sub.length,
-              completed: sub.filter((raw) => raw.state === "closed").length,
-            },
-          });
+          if (sub.length > 0)
+            result.set(number, {
+              subIssues: {
+                total: sub.length,
+                completed: sub.filter((raw) => raw.state === "closed").length,
+              },
+            });
         }
       }
       if (!roadmap) return result;
