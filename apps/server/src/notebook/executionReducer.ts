@@ -1,20 +1,32 @@
-import { NOTEBOOK_LIMITS, type NotebookOutputPatch } from "@t3tools/contracts";
+import { NOTEBOOK_LIMITS, NotebookError, type NotebookOutputPatch } from "@t3tools/contracts";
 import type { Message } from "./JupyterTransport.ts";
 import { byteLength, type Document, type NotebookCell } from "./notebookDocument.ts";
 
 type Owner = { cell: NotebookCell; reply: boolean; idle: boolean; failed: boolean; clear: boolean };
 export class ExecutionReducer {
   readonly owners = new Map<string, Owner>();
-  readonly displays = new WeakMap<object, string>();
+  displays = new WeakMap<object, string>();
   truncated = false;
   readonly document: Document;
   constructor(document: Document) {
     this.document = document;
   }
+  resetGeneration() {
+    this.owners.clear();
+    this.displays = new WeakMap();
+  }
   begin(id: string, cell: NotebookCell) {
-    for (const [key, owner] of this.owners) if (owner.cell === cell) this.owners.delete(key);
+    const previous = { outputs: cell.outputs, count: cell.execution_count };
     cell.outputs = [];
     cell.execution_count = null;
+    if (byteLength(this.document) > NOTEBOOK_LIMITS.bytes) {
+      if (previous.outputs === undefined) delete cell.outputs;
+      else cell.outputs = previous.outputs;
+      if (previous.count === undefined) delete cell.execution_count;
+      else cell.execution_count = previous.count;
+      throw new NotebookError({ reason: "output-limit" });
+    }
+    for (const [key, owner] of this.owners) if (owner.cell === cell) this.owners.delete(key);
     this.owners.set(id, { cell, reply: false, idle: false, failed: false, clear: false });
   }
   reduce(message: Message) {
@@ -24,6 +36,7 @@ export class ExecutionReducer {
     const patches: NotebookOutputPatch[] = [];
     const content = message.content;
     const type = message.header.msg_type;
+    if (type === "t3_output_lost" || content.t3_truncated === true) this.truncated = true;
     if (type === "execute_reply" && message.channel === "shell") {
       owner.reply = true;
       owner.failed = content.status !== "ok";
@@ -32,8 +45,13 @@ export class ExecutionReducer {
       owner.idle = true;
     if (message.channel === "iopub") {
       if (type === "execute_input" && typeof content.execution_count === "number") {
+        const previous = cell.execution_count;
         cell.execution_count = content.execution_count;
-        patches.push({ type: "count", cellId: cell.id, count: content.execution_count });
+        if (byteLength(this.document) > NOTEBOOK_LIMITS.bytes) {
+          if (previous === undefined) delete cell.execution_count;
+          else cell.execution_count = previous;
+          this.truncated = true;
+        } else patches.push({ type: "count", cellId: cell.id, count: content.execution_count });
       }
       if (type === "clear_output") {
         if (content.wait === true) owner.clear = true;
@@ -44,7 +62,14 @@ export class ExecutionReducer {
         }
       }
       if (
-        ["stream", "display_data", "execute_result", "error", "update_display_data"].includes(type)
+        [
+          "stream",
+          "display_data",
+          "execute_result",
+          "error",
+          "update_display_data",
+          "t3_output_lost",
+        ].includes(type)
       ) {
         if (owner.clear) {
           cell.outputs = [];
@@ -54,7 +79,7 @@ export class ExecutionReducer {
         const transient = content.transient as { display_id?: unknown } | undefined;
         const displayId =
           typeof transient?.display_id === "string" ? transient.display_id : undefined;
-        const { transient: _transient, ...saved } = content;
+        const { transient: _transient, t3_truncated: _truncated, ...saved } = content;
         if (type === "update_display_data") {
           if (displayId)
             for (const other of this.document.cells)
@@ -88,7 +113,7 @@ export class ExecutionReducer {
               previous.text = text;
               this.truncated = true;
             } else patches.push({ type: "stream", cellId: cell.id, text: saved.text });
-          } else {
+          } else if (type !== "t3_output_lost") {
             const output = { ...saved, output_type: type };
             outputs.push(output);
             if (

@@ -86,10 +86,10 @@ const make = Effect.gen(function* () {
   const config = yield* NotebookConfiguration;
   const transport = yield* JupyterTransport.JupyterTransport;
   const scope = yield* Scope.Scope;
-  const lock = yield* Semaphore.make(1);
   const epoch = NodeCrypto.randomUUID();
   type Session = {
-    projectId: string;
+    projects: Set<string>;
+    lock: Semaphore.Semaphore;
     path: string;
     root: string;
     snapshot: { -readonly [K in keyof NotebookSnapshot]: NotebookSnapshot[K] };
@@ -97,8 +97,8 @@ const make = Effect.gen(function* () {
     kernel?: {
       id: string;
       endpoint: JupyterTransport.Endpoint;
-      channels: JupyterTransport.Channels;
-      scope: Scope.Closeable;
+      channels?: JupyterTransport.Channels;
+      scope?: Scope.Closeable;
     };
     pending?: { id: string; done: Deferred.Deferred<boolean> };
     cancelled: boolean;
@@ -147,7 +147,7 @@ const make = Effect.gen(function* () {
   ) {
     yield* authorize(caller, execute);
     const session = sessions.get(input.handle);
-    if (!session || session.projectId !== input.projectId)
+    if (!session || !session.projects.has(input.projectId))
       return yield* new NotebookError({ reason: "not-found" });
     const resolved = yield* resolve({
       projectId: input.projectId,
@@ -204,13 +204,21 @@ const make = Effect.gen(function* () {
     id: string,
   ) {
     const kernelScope = yield* Scope.make();
+    session.kernel = { id, endpoint, scope: kernelScope };
     const channels = yield* transport.connect(endpoint, id).pipe(
       Effect.provideService(Scope.Scope, kernelScope),
       Effect.onError(() =>
         Effect.all(
           [
             Scope.close(kernelScope, Exit.void),
-            transport.control(endpoint, id, "shutdown").pipe(Effect.ignore),
+            transport.control(endpoint, id, "shutdown").pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  delete session.kernel;
+                }),
+              ),
+              Effect.ignore,
+            ),
             unknown(session),
           ],
           { discard: true },
@@ -241,59 +249,62 @@ const make = Effect.gen(function* () {
     caller: Caller,
   ) {
     yield* authorize(caller);
-    return yield* lock.withPermit(
-      Effect.gen(function* () {
-        const { root, path } = yield* resolve(input);
-        for (const session of sessions.values())
-          if (
-            session.path === path &&
-            session.root === root &&
-            session.projectId === input.projectId
-          )
-            return snapshotOf(session);
-        if (sessions.size >= NOTEBOOK_LIMITS.sessions)
-          return yield* new NotebookError({ reason: "output-limit" });
-        const stat = yield* fs
-          .stat(path)
-          .pipe(Effect.mapError(() => new NotebookError({ reason: "not-found" })));
-        if (stat.size > NOTEBOOK_LIMITS.bytes)
-          return yield* new NotebookError({ reason: "output-limit" });
-        const text = yield* fs
-          .readFileString(path)
-          .pipe(Effect.mapError(() => new NotebookError({ reason: "not-found" })));
-        const parsed = yield* Effect.try({
-          try: () => parseNotebook(text),
-          catch: () => new NotebookError({ reason: "invalid-document" }),
-        });
-        const handle = NodeCrypto.randomUUID();
-        const snapshot: NotebookSnapshot = {
-          handle,
-          epoch,
-          sequence: 0,
-          revision: parsed.changed ? 1 : 0,
-          diskHash: NodeCrypto.createHash("sha256").update(text).digest("hex"),
-          generation: 0,
-          executions: {},
-          document: parsed.document,
-          kernel: "stopped",
-          runId: null,
-          outcome: "none",
-          truncated: false,
-        };
-        const session: Session = {
-          projectId: input.projectId,
-          path,
-          root,
-          snapshot,
-          reducer: new ExecutionReducer(parsed.document),
-          cancelled: false,
-          requests: new Map(),
-          observers: new Set(),
-        };
-        sessions.set(handle, session);
+    const { root, path } = yield* resolve(input);
+    for (const session of sessions.values())
+      if (session.path === path && session.root === root) {
+        session.projects.add(input.projectId);
         return snapshotOf(session);
-      }),
-    );
+      }
+    if (sessions.size >= NOTEBOOK_LIMITS.sessions)
+      return yield* new NotebookError({ reason: "output-limit" });
+    const stat = yield* fs
+      .stat(path)
+      .pipe(Effect.mapError(() => new NotebookError({ reason: "not-found" })));
+    if (stat.size > NOTEBOOK_LIMITS.bytes)
+      return yield* new NotebookError({ reason: "output-limit" });
+    const text = yield* fs
+      .readFileString(path)
+      .pipe(Effect.mapError(() => new NotebookError({ reason: "not-found" })));
+    const parsed = yield* Effect.try({
+      try: () => parseNotebook(text),
+      catch: () => new NotebookError({ reason: "invalid-document" }),
+    });
+    for (const session of sessions.values()) {
+      if (session.path === path && session.root === root) {
+        session.projects.add(input.projectId);
+        return snapshotOf(session);
+      }
+    }
+    if (sessions.size >= NOTEBOOK_LIMITS.sessions)
+      return yield* new NotebookError({ reason: "output-limit" });
+    const handle = NodeCrypto.randomUUID();
+    const snapshot: NotebookSnapshot = {
+      handle,
+      epoch,
+      sequence: 0,
+      revision: parsed.changed ? 1 : 0,
+      diskHash: NodeCrypto.createHash("sha256").update(text).digest("hex"),
+      generation: 0,
+      executions: {},
+      document: parsed.document,
+      kernel: "stopped",
+      runId: null,
+      outcome: "none",
+      truncated: false,
+    };
+    const session: Session = {
+      projects: new Set([input.projectId]),
+      lock: Semaphore.makeUnsafe(1),
+      path,
+      root,
+      snapshot,
+      reducer: new ExecutionReducer(parsed.document),
+      cancelled: false,
+      requests: new Map(),
+      observers: new Set(),
+    };
+    sessions.set(handle, session);
+    return snapshotOf(session);
   });
   const snapshot = Effect.fn("NotebookService.snapshot")(function* (
     input: NotebookHandle,
@@ -305,9 +316,10 @@ const make = Effect.gen(function* () {
     input: NotebookExecute,
     caller: Caller,
   ) {
-    return yield* lock.withPermit(
+    const session = yield* get(input, caller, true);
+    return yield* session.lock.withPermit(
       Effect.gen(function* () {
-        const session = yield* get(input, caller, true);
+        yield* get(input, caller, true);
         const fingerprint = fingerprintOf([input.revision, input.cellIds]);
         const prior = session.requests.get(input.requestId);
         if (prior) {
@@ -338,11 +350,14 @@ const make = Effect.gen(function* () {
         if (!session.kernel) {
           const endpoint = yield* config.endpoint(session.root);
           const id = yield* transport.create(endpoint, session.root);
+          session.kernel = { id, endpoint };
           session.snapshot.generation++;
+          session.reducer.resetGeneration();
           yield* connectOwned(session, endpoint, id);
         }
         const kernel = session.kernel;
-        if (!kernel) return yield* new NotebookError({ reason: "kernel-failure" });
+        if (!kernel?.channels) return yield* new NotebookError({ reason: "kernel-failure" });
+        const channels = kernel.channels;
         const runId = NodeCrypto.randomUUID();
         session.snapshot.runId = runId;
         session.snapshot.outcome = "running";
@@ -359,6 +374,10 @@ const make = Effect.gen(function* () {
             const id = NodeCrypto.randomUUID();
             const done = yield* Deferred.make<boolean>();
             session.pending = { id, done };
+            yield* Effect.try({
+              try: () => session.reducer.begin(id, cell),
+              catch: () => new NotebookError({ reason: "output-limit" }),
+            });
             session.snapshot.executions = {
               ...session.snapshot.executions,
               [cell.id]: {
@@ -370,9 +389,16 @@ const make = Effect.gen(function* () {
                   .digest("hex"),
               },
             };
-            session.reducer.begin(id, cell);
-            changed(session, cell.id, [{ type: "clear", cellId: cell.id }]);
-            yield* kernel.channels.execute(
+            changed(session, cell.id, [
+              { type: "clear", cellId: cell.id },
+              {
+                type: "execution",
+                cellId: cell.id,
+                count: null,
+                execution: session.snapshot.executions[cell.id]!,
+              },
+            ]);
+            yield* channels.execute(
               id,
               typeof cell.source === "string" ? cell.source : cell.source.join(""),
             );
@@ -403,9 +429,10 @@ const make = Effect.gen(function* () {
       input: NotebookControl & { runId?: string },
       caller: Caller,
     ) {
-      yield* lock.withPermit(
+      const session = yield* get(input, caller, true);
+      yield* session.lock.withPermit(
         Effect.gen(function* () {
-          const session = yield* get(input, caller, true);
+          yield* get(input, caller, true);
           if (session.snapshot.generation !== input.generation)
             return yield* new NotebookError({ reason: "stale-generation" });
           if (action === "interrupt" && input.runId !== session.snapshot.runId)
@@ -425,11 +452,13 @@ const make = Effect.gen(function* () {
             .pipe(Effect.onError(() => unknown(session)));
           if (action !== "interrupt") {
             session.snapshot.generation++;
-            session.reducer.owners.clear();
+            session.reducer.resetGeneration();
             if (session.pending) yield* Deferred.succeed(session.pending.done, true);
-            yield* Scope.close(kernel.scope, Exit.void);
-            delete session.kernel;
-            if (action === "restart") yield* connectOwned(session, kernel.endpoint, kernel.id);
+            if (kernel.scope) yield* Scope.close(kernel.scope, Exit.void);
+            if (action === "restart") {
+              session.kernel = { id: kernel.id, endpoint: kernel.endpoint };
+              yield* connectOwned(session, kernel.endpoint, kernel.id);
+            } else delete session.kernel;
             session.snapshot.kernel = action === "restart" ? "idle" : "stopped";
             session.snapshot.outcome = "aborted";
           }
@@ -464,7 +493,7 @@ const make = Effect.gen(function* () {
           const kernel = session.kernel;
           if (!kernel) return;
           session.snapshot.generation++;
-          yield* Scope.close(kernel.scope, Exit.void);
+          if (kernel.scope) yield* Scope.close(kernel.scope, Exit.void);
           yield* transport.control(kernel.endpoint, kernel.id, "shutdown").pipe(Effect.ignore);
         }),
       { discard: true },

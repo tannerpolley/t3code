@@ -48,21 +48,19 @@ export const NotebookControl = Schema.Struct({ ...NotebookHandle.fields, generat
 export type NotebookControl = typeof NotebookControl.Type;
 export const NotebookInterrupt = Schema.Struct({ ...NotebookControl.fields, runId: Schema.String });
 export type NotebookInterrupt = typeof NotebookInterrupt.Type;
+const NotebookExecution = Schema.Struct({
+  runId: Schema.String,
+  generation: Schema.Int,
+  sourceHash: Schema.String,
+  sourceRevision: Schema.Int,
+});
 export const NotebookSnapshot = Schema.Struct({
   handle: Schema.String,
   epoch: Schema.String,
   sequence: Schema.Int,
   revision: Schema.Int,
   diskHash: Schema.String,
-  executions: Schema.Record(
-    Schema.String,
-    Schema.Struct({
-      runId: Schema.String,
-      generation: Schema.Int,
-      sourceHash: Schema.String,
-      sourceRevision: Schema.Int,
-    }),
-  ),
+  executions: Schema.Record(Schema.String, NotebookExecution),
   generation: Schema.Int,
   document: NotebookDocument,
   kernel: Schema.Literals(["stopped", "idle", "busy", "unknown"]),
@@ -72,6 +70,12 @@ export const NotebookSnapshot = Schema.Struct({
 });
 export type NotebookSnapshot = typeof NotebookSnapshot.Type;
 export const NotebookOutputPatch = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("execution"),
+    cellId: Schema.String,
+    count: Schema.NullOr(Schema.Int),
+    execution: NotebookExecution,
+  }),
   Schema.Struct({ type: Schema.Literal("clear"), cellId: Schema.String }),
   Schema.Struct({ type: Schema.Literal("count"), cellId: Schema.String, count: Schema.Int }),
   Schema.Struct({

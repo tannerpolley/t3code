@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // Node UUIDs identify kernel protocol requests at this adapter boundary.
 import * as NodeCrypto from "node:crypto";
-import { fetch, WebSocket } from "undici";
+import { fetch } from "undici";
 import { NOTEBOOK_LIMITS, NotebookError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -11,6 +11,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { connectKernelSocket } from "./kernelSocket.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -145,62 +146,99 @@ export const layer = Layer.sync(JupyterTransport, () => {
     );
   });
   const connect = Effect.fn("JupyterTransport.connect")(function* (endpoint: Endpoint, id: string) {
-    const messages = yield* Queue.dropping<Message, NotebookError>(64);
-    const socket = yield* Effect.try({
-      try: () => {
-        const url = endpointUrl(endpoint, `/${encodeURIComponent(id)}/channels`);
-        url.protocol = "ws:";
-        url.searchParams.set("session_id", NodeCrypto.randomUUID());
-        return new WebSocket(url, { headers: { Authorization: `token ${endpoint.token}` } });
-      },
-      catch: () => new NotebookError({ reason: "unavailable" }),
-    });
-    const fail = () => {
-      Queue.failCauseUnsafe(messages, Cause.fail(new NotebookError({ reason: "disconnected" })));
-      socket.close();
+    const wake = yield* Queue.sliding<void, NotebookError>(1);
+    const output: Message[] = [];
+    const control = new Map<string, Message>();
+    let retainedBytes = 0;
+    let currentId: string | undefined;
+    let lost = false;
+    const loss = () => {
+      lost = true;
+      Queue.offerUnsafe(wake, undefined);
     };
-    socket.addEventListener("message", (event) => {
+    const fail = () => {
+      Queue.failCauseUnsafe(wake, Cause.fail(new NotebookError({ reason: "disconnected" })));
+    };
+    const receive = (text: string | null) => {
       try {
+        if (text === null) {
+          loss();
+          return;
+        }
+        // Admission is bounded before JSON decoding; large data is discarded while channels drain.
+        if (Buffer.byteLength(text) > NOTEBOOK_LIMITS.bytes + 65536) {
+          loss();
+          return;
+        }
+        let message = decodeMessage(text);
         if (
-          typeof event.data !== "string" ||
-          Buffer.byteLength(event.data) > NOTEBOOK_LIMITS.frameBytes
+          message.buffers?.length ||
+          contentValidators[message.header.msg_type]?.(message.content) === false
         ) {
           fail();
           return;
         }
-        const message = decodeMessage(event.data);
+        const type = message.header.msg_type;
         if (
-          message.buffers?.length ||
-          contentValidators[message.header.msg_type]?.(message.content) === false ||
-          !Queue.offerUnsafe(messages, message)
-        )
-          fail();
+          message.parent_header.msg_id === currentId &&
+          currentId &&
+          (type === "execute_reply" ||
+            type === "execute_input" ||
+            (type === "status" && message.content.execution_state === "idle"))
+        ) {
+          if (Buffer.byteLength(encodeJson(message)) > 65536) {
+            fail();
+            return;
+          }
+          control.set(type, message);
+        } else {
+          if (
+            type === "stream" &&
+            typeof message.content.text === "string" &&
+            Buffer.byteLength(message.content.text) > 65532
+          ) {
+            message = {
+              ...message,
+              content: {
+                ...message.content,
+                text: Buffer.from(message.content.text).subarray(0, 65528).toString("utf8"),
+                t3_truncated: true,
+              },
+            };
+          }
+          const size = Buffer.byteLength(encodeJson(message));
+          if (
+            size > NOTEBOOK_LIMITS.frameBytes ||
+            retainedBytes + size > NOTEBOOK_LIMITS.frameBytes ||
+            output.length >= 64
+          ) {
+            loss();
+            return;
+          }
+          output.push(message);
+          retainedBytes += size;
+        }
+        Queue.offerUnsafe(wake, undefined);
       } catch {
         fail();
       }
+    };
+    const url = yield* Effect.try({
+      try: () => {
+        const url = endpointUrl(endpoint, "/" + encodeURIComponent(id) + "/channels");
+        url.searchParams.set("session_id", NodeCrypto.randomUUID());
+        return url;
+      },
+      catch: () => new NotebookError({ reason: "unavailable" }),
     });
-    socket.addEventListener("close", fail);
-    socket.addEventListener("error", fail);
+    const socket = yield* connectKernelSocket(url, endpoint.token, receive, fail);
     const close = Effect.sync(() => {
-      socket.removeEventListener("close", fail);
-      socket.removeEventListener("error", fail);
       socket.close();
-      Queue.shutdownUnsafe(messages);
+      Queue.shutdownUnsafe(wake);
     });
     yield* Effect.addFinalizer(() => close);
-    yield* Effect.callback<void, NotebookError>((resume) => {
-      const opened = () => resume(Effect.void);
-      const failed = () => resume(Effect.fail(new NotebookError({ reason: "disconnected" })));
-      socket.addEventListener("open", opened, { once: true });
-      socket.addEventListener("error", failed, { once: true });
-      socket.addEventListener("close", failed, { once: true });
-      return Effect.sync(() => {
-        socket.removeEventListener("open", opened);
-        socket.removeEventListener("error", failed);
-        socket.removeEventListener("close", failed);
-      });
-    });
     const execute = Effect.fn("JupyterTransport.execute")(function* (id: string, code: string) {
+      currentId = id;
       yield* Effect.try({
         try: () =>
           socket.send(
@@ -228,7 +266,29 @@ export const layer = Layer.sync(JupyterTransport, () => {
         catch: () => new NotebookError({ reason: "disconnected" }),
       });
     });
-    return { messages: Stream.fromQueue(messages), execute, close };
+    const messages = Stream.fromQueue(wake).pipe(
+      Stream.flatMap(() => {
+        const batch = output.splice(0);
+        retainedBytes = 0;
+        const input = control.get("execute_input");
+        if (input) batch.unshift(input);
+        if (lost && currentId)
+          batch.push({
+            header: { msg_type: "t3_output_lost" },
+            parent_header: { msg_id: currentId },
+            channel: "iopub",
+            content: {},
+          });
+        for (const type of ["execute_reply", "status"]) {
+          const message = control.get(type);
+          if (message) batch.push(message);
+        }
+        control.clear();
+        lost = false;
+        return Stream.fromIterable(batch);
+      }),
+    );
+    return { messages, execute, close };
   });
   return JupyterTransport.of({ create, control, connect });
 });

@@ -31,7 +31,9 @@ const fixture = {
     outputs: [],
   })),
 };
-const setup = Effect.gen(function* () {
+const setup = Effect.fn("Test.setup")(function* (
+  overrides: Partial<JupyterTransport.JupyterTransport["Service"]> = {},
+) {
   const messages = yield* Queue.unbounded<JupyterTransport.Message, NotebookError>();
   const requests = yield* Queue.unbounded<{ id: string; code: string }>();
   const controls: string[] = [];
@@ -51,6 +53,7 @@ const setup = Effect.gen(function* () {
         controls.push(action);
       }),
     ),
+    ...overrides,
   });
   const fs = yield* FileSystem.FileSystem;
   const sql = yield* SqlClient.SqlClient;
@@ -93,15 +96,194 @@ const setup = Effect.gen(function* () {
       Stream.filter((s) => s.runId === runId && s.outcome !== "running"),
       Stream.runHead,
     );
-  return { service, opened, handle, requests, controls, send, finished, root, fs, messages };
+  return { service, opened, handle, requests, controls, send, finished, root, fs, messages, sql };
 });
 const layer = Layer.mergeAll(NodeServices.layer, ProjectStore.layer).pipe(
   Layer.provideMerge(Sqlite.layerMemory),
 );
 
+it.effect("project aliases share the canonical notebook owner and revalidate each project", () =>
+  Effect.gen(function* () {
+    const { service, opened, handle, sql, root, requests, send, finished } = yield* setup();
+    const alias = ProjectId.make("alias");
+    yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at) VALUES (${alias}, 'Alias', ${root}, '[]', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z')`;
+    const other = yield* service.open({ projectId: alias, relativePath: "test.ipynb" }, caller);
+    expect(other.handle).toBe(opened.handle);
+    const runId = yield* service.execute(
+      { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "alias" },
+      caller,
+    );
+    const request = yield* Queue.take(requests);
+    expect(
+      yield* service
+        .execute(
+          {
+            projectId: alias,
+            handle: other.handle,
+            revision: other.revision,
+            cellIds: ["b"],
+            requestId: "conflict",
+          },
+          caller,
+        )
+        .pipe(Effect.flip),
+    ).toMatchObject({ reason: "busy" });
+    yield* send(request.id, "execute_reply", { status: "ok" });
+    yield* send(request.id, "status", { execution_state: "idle" });
+    yield* finished(runId);
+    yield* sql`UPDATE projection_projects SET workspace_root = '/missing' WHERE project_id = ${alias}`;
+    expect(
+      yield* service.snapshot({ projectId: alias, handle: other.handle }, caller).pipe(Effect.flip),
+    ).toMatchObject({ reason: "invalid-path" });
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect.each(["shutdown", "finalizer"] as const)(
+  "retains an acquired kernel for %s when connect and its first cleanup fail",
+  (cleanup) =>
+    Effect.gen(function* () {
+      const deleted: string[] = [];
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const { service, opened, handle } = yield* setup({
+            connect: Effect.fn("Fault.connect")(() =>
+              Effect.fail(new NotebookError({ reason: "disconnected" })),
+            ),
+            control: Effect.fn("Fault.control")((_endpoint, id) =>
+              Effect.gen(function* () {
+                deleted.push(id);
+                if (deleted.length === 1)
+                  return yield* new NotebookError({ reason: "kernel-failure" });
+              }),
+            ),
+          });
+          yield* service
+            .execute(
+              { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "fault" },
+              caller,
+            )
+            .pipe(Effect.flip);
+          if (cleanup === "shutdown") {
+            const current = yield* service.snapshot(handle, caller);
+            yield* service.shutdown({ ...handle, generation: current.generation }, caller);
+          }
+        }),
+      );
+      expect(deleted).toEqual(["owned", "owned"]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("a blocked acquisition in B does not block A interrupt", () =>
+  Effect.gen(function* () {
+    const blocked = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const interrupted = yield* Deferred.make<void>();
+    let creates = 0;
+    const { service, opened, handle, requests, fs, root } = yield* setup({
+      create: Effect.fn("Blocked.create")(() =>
+        Effect.gen(function* () {
+          creates++;
+          if (creates === 2) {
+            yield* Deferred.succeed(blocked, undefined);
+            yield* Deferred.await(release);
+          }
+          return "owned";
+        }),
+      ),
+      control: Effect.fn("Blocked.control")((_endpoint, _id, action) =>
+        action === "interrupt"
+          ? Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      ),
+    });
+    const runId = yield* service.execute(
+      { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "A" },
+      caller,
+    );
+    yield* Queue.take(requests);
+    yield* fs.writeFileString(`${root}/B.ipynb`, JSON.stringify(fixture));
+    const b = yield* service.open({ projectId: handle.projectId, relativePath: "B.ipynb" }, caller);
+    const acquiring = yield* service
+      .execute(
+        { ...handle, handle: b.handle, revision: b.revision, cellIds: ["a"], requestId: "B" },
+        caller,
+      )
+      .pipe(Effect.forkScoped);
+    yield* Deferred.await(blocked);
+    const interrupt = yield* service
+      .interrupt({ ...handle, generation: 1, runId }, caller)
+      .pipe(Effect.forkScoped);
+    yield* Deferred.await(interrupted);
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(acquiring);
+    yield* Fiber.join(interrupt);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("execution deltas reset counts and carry provenance even when dispatch fails", () =>
+  Effect.gen(function* () {
+    const { service, handle, fs, root } = yield* setup({
+      connect: Effect.fn("FailDispatch.connect")(() =>
+        Effect.succeed({
+          messages: Stream.never,
+          execute: Effect.fn("FailDispatch.execute")(() =>
+            Effect.fail(new NotebookError({ reason: "disconnected" })),
+          ),
+          close: Effect.void,
+        }),
+      ),
+    });
+    const old = {
+      ...fixture,
+      cells: fixture.cells.map((cell) => ({ ...cell, execution_count: 7 as number | null })),
+    };
+    yield* fs.writeFileString(`${root}/counts.ipynb`, JSON.stringify(old));
+    const initial = yield* service.open(
+      { projectId: handle.projectId, relativePath: "counts.ipynb" },
+      caller,
+    );
+    const target = { ...handle, handle: initial.handle };
+    const ready = yield* Deferred.make<void>();
+    const terminal = yield* Deferred.make<void>();
+    let count: number | null = 7;
+    let execution: unknown;
+    const observer = yield* service.subscribe(target, caller).pipe(
+      Stream.runForEach((event) =>
+        Effect.gen(function* () {
+          if (event.type === "snapshot") yield* Deferred.succeed(ready, undefined);
+          if (event.type !== "changed") return;
+          for (const patch of event.patches) {
+            if (patch.type === "execution") {
+              count = patch.count;
+              execution = patch.execution;
+            }
+            if (patch.type === "count") count = patch.count;
+          }
+          if (event.outcome === "unknown") yield* Deferred.succeed(terminal, undefined);
+        }),
+      ),
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(ready);
+    yield* service.execute(
+      { ...target, revision: initial.revision, cellIds: ["a"], requestId: "failed-dispatch" },
+      caller,
+    );
+    yield* Deferred.await(terminal);
+    const final = yield* service.snapshot(target, caller);
+    expect(count).toBeNull();
+    expect(count).toBe(
+      (final.document.cells as Array<{ execution_count: number | null }>)[0]?.execution_count,
+    );
+    expect(execution).toEqual(final.executions.a);
+    expect(execution).toMatchObject({ sourceRevision: initial.revision, generation: 1 });
+    yield* Fiber.interrupt(observer);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.effect("slow observers receive an explicit resync instead of retaining every delta", () =>
   Effect.gen(function* () {
-    const { service, opened, handle, requests, send, finished } = yield* setup;
+    const { service, opened, handle, requests, send, finished } = yield* setup();
     const ready = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     const resync = yield* Deferred.make<void>();
@@ -139,7 +321,7 @@ it.effect("slow observers receive an explicit resync instead of retaining every 
 
 it.effect("disconnect marks an uncertain outcome and never resends an accepted request", () =>
   Effect.gen(function* () {
-    const { service, opened, handle, requests, messages, finished } = yield* setup;
+    const { service, opened, handle, requests, messages, finished } = yield* setup();
     const input = {
       ...handle,
       revision: opened.revision,
@@ -176,7 +358,7 @@ it.effect(
   "correlates requests, waits for reply and idle in both orders, deduplicates, and retains late output",
   () =>
     Effect.gen(function* () {
-      const { service, opened, handle, requests, send, finished } = yield* setup;
+      const { service, opened, handle, requests, send, finished } = yield* setup();
       const input = { ...handle, revision: opened.revision, cellIds: ["a", "b"], requestId: "run" };
       const runId = yield* service.execute(input, caller);
       expect(yield* service.execute(input, caller)).toBe(runId);
@@ -201,13 +383,18 @@ it.effect(
   "interrupt cancels undispatched cells; restart and shutdown fence stale generations",
   () =>
     Effect.gen(function* () {
-      const { service, opened, handle, requests, controls, send, finished } = yield* setup;
+      const { service, opened, handle, requests, controls, send, finished } = yield* setup();
       const runId = yield* service.execute(
         { ...handle, revision: opened.revision, cellIds: ["a", "b"], requestId: "run" },
         caller,
       );
       const first = yield* Queue.take(requests);
       const generation = (yield* service.snapshot(handle, caller)).generation;
+      yield* send(first.id, "display_data", {
+        data: { "text/plain": "generation-one" },
+        metadata: {},
+        transient: { display_id: "shared" },
+      });
       yield* service.interrupt({ ...handle, generation, runId }, caller);
       yield* send(first.id, "execute_reply", { status: "error" });
       yield* send(first.id, "status", { execution_state: "idle" });
@@ -218,7 +405,67 @@ it.effect(
       expect(
         yield* service.shutdown({ ...handle, generation }, caller).pipe(Effect.flip),
       ).toMatchObject({ reason: "stale-generation" });
+      const secondSnapshot = yield* service.snapshot(handle, caller);
+      const runB = yield* service.execute(
+        {
+          ...handle,
+          revision: secondSnapshot.revision,
+          cellIds: ["b"],
+          requestId: "after-restart",
+        },
+        caller,
+      );
+      const b = yield* Queue.take(requests);
+      yield* send(b.id, "display_data", {
+        data: { "text/plain": "generation-two" },
+        metadata: {},
+        transient: { display_id: "shared" },
+      });
+      yield* send(b.id, "update_display_data", {
+        data: { "text/plain": "updated-two" },
+        metadata: {},
+        transient: { display_id: "shared" },
+      });
+      yield* send(b.id, "execute_reply", { status: "ok" });
+      yield* send(b.id, "status", { execution_state: "idle" });
+      yield* finished(runB);
+      expect(
+        (
+          (yield* service.snapshot(handle, caller)).document.cells as Array<{ outputs: unknown[] }>
+        )[0]?.outputs,
+      ).toEqual([
+        { output_type: "display_data", data: { "text/plain": "generation-one" }, metadata: {} },
+      ]);
       yield* service.shutdown({ ...handle, generation: generation + 1 }, caller);
+      const thirdSnapshot = yield* service.snapshot(handle, caller);
+      const runC = yield* service.execute(
+        {
+          ...handle,
+          revision: thirdSnapshot.revision,
+          cellIds: ["b"],
+          requestId: "after-shutdown",
+        },
+        caller,
+      );
+      const c = yield* Queue.take(requests);
+      yield* send(c.id, "display_data", {
+        data: { "text/plain": "generation-three" },
+        metadata: {},
+        transient: { display_id: "shared" },
+      });
+      yield* send(c.id, "update_display_data", {
+        data: { "text/plain": "updated-three" },
+        metadata: {},
+        transient: { display_id: "shared" },
+      });
+      yield* send(c.id, "execute_reply", { status: "ok" });
+      yield* send(c.id, "status", { execution_state: "idle" });
+      yield* finished(runC);
+      const final = yield* service.snapshot(handle, caller);
+      expect((final.document.cells as Array<{ outputs: unknown[] }>)[0]?.outputs).toEqual([
+        { output_type: "display_data", data: { "text/plain": "generation-one" }, metadata: {} },
+      ]);
+      expect(final.executions.a?.generation).toBe(1);
       expect(controls).toEqual(["interrupt", "restart", "shutdown"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
 );
@@ -227,7 +474,7 @@ it.effect(
   "enforces read and execution grants, handle ownership, and canonical path containment",
   () =>
     Effect.gen(function* () {
-      const { service, opened, handle, root, fs } = yield* setup;
+      const { service, opened, handle, root, fs } = yield* setup();
       expect(yield* service.snapshot(handle, { scopes: [] }).pipe(Effect.flip)).toMatchObject({
         reason: "permission-denied",
       });
