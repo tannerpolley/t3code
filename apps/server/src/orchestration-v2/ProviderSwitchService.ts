@@ -1,4 +1,9 @@
-import { ModelSelection, OrchestrationV2ThreadProjection, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  ModelSelection,
+  OrchestrationV2ThreadProjection,
+  ProviderSessionId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -9,7 +14,10 @@ import * as Schema from "effect/Schema";
 
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { managedIssueProviderError, supportsManagedIssueWork } from "../issues/IssueEligibility.ts";
-import { decideProviderSessionTransition, type ProviderSessionTransition } from "./ProviderSessionTransitionPolicy.ts";
+import {
+  decideProviderSessionTransition,
+  type ProviderSessionTransition,
+} from "./ProviderSessionTransitionPolicy.ts";
 
 export interface ProviderSwitchPlanV2 {
   readonly instanceChanged: boolean;

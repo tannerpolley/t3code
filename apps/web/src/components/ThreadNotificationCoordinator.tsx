@@ -187,7 +187,8 @@ export function startThreadNotifications(
         (threadId) => retract(environmentId, threadId),
       ),
     };
-    let threads: ReadonlyArray<import("@t3tools/contracts").OrchestrationV2ThreadShell> | null = null;
+    let threads: ReadonlyArray<import("@t3tools/contracts").OrchestrationV2ThreadShell> | null =
+      null;
     const unsubscribeShell = registry.subscribe(
       environmentShell.stateValueAtom(environmentId),
       (shell) => {

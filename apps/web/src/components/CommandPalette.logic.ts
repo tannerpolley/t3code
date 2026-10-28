@@ -1,8 +1,32 @@
-import { foldSearchQuery, PALETTE_SECONDARY_LIMIT, PALETTE_THREAD_LIMIT, rankSearchGroups, scoreSearchTerms, scoreThreadSearch, type SearchMatchHint, type SearchRange, type ThreadSearchSubject } from "@t3tools/shared/paletteSearch";
+import {
+  foldSearchQuery,
+  PALETTE_SECONDARY_LIMIT,
+  PALETTE_THREAD_LIMIT,
+  rankSearchGroups,
+  scoreSearchTerms,
+  scoreThreadSearch,
+  type SearchMatchHint,
+  type SearchRange,
+  type ThreadSearchSubject,
+} from "@t3tools/shared/paletteSearch";
 import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
-import { addProjectRemoteSourceLabel, addProjectRemoteSourcePathHint, buildAddProjectRemoteSourceReadiness, type AddProjectRemoteSource, type AddProjectRemoteSourceReadiness } from "@t3tools/client-runtime/operations/projects";
-import { type EnvironmentId, type EnvironmentMachineKind, type FilesystemBrowseEntry, type KeybindingCommand, type SourceControlDiscoveryResult, type SourceControlRepositoryInfo, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import {
+  addProjectRemoteSourceLabel,
+  addProjectRemoteSourcePathHint,
+  buildAddProjectRemoteSourceReadiness,
+  type AddProjectRemoteSource,
+  type AddProjectRemoteSourceReadiness,
+} from "@t3tools/client-runtime/operations/projects";
+import {
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  type FilesystemBrowseEntry,
+  type KeybindingCommand,
+  type SourceControlDiscoveryResult,
+  type SourceControlRepositoryInfo,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+} from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
 import { type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";

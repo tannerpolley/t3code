@@ -1,3 +1,6 @@
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as Context from "effect/Context";
 import * as ProjectArtifacts from "../../../project/ProjectArtifacts.ts";
 import * as Sidebar from "../../../sidebarLayout.ts";
@@ -106,6 +109,9 @@ it.effect("production mcp layer lists worktree tools over http", () =>
     Effect.gen(function* () {
       const layerRegistry = McpSessionRegistry.layer;
       const layerRoutes = McpHttpServer.layer.pipe(
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
         Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),

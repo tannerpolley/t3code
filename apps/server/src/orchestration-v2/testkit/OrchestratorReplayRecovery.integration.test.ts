@@ -7,24 +7,61 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as CodexReplay from "effect-codex-app-server/replay";
-import { type OrchestrationV2ThreadProjection, ProviderDriverKind, type ThreadId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ThreadProjection,
+  ProviderDriverKind,
+  type ThreadId,
+} from "@t3tools/contracts";
 
-import { ClaudeOrchestratorReplayHarness, makeClaudeRestartReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
+import {
+  ClaudeOrchestratorReplayHarness,
+  makeClaudeRestartReplayHarness,
+} from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "../Adapters/CodexAdapterV2.testkit.ts";
-import { type CursorAgentSdkReplayTranscript, CursorOrchestratorReplayHarness, makeCursorAgentSdkReplayRunner } from "../Adapters/CursorAdapterV2.testkit.ts";
+import {
+  type CursorAgentSdkReplayTranscript,
+  CursorOrchestratorReplayHarness,
+  makeCursorAgentSdkReplayRunner,
+} from "../Adapters/CursorAdapterV2.testkit.ts";
 import * as CursorAdapterV2Testkit from "../Adapters/CursorAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
-import { CLAUDE_MODEL_SELECTION, CODEX_MODEL_SELECTION, CURSOR_MODEL_SELECTION, materializeFixtureInput, type MaterializedOrchestratorFixtureInput, PROVIDER_THREAD_RESUME_FIRST_PROMPT, PROVIDER_THREAD_RESUME_SECOND_PROMPT } from "./fixtures/shared.ts";
-import { assertAssistantTextIncludes, assertBaseProjection, assertConversationMessageRoles, assertRunOrdinals, assertSemanticProjectionIntegrity, assertTurnItemTypes, assertUserMessagesInclude, projectionFor } from "./fixtures/shared.ts";
-import { runOrchestratorV2Scenario, type OrchestratorV2ScenarioResult } from "./OrchestratorScenario.ts";
-import { layerProviderReplay, runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
+import {
+  CLAUDE_MODEL_SELECTION,
+  CODEX_MODEL_SELECTION,
+  CURSOR_MODEL_SELECTION,
+  materializeFixtureInput,
+  type MaterializedOrchestratorFixtureInput,
+  PROVIDER_THREAD_RESUME_FIRST_PROMPT,
+  PROVIDER_THREAD_RESUME_SECOND_PROMPT,
+} from "./fixtures/shared.ts";
+import {
+  assertAssistantTextIncludes,
+  assertBaseProjection,
+  assertConversationMessageRoles,
+  assertRunOrdinals,
+  assertSemanticProjectionIntegrity,
+  assertTurnItemTypes,
+  assertUserMessagesInclude,
+  projectionFor,
+} from "./fixtures/shared.ts";
+import {
+  runOrchestratorV2Scenario,
+  type OrchestratorV2ScenarioResult,
+} from "./OrchestratorScenario.ts";
+import {
+  layerProviderReplay,
+  runOrchestratorV2ProviderReplayScenario,
+} from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { materializeReplayTranscriptRuntimeInstructions } from "./ReplayRuntimeInstructions.ts";
-import { materializeReplayTranscriptWorkspace, readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
+import {
+  materializeReplayTranscriptWorkspace,
+  readProviderReplayTranscript,
+} from "@t3tools/provider-testing/replayTranscript";
 
 const FIRST_FINAL = "provider thread resume fixture first turn complete";
 const SECOND_FINAL = "provider thread resume fixture second turn complete";

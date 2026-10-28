@@ -1,4 +1,8 @@
-import { AuthPreviewOperateScope, AuthTerminalOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  AuthPreviewOperateScope,
+  AuthTerminalOperateScope,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
@@ -7,7 +11,12 @@ import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
 import { readLocalApi } from "../localApi";
 import { setActivePreviewTab, useThreadPreviewState } from "../previewStateStore";
-import { selectActiveRightPanelSurface, selectThreadRightPanelState, useRightPanelStore, type RightPanelSurface } from "../rightPanelStore";
+import {
+  selectActiveRightPanelSurface,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+  type RightPanelSurface,
+} from "../rightPanelStore";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";

@@ -1,7 +1,15 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { assert, describe, it, vi } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { CommandId, EnvironmentId, GitCommandError, MessageId, ProviderDriverKind, ThreadId, type ServerProvider } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  GitCommandError,
+  MessageId,
+  ProviderDriverKind,
+  ThreadId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,7 +21,12 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { adapter, makeHarness, modelSelection, projectId } from "./ThreadLaunchService.testHarness.ts";
+import {
+  adapter,
+  makeHarness,
+  modelSelection,
+  projectId,
+} from "./ThreadLaunchService.testHarness.ts";
 
 describe("delegate_task isolation", () => {
   const parentThreadId = ThreadId.make("thread:delegate-parent");
@@ -158,7 +171,7 @@ describe("delegate_task isolation", () => {
             clientRequestId: "parser",
           } as const;
           const task = yield* service.delegateTask(scope, request);
-          const created = yield* threads.getThreadProjection(task.childThreadId);
+          const created = yield* threads.getThreadProjection(task.childThreadId!);
           assert.equal(created.runs[0]?.status, "preparing");
 
           // Setup runs in the bound worktree while the child's run still waits to start.
@@ -167,7 +180,7 @@ describe("delegate_task isolation", () => {
           assert.equal(worktree.cwd, "/repo");
           assert.equal(worktree.refName, "parent-local-commit");
           assert.equal(worktree.newRefName, "parser");
-          const preparing = yield* threads.getThreadProjection(task.childThreadId);
+          const preparing = yield* threads.getThreadProjection(task.childThreadId!);
           assert.equal(preparing.thread.worktreePath, "/repo-worktrees/feature");
           assert.equal(preparing.thread.branch, worktree.newRefName);
           assert.equal(preparing.runs[0]?.status, "preparing");
@@ -175,7 +188,7 @@ describe("delegate_task isolation", () => {
           // Retries with the same clientRequestId, during and after preparation, reuse it.
           assert.equal((yield* service.delegateTask(scope, request)).taskId, task.taskId);
           yield* Deferred.succeed(allowSetup, undefined);
-          yield* tracker.stream(task.childThreadId).pipe(
+          yield* tracker.stream(task.childThreadId!).pipe(
             Stream.filter((snapshot) => snapshot?.phase === "done"),
             Stream.runHead,
           );
@@ -184,7 +197,7 @@ describe("delegate_task isolation", () => {
           assert.equal(harness.createWorktree.mock.calls.length, 1);
           assert.equal(retried.worktreePath, "/repo-worktrees/feature");
           assert.equal(retried.branch, worktree.newRefName);
-          const started = yield* threads.getThreadProjection(task.childThreadId);
+          const started = yield* threads.getThreadProjection(task.childThreadId!);
           assert.equal(started.runs.length, 1);
           assert.equal(started.runs[0]?.status, "starting");
         }),
@@ -218,7 +231,7 @@ describe("delegate_task isolation", () => {
         assert.equal(task.branch, "feature/parent");
         assert.equal(task.worktreePath, "/repo-worktrees/parent");
         assert.equal(harness.createWorktree.mock.calls.length, 0);
-        const child = yield* threads.getThreadProjection(task.childThreadId);
+        const child = yield* threads.getThreadProjection(task.childThreadId!);
         assert.equal(child.runs[0]?.status, "starting");
       }),
     );
@@ -239,12 +252,12 @@ describe("delegate_task isolation", () => {
         const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
         const task = yield* service.delegateTask(scope, { task: "Handle the parser", ...choice });
         if ("isolation" in choice) {
-          yield* tracker.stream(task.childThreadId).pipe(
+          yield* tracker.stream(task.childThreadId!).pipe(
             Stream.filter((snapshot) => snapshot?.phase === "done"),
             Stream.runHead,
           );
         }
-        const child = yield* threads.getThreadProjection(task.childThreadId);
+        const child = yield* threads.getThreadProjection(task.childThreadId!);
         assert.equal(child.thread.role, role);
         assert.equal(
           child.thread.worktreePath,
@@ -272,7 +285,7 @@ describe("delegate_task isolation", () => {
               role,
             });
             assert.isUndefined(task.workspaceNote);
-            yield* tracker.stream(task.childThreadId).pipe(
+            yield* tracker.stream(task.childThreadId!).pipe(
               Stream.filter((snapshot) => snapshot?.phase === "done"),
               Stream.runHead,
             );
@@ -301,7 +314,7 @@ describe("delegate_task isolation", () => {
           assert.isString(task.workspaceNote);
           assert.isNull(task.worktreePath);
           assert.equal(harness.createWorktree.mock.calls.length, 0);
-          const child = yield* threads.getThreadProjection(task.childThreadId);
+          const child = yield* threads.getThreadProjection(task.childThreadId!);
           assert.equal(child.runs[0]?.status, "starting");
         }),
       rootParent,
@@ -342,7 +355,7 @@ describe("delegate_task isolation", () => {
               clientRequestId: "detached-retry",
             };
             const task = yield* service.delegateTask(scope, request);
-            yield* tracker.stream(task.childThreadId).pipe(
+            yield* tracker.stream(task.childThreadId!).pipe(
               Stream.filter((snapshot) => snapshot?.phase === "done"),
               Stream.runHead,
             );

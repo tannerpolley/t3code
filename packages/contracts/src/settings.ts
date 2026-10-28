@@ -1,23 +1,61 @@
-import { ForkClientSettingsFields, SidebarRoleDisplay, migrateSidebarRoleDisplay, ForkServerSettingsFields, ForkClientSettingsPatchFields, ForkServerSettingsPatchFields } from "./ForkSettings.ts";
+import {
+  ForkClientSettingsFields,
+  SidebarRoleDisplay,
+  migrateSidebarRoleDisplay,
+  ForkServerSettingsFields,
+  ForkClientSettingsPatchFields,
+  ForkServerSettingsPatchFields,
+} from "./ForkSettings.ts";
 export * from "./ForkSettings.ts";
 import { EasDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
-import { AuthOrchestrationOperateScope, AuthSettingsWriteScope, AuthProvidersManageScope, type AuthEnvironmentScope } from "./auth.ts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
+  AuthProvidersManageScope,
+  type AuthEnvironmentScope,
+} from "./auth.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { ForwardCompatibleNullable, ForwardCompatibleOptional, OmittedWhenNull, ProjectId, ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import {
+  ForwardCompatibleNullable,
+  ForwardCompatibleOptional,
+  OmittedWhenNull,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TrimmedString,
+} from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
-import { CustomModelSetting, DEFAULT_TEXT_GENERATION_MODEL, DEFAULT_TEXT_GENERATION_REASONING_EFFORT, ProviderOptionSelections } from "./model.ts";
+import {
+  CustomModelSetting,
+  DEFAULT_TEXT_GENERATION_MODEL,
+  DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+  ProviderOptionSelections,
+} from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
-import { BrowserRecordingFrameRate, DEFAULT_BROWSER_RECORDING_FRAME_RATE, DEFAULT_PREVIEW_APPEARANCE, DEFAULT_PREVIEW_ZOOM_FACTOR, FILL_PREVIEW_VIEWPORT, PreviewAppearancePreference, PreviewViewportSetting, PreviewZoomFactor } from "./preview.ts";
-import { ProviderInstanceConfig, ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import {
+  BrowserRecordingFrameRate,
+  DEFAULT_BROWSER_RECORDING_FRAME_RATE,
+  DEFAULT_PREVIEW_APPEARANCE,
+  DEFAULT_PREVIEW_ZOOM_FACTOR,
+  FILL_PREVIEW_VIEWPORT,
+  PreviewAppearancePreference,
+  PreviewViewportSetting,
+  PreviewZoomFactor,
+} from "./preview.ts";
+import {
+  ProviderInstanceConfig,
+  ProviderInstanceId,
+  ProviderDriverKind,
+} from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);

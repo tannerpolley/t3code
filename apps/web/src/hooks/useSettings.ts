@@ -1,14 +1,47 @@
 import { useRef, useSyncExternalStore, use } from "react";
 import { useSyncExternalStoreWithSelector } from "use-sync-external-store/with-selector";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { DEFAULT_SERVER_SETTINGS, AuthSettingsWriteScope, requiredScopesForServerSettingsPatch, type EnvironmentId, type ProviderInstanceMutation, type ProviderInstanceId, ServerSettings, type ServerSettingsPatch, sessionGrantsScope } from "@t3tools/contracts";
-import { type ClientSettingsPatch, type ClientSettings, DEFAULT_CLIENT_SETTINGS, type EnvironmentIdentificationMode, type UnifiedSettings } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  AuthSettingsWriteScope,
+  requiredScopesForServerSettingsPatch,
+  type EnvironmentId,
+  type ProviderInstanceMutation,
+  type ProviderInstanceId,
+  ServerSettings,
+  type ServerSettingsPatch,
+  sessionGrantsScope,
+} from "@t3tools/contracts";
+import {
+  type ClientSettingsPatch,
+  type ClientSettings,
+  DEFAULT_CLIENT_SETTINGS,
+  type EnvironmentIdentificationMode,
+  type UnifiedSettings,
+} from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import { isAtomCommandInterrupted, runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { filterSharedServerPatch, splitSharedServerPatch, supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
+import {
+  isAtomCommandInterrupted,
+  runAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  filterSharedServerPatch,
+  splitSharedServerPatch,
+  supportsSharedSettingsSync,
+} from "@t3tools/client-runtime/state/shared-settings";
 import { ensureLocalApi } from "~/localApi";
-import { getThemeDefinition, getThemePreviewSidebarArtwork, resolveThemeHalf, subscribeToThemePreview, themeAllowsSidebarArtwork } from "~/themePalette";
-import { modelPreferencesMigrationPatch, resolveModelPreferences } from "@t3tools/shared/serverSettings";
+import {
+  getThemeDefinition,
+  getThemePreviewSidebarArtwork,
+  resolveThemeHalf,
+  subscribeToThemePreview,
+  themeAllowsSidebarArtwork,
+} from "~/themePalette";
+import {
+  modelPreferencesMigrationPatch,
+  resolveModelPreferences,
+} from "@t3tools/shared/serverSettings";
 import * as Equal from "effect/Equal";
 import * as Struct from "effect/Struct";
 import * as Option from "effect/Option";
@@ -20,7 +53,12 @@ import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
-import { environmentSession, environmentSessionStatesAtom, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  environmentSession,
+  environmentSessionStatesAtom,
+  readEnvironmentScope,
+  useEnvironmentScope,
+} from "~/state/session";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 

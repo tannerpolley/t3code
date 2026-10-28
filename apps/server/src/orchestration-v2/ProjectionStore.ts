@@ -1,6 +1,14 @@
 import { readIssueWorkThreads, type IssueWorkThread } from "../issues/IssueWorkProjection.ts";
-import { USAGE_LIMIT_SWITCH_RESUME_PREFIX, USAGE_LIMIT_SWITCH_HOLD_MS, USAGE_LIMIT_SWITCH_RELEASE_MARGIN_MS } from "./usageLimitRecoveryPending.ts";
-import { applyIssueQueueEvent, claimQueuedIssue, finishIssueQueueNotice } from "../issues/IssueQueueStore.ts";
+import {
+  USAGE_LIMIT_SWITCH_RESUME_PREFIX,
+  USAGE_LIMIT_SWITCH_HOLD_MS,
+  USAGE_LIMIT_SWITCH_RELEASE_MARGIN_MS,
+} from "./usageLimitRecoveryPending.ts";
+import {
+  applyIssueQueueEvent,
+  claimQueuedIssue,
+  finishIssueQueueNotice,
+} from "../issues/IssueQueueStore.ts";
 import { IssueWorkCancelled, IssueWorkRequested } from "@t3tools/contracts";
 import { pendingRoutedRequestThreadIds } from "./ForkProjectionReads.ts";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
@@ -8,13 +16,85 @@ import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullReq
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import { makeThreadFind } from "./ThreadFind.ts";
-import type { OrchestrationV2SearchThreadInput, OrchestrationV2SearchThreadResult, OrchestrationV2ThreadHistoryPage } from "@t3tools/contracts";
-import { latestRootProviderFailure, latestExecutedRun, latestUnheldRun, threadErrorSummary, usageLimitRunPresentedAsLatest } from "@t3tools/shared/orchestrationV2ThreadError";
+import type {
+  OrchestrationV2SearchThreadInput,
+  OrchestrationV2SearchThreadResult,
+  OrchestrationV2ThreadHistoryPage,
+} from "@t3tools/contracts";
+import {
+  latestRootProviderFailure,
+  latestExecutedRun,
+  latestUnheldRun,
+  threadErrorSummary,
+  usageLimitRunPresentedAsLatest,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
-import type { OrchestrationV2AppThread, OrchestrationV2Checkpoint, OrchestrationV2CheckpointScope, OrchestrationV2ExecutionNode, OrchestrationV2PlanArtifact, OrchestrationV2PendingRuntimeRequestSummary, PlanId, OrchestrationV2ConversationMessage, OrchestrationV2DomainEvent, OrchestrationV2OlderSettledCount, OrchestrationV2OlderSettledCursor, OrchestrationV2ProjectedTurnItem, OrchestrationV2ProviderThread, OrchestrationV2ProviderTurn, OrchestrationV2Run, OrchestrationV2Subagent, OrchestrationV2ThreadShellSnapshot, OrchestrationV2ShellThreadStatus, OrchestrationV2ThreadShell, OrchestrationV2ThreadProjection, OrchestrationV2TurnItem, GuestShareId, ProviderThreadId, ProviderTurnId, RunAttemptId } from "@t3tools/contracts";
-import { IDLE_COMPACTION_TEXT, idleCompactionOf, OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema, OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema, OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema, OrchestrationV2ContextHandoffJson as OrchestrationV2ContextHandoffJsonSchema, OrchestrationV2ContextTransferJson as OrchestrationV2ContextTransferJsonSchema, OrchestrationV2ConversationMessageJson as OrchestrationV2ConversationMessageJsonSchema, OrchestrationV2ExecutionNodeJson as OrchestrationV2ExecutionNodeJsonSchema, OrchestrationV2PlanArtifact as OrchestrationV2PlanArtifactSchema, OrchestrationV2ProviderSessionJson as OrchestrationV2ProviderSessionJsonSchema, OrchestrationV2ProviderThreadJson as OrchestrationV2ProviderThreadJsonSchema, OrchestrationV2ProviderTurnJson as OrchestrationV2ProviderTurnJsonSchema, OrchestrationV2RunAttemptJson as OrchestrationV2RunAttemptJsonSchema, OrchestrationV2RunJson as OrchestrationV2RunJsonSchema, OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema, OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema, OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema, orchestrationV2RunWorkStartedAt, RunId, MessageId, RuntimeRequestId, CheckpointScopeId, CheckpointId, ThreadId, TurnItemId, NodeId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
-import { createOrchestrationV2TurnItemVisibility, isOrchestrationV2SupersededInterrupt } from "@t3tools/shared/orchestrationV2Timeline";
-import { deriveBlockedOnThreadWait, derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import type {
+  OrchestrationV2AppThread,
+  OrchestrationV2Checkpoint,
+  OrchestrationV2CheckpointScope,
+  OrchestrationV2ExecutionNode,
+  OrchestrationV2PlanArtifact,
+  OrchestrationV2PendingRuntimeRequestSummary,
+  PlanId,
+  OrchestrationV2ConversationMessage,
+  OrchestrationV2DomainEvent,
+  OrchestrationV2OlderSettledCount,
+  OrchestrationV2OlderSettledCursor,
+  OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderTurn,
+  OrchestrationV2Run,
+  OrchestrationV2Subagent,
+  OrchestrationV2ThreadShellSnapshot,
+  OrchestrationV2ShellThreadStatus,
+  OrchestrationV2ThreadShell,
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2TurnItem,
+  GuestShareId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
+} from "@t3tools/contracts";
+import {
+  IDLE_COMPACTION_TEXT,
+  idleCompactionOf,
+  OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
+  OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
+  OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
+  OrchestrationV2ContextHandoffJson as OrchestrationV2ContextHandoffJsonSchema,
+  OrchestrationV2ContextTransferJson as OrchestrationV2ContextTransferJsonSchema,
+  OrchestrationV2ConversationMessageJson as OrchestrationV2ConversationMessageJsonSchema,
+  OrchestrationV2ExecutionNodeJson as OrchestrationV2ExecutionNodeJsonSchema,
+  OrchestrationV2PlanArtifact as OrchestrationV2PlanArtifactSchema,
+  OrchestrationV2ProviderSessionJson as OrchestrationV2ProviderSessionJsonSchema,
+  OrchestrationV2ProviderThreadJson as OrchestrationV2ProviderThreadJsonSchema,
+  OrchestrationV2ProviderTurnJson as OrchestrationV2ProviderTurnJsonSchema,
+  OrchestrationV2RunAttemptJson as OrchestrationV2RunAttemptJsonSchema,
+  OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
+  OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
+  OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
+  OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
+  orchestrationV2RunWorkStartedAt,
+  RunId,
+  MessageId,
+  RuntimeRequestId,
+  CheckpointScopeId,
+  CheckpointId,
+  ThreadId,
+  TurnItemId,
+  NodeId,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
+import {
+  createOrchestrationV2TurnItemVisibility,
+  isOrchestrationV2SupersededInterrupt,
+} from "@t3tools/shared/orchestrationV2Timeline";
+import {
+  deriveBlockedOnThreadWait,
+  derivePendingBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -26,7 +106,21 @@ import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
-import { isThreadHistoryUserTurn, isConversationHistoryItem, THREAD_HISTORY_MAX_RAW_TURNS, missingInterruptRequests, deferWorkHistoryRows, selectDeferredWorkPage, encodeThreadHistoryCursor, olderHistoryPagePolicy, selectHistoryPageFromCursor, selectRecentTimelineWindow, THREAD_HISTORY_PAGE_POLICY, THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT, THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT } from "./threadHistoryPaging.ts";
+import {
+  isThreadHistoryUserTurn,
+  isConversationHistoryItem,
+  THREAD_HISTORY_MAX_RAW_TURNS,
+  missingInterruptRequests,
+  deferWorkHistoryRows,
+  selectDeferredWorkPage,
+  encodeThreadHistoryCursor,
+  olderHistoryPagePolicy,
+  selectHistoryPageFromCursor,
+  selectRecentTimelineWindow,
+  THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT,
+  THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
+} from "./threadHistoryPaging.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",

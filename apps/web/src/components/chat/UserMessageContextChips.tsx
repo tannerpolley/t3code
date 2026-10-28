@@ -1,6 +1,6 @@
 import { IssueContextChip } from "../issues/IssueContextChip";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { documentIconColorForFileName } from "~/pierre-icons";
+
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { useRenderedAppearance } from "../../hooks/useTheme";

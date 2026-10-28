@@ -170,7 +170,6 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadTranscript: unused,
     getThreadSnapshotWindow: unused,
     getProjectThreadRecords: () => Effect.die("unused project record read"),
-    getProjectThread: unused,
     listProjectThreads: unused,
     sendToThread: unused,
     assertProviderInstanceEnabled: unused,
@@ -227,6 +226,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
       getDescriptor: unused(),
     }),
     Effect.provideService(ProjectService.ProjectService, {
+      listPage: unused,
       create: unused,
       bootstrap: unused,
       update: unused,
@@ -511,6 +511,9 @@ describe("AgentAwarenessRelay", () => {
           assert.equal(childPublications.length, 2);
           assert.isNull(childPublications[1]?.state);
         }
-      }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)))),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      ),
   );
 });

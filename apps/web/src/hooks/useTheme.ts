@@ -3,7 +3,28 @@ import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
-import { applyThemePalette, CUSTOM_THEMES_STORAGE_KEY, invalidateCustomThemes, canonicalThemePreference, isKnownThemePreference, getThemePreferenceMode, getThemePreviewAppearance, parseThemeHalves, resolveDesktopTheme, resolveThemeAppearance, resolveThemeHalf, subscribeToThemePreview, THEME_PREVIEW_ID, THEME_APPEARANCE_MODE_STORAGE_KEY, THEME_FOLLOW_SYSTEM_STORAGE_KEY, THEME_HALVES_STORAGE_KEY, ThemePreference, type ThemeAppearance, type ThemeHalves, type ThemePreferenceMode } from "../themePalette";
+import {
+  applyThemePalette,
+  CUSTOM_THEMES_STORAGE_KEY,
+  invalidateCustomThemes,
+  canonicalThemePreference,
+  isKnownThemePreference,
+  getThemePreferenceMode,
+  getThemePreviewAppearance,
+  parseThemeHalves,
+  resolveDesktopTheme,
+  resolveThemeAppearance,
+  resolveThemeHalf,
+  subscribeToThemePreview,
+  THEME_PREVIEW_ID,
+  THEME_APPEARANCE_MODE_STORAGE_KEY,
+  THEME_FOLLOW_SYSTEM_STORAGE_KEY,
+  THEME_HALVES_STORAGE_KEY,
+  ThemePreference,
+  type ThemeAppearance,
+  type ThemeHalves,
+  type ThemePreferenceMode,
+} from "../themePalette";
 
 type Theme = ThemePreference;
 type ThemeSnapshot = {

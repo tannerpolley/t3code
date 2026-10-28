@@ -5,7 +5,11 @@ import * as Tracer from "effect/Tracer";
 import { HttpServerRequest } from "effect/http";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 
-import { traceAuthenticatedRelayRequest, traceLocalHandlerWork, traceRelayRequest } from "./traceRelayRequest.ts";
+import {
+  traceAuthenticatedRelayRequest,
+  traceLocalHandlerWork,
+  traceRelayRequest,
+} from "./traceRelayRequest.ts";
 
 const AUTHENTICATION = { startTime: 1_000n, endTime: 2_000n };
 

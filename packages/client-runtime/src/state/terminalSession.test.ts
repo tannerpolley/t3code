@@ -2,7 +2,16 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { EnvironmentId, TerminalSessionSnapshot, ThreadId } from "@t3tools/contracts";
 
-import { applyTerminalAttachStreamEvent, applyTerminalMetadataStreamEvent, combineTerminalSessionState, EMPTY_TERMINAL_BUFFER_STATE, INITIAL_TERMINAL_OUTPUT_CURSOR, nextTerminalAttachSeedState, readTerminalOutputUpdate, terminalOutputText } from "./terminalSession.ts";
+import {
+  applyTerminalAttachStreamEvent,
+  applyTerminalMetadataStreamEvent,
+  combineTerminalSessionState,
+  EMPTY_TERMINAL_BUFFER_STATE,
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  nextTerminalAttachSeedState,
+  readTerminalOutputUpdate,
+  terminalOutputText,
+} from "./terminalSession.ts";
 
 const TARGET = {
   environmentId: EnvironmentId.make("env-local"),

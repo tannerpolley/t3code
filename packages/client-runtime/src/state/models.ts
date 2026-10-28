@@ -1,7 +1,25 @@
-import { runtimeRequestIsOwnerVisible, type RoutedRequestParent } from "@t3tools/shared/delegatedRequestVisibility";
+import {
+  runtimeRequestIsOwnerVisible,
+  type RoutedRequestParent,
+} from "@t3tools/shared/delegatedRequestVisibility";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "../threadPullRequests.ts";
-import type { ThreadLinkedPullRequest, EnvironmentId, MessageId, OrchestrationProjectShell, OrchestrationV2ProviderGoal, OrchestrationV2RunStatus, OrchestrationV2ProviderFailureClass, OrchestrationV2ThreadProjection, OrchestrationV2ThreadShell, PlanId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import type {
+  ThreadLinkedPullRequest,
+  EnvironmentId,
+  MessageId,
+  OrchestrationProjectShell,
+  OrchestrationV2ProviderGoal,
+  OrchestrationV2RunStatus,
+  OrchestrationV2ProviderFailureClass,
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadShell,
+  PlanId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";

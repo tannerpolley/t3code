@@ -1,10 +1,47 @@
-import { CommandId, CLOSED_ISSUE_SUSPENSION_REASON, ThreadId, type IssueQueueInput, type OrchestrationV2ServerCommand, DEFAULT_REPOSITORY_WORK_SETTINGS, IssueWorkError, type IssueRef, type IssueWorkStartInput, type IssueWorkCancelInput, type IssueWorkCloseOutInput, type IssueWorkRequested, type RepositoryWorkRestoreInput, type IssueWorkStartResult, type IssueWorkStatusResult, type ModelSelection, type RepositoryWorkInput, type RepositoryWorkControlInput, RepositoryWorkerLimitInput, RepositoryReadOnlyLimitInput, type RepositoryHandoffInput, type RepositoryOrchestratorInput, type IssueRepositoryRef, isRepositoryOrchestratorEligible, type RepositoryHandoffRequestInput, type RepositoryWorkResult, type RepositoryOrchestration, type ProjectId, type IssueWorkRead, type ThreadLinkedIssue, SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  CommandId,
+  CLOSED_ISSUE_SUSPENSION_REASON,
+  ThreadId,
+  type IssueQueueInput,
+  type OrchestrationV2ServerCommand,
+  DEFAULT_REPOSITORY_WORK_SETTINGS,
+  IssueWorkError,
+  type IssueRef,
+  type IssueWorkStartInput,
+  type IssueWorkCancelInput,
+  type IssueWorkCloseOutInput,
+  type IssueWorkRequested,
+  type RepositoryWorkRestoreInput,
+  type IssueWorkStartResult,
+  type IssueWorkStatusResult,
+  type ModelSelection,
+  type RepositoryWorkInput,
+  type RepositoryWorkControlInput,
+  RepositoryWorkerLimitInput,
+  RepositoryReadOnlyLimitInput,
+  type RepositoryHandoffInput,
+  type RepositoryOrchestratorInput,
+  type IssueRepositoryRef,
+  isRepositoryOrchestratorEligible,
+  type RepositoryHandoffRequestInput,
+  type RepositoryWorkResult,
+  type RepositoryOrchestration,
+  type ProjectId,
+  type IssueWorkRead,
+  type ThreadLinkedIssue,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Context from "effect/Context";
 import { agentWorktreeName } from "@t3tools/shared/git";
-import { OrchestratorCommandRejectedError, OrchestratorCommandPreviouslyRejectedError, OrchestratorDispatchError, type OrchestratorV2DispatchResult } from "../orchestration-v2/Orchestrator.ts";
+import {
+  OrchestratorCommandRejectedError,
+  OrchestratorCommandPreviouslyRejectedError,
+  OrchestratorDispatchError,
+  type OrchestratorV2DispatchResult,
+} from "../orchestration-v2/Orchestrator.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
@@ -14,14 +51,26 @@ import { IssueService } from "./IssueService.ts";
 import { IssueWorkStore } from "./IssueWorkStore.ts";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
-import { ThreadManagementService, ThreadManagementProviderInstanceDisabledError } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  ThreadManagementService,
+  ThreadManagementProviderInstanceDisabledError,
+} from "../orchestration-v2/ThreadManagementService.ts";
 import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { checkDelegateTarget, workerProviderTargets } from "../mcp/delegateTaskTarget.ts";
-import { issueEligibility, isReadOnlyIssueRole, sameIssueRepository, supportsManagedIssueWork, issueScopeExpansionError, openBlockerSuspensionReason, unreadableRelationshipsSuspensionReason, isAutomaticIssueSuspension } from "./IssueEligibility.ts";
+import {
+  issueEligibility,
+  isReadOnlyIssueRole,
+  sameIssueRepository,
+  supportsManagedIssueWork,
+  issueScopeExpansionError,
+  openBlockerSuspensionReason,
+  unreadableRelationshipsSuspensionReason,
+  isAutomaticIssueSuspension,
+} from "./IssueEligibility.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";

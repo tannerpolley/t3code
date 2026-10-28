@@ -1,7 +1,41 @@
-import { capitalizeTerm, sourceControlClients, type ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+import {
+  capitalizeTerm,
+  sourceControlClients,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
-import { GitCommandError, PullRequestDetail, PullRequestOperationError, type PullRequestAction, type PullRequestActor, type PullRequestBaseComparison, type PullRequestCheck, type PullRequestChecksState as ContractPullRequestChecksState, type PullRequestComment, type PullRequestCommit, type PullRequestContextMetadata, type PullRequestDetailView, type PullRequestMergeability, type PullRequestReaction, type PullRequestMergeMethod, type PullRequestRef, type RepositoryIdentity, type PullRequestReviewThread, type PullRequestState, type PullRequestUpdateMethod, SourceControlProviderKind, type ThreadLinkedPullRequest, type ThreadPullRequestLink, type VcsRef } from "@t3tools/contracts";
-import { legacyThreadPullRequestKey, resolveThreadCurrentPullRequestLink, threadPullRequestKeysEqual, visibleThreadPullRequests } from "@t3tools/client-runtime/thread-pull-requests";
+import {
+  GitCommandError,
+  PullRequestDetail,
+  PullRequestOperationError,
+  type PullRequestAction,
+  type PullRequestActor,
+  type PullRequestBaseComparison,
+  type PullRequestCheck,
+  type PullRequestChecksState as ContractPullRequestChecksState,
+  type PullRequestComment,
+  type PullRequestCommit,
+  type PullRequestContextMetadata,
+  type PullRequestDetailView,
+  type PullRequestMergeability,
+  type PullRequestReaction,
+  type PullRequestMergeMethod,
+  type PullRequestRef,
+  type RepositoryIdentity,
+  type PullRequestReviewThread,
+  type PullRequestState,
+  type PullRequestUpdateMethod,
+  SourceControlProviderKind,
+  type ThreadLinkedPullRequest,
+  type ThreadPullRequestLink,
+  type VcsRef,
+} from "@t3tools/contracts";
+import {
+  legacyThreadPullRequestKey,
+  resolveThreadCurrentPullRequestLink,
+  threadPullRequestKeysEqual,
+  visibleThreadPullRequests,
+} from "@t3tools/client-runtime/thread-pull-requests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 import { reviewCommentContextId } from "~/lib/composerContextRecords";

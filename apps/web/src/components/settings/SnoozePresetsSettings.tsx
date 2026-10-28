@@ -1,6 +1,16 @@
 import { useState } from "react";
-import { DEFAULT_SNOOZE_PRESETS, MAX_SNOOZE_PRESET_MINUTES, MAX_SNOOZE_PRESETS, SnoozePresetDay, type SnoozePresetSetting } from "@t3tools/contracts/settings";
-import { resolveSnoozePreset, resolveSnoozePresets, snoozePresetId } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  DEFAULT_SNOOZE_PRESETS,
+  MAX_SNOOZE_PRESET_MINUTES,
+  MAX_SNOOZE_PRESETS,
+  SnoozePresetDay,
+  type SnoozePresetSetting,
+} from "@t3tools/contracts/settings";
+import {
+  resolveSnoozePreset,
+  resolveSnoozePresets,
+  snoozePresetId,
+} from "@t3tools/client-runtime/state/thread-settled";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { PlusIcon, XIcon } from "lucide-react";
@@ -10,11 +20,21 @@ import { reconcileSnoozeDraft, sortSnoozeRows } from "./SnoozePresetsSettings.lo
 import { formatShortTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { NumberField, NumberFieldDecrement, NumberFieldGroup, NumberFieldIncrement, NumberFieldInput } from "../ui/number-field";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { useScopedSettings, useScopedSettingsMixed, useUpdateScopedSettings } from "./useScopedSettings";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 
 const UNIT_MINUTES = { minutes: 1, hours: 60, days: 24 * 60 } as const;
 type DurationUnit = keyof typeof UNIT_MINUTES;

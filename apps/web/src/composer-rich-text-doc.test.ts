@@ -7,9 +7,30 @@ import { splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 
-import { collapseExpandedComposerCursor, expandCollapsedComposerCursor, pastedPathQueryLength } from "./composer-logic";
+import {
+  collapseExpandedComposerCursor,
+  expandCollapsedComposerCursor,
+  pastedPathQueryLength,
+} from "./composer-logic";
 
-import { buildDocJson, buildTiptapContent, caretTakesMarksBefore, ComposerBlockExtensions, ComposerCodeBlockExtension, ComposerListExtensions, ComposerCodeExtension, ComposerTaskItemExtension, flatToMarkdown, flatToPm, markdownToFlat, pmToFlat, serializeEditorDoc, serializeSelection, skillChipReplacements, stepCaretAcrossStyledEdge } from "./composer-rich-text-doc";
+import {
+  buildDocJson,
+  buildTiptapContent,
+  caretTakesMarksBefore,
+  ComposerBlockExtensions,
+  ComposerCodeBlockExtension,
+  ComposerListExtensions,
+  ComposerCodeExtension,
+  ComposerTaskItemExtension,
+  flatToMarkdown,
+  flatToPm,
+  markdownToFlat,
+  pmToFlat,
+  serializeEditorDoc,
+  serializeSelection,
+  skillChipReplacements,
+  stepCaretAcrossStyledEdge,
+} from "./composer-rich-text-doc";
 
 function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
   return Node.create({

@@ -1,6 +1,9 @@
 import { pipe } from "effect/Function";
 import type { AssistantCitation } from "@t3tools/contracts";
-import { formatAssistantCitationHref, parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
+import {
+  formatAssistantCitationHref,
+  parseAssistantCitationHref,
+} from "@t3tools/shared/assistantCitations";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 

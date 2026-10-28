@@ -1,4 +1,7 @@
-import type { OrchestrationV2ThreadProjection, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { selectThreadRelationshipShells } from "./entities";

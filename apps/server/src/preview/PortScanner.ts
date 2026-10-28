@@ -1,4 +1,9 @@
-import type { LocalServerHideRule, OrchestrationProjectShell, ProjectId, LocalServerDiscoveryReason } from "@t3tools/contracts";
+import type {
+  LocalServerHideRule,
+  OrchestrationProjectShell,
+  ProjectId,
+  LocalServerDiscoveryReason,
+} from "@t3tools/contracts";
 const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([
   3000, 3001, 3333, 4173, 4200, 4321, 5000, 5173, 5174, 5175, 5500, 8000, 8080, 8081, 8888, 9000,
 ]);
@@ -536,7 +541,10 @@ const serversEqual = (
       a.pid !== b.pid ||
       a.terminal?.threadId !== b.terminal?.threadId ||
       a.terminal?.terminalId !== b.terminal?.terminalId ||
-      a.agent?.threadId !== b.agent?.threadId
+      a.agent?.threadId !== b.agent?.threadId ||
+      a.reason !== b.reason ||
+      a.systemdUnit !== b.systemdUnit ||
+      a.projectId !== b.projectId
     ) {
       return false;
     }

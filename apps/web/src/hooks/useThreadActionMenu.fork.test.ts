@@ -55,6 +55,7 @@ vi.mock("../state/session", () => ({
     scope === AuthOrchestrationOperateScope && state.granted.has(environmentId),
 }));
 vi.mock("../state/entities", () => ({
+  readEnvironmentServerConfigLoaded: () => true,
   readEnvironmentSupportsAutoSettleOptOut: () => true,
   readEnvironmentSupportsPinning: () => true,
   readEnvironmentSupportsSettlement: () => true,

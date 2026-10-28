@@ -2,7 +2,18 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import { assertAssistantTextIncludes, assertBaseProjection, assertRuntimeRequestCounts, assertSemanticProjectionIntegrity, assertTurnItemTypes, assertUserMessageInputIntents, assertUserMessagesInclude, MESSAGE_STEERING_INITIAL_PROMPT, MESSAGE_STEERING_STEER_PROMPT, projectionFor } from "../shared.ts";
+import {
+  assertAssistantTextIncludes,
+  assertBaseProjection,
+  assertRuntimeRequestCounts,
+  assertSemanticProjectionIntegrity,
+  assertTurnItemTypes,
+  assertUserMessageInputIntents,
+  assertUserMessagesInclude,
+  MESSAGE_STEERING_INITIAL_PROMPT,
+  MESSAGE_STEERING_STEER_PROMPT,
+  projectionFor,
+} from "../shared.ts";
 
 export function assertGrokMessageSteeringOutput(
   result: OrchestratorV2ScenarioResult,

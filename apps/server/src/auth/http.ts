@@ -1,4 +1,22 @@
-import { authScopeRequiredResponse, AuthAccessWriteScope, AuthStandardClientScopes, AuthGrantScope, EnvironmentAuthInvalidError, type EnvironmentAuthInvalidReason, EnvironmentHttpApi, EnvironmentInternalError, type EnvironmentInternalErrorReason, EnvironmentOperationForbiddenError, EnvironmentRequestInvalidError, type EnvironmentRequestInvalidReason, EnvironmentResourceNotFoundError, type EnvironmentResourceNotFoundReason, EnvironmentScopeRequiredError, EnvironmentAuthenticatedAuth, EnvironmentAuthenticatedPrincipal } from "@t3tools/contracts";
+import {
+  authScopeRequiredResponse,
+  AuthAccessWriteScope,
+  AuthStandardClientScopes,
+  AuthGrantScope,
+  EnvironmentAuthInvalidError,
+  type EnvironmentAuthInvalidReason,
+  EnvironmentHttpApi,
+  EnvironmentInternalError,
+  type EnvironmentInternalErrorReason,
+  EnvironmentOperationForbiddenError,
+  EnvironmentRequestInvalidError,
+  type EnvironmentRequestInvalidReason,
+  EnvironmentResourceNotFoundError,
+  type EnvironmentResourceNotFoundReason,
+  EnvironmentScopeRequiredError,
+  EnvironmentAuthenticatedAuth,
+  EnvironmentAuthenticatedPrincipal,
+} from "@t3tools/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";

@@ -1,4 +1,10 @@
-import type { OrchestrationV2ProjectedTurnItem, OrchestrationV2ThreadProjection, OrchestrationV2TurnItem, ThreadId, TurnItemId } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2TurnItem,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 
 /**
  * Every window stops at the byte budget. A window that holds a user turn also

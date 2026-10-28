@@ -1,4 +1,8 @@
-import type { PullRequestComment, PullRequestDetail, PullRequestReviewThread } from "@t3tools/contracts";
+import type {
+  PullRequestComment,
+  PullRequestDetail,
+  PullRequestReviewThread,
+} from "@t3tools/contracts";
 
 type EditingSubject = Pick<
   PullRequestDetail,

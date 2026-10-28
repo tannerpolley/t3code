@@ -1,6 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { CommandId, MessageId, type ModelSelection, type OrchestrationV2Command, type OrchestrationV2ThreadProjection, ProjectId, ProviderInstanceId, ProviderDriverKind, type ProviderReplayTranscript, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  type ModelSelection,
+  type OrchestrationV2Command,
+  type OrchestrationV2ThreadProjection,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderDriverKind,
+  type ProviderReplayTranscript,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -10,10 +21,22 @@ import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.tes
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
-import { CODEX_MODEL_SELECTION, THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT, THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT, THREAD_MERGE_BACK_SIBLINGS_RECALL, THREAD_MERGE_BACK_SIBLINGS_RECALL_PROMPT, THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT, THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT, THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT } from "./fixtures/shared.ts";
+import {
+  CODEX_MODEL_SELECTION,
+  THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_RECALL,
+  THREAD_MERGE_BACK_SIBLINGS_RECALL_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT,
+} from "./fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
 import { makeCheckpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import { decodeProviderReplayNdjson, materializeReplayTranscriptWorkspace } from "@t3tools/provider-testing/replayTranscript";
+import {
+  decodeProviderReplayNdjson,
+  materializeReplayTranscriptWorkspace,
+} from "@t3tools/provider-testing/replayTranscript";
 
 const CodexHistoryReplayHarness: typeof CodexOrchestratorReplayHarness = {
   ...CodexOrchestratorReplayHarness,

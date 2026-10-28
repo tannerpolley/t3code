@@ -1,20 +1,56 @@
 import type { ChatComposerProps } from "./ChatComposer";
-import { type ChatFileAttachment, PROVIDER_SEND_TURN_MAX_ATTACHMENTS, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES, PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
-import { type ComposerContextReference, collectInlineContextIds, stripInlineContextReferences } from "~/lib/composerContextReferences";
-import { type ComposerFileAttachment, type ComposerImageAttachment, type DraftId, composerFileMatchesReattachMarker, composerFileNeedsReattach } from "../../composerDraftStore";
+import {
+  type ChatFileAttachment,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+} from "@t3tools/contracts";
+import {
+  type ComposerContextReference,
+  collectInlineContextIds,
+  stripInlineContextReferences,
+} from "~/lib/composerContextReferences";
+import {
+  type ComposerFileAttachment,
+  type ComposerImageAttachment,
+  type DraftId,
+  composerFileMatchesReattachMarker,
+  composerFileNeedsReattach,
+} from "../../composerDraftStore";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import { type PendingUserInput } from "../../session-logic";
-import { changeQuestionAttachmentPreparation, useQuestionAttachmentPreparation } from "../../questionAttachments";
-import { classifyComposerAttachmentFile, composerFileAttachmentMimeType, normalizeComposerImageFileMimeType } from "./composerAttachmentFiles";
-import { fileAttachmentTooLargeMessage, formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import {
+  changeQuestionAttachmentPreparation,
+  useQuestionAttachmentPreparation,
+} from "../../questionAttachments";
+import {
+  classifyComposerAttachmentFile,
+  composerFileAttachmentMimeType,
+  normalizeComposerImageFileMimeType,
+} from "./composerAttachmentFiles";
+import {
+  fileAttachmentTooLargeMessage,
+  formatAttachmentSize,
+} from "@t3tools/client-runtime/state/attachments";
 import { fileContextReference, imageContextReference } from "~/lib/composerContextRecords";
 import { isMacPlatform, randomUUID } from "~/lib/utils";
-import { nextPastedTextFileName, pastedTextDisposition, wouldTextPasteExceedLimit } from "@t3tools/client-runtime/text-paste";
-import { inheritComposerImageThumbnail, prepareImageForAttachment } from "../../lib/imageCompression";
+import {
+  nextPastedTextFileName,
+  pastedTextDisposition,
+  wouldTextPasteExceedLimit,
+} from "@t3tools/client-runtime/text-paste";
+import {
+  inheritComposerImageThumbnail,
+  prepareImageForAttachment,
+} from "../../lib/imageCompression";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
-import { addPreparingComposerImages, isPreparingComposerImage, removePreparingComposerImages } from "./preparingComposerImages";
+import {
+  addPreparingComposerImages,
+  isPreparingComposerImage,
+  removePreparingComposerImages,
+} from "./preparingComposerImages";
 
 /**
  * Takes files into the draft: validates and reserves slots, compresses images, inserts

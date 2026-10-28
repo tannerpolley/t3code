@@ -1,4 +1,10 @@
-import type { ModelSelection, OrchestrationV2Run, OrchestrationV2TurnItem, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  OrchestrationV2Run,
+  OrchestrationV2TurnItem,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@t3tools/contracts";
 
 import type { ThreadStructure } from "./state/models.ts";
 

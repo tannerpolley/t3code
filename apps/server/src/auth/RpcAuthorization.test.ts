@@ -1,11 +1,33 @@
-import { AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope, AuthFilesystemReadScope, AuthProvidersManageScope, AuthSettingsWriteScope, DEFAULT_SERVER_SETTINGS, ProjectId, CommandId, ProviderInstanceId, ThreadId, AuthOrchestrationOperateScope, AuthOrchestrationReadScope, AuthSourceControlWriteScope, AuthTerminalReadScope, AuthTerminalOperateScope, WS_METHODS, WsRpcGroup } from "@t3tools/contracts";
+import {
+  AuthEnvironmentMaintainScope,
+  AuthDiagnosticsReadScope,
+  AuthFilesystemReadScope,
+  AuthProvidersManageScope,
+  AuthSettingsWriteScope,
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  CommandId,
+  ProviderInstanceId,
+  ThreadId,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthSourceControlWriteScope,
+  AuthTerminalReadScope,
+  AuthTerminalOperateScope,
+  WS_METHODS,
+  WsRpcGroup,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
-import { RPC_REQUIRED_SCOPES, requiredScopeForRpcMethod, requiredScopeForDeviceList } from "./RpcAuthorization.ts";
+import {
+  RPC_REQUIRED_SCOPES,
+  requiredScopeForRpcMethod,
+  requiredScopeForDeviceList,
+} from "./RpcAuthorization.ts";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 it.effect(
@@ -81,7 +103,12 @@ describe("RPC authorization scopes", () => {
   });
 
   it("separates passive terminal observation from operations that can change a shell", () => {
-    for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
+    for (const method of [
+      WS_METHODS.terminalObserve,
+      WS_METHODS.terminalGetInlineRun,
+      WS_METHODS.terminalWatchInlineRun,
+      WS_METHODS.subscribeTerminalMetadata,
+    ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
     }
     for (const method of [

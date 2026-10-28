@@ -327,6 +327,7 @@ const layerIssueChangesProvided = IssueChangeService.layer.pipe(Layer.provide(Ef
 const layerIssueWorkProvided = IssueWorkService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       layerProjectService,
       IssueWorkStore.layer,
       layerThreadLaunchProvided,
@@ -428,7 +429,8 @@ export const layerProduction = Layer.mergeAll(
         ProjectionStore.layer,
         layerThreadManagementProvided,
         layerOrchestratorProvided,
-          layerEventSink,
+        ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
+        layerEventSink,
       ),
     ),
   ),
@@ -445,9 +447,7 @@ export const layerProduction = Layer.mergeAll(
     ),
   ),
   DontAskModeWorker.workerLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(layerOrchestratorProvided, ProjectionStore.layer, layerEventSink),
-    ),
+    Layer.provide(Layer.mergeAll(layerOrchestratorProvided, ProjectionStore.layer, layerEventSink)),
   ),
   ThreadTitleRefreshWorker.workerLive.pipe(
     Layer.provide(Layer.merge(ProjectionStore.layer, layerThreadManagementProvided)),

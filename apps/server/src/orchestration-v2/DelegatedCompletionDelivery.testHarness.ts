@@ -124,7 +124,9 @@ const layerTestBase = Layer.mergeAll(
   Layer.provide(ProviderTurnStartServiceTestkit.layer),
   Layer.provide(
     Layer.succeed(ProjectEnrichmentService.ProjectEnrichmentService, {
-      readRepositoryIdentity: () => Effect.succeed(null),
+      readRepositoryIdentity: Effect.fn(
+        "ProjectEnrichmentService.ProjectEnrichmentService.readRepositoryIdentity",
+      )(() => Effect.succeed(null)),
       peek: Effect.fn("ProjectEnrichmentService.ProjectEnrichmentService.peek")(() =>
         Effect.succeed({
           repositoryIdentity: null,

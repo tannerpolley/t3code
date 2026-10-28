@@ -1,6 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { MessageId, NodeId, ProjectId, RunAttemptId, RunId, type ModelSelection, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  MessageId,
+  NodeId,
+  ProjectId,
+  RunAttemptId,
+  RunId,
+  type ModelSelection,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Exit from "effect/Exit";
@@ -20,7 +30,10 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
-import { makeProviderReplayGate, type ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
+import {
+  makeProviderReplayGate,
+  type ProviderReplayGate,
+} from "@t3tools/provider-testing/replayGate";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { AcpRegistryLiveConfiguration } from "@t3tools/provider-acp-registry/testing";
@@ -29,10 +42,20 @@ import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/s
 import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { decodeAcpReplayTranscript, makeAcpReplayCompletenessAssertion, makeAcpReplayRuntime, makeTurnInput } from "./AcpAdapterV2.testkit.ts";
+import {
+  decodeAcpReplayTranscript,
+  makeAcpReplayCompletenessAssertion,
+  makeAcpReplayRuntime,
+  makeTurnInput,
+} from "./AcpAdapterV2.testkit.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { AcpRegistryAdapterV2Driver } from "@t3tools/provider-acp-registry/server";
-import { ACP_REGISTRY_PROVIDER, makeAcpRegistryAdapterV2, acpRegistryPromptFailure, acpRegistryProbeResult } from "@t3tools/provider-acp-registry/testing";
+import {
+  ACP_REGISTRY_PROVIDER,
+  makeAcpRegistryAdapterV2,
+  acpRegistryPromptFailure,
+  acpRegistryProbeResult,
+} from "@t3tools/provider-acp-registry/testing";
 
 const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
   AcpRegistryAdapterV2Driver.configSchema,

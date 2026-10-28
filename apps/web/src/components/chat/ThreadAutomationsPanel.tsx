@@ -3,8 +3,16 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { useNavigate } from "@tanstack/react-router";
 import { CalendarClockIcon, PencilIcon, PlayIcon, Settings2Icon } from "lucide-react";
 import { useState } from "react";
-import { AuthOrchestrationOperateScope, type EnvironmentId, type ScheduledTask, type ThreadId } from "@t3tools/contracts";
-import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ScheduledTask,
+  type ThreadId,
+} from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { cn } from "../../lib/utils";
@@ -17,7 +25,10 @@ import { readEnvironmentScope } from "../../state/session";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { THREAD_DETAILS_PANEL_ICON_CLASS, THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS } from "./threadDetailsPanelStyles";
+import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
+} from "./threadDetailsPanelStyles";
 
 const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
   never: "bg-muted-foreground/40",

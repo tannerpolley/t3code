@@ -1,30 +1,99 @@
 import { issueContextReference } from "./components/issues/issueComposerContext";
 import { composerFileAttachmentMimeType } from "./components/chat/composerAttachmentFiles";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
-import { ElementContextDetails, DEFAULT_MODEL, DEFAULT_MODEL_BY_PROVIDER, defaultInstanceIdForDriver, EnvironmentId, ModelSelection, ProjectId, ProviderInstanceId, ProviderInteractionMode, ProviderDriverKind, ProviderOptionSelection, PROVIDER_SEND_TURN_MAX_ATTACHMENTS, ProviderOptionSelections, PreviewAnnotationPayloadSchema, PastedTextAttachmentSource, type PreviewAnnotationPayload, RuntimeMode, ThreadContextRecord, IssueContextRecord, EnvironmentContextRecord, type ServerProvider, type ScopedProjectRef, type ScopedThreadRef, ThreadId, SnapShotSource } from "@t3tools/contracts";
-import { parseScopedProjectKey, parseScopedThreadKey, scopedProjectKey, scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  ElementContextDetails,
+  DEFAULT_MODEL,
+  DEFAULT_MODEL_BY_PROVIDER,
+  defaultInstanceIdForDriver,
+  EnvironmentId,
+  ModelSelection,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderInteractionMode,
+  ProviderDriverKind,
+  ProviderOptionSelection,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  ProviderOptionSelections,
+  PreviewAnnotationPayloadSchema,
+  PastedTextAttachmentSource,
+  type PreviewAnnotationPayload,
+  RuntimeMode,
+  ThreadContextRecord,
+  IssueContextRecord,
+  EnvironmentContextRecord,
+  type ServerProvider,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+  ThreadId,
+  SnapShotSource,
+} from "@t3tools/contracts";
+import {
+  parseScopedProjectKey,
+  parseScopedThreadKey,
+  scopedProjectKey,
+  scopeProjectRef,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import { DeepMutable } from "effect/Types";
-import { createModelSelection, draftModelPickMatchesThread, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  createModelSelection,
+  draftModelPickMatchesThread,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
-import type { EnvironmentShellState, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type {
+  EnvironmentShellState,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import { waitForDraftHeroTransition } from "./components/chat/draftHeroTransition";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { readThreadPreviewState } from "./previewStateStore";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatFileAttachment, type ChatImageAttachment, videoMimeType } from "./types";
-import { type TerminalContextDraft, migrateLegacyTerminalContextPlaceholders, normalizeTerminalContextText } from "./lib/terminalContext";
-import { appendInlineContextReference, type ComposerContextReference, ensureInlineContextReferences, formatInlineContextReference, removeInlineContextReference } from "./lib/composerContextReferences";
-import { fileContextReference, previewAnnotationContextId, previewAnnotationContextReference, reviewCommentContextId, reviewCommentContextReference, terminalContextReference, threadContextReference, environmentContextReference } from "./lib/composerContextRecords";
+import {
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type ChatFileAttachment,
+  type ChatImageAttachment,
+  videoMimeType,
+} from "./types";
+import {
+  type TerminalContextDraft,
+  migrateLegacyTerminalContextPlaceholders,
+  normalizeTerminalContextText,
+} from "./lib/terminalContext";
+import {
+  appendInlineContextReference,
+  type ComposerContextReference,
+  ensureInlineContextReferences,
+  formatInlineContextReference,
+  removeInlineContextReference,
+} from "./lib/composerContextReferences";
+import {
+  fileContextReference,
+  previewAnnotationContextId,
+  previewAnnotationContextReference,
+  reviewCommentContextId,
+  reviewCommentContextReference,
+  terminalContextReference,
+  threadContextReference,
+  environmentContextReference,
+} from "./lib/composerContextRecords";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
-import { replaceComposerContextReferences, toComposerContextId, toKindScopedComposerContextId } from "@t3tools/shared/composerContextReferences";
+import {
+  replaceComposerContextReferences,
+  toComposerContextId,
+  toKindScopedComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 
 const isElementContextDetails = Schema.is(ElementContextDetails);

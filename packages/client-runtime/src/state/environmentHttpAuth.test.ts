@@ -1,5 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, ORCHESTRATION_PROTOCOL_HEADER, ORCHESTRATION_PROTOCOL_VERSION_TEXT, ProjectId, ThreadId, type AuthSessionState, type OrchestrationV2ShellSnapshot, OrchestrationV2ThreadDetailSnapshot, OrchestrationV2ThreadBoundedSnapshot, OrchestrationV2ThreadTranscript, type OrchestrationV2ThreadHistoryPage } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ORCHESTRATION_PROTOCOL_HEADER,
+  ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+  ProjectId,
+  ThreadId,
+  type AuthSessionState,
+  type OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadDetailSnapshot,
+  OrchestrationV2ThreadBoundedSnapshot,
+  OrchestrationV2ThreadTranscript,
+  type OrchestrationV2ThreadHistoryPage,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -11,7 +23,12 @@ import * as TestClock from "effect/testing/TestClock";
 import type { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
-import { ConnectionTransientError, RelayConnectionTarget, type PreparedConnection, type PreparedHttpAuthorization } from "../connection/model.ts";
+import {
+  ConnectionTransientError,
+  RelayConnectionTarget,
+  type PreparedConnection,
+  type PreparedHttpAuthorization,
+} from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";

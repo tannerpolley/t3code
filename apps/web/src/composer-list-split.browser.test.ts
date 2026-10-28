@@ -4,7 +4,15 @@ import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildDocJson, buildTiptapContent, ComposerBlockExtensions, ComposerCodeBlockExtension, ComposerListExtensions, ComposerTaskItemExtension, serializeEditorDoc } from "./composer-rich-text-doc";
+import {
+  buildDocJson,
+  buildTiptapContent,
+  ComposerBlockExtensions,
+  ComposerCodeBlockExtension,
+  ComposerListExtensions,
+  ComposerTaskItemExtension,
+  serializeEditorDoc,
+} from "./composer-rich-text-doc";
 
 // ProseMirror's DOM observer can flush on a timer after a test ends, which
 // throws once its DOM is gone, so every editor is acquired with `using`.

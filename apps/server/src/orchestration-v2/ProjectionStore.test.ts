@@ -1,5 +1,32 @@
 import { assert, it } from "@effect/vitest";
-import { EnvironmentId, EventId, CommandId, CheckpointId, CheckpointRef, CheckpointScopeId, MessageId, type ModelSelection, type OrchestrationV2ProviderThread, type OrchestrationV2TurnItem, type OrchestrationV2ThreadHistoryPage, type OrchestrationV2ThreadShellSnapshot, NodeId, PlanId, ProjectId, ProviderDriverKind, ProviderInstanceId, ProviderSessionId, ProviderThreadId, ProviderTurnId, RuntimeRequestId, RunAttemptId, RunId, ThreadId, TurnItemId, type ThreadPullRequestLink } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  EventId,
+  CommandId,
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
+  MessageId,
+  type ModelSelection,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
+  type OrchestrationV2ThreadHistoryPage,
+  type OrchestrationV2ThreadShellSnapshot,
+  NodeId,
+  PlanId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RuntimeRequestId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+  TurnItemId,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,7 +38,14 @@ import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { buildBoundedThreadProjection, decodeThreadHistoryCursor, encodeThreadHistoryCursor, selectHistoryPageFromCursor, THREAD_HISTORY_PAGE_POLICY, THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT } from "./threadHistoryPaging.ts";
+import {
+  buildBoundedThreadProjection,
+  decodeThreadHistoryCursor,
+  encodeThreadHistoryCursor,
+  selectHistoryPageFromCursor,
+  THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
+} from "./threadHistoryPaging.ts";
 
 const layerTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
@@ -507,7 +541,13 @@ it.effect("SQL shells use the latest subagent owner for duplicate provider-threa
       }
     });
     const owned = [
-      { taskId: nativeTaskId, description: item.title, kind: "subagent", providerInstanceId },
+      {
+        taskId: nativeTaskId,
+        description: item.title,
+        startedAt: item.startedAt,
+        kind: "subagent",
+        providerInstanceId,
+      },
     ];
     yield* assertOwners(threadId, owned);
     yield* assertOwners(otherThreadId, owned);
@@ -4114,6 +4154,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const candidate = candidates.find((row) => row.id === threadId);
         if (lastErrorClass === "usage_limit") {
           assert.deepEqual(candidate, {
+            providerInstanceId: sqlShell.providerInstanceId,
             id: sqlShell.id,
             status: sqlShell.status,
             lastErrorClass: sqlShell.lastErrorClass,
@@ -4124,6 +4165,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             archivedAt: sqlShell.archivedAt,
             settledOverride: sqlShell.settledOverride,
             pendingRuntimeRequest: null,
+            autoProviderSwitch: null,
             limitRecovery: sqlShell.limitRecovery,
             snoozedUntil: sqlShell.snoozedUntil,
           });

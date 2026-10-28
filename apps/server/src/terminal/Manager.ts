@@ -2,7 +2,39 @@
 import * as NodeCrypto from "node:crypto";
 
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
-import { DEFAULT_TERMINAL_ID, DEFAULT_MAX_TERMINAL_BUFFER_BYTES, TerminalCwdError, TerminalCwdNotDirectoryError, TerminalCwdNotFoundError, TerminalCwdStatError, TerminalError, TerminalHistoryError, TerminalNotRunningError, TerminalProviderInstanceNotFoundError, TerminalProviderEnvironmentError, TerminalResizeError, TerminalSessionLookupError, TerminalWriteError, type TerminalAttachInput, type TerminalAttachStreamEvent, type TerminalClearInput, type TerminalCloseInput, type TerminalEvent, type TerminalMetadataStreamEvent, type TerminalOpenInput, type TerminalObserveInput, type TerminalResizeInput, type ResourceMonitorProcessTableEntry, type TerminalSessionSnapshot, type TerminalSessionStatus, type TerminalSummary, type TerminalWriteInput, ClaudeSettings, CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  DEFAULT_TERMINAL_ID,
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+  TerminalCwdError,
+  TerminalCwdNotDirectoryError,
+  TerminalCwdNotFoundError,
+  TerminalCwdStatError,
+  TerminalError,
+  TerminalHistoryError,
+  TerminalNotRunningError,
+  TerminalProviderInstanceNotFoundError,
+  TerminalProviderEnvironmentError,
+  TerminalResizeError,
+  TerminalSessionLookupError,
+  TerminalWriteError,
+  type TerminalAttachInput,
+  type TerminalAttachStreamEvent,
+  type TerminalClearInput,
+  type TerminalCloseInput,
+  type TerminalEvent,
+  type TerminalMetadataStreamEvent,
+  type TerminalOpenInput,
+  type TerminalObserveInput,
+  type TerminalResizeInput,
+  type ResourceMonitorProcessTableEntry,
+  type TerminalSessionSnapshot,
+  type TerminalSessionStatus,
+  type TerminalSummary,
+  type TerminalWriteInput,
+  ClaudeSettings,
+  CodexSettings,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { AgentScope } from "@t3tools/shared/AgentScope";

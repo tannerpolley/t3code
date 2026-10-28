@@ -15,7 +15,6 @@ export {
   sanitizeNewRefName,
 } from "@t3tools/shared/git";
 
-
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
   projectId: ProjectId | null;

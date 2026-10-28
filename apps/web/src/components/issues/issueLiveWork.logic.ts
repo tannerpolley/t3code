@@ -1,5 +1,11 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, IssueListResult, IssueRepositoryRef, IssueSummary, IssuePullRequestStatus } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueListResult,
+  IssueRepositoryRef,
+  IssueSummary,
+  IssuePullRequestStatus,
+} from "@t3tools/contracts";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 

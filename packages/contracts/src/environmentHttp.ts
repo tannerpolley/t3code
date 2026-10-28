@@ -9,13 +9,68 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
-import { AuthAccessTokenResult, AuthBrowserSessionRequest, AuthBrowserSessionResult, AuthCreatePairingCredentialInput, AuthMcpApprovalDecisionRequest, AuthMcpApprovalDetails, AuthMcpApprovalError, AuthMcpApprovalRedirect, AuthMcpAuthorizationRequest, AuthMcpAuthorizationServerMetadata, AuthMcpClientRegistration, AuthMcpProtectedResourceMetadata, AuthMcpRegisteredClient, AuthMcpRegistrationError, AuthMcpTokenError, AuthMcpTokenRequest, AuthMcpTokenResult, AuthPairingCredentialResult, AuthRevokeClientSessionInput, AuthRevokePairingLinkInput, AuthEnvironmentScope, AuthTokenExchangeRequest, AuthSessionState, AuthWebSocketTicketParams, AuthWebSocketTicketResult, ServerAuthSessionMethod } from "./auth.ts";
-import { ExecutionEnvironmentDescriptor, ORCHESTRATION_PROTOCOL_HEADER, ORCHESTRATION_PROTOCOL_VERSION_TEXT } from "./environment.ts";
-import { DpopFailureReason, AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { OrchestrationV2ShellSnapshot, OrchestrationV2ThreadBoundedSnapshot, OrchestrationV2ThreadDetailSnapshot, OrchestrationV2ThreadHistoryPage, OrchestrationV2ThreadTranscript } from "./orchestrationV2.ts";
+import {
+  AuthAccessTokenResult,
+  AuthBrowserSessionRequest,
+  AuthBrowserSessionResult,
+  AuthCreatePairingCredentialInput,
+  AuthMcpApprovalDecisionRequest,
+  AuthMcpApprovalDetails,
+  AuthMcpApprovalError,
+  AuthMcpApprovalRedirect,
+  AuthMcpAuthorizationRequest,
+  AuthMcpAuthorizationServerMetadata,
+  AuthMcpClientRegistration,
+  AuthMcpProtectedResourceMetadata,
+  AuthMcpRegisteredClient,
+  AuthMcpRegistrationError,
+  AuthMcpTokenError,
+  AuthMcpTokenRequest,
+  AuthMcpTokenResult,
+  AuthPairingCredentialResult,
+  AuthRevokeClientSessionInput,
+  AuthRevokePairingLinkInput,
+  AuthEnvironmentScope,
+  AuthTokenExchangeRequest,
+  AuthSessionState,
+  AuthWebSocketTicketParams,
+  AuthWebSocketTicketResult,
+  ServerAuthSessionMethod,
+} from "./auth.ts";
+import {
+  ExecutionEnvironmentDescriptor,
+  ORCHESTRATION_PROTOCOL_HEADER,
+  ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+} from "./environment.ts";
+import {
+  DpopFailureReason,
+  AuthSessionId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import {
+  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadBoundedSnapshot,
+  OrchestrationV2ThreadDetailSnapshot,
+  OrchestrationV2ThreadHistoryPage,
+  OrchestrationV2ThreadTranscript,
+} from "./orchestrationV2.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
-import { PullRequestDiffInput, PullRequestDiffResult, PullRequestOperationError, PullRequestUnavailableError } from "./pullRequest.ts";
-import { RelayCloudEnvironmentHealthRequest, RelayCloudMintCredentialRequest, RelayEnvironmentConfigRequest, RelayEnvironmentHealthResponse, RelayEnvironmentLinkProof, RelayEnvironmentMintResponse, RelayLinkProofRequest } from "./relay.ts";
+import {
+  PullRequestDiffInput,
+  PullRequestDiffResult,
+  PullRequestOperationError,
+  PullRequestUnavailableError,
+} from "./pullRequest.ts";
+import {
+  RelayCloudEnvironmentHealthRequest,
+  RelayCloudMintCredentialRequest,
+  RelayEnvironmentConfigRequest,
+  RelayEnvironmentHealthResponse,
+  RelayEnvironmentLinkProof,
+  RelayEnvironmentMintResponse,
+  RelayLinkProofRequest,
+} from "./relay.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),

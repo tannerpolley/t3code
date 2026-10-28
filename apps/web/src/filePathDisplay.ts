@@ -1,5 +1,9 @@
 import { pipe } from "effect/Function";
-import { fileBasename, stripSlashPrefixedWindowsDrive, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import {
+  fileBasename,
+  stripSlashPrefixedWindowsDrive,
+  isWindowsAbsolutePath,
+} from "@t3tools/shared/path";
 import { formatFilePathPosition, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 
 function normalizePathSeparators(path: string): string {

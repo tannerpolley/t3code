@@ -1,4 +1,13 @@
-import { isOrchestrationV2WorkActive, ORCHESTRATION_V2_WS_METHODS, type EnvironmentId as EnvironmentIdType, type OrchestrationV2ThreadDetailSnapshot, type OrchestrationV2ThreadProjection, type OrchestrationV2ThreadStreamItem, type OrchestrationV2TurnItem, type ThreadId as ThreadIdType } from "@t3tools/contracts";
+import {
+  isOrchestrationV2WorkActive,
+  ORCHESTRATION_V2_WS_METHODS,
+  type EnvironmentId as EnvironmentIdType,
+  type OrchestrationV2ThreadDetailSnapshot,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadStreamItem,
+  type OrchestrationV2TurnItem,
+  type ThreadId as ThreadIdType,
+} from "@t3tools/contracts";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Cause from "effect/Cause";
@@ -30,10 +39,21 @@ import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
-import { applyHistoryPageMeta, clearActiveHistoryLoading, EMPTY_THREAD_HISTORY_META, isActiveHistoryRequestCursor, mergeOlderHistoryIntoProjection, type ThreadHistoryMeta } from "./threadHistoryMerge.ts";
+import {
+  applyHistoryPageMeta,
+  clearActiveHistoryLoading,
+  EMPTY_THREAD_HISTORY_META,
+  isActiveHistoryRequestCursor,
+  mergeOlderHistoryIntoProjection,
+  type ThreadHistoryMeta,
+} from "./threadHistoryMerge.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import { makeThreadRequestsResolvedAnnouncer, pendingRuntimeRequestIds } from "./threadRequests.ts";
-import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState, type EnvironmentThreadStatus } from "./threadState.ts";
+import {
+  EMPTY_ENVIRONMENT_THREAD_STATE,
+  type EnvironmentThreadState,
+  type EnvironmentThreadStatus,
+} from "./threadState.ts";
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -1086,3 +1106,5 @@ export * from "./threadFamilies.ts";
 export * from "./olderSettledThreads.ts";
 export * from "./threadShell.ts";
 export * from "./threadState.ts";
+
+export { pendingSubagentRequestsByThread } from "./threadShell.ts";

@@ -2,7 +2,16 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import { assertBaseProjection, assertNoExtraAppRunsForProviderChildren, assertSemanticProjectionIntegrity, assertUserMessagesInclude, projectionFor, SUBAGENT_CONTINUE_CHILD_PROMPT, SUBAGENT_CONTINUE_PARENT_PROMPT, SUBAGENT_CONTINUE_PROMPT } from "../shared.ts";
+import {
+  assertBaseProjection,
+  assertNoExtraAppRunsForProviderChildren,
+  assertSemanticProjectionIntegrity,
+  assertUserMessagesInclude,
+  projectionFor,
+  SUBAGENT_CONTINUE_CHILD_PROMPT,
+  SUBAGENT_CONTINUE_PARENT_PROMPT,
+  SUBAGENT_CONTINUE_PROMPT,
+} from "../shared.ts";
 
 export function assertSubagentContinueOutput(
   result: OrchestratorV2ScenarioResult,

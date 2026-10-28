@@ -1,4 +1,9 @@
-import { parseScopedProjectKey, scopedProjectKey, scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  parseScopedProjectKey,
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+} from "@t3tools/client-runtime/environment";
 import type { DesktopPreviewFavicon, ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { create } from "zustand";
@@ -8,7 +13,17 @@ import { normalizeHostname } from "~/browser/browserTargetResolver";
 import { readThreadShell, useQuietThreadShell } from "~/state/entities";
 import { readPreparedConnection, usePreparedConnection } from "~/state/session";
 
-import { BROWSER_FAVICON_MAX_ALIASES_PER_ENTRY, type BrowserFaviconEntry, canCanonicalizeFaviconWithoutEnvironment, evictExcessFavicons, faviconKey, faviconStorageLocation, isStorableFaviconDataUrl, isValidFaviconCapturedAt, migratePersistedBrowserFaviconState } from "./browserFaviconLogic";
+import {
+  BROWSER_FAVICON_MAX_ALIASES_PER_ENTRY,
+  type BrowserFaviconEntry,
+  canCanonicalizeFaviconWithoutEnvironment,
+  evictExcessFavicons,
+  faviconKey,
+  faviconStorageLocation,
+  isStorableFaviconDataUrl,
+  isValidFaviconCapturedAt,
+  migratePersistedBrowserFaviconState,
+} from "./browserFaviconLogic";
 import { useComposerDraftStore } from "./composerDraftStore";
 import { createMemoryStorage, type StateStorage } from "./lib/storage";
 

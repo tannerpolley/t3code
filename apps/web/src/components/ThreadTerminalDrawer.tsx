@@ -1,12 +1,45 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
-import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { INITIAL_TERMINAL_OUTPUT_CURSOR, readTerminalOutputUpdate, type TerminalOutputCursor, type TerminalOutputUpdate, type TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
-import { Plus, Square, SquareSplitHorizontal, SquareSplitVertical, TerminalSquare, Trash2 } from "lucide-react";
-import { AuthPreviewOperateScope, AuthOrchestrationOperateScope, AuthTerminalOperateScope, type ContextMenuItem, type ProviderInstanceId, type ResolvedKeybindingsConfig, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  readTerminalOutputUpdate,
+  type TerminalOutputCursor,
+  type TerminalOutputUpdate,
+  type TerminalSessionState,
+} from "@t3tools/client-runtime/state/terminal";
+import {
+  Plus,
+  Square,
+  SquareSplitHorizontal,
+  SquareSplitVertical,
+  TerminalSquare,
+  Trash2,
+} from "lucide-react";
+import {
+  AuthPreviewOperateScope,
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  type ContextMenuItem,
+  type ProviderInstanceId,
+  type ResolvedKeybindingsConfig,
+  type ScopedThreadRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
-import { type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
@@ -14,14 +47,34 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
-import { observeSelectionActions, resolveSelectionActionPosition, type SelectionActionPoint } from "~/lib/selectionActions";
-import { GhosttyTerminalSurface, type GhosttyTerminalSurfaceOptions } from "~/terminal/ghostty/surface";
+import {
+  observeSelectionActions,
+  resolveSelectionActionPosition,
+  type SelectionActionPoint,
+} from "~/lib/selectionActions";
+import {
+  GhosttyTerminalSurface,
+  type GhosttyTerminalSurfaceOptions,
+} from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { isTerminalUrl } from "../terminal-links";
-import { isDiffToggleShortcut, isTerminalClearShortcut, isTerminalNewShortcut, isTerminalSplitShortcut, isTerminalSplitVerticalShortcut, isTerminalToggleShortcut, terminalDeleteShortcutData, terminalNavigationShortcutData } from "../keybindings";
-import { DEFAULT_THREAD_TERMINAL_HEIGHT, MAX_TERMINALS_PER_GROUP, type ThreadTerminalGroup } from "../types";
+import {
+  isDiffToggleShortcut,
+  isTerminalClearShortcut,
+  isTerminalNewShortcut,
+  isTerminalSplitShortcut,
+  isTerminalSplitVerticalShortcut,
+  isTerminalToggleShortcut,
+  terminalDeleteShortcutData,
+  terminalNavigationShortcutData,
+} from "../keybindings";
+import {
+  DEFAULT_THREAD_TERMINAL_HEIGHT,
+  MAX_TERMINALS_PER_GROUP,
+  type ThreadTerminalGroup,
+} from "../types";
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
@@ -37,8 +90,17 @@ import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
-import { consumePendingTerminalFocus, focusTerminal, focusTerminalViewport, registerTerminalFocusTarget } from "../lib/terminalFocus";
-import { resolveTerminalFontPreference, resolveTerminalFontSizePreference, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../appearanceFonts";
+import {
+  consumePendingTerminalFocus,
+  focusTerminal,
+  focusTerminalViewport,
+  registerTerminalFocusTarget,
+} from "../lib/terminalFocus";
+import {
+  resolveTerminalFontPreference,
+  resolveTerminalFontSizePreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+} from "../appearanceFonts";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;

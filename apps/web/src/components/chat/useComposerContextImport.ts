@@ -321,7 +321,9 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread" || existing?.kind === "issue" || existing?.kind === "environment"
+              : existing?.kind === "thread" ||
+                  existing?.kind === "issue" ||
+                  existing?.kind === "environment"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)

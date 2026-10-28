@@ -4,8 +4,21 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
-import { EnvironmentCloudEndpointUnavailableError, type EnvironmentCloudLinkStateResult, EnvironmentHttpBadRequestError, EnvironmentHttpConflictError, EnvironmentHttpForbiddenError, EnvironmentHttpInternalServerError, EnvironmentHttpUnauthorizedError, EnvironmentId, WS_METHODS } from "@t3tools/contracts";
-import { type RelayEnvironmentLinkResponse, type RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
+import {
+  EnvironmentCloudEndpointUnavailableError,
+  type EnvironmentCloudLinkStateResult,
+  EnvironmentHttpBadRequestError,
+  EnvironmentHttpConflictError,
+  EnvironmentHttpForbiddenError,
+  EnvironmentHttpInternalServerError,
+  EnvironmentHttpUnauthorizedError,
+  EnvironmentId,
+  WS_METHODS,
+} from "@t3tools/contracts";
+import {
+  type RelayEnvironmentLinkResponse,
+  type RelayManagedEndpointProviderKind,
+} from "@t3tools/contracts/relay";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { request, runStream } from "@t3tools/client-runtime/rpc";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
@@ -13,7 +26,11 @@ import { ManagedRelay, relayRequestFailureDetail } from "@t3tools/client-runtime
 
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { resolveCloudPublicConfig } from "./publicConfig";
-import { finishRelayClientInstall, reportRelayClientInstallProgress, requestRelayClientInstallConfirmation } from "./relayClientInstallDialog";
+import {
+  finishRelayClientInstall,
+  reportRelayClientInstallProgress,
+  requestRelayClientInstallConfirmation,
+} from "./relayClientInstallDialog";
 
 function relayUrl(): string | null {
   return resolveCloudPublicConfig().relayUrl;

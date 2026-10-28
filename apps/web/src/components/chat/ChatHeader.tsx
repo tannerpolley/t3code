@@ -1,18 +1,35 @@
 import { environmentThreadShells } from "../../state/threads";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
-import { AuthOrchestrationOperateScope, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { ChevronDownIcon } from "lucide-react";
-import { memo, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { readLocalApi } from "~/localApi";
-import { deriveLogicalProjectKeyFromSettings, selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  selectProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
 import { useProjectFolderAppearance } from "../../projectFolderAppearance";
 import { threadEnvironment } from "../../state/threads";
 import { canShareWithGuestAtom } from "./guestShareAvailability";
@@ -20,7 +37,12 @@ import { useAtomValue } from "@effect/atom-react";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem, WorkspaceBreadcrumbSeparator, WorkspaceBreadcrumbText } from "../WorkspaceBreadcrumb";
+import {
+  WorkspaceBreadcrumb,
+  WorkspaceBreadcrumbItem,
+  WorkspaceBreadcrumbSeparator,
+  WorkspaceBreadcrumbText,
+} from "../WorkspaceBreadcrumb";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";

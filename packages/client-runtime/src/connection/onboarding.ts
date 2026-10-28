@@ -12,10 +12,23 @@ import { bootstrapRemoteBearerSession } from "../authorization/remote.ts";
 import { deriveWsBaseUrl, normalizeHttpBaseUrl } from "../environment/endpoint.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
-import { BearerConnectionCredential, BearerConnectionProfile, BearerConnectionRegistration, type ConnectionCatalogEntry, type ConnectionCredential, SshConnectionProfile, SshConnectionRegistration } from "./catalog.ts";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  BearerConnectionRegistration,
+  type ConnectionCatalogEntry,
+  type ConnectionCredential,
+  SshConnectionProfile,
+  SshConnectionRegistration,
+} from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import { mapRemoteEnvironmentError } from "./errors.ts";
-import { BearerConnectionTarget, ConnectionBlockedError, SshConnectionTarget, type ConnectionAttemptError } from "./model.ts";
+import {
+  BearerConnectionTarget,
+  ConnectionBlockedError,
+  SshConnectionTarget,
+  type ConnectionAttemptError,
+} from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";

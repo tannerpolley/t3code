@@ -1,5 +1,19 @@
-import { combineTerminalSessionState, EMPTY_TERMINAL_BUFFER_STATE, EMPTY_TERMINAL_SESSION_STATE, selectRunningSubprocessTerminalIds, type KnownTerminalSession, type TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
-import { EnvironmentId, ThreadId, AuthTerminalReadScope, AuthTerminalOperateScope, TerminalAttachInput, type TerminalSummary } from "@t3tools/contracts";
+import {
+  combineTerminalSessionState,
+  EMPTY_TERMINAL_BUFFER_STATE,
+  EMPTY_TERMINAL_SESSION_STATE,
+  selectRunningSubprocessTerminalIds,
+  type KnownTerminalSession,
+  type TerminalSessionState,
+} from "@t3tools/client-runtime/state/terminal";
+import {
+  EnvironmentId,
+  ThreadId,
+  AuthTerminalReadScope,
+  AuthTerminalOperateScope,
+  TerminalAttachInput,
+  type TerminalSummary,
+} from "@t3tools/contracts";
 
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

@@ -360,7 +360,9 @@ export const make = Effect.gen(function* () {
         }
         case "Unauthorized":
           // The source may hold a newer token than the one that was refused.
-          yield* Option.isSome(appSignIn) ? appSignIn.value.invalidate(host, Redacted.value(token)) : Effect.void;
+          yield* Option.isSome(appSignIn)
+            ? appSignIn.value.invalidate(host, Redacted.value(token))
+            : Effect.void;
           yield* credentials.invalidate(host);
           return yield* new GitHubApiAuthenticationError(context);
         case "NotFound":
@@ -375,10 +377,14 @@ export const make = Effect.gen(function* () {
     });
 
     /** One send under `held`; `Retry` hands an app-refused request to the user's credential. */
+    const queuedAt = yield* Clock.currentTimeMillis;
     const attempt = (held: ChosenCredential) =>
       slots
         .withPermit(
           Effect.gen(function* () {
+            yield* Effect.annotateCurrentSpan({
+              "github.request.queue_ms": (yield* Clock.currentTimeMillis) - queuedAt,
+            });
             const lease = yield* quota
               .admit(host, input.resource, { allowReserve: input.allowReserve })
               .pipe(
@@ -394,6 +400,7 @@ export const make = Effect.gen(function* () {
               );
             // One deadline covers the headers and the body: a host that answers headers and then
             // stalls must not hold a shared slot for undici's own five-minute body timeout.
+            const startedAt = yield* Clock.currentTimeMillis;
             const answer = yield* send({
               ...REQUEST_HEADERS,
               authorization: `Bearer ${Redacted.value(held.token)}`,
@@ -406,6 +413,9 @@ export const make = Effect.gen(function* () {
                   ),
               }),
             );
+            yield* Effect.annotateCurrentSpan({
+              "github.request.send_ms": (yield* Clock.currentTimeMillis) - startedAt,
+            });
             if (held.fromApp && refusedToApp(answer)) {
               const personal = yield* Effect.option(personalCredential(host));
               if (Option.isSome(personal)) {

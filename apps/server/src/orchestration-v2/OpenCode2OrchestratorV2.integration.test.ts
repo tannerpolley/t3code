@@ -1,10 +1,25 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { CommandId, MessageId, type ModelSelection, type OrchestrationV2Command, type OrchestrationV2Run, ProjectId, type ProviderInteractionMode, ProviderInstanceId, type ProviderReplayEntry, type RuntimeMode, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  type ModelSelection,
+  type OrchestrationV2Command,
+  type OrchestrationV2Run,
+  ProjectId,
+  type ProviderInteractionMode,
+  ProviderInstanceId,
+  type ProviderReplayEntry,
+  type RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { OPENCODE2_HTTP_PROTOCOL, OpenCode2OrchestratorReplayHarness } from "./Adapters/OpenCode2AdapterV2.testkit.ts";
+import {
+  OPENCODE2_HTTP_PROTOCOL,
+  OpenCode2OrchestratorReplayHarness,
+} from "./Adapters/OpenCode2AdapterV2.testkit.ts";
 import { OPENCODE_PROVIDER } from "@t3tools/provider-opencode/testing";
 import { provideDeterministicTestRuntime } from "./testkit/DeterministicRuntime.ts";
 import type { OrchestratorV2ScenarioStep } from "./testkit/OrchestratorScenario.ts";

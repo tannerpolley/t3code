@@ -1,5 +1,6 @@
 import {
-  resolveThreadRole, THREAD_ROLE_LABELS,
+  resolveThreadRole,
+  THREAD_ROLE_LABELS,
   type ModelSelection,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,

@@ -2,7 +2,14 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import { assertBaseProjection, assertSemanticProjectionIntegrity, assertUserMessagesInclude, CLAUDE_RESULT_IS_ERROR_FOLLOW_UP, CLAUDE_RESULT_IS_ERROR_PROMPT, projectionFor } from "../shared.ts";
+import {
+  assertBaseProjection,
+  assertSemanticProjectionIntegrity,
+  assertUserMessagesInclude,
+  CLAUDE_RESULT_IS_ERROR_FOLLOW_UP,
+  CLAUDE_RESULT_IS_ERROR_PROMPT,
+  projectionFor,
+} from "../shared.ts";
 
 const AUTH_ERROR_TEXT = "Failed to authenticate. API Error: 401 Invalid authentication credentials";
 const AUTH_FAILURE_TEXT =

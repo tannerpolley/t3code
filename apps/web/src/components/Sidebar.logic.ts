@@ -1,22 +1,47 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
 import { formatElapsedSeconds } from "../timestampFormat";
-import { threadRuntimeIsActive, resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  threadRuntimeIsActive,
+  resolveThreadWorkingStartedAt,
+} from "@t3tools/client-runtime/state/models";
 
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
-import { isAtomCommandInterrupted, type AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import { threadSearchMatchKey, threadSearchSubject, type ThreadSearchShell } from "@t3tools/client-runtime/state/thread-search";
+import {
+  threadSearchMatchKey,
+  threadSearchSubject,
+  type ThreadSearchShell,
+} from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
-import { effectiveThreadRole, isProviderNativeSubagentThread, type ContextMenuItem, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import {
+  effectiveThreadRole,
+  isProviderNativeSubagentThread,
+  type ContextMenuItem,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
-import { effectiveSnoozed, type ThreadSnoozeShell } from "@t3tools/client-runtime/state/thread-settled";
-import { getThreadSortTimestamp, planPinnedReorder, sortThreads, toSortableTimestamp, type ThreadSortInput } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  effectiveSnoozed,
+  type ThreadSnoozeShell,
+} from "@t3tools/client-runtime/state/thread-settled";
+import {
+  getThreadSortTimestamp,
+  planPinnedReorder,
+  sortThreads,
+  toSortableTimestamp,
+  type ThreadSortInput,
+} from "@t3tools/client-runtime/state/thread-sort";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn, normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
@@ -561,20 +586,31 @@ export function resolveSidebarRowThreadId(
 export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
     projectId: string;
+    hasPendingApprovals?: boolean;
+    hasPendingUserInput?: boolean;
   },
 >(
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
   delegatedUnderParent: ReadonlySet<string> = new Set(),
 ): T[] {
+  const present = new Set(
+    threads
+      .filter((thread) => thread.archivedAt === null)
+      .map((thread) => JSON.stringify([thread.environmentId, thread.id])),
+  );
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
-      !isShownUnderParent(
+      (!isShownUnderParent(
         { environmentId: thread.environmentId, threadId: thread.id },
         thread.lineage,
         delegatedUnderParent,
-      ) &&
+      ) ||
+        (isSidebarSubagentThread(thread) &&
+          (thread.hasPendingApprovals || thread.hasPendingUserInput) &&
+          !present.has(JSON.stringify([thread.environmentId, thread.lineage.parentThreadId])) &&
+          !present.has(JSON.stringify([thread.environmentId, thread.lineage.rootThreadId])))) &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );

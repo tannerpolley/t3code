@@ -1,7 +1,18 @@
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import { PlusIcon, QrCodeIcon } from "lucide-react";
 import { type ReactNode, memo, useId, useState } from "react";
-import { AuthAccessWriteScope, AuthDiagnosticsReadScope, AuthOrchestrationReadScope, AuthFilesystemReadScope, AuthStandardClientScopes, AuthTerminalReadScope, type AuthEnvironmentScope, type AuthGrantScope, type AuthPairingCredentialResult, type AdvertisedEndpoint } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  AuthDiagnosticsReadScope,
+  AuthOrchestrationReadScope,
+  AuthFilesystemReadScope,
+  AuthStandardClientScopes,
+  AuthTerminalReadScope,
+  type AuthEnvironmentScope,
+  type AuthGrantScope,
+  type AuthPairingCredentialResult,
+  type AdvertisedEndpoint,
+} from "@t3tools/contracts";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 
@@ -9,23 +20,51 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
-import { canRevokeOtherClients, isQrShareableEndpoint, selectQrEndpointOption, togglePairingScopeSelection } from "./ConnectionsSettings.logic";
+import {
+  canRevokeOtherClients,
+  isQrShareableEndpoint,
+  selectQrEndpointOption,
+  togglePairingScopeSelection,
+} from "./ConnectionsSettings.logic";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { Input } from "../ui/input";
 import { Checkbox } from "../ui/checkbox";
-import { Dialog, DialogFooter, DialogDescription, DialogHeader, DialogPanel, DialogPopup, DialogTitle, DialogTrigger } from "../ui/dialog";
+import {
+  Dialog,
+  DialogFooter,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+  DialogTrigger,
+} from "../ui/dialog";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { QRCodeSvg } from "../ui/qr-code";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
-import { createServerPairingCredential, isLoopbackHostname, type ServerClientSessionRecord, type ServerPairingLinkRecord } from "~/environments/primary";
+import {
+  createServerPairingCredential,
+  isLoopbackHostname,
+  type ServerClientSessionRecord,
+  type ServerPairingLinkRecord,
+} from "~/environments/primary";
 import { readEnvironmentScope } from "~/state/session";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
-import { formatAccessTimestamp, selectPairingEndpoint, isTailscaleHttpsEndpoint, endpointDefaultPreferenceKey, resolveAdvertisedEndpointPairingUrl, resolveCurrentOriginPairingUrl, isHostedAppPairingUrl, endpointShareHint } from "./ConnectionsSettings.logic";
+import {
+  formatAccessTimestamp,
+  selectPairingEndpoint,
+  isTailscaleHttpsEndpoint,
+  endpointDefaultPreferenceKey,
+  resolveAdvertisedEndpointPairingUrl,
+  resolveCurrentOriginPairingUrl,
+  isHostedAppPairingUrl,
+  endpointShareHint,
+} from "./ConnectionsSettings.logic";
 
 function AccessScopeSummary({
   scopes,

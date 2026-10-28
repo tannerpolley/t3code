@@ -7,7 +7,19 @@ import {
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 
-export async function copyThreadReference(target: ThreadReferenceCopyTarget | { kind: "issue"; value: string; clipboardTarget: string; successTitle: string; failureTitle: string; fragment?: never; description?: never }): Promise<void> {
+export async function copyThreadReference(
+  target:
+    | ThreadReferenceCopyTarget
+    | {
+        kind: "issue";
+        value: string;
+        clipboardTarget: string;
+        successTitle: string;
+        failureTitle: string;
+        fragment?: never;
+        description?: never;
+      },
+): Promise<void> {
   const fragment = target.fragment ? encodeComposerContextFragment(target.fragment) : null;
   try {
     const didCopy = await writeTextToClipboard(

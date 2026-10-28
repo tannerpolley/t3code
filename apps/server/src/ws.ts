@@ -20,8 +20,92 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { rpcInitialItems } from "./rpcInitialItems.ts";
 import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
-import { AcpRegistryOperationError, CommandId, authScopeResponse, AuthAccessStreamError, type AuthAccessStreamEvent, AuthOrchestrationOperateScope, type AuthEnvironmentScope, type ScheduledTaskListResult, AuthSessionId, ClientConnectionMethod, ClientDeviceType, ClientOs, ClientSurface, ClientWebDeployment, type DiscoveredLocalServerList, type EditorId, type FileManagerRevealKind, type OrchestrationV2Command, type GitActionProgressEvent, type GitManagerServiceError, type MessageId, type AcpRegistryImportSessionInput, type AcpRegistryDeleteSessionInput, type AcpRegistryDisableProviderInput, type AcpRegistryListProvidersInput, type AcpRegistryListSessionsInput, type AcpRegistrySetProviderInput, OrchestrationGetFullThreadDiffError, OrchestrationSearchThreadsError, OrchestrationV2SearchThreadError, OrchestrationGetTurnDiffError, ORCHESTRATION_V2_WS_METHODS, ORCHESTRATION_PROTOCOL_QUERY_PARAM, ORCHESTRATION_PROTOCOL_VERSION, OrchestrationV2DispatchCommandError, OrchestrationV2GetShellSnapshotError, OrchestrationV2GetThreadProjectionError, OrchestrationV2ThreadLaunchError, type OrchestrationProjectShell, type OrchestrationV2ShellSnapshot, type OrchestrationV2ThreadStreamItem, type ApplicationStoredEvent, type ProjectEntriesFailure, type ProjectFileFailure, type ProjectFileOperation, type ProjectMutation, ProjectListEntriesError, ProjectReadFileError, ProjectSearchContentsError, ProjectSearchEntriesError, ProjectWriteFileError, ProjectMutationError, ProviderUploadFeedbackError, ProviderSetupError, RelayClientInstallFailedError, type RelayClientInstallProgressEvent, type ServerConfig as ClientServerConfig, type ServerConfigStreamEvent, type ServerLifecycleStreamEvent, type ServerProvider, type FilesystemBrowseFailure, FilesystemBrowseError, AssetWorkspaceContextNotFoundError, AssetWorkspaceContextResolutionError, SOURCE_CONTROL_MEDIA_ASSET, ChatAttachmentId, PersistChatAttachmentsError, RpcClientId, EnvironmentAuthorizationError, type ProjectId, type ProviderDriverKind, type ProviderInstanceId, ThreadId, type TerminalMetadataStreamEvent, type PullRequestRef, WS_METHODS, WsRpcGroup, UpstreamWsRpcGroup } from "@t3tools/contracts";
-import { HttpRouter, HttpServerRequest, HttpServerRespondable, HttpServerResponse } from "effect/http";
+import {
+  AcpRegistryOperationError,
+  CommandId,
+  authScopeResponse,
+  AuthAccessStreamError,
+  type AuthAccessStreamEvent,
+  AuthOrchestrationOperateScope,
+  type AuthEnvironmentScope,
+  type ScheduledTaskListResult,
+  AuthSessionId,
+  ClientConnectionMethod,
+  ClientDeviceType,
+  ClientOs,
+  ClientSurface,
+  ClientWebDeployment,
+  type DiscoveredLocalServerList,
+  type EditorId,
+  type FileManagerRevealKind,
+  type OrchestrationV2Command,
+  type GitActionProgressEvent,
+  type GitManagerServiceError,
+  type MessageId,
+  type AcpRegistryImportSessionInput,
+  type AcpRegistryDeleteSessionInput,
+  type AcpRegistryDisableProviderInput,
+  type AcpRegistryListProvidersInput,
+  type AcpRegistryListSessionsInput,
+  type AcpRegistrySetProviderInput,
+  OrchestrationGetFullThreadDiffError,
+  OrchestrationSearchThreadsError,
+  OrchestrationV2SearchThreadError,
+  OrchestrationGetTurnDiffError,
+  ORCHESTRATION_V2_WS_METHODS,
+  ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  OrchestrationV2DispatchCommandError,
+  OrchestrationV2GetShellSnapshotError,
+  OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2ThreadLaunchError,
+  type OrchestrationProjectShell,
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadStreamItem,
+  type ApplicationStoredEvent,
+  type ProjectEntriesFailure,
+  type ProjectFileFailure,
+  type ProjectFileOperation,
+  type ProjectMutation,
+  ProjectListEntriesError,
+  ProjectReadFileError,
+  ProjectSearchContentsError,
+  ProjectSearchEntriesError,
+  ProjectWriteFileError,
+  ProjectMutationError,
+  ProviderUploadFeedbackError,
+  ProviderSetupError,
+  RelayClientInstallFailedError,
+  type RelayClientInstallProgressEvent,
+  type ServerConfig as ClientServerConfig,
+  type ServerConfigStreamEvent,
+  type ServerLifecycleStreamEvent,
+  type ServerProvider,
+  type FilesystemBrowseFailure,
+  FilesystemBrowseError,
+  AssetWorkspaceContextNotFoundError,
+  AssetWorkspaceContextResolutionError,
+  SOURCE_CONTROL_MEDIA_ASSET,
+  ChatAttachmentId,
+  PersistChatAttachmentsError,
+  RpcClientId,
+  EnvironmentAuthorizationError,
+  type ProjectId,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  ThreadId,
+  type TerminalMetadataStreamEvent,
+  type PullRequestRef,
+  WS_METHODS,
+  WsRpcGroup,
+  UpstreamWsRpcGroup,
+} from "@t3tools/contracts";
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
 import { RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -42,12 +126,47 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
-import { buildActiveShellSnapshot, bufferShellLiveStream, coalesceShellApplicationEvents, SHELL_COALESCE_WINDOW, composeShellStreamWithEnrichment, dedupeShellEnrichment, loadOlderSettledThreadsPage, loadShellSnapshotParts, shellStreamItemFromEnrichmentRefresh, shellStreamItemFromThreadShell, shellStreamItemsFromInitialSnapshot, shellSnapshotForSubscriber, shellStreamItemsFromResumeSnapshot, shouldPublishShellApplicationEvent, skipUnchangedThreadShells, toShellApplicationEvent, type ShellApplicationEvent } from "./orchestration-v2/ShellStream.ts";
+import {
+  buildActiveShellSnapshot,
+  bufferShellLiveStream,
+  coalesceShellApplicationEvents,
+  SHELL_COALESCE_WINDOW,
+  composeShellStreamWithEnrichment,
+  dedupeShellEnrichment,
+  loadOlderSettledThreadsPage,
+  loadShellSnapshotParts,
+  shellStreamItemFromEnrichmentRefresh,
+  shellStreamItemFromThreadShell,
+  shellStreamItemsFromInitialSnapshot,
+  shellSnapshotForSubscriber,
+  shellStreamItemsFromResumeSnapshot,
+  shouldPublishShellApplicationEvent,
+  skipUnchangedThreadShells,
+  toShellApplicationEvent,
+  type ShellApplicationEvent,
+} from "./orchestration-v2/ShellStream.ts";
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
-import { coalesceLiveUpdatedEvents, coalesceThreadLiveStream } from "./orchestration-v2/ThreadLiveEventCoalescer.ts";
-import { buildBoundedThreadStreamSnapshot, decideThreadResume, isThreadReplayRawPayloadSafe, threadReplayEncodedBytes, THREAD_RESUME_MAX_REPLAY_EVENTS } from "./orchestration-v2/ThreadStream.ts";
-import { buildBoundedThreadProjection, THREAD_HISTORY_PAGE_POLICY, THREAD_HISTORY_SNAPSHOT_ROW_LIMIT } from "./orchestration-v2/threadHistoryPaging.ts";
-import { makeLiveBodyDeduper, projectDomainEventForWire, projectThreadProjectionForWire } from "./orchestration-v2/WireProjection.ts";
+import {
+  coalesceLiveUpdatedEvents,
+  coalesceThreadLiveStream,
+} from "./orchestration-v2/ThreadLiveEventCoalescer.ts";
+import {
+  buildBoundedThreadStreamSnapshot,
+  decideThreadResume,
+  isThreadReplayRawPayloadSafe,
+  threadReplayEncodedBytes,
+  THREAD_RESUME_MAX_REPLAY_EVENTS,
+} from "./orchestration-v2/ThreadStream.ts";
+import {
+  buildBoundedThreadProjection,
+  THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+} from "./orchestration-v2/threadHistoryPaging.ts";
+import {
+  makeLiveBodyDeduper,
+  projectDomainEventForWire,
+  projectThreadProjectionForWire,
+} from "./orchestration-v2/WireProjection.ts";
 import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodies";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
@@ -76,7 +195,11 @@ import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
-import { attachmentRelativePath, chatAttachmentStableKey, createDeterministicAttachmentId } from "./attachmentStore.ts";
+import {
+  attachmentRelativePath,
+  chatAttachmentStableKey,
+  createDeterministicAttachmentId,
+} from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -140,7 +263,10 @@ import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { isTelemetryIdHash } from "@t3tools/shared/telemetryId";
-import { sameUsageLimitCommandCoverage, withUsageLimitsCommands } from "@t3tools/shared/usageLimits";
+import {
+  sameUsageLimitCommandCoverage,
+  withUsageLimitsCommands,
+} from "@t3tools/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";

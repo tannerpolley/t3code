@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 import { INLINE_SHELL_OUTPUT_BYTES, ThreadId, type InlineShellRunRecord } from "@t3tools/contracts";
-import { inlineShellOutputTail, inlineShellCanWrite, inlineShellDisplayOutput, inlineShellIsPasswordPrompt } from "@t3tools/shared/inlineShell";
+import {
+  inlineShellOutputTail,
+  inlineShellCanWrite,
+  inlineShellDisplayOutput,
+  inlineShellIsPasswordPrompt,
+} from "@t3tools/shared/inlineShell";
 import { latestInlineShellRecord } from "@t3tools/shared/inlineShell";
-import { applyInlineShellOutputBatch, resolveInlineShellRun, inlineTerminalBelongsInDrawer, applyInlineShellOutput, emptyInlineShellOutput } from "./inlineShell.ts";
+import {
+  applyInlineShellOutputBatch,
+  resolveInlineShellRun,
+  inlineTerminalBelongsInDrawer,
+  applyInlineShellOutput,
+  emptyInlineShellOutput,
+} from "./inlineShell.ts";
 
 const base = { threadId: "thread", terminalId: "inline-test" };
 describe("inline shell output", () => {

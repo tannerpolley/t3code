@@ -19,12 +19,33 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
-import type { ChangeRequest, GitActionProgressEvent, GitPreparePullRequestThreadInput, ModelSelection } from "@t3tools/contracts";
+import type {
+  ChangeRequest,
+  GitActionProgressEvent,
+  GitPreparePullRequestThreadInput,
+  ModelSelection,
+} from "@t3tools/contracts";
 
-import { DEFAULT_SERVER_SETTINGS, EventId, GitCommandError, MessageId, ProjectId, ProviderDriverKind, ProviderInstanceId, RunId, SourceControlProviderError as SourceControlProviderFailure, TextGenerationError, ThreadId, TurnItemId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EventId,
+  GitCommandError,
+  MessageId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  SourceControlProviderError as SourceControlProviderFailure,
+  TextGenerationError,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import { fromRunner, decodeJsonReply } from "@t3tools/provider-core/server/textGenerationOperations";
+import {
+  fromRunner,
+  decodeJsonReply,
+} from "@t3tools/provider-core/server/textGenerationOperations";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";

@@ -2,7 +2,17 @@ import { HTML_RENDER_DEFAULT_FONTS, htmlRenderTheme } from "@t3tools/shared/html
 import { useSyncExternalStore } from "react";
 
 import { appearanceFontStack } from "../appearanceFonts";
-import { getStandardThemeColors, getThemeColorsForMode, getThemeDefinition, resolveThemeHalf, subscribeToCustomThemes, themeColorToHex, type ThemeAppearance, type ThemeHalves, type ThemePreference } from "../themePalette";
+import {
+  getStandardThemeColors,
+  getThemeColorsForMode,
+  getThemeDefinition,
+  resolveThemeHalf,
+  subscribeToCustomThemes,
+  themeColorToHex,
+  type ThemeAppearance,
+  type ThemeHalves,
+  type ThemePreference,
+} from "../themePalette";
 import { useClientSettings } from "./useSettings";
 import { useTheme } from "./useTheme";
 

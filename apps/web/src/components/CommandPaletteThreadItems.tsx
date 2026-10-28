@@ -1,16 +1,34 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { findForMessageMatch, openThreadFindOnQuery } from "./chat/threadFindStore";
-import { claimThreadOpen, nextShownOrder, type EnvironmentThreadSearchMatch, type ShownOrder } from "@t3tools/client-runtime/state/thread-search";
-import { foldSearchQuery, PALETTE_MESSAGE_LIMIT, pickedQuery, rankMessageMatches } from "@t3tools/shared/paletteSearch";
+import {
+  claimThreadOpen,
+  nextShownOrder,
+  type EnvironmentThreadSearchMatch,
+  type ShownOrder,
+} from "@t3tools/client-runtime/state/thread-search";
+import {
+  foldSearchQuery,
+  PALETTE_MESSAGE_LIMIT,
+  pickedQuery,
+  rankMessageMatches,
+} from "@t3tools/shared/paletteSearch";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { MessageSquareIcon } from "lucide-react";
 import { useState } from "react";
 
-import { applyProviderInstanceSettings, deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  type ProviderInstanceEntry,
+} from "../providerInstances";
 import { useThreadShells } from "../state/entities";
-import { useEnvironmentProviders, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import {
+  useEnvironmentProviders,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
 import { useThreadSearch } from "../state/queries";
 import { primaryServerProvidersAtom } from "../state/server";
 import { threadEnvironment } from "../state/threads";
@@ -20,7 +38,11 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import { buildThreadActionItems, ITEM_ICON_CLASS } from "./CommandPalette.logic";
 import { useEnvironmentLookups, useProjectLookups } from "./CommandPaletteLookups";
 import { ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
-import { ThreadRowLeadingStatus, ThreadRowTrailingStatus, ThreadSearchPullRequestNumber } from "./ThreadStatusIndicators";
+import {
+  ThreadRowLeadingStatus,
+  ThreadRowTrailingStatus,
+  ThreadSearchPullRequestNumber,
+} from "./ThreadStatusIndicators";
 
 function useProviderEntryByEnvironmentAndInstanceId() {
   const { environments } = useEnvironments();

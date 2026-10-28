@@ -18,7 +18,20 @@ import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { EnvironmentId, ClaudeSettings, CodexSettings, DEFAULT_SERVER_SETTINGS, PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS, ProviderDriverKind, ProviderInstanceId, ServerSettings, ServerSettingsError, ServerProvider, type ServerProviderSlashCommand, type ServerSettings as ContractServerSettings } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ClaudeSettings,
+  CodexSettings,
+  DEFAULT_SERVER_SETTINGS,
+  PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerSettings,
+  ServerSettingsError,
+  ServerProvider,
+  type ServerProviderSlashCommand,
+  type ServerSettings as ContractServerSettings,
+} from "@t3tools/contracts";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { deepMerge } from "@t3tools/shared/Struct";
@@ -41,9 +54,16 @@ import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHy
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
-import { readProviderStatusCache, resolveProviderStatusCachePath, writeProviderStatusCache } from "./providerStatusCache.ts";
+import {
+  readProviderStatusCache,
+  resolveProviderStatusCachePath,
+  writeProviderStatusCache,
+} from "./providerStatusCache.ts";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
-import type { ProviderInstance, ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
+import type {
+  ProviderInstance,
+  ProviderWorkspaceSnapshot,
+} from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";

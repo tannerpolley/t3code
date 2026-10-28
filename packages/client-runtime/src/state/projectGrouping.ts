@@ -1,5 +1,11 @@
 import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
-import { repositoryGroupingDisplayNameOf, repositoryGroupingKeyOf, type EnvironmentId, type ScopedProjectRef, type SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  repositoryGroupingDisplayNameOf,
+  repositoryGroupingKeyOf,
+  type EnvironmentId,
+  type ScopedProjectRef,
+  type SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";

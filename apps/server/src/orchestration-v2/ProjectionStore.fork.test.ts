@@ -1076,7 +1076,9 @@ it.effect("native subagent child shells report the subagent status (SQL)", () =>
 );
 
 it.effect("native subagent child shells report the subagent status (memory)", () =>
-  assertNativeSubagentChildShell().pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)))),
+  assertNativeSubagentChildShell().pipe(
+    Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+  ),
 );
 
 it.effect("runtime discovery preserves queued-run rules while searching the recovery index", () =>

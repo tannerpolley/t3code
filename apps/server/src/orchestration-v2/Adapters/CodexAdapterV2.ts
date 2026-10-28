@@ -3,21 +3,82 @@ import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
-import { mcpToolPresentation, type McpToolPresentation } from "../../provider/CodexToolPresentation.ts";
-import { makeCodexTurnTokenUsageState, getCodexTurnAccumulator, accumulateCodexTurnTokenUsage, completeCodexTurnTokenUsage, readCodexTurnTokenUsage, type CodexTurnTokenUsageState } from "../../provider/CodexTurnTokenUsage.ts";
+import {
+  mcpToolPresentation,
+  type McpToolPresentation,
+} from "../../provider/CodexToolPresentation.ts";
+import {
+  makeCodexTurnTokenUsageState,
+  getCodexTurnAccumulator,
+  accumulateCodexTurnTokenUsage,
+  completeCodexTurnTokenUsage,
+  readCodexTurnTokenUsage,
+  type CodexTurnTokenUsageState,
+} from "../../provider/CodexTurnTokenUsage.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
 import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts";
-import { buildCodexInitializeParams, codexAppServerEnvironment, codexDefaultReasoningEffortOverride } from "../../provider/CodexProvider.ts";
-import { codexRateLimitsToUpdate, mergeCodexRateLimits, codexUsageLimitResetAt, type CodexRateLimitSnapshot } from "../../provider/codexUsageLimits.ts";
-import { CodexSettings, defaultInstanceIdForDriver, isOrchestrationV2WorkActive, nativeSubagentRole, type OrchestrationV2GoalCommand, OrchestrationV2ProviderGoal, parseGoalCommand, ProviderDriverKind, type ProviderSetupError } from "@t3tools/contracts";
+import {
+  buildCodexInitializeParams,
+  codexAppServerEnvironment,
+  codexDefaultReasoningEffortOverride,
+} from "../../provider/CodexProvider.ts";
+import {
+  codexRateLimitsToUpdate,
+  mergeCodexRateLimits,
+  codexUsageLimitResetAt,
+  type CodexRateLimitSnapshot,
+} from "../../provider/codexUsageLimits.ts";
+import {
+  CodexSettings,
+  defaultInstanceIdForDriver,
+  isOrchestrationV2WorkActive,
+  nativeSubagentRole,
+  type OrchestrationV2GoalCommand,
+  OrchestrationV2ProviderGoal,
+  parseGoalCommand,
+  ProviderDriverKind,
+  type ProviderSetupError,
+} from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { COMPUTER_USE_TOOL_SOURCE, dynamicToolSurface, dynamicToolTitle } from "@t3tools/shared/toolActivity";
+import {
+  COMPUTER_USE_TOOL_SOURCE,
+  dynamicToolSurface,
+  dynamicToolTitle,
+} from "@t3tools/shared/toolActivity";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import type { ChatAttachment, OrchestrationV2AppThread, OrchestrationV2AssistantMessagePhase, OrchestrationV2ConversationMessage, OrchestrationV2ExecutionNode, ModelSelection, OrchestratorMcpModelRole, OrchestrationV2PlanArtifact, OrchestrationV2ProviderCapabilities, OrchestrationV2ProviderFailure, OrchestrationV2ProviderRetry, OrchestrationV2ProviderSession, OrchestrationV2ProviderThread, OrchestrationV2ProviderTurn, OrchestrationV2PlanStep, OrchestrationV2RuntimeRequest, OrchestrationV2Subagent, OrchestrationV2TurnItem, ProviderUserInputAnswers, ProviderApprovalDecision, ProviderApprovalOption, ProviderRequestKind, ProviderThreadId, ProviderTurnId, ProviderInstanceId, RuntimeMode, ThreadId } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  OrchestrationV2AppThread,
+  OrchestrationV2AssistantMessagePhase,
+  OrchestrationV2ConversationMessage,
+  OrchestrationV2ExecutionNode,
+  ModelSelection,
+  OrchestratorMcpModelRole,
+  OrchestrationV2PlanArtifact,
+  OrchestrationV2ProviderCapabilities,
+  OrchestrationV2ProviderFailure,
+  OrchestrationV2ProviderRetry,
+  OrchestrationV2ProviderSession,
+  OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderTurn,
+  OrchestrationV2PlanStep,
+  OrchestrationV2RuntimeRequest,
+  OrchestrationV2Subagent,
+  OrchestrationV2TurnItem,
+  ProviderUserInputAnswers,
+  ProviderApprovalDecision,
+  ProviderApprovalOption,
+  ProviderRequestKind,
+  ProviderThreadId,
+  ProviderTurnId,
+  ProviderInstanceId,
+  RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexSchema from "effect-codex-app-server/schema";
@@ -47,24 +108,55 @@ import { ServerConfig } from "../../config.ts";
 import { makeBackgroundTaskLogWriter } from "../backgroundTaskFiles.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { buildCodexAdditionalContext } from "../../provider/CodexDeveloperInstructions.ts";
-import { codexPermissionsApprovalPrompt, combineApprovalPrompt } from "../../provider/approvalPrompt.ts";
-import { describeMcpElicitation, toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
-import { materializeCodexShadowHome, resolveCodexHomeLayout } from "../../provider/Drivers/CodexHomeLayout.ts";
-import { boundProviderEventForLogging, shouldPersistProviderEvent } from "../../provider/EventNdjsonLogger.ts";
+import {
+  codexPermissionsApprovalPrompt,
+  combineApprovalPrompt,
+} from "../../provider/approvalPrompt.ts";
+import {
+  describeMcpElicitation,
+  toMcpElicitationResponse,
+} from "../../provider/CodexMcpElicitation.ts";
+import {
+  materializeCodexShadowHome,
+  resolveCodexHomeLayout,
+} from "../../provider/Drivers/CodexHomeLayout.ts";
+import {
+  boundProviderEventForLogging,
+  shouldPersistProviderEvent,
+} from "../../provider/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { MCP_APP_EXTENSION_ID, MCP_APP_MIME_TYPE, MCP_APP_OUTPUT_KEY, MCP_APP_RESOURCE_SCHEME } from "@t3tools/shared/mcpApp";
+import {
+  MCP_APP_EXTENSION_ID,
+  MCP_APP_MIME_TYPE,
+  MCP_APP_OUTPUT_KEY,
+  MCP_APP_RESOURCE_SCHEME,
+} from "@t3tools/shared/mcpApp";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
-import { ProviderAdapterDriverCreateError, type ProviderAdapterDriverCreateInput } from "@t3tools/provider-core/server/adapterDriver";
+import {
+  ProviderAdapterDriverCreateError,
+  type ProviderAdapterDriverCreateInput,
+} from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { backgroundWorkNotification } from "@t3tools/provider-core/server/notification";
-import { makeProviderFailure, makeProviderFailureTurnItem, makeProviderRetryTurnItem } from "@t3tools/provider-core/server/failure";
+import {
+  makeProviderFailure,
+  makeProviderFailureTurnItem,
+  makeProviderRetryTurnItem,
+} from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
-import { isProviderNativeImageAttachment, providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
-import { makeSubagentChildThread, makeSubagentConversationArtifacts, subagentThreadTitle } from "@t3tools/provider-core/server/subagentProjection";
+import {
+  isProviderNativeImageAttachment,
+  providerMessageTextWithAttachmentPaths,
+} from "@t3tools/provider-core/server/attachmentPrompt";
+import {
+  makeSubagentChildThread,
+  makeSubagentConversationArtifacts,
+  subagentThreadTitle,
+} from "@t3tools/provider-core/server/subagentProjection";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -2465,37 +2557,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 result: task.result,
               },
             });
-            // The active-to-terminal transition deduplicates activity and native turn completion.
-            // Only direct children wake an idle root; running roots receive results natively.
-            const parent = input.subagent.parentContext;
-            if (
-              !settled &&
-              continuationRequests !== undefined &&
-              parent.subagent === null &&
-              (task.status === "completed" || task.status === "failed") &&
-              !(yield* Ref.get(terminalizedNonCompletedNativeTurns)).has(parent.nativeTurnId) &&
-              ![...(yield* Ref.get(activeTurns)).values()].some(
-                (active) =>
-                  active.subagent === null && active.providerThread.id === parent.providerThread.id,
-              )
-            ) {
-              yield* continuationRequests.offer({
-                threadId: parent.projectionThreadId,
-                providerThreadId: parent.providerThread.id,
-                driver: CODEX_PROVIDER,
-                detail: codexNativeSubagentDetail(task),
-                // The detail is the whole wake; Codex buffers no output for it.
-                delivery: "message_text",
-                notification: backgroundWorkNotification([
-                  {
-                    kind: "subagent",
-                    label: codexNativeSubagentLabel(task),
-                    outcome: task.status,
-                    childThreadId: input.subagent.childThreadId,
-                  },
-                ]),
-              });
-            }
           });
 
         const emitSubagentProviderTurnStarted =

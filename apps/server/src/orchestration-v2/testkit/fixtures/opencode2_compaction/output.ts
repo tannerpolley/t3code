@@ -2,7 +2,16 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import { assertAssistantTextIncludes, assertBaseProjection, assertSemanticProjectionIntegrity, assertUserMessagesInclude, assertVisibleTurnItemsMirrorLocalTurnItems, OPENCODE2_COMPACTION_FIRST_PROMPT, OPENCODE2_COMPACTION_RECALL_PROMPT, projectionFor } from "../shared.ts";
+import {
+  assertAssistantTextIncludes,
+  assertBaseProjection,
+  assertSemanticProjectionIntegrity,
+  assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
+  OPENCODE2_COMPACTION_FIRST_PROMPT,
+  OPENCODE2_COMPACTION_RECALL_PROMPT,
+  projectionFor,
+} from "../shared.ts";
 
 /** session.compact queues a compaction execution that ends /compact; the next turn uses its summary. */
 export function assertOpenCode2CompactionOutput(

@@ -1,5 +1,12 @@
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
-import type { EnvironmentId, OrchestrationV2ShellSnapshot, ProjectId, ScopedProjectRef, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ShellSnapshot,
+  ProjectId,
+  ScopedProjectRef,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import { isProviderNativeSubagentThread, OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
@@ -7,7 +14,14 @@ import { Atom } from "effect/reactivity";
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
-import { arrayElementsEqual, parseProjectRefCollectionKey, parseThreadKey, projectRefCollectionKey, threadKey, threadRefsEqual } from "./entities.ts";
+import {
+  arrayElementsEqual,
+  parseProjectRefCollectionKey,
+  parseThreadKey,
+  projectRefCollectionKey,
+  threadKey,
+  threadRefsEqual,
+} from "./entities.ts";
 
 const EMPTY_THREADS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([]);
 const EMPTY_SCOPED_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
@@ -102,9 +116,10 @@ export function pendingSubagentRequestsByThread(
         parent?.lineage.relationshipToParent === "subagent" ? parent.lineage.parentThreadId : null;
     }
   };
+  const index = new Map(threads.map((thread) => [thread.id, thread]));
   for (const child of threads) {
     if (child.lineage.relationshipToParent !== "subagent") continue;
-    const request = subagentRequest(child);
+    const request = subagentRequest(child, index);
     if (request !== null) flag(child.lineage.parentThreadId, request, new Set([child.id]));
   }
   for (const task of delegated) flag(task.parentThreadId, task.request, new Set());
@@ -260,7 +275,7 @@ export function createEnvironmentThreadShellAtoms(input: {
       const next = new Map(flags);
       for (const [environmentId, tasks] of tasksByDelegator) {
         const delegated = tasks.flatMap(({ runsIn, thread, parentThreadId }) => {
-          const own = subagentRequest(thread);
+          const own = subagentRequest(thread, get(environmentThreadIndexAtom(runsIn)));
           const nested = requestsOf(runsIn).get(thread.id);
           const request = own === "approval" ? own : (nested ?? own);
           return request === null ? [] : [{ parentThreadId, request }];
@@ -418,9 +433,14 @@ export function createEnvironmentThreadShellAtoms(input: {
           if (seen.has(childKey)) continue;
           seen.add(childKey);
           pending.push(childKey);
-          if (subagentRequest(thread) !== null) {
+          if (subagentRequest(thread, get(environmentThreadIndexAtom(environmentId))) !== null) {
             next.push(
-              scopedThread(environmentId, thread, get(pendingSubagentRequestsAtom(environmentId))),
+              scopedThread(
+                environmentId,
+                thread,
+                get(pendingSubagentRequestsAtom(environmentId)),
+                get(environmentThreadIndexAtom(environmentId)),
+              ),
             );
           }
         }
@@ -564,7 +584,7 @@ export function createEnvironmentThreadShellAtoms(input: {
         ) {
           continue;
         }
-        next.push(scopedThread(environmentId, thread, subagentRequests));
+        next.push(scopedThread(environmentId, thread, subagentRequests, index));
       }
     }
     if (arrayElementsEqual(previousNavigationShells, next)) return previousNavigationShells;

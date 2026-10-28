@@ -1,27 +1,68 @@
-import { sidebarSubagentRowKey, sidebarWorkSeparator, sidebarSeparatorStyle, type SidebarFamilySeparator } from "./SidebarFamilySeparators.logic";
+import {
+  sidebarSubagentRowKey,
+  sidebarWorkSeparator,
+  sidebarSeparatorStyle,
+  type SidebarFamilySeparator,
+} from "./SidebarFamilySeparators.logic";
 import { useEnvironmentProviders } from "../../state/environments";
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { isProviderNativeSubagentThread, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import {
+  isProviderNativeSubagentThread,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CornerDownRightIcon } from "lucide-react";
-import { Fragment, useRef, type ComponentProps, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import {
+  Fragment,
+  useRef,
+  type ComponentProps,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
-import { BackgroundProcessOutputButton, BackgroundShellElapsed, StopBackgroundShellButton, STOP_SHELL_ON_ROW_HOVER_CLASS } from "../chat/BackgroundProcessOutput";
-import { BackgroundProcessKindIcon, backgroundProcessKindLabel } from "../chat/BackgroundProcessKind";
+import {
+  BackgroundProcessOutputButton,
+  BackgroundShellElapsed,
+  StopBackgroundShellButton,
+  STOP_SHELL_ON_ROW_HOVER_CLASS,
+} from "../chat/BackgroundProcessOutput";
+import {
+  BackgroundProcessKindIcon,
+  backgroundProcessKindLabel,
+} from "../chat/BackgroundProcessKind";
 import { useThreadShell } from "../../state/entities";
 import type { SidebarThreadSummary } from "../../types";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { cn } from "../../lib/utils";
-import { SidebarCaretToggle, SidebarCaretSlot, SidebarThreadColumns, SidebarThreadTitle, PROJECTS_WORK_ROW_HEIGHT } from "./SidebarColumns";
+import {
+  SidebarCaretToggle,
+  SidebarCaretSlot,
+  SidebarThreadColumns,
+  SidebarThreadTitle,
+  PROJECTS_WORK_ROW_HEIGHT,
+} from "./SidebarColumns";
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "../chat/AgentElapsed";
-import { SidebarProjectThreadName, ThreadIssueBadge, ThreadPullRequestBadge, SidebarProjectThreadTooltip } from "./SidebarProjectThreadTooltip";
+import {
+  SidebarProjectThreadName,
+  ThreadIssueBadge,
+  ThreadPullRequestBadge,
+  SidebarProjectThreadTooltip,
+} from "./SidebarProjectThreadTooltip";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
-import { afterTasksIndex, childWorktreeLabel, resolveSidebarThreadModelLabel, sidebarRoleLabel, type BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
+import {
+  afterTasksIndex,
+  childWorktreeLabel,
+  resolveSidebarThreadModelLabel,
+  sidebarRoleLabel,
+  type BackgroundWorkTaskRow,
+} from "./SidebarBackgroundWork.logic";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { workRowProgram } from "./SidebarThreadProcesses.logic";

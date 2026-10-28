@@ -1,9 +1,27 @@
-import { type ClientConnectionMethod, EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import {
+  type ClientConnectionMethod,
+  EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
+} from "@t3tools/contracts";
 import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
-import { exchangeRemoteDpopAccessToken, type RemoteEnvironmentAuthError, resolveRemoteDpopWebSocketConnectionUrl, resolveRemoteWebSocketConnectionUrl } from "./remote.ts";
-import { environmentMismatchError, mapManagedRelayError, mapRemoteDpopEnvironmentError, mapRemoteEnvironmentError } from "../connection/errors.ts";
-import { ConnectionBlockedError, ConnectionTransientError, type ConnectionAttemptError } from "../connection/model.ts";
+import {
+  exchangeRemoteDpopAccessToken,
+  type RemoteEnvironmentAuthError,
+  resolveRemoteDpopWebSocketConnectionUrl,
+  resolveRemoteWebSocketConnectionUrl,
+} from "./remote.ts";
+import {
+  environmentMismatchError,
+  mapManagedRelayError,
+  mapRemoteDpopEnvironmentError,
+  mapRemoteEnvironmentError,
+} from "../connection/errors.ts";
+import {
+  ConnectionBlockedError,
+  ConnectionTransientError,
+  type ConnectionAttemptError,
+} from "../connection/model.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -20,7 +38,10 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 
-import { DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS, type PreparedHttpAuthorization } from "../connection/model.ts";
+import {
+  DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
+  type PreparedHttpAuthorization,
+} from "../connection/model.ts";
 
 export interface AuthorizedRemoteEnvironment {
   readonly environmentId: EnvironmentId;

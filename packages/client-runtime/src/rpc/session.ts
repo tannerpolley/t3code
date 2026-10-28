@@ -1,4 +1,9 @@
-import { type ServerConfig, type ServerConfigStreamEvent, WsSubscribeServerConfigRpc, WS_METHODS } from "@t3tools/contracts";
+import {
+  type ServerConfig,
+  type ServerConfigStreamEvent,
+  WsSubscribeServerConfigRpc,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -20,11 +25,27 @@ import * as RpcClientError from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
-import { makeWsRpcProtocolClient, PING_TIMEOUT, LOCAL_PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
+import {
+  makeWsRpcProtocolClient,
+  PING_TIMEOUT,
+  LOCAL_PING_TIMEOUT,
+  type WsRpcProtocolClient,
+} from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT, UNRESPONSIVE_HOST_HINT } from "../errors/network.ts";
-import type { ConnectionAttemptError, ConnectionTransientError, PreparedConnection } from "../connection/model.ts";
-import { ConnectionBlockedError, ConnectionTransientError as ConnectionTransientErrorClass } from "../connection/model.ts";
-import { applyServerConfigProjection, type ServerConfigProjection, withoutEnvironmentThemes } from "../state/serverConfigProjection.ts";
+import type {
+  ConnectionAttemptError,
+  ConnectionTransientError,
+  PreparedConnection,
+} from "../connection/model.ts";
+import {
+  ConnectionBlockedError,
+  ConnectionTransientError as ConnectionTransientErrorClass,
+} from "../connection/model.ts";
+import {
+  applyServerConfigProjection,
+  type ServerConfigProjection,
+  withoutEnvironmentThemes,
+} from "../state/serverConfigProjection.ts";
 import { environmentMismatchError } from "../connection/errors.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";

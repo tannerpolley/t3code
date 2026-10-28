@@ -7,7 +7,12 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { type CodexSettings, DEFAULT_TEXT_GENERATION_REASONING_EFFORT, type ServerProviderModel, TextGenerationError } from "@t3tools/contracts";
+import {
+  type CodexSettings,
+  DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+  type ServerProviderModel,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -15,7 +20,10 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/codexLaunchArgs.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
-import { normalizeCliError, toJsonSchemaObject } from "@t3tools/provider-core/server/textGenerationUtils";
+import {
+  normalizeCliError,
+  toJsonSchemaObject,
+} from "@t3tools/provider-core/server/textGenerationUtils";
 import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";

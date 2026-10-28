@@ -13,7 +13,15 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { createReviewRoot, delegateReviewIssue, makeHarness, modelSelection, projectId, reviewIssue, reviewRead } from "./ThreadLaunchService.testHarness.ts";
+import {
+  createReviewRoot,
+  delegateReviewIssue,
+  makeHarness,
+  modelSelection,
+  projectId,
+  reviewIssue,
+  reviewRead,
+} from "./ThreadLaunchService.testHarness.ts";
 
 const harness = makeHarness({
   issueServiceLayer: Layer.mock(IssueService.IssueService)({

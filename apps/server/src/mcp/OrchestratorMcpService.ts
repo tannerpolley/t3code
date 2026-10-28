@@ -784,8 +784,6 @@ function threadTitle(input: {
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
 }
 
-
-
 function threadSettlement(
   thread: Pick<OrchestrationV2ThreadShell, "settledOverride" | "settledAt">,
 ): Pick<OrchestratorMcpThreadListItem, "settled" | "settledAt"> {
@@ -1761,7 +1759,8 @@ const make = Effect.gen(function* () {
     return {
       taskId: task.id,
       childThreadId: null,
-      branch: null, worktreePath: null,
+      branch: null,
+      worktreePath: null,
       ...(task.remoteChild === undefined
         ? {}
         : { remoteChild: task.remoteChild, link: formatThreadLink(task.remoteChild) }),
@@ -2422,7 +2421,8 @@ const make = Effect.gen(function* () {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
         // The task's child runs as an ordinary thread there; this thread keeps the task.
-        if (Option.isNone(remoteDelegation)) return yield* failure("invalid_request", "Linked-environment delegation is unavailable.");
+        if (Option.isNone(remoteDelegation))
+          return yield* failure("invalid_request", "Linked-environment delegation is unavailable.");
         const { taskId } = yield* remoteDelegation.value.delegate(scope, {
           ...input,
           target: { ...input.target, environmentId },
@@ -2721,7 +2721,8 @@ const make = Effect.gen(function* () {
             `Delegated task ${input.taskId} does not belong to thread ${scope.thread.threadId}.`,
           );
         }
-        if (Option.isNone(remoteDelegation)) return yield* failure("invalid_request", "Linked-environment delegation is unavailable.");
+        if (Option.isNone(remoteDelegation))
+          return yield* failure("invalid_request", "Linked-environment delegation is unavailable.");
         return yield* remoteDelegation.value.cancel(scope, remoteTask, input);
       }
       const key = yield* requestKey(input.clientRequestId);

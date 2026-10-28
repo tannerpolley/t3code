@@ -1,4 +1,10 @@
-import { type AuthMcpApprovalDecision, type AuthMcpApprovalDetails, AuthMcpApprovalError, AuthMcpClientAccess, type AuthMcpAuthorizationRequest } from "@t3tools/contracts";
+import {
+  type AuthMcpApprovalDecision,
+  type AuthMcpApprovalDetails,
+  AuthMcpApprovalError,
+  AuthMcpClientAccess,
+  type AuthMcpAuthorizationRequest,
+} from "@t3tools/contracts";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { EyeIcon, type LucideIcon } from "lucide-react";

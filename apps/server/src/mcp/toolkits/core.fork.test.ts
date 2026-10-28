@@ -1,3 +1,6 @@
+import * as PeerForwarding from "../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../peer/PeerLinks.ts";
 import * as OwnerDecisions from "../../issues/OwnerDecisions.ts";
 import { ProjectArtifactsToolkit } from "./projectArtifacts/tools.ts";
 import * as IssueLinks from "../../issues/IssueLinks.ts";
@@ -54,6 +57,10 @@ import { WorktreeToolkit } from "./worktree/tools.ts";
 import { DeviceToolkit } from "./device/tools.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
+  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+  Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+  Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+
   Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
@@ -75,6 +82,10 @@ import {
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
+  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+  Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+  Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
   Layer.provide(Layer.mock(OrchestratorV2)({})),

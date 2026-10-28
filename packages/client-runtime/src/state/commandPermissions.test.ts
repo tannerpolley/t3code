@@ -7,7 +7,24 @@ import * as Stream from "effect/Stream";
 import type { RpcSession } from "../rpc/session.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
-import { AuthAccessReadScope, AuthAccessWriteScope, AuthOrchestrationOperateScope, CommandId, ProjectId, AuthOrchestrationReadScope, AuthPreviewOperateScope, AuthSettingsWriteScope, AuthTerminalOperateScope, AuthSourceControlWriteScope, ThreadId, EnvironmentId, ScheduledTaskId, WS_METHODS, type AuthSessionState, type PeerLinkSummary } from "@t3tools/contracts";
+import {
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
+  CommandId,
+  ProjectId,
+  AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
+  AuthSettingsWriteScope,
+  AuthTerminalOperateScope,
+  AuthSourceControlWriteScope,
+  ThreadId,
+  EnvironmentId,
+  ScheduledTaskId,
+  WS_METHODS,
+  type AuthSessionState,
+  type PeerLinkSummary,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

@@ -1,24 +1,58 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { previewStreamDownloadUrl } from "@t3tools/client-runtime/preview/server-browser-stream";
-import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { AuthOrchestrationOperateScope, DEFAULT_BROWSER_PROFILE_ID, FILL_PREVIEW_VIEWPORT, type PreviewAnnotationPayload, type ScopedThreadRef, DEFAULT_PREVIEW_ZOOM_FACTOR, PREVIEW_ZOOM_LEVELS, type PreviewAdjustInput } from "@t3tools/contracts";
-import { normalizePreviewUrl, resolveAddressBarInput, previewPdfAssetUrl, resolveSearchUrlTemplate } from "@t3tools/shared/preview";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  AuthOrchestrationOperateScope,
+  DEFAULT_BROWSER_PROFILE_ID,
+  FILL_PREVIEW_VIEWPORT,
+  type PreviewAnnotationPayload,
+  type ScopedThreadRef,
+  DEFAULT_PREVIEW_ZOOM_FACTOR,
+  PREVIEW_ZOOM_LEVELS,
+  type PreviewAdjustInput,
+} from "@t3tools/contracts";
+import {
+  normalizePreviewUrl,
+  resolveAddressBarInput,
+  previewPdfAssetUrl,
+  resolveSearchUrlTemplate,
+} from "@t3tools/shared/preview";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT, recordVisitForThread, removeUrlForThread, useThreadRecentHistory } from "~/browserHistoryStore";
+import {
+  BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
+  recordVisitForThread,
+  removeUrlForThread,
+  useThreadRecentHistory,
+} from "~/browserHistoryStore";
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
 import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import { getClientSettings } from "~/hooks/useSettings";
-import { rememberPreviewUrl, updatePreviewServerSnapshot, useThreadPreviewState } from "~/previewStateStore";
+import {
+  rememberPreviewUrl,
+  updatePreviewServerSnapshot,
+  useThreadPreviewState,
+} from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
-import { useEnvironment, useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  useEnvironment,
+  useEnvironmentHttpBaseUrl,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { usePreviewStreamAccess } from "~/state/previewStream";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { browserMiniPlayerSource, selectThreadPreviewMiniPlayerTabId, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import {
+  browserMiniPlayerSource,
+  selectThreadPreviewMiniPlayerTabId,
+  usePreviewMiniPlayerStore,
+} from "~/previewMiniPlayerStore";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useRightPanelStore } from "~/rightPanelStore";
 
@@ -49,7 +83,13 @@ import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
 import { AgentBrowserCursor } from "./AgentBrowserCursor";
-import { findActiveBrowserRecordingRuntimeTabId, isBrowserRecordingStartCancelledError, startBrowserRecording, stopBrowserRecording, useActiveBrowserRecordingTabIds } from "~/browser/browserRecording";
+import {
+  findActiveBrowserRecordingRuntimeTabId,
+  isBrowserRecordingStartCancelledError,
+  startBrowserRecording,
+  stopBrowserRecording,
+  useActiveBrowserRecordingTabIds,
+} from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";

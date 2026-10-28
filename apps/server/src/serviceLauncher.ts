@@ -8,8 +8,26 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
-import type { PendingServiceUpdate, ServiceLauncherChildMessage, ServiceLauncherContext, ServiceLauncherParentMessage, ServiceState, ServiceUpdateRecord } from "./cloud/serviceProtocol.ts";
-import { compareExactServiceVersions, decodeServiceLauncherChildMessage, isExactServiceVersion, parseServiceState, SERVICE_ENV_FILE, SERVICE_LAUNCHER_CONTEXT_ENV, SERVICE_LAUNCHER_PROTOCOL, SERVICE_STATE_FILE, SERVICE_RESTART_PENDING_FILE, SERVICE_STOP_MARKER_FILE } from "./cloud/serviceProtocol.ts";
+import type {
+  PendingServiceUpdate,
+  ServiceLauncherChildMessage,
+  ServiceLauncherContext,
+  ServiceLauncherParentMessage,
+  ServiceState,
+  ServiceUpdateRecord,
+} from "./cloud/serviceProtocol.ts";
+import {
+  compareExactServiceVersions,
+  decodeServiceLauncherChildMessage,
+  isExactServiceVersion,
+  parseServiceState,
+  SERVICE_ENV_FILE,
+  SERVICE_LAUNCHER_CONTEXT_ENV,
+  SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_STATE_FILE,
+  SERVICE_RESTART_PENDING_FILE,
+  SERVICE_STOP_MARKER_FILE,
+} from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 /**

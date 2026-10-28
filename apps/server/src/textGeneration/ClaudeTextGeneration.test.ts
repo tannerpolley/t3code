@@ -12,7 +12,12 @@ import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import { processProbeSource } from "../testUtils/processProbe.ts";
-import { SYNTHETIC_CLAUDE_CAPABLE_MODEL, SYNTHETIC_CLAUDE_COLLIDING_ALIAS, SYNTHETIC_CLAUDE_MODEL_CATALOG, SYNTHETIC_CLAUDE_STANDARD_MODEL } from "../provider/ClaudeModelCatalog.testFixtures.ts";
+import {
+  SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+  SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
+  SYNTHETIC_CLAUDE_MODEL_CATALOG,
+  SYNTHETIC_CLAUDE_STANDARD_MODEL,
+} from "../provider/ClaudeModelCatalog.testFixtures.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "@t3tools/provider-core/server/textGenerationUtils";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";

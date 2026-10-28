@@ -162,6 +162,11 @@ export function backgroundWorkNowItem(input: {
     ),
     actions: (
       <>
+        <BackgroundWorkDetails
+          environmentId={input.environmentId}
+          threadId={input.threadId}
+          tasks={input.tasks}
+        />
         {startedAtMs === null ? null : (
           <span
             ref={tickTextContent(

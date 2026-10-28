@@ -603,7 +603,7 @@ it.effect.each([false, true])(
         fetchedAt: "2026-10-22T00:00:00.000Z",
       };
       const scopes = authorized ? [AuthOrchestrationReadScope] : [];
-      const methods = [WS_METHODS.serverGetSettings, WS_METHODS.issuesRepositories] as const;
+      const methods = [WS_METHODS.serverGetConfig, WS_METHODS.issuesRepositories] as const;
       const group = WsRpcGroup.omit(
         ...[...WsRpcGroup.requests.keys()].filter(
           (
@@ -623,8 +623,6 @@ it.effect.each([false, true])(
                 scopes,
               },
               {},
-              {},
-              yield* PreviewAutomationBroker.PreviewAutomationBroker,
               yield* ServerBrowser.ServerBrowser,
             ).pipe(
               Layer.provide(
@@ -642,11 +640,14 @@ it.effect.each([false, true])(
         ),
       );
       if (authorized) {
-        assert.deepEqual(yield* client[WS_METHODS.serverGetSettings]({}), expectedSettings);
+        assert.deepEqual(
+          (yield* client[WS_METHODS.serverGetConfig]({})).settings,
+          expectedSettings,
+        );
         assert.deepEqual(yield* client[WS_METHODS.issuesRepositories]({}), repositories);
       } else {
         assert.equal(
-          (yield* client[WS_METHODS.serverGetSettings]({}).pipe(Effect.flip))._tag,
+          (yield* client[WS_METHODS.serverGetConfig]({}).pipe(Effect.flip))._tag,
           "EnvironmentAuthorizationError",
         );
         assert.equal(

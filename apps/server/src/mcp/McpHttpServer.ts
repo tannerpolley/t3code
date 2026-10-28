@@ -15,7 +15,15 @@ import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { DeviceToolError, OrchestratorMcpFailure, PreviewAutomationError, ProviderInteractionMode, type RunId, RuntimeMode, ThreadId } from "@t3tools/contracts";
+import {
+  DeviceToolError,
+  OrchestratorMcpFailure,
+  PreviewAutomationError,
+  ProviderInteractionMode,
+  type RunId,
+  RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
@@ -26,7 +34,13 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
-import { type AgentThread, agentToolProperties, handoffSettings, MAX_REPORTED_DEPTH, toolOutcome } from "../telemetry/ProviderDimensions.ts";
+import {
+  type AgentThread,
+  agentToolProperties,
+  handoffSettings,
+  MAX_REPORTED_DEPTH,
+  toolOutcome,
+} from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
@@ -47,7 +61,11 @@ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import * as OrchestratorHandlers from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import * as PreviewHandlers from "./toolkits/preview/handlers.ts";
-import { PreviewSnapshotTool, PreviewSnapshotToolkit, PreviewStandardToolkit } from "./toolkits/preview/tools.ts";
+import {
+  PreviewSnapshotTool,
+  PreviewSnapshotToolkit,
+  PreviewStandardToolkit,
+} from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as ThreadWorkspaceService from "../orchestration-v2/ThreadWorkspaceService.ts";
@@ -55,7 +73,11 @@ import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
-import { DeviceScreenshotTool, DeviceScreenshotToolkit, DeviceStandardToolkit } from "./toolkits/device/tools.ts";
+import {
+  DeviceScreenshotTool,
+  DeviceScreenshotToolkit,
+  DeviceStandardToolkit,
+} from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 

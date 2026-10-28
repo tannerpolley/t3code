@@ -6,7 +6,13 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import VirtualTablePreview from "./VirtualTablePreview";
 
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "~/components/ui/select";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 
 import { FileSurfaceAction, FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";

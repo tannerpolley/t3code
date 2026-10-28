@@ -76,7 +76,7 @@ export interface UiProjectState {
   sidebarOtherProjectsExpanded: boolean;
   sidebarMode: SidebarMode;
 
-  sidebarProjectScopeKeys?: string[];
+  sidebarProjectScopeKeys: string[];
 }
 
 export interface UiThreadState {

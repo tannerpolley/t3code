@@ -8,7 +8,7 @@ import {
   type PendingSubagentRequest,
   presentThreadShell,
 } from "@t3tools/client-runtime/state/models";
-import { pendingSubagentRequestsByThread } from "@t3tools/client-runtime/state/threadShell";
+import { pendingSubagentRequestsByThread } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
 import {

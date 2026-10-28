@@ -1,11 +1,31 @@
-import type { EnvironmentId, OrchestrationV2DomainEvent, OrchestrationV2ThreadShell, OrchestrationV2TurnItem, Project, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import { RelayApi, type RelayAgentActivityPublishProofPayload, type RelayAgentActivityState } from "@t3tools/contracts/relay";
-import { ROUTED_REQUEST_ALERT_SETTLE_MS, runtimeRequestIsOwnerVisible, runtimeRequestOwnerAlertIsSettled } from "@t3tools/shared/delegatedRequestVisibility";
+import type {
+  EnvironmentId,
+  OrchestrationV2DomainEvent,
+  OrchestrationV2ThreadShell,
+  OrchestrationV2TurnItem,
+  Project,
+  RuntimeRequestId,
+  ThreadId,
+} from "@t3tools/contracts";
+import {
+  RelayApi,
+  type RelayAgentActivityPublishProofPayload,
+  type RelayAgentActivityState,
+} from "@t3tools/contracts/relay";
+import {
+  ROUTED_REQUEST_ALERT_SETTLE_MS,
+  runtimeRequestIsOwnerVisible,
+  runtimeRequestOwnerAlertIsSettled,
+} from "@t3tools/shared/delegatedRequestVisibility";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker, type DrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
-import { normalizeRelayIssuer, RELAY_ACTIVITY_PUBLISH_TYP, signRelayJwt } from "@t3tools/shared/relayJwt";
+import {
+  normalizeRelayIssuer,
+  RELAY_ACTIVITY_PUBLISH_TYP,
+  signRelayJwt,
+} from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -24,7 +44,13 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { isAgentActivityPublishingEnabledValue, PUBLISH_AGENT_ACTIVITY_SECRET, RELAY_ENVIRONMENT_CREDENTIAL_SECRET, RELAY_ISSUER_SECRET, RELAY_URL_SECRET } from "../cloud/config.ts";
+import {
+  isAgentActivityPublishingEnabledValue,
+  PUBLISH_AGENT_ACTIVITY_SECRET,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+  RELAY_ISSUER_SECRET,
+  RELAY_URL_SECRET,
+} from "../cloud/config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";

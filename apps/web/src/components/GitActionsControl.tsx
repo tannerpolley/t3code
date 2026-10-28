@@ -1,26 +1,79 @@
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope, SourceControlProviderKind, type ScopedThreadRef } from "@t3tools/contracts";
-import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { GitRunStackedActionResult, GitStackedAction, SourceControlCloneProtocol, SourceControlProviderDiscoveryItem, SourceControlPublishRepositoryResult, SourceControlRepositoryVisibility, VcsStatusResult } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  SourceControlProviderKind,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import type {
+  GitRunStackedActionResult,
+  GitStackedAction,
+  SourceControlCloneProtocol,
+  SourceControlProviderDiscoveryItem,
+  SourceControlPublishRepositoryResult,
+  SourceControlRepositoryVisibility,
+  VcsStatusResult,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { useNowSecond } from "../hooks/useNowSecond";
 import { flushSync } from "react-dom";
-import { CheckIcon, ChevronDownIcon, CloudDownloadIcon, CloudUploadIcon, FileDiffIcon, GitBranchPlusIcon, GitCommitIcon, InfoIcon, LockIcon, GlobeIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  CloudDownloadIcon,
+  CloudUploadIcon,
+  FileDiffIcon,
+  GitBranchPlusIcon,
+  GitCommitIcon,
+  InfoIcon,
+  LockIcon,
+  GlobeIcon,
+} from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
-import { buildMenuItems, formatGitActionElapsed, GIT_ACTION_SUCCESS_VISIBLE_MS, type GitActionProgressPresentation, type GitActionIconName, type GitActionMenuItem, type GitQuickAction, type DefaultBranchConfirmableAction, requiresDefaultBranchConfirmation, resolveDefaultBranchActionDialogCopy, resolveFeatureBranchUnavailableReason, resolveGitActionProgressPresentation, resolveGitActionResultToastTiming, resolveLiveThreadBranchUpdate, resolveThreadBranchMetadataPatch, resolveQuickAction, resolveThreadBranchUpdate } from "./GitActionsControl.logic";
+import {
+  buildMenuItems,
+  formatGitActionElapsed,
+  GIT_ACTION_SUCCESS_VISIBLE_MS,
+  type GitActionProgressPresentation,
+  type GitActionIconName,
+  type GitActionMenuItem,
+  type GitQuickAction,
+  type DefaultBranchConfirmableAction,
+  requiresDefaultBranchConfirmation,
+  resolveDefaultBranchActionDialogCopy,
+  resolveFeatureBranchUnavailableReason,
+  resolveGitActionProgressPresentation,
+  resolveGitActionResultToastTiming,
+  resolveLiveThreadBranchUpdate,
+  resolveThreadBranchMetadataPatch,
+  resolveQuickAction,
+  resolveThreadBranchUpdate,
+} from "./GitActionsControl.logic";
 import { WizardPopup, WizardHeader, WizardSteps, WizardPanel, WizardFooter } from "./ui/wizard";
 import { StartTruncatedPath } from "./StartTruncatedPath";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
-import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "~/components/ui/dialog";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
@@ -29,7 +82,13 @@ import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
-import { useGitStackedAction, useSourceControlActionRunning, useSourceControlPublishRepositoryAction, useVcsInitAction, useVcsPullAction } from "../state/sourceControlActions";
+import {
+  useGitStackedAction,
+  useSourceControlActionRunning,
+  useSourceControlPublishRepositoryAction,
+  useVcsInitAction,
+  useVcsPullAction,
+} from "../state/sourceControlActions";
 import { useThreadProjection, useQuietThreadShell } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
@@ -41,7 +100,13 @@ import { vcsActionManager, vcsEnvironment, vcsStatusRevalidation } from "~/state
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { THREAD_DETAILS_PANEL_CHEVRON_CLASS, THREAD_DETAILS_PANEL_ICON_CLASS, THREAD_DETAILS_PANEL_LABEL_CLASS, THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS } from "./chat/threadDetailsPanelStyles";
+import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
+} from "./chat/threadDetailsPanelStyles";
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";

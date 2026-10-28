@@ -1,4 +1,24 @@
-import { type ChatAttachment, ChatAttachmentId, CommandId, GUEST_SHARE_TTL_MS, GuestMessageId, GuestShareCreateError, type GuestShareCreateInput, type GuestShareCreateResult, GuestShareId, type GuestRedeemRequest, type GuestStreamEvent, type GuestSubmitRequest, type OrchestrationV2AppThread, type OrchestrationV2CommandOutputFrame, type OrchestrationV2DomainEvent, type OrchestrationV2GetTurnItemResult, type OrchestrationV2TurnItem, ThreadId, TurnItemId } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  ChatAttachmentId,
+  CommandId,
+  GUEST_SHARE_TTL_MS,
+  GuestMessageId,
+  GuestShareCreateError,
+  type GuestShareCreateInput,
+  type GuestShareCreateResult,
+  GuestShareId,
+  type GuestRedeemRequest,
+  type GuestStreamEvent,
+  type GuestSubmitRequest,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2CommandOutputFrame,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2GetTurnItemResult,
+  type OrchestrationV2TurnItem,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import { chatMarkdownImageSources } from "@t3tools/shared/markdownPipeline";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Context from "effect/Context";
@@ -13,9 +33,20 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { base64UrlDecodeUtf8, base64UrlEncode, signPayload, timingSafeEqualBase64Url } from "../auth/utils.ts";
+import {
+  base64UrlDecodeUtf8,
+  base64UrlEncode,
+  signPayload,
+  timingSafeEqualBase64Url,
+} from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { attachmentFileExtension, createAttachmentId, resolveAttachmentPath, resolveAttachmentPathById, threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import {
+  attachmentFileExtension,
+  createAttachmentId,
+  resolveAttachmentPath,
+  resolveAttachmentPathById,
+  threadHtmlRenderAttachmentIds,
+} from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts";
 import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
@@ -23,12 +54,22 @@ import { GUEST_FAILURE } from "../orchestration-v2/GuestShareDecider.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { coalesceThreadLiveStream } from "../orchestration-v2/ThreadLiveEventCoalescer.ts";
 import { buildBoundedThreadStreamSnapshot } from "../orchestration-v2/ThreadStream.ts";
-import { projectDomainEventForWire, projectTurnItemForDetail } from "../orchestration-v2/WireProjection.ts";
+import {
+  projectDomainEventForWire,
+  projectTurnItemForDetail,
+} from "../orchestration-v2/WireProjection.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { guestShareView, guestThreadModel } from "./guestView.ts";
-import { classifyGuestUploads, GUEST_UPLOAD_HEADER_BYTES, guestHostImageType, type GuestUpload, matchesImageSignature, repliesShowImage } from "./guestAttachments.ts";
+import {
+  classifyGuestUploads,
+  GUEST_UPLOAD_HEADER_BYTES,
+  guestHostImageType,
+  type GuestUpload,
+  matchesImageSignature,
+  repliesShowImage,
+} from "./guestAttachments.ts";
 
 const SIGNING_SECRET_NAME = "guest-share-signing-key";
 const SHARE_ID_BYTES = 16;

@@ -2,7 +2,14 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import { assertBaseProjection, assertSemanticProjectionIntegrity, assertUserMessagesInclude, projectionFor, PROVIDER_THREAD_RESUME_FIRST_PROMPT, PROVIDER_THREAD_RESUME_SECOND_PROMPT } from "../shared.ts";
+import {
+  assertBaseProjection,
+  assertSemanticProjectionIntegrity,
+  assertUserMessagesInclude,
+  projectionFor,
+  PROVIDER_THREAD_RESUME_FIRST_PROMPT,
+  PROVIDER_THREAD_RESUME_SECOND_PROMPT,
+} from "../shared.ts";
 
 const FIRST_FINAL = "provider thread resume fixture first turn complete";
 const SECOND_FINAL = "provider thread resume fixture second turn complete";

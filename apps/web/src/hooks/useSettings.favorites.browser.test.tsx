@@ -1,6 +1,15 @@
 import { RegistryContext } from "@effect/atom-react";
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProviderInstanceId, type ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
-import { AVAILABLE_CONNECTION_STATE, type SupervisorConnectionState } from "@t3tools/client-runtime/connection";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ProviderInstanceId,
+  type ServerSettings,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  type SupervisorConnectionState,
+} from "@t3tools/client-runtime/connection";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -68,7 +77,11 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
 }));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { ensureClientSettingsHydrated, startModelPreferencesMigration, useToggleEnvironmentModelFavorite } from "./useSettings";
+import {
+  ensureClientSettingsHydrated,
+  startModelPreferencesMigration,
+  useToggleEnvironmentModelFavorite,
+} from "./useSettings";
 
 const primaryId = EnvironmentId.make("primary");
 const remoteId = EnvironmentId.make("remote");

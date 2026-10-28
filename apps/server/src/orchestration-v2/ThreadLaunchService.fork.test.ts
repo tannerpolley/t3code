@@ -5,7 +5,15 @@ import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentS
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import { assert, it } from "@effect/vitest";
 
-import { ChatAttachmentId, CommandId, ComposerContextId, MessageId, ProjectId, ThreadId, type ChatAttachment } from "@t3tools/contracts";
+import {
+  ChatAttachmentId,
+  CommandId,
+  ComposerContextId,
+  MessageId,
+  ProjectId,
+  ThreadId,
+  type ChatAttachment,
+} from "@t3tools/contracts";
 
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";

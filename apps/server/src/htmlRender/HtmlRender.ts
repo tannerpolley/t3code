@@ -1,8 +1,22 @@
 import type { ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { clampHtmlRenderHeight, HTML_RENDER_COLUMN_WIDTH, HTML_RENDER_MAX_TITLE_LENGTH, HTML_RENDER_MEASURE_FONTS, HTML_RENDER_MEASURE_WIDTHS, htmlRenderTheme, htmlRenderThemeFragment, injectHtmlRenderBootstrap, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
-import { T3_CODE_DARK_THEME_COLORS, T3_CODE_LIGHT_THEME_COLORS, type ThemeAppearance } from "@t3tools/shared/themePalettes";
+import {
+  clampHtmlRenderHeight,
+  HTML_RENDER_COLUMN_WIDTH,
+  HTML_RENDER_MAX_TITLE_LENGTH,
+  HTML_RENDER_MEASURE_FONTS,
+  HTML_RENDER_MEASURE_WIDTHS,
+  htmlRenderTheme,
+  htmlRenderThemeFragment,
+  injectHtmlRenderBootstrap,
+  type HtmlRenderReference,
+} from "@t3tools/shared/htmlRender";
+import {
+  T3_CODE_DARK_THEME_COLORS,
+  T3_CODE_LIGHT_THEME_COLORS,
+  type ThemeAppearance,
+} from "@t3tools/shared/themePalettes";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

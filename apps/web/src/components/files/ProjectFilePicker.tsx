@@ -10,7 +10,10 @@ import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { CommandPaletteContent } from "../CommandPaletteContent";
 import { type CommandPaletteActionItem } from "../CommandPalette.logic";
 import { CommandPaletteResults } from "../CommandPaletteResults";
-import { getProjectFilePickerMatches, PROJECT_FILE_PICKER_RESULT_LIMIT } from "./ProjectFilePicker.logic";
+import {
+  getProjectFilePickerMatches,
+  PROJECT_FILE_PICKER_RESULT_LIMIT,
+} from "./ProjectFilePicker.logic";
 import { useProjectFilePickerQuery } from "./projectFilesQueryState";
 
 interface ProjectFilePickerProps {

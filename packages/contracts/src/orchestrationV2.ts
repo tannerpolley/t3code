@@ -8,22 +8,92 @@ import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import { CheckpointId, CheckpointRef, CheckpointScopeId, CommandId, ContextHandoffId, ContextTransferId, EventId, GuestMessageId, GuestShareId, IsoDateTime, MessageId, EnvironmentId, NodeId, ForwardCompatibleUnion, ForwardCompatibleUnionArray, hasUnknownUnionTag, isUnknownUnionMember, NonNegativeInt, PlanId, PositiveInt, ProjectId, ProviderSessionId, ProviderThreadId, ProviderTurnId, RawEventId, RunAttemptId, RunId, RuntimeRequestId, ScheduledTaskId, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
+import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
+  CommandId,
+  ContextHandoffId,
+  ContextTransferId,
+  EventId,
+  GuestMessageId,
+  GuestShareId,
+  IsoDateTime,
+  MessageId,
+  EnvironmentId,
+  NodeId,
+  ForwardCompatibleUnion,
+  ForwardCompatibleUnionArray,
+  hasUnknownUnionTag,
+  isUnknownUnionMember,
+  NonNegativeInt,
+  PlanId,
+  PositiveInt,
+  ProjectId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RawEventId,
+  RunAttemptId,
+  RunId,
+  RuntimeRequestId,
+  ScheduledTaskId,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TurnItemId,
+} from "./baseSchemas.ts";
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
-import { OrchestrationSearchThreadsInput, OrchestrationSearchThreadsResult } from "./threadSearch.ts";
-import { OrchestrationGetFullThreadDiffInput, OrchestrationGetFullThreadDiffResult, OrchestrationGetTurnDiffInput, OrchestrationGetTurnDiffResult } from "./checkpointDiff.ts";
+import {
+  OrchestrationSearchThreadsInput,
+  OrchestrationSearchThreadsResult,
+} from "./threadSearch.ts";
+import {
+  OrchestrationGetFullThreadDiffInput,
+  OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetTurnDiffInput,
+  OrchestrationGetTurnDiffResult,
+} from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { IssueWorkRequested, IssueQueueEntry, IssueWorkCancelled, RepositoryWorkRestored, RepositoryOrchestration } from "./issueWork.ts";
+import {
+  IssueWorkRequested,
+  IssueQueueEntry,
+  IssueWorkCancelled,
+  RepositoryWorkRestored,
+  RepositoryOrchestration,
+} from "./issueWork.ts";
 import { IssueGithubCommentRecorded } from "./issueComment.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import type { IssueWorkRead } from "./issue.ts";
-import { ThreadLinkedPullRequest, ThreadPullRequestLink, ThreadPullRequestKey, ThreadPullRequestLinkSource, ThreadPullRequestSnapshot, ThreadPullRequestStack, ThreadPullRequestWatch } from "./threadPullRequest.ts";
-import { ProviderApprovalDecision, ProviderApprovalFullAccessOverride, ProviderApprovalOption, ProviderInteractionMode, ProviderRequestKind, ProviderUserInputAnswers, UserInputAttachments, UserInputAttachmentAnswerPayload, RuntimeMode } from "./providerPolicy.ts";
+import {
+  ThreadLinkedPullRequest,
+  ThreadPullRequestLink,
+  ThreadPullRequestKey,
+  ThreadPullRequestLinkSource,
+  ThreadPullRequestSnapshot,
+  ThreadPullRequestStack,
+  ThreadPullRequestWatch,
+} from "./threadPullRequest.ts";
+import {
+  ProviderApprovalDecision,
+  ProviderApprovalFullAccessOverride,
+  ProviderApprovalOption,
+  ProviderInteractionMode,
+  ProviderRequestKind,
+  ProviderUserInputAnswers,
+  UserInputAttachments,
+  UserInputAttachmentAnswerPayload,
+  RuntimeMode,
+} from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
-import { TurnTokenUsage, ToolActivitySurface, ToolActivityIcon, ToolActivitySource } from "./providerRuntime.ts";
+import {
+  TurnTokenUsage,
+  ToolActivitySurface,
+  ToolActivityIcon,
+  ToolActivitySource,
+} from "./providerRuntime.ts";
 import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);

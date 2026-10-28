@@ -17,16 +17,53 @@ import { useDeadlinePassed } from "~/hooks/useDeadline";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { canSnooze, hasQueuedTurnStart, QUEUED_TURN_START_GRACE_MS } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  hasQueuedTurnStart,
+  QUEUED_TURN_START_GRACE_MS,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { AuthOrchestrationOperateScope, type EnvironmentId, type EnvironmentMachineKind, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import { AlarmClockIcon, AlarmClockOffIcon, ArrowRightLeftIcon, CheckIcon, CircleAlertIcon, CircleCheckIcon, CircleDashedIcon, CircleDotDashedIcon, ClockIcon, GitBranchIcon, MessageCircleQuestionIcon, PinIcon, PinOffIcon, ShieldQuestionIcon, SquarePenIcon, TerminalIcon, Undo2Icon, UserRoundIcon, XIcon } from "lucide-react";
-import { memo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import {
+  AlarmClockIcon,
+  AlarmClockOffIcon,
+  ArrowRightLeftIcon,
+  CheckIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleDotDashedIcon,
+  ClockIcon,
+  GitBranchIcon,
+  MessageCircleQuestionIcon,
+  PinIcon,
+  PinOffIcon,
+  ShieldQuestionIcon,
+  SquarePenIcon,
+  TerminalIcon,
+  Undo2Icon,
+  UserRoundIcon,
+  XIcon,
+} from "lucide-react";
+import {
+  memo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 
 import { useRightPanelStore } from "../../rightPanelStore";
 import { useOpenPrLink } from "../../lib/openPullRequestLink";
@@ -41,9 +78,29 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { animateSidebarLayoutChanges, hasUnseenCompletion, resolveSidebarRowAccessibility, type SidebarDropVerb, resolveSidebarThreadStatus, resolveThreadLastVisitedAt, shouldRecedeSidebarThread, useRetainedValue, useSidebarRowSubscriptionLease, setFileDragActive } from "../Sidebar.logic";
+import {
+  animateSidebarLayoutChanges,
+  hasUnseenCompletion,
+  resolveSidebarRowAccessibility,
+  type SidebarDropVerb,
+  resolveSidebarThreadStatus,
+  resolveThreadLastVisitedAt,
+  shouldRecedeSidebarThread,
+  useRetainedValue,
+  useSidebarRowSubscriptionLease,
+  setFileDragActive,
+} from "../Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
-import { ThreadPullRequestBadgeControl, ThreadPullRequestsMiniList, prStatusIndicator, resolveThreadPullRequestBadge, terminalStatusFromRunningIds, type TerminalStatusIndicator, useLinkedThreadPullRequest, ThreadSearchPullRequestNumber } from "../ThreadStatusIndicators";
+import {
+  ThreadPullRequestBadgeControl,
+  ThreadPullRequestsMiniList,
+  prStatusIndicator,
+  resolveThreadPullRequestBadge,
+  terminalStatusFromRunningIds,
+  type TerminalStatusIndicator,
+  useLinkedThreadPullRequest,
+  ThreadSearchPullRequestNumber,
+} from "../ThreadStatusIndicators";
 import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "../Sidebar.snooze";
 import { useThreadShell } from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
@@ -1393,7 +1450,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       </span>
                     ) : (
                       <span className="text-xs">
-                        {props.timeLabel}
+                        <SidebarThreadTime thread={thread} status={status} />
                       </span>
                     )}
                   </span>

@@ -1,17 +1,41 @@
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { latestInlineShellRecord } from "@t3tools/shared/inlineShell";
-import { type EnvironmentId, type TerminalAttachInput, type TerminalCloseInput, type TerminalOpenInput, type TerminalResizeInput, type TerminalSummary, type TerminalWriteInput, type ThreadId, WS_METHODS } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type TerminalAttachInput,
+  type TerminalCloseInput,
+  type TerminalOpenInput,
+  type TerminalResizeInput,
+  type TerminalSummary,
+  type TerminalWriteInput,
+  type ThreadId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
-import { type AtomCommand, createAtomCommandScheduler, createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily, createEnvironmentRpcSubscriptionAtomFamily, createEnvironmentSubscriptionAtomFamily, runAtomCommand } from "./runtime.ts";
+import {
+  type AtomCommand,
+  createAtomCommandScheduler,
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
+  runAtomCommand,
+} from "./runtime.ts";
 import { applyInlineShellOutputBatch, emptyInlineShellOutput } from "./inlineShell.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe, subscribeDynamic, type EnvironmentRpcInput } from "../rpc/client.ts";
-import { applyTerminalAttachStreamEvent, applyTerminalMetadataStreamEvent, EMPTY_TERMINAL_BUFFER_STATE, nextTerminalAttachSeedState, type TerminalBufferState } from "./terminalSession.ts";
+import {
+  applyTerminalAttachStreamEvent,
+  applyTerminalMetadataStreamEvent,
+  EMPTY_TERMINAL_BUFFER_STATE,
+  nextTerminalAttachSeedState,
+  type TerminalBufferState,
+} from "./terminalSession.ts";
 import { terminalOutputText } from "./terminalOutput.ts";
 
 export function createTerminalEnvironmentAtoms<R, E>(

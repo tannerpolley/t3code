@@ -4,7 +4,33 @@ import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 
 import { CONTEXT_CHIP_ACCENTS, contextChipColorVariable } from "./lib/contextChipAccents";
 
-import { applyThemePalette, contextChipVariables, getThemeColorsForMode, getThemeModes, getCustomThemes, getStandardThemeColors, getStoredCustomThemeCollection, invalidateCustomThemes, installCustomTheme, parseThemeFile, removeCustomTheme, replaceCustomThemeCollection, resolveDesktopTheme, resolveThemeAppearance, serializeThemeFile, T3_CHAT_THEME, GROVE_THEME, updateCustomTheme, updateThemeColorFamily, CUSTOM_THEMES_STORAGE_KEY, createVividThemeColors, getDefaultThemeColors, themeColorToHex, toCanonicalThemeColor, THEME_FILE_VERSION } from "./themePalette";
+import {
+  applyThemePalette,
+  contextChipVariables,
+  getThemeColorsForMode,
+  getThemeModes,
+  getCustomThemes,
+  getStandardThemeColors,
+  getStoredCustomThemeCollection,
+  invalidateCustomThemes,
+  installCustomTheme,
+  parseThemeFile,
+  removeCustomTheme,
+  replaceCustomThemeCollection,
+  resolveDesktopTheme,
+  resolveThemeAppearance,
+  serializeThemeFile,
+  T3_CHAT_THEME,
+  GROVE_THEME,
+  updateCustomTheme,
+  updateThemeColorFamily,
+  CUSTOM_THEMES_STORAGE_KEY,
+  createVividThemeColors,
+  getDefaultThemeColors,
+  themeColorToHex,
+  toCanonicalThemeColor,
+  THEME_FILE_VERSION,
+} from "./themePalette";
 
 function asHex(value: string): string {
   const hex = themeColorToHex(value);

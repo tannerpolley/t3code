@@ -1,4 +1,7 @@
-import { hasQuestionAnswer, getQuestionAnswerPreview } from "@t3tools/client-runtime/work-log/userInput";
+import {
+  hasQuestionAnswer,
+  getQuestionAnswerPreview,
+} from "@t3tools/client-runtime/work-log/user-input";
 import { workEntryResponderLabel } from "./MessagesTimeline.logic";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogButton, WorkLogList, WorkLogRow } from "./WorkLog";

@@ -111,4 +111,6 @@ export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
 }
 
-export function useEnvironmentIds() { return useEnvironments().environments.map(({ environmentId }) => environmentId); }
+export function useEnvironmentIds() {
+  return useAtomValue(environmentSummaries.environmentIdsAtom);
+}

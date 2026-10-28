@@ -1,9 +1,24 @@
 import { assert } from "@effect/vitest";
-import type { OrchestrationV2ThreadProjection, ProviderReplayTranscript, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ThreadProjection,
+  ProviderReplayTranscript,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import { assertBaseProjection, assertSemanticProjectionIntegrity, assertUserMessagesInclude, backgroundNotifications, projectionFor } from "../shared.ts";
-import { CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_FINAL_PROMPT, CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_LAUNCH_PROMPT, CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_RESUME_PROMPT, CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_STOP_PROMPT } from "./input.ts";
+import {
+  assertBaseProjection,
+  assertSemanticProjectionIntegrity,
+  assertUserMessagesInclude,
+  backgroundNotifications,
+  projectionFor,
+} from "../shared.ts";
+import {
+  CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_FINAL_PROMPT,
+  CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_LAUNCH_PROMPT,
+  CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_RESUME_PROMPT,
+  CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_STOP_PROMPT,
+} from "./input.ts";
 
 const AGENT_A_TASK_ID = "a1a715b7d0bdfefea";
 const AGENT_B_TASK_ID = "af44d5c14aa3ce867";

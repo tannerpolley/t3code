@@ -3,10 +3,20 @@ import { Editor, Node } from "@tiptap/core";
 import { newlineInCode } from "@tiptap/pm/commands";
 import { TextSelection } from "@tiptap/pm/state";
 
-import { indentCodeBlock, convertCodeFenceOnEnter, exitCodeBlockOnClosingFence, exitCodeBlockOnTrailingBlankLines, indentedNewlineInCodeBlock } from "./composer-code-block";
+import {
+  indentCodeBlock,
+  convertCodeFenceOnEnter,
+  exitCodeBlockOnClosingFence,
+  exitCodeBlockOnTrailingBlankLines,
+  indentedNewlineInCodeBlock,
+} from "./composer-code-block";
 import StarterKit from "@tiptap/starter-kit";
 
-import { ComposerCodeBlockExtension, ComposerListExtensions, serializeEditorDoc } from "./composer-rich-text-doc";
+import {
+  ComposerCodeBlockExtension,
+  ComposerListExtensions,
+  serializeEditorDoc,
+} from "./composer-rich-text-doc";
 
 const extensions = [
   StarterKit.configure({ codeBlock: false, trailingNode: false }),

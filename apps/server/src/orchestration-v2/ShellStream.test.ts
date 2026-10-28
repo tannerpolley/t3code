@@ -1,5 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { ApplicationStoredEvent, OrchestrationV2ShellSnapshot, OrchestrationV2ShellStreamItem, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import type {
+  ApplicationStoredEvent,
+  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellStreamItem,
+  OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -11,7 +16,18 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { activeShellRowsForSubscriber, bufferShellLiveStream, composeShellStreamWithEnrichment, dedupeShellEnrichment, omitIdleSubagentShells, omitOlderSettledShells, shellStreamItemFromEnrichmentRefresh, shellStreamItemsFromInitialSnapshot, shouldPublishShellApplicationEvent, skipUnchangedThreadShells } from "./ShellStream.ts";
+import {
+  activeShellRowsForSubscriber,
+  bufferShellLiveStream,
+  composeShellStreamWithEnrichment,
+  dedupeShellEnrichment,
+  omitIdleSubagentShells,
+  omitOlderSettledShells,
+  shellStreamItemFromEnrichmentRefresh,
+  shellStreamItemsFromInitialSnapshot,
+  shouldPublishShellApplicationEvent,
+  skipUnchangedThreadShells,
+} from "./ShellStream.ts";
 
 const emptyShellSnapshot = {
   schemaVersion: 1,

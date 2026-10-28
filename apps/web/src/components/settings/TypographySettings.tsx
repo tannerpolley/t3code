@@ -1,19 +1,47 @@
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { DEFAULT_UNIFIED_SETTINGS, MAX_CODE_FONT_SIZE, MAX_INTERFACE_FONT_SIZE, MAX_PROMPT_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_CODE_FONT_SIZE, MIN_INTERFACE_FONT_SIZE, MIN_PROMPT_FONT_SIZE, MIN_TERMINAL_FONT_SIZE } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  MAX_CODE_FONT_SIZE,
+  MAX_INTERFACE_FONT_SIZE,
+  MAX_PROMPT_FONT_SIZE,
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_CODE_FONT_SIZE,
+  MIN_INTERFACE_FONT_SIZE,
+  MIN_PROMPT_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+} from "@t3tools/contracts/settings";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { isMacPlatform } from "../../lib/utils";
 import { Input } from "../ui/input";
-import { DEFAULT_CODE_FONT_STACK, DEFAULT_SANS_FONT_STACK, isFontFamilyAvailable, isMonospaceFamily, resolveDefaultFamilyLabel, resolveTerminalFontPreference, resolveTerminalFontSizePreference, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
+import {
+  DEFAULT_CODE_FONT_STACK,
+  DEFAULT_SANS_FONT_STACK,
+  isFontFamilyAvailable,
+  isMonospaceFamily,
+  resolveDefaultFamilyLabel,
+  resolveTerminalFontPreference,
+  resolveTerminalFontSizePreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+} from "../../appearanceFonts";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { SettingResetButton, SettingsRow, SettingsSection, useSettingsSearchTargetId } from "./settingsLayout";
-import { isAdvancedTypographyTarget, revealSettingsSearchTarget, searchableSetting } from "./settingsSearch";
+import {
+  SettingResetButton,
+  SettingsRow,
+  SettingsSection,
+  useSettingsSearchTargetId,
+} from "./settingsLayout";
+import {
+  isAdvancedTypographyTarget,
+  revealSettingsSearchTarget,
+  searchableSetting,
+} from "./settingsSearch";
 
 function useFontDefaultFamilies() {
   const settings = useScopedSettings();

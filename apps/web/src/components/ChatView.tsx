@@ -10,12 +10,22 @@ import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-e
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
-import { deriveAvailableRevertTurnCounts, deriveThreadPendingBackgroundTasks, deriveWorkspaceMutationId, presentThreadShellFromProjection } from "./ChatView.logic";
+import {
+  deriveAvailableRevertTurnCounts,
+  deriveThreadPendingBackgroundTasks,
+  deriveWorkspaceMutationId,
+  presentThreadShellFromProjection,
+} from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { useComposerSelection } from "./chat/useComposerSelection";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
 import { useAttachmentPreviewHandoff } from "./chat/useAttachmentPreviewHandoff";
-import { applyOptimisticUserMessagesAction, createOptimisticBlobPreviews, emptyOptimisticUserMessages, reconcileOptimisticUserMessages } from "./chat/optimisticUserMessages";
+import {
+  applyOptimisticUserMessagesAction,
+  createOptimisticBlobPreviews,
+  emptyOptimisticUserMessages,
+  reconcileOptimisticUserMessages,
+} from "./chat/optimisticUserMessages";
 import { useTimelineRewind } from "./chat/useTimelineRewind";
 import { useThreadLifecycle } from "./chat/useThreadLifecycle";
 import { useRightPanelActions } from "./chat/useRightPanelActions";
@@ -37,7 +47,10 @@ import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
-import { latestExecutedRun, latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  latestExecutedRun,
+  latestRootProviderFailure,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
@@ -45,14 +58,57 @@ import { useWorktreeSetup } from "./chat/useWorktreeSetup";
 import { useChatShortcuts } from "./chat/useChatShortcuts";
 import { ChatBannerLane } from "./chat/ChatBannerLane";
 import * as Schema from "effect/Schema";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope, AuthPreviewOperateScope, AuthTerminalOperateScope, type AssistantCitation, type ChatFileAttachment, isProviderNativeSubagentThread, type EnvironmentId, type MessageId, type ModelSelection, type PreviewAnnotationPayload, ProviderInstanceId, type ServerProvider, type ScopedThreadRef, type ThreadId, ProviderInteractionMode, resolveIdleCompaction, RuntimeMode } from "@t3tools/contracts";
-import { deriveProviderSubagentStatus, deriveReportedModelSelection, formatModelSelectionEffort, deriveRunlessWorkStartedAt, deriveThreadActivityRun, deriveLatestThreadRun, deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
-import { resolveWorkflowOpening, workflowOpeningParentThreadId } from "@t3tools/client-runtime/state/subagentRuntime";
-import { getUserQueuedThreadRuns, threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  AuthPreviewOperateScope,
+  AuthTerminalOperateScope,
+  type AssistantCitation,
+  type ChatFileAttachment,
+  isProviderNativeSubagentThread,
+  type EnvironmentId,
+  type MessageId,
+  type ModelSelection,
+  type PreviewAnnotationPayload,
+  ProviderInstanceId,
+  type ServerProvider,
+  type ScopedThreadRef,
+  type ThreadId,
+  ProviderInteractionMode,
+  resolveIdleCompaction,
+  RuntimeMode,
+} from "@t3tools/contracts";
+import {
+  deriveProviderSubagentStatus,
+  deriveReportedModelSelection,
+  formatModelSelectionEffort,
+  deriveRunlessWorkStartedAt,
+  deriveThreadActivityRun,
+  deriveLatestThreadRun,
+  deriveThreadStructureRuntime,
+} from "@t3tools/client-runtime/state/thread-execution";
+import {
+  resolveWorkflowOpening,
+  workflowOpeningParentThreadId,
+} from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  getUserQueuedThreadRuns,
+  threadSupportsProviderHandoff,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
-import { codexFeedbackMessage, isCompleteTurnItemRow, shouldShowLoadEarlierControl, type CodexFeedbackSubmission } from "@t3tools/client-runtime/state/threads";
-import { parseScopedThreadKey, scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  codexFeedbackMessage,
+  isCompleteTurnItemRow,
+  shouldShowLoadEarlierControl,
+  type CodexFeedbackSubmission,
+} from "@t3tools/client-runtime/state/threads";
+import {
+  parseScopedThreadKey,
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -67,13 +123,26 @@ import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection
 import { useStore } from "zustand";
 import { shallow } from "zustand/vanilla/shallow";
 import { useShallow } from "zustand/react/shallow";
-import { isAtomCommandInterrupted, mapAtomCommandResult, squashAtomCommandFailure, type AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  mapAtomCommandResult,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { isElectron } from "../env";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { useActiveThreadRef } from "../hooks/useActiveThreadRef";
 import { composerRequiresModifier } from "../composer-logic";
-import { derivePhase, deriveActiveWorkStartedAt, deriveCanInterruptRunningThread, findLatestProposedPlan, findRevertCheckpoint, hasActionableProposedPlan, isLatestRunSettled } from "../session-logic";
+import {
+  derivePhase,
+  deriveActiveWorkStartedAt,
+  deriveCanInterruptRunningThread,
+  findLatestProposedPlan,
+  findRevertCheckpoint,
+  hasActionableProposedPlan,
+  isLatestRunSettled,
+} from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { DEFAULT_INTERACTION_MODE, type ChatMessage } from "../types";
@@ -85,15 +154,28 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { PopoverCreateHandle } from "./ui/popover";
-import { selectActiveRightPanel, selectActiveRightPanelSurface, selectThreadPanelOpen, selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  selectActiveRightPanel,
+  selectActiveRightPanelSurface,
+  selectThreadPanelOpen,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { isPreviewSupportedInRuntime, useThreadPreviewState } from "../previewStateStore";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
-import { ThreadPreviewMiniPlayer, useThreadPreviewCanvasSource } from "./preview/ThreadPreviewMiniPlayer";
+import {
+  ThreadPreviewMiniPlayer,
+  useThreadPreviewCanvasSource,
+} from "./preview/ThreadPreviewMiniPlayer";
 import { createChatCanvasStore, resolveChatCanvasModel } from "./chat/canvasStore";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
-import { previewMiniPlayerSourceKey, selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
+import {
+  previewMiniPlayerSourceKey,
+  selectThreadPreviewMiniPlayer,
+  usePreviewMiniPlayerStore,
+} from "../previewMiniPlayerStore";
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
@@ -110,54 +192,121 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
-import { NO_PROVIDER_MODEL_SELECTION, providerInstanceEntriesFor, shouldShowInstanceBadge } from "../providerInstances";
-import { useClientSettings, useClientSettingsHydrated, useEnvironmentSettings } from "../hooks/useSettings";
+import {
+  NO_PROVIDER_MODEL_SELECTION,
+  providerInstanceEntriesFor,
+  shouldShowInstanceBadge,
+} from "../providerInstances";
+import {
+  useClientSettings,
+  useClientSettingsHydrated,
+  useEnvironmentSettings,
+} from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { focusTerminalOnThreadEnter, getTerminalFocusOwner } from "../lib/terminalFocus";
-import { deriveLogicalProjectKeyFromSettings, selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
-import { isSameSidebarThreadRef, useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
-import { composerDraftHasUserContent, type ComposerFileAttachment, type ComposerImageAttachment, type DraftThreadEnvMode, useComposerDraftStore, DraftId } from "../composerDraftStore";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  selectProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
+import {
+  isSameSidebarThreadRef,
+  useSidebarPendingFileDropStore,
+} from "../sidebarPendingFileDropStore";
+import {
+  composerDraftHasUserContent,
+  type ComposerFileAttachment,
+  type ComposerImageAttachment,
+  type DraftThreadEnvMode,
+  useComposerDraftStore,
+  DraftId,
+} from "../composerDraftStore";
 import { type TerminalContextDraft } from "../lib/terminalContext";
 import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
-import { primaryServerAvailableEditorsAtom, primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
+import {
+  primaryServerAvailableEditorsAtom,
+  primaryServerKeybindingsAtom,
+  serverEnvironment,
+} from "../state/server";
 import { threadEnvironment, useThreadFamily } from "../state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
-import { type EnvironmentPresentation, useEnvironment, useEnvironmentProviders, useEnvironments, usePrimaryEnvironment } from "../state/environments";
-import { resolveThreadDetailRef, useEnvironmentSupportsServerBrowser, useProject, useQuietThreadProjection, useThreadUpdatedAt, useThreadLastVisitedAt, useQuietThreadVisibleTurnItems, useThreadStatus, useThreadHistory, useQuietThreadShell, useThreadCheckpointSummaries } from "../state/entities";
+import {
+  type EnvironmentPresentation,
+  useEnvironment,
+  useEnvironmentProviders,
+  useEnvironments,
+  usePrimaryEnvironment,
+} from "../state/environments";
+import {
+  resolveThreadDetailRef,
+  useEnvironmentSupportsServerBrowser,
+  useProject,
+  useQuietThreadProjection,
+  useThreadUpdatedAt,
+  useThreadLastVisitedAt,
+  useQuietThreadVisibleTurnItems,
+  useThreadStatus,
+  useThreadHistory,
+  useQuietThreadShell,
+  useThreadCheckpointSummaries,
+} from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
-import { BranchRestoreConfirmHost, DeviceSetupDialogHost, openBranchRestoreConfirm, PullRequestThreadDialogHost, RevertConfirmHost } from "./chat/ChatOverlayHosts";
+import {
+  BranchRestoreConfirmHost,
+  DeviceSetupDialogHost,
+  openBranchRestoreConfirm,
+  PullRequestThreadDialogHost,
+  RevertConfirmHost,
+} from "./chat/ChatOverlayHosts";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { forkTriggerDisplayModelName } from "./chat/ForkModelNames";
-import { overlayComposerIsResting, resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
+import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 
 import { ChatHeader } from "./chat/ChatHeader";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
-import { PanelLayoutControls, type PanelLayoutControlsProps, RightPanelMaximizeControl, ThreadPanelHeaderControl, WorkspaceTitlebarControls } from "./chat/PanelLayoutControls";
+import {
+  PanelLayoutControls,
+  type PanelLayoutControlsProps,
+  RightPanelMaximizeControl,
+  ThreadPanelHeaderControl,
+  WorkspaceTitlebarControls,
+} from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
 import { NoActiveThreadState } from "./NoActiveThreadState";
-import { resolveEffectiveEnvMode, resolveLocalCheckoutBranchMismatch, shouldShowComposerContextStrip, shouldShowEnvironmentIndicator } from "./BranchToolbar.logic";
-import { getProviderStatusBannerKey, shouldShowProviderStatusBanner } from "./chat/ProviderStatusBanner";
-import { getThreadErrorBannerKey, isThreadErrorBannerDismissedForSession, shouldShowThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import {
+  resolveEffectiveEnvMode,
+  resolveLocalCheckoutBranchMismatch,
+  shouldShowComposerContextStrip,
+  shouldShowEnvironmentIndicator,
+} from "./BranchToolbar.logic";
+import {
+  getProviderStatusBannerKey,
+  shouldShowProviderStatusBanner,
+} from "./chat/ProviderStatusBanner";
+import {
+  getThreadErrorBannerKey,
+  isThreadErrorBannerDismissedForSession,
+  shouldShowThreadErrorBanner,
+} from "./chat/ThreadErrorBanner";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
@@ -166,10 +315,35 @@ import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
-import { hasAvailableCompactionProvider, hasDismissedResumeCompaction, shouldOfferResumeCompaction } from "./chat/ContextWindowMeter.logic";
-import { deriveLatestContextWindowSnapshot, latestProviderTurnTokenUsage } from "../lib/contextWindow";
-import { MOBILE_COMPOSER_VIEW_TRANSITION_NAME, MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME } from "./chat/draftHeroTransition";
-import { buildLocalDraftThread, deriveCommittedServerUserMessageIds, dismissBranchMismatchForSession, shouldShowPlanFollowUpPrompt, shouldRenderPreviewMiniPlayer, deriveLockedProvider, resolveFileAttachmentUrl, resolveComposerInteractionMode, resolveComposerProviderSelection, resolveThreadMetadataUpdateForNextTurn, resolveSendEnvMode, startNewThreadForProject, codexArtifactTemplatePromptToAppend, shouldRefocusComposerOnWindowFocus } from "./ChatView.logic";
+import {
+  hasAvailableCompactionProvider,
+  hasDismissedResumeCompaction,
+  shouldOfferResumeCompaction,
+} from "./chat/ContextWindowMeter.logic";
+import {
+  deriveLatestContextWindowSnapshot,
+  latestProviderTurnTokenUsage,
+} from "../lib/contextWindow";
+import {
+  MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
+  MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
+} from "./chat/draftHeroTransition";
+import {
+  buildLocalDraftThread,
+  deriveCommittedServerUserMessageIds,
+  dismissBranchMismatchForSession,
+  shouldShowPlanFollowUpPrompt,
+  shouldRenderPreviewMiniPlayer,
+  deriveLockedProvider,
+  resolveFileAttachmentUrl,
+  resolveComposerInteractionMode,
+  resolveComposerProviderSelection,
+  resolveThreadMetadataUpdateForNextTurn,
+  resolveSendEnvMode,
+  startNewThreadForProject,
+  codexArtifactTemplatePromptToAppend,
+  shouldRefocusComposerOnWindowFocus,
+} from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
@@ -189,11 +363,18 @@ import { ThreadNow } from "./chat/ThreadNow";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
 import { useTimelineFollow } from "./chat/useTimelineFollow";
-import { type EnvironmentUnavailableState, useSystemComposerBanners } from "./chat/useSystemComposerBanners";
+import {
+  type EnvironmentUnavailableState,
+  useSystemComposerBanners,
+} from "./chat/useSystemComposerBanners";
 import { useDraftHeroLayoutTransition } from "./chat/useDraftHeroLayoutTransition";
 import { useLocalDispatchState } from "./chat/useLocalDispatchState";
 import { draftFanoutSelectionsAtom, draftSendState } from "./chat/chatViewSend";
-import { isCompactCommandMessage, type LocalThreadErrorEntry, makeThreadErrorSetter } from "./ChatView.logic";
+import {
+  isCompactCommandMessage,
+  type LocalThreadErrorEntry,
+  makeThreadErrorSetter,
+} from "./ChatView.logic";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
@@ -2090,7 +2271,8 @@ export default function ChatView(props: ChatViewProps) {
       ? null
       : (issueReferenceCopyTarget ??
         resolveThreadReferenceCopyTarget({
-          threadId: activeThreadId,
+          threadRef: activeThreadRef,
+          title: activeThread?.title ?? "Thread",
           openPanelPullRequestUrl,
           pullRequests: activeThread?.pullRequests,
           linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
@@ -3087,122 +3269,119 @@ export default function ChatView(props: ChatViewProps) {
               setThreadError={setThreadError}
               setThreadErrorBannerDismissTick={setThreadErrorBannerDismissTick}
             />
-            <InlineShellRunProvider
-              environmentId={environmentId}
-              threadId={activeThread.id}
-            >
-            <div
-              {...conversationArea}
-              className="relative flex min-h-0 flex-1 flex-col bg-background"
-            >
-              <ThreadTimeline
-                pendingApprovals={pendingApprovals}
-                heldApprovalRequestIds={heldApprovalRequestIds}
-                respondingRequestIds={respondingRequestIds}
-                onRespondToApproval={onRespondToApprovalStable}
-                canOperateThread={canOperateThread}
-                threadDetailRef={routeThreadDetailRef}
-                entriesInput={timelineEntriesInput}
-                draftEntries={isServerThread ? null : draftTimelineEntries}
-                activeThreadKey={activeThreadKey}
-                syncing={threadSyncPhase !== null}
-                detailLoading={threadDetailLoading}
-                citationRequest={citationRequest}
-                citationHistory={citationHistory}
-                onCiteAssistantText={citeAssistantTextStable}
-                {...(activeProject
-                  ? {
-                      onRunShellCommand: runShellCommandStable,
-                      onOpenInlineTerminal: openInlineShellTerminalStable,
-                    }
-                  : {})}
-                isWorking={isWorking}
-                runlessWorkActive={runlessWorkStartedAt !== null}
-                isCompacting={isCompacting}
-                awaitingUser={
-                  activePendingApproval !== null
-                    ? "approval"
-                    : activePendingUserInput !== null ||
-                        // A secret request has no runtime request; the shell carries it.
-                        activeThreadShell?.hasPendingUserInput === true
-                      ? "input"
-                      : null
-                }
-                awaitingRequestId={
-                  activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
-                }
-                activeTurnStartedAt={activeWorkStartedAt}
-                worktreeSetup={worktreeSetup}
-                onCancelWorktreeSetup={onCancelWorktreeSetupStable}
-                retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
-                onRetryWorkspacePreparation={onRetryWorkspacePreparationStable}
-                {...(draftId
-                  ? { onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocallyStable }
-                  : {})}
-                {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
-                isPreparingWorktree={isPreparingWorktree}
-                footer={timelineFooter}
-                listRef={legendListRef}
-                runs={serverProjection?.runs ?? []}
-                latestRun={activeActivityRun}
-                announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
-                detailBehindShell={isDetailBehindShell(
-                  activeLatestRun,
-                  activeThreadShell?.latestRun ?? null,
-                )}
-                runningRunId={activeRunningTurnId}
-                turnDiffSummaries={turnDiffSummaries}
-                activeThreadEnvironmentId={
-                  displayedThreadRef?.environmentId ?? activeThread.environmentId
-                }
-                routeThreadKey={displayedTimelineKey}
-                displayThreadKey={displayedTimelineKey}
-                announceTurnStatus={!isProviderSubagent}
-                onOpenToolDiff={onOpenToolDiffStable}
-                onOpenTurnDiff={onOpenTurnDiffStable}
-                onOpenThread={onOpenRelatedThreadStable}
-                parentThreadLink={parentThreadLink}
-                workflowOpening={workflowOpening}
-                onForkFromRun={onForkFromRunStable}
-                supportsConversationRollback={supportsConversationRollback}
-                threadStartCheckpointReady={threadStartCheckpointReady}
-                availableRevertTurnCounts={availableRevertTurnCounts}
-                onRevertToTurnCount={onRevertTimelineTurnStable}
-                onUseArtifactTemplate={insertArtifactTemplateStable}
-                onSendAppMessage={sendAppMessageStable}
-                isRevertingCheckpoint={isRevertingCheckpoint}
-                onImageExpand={onExpandTimelineImageStable}
-                onFileOpen={openFileAttachmentStable}
-                onFileDownload={downloadFileAttachmentStable}
-                markdownCwd={gitCwd ?? undefined}
-                resolvedTheme={resolvedTheme}
-                timestampFormat={timestampFormat}
-                workspaceRoot={activeWorkspaceRoot}
-                skills={timelineSkills}
-                anchorMessageId={timelineAnchorMessageId}
-                onAnchorReady={onTimelineAnchorReadyStable}
-                onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
-                contentInsetEndAdjustment={composerTimelineInset}
-                liveFollowEnabled={timelineLiveFollowEnabled}
-                onIsAtEndChange={onIsAtEndChangeStable}
-                onViewportAttach={attachTimelineViewport}
-                onFooterGrow={onTimelineFooterGrowStable}
-                hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
-                emptyPlaceholderInset={composerReservedHeight}
-                topFadeEnabled={!hasTimelineTopBanner}
-                {...(threadHistoryControls === undefined
-                  ? {}
-                  : { historyControls: threadHistoryControls })}
-              />
-
-              {showScrollToBottom && !isThreadFindActive && (
-                <ScrollToEndButton
-                  bottom={scrollToEndClearance + 4}
-                  summary={scrollToEndSummary}
-                  onScrollToEnd={() => scrollToEnd(true)}
+            <InlineShellRunProvider environmentId={environmentId} threadId={activeThread.id}>
+              <div
+                {...conversationArea}
+                className="relative flex min-h-0 flex-1 flex-col bg-background"
+              >
+                <ThreadTimeline
+                  pendingApprovals={pendingApprovals}
+                  heldApprovalRequestIds={heldApprovalRequestIds}
+                  respondingRequestIds={respondingRequestIds}
+                  onRespondToApproval={onRespondToApprovalStable}
+                  canOperateThread={canOperateThread}
+                  threadDetailRef={routeThreadDetailRef}
+                  entriesInput={timelineEntriesInput}
+                  draftEntries={isServerThread ? null : draftTimelineEntries}
+                  activeThreadKey={activeThreadKey}
+                  syncing={threadSyncPhase !== null}
+                  detailLoading={threadDetailLoading}
+                  citationRequest={citationRequest}
+                  citationHistory={citationHistory}
+                  onCiteAssistantText={citeAssistantTextStable}
+                  {...(activeProject
+                    ? {
+                        onRunShellCommand: runShellCommandStable,
+                        onOpenInlineTerminal: openInlineShellTerminalStable,
+                      }
+                    : {})}
+                  isWorking={isWorking}
+                  runlessWorkActive={runlessWorkStartedAt !== null}
+                  isCompacting={isCompacting}
+                  awaitingUser={
+                    activePendingApproval !== null
+                      ? "approval"
+                      : activePendingUserInput !== null ||
+                          // A secret request has no runtime request; the shell carries it.
+                          activeThreadShell?.hasPendingUserInput === true
+                        ? "input"
+                        : null
+                  }
+                  awaitingRequestId={
+                    activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
+                  }
+                  activeTurnStartedAt={activeWorkStartedAt}
+                  worktreeSetup={worktreeSetup}
+                  onCancelWorktreeSetup={onCancelWorktreeSetupStable}
+                  retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
+                  onRetryWorkspacePreparation={onRetryWorkspacePreparationStable}
+                  {...(draftId
+                    ? { onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocallyStable }
+                    : {})}
+                  {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
+                  isPreparingWorktree={isPreparingWorktree}
+                  footer={timelineFooter}
+                  listRef={legendListRef}
+                  runs={serverProjection?.runs ?? []}
+                  latestRun={activeActivityRun}
+                  announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
+                  detailBehindShell={isDetailBehindShell(
+                    activeLatestRun,
+                    activeThreadShell?.latestRun ?? null,
+                  )}
+                  runningRunId={activeRunningTurnId}
+                  turnDiffSummaries={turnDiffSummaries}
+                  activeThreadEnvironmentId={
+                    displayedThreadRef?.environmentId ?? activeThread.environmentId
+                  }
+                  routeThreadKey={displayedTimelineKey}
+                  displayThreadKey={displayedTimelineKey}
+                  announceTurnStatus={!isProviderSubagent}
+                  onOpenToolDiff={onOpenToolDiffStable}
+                  onOpenTurnDiff={onOpenTurnDiffStable}
+                  onOpenThread={onOpenRelatedThreadStable}
+                  parentThreadLink={parentThreadLink}
+                  workflowOpening={workflowOpening}
+                  onForkFromRun={onForkFromRunStable}
+                  supportsConversationRollback={supportsConversationRollback}
+                  threadStartCheckpointReady={threadStartCheckpointReady}
+                  availableRevertTurnCounts={availableRevertTurnCounts}
+                  onRevertToTurnCount={onRevertTimelineTurnStable}
+                  onUseArtifactTemplate={insertArtifactTemplateStable}
+                  onSendAppMessage={sendAppMessageStable}
+                  isRevertingCheckpoint={isRevertingCheckpoint}
+                  onImageExpand={onExpandTimelineImageStable}
+                  onFileOpen={openFileAttachmentStable}
+                  onFileDownload={downloadFileAttachmentStable}
+                  markdownCwd={gitCwd ?? undefined}
+                  resolvedTheme={resolvedTheme}
+                  timestampFormat={timestampFormat}
+                  workspaceRoot={activeWorkspaceRoot}
+                  skills={timelineSkills}
+                  anchorMessageId={timelineAnchorMessageId}
+                  onAnchorReady={onTimelineAnchorReadyStable}
+                  onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
+                  contentInsetEndAdjustment={composerTimelineInset}
+                  liveFollowEnabled={timelineLiveFollowEnabled}
+                  onIsAtEndChange={onIsAtEndChangeStable}
+                  onViewportAttach={attachTimelineViewport}
+                  onFooterGrow={onTimelineFooterGrowStable}
+                  hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                  emptyPlaceholderInset={composerReservedHeight}
+                  topFadeEnabled={!hasTimelineTopBanner}
+                  {...(threadHistoryControls === undefined
+                    ? {}
+                    : { historyControls: threadHistoryControls })}
                 />
-              )}
-            </div>
+
+                {showScrollToBottom && !isThreadFindActive && (
+                  <ScrollToEndButton
+                    bottom={scrollToEndClearance + 4}
+                    summary={scrollToEndSummary}
+                    onScrollToEnd={() => scrollToEnd(true)}
+                  />
+                )}
+              </div>
             </InlineShellRunProvider>
 
             <div

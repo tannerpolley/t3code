@@ -2,7 +2,19 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import { assertAssistantTextIncludes, assertBaseProjection, assertRuntimeRequestCounts, assertSemanticProjectionIntegrity, assertTurnItemTypes, assertUserMessageInputIntents, assertUserMessagesInclude, assertVisibleTurnItemsMirrorLocalTurnItems, MESSAGE_STEERING_INITIAL_PROMPT, MESSAGE_STEERING_STEER_PROMPT, projectionFor } from "../shared.ts";
+import {
+  assertAssistantTextIncludes,
+  assertBaseProjection,
+  assertRuntimeRequestCounts,
+  assertSemanticProjectionIntegrity,
+  assertTurnItemTypes,
+  assertUserMessageInputIntents,
+  assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
+  MESSAGE_STEERING_INITIAL_PROMPT,
+  MESSAGE_STEERING_STEER_PROMPT,
+  projectionFor,
+} from "../shared.ts";
 
 function frameField(frame: unknown, key: string): unknown {
   return typeof frame === "object" && frame !== null ? Reflect.get(frame, key) : undefined;

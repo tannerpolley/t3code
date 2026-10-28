@@ -3870,8 +3870,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
     const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
-    const addWorktree = (target: string, branch: string | undefined) =>
-      executeGitWithStableDiagnostics(
+    const addWorktree = Effect.fn("GitVcsDriver.addWorktree")(function* (
+      target: string,
+      branch: string | undefined,
+    ) {
+      if (branch !== undefined && !options?.detached)
+        yield* createBranchAt(
+          "GitVcsDriver.createWorktree.createBranch",
+          { cwd: input.cwd, branch, startPoint: input.refName },
+          "git worktree add failed",
+        );
+      return yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.createWorktree",
         input.cwd,
         [
@@ -3880,7 +3889,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ...(options?.detached
             ? ["worktree", "add", "--detach", "--", target, input.refName]
             : branch
-              ? ["worktree", "add", "-b", branch, "--", target, input.refName]
+              ? ["worktree", "add", "--", target, branch]
               : ["worktree", "add", "--", target, input.refName]),
         ],
         {
@@ -3901,6 +3910,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             : {}),
         },
       );
+    });
 
     let worktreePath = input.path;
     let added = false;
@@ -4001,37 +4011,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }
       }
     }
-    if (input.newRefName) {
-      // Kept apart from the checkout so the shared-config lock only covers the tracking write.
-      yield* createBranchAt(
-        "GitVcsDriver.createWorktree.createBranch",
-        { cwd: input.cwd, branch: input.newRefName, startPoint: input.refName },
-        "git worktree add failed",
-      );
-    }
-    const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];
-    yield* executeGitWithStableDiagnostics(
-      "GitVcsDriver.createWorktree",
-      input.cwd,
-      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
-      {
-        fallbackErrorDetail: "git worktree add failed",
-        timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
-                },
-              },
-            }
-          : {}),
-      },
-    );
+    if (!added) yield* addWorktree(worktreePath, newRefName);
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);
@@ -4125,7 +4105,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             // The base key names a branch on the host; this one keeps the remote it came from.
             yield* writeConfigValue({
               cwd: input.cwd,
-              key: `branch.${input.newRefName}.t3-merge-base-ref`,
+              key: `branch.${newRefName}.t3-merge-base-ref`,
               value: base.baseRef,
             });
           }

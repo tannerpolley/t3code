@@ -1,6 +1,20 @@
-import type { BackgroundActivityProfile, BackgroundActivitySettings, ProviderInstanceConfig, PreviewViewportSetting, ProviderInstanceId, ServerSettings, SidebarProjectGroupingMode, UnifiedSettings } from "@t3tools/contracts";
+import type {
+  BackgroundActivityProfile,
+  BackgroundActivitySettings,
+  ProviderInstanceConfig,
+  PreviewViewportSetting,
+  ProviderInstanceId,
+  ServerSettings,
+  SidebarProjectGroupingMode,
+  UnifiedSettings,
+} from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { getBackgroundActivityBaseProfile, normalizeBackgroundActivitySettings, normalizeServerBackgroundActivitySettings, resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import {
+  getBackgroundActivityBaseProfile,
+  normalizeBackgroundActivitySettings,
+  normalizeServerBackgroundActivitySettings,
+  resolveServerBackgroundActivitySettings,
+} from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 

@@ -1,7 +1,27 @@
 import { vi } from "vite-plus/test";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { assert, describe, it } from "@effect/vitest";
-import { CommandId, type ChatAttachment, EventId, MessageId, type ModelSelection, type OrchestrationV2Command, type OrchestrationV2ProviderCapabilities, type OrchestrationV2ProviderSession, type OrchestrationV2ProviderThread, type OrchestrationV2ProviderTurnTokenUsage, type OrchestrationV2ThreadProjection, ProjectId, ProviderInstanceId, ProviderSessionId, ProviderThreadId, ProviderTurnId, ThreadId, TurnItemId, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  CommandId,
+  type ChatAttachment,
+  EventId,
+  MessageId,
+  type ModelSelection,
+  type OrchestrationV2Command,
+  type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderSession,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurnTokenUsage,
+  type OrchestrationV2ThreadProjection,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  ThreadId,
+  TurnItemId,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -15,8 +35,16 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
-import { ClaudeAgentSdkQueryRunnerError, ClaudeAppendSystemPromptFileError, ClaudeBackgroundWorkBlocksQueryReplacementError, ClaudeProviderCapabilitiesV2 } from "../Adapters/ClaudeAdapterV2.ts";
-import { CodexProviderCapabilitiesV2, canReuseCodexContextUsage } from "../Adapters/CodexAdapterV2.ts";
+import {
+  ClaudeAgentSdkQueryRunnerError,
+  ClaudeAppendSystemPromptFileError,
+  ClaudeBackgroundWorkBlocksQueryReplacementError,
+  ClaudeProviderCapabilitiesV2,
+} from "../Adapters/ClaudeAdapterV2.ts";
+import {
+  CodexProviderCapabilitiesV2,
+  canReuseCodexContextUsage,
+} from "../Adapters/CodexAdapterV2.ts";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
@@ -28,7 +56,11 @@ import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
-import { CLAUDE_MODEL_SELECTION, CODEX_MODEL_SELECTION, GROK_MODEL_SELECTION } from "./fixtures/shared.ts";
+import {
+  CLAUDE_MODEL_SELECTION,
+  CODEX_MODEL_SELECTION,
+  GROK_MODEL_SELECTION,
+} from "./fixtures/shared.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";

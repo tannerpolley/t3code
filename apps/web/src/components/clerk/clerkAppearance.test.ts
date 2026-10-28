@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, themeColorToHex, type ThemeColors } from "../../themePalette";
+import {
+  EMBER_THEME,
+  GROVE_THEME,
+  IRIS_THEME,
+  OCEAN_THEME,
+  T3_CHAT_THEME,
+  themeColorToHex,
+  type ThemeColors,
+} from "../../themePalette";
 import { clerkAppearance } from "./clerkAppearance";
 
 function contrastRatio(first: string, second: string): number {

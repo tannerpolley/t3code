@@ -967,7 +967,10 @@ it.effect("marks fork descendants unreadable when their source is missing or cor
 
 it.effect.each([
   { name: "SQLite", layer: layerTest },
-  { name: "memory", layer: ProjectionStore.layerMemory },
+  {
+    name: "memory",
+    layer: ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+  },
 ])("finds a runless completion mailbox with $name projections", ({ layer }) =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;

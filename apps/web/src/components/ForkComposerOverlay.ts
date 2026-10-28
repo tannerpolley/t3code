@@ -25,4 +25,3 @@ export function overlayComposerIsResting(input: {
 }): boolean {
   return input.composerMounted && input.composerReportedResting;
 }
-

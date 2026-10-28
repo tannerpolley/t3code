@@ -22,7 +22,6 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     sidebarProjectSections: [],
     sidebarOtherProjectsExpanded: true,
     sidebarMode: "activity",
-    sidebarProjectScopeKey: null,
     sidebarProjectScopeKeys: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
@@ -125,6 +124,7 @@ describe("parsePersistedState", () => {
     });
 
     expect(parsed).toEqual({
+      sidebarProjectScopeKeys: [],
       projectExpandedById: {
         logical: false,
       },
@@ -136,7 +136,6 @@ describe("parsePersistedState", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
-      sidebarProjectScopeKeys: [],
       pullRequestMergeMethod: "merge",
       lineageDetailsExpandedById: {},
       lineageAgentsClearedAtById: {},
@@ -237,6 +236,7 @@ describe("uiStateStore persistence", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(persisted).toEqual({
+      sidebarProjectScopeKey: null,
       projectExpandedById: {},
       projectOrder: [],
       sidebarProjectSections: [],
@@ -251,7 +251,6 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
-      sidebarProjectScopeKey: null,
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {

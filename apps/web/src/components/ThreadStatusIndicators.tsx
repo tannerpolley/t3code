@@ -1,17 +1,35 @@
 import { pipe } from "effect/Function";
-import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
-import { resolveEnvironmentMachineKind, type EnvironmentId, type ScopedThreadRef, type ThreadLinkedPullRequest, type ThreadPullRequestLink, type VcsStatusResult } from "@t3tools/contracts";
+import {
+  resolveEnvironmentMachineKind,
+  type EnvironmentId,
+  type ScopedThreadRef,
+  type ThreadLinkedPullRequest,
+  type ThreadPullRequestLink,
+  type VcsStatusResult,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { FolderGitIcon, TerminalIcon } from "lucide-react";
 import { FolderGit2Icon } from "lucide-react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
-import { pullRequestListLines, resolveThreadCurrentPullRequestLink, resolveThreadPullRequestBadge, resolveThreadPullRequestChains, type ThreadPullRequestBadge, visibleThreadPullRequests } from "@t3tools/client-runtime/thread-pull-requests";
+import {
+  pullRequestListLines,
+  resolveThreadCurrentPullRequestLink,
+  resolveThreadPullRequestBadge,
+  resolveThreadPullRequestChains,
+  type ThreadPullRequestBadge,
+  visibleThreadPullRequests,
+} from "@t3tools/client-runtime/thread-pull-requests";
 import { useRender } from "@base-ui/react/use-render";
 import { type ReactNode, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
 import { cn } from "../lib/utils";
@@ -23,12 +41,23 @@ import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { pullRequestMatchesSearchQuery, resolveThreadLastVisitedAt, resolveThreadStatusPill, type ThreadStatusPill, useRetainedValue, useSidebarRowSubscriptionLease } from "./Sidebar.logic";
+import {
+  pullRequestMatchesSearchQuery,
+  resolveThreadLastVisitedAt,
+  resolveThreadStatusPill,
+  type ThreadStatusPill,
+  useRetainedValue,
+  useSidebarRowSubscriptionLease,
+} from "./Sidebar.logic";
 
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { PULL_REQUEST_STATE_PRESENTATION, PullRequestGlyph, type PullRequestGlyphIcon } from "./pullRequest/pullRequestIcons";
+import {
+  PULL_REQUEST_STATE_PRESENTATION,
+  PullRequestGlyph,
+  type PullRequestGlyphIcon,
+} from "./pullRequest/pullRequestIcons";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 
 export interface PrStatusIndicator {

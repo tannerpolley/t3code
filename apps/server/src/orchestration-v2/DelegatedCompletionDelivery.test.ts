@@ -1,3 +1,5 @@
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as Context from "effect/Context";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -111,6 +113,7 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
 const layerTest = Layer.mergeAll(
   RuntimeLayer.layer,
   RuntimeLayer.layerEventSink,
+  ProjectionStore.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provideMerge(RuntimeLayer.layerProjectService),
@@ -1287,6 +1290,103 @@ const seedRestartCancelledChild = (input: {
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
+    it.effect("serializes sibling background follow-up cards on their parent", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:sibling-followups");
+        const projectId = ProjectId.make("project:sibling-followups");
+        const parentRunId = RunId.make("run:sibling-followups");
+        const rootNodeId = NodeId.make("node:sibling-followups");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:sibling-followups-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const children = yield* Effect.forEach(["a", "b"], (name) =>
+          seedRestartCancelledChild({
+            parentThreadId,
+            projectId,
+            parentRunId,
+            rootNodeId,
+            name: `sibling-followups-${name}`,
+            completionWake: "always",
+            continuationPending: false,
+            runStatus: "completed",
+            now,
+          }),
+        );
+        yield* orchestrator.recoverDelegatedTasks;
+        const dispatch = (child: (typeof children)[number], index: number) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: index === 0 ? "provider" : "server",
+            senderThreadId: parentThreadId,
+            commandId: CommandId.make(`command:sibling-followups:${index}`),
+            threadId: child.childThreadId,
+            messageId: MessageId.make(`message:sibling-followups:${index}`),
+            text: "Background command completed",
+            ...(index === 0
+              ? {
+                  notification: {
+                    source: { kind: "command" as const },
+                    outcome: "completed" as const,
+                    summary: "Background command completed",
+                  },
+                }
+              : {}),
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        class HeldLocks extends Context.Reference<ReadonlyArray<ThreadId>>("test/FollowupLocks", {
+          defaultValue: () => [],
+        }) {}
+        const nextOrdinal = projections.getNextTurnItemOrdinal;
+        const withLock = executor.withLock;
+        const ordinalSpy = vi
+          .spyOn(projections, "getNextTurnItemOrdinal")
+          .mockImplementation((threadId) =>
+            Effect.gen(function* () {
+              if (threadId === parentThreadId)
+                assert.include(
+                  yield* HeldLocks,
+                  parentThreadId,
+                  "parent lock during card allocation",
+                );
+              return yield* nextOrdinal(threadId);
+            }),
+          );
+        const lockSpy = vi
+          .spyOn(executor, "withLock")
+          .mockImplementation(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) =>
+            Effect.flatMap(HeldLocks, (held) =>
+              withLock(key, effect.pipe(Effect.provideService(HeldLocks, [...held, key]))),
+            ),
+          );
+        yield* Effect.forEach(children, dispatch, { concurrency: "unbounded" }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              ordinalSpy.mockRestore();
+              lockSpy.mockRestore();
+            }),
+          ),
+        );
+        const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+        const cards = parent.turnItems.filter(
+          (item) => item.type === "subagent" && item.prompt === "Background command completed",
+        );
+        assert.lengthOf(cards, 2);
+        assert.equal(new Set(cards.map((item) => item.ordinal)).size, 2);
+      }),
+    );
+
     it.effect("keeps a checkpoint completion committed between finalize's read and write", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2155,6 +2255,149 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
 );
 
 it.layer(layerTest)("delegated tasks across a server restart", (it) => {
+  it.effect("recovers orphaned follow-up nodes only after their child work ends", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      for (const state of [
+        "idle",
+        "archived",
+        "deleted",
+        "running",
+        "queued",
+        "older-result",
+        "archived-active",
+        "deleted-active",
+      ] as const) {
+        const parentThreadId = ThreadId.make(`thread:orphan-parent-${state}`);
+        const projectId = ProjectId.make(`project:orphan-${state}`);
+        const parentRunId = RunId.make(`run:orphan-parent-${state}`);
+        const rootNodeId = NodeId.make(`node:orphan-parent-${state}`);
+        const earlier = DateTime.subtract(now, { minutes: 10 });
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make(`node:orphan-seed-${state}`),
+          deliveryState: "acknowledged",
+          now: earlier,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: `orphan-child-${state}`,
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now: earlier,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+        const original = parent.subagents.find((task) => task.id === child.taskId)!;
+        assert.equal(original.status, "completed");
+        const stuckId = NodeId.make(`node:orphan-followup-${state}`);
+        const startedAt = DateTime.subtract(now, { minutes: 5 });
+        const closed = state.startsWith("archived") || state.startsWith("deleted");
+        const active = state === "running" || state.endsWith("-active");
+        const result = runEvent({
+          threadId: child.childThreadId,
+          runId: RunId.make(`run:orphan-followup-${state}`),
+          ordinal: 2,
+          status: active ? "running" : state === "queued" ? "queued" : "completed",
+          now: state === "older-result" ? earlier : now,
+        });
+        const childThread = (yield* orchestrator.getThreadProjection(child.childThreadId)).thread;
+        yield* sink.write({
+          commandId: reconcileCommandId(`orphan-${state}`),
+          events: [
+            {
+              ...result,
+              payload: {
+                ...result.payload,
+                ...(state === "deleted-active" ? { delegatedTaskId: stuckId } : {}),
+                requestedAt: DateTime.subtract(startedAt, { minutes: 1 }),
+                startedAt: state === "queued" ? null : DateTime.subtract(startedAt, { minutes: 1 }),
+                completedAt: active || state === "queued" ? null : result.payload.completedAt,
+              },
+            },
+            {
+              id: EventId.make(`event:orphan-task-${state}`),
+              type: "subagent.updated",
+              threadId: parentThreadId,
+              occurredAt: startedAt,
+              payload: {
+                ...original,
+                id: stuckId,
+                status: "running",
+                result: null,
+                startedAt,
+                completedAt: null,
+                completionDelivery: { state: "pending", observedByRunId: null },
+              },
+            },
+            ...(closed
+              ? [
+                  {
+                    id: EventId.make(`event:orphan-child-${state}`),
+                    type: "thread.metadata-updated" as const,
+                    threadId: child.childThreadId,
+                    occurredAt: now,
+                    payload: {
+                      ...childThread,
+                      ...(state.startsWith("archived") ? { archivedAt: now } : { deletedAt: now }),
+                    },
+                  },
+                ]
+              : []),
+          ],
+        });
+        if (state.startsWith("deleted")) {
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          assert.notInclude(
+            yield* projections.getRecoveryThreadIds("subagent-results"),
+            child.childThreadId,
+          );
+          assert.include(
+            yield* projections.getRecoveryThreadIds("delegated-completions"),
+            parentThreadId,
+          );
+        }
+        yield* orchestrator.recoverDelegatedTasks;
+        const recovered = yield* orchestrator.getThreadProjection(parentThreadId);
+        const task = recovered.subagents.find((row) => row.id === stuckId)!;
+        const finished = state === "idle" || closed;
+        assert.equal(
+          task.status,
+          finished ? (active ? "interrupted" : "completed") : "running",
+          state,
+        );
+        assert.equal(task.completionDelivery?.state, finished ? "claimed" : "pending", state);
+        assert.equal(
+          yield* orchestrator.delegatedTaskResultPending(child.childThreadId, stuckId),
+          !finished,
+          state,
+        );
+        assert.deepEqual(
+          recovered.subagents.find((row) => row.id === child.taskId),
+          original,
+        );
+        assert.equal(
+          recovered.contextTransfers.length,
+          parent.contextTransfers.length + (finished ? 1 : 0),
+        );
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(parentThreadId)).subagents,
+          recovered.subagents,
+        );
+      }
+    }),
+  );
+
   it.effect("queues a child result without creating a provider history handoff", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

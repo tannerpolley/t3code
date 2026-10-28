@@ -1,9 +1,6 @@
 import { useComposerIssues } from "../issues/useComposerIssues";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
-import {
-  matchComposerEnvironmentItems,
-  matchComposerThreadItems,
-} from "@t3tools/client-runtime/composerThreadItems";
+import { matchComposerEnvironmentItems } from "@t3tools/client-runtime/composerThreadItems";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
 import type {
