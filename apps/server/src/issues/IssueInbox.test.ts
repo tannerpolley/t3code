@@ -22,6 +22,8 @@ import { classifyWrite, parseSourceMarker, sourceMarker } from "./IssueInboxRule
 import { isoSeconds } from "./IssueInboxWatcher.ts";
 import * as IssueWorkService from "./IssueWorkService.ts";
 import * as IssueService from "./IssueService.ts";
+import * as GitHubApi from "./IssueGitHubApi.ts";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 
 const root = ThreadId.make("root-b");
 const repo = { host: "github.com", repository: "acme/b" };
@@ -96,59 +98,105 @@ function fakeGitHub(pageSize = 2) {
   };
   const newest = (key: string) => (left: Item, right: Item) =>
     String(right[key]).localeCompare(String(left[key]));
-  const service = Layer.mock(IssueService.IssueService)({
-    repositoryIdentity: (input) =>
-      Effect.suspend(() => {
-        identityReads.push(input);
-        return identityError === null
-          ? Effect.succeed({ ...input, repositoryId: input.repository })
-          : Effect.fail(identityError);
-      }),
-    repositoryRest: (input) =>
-      Effect.sync(() => {
-        requests.push(input);
-        if (input.method === "POST")
-          return {
-            status: 201,
-            body: JSON.stringify(
-              input.path === "issues"
-                ? { id: 900, number: 77, html_url: "https://github.com/acme/a/issues/77" }
-                : {
-                    id: 901,
-                    html_url: "https://github.com/acme/b/issues/3#issuecomment-901",
-                    body: (input.body as { body?: string }).body,
-                    updated_at: at(5),
-                  },
-            ),
-            etag: null,
-            nextPage: null,
-          };
-        const [route, query = ""] = input.path.split("?");
-        const params = new URLSearchParams(query);
-        const since = params.get("since") ?? "";
-        const list =
-          route === "labels"
-            ? [{ name: "external" }]
-            : route === "milestones"
-              ? data.milestones
-              : route === "issues"
-                ? data.issues
-                    .filter((entry) => params.get("state") !== "open" || entry.state === "open")
+  const rest = (input: Request) =>
+    Effect.sync(() => {
+      requests.push(input);
+      if (input.method === "POST")
+        return {
+          status: 201,
+          body: JSON.stringify(
+            input.path === "issues"
+              ? { id: 900, number: 77, html_url: "https://github.com/acme/a/issues/77" }
+              : {
+                  id: 901,
+                  html_url: "https://github.com/acme/b/issues/3#issuecomment-901",
+                  body: (input.body as { body?: string }).body,
+                  updated_at: at(5),
+                },
+          ),
+          etag: null,
+          nextPage: null,
+        };
+      const [route, query = ""] = input.path.split("?");
+      const params = new URLSearchParams(query);
+      const since = params.get("since") ?? "";
+      const list =
+        route === "labels"
+          ? [{ name: "external" }]
+          : route === "milestones"
+            ? data.milestones
+            : route === "issues"
+              ? data.issues
+                  .filter((entry) => params.get("state") !== "open" || entry.state === "open")
+                  .filter((entry) => String(entry.updated_at) > since)
+                  .toSorted(newest("updated_at"))
+              : route === "issues/comments"
+                ? data.comments
                     .filter((entry) => String(entry.updated_at) > since)
                     .toSorted(newest("updated_at"))
-                : route === "issues/comments"
-                  ? data.comments
-                      .filter((entry) => String(entry.updated_at) > since)
-                      .toSorted(newest("updated_at"))
-                  : data.events.toSorted((left, right) => Number(right.id) - Number(left.id));
-        const page = Number(params.get("page") ?? "1");
-        const body = JSON.stringify(list.slice((page - 1) * pageSize, page * pageSize));
-        const etag = `"${input.path}:${body}"`;
-        return input.ifNoneMatch === etag
-          ? { status: 304, body: "", etag, nextPage: null }
-          : { status: 200, body, etag, nextPage: page * pageSize < list.length ? page + 1 : null };
-      }),
-  });
+                : data.events.toSorted((left, right) => Number(right.id) - Number(left.id));
+      const page = Number(params.get("page") ?? "1");
+      const body = JSON.stringify(list.slice((page - 1) * pageSize, page * pageSize));
+      const etag = `"${input.path}:${body}"`;
+      return input.ifNoneMatch === etag
+        ? { status: 304, body: "", etag, nextPage: null }
+        : { status: 200, body, etag, nextPage: page * pageSize < list.length ? page + 1 : null };
+    });
+  const service = Layer.effect(
+    IssueService.IssueService,
+    Effect.gen(function* () {
+      const service = yield* IssueService.make();
+      return IssueService.IssueService.of({
+        ...service,
+        repositoryIdentity: (input) =>
+          Effect.suspend(() => {
+            identityReads.push(input);
+            return identityError === null
+              ? Effect.succeed({ ...input, repositoryId: input.repository })
+              : Effect.fail(identityError);
+          }),
+      });
+    }),
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(GitHubApi.GitHubApi)({
+          rest: (input) =>
+            Effect.gen(function* () {
+              const parts = input.path.split("/");
+              const response = yield* rest({
+                host: input.host,
+                repository: parts.slice(1, 3).join("/"),
+                path: parts.slice(3).join("/"),
+                ...(input.method === undefined
+                  ? {}
+                  : { method: input.method as "POST" | "DELETE" }),
+                ...(input.body === undefined ? {} : { body: input.body }),
+                ...(input.ifNoneMatch === undefined ? {} : { ifNoneMatch: input.ifNoneMatch }),
+              });
+              return {
+                ...response,
+                truncated: false,
+                invalidUtf8: false,
+                headers: {
+                  ...(response.etag === null ? {} : { etag: response.etag }),
+                  ...(response.nextPage === null
+                    ? {}
+                    : {
+                        link: `<https://api.github.com/repos/${parts.slice(1, 3).join("/")}/issues?page=${response.nextPage}>; rel="next"`,
+                      }),
+                },
+              };
+            }),
+        }),
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          withVerifiedCredential: (_input, use) =>
+            use({ accountId: "test", viewer: "owner", credentialFingerprint: "test" }),
+        }),
+      ),
+    ),
+  );
+
   return {
     requests,
     identityReads,

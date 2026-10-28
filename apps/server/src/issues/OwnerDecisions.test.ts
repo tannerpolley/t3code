@@ -7,7 +7,6 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import { assert, it } from "@effect/vitest";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import {
-  IssueReadError,
   ProjectId,
   ThreadId,
   type OwnerDecisionRequest,
@@ -33,6 +32,9 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as IssueService from "./IssueService.ts";
+import * as GitHubRequestPolicy from "@t3tools/source-control-github/server/GitHubRequestPolicy";
+import * as GitHubApi from "./IssueGitHubApi.ts";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as IssueInbox from "./IssueInbox.ts";
 import * as IssueWorkStore from "./IssueWorkStore.ts";
 import * as IssueWorkService from "./IssueWorkService.ts";
@@ -146,47 +148,74 @@ const setup = (
             },
           } as never),
       }),
-      Layer.mock(IssueService.IssueService)({
-        repositoryRest: (input) =>
-          Effect.gen(function* () {
-            let body: unknown = [];
-            let nextPage: number | null = null;
-            if (input.path.endsWith("/comments") && input.method === "POST") {
-              const id = comments.length + 1;
-              const url = `https://github.com/acme/repo/issues/46#issuecomment-${id}`;
-              const comment = { id, body: (input.body as { body: string }).body, html_url: url };
-              comments.push(comment);
-              if (loseCommentResponse) {
-                loseCommentResponse = false;
-                return yield* new IssueReadError({
-                  code: "upstream",
-                  operation: "detail",
-                  message: "Lost comment response",
-                });
-              }
-              body = comment;
-            } else if (input.path.includes("/comments?")) {
-              pages++;
-              const page = Number(new URLSearchParams(input.path.split("?")[1]).get("page"));
-              body = comments.slice((page - 1) * pageSize, page * pageSize);
-              nextPage = page * pageSize < comments.length ? page + 1 : null;
-            } else if (input.path === "labels?per_page=100") body = [{ name: "decision-needed" }];
-            else if (input.path.includes("/labels")) {
-              if (failLabels)
-                return yield* new IssueReadError({
-                  code: "upstream",
-                  operation: "detail",
-                  message: "Label failure",
-                });
-              if (input.method === "DELETE") {
-                yield* github.beforeLabelDelete;
-                labels.delete("decision-needed");
-              } else if (input.method === "POST") labels.add("decision-needed");
-              body = [...labels].map((name) => ({ name }));
-            }
-            return { status: 200, body: JSON.stringify(body), nextPage, etag: null };
-          }),
-      }),
+      IssueService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+              withVerifiedCredential: (_input, use) =>
+                use({ accountId: "test", viewer: "owner", credentialFingerprint: "test" }),
+            }),
+            Layer.mock(GitHubApi.GitHubApi)({
+              rest: (request) =>
+                Effect.gen(function* () {
+                  const input = { ...request, path: request.path.split("/").slice(3).join("/") };
+                  let body: unknown = [];
+                  let nextPage: number | null = null;
+                  if (input.path.endsWith("/comments") && input.method === "POST") {
+                    const id = comments.length + 1;
+                    const url = `https://github.com/acme/repo/issues/46#issuecomment-${id}`;
+                    const comment = {
+                      id,
+                      body: (input.body as { body: string }).body,
+                      html_url: url,
+                    };
+                    comments.push(comment);
+                    if (loseCommentResponse) {
+                      loseCommentResponse = false;
+                      return yield* new GitHubRequestPolicy.GitHubApiResponseError({
+                        host: request.host,
+                        operation: request.operation,
+                        status: 500,
+                      });
+                    }
+                    body = comment;
+                  } else if (input.path.includes("/comments?")) {
+                    pages++;
+                    const page = Number(new URLSearchParams(input.path.split("?")[1]).get("page"));
+                    body = comments.slice((page - 1) * pageSize, page * pageSize);
+                    nextPage = page * pageSize < comments.length ? page + 1 : null;
+                  } else if (input.path === "labels?per_page=100")
+                    body = [{ name: "decision-needed" }];
+                  else if (input.path.includes("/labels")) {
+                    if (failLabels)
+                      return yield* new GitHubRequestPolicy.GitHubApiResponseError({
+                        host: request.host,
+                        operation: request.operation,
+                        status: 500,
+                      });
+                    if (input.method === "DELETE") {
+                      yield* github.beforeLabelDelete;
+                      labels.delete("decision-needed");
+                    } else if (input.method === "POST") labels.add("decision-needed");
+                    body = [...labels].map((name) => ({ name }));
+                  }
+                  return {
+                    status: 200,
+                    body: JSON.stringify(body),
+                    truncated: false,
+                    invalidUtf8: false,
+                    headers:
+                      nextPage === null
+                        ? {}
+                        : {
+                            link: `<https://api.github.com/repos/acme/repo/issues/46/comments?page=${nextPage}>; rel="next"`,
+                          },
+                  };
+                }),
+            }),
+          ),
+        ),
+      ),
     );
     const external = Layer.merge(dependencies, IssueInbox.layer.pipe(Layer.provide(dependencies)));
     const start = Effect.gen(function* () {

@@ -218,7 +218,19 @@ it.effect(
       let credential = "reader";
       const harness = makeHarness({
         credentialFingerprint: () => credential,
-        responses: [status(), status(), status(), status(), httpResponse({}), status("CLOSED")],
+        responses: [
+          status(),
+          status(),
+          status(),
+          status(),
+          httpResponse({}),
+          status("CLOSED"),
+          httpResponse({
+            id: 99,
+            html_url: `https://${HOST}/${REPOSITORY}/issues/7#issuecomment-99`,
+          }),
+          status(),
+        ],
       });
       const issues = yield* service(harness);
       let working = false;
@@ -286,6 +298,9 @@ it.effect(
       credential = "reader";
       assert.equal((yield* issues.statusBatch(input))[0]?.state, "closed");
       assert.equal(harness.calls.length, 6);
+      yield* issues.postComment({ ...listInput, number: 7 }, "Update");
+      assert.equal((yield* issues.statusBatch(input))[0]?.state, "open");
+      assert.equal(harness.calls.length, 8, "inbox writes must invalidate live status reads");
     }),
 );
 
@@ -2546,5 +2561,39 @@ it.effect("fetches closed issues in all-state roadmap reads and retains actual c
     assert.equal(result.issues[0]?.state, "closed");
     assert.equal(result.issues[0]?.closedAt, closedAt);
     assert.include(harness.calls[0]!.url, "state=all");
+  }),
+);
+
+it.effect("inbox labels preserve existing labels and tolerate a failed create", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse([{ name: "External" }]),
+        httpResponse({ message: "already exists" }, {}, 422),
+        httpResponse({}),
+        httpResponse([{ name: "other" }]),
+        httpResponse([{ name: "decision-needed" }, { name: "other" }]),
+        { body: null, status: 204 },
+      ],
+    });
+    const issues = yield* service(harness);
+    yield* issues.ensureLabels(listInput, [
+      { name: "external", color: "1d76db" },
+      { name: "raced", color: "ededed" },
+      { name: "high-priority", color: "b60205" },
+    ]);
+    const ref = { ...listInput, number: 7 };
+    yield* issues.setLabels(ref, [], ["decision-needed"]);
+    assert.equal(harness.calls.length, 4, "an absent label must not be deleted");
+    yield* issues.setLabels(ref, [], ["decision-needed"]);
+    assert.deepEqual(
+      harness.calls.filter((call) => call.method === "POST").map((call) => JSON.parse(call.body!)),
+      [
+        { name: "raced", color: "ededed" },
+        { name: "high-priority", color: "b60205" },
+      ],
+    );
+    assert.equal(harness.calls[5]?.method, "DELETE");
+    assert.isTrue(harness.calls[5]!.url.endsWith("/issues/7/labels/decision-needed"));
   }),
 );

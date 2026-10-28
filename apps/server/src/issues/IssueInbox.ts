@@ -60,12 +60,6 @@ const REGISTERED_POLL_INTERVAL_MS = 5 * 60_000;
 const DISCOVERY_POLL_INTERVAL_MS = 15 * 60_000;
 const DISCOVERY_RETRY_SPACING_MS = 5_000;
 const sameRepositoryIdentity = Schema.toEquivalence(RepositoryIdentity);
-const RawCreated = Schema.Struct({
-  id: Schema.Number,
-  number: Schema.optional(Schema.Number),
-  html_url: Schema.String,
-});
-const decodeCreated = Schema.decodeUnknownEffect(Schema.fromJsonString(RawCreated));
 
 interface EventRow {
   readonly event_id: number;
@@ -536,27 +530,13 @@ export const make = Effect.gen(function* () {
           })}`
         : input.body;
       if (labels.length > 0) yield* watcher.ensureLabels(target, labels);
-      const response =
+      const created =
         input.issueNumber === undefined
-          ? yield* watcher.rest(target, "issues", {
-              body: { title: input.title, body, ...(labels.length > 0 ? { labels } : {}) },
-            })
-          : yield* watcher.rest(target, `issues/${input.issueNumber}/comments`, {
-              body: { body },
-            });
+          ? yield* issues.postIssue(target, { title: input.title!, body, labels })
+          : yield* issues.postComment({ ...target, number: input.issueNumber }, body);
       // A cross-project comment marks the issue it lands on as external too.
       if (input.issueNumber !== undefined && labels.length > 0)
-        yield* watcher.rest(target, `issues/${input.issueNumber}/labels`, { body: { labels } });
-      const created = yield* decodeCreated(response.body).pipe(
-        Effect.mapError(
-          () =>
-            new IssueReadError({
-              code: "invalid-response",
-              operation: "detail",
-              message: "GitHub returned an invalid created issue or comment.",
-            }),
-        ),
-      );
+        yield* issues.setLabels({ ...target, number: input.issueNumber }, labels, []);
       const issueNumber = input.issueNumber ?? created.number ?? 0;
       return {
         url: created.html_url,

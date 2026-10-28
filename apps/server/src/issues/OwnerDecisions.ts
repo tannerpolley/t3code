@@ -30,7 +30,6 @@ import * as IssueInbox from "./IssueInbox.ts";
 import * as IssueWorkStore from "./IssueWorkStore.ts";
 import { commentIdentity, decisionComment, parseDecisionComment } from "./OwnerDecisionComments.ts";
 import * as IssueService from "./IssueService.ts";
-import * as Watcher from "./IssueInboxWatcher.ts";
 
 // Only the authenticated client transport supplies this actor; MCP never exposes choose.
 type Actor = {
@@ -103,20 +102,6 @@ const encodeRequest = Schema.encodeEffect(Schema.fromJsonString(OwnerDecisionReq
 const decodeRequest = Schema.decodeUnknownEffect(OwnerDecisionRequest);
 const decodeChoose = Schema.decodeUnknownEffect(OwnerDecisionChooseInput);
 const decodeWithdraw = Schema.decodeUnknownEffect(OwnerDecisionWithdrawInput);
-const decodeComments = Schema.decodeEffect(
-  Schema.fromJsonString(
-    Schema.Array(
-      Schema.Struct({
-        id: Schema.Number,
-        body: Schema.NullOr(Schema.String),
-        html_url: Schema.String,
-      }),
-    ),
-  ),
-);
-const decodeLabels = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Array(Schema.Struct({ name: Schema.String }))),
-);
 const isDecisionError = Schema.is(OwnerDecisionError);
 const storageError = (cause: unknown) =>
   isDecisionError(cause)
@@ -134,7 +119,6 @@ const make = Effect.gen(function* () {
   const work = yield* IssueWorkStore.IssueWorkStore;
   const issues = yield* IssueService.IssueService;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const github = yield* Watcher.make;
   const lock = yield* Semaphore.make(1);
   const updates = yield* PubSub.sliding<number>(1);
   let revision = 0;
@@ -375,33 +359,23 @@ const make = Effect.gen(function* () {
     function* (decision: OwnerDecision, body: string) {
       const expected = parseDecisionComment(body)!;
       const identity = commentIdentity(decision.pendingPublish!, decision.id);
-      let page: number | null = 1;
-      do {
-        const response: Effect.Success<
-          ReturnType<IssueService.IssueService["Service"]["repositoryRest"]>
-        > = yield* github.rest(
-          decision,
-          `issues/${decision.number}/comments?per_page=100&page=${page}`,
-        );
-        const comments = yield* decodeComments(response.body);
-        for (const comment of comments) {
-          if (!comment.body?.includes(identity)) continue;
-          const actual = parseDecisionComment(comment.body);
-          if (
-            actual === null ||
-            actual.digest !== expected.digest ||
-            actual.kind !== expected.kind ||
-            actual.id !== expected.id ||
-            actual.optionId !== expected.optionId
-          )
-            return yield* new OwnerDecisionError({
-              code: "publication-mismatch",
-              message: `Decision publication stopped: comment ${comment.html_url} does not match the expected ${decision.pendingPublish} content and digest.`,
-            });
-          return { id: String(comment.id), url: comment.html_url };
-        }
-        page = response.nextPage;
-      } while (page !== null);
+      const { comments } = yield* issues.listComments(decision);
+      for (const comment of comments) {
+        if (!comment.body?.includes(identity)) continue;
+        const actual = parseDecisionComment(comment.body);
+        if (
+          actual === null ||
+          actual.digest !== expected.digest ||
+          actual.kind !== expected.kind ||
+          actual.id !== expected.id ||
+          actual.optionId !== expected.optionId
+        )
+          return yield* new OwnerDecisionError({
+            code: "publication-mismatch",
+            message: `Decision publication stopped: comment ${comment.html_url} does not match the expected ${decision.pendingPublish} content and digest.`,
+          });
+        return { id: String(comment.id), url: comment.html_url };
+      }
       const posted = yield* inbox.post(
         decision.requestingThreadId,
         {
@@ -479,17 +453,12 @@ const make = Effect.gen(function* () {
         count: number;
       }>`SELECT COUNT(*) AS count FROM owner_decisions WHERE host = ${decision.host} AND repository = ${decision.repository} AND issue_number = ${decision.number} AND chosen_option_id IS NULL AND state != 'withdrawn'`;
       if ((open?.count ?? 0) > 0) {
-        yield* github.ensureLabels(decision, ["decision-needed"]);
-        yield* github.rest(decision, `issues/${decision.number}/labels`, {
-          body: { labels: ["decision-needed"] },
-        });
+        yield* issues.ensureLabels(decision, [{ name: "decision-needed", color: "ededed" }]);
+        yield* issues.setLabels(decision, ["decision-needed"], []);
       } else {
         // One bounded read; an incomplete view cannot prove that label removal is safe.
-        const page = yield* github.rest(
-          decision,
-          `issues/${decision.number}/comments?per_page=100&page=1`,
-        );
-        const comments = yield* decodeComments(page.body);
+        const page = yield* issues.listComments(decision, { maxPages: 1 });
+        const comments = page.comments;
         const openRequests = new Set<string>();
         const closedRequests = new Set<string>();
         for (const comment of comments) {
@@ -500,20 +469,8 @@ const make = Effect.gen(function* () {
           const parsed = parseDecisionComment(body);
           if (parsed !== null && parsed.kind !== "request") closedRequests.add(parsed.id!);
         }
-        if (page.nextPage !== null || [...openRequests].some((id) => !closedRequests.has(id)))
-          return;
-        const response = yield* github.rest(
-          decision,
-          `issues/${decision.number}/labels?per_page=100`,
-        );
-        const labels = yield* decodeLabels(response.body);
-        if (labels.some((label) => label.name.toLowerCase() === "decision-needed"))
-          yield* issues.repositoryRest({
-            host: decision.host,
-            repository: decision.repository,
-            path: `issues/${decision.number}/labels/decision-needed`,
-            method: "DELETE",
-          });
+        if (!page.complete || [...openRequests].some((id) => !closedRequests.has(id))) return;
+        yield* issues.setLabels(decision, [], ["decision-needed"]);
       }
       yield* sql`UPDATE owner_decisions SET pending_label = 0, last_error = CASE WHEN state IN ('publication_mismatch', 'delivery_failed') OR pending_delivery = 1 THEN last_error ELSE NULL END WHERE id = ${decision.id}`;
     },

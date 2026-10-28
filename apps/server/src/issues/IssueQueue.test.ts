@@ -37,6 +37,8 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "../orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as IssueService from "./IssueService.ts";
+import * as GitHubApi from "./IssueGitHubApi.ts";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as IssueWorkService from "./IssueWorkService.ts";
 import * as IssueWorkStore from "./IssueWorkStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -139,6 +141,40 @@ function harness(
       Layer.provide(Layer.mergeAll(dependencies, executor)),
     ),
   ).pipe(Layer.provideMerge(dependencies));
+}
+
+function inboxService(
+  overrides: Partial<IssueService.IssueService["Service"]>,
+  rest: (input: { readonly path: string }) => Effect.Effect<{
+    readonly body: string;
+    readonly status: number;
+    readonly etag: string | null;
+    readonly nextPage: number | null;
+  }>,
+) {
+  return Layer.effect(
+    IssueService.IssueService,
+    Effect.gen(function* () {
+      const service = yield* IssueService.make();
+      return IssueService.IssueService.of({ ...service, ...overrides });
+    }),
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          withVerifiedCredential: (_input, use) =>
+            use({ accountId: "test", viewer: "owner", credentialFingerprint: "test" }),
+        }),
+        Layer.mock(GitHubApi.GitHubApi)({
+          rest: (input) =>
+            Effect.gen(function* () {
+              const response = yield* rest({ path: input.path.split("/").slice(3).join("/") });
+              return { ...response, truncated: false, invalidUtf8: false, headers: {} };
+            }),
+        }),
+      ),
+    ),
+  );
 }
 it.effect("hands SQLite connections to waiting queue calls before new borrows", () =>
   Effect.gen(function* () {
@@ -1284,12 +1320,14 @@ it.effect.each(["external", "bot", "listing"] as const)(
   (origin) => {
     let closed = false;
     let listingCaughtUp = false;
-    const github = Layer.mock(IssueService.IssueService)({
-      resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-      detail: (input) =>
-        Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
-      workRead: (input) => Effect.succeed(read(input.number)),
-      repositoryRest: (input) =>
+    const github = inboxService(
+      {
+        resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+        detail: (input) =>
+          Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
+        workRead: (input) => Effect.succeed(read(input.number)),
+      },
+      (input) =>
         Effect.succeed({
           status: 200,
           etag: null,
@@ -1331,7 +1369,7 @@ it.effect.each(["external", "bot", "listing"] as const)(
                   : [],
           ),
         }),
-    });
+    );
     return Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
       const store = yield* IssueWorkStore.IssueWorkStore;
@@ -1655,13 +1693,15 @@ it.effect.each([false, true])(
   "queue and Inbox work register one root across mixed concurrent triggers (no candidate: %s)",
   (noCandidate) => {
     let arrived = false;
-    const github = Layer.mock(IssueService.IssueService)({
-      resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-      detail: (input) =>
-        Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
-      workRead: (input) => Effect.succeed(read(input.number)),
-      repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
-      repositoryRest: (input) =>
+    const github = inboxService(
+      {
+        resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+        detail: (input) =>
+          Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
+        workRead: (input) => Effect.succeed(read(input.number)),
+        repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+      },
+      (input) =>
         Effect.succeed({
           status: 200,
           etag: null,
@@ -1689,7 +1729,7 @@ it.effect.each([false, true])(
               : [],
           ),
         }),
-    });
+    );
     return Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
       const sql = yield* SqlClient.SqlClient;

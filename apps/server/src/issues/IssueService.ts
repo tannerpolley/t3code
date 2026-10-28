@@ -52,6 +52,8 @@ const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const DETAIL_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const DETAIL_COMMENT_LIMIT = 100;
 const COMMENT_MAX_PAGES = 1_000;
+/** Pages per listing per inbox poll; longer catch-ups skip ahead. */
+const INBOX_MAX_PAGES = 50;
 const COMMENT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const COMMENT_MAX_BODY_LENGTH = 60_000;
 const MAX_PAGE = 1_000_000;
@@ -794,6 +796,78 @@ function encodeCursor(cursor: IssueCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
+const Author = Schema.NullOr(
+  Schema.Struct({ login: Schema.String, type: Schema.optional(Schema.String) }),
+);
+const Labels = Schema.optional(Schema.NullOr(Schema.Array(Schema.Struct({ name: Schema.String }))));
+const InboxIssue = Schema.Struct({
+  number: Schema.Number,
+  title: Schema.String,
+  state: Schema.optional(Schema.Literals(["open", "closed"])),
+  body: Schema.optional(Schema.NullOr(Schema.String)),
+  user: Schema.optional(Author),
+  labels: Labels,
+  milestone: Schema.optional(Schema.NullOr(Schema.Struct({ number: Schema.Number }))),
+  created_at: Schema.String,
+  updated_at: Schema.String,
+  html_url: Schema.String,
+  pull_request: Schema.optional(Schema.Unknown),
+});
+const InboxComment = Schema.Struct({
+  id: Schema.Number,
+  body: Schema.optional(Schema.NullOr(Schema.String)),
+  user: Schema.optional(Author),
+  created_at: Schema.String,
+  updated_at: Schema.String,
+  html_url: Schema.String,
+  issue_url: Schema.String,
+});
+const InboxEvent = Schema.Struct({
+  id: Schema.Number,
+  event: Schema.String,
+  created_at: Schema.String,
+  issue: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        number: Schema.Number,
+        pull_request: Schema.optional(Schema.Unknown),
+      }),
+    ),
+  ),
+});
+const InboxPosted = Schema.Struct({
+  id: Schema.Number,
+  number: Schema.optional(Schema.Number),
+  html_url: Schema.String,
+});
+const InboxListedComment = Schema.Struct({
+  id: Schema.Number,
+  body: Schema.NullOr(Schema.String),
+  html_url: Schema.String,
+});
+interface ActivityCursors {
+  readonly issuesSince: string;
+  readonly commentsSince: string;
+  readonly eventsAfter: number;
+  readonly issuesEtag: string | null;
+  readonly commentsEtag: string | null;
+  readonly eventsEtag: string | null;
+  readonly initial?: boolean;
+}
+interface ActivityPage<A> {
+  readonly items: ReadonlyArray<A>;
+  readonly etag: string | null;
+  readonly complete: boolean;
+}
+interface RepositoryRequest {
+  readonly host: string;
+  readonly repository: string;
+  readonly path: string;
+  readonly method?: "POST" | "DELETE";
+  readonly body?: unknown;
+  readonly ifNoneMatch?: string;
+}
+
 export class IssueService extends Context.Service<
   IssueService,
   {
@@ -869,27 +943,49 @@ export class IssueService extends Context.Service<
       readonly marker: string;
       readonly body: string;
     }) => Effect.Effect<{ readonly commentId: string }, IssueReadError>;
-    /**
-     * One verified REST call below `repos/{owner}/{name}/`, for the issue inbox. With
-     * `ifNoneMatch`, an unchanged answer is a free 304 with an empty body. `nextPage` comes from
-     * the Link header.
-     */
-    readonly repositoryRest: (input: {
-      readonly host: string;
-      readonly repository: string;
-      readonly path: string;
-      readonly method?: "POST" | "DELETE";
-      readonly body?: unknown;
-      readonly ifNoneMatch?: string;
-    }) => Effect.Effect<
+    readonly activitySince: (
+      scope: IssueRepositoryRef,
+      cursors: ActivityCursors,
+    ) => Effect.Effect<
       {
-        readonly status: number;
-        readonly body: string;
-        readonly etag: string | null;
-        readonly nextPage: number | null;
+        readonly issues: ActivityPage<typeof InboxIssue.Type>;
+        readonly comments: ActivityPage<typeof InboxComment.Type>;
+        readonly stateChanges: ActivityPage<typeof InboxEvent.Type>;
+        readonly eventsAfter: number;
       },
       IssueReadError
     >;
+    readonly listComments: (
+      ref: IssueRef,
+      options?: { readonly maxPages?: number },
+    ) => Effect.Effect<
+      {
+        readonly comments: ReadonlyArray<typeof InboxListedComment.Type>;
+        readonly complete: boolean;
+      },
+      IssueReadError
+    >;
+    readonly postComment: (
+      ref: IssueRef,
+      body: string,
+    ) => Effect.Effect<typeof InboxPosted.Type, IssueReadError>;
+    readonly postIssue: (
+      scope: IssueRepositoryRef,
+      input: {
+        readonly title: string;
+        readonly body: string;
+        readonly labels: ReadonlyArray<string>;
+      },
+    ) => Effect.Effect<typeof InboxPosted.Type, IssueReadError>;
+    readonly ensureLabels: (
+      scope: IssueRepositoryRef,
+      labels: ReadonlyArray<{ readonly name: string; readonly color: string }>,
+    ) => Effect.Effect<void, IssueReadError>;
+    readonly setLabels: (
+      ref: IssueRef,
+      add: ReadonlyArray<string>,
+      remove: ReadonlyArray<string>,
+    ) => Effect.Effect<void, IssueReadError>;
   }
 >()("t3/issues/IssueService") {}
 
@@ -2222,9 +2318,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       );
     },
   );
-  const repositoryRest: IssueService["Service"]["repositoryRest"] = Effect.fn(
-    "IssueService.repositoryRest",
-  )(function* (input) {
+  const inboxRequest = Effect.fn("IssueService.inboxRequest")(function* (input: RepositoryRequest) {
     const scope = yield* resolveScope("detail", input);
     const response = yield* verified(
       scope,
@@ -2269,9 +2363,177 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       nextPage,
     };
   });
+  const decodeInbox = <S extends Schema.Top>(
+    schema: S,
+    body: string,
+    message = "GitHub returned an invalid inbox response.",
+  ) =>
+    Schema.decodeEffect(Schema.fromJsonString(schema))(body).pipe(
+      Effect.mapError(() => readError("detail", "invalid-response", message)),
+    );
+  const readActivityPages = Effect.fn("IssueService.readActivityPages")(function* <
+    S extends Schema.Top,
+  >(
+    scope: IssueRepositoryRef,
+    path: string,
+    schema: S,
+    etag: string | null,
+    enough: (items: ReadonlyArray<S["Type"]>) => boolean = () => false,
+    maxPages = INBOX_MAX_PAGES,
+  ) {
+    const first = yield* inboxRequest({
+      ...scope,
+      path: `${path}&page=1`,
+      ...(etag === null ? {} : { ifNoneMatch: etag }),
+    });
+    if (first.status === 304)
+      return { items: [] as ReadonlyArray<S["Type"]>, etag, complete: true };
+    const items = [...(yield* decodeInbox(Schema.Array(schema), first.body))];
+    let next = first.nextPage;
+    for (let pages = 1; next !== null && !enough(items); pages++) {
+      if (pages >= maxPages) return { items, etag: first.etag, complete: false };
+      const page = yield* inboxRequest({ ...scope, path: `${path}&page=${next}` });
+      items.push(...(yield* decodeInbox(Schema.Array(schema), page.body)));
+      next = page.nextPage;
+    }
+    return { items, etag: first.etag, complete: true };
+  });
+  const activitySince: IssueService["Service"]["activitySince"] = Effect.fn(
+    "IssueService.activitySince",
+  )(function* (scope, cursors) {
+    if (cursors.initial) {
+      const response = yield* inboxRequest({ ...scope, path: "issues/events?per_page=100&page=1" });
+      const events = yield* decodeInbox(Schema.Array(InboxEvent), response.body);
+      return {
+        issues: { items: [], etag: null, complete: true },
+        comments: { items: [], etag: null, complete: true },
+        stateChanges: { items: [], etag: response.etag, complete: true },
+        eventsAfter: Math.max(0, ...events.map((event) => event.id)),
+      };
+    }
+    const issues = yield* readActivityPages(
+      scope,
+      `issues?state=all&sort=updated&direction=desc&per_page=100&since=${encodeURIComponent(cursors.issuesSince)}`,
+      InboxIssue,
+      cursors.issuesEtag,
+    );
+    const comments = yield* readActivityPages(
+      scope,
+      `issues/comments?sort=updated&direction=desc&per_page=100&since=${encodeURIComponent(cursors.commentsSince)}`,
+      InboxComment,
+      cursors.commentsEtag,
+    );
+    const stateChanges = yield* readActivityPages(
+      scope,
+      "issues/events?per_page=100",
+      InboxEvent,
+      cursors.eventsEtag,
+      (events) => events.some((event) => event.id <= cursors.eventsAfter),
+    );
+    return {
+      issues,
+      comments,
+      stateChanges,
+      eventsAfter: Math.max(cursors.eventsAfter, ...stateChanges.items.map((event) => event.id)),
+    };
+  });
+  const listComments: IssueService["Service"]["listComments"] = Effect.fn(
+    "IssueService.listComments",
+  )(function* (ref, options) {
+    const result = yield* readActivityPages(
+      ref,
+      `issues/${ref.number}/comments?per_page=100`,
+      InboxListedComment,
+      null,
+      () => false,
+      options?.maxPages ?? Infinity,
+    );
+    return { comments: result.items, complete: result.complete };
+  });
+  const postComment: IssueService["Service"]["postComment"] = Effect.fn("IssueService.postComment")(
+    function* (ref, body) {
+      const response = yield* inboxRequest({
+        ...ref,
+        path: `issues/${ref.number}/comments`,
+        method: "POST",
+        body: { body },
+      });
+      return yield* decodeInbox(
+        InboxPosted,
+        response.body,
+        "GitHub returned an invalid created issue or comment.",
+      );
+    },
+  );
+  const postIssue: IssueService["Service"]["postIssue"] = Effect.fn("IssueService.postIssue")(
+    function* (scope, input) {
+      const response = yield* inboxRequest({
+        ...scope,
+        path: "issues",
+        method: "POST",
+        body: {
+          title: input.title,
+          body: input.body,
+          ...(input.labels.length > 0 ? { labels: input.labels } : {}),
+        },
+      });
+      return yield* decodeInbox(
+        InboxPosted,
+        response.body,
+        "GitHub returned an invalid created issue or comment.",
+      );
+    },
+  );
+  const ensureLabels: IssueService["Service"]["ensureLabels"] = Effect.fn(
+    "IssueService.ensureLabels",
+  )(function* (scope, labels) {
+    const response = yield* inboxRequest({ ...scope, path: "labels?per_page=100" });
+    const existing = new Set(
+      (yield* decodeInbox(Schema.Array(Schema.Struct({ name: Schema.String })), response.body)).map(
+        (label) => label.name.toLowerCase(),
+      ),
+    );
+    for (const label of labels)
+      if (!existing.has(label.name.toLowerCase()))
+        yield* inboxRequest({ ...scope, path: "labels", method: "POST", body: label }).pipe(
+          Effect.catch(() => Effect.void),
+        );
+  });
+  const setLabels: IssueService["Service"]["setLabels"] = Effect.fn("IssueService.setLabels")(
+    function* (ref, add, remove) {
+      if (add.length > 0)
+        yield* inboxRequest({
+          ...ref,
+          path: `issues/${ref.number}/labels`,
+          method: "POST",
+          body: { labels: add },
+        });
+      if (remove.length === 0) return;
+      const response = yield* inboxRequest({
+        ...ref,
+        path: `issues/${ref.number}/labels?per_page=100`,
+      });
+      const labels = yield* decodeInbox(
+        Schema.Array(Schema.Struct({ name: Schema.String })),
+        response.body,
+      );
+      for (const name of remove)
+        if (labels.some((label) => label.name.toLowerCase() === name.toLowerCase()))
+          yield* inboxRequest({
+            ...ref,
+            path: `issues/${ref.number}/labels/${encodeURIComponent(name)}`,
+            method: "DELETE",
+          });
+    },
+  );
   return IssueService.of({
     refreshes: SubscriptionRef.changes(refreshes),
-    repositoryRest,
+    activitySince,
+    listComments,
+    postComment,
+    postIssue,
+    ensureLabels,
+    setLabels,
     readChangeState,
     createIssue,
     updateBody: Effect.fn("IssueService.updateBody")((input) =>

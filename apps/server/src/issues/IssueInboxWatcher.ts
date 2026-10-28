@@ -7,7 +7,6 @@ import { CommandId, type IssueInboxEventKind, ThreadId } from "@t3tools/contract
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
@@ -26,59 +25,11 @@ import {
 
 /** Timestamp cursors re-read this much, so same-second and late-committed writes are not lost. */
 const CURSOR_OVERLAP_MS = 5 * 60_000;
-/** Pages per listing per poll; longer catch-ups skip ahead. */
-const MAX_PAGES = 50;
-const EVENTS_PATH = "issues/events?per_page=100";
 const LABEL_COLORS: Record<string, string> = {
   [EXTERNAL_LABEL]: "1d76db",
   [HIGH_PRIORITY_LABEL]: "b60205",
 };
 
-const Author = Schema.NullOr(
-  Schema.Struct({ login: Schema.String, type: Schema.optional(Schema.String) }),
-);
-const Labels = Schema.optional(Schema.NullOr(Schema.Array(Schema.Struct({ name: Schema.String }))));
-const RawIssue = Schema.Struct({
-  number: Schema.Number,
-  title: Schema.String,
-  state: Schema.optional(Schema.Literals(["open", "closed"])),
-  body: Schema.optional(Schema.NullOr(Schema.String)),
-  user: Schema.optional(Author),
-  labels: Labels,
-  milestone: Schema.optional(Schema.NullOr(Schema.Struct({ number: Schema.Number }))),
-  created_at: Schema.String,
-  updated_at: Schema.String,
-  html_url: Schema.String,
-  pull_request: Schema.optional(Schema.Unknown),
-});
-const RawComment = Schema.Struct({
-  id: Schema.Number,
-  body: Schema.optional(Schema.NullOr(Schema.String)),
-  user: Schema.optional(Author),
-  created_at: Schema.String,
-  updated_at: Schema.String,
-  html_url: Schema.String,
-  issue_url: Schema.String,
-});
-const RawEvent = Schema.Struct({
-  id: Schema.Number,
-  event: Schema.String,
-  created_at: Schema.String,
-  issue: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        number: Schema.Number,
-        pull_request: Schema.optional(Schema.Unknown),
-      }),
-    ),
-  ),
-});
-const decodeJson = <S extends Schema.Top>(schema: S) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(schema));
-const decodeIssues = decodeJson(Schema.Array(RawIssue));
-const decodeComments = decodeJson(Schema.Array(RawComment));
-const decodeEvents = decodeJson(Schema.Array(RawEvent));
-const decodeNames = decodeJson(Schema.Array(Schema.Struct({ name: Schema.String })));
 export interface WatchedRepository {
   readonly host: string;
   readonly repositoryId: string;
@@ -131,71 +82,34 @@ export const make = Effect.gen(function* () {
   const issues = yield* IssueService;
   const threads = yield* ThreadManagementService;
 
-  const rest = (
-    repo: Pick<WatchedRepository, "host" | "repository">,
-    path: string,
-    options: { readonly etag?: string | null; readonly body?: unknown } = {},
-  ) =>
-    issues.repositoryRest({
-      host: repo.host,
-      repository: repo.repository,
-      path,
-      ...(options.body === undefined ? {} : { method: "POST" as const, body: options.body }),
-      ...(options.etag == null ? {} : { ifNoneMatch: options.etag }),
-    });
-
-  /**
-   * A listing's pages, newest first: a 304 on page 1 means nothing changed. Reading stops once
-   * `enough` sees items already handled, or at MAX_PAGES with `complete: false`.
-   */
-  const readAll = Effect.fn("IssueInboxWatcher.readAll")(function* <A, E>(
-    repo: WatchedRepository,
-    path: string,
-    decode: (body: string) => Effect.Effect<ReadonlyArray<A>, E>,
-    etag: string | null = null,
-    enough: (items: ReadonlyArray<A>) => boolean = () => false,
-  ) {
-    const first = yield* rest(repo, `${path}&page=1`, { etag });
-    if (first.status === 304) return { items: [] as ReadonlyArray<A>, etag, complete: true };
-    const items = [...(yield* decode(first.body))];
-    let next = first.nextPage;
-    for (let pages = 1; next !== null && !enough(items); pages++) {
-      if (pages >= MAX_PAGES) return { items, etag: first.etag, complete: false };
-      const page = yield* rest(repo, `${path}&page=${next}`);
-      items.push(...(yield* decode(page.body)));
-      next = page.nextPage;
-    }
-    return { items: items as ReadonlyArray<A>, etag: first.etag, complete: true };
-  });
-
-  /** Creates the labels a repository lacks, with T3's colors. */
-  const ensureLabels = Effect.fn("IssueInboxWatcher.ensureLabels")(function* (
+  const ensureLabels = (
     repo: Pick<WatchedRepository, "host" | "repository">,
     names: ReadonlyArray<string>,
-  ) {
-    const existing = new Set(
-      (yield* decodeNames((yield* rest(repo, "labels?per_page=100")).body)).map((label) =>
-        label.name.toLowerCase(),
-      ),
+  ) =>
+    issues.ensureLabels(
+      repo,
+      names.map((name) => ({ name, color: LABEL_COLORS[name] ?? "ededed" })),
     );
-    for (const name of names)
-      if (!existing.has(name.toLowerCase()))
-        yield* rest(repo, "labels", {
-          body: { name, color: LABEL_COLORS[name] ?? "ededed" },
-        }).pipe(Effect.catch(() => Effect.void));
-  });
 
   /** Starts watching from now: history from before is not news. */
   const initialize = Effect.fn("IssueInboxWatcher.initialize")(function* (repo: WatchedRepository) {
     const startedAt = yield* Clock.currentTimeMillis;
-    const events = yield* rest(repo, `${EVENTS_PATH}&page=1`);
-    const latest = Math.max(0, ...(yield* decodeEvents(events.body)).map((event) => event.id));
     const cursor = isoSeconds(startedAt - CURSOR_OVERLAP_MS);
+    const activity = yield* issues.activitySince(repo, {
+      initial: true,
+      issuesSince: cursor,
+      commentsSince: cursor,
+      eventsAfter: 0,
+      issuesEtag: null,
+      commentsEtag: null,
+      eventsEtag: null,
+    });
+    const latest = activity.eventsAfter;
     yield* sql`
         INSERT INTO issue_inbox_repositories (host, repository_id, watched_since, issues_since,
           comments_since, events_after, events_etag)
         VALUES (${repo.host}, ${repo.repositoryId}, ${isoSeconds(startedAt)}, ${cursor},
-          ${cursor}, ${latest}, ${events.etag})
+          ${cursor}, ${latest}, ${activity.stateChanges.etag})
         ON CONFLICT DO NOTHING
       `;
     return 0;
@@ -212,25 +126,18 @@ export const make = Effect.gen(function* () {
     if (state === undefined) return yield* initialize(repo);
     const repositoryKey = `${repo.host}/${repo.repository}`.toLowerCase();
     const eventsAfter = state.events_after ?? 0;
-    const issuesRead = yield* readAll(
-      repo,
-      `issues?state=all&sort=updated&direction=desc&per_page=100&since=${encodeURIComponent(state.issues_since)}`,
-      decodeIssues,
-      state.issues_etag,
-    );
-    const commentsRead = yield* readAll(
-      repo,
-      `issues/comments?sort=updated&direction=desc&per_page=100&since=${encodeURIComponent(state.comments_since)}`,
-      decodeComments,
-      state.comments_etag,
-    );
-    const eventsRead = yield* readAll(
-      repo,
-      EVENTS_PATH,
-      decodeEvents,
-      state.events_etag,
-      (events) => events.some((event) => event.id <= eventsAfter),
-    );
+    const {
+      issues: issuesRead,
+      comments: commentsRead,
+      stateChanges: eventsRead,
+    } = yield* issues.activitySince(repo, {
+      issuesSince: state.issues_since,
+      commentsSince: state.comments_since,
+      eventsAfter,
+      issuesEtag: state.issues_etag,
+      commentsEtag: state.comments_etag,
+      eventsEtag: state.events_etag,
+    });
     const issueList = issuesRead.items.filter((issue) => issue.pull_request === undefined);
     const listed = new Map(issueList.map((issue) => [issue.number, issue]));
     const comments = commentsRead.items.flatMap((comment) => {
@@ -464,7 +371,7 @@ export const make = Effect.gen(function* () {
     for (const row of pending) {
       const labels = receiverLabels(row.external_source);
       yield* ensureLabels(repo, labels);
-      yield* rest(repo, `issues/${row.issue_number}/labels`, { body: { labels } });
+      yield* issues.setLabels({ ...repo, number: row.issue_number }, labels, []);
       yield* sql`
           UPDATE issue_inbox_issues SET labeled = 1
           WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId}
@@ -473,5 +380,5 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  return { rest, ensureLabels, poll, enforceLabels };
+  return { ensureLabels, poll, enforceLabels };
 });
