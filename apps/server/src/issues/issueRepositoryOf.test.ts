@@ -14,7 +14,10 @@ it("addresses GitHub origins and rejects providers without an issue host", () =>
     },
     origin: { canonicalKey: "forge.example:3000/owner/repo", displayName: "owner/repo" },
   };
-  expect(issueRepositoryOf(identity)).toBeNull();
+  expect(issueRepositoryOf(identity)).toEqual({
+    host: "forge.example:3000",
+    repository: "owner/repo",
+  });
   expect(
     issueRepositoryOf({
       ...identity,

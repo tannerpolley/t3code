@@ -21,14 +21,14 @@ const dependencies = [
 
 export const IssuePostTool = Tool.make("t3_issue_post", {
   description:
-    "Create a GitHub issue (title and body) or comment on one (issueNumber and body) in any repository. Use it instead of raw `gh` for issues in another project's repository: T3 adds a hidden source marker naming this project and thread, and labels the issue external, from:<project> and priority: high, so that repository's orchestrator is notified. Writes to this thread's own repository get neither.",
+    "Create an issue on its issue host (title and body) or comment on one (issueNumber and body) in any repository. Use it instead of raw host CLI commands for issues in another project's repository: T3 adds a hidden source marker naming this project and thread, and labels the issue external, from:<project> and priority: high, so that repository's orchestrator is notified. Writes to this thread's own repository get neither.",
   parameters: IssuePostInput,
   success: IssuePostResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies,
 })
-  .annotate(Tool.Title, "Post to a GitHub issue")
+  .annotate(Tool.Title, "Post to an issue")
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, true);
 
@@ -66,7 +66,11 @@ export const issueInboxHandlers = {
   t3_issue_post: McpToolAccess.actsAsCaller((input: IssuePostInput) =>
     Effect.gen(function* () {
       const available = yield* Effect.serviceOption(IssueInbox.IssueInbox);
-      if (Option.isNone(available)) return yield* new OrchestratorMcpFailure({ code: "orchestration_error", message: "Issue tools are unavailable in this runtime." });
+      if (Option.isNone(available))
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "Issue tools are unavailable in this runtime.",
+        });
       const inbox = available.value;
       return yield* inbox.post(yield* caller, input).pipe(Effect.mapError(failure));
     }),
@@ -74,7 +78,11 @@ export const issueInboxHandlers = {
   t3_issue_inbox: McpToolAccess.actsAsCaller((input: IssueInboxToolInput) =>
     Effect.gen(function* () {
       const available = yield* Effect.serviceOption(IssueInbox.IssueInbox);
-      if (Option.isNone(available)) return yield* new OrchestratorMcpFailure({ code: "orchestration_error", message: "Issue tools are unavailable in this runtime." });
+      if (Option.isNone(available))
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "Issue tools are unavailable in this runtime.",
+        });
       const inbox = available.value;
       return yield* inbox.forCaller(yield* caller, input).pipe(Effect.mapError(failure));
     }),

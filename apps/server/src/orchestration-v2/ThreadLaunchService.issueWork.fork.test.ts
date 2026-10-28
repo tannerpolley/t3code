@@ -1980,7 +1980,9 @@ it.effect(
       assert.deepEqual(resumed.thread.lineage, before.lineage);
       assert.equal(resumed.thread.worktreePath, before.worktreePath);
       assert.lengthOf(
-        resumed.messages.filter((message) => message.text.includes("GitHub blockers are closed")),
+        resumed.messages.filter((message) =>
+          message.text.includes("issue host blockers are closed"),
+        ),
         1,
       );
       assert.lengthOf((yield* threads.getThreadRecords(other, ["runs"])).runs, 1);
@@ -1996,7 +1998,7 @@ it.effect(
         rootState.turnItems.filter(
           (item) =>
             item.type === "system_notice" &&
-            item.message === "Issue #1 resumed: its GitHub blockers are closed.",
+            item.message === "Issue #1 resumed: its issue host blockers are closed.",
         ),
         1,
       );
@@ -2490,7 +2492,7 @@ it.effect(
       assert.lengthOf(final.runs, 1);
       assert.equal(final.runs[0]!.status, "completed");
       assert.isFalse(
-        final.messages.some((message) => message.text.includes("GitHub blockers are closed")),
+        final.messages.some((message) => message.text.includes("issue host blockers are closed")),
       );
       assert.isFalse(
         (yield* threads.getThreadRecords(root, ["messages"])).messages.some((message) =>

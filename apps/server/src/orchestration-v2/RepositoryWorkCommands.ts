@@ -20,10 +20,7 @@ import type { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type { DelegatedTaskRequest, ForkCommandHooks } from "./IssueWorkCommands.ts";
 import type { OrchestratorV2Error, OrchestratorProjectionError } from "./Orchestrator.ts";
-import {
-  openBlockerSuspensionReason,
-  isAutomaticIssueSuspension,
-} from "../issues/IssueEligibility.ts";
+import { isOpenBlockerSuspension, isAutomaticIssueSuspension } from "../issues/IssueEligibility.ts";
 
 interface RepositoryWorkCommandHooks extends ForkCommandHooks {
   readonly nextTurnItemOrdinal: (
@@ -265,10 +262,10 @@ export function makeRepositoryWorkCommands({
           status: "completed",
           title: `Issue #${issue.number} ${resumed ? "resumed" : "paused"}`,
           message: resumed
-            ? reason === openBlockerSuspensionReason
-              ? `Issue #${issue.number} resumed: its GitHub blockers are closed.`
-              : `Issue #${issue.number} resumed: its GitHub relationships are readable again.`
-            : `Issue #${issue.number} paused: ${reason} Its workspace, link and results are retained. ${reason === openBlockerSuspensionReason ? "It resumes automatically when its GitHub blockers close; no user decision is needed." : "It resumes automatically once GitHub relationships are readable and the issue is eligible; no user decision is needed."}`,
+            ? isOpenBlockerSuspension(reason)
+              ? `Issue #${issue.number} resumed: its issue host blockers are closed.`
+              : `Issue #${issue.number} resumed: its issue host relationships are readable again.`
+            : `Issue #${issue.number} paused: ${reason} Its workspace, link and results are retained. ${isOpenBlockerSuspension(reason) ? "It resumes automatically when its issue host blockers close; no user decision is needed." : "It resumes automatically once issue host relationships are readable and the issue is eligible; no user decision is needed."}`,
           startedAt: existing?.startedAt ?? now,
           completedAt: now,
           updatedAt: now,
@@ -328,10 +325,9 @@ export function makeRepositoryWorkCommands({
             threadId: owner.id,
             senderThreadId: owner.lineage.parentThreadId!,
             messageId: MessageId.make(`${command.commandId}:worker`),
-            text:
-              resumeReason === openBlockerSuspensionReason
-                ? `Issue #${owner.linkedIssue.number}'s GitHub blockers are closed. Continue working on the issue from where you left off.`
-                : `Issue #${owner.linkedIssue.number}'s GitHub relationships are readable again. Continue working on the issue from where you left off.`,
+            text: isOpenBlockerSuspension(resumeReason)
+              ? `Issue #${owner.linkedIssue.number}'s issue host blockers are closed. Continue working on the issue from where you left off.`
+              : `Issue #${owner.linkedIssue.number}'s issue host relationships are readable again. Continue working on the issue from where you left off.`,
             attachments: [],
             modelSelection: latest.modelSelection,
             dispatchMode: { type: "queue_after_active" },

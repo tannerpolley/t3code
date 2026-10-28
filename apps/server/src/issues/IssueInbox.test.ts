@@ -19,6 +19,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as IssueInbox from "./IssueInbox.ts";
 import { classifyWrite, parseSourceMarker, sourceMarker } from "./IssueInboxRules.ts";
+import * as IssueInboxWatcher from "./IssueInboxWatcher.ts";
 import { isoSeconds } from "./IssueInboxWatcher.ts";
 import * as IssueWorkService from "./IssueWorkService.ts";
 import * as IssueService from "./IssueService.ts";
@@ -1076,4 +1077,146 @@ it.effect(
       yield* restarted.pollDue; // t=20
       assert.equal(threads.dispatched.length, 2);
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("includes Forgejo inbox discovery and registered polling", () =>
+  Effect.gen(function* () {
+    yield* seedRepository;
+    const github = fakeGitHub();
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE orchestration_v2_projection_repository_orchestration SET host = 'forge.example:3000'`;
+    const base = yield* IssueService.IssueService.pipe(Effect.provide(github.service));
+    const inbox = yield* IssueInbox.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(IssueService.IssueService, {
+            ...base,
+            isForgejoHost: (host) => Effect.succeed(host === "forge.example:3000"),
+          }),
+          fakeThreads().service,
+          Layer.mock(IssueWorkService.IssueWorkService)({
+            repositoryStatus: () => Effect.succeed({ rootThreadId: null } as never),
+          }),
+          Layer.mock(ProjectService.ProjectService)({
+            listShells: () =>
+              Effect.succeed([
+                {
+                  id: ProjectId.make("forge"),
+                  repositoryIdentity: {
+                    provider: "forgejo",
+                    canonicalKey: "forge.example:3000/acme/discovery",
+                    displayName: "acme/discovery",
+                    locator: {
+                      source: "git-remote",
+                      remoteName: "origin",
+                      remoteUrl: "https://forge.example:3000/acme/discovery",
+                    },
+                  },
+                },
+              ] as never),
+          }),
+        ),
+      ),
+    );
+    yield* inbox.pollDue;
+    yield* TestClock.adjust("15 minutes");
+    yield* inbox.pollDue;
+    assert.isTrue(github.identityReads.some((read) => read.repository === "acme/discovery"));
+    assert.isTrue(github.requests.length > 0);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory), Effect.scoped),
+);
+
+it.effect("records ordinary Forgejo issues with a null pull_request", () =>
+  Effect.gen(function* () {
+    const watcher = yield* IssueInboxWatcher.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(IssueService.IssueService)({
+            activitySince: (_, cursors) =>
+              Effect.succeed({
+                issues: {
+                  items: cursors.initial
+                    ? []
+                    : [
+                        {
+                          number: 7,
+                          title: "Forgejo issue",
+                          body: amineMarker,
+                          pull_request: null,
+                          created_at: at(1),
+                          updated_at: at(1),
+                          html_url: "https://forge.example/acme/b/issues/7",
+                        },
+                      ],
+                  etag: null,
+                  complete: true,
+                },
+                comments: { items: [], etag: null, complete: true },
+                stateChanges: { items: [], etag: null, complete: true },
+                eventsAfter: 0,
+              }),
+          }),
+          fakeThreads().service,
+        ),
+      ),
+    );
+    const watched = {
+      host: "forge.example",
+      repository: "acme/b",
+      repositoryId: "42",
+      rootThreadId: null,
+    };
+    yield* watcher.poll(watched);
+    assert.equal(yield* watcher.poll(watched), 1);
+    const sql = yield* SqlClient.SqlClient;
+    assert.deepEqual(yield* sql`SELECT issue_number, kind FROM issue_inbox_events`, [
+      { issue_number: 7, kind: "issue_opened" },
+    ]);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("excludes GitHub and Forgejo PR comments while advancing the comment cursor", () =>
+  Effect.gen(function* () {
+    const watcher = yield* IssueInboxWatcher.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(IssueService.IssueService)({
+            activitySince: (_, cursors) =>
+              Effect.succeed({
+                issues: { items: [], etag: null, complete: true },
+                comments: {
+                  items: cursors.initial
+                    ? []
+                    : ["pull", "pulls"].map((route, index) => ({
+                        id: index + 1,
+                        body: amineMarker,
+                        created_at: at(10),
+                        updated_at: at(10),
+                        issue_url: "https://forge.example/api/v1/repos/acme/b/issues/7",
+                        html_url: `https://forge.example/acme/b/${route}/7#issuecomment-${index + 1}`,
+                      })),
+                  etag: null,
+                  complete: false,
+                },
+                stateChanges: { items: [], etag: null, complete: true },
+                eventsAfter: 0,
+              }),
+          }),
+          fakeThreads().service,
+        ),
+      ),
+    );
+    const watched = {
+      host: "forge.example",
+      repository: "acme/b",
+      repositoryId: "42",
+      rootThreadId: null,
+    };
+    yield* watcher.poll(watched);
+    assert.equal(yield* watcher.poll(watched), 0);
+    const sql = yield* SqlClient.SqlClient;
+    assert.deepEqual(yield* sql`SELECT comments_since FROM issue_inbox_repositories`, [
+      { comments_since: at(10) },
+    ]);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

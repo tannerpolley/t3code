@@ -124,3 +124,15 @@ This API replay measures routing and recovery decisions. Screenshots return prod
 2. From `evals/`, run `pnpm mcp-tool-use:trim-capture <claude|codex> <capture.json> mcp-tool-use/templates/<claude|codex>.json.gz`. It keeps only what `run.ts` reads, and removes user instructions, the user's own skills and agents, account ids, and home paths.
 3. Read the output for user data before you commit it: `zcat <file> | less`.
 4. Run the full eval on the old and new templates, and compare.
+
+## Issue host cases
+
+`cases/issue-host.ndjson` guards #203's Forgejo guidance. `forgejo-issue-post` exercises the
+`t3_issue_post` description; `forgejo-owner-decision` exercises the owner-decision description;
+`forgejo-queued-issue-not-planned` loads the real queued-issue prompt and checks close plus comment;
+`forgejo-open-blocker` loads the real suspension reason. The latter two use `setup.issueGuidance`
+instead of copying product text into fixtures. These are routing guards, not proof that the old
+wording caused a model failure. Live host behavior is covered by the server tests.
+
+Run the same cases and model against the eval-harness commit (original product wording) and the
+implementation commit. Use three samples for the comparison, and keep errors separate from passes.

@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./server/ForgejoCli": "./src/server/ForgejoCli.ts",
     "./shared/definition": {
       "types": "./src/shared/definition.ts",
       "import": "./src/shared/definition.ts"

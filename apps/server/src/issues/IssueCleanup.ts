@@ -14,6 +14,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as StorageCleanup from "../storageCleanup.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
+import * as IssueService from "./IssueService.ts";
 
 export class IssueCleanup extends Context.Service<
   IssueCleanup,
@@ -34,6 +35,7 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const storageCleanup = yield* StorageCleanup.StorageCleanup;
   const github = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+  const issues = yield* IssueService.IssueService;
 
   const ensureBranchNotCheckedOut = Effect.fn("IssueCleanup.ensureBranchNotCheckedOut")(function* (
     cwd: string,
@@ -149,6 +151,7 @@ const make = Effect.gen(function* () {
       }
       for (const pr of detail.issue.pullRequests ?? []) {
         if (merged) break;
+        if (yield* issues.isForgejoHost(pr.host)) continue;
         const fresh = yield* github
           .getPullRequestDetail({
             cwd,

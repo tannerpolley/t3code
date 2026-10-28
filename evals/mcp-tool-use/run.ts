@@ -32,6 +32,9 @@ import { Tool } from "effect/ai";
 import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
+import { issueQueueMessage } from "../../apps/server/src/issues/IssueQueueMessage.ts";
+import { openBlockerSuspensionReason } from "../../apps/server/src/issues/IssueEligibility.ts";
+import { CommandId } from "@t3tools/contracts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
@@ -230,6 +233,7 @@ export const McpToolUseCase = Schema.Struct({
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
+    issueGuidance: Schema.optional(Schema.Literals(["queued-issue", "open-blocker"])),
     priorTurns: Schema.optional(
       Schema.Array(
         Schema.Struct({
@@ -834,6 +838,24 @@ export const buildMessages = (sample: Sample) => {
       ? "You are a subagent started by the parent agent's Agent tool. Your final message goes to the parent agent, not to the user."
       : undefined,
     context,
+    testCase.setup.issueGuidance === "open-blocker"
+      ? openBlockerSuspensionReason
+      : testCase.setup.issueGuidance === "queued-issue"
+        ? issueQueueMessage({
+            requestId: CommandId.make("eval-queue"),
+            state: "queued",
+            issue: {
+              host: "forge.example:3000",
+              repository: "acme/app",
+              repositoryId: "12",
+              id: "107",
+              nodeId: "12/7",
+              number: 7,
+              title: "Remove retired integration",
+              url: "https://forge.example:3000/acme/app/issues/7",
+            },
+          })
+        : undefined,
   ];
   const reminders = base.reminders.toSpliced(base.gitStatusAt, 0, reminder(gitStatus(testCase)));
   push("user", ...reminders, ...notes.flatMap((note) => (note ? [reminder(note)] : [])));

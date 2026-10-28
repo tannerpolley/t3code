@@ -37,7 +37,7 @@ it("reads GitHub issue pages and leaves every other link alone", () => {
   expect(parseIssueUrl("https://github.com/acme/web/issues/0", hosts)).toBeNull();
 });
 
-it("keeps Forgejo links external until their issue host is available", () => {
+it("opens Forgejo issue links in T3, matching the host with its port", () => {
   const identity: RepositoryIdentity = {
     provider: SourceControlProviderKind.make("forgejo"),
     canonicalKey: "forge.example:3000/owner/repo",
@@ -58,6 +58,11 @@ it("keeps Forgejo links external until their issue host is available", () => {
       },
     },
   ]);
-  expect([...issueHosts]).toEqual(["github.com", "github.example"]);
-  expect(parseIssueUrl("https://forge.example:3000/owner/repo/issues/1", issueHosts)).toBeNull();
+  expect([...issueHosts]).toEqual(["github.com", "forge.example:3000", "github.example"]);
+  expect(parseIssueUrl("https://forge.example:3000/owner/repo/issues/1", issueHosts)).toEqual({
+    host: "forge.example:3000",
+    repository: "owner/repo",
+    number: 1,
+  });
+  expect(parseIssueUrl("https://forge.example/owner/repo/issues/1", issueHosts)).toBeNull();
 });

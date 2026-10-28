@@ -25,7 +25,7 @@ import {
 } from "./ThreadLaunchService.testHarness.ts";
 
 function milestoneReads(statuses: ReadonlyMap<number, number>, calls: number[]) {
-  return IssueService.layer.pipe(
+  return Layer.effect(IssueService.IssueService, IssueService.make()).pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(GitHubApi.GitHubApi)({

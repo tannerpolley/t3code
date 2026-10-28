@@ -138,19 +138,18 @@ export const make = Effect.gen(function* () {
       commentsEtag: state.comments_etag,
       eventsEtag: state.events_etag,
     });
-    const issueList = issuesRead.items.filter((issue) => issue.pull_request === undefined);
+    const issueList = issuesRead.items.filter((issue) => issue.pull_request == null);
     const listed = new Map(issueList.map((issue) => [issue.number, issue]));
     const comments = commentsRead.items.flatMap((comment) => {
       const number = Number(/\/issues\/(\d+)$/u.exec(comment.issue_url)?.[1]);
       return Number.isSafeInteger(number) &&
-        !comment.html_url.includes("/pull/") &&
+        !/\/pulls?\/\d+(?:[/?#]|$)/u.test(comment.html_url) &&
         comment.created_at >= state.watched_since
         ? [{ ...comment, number }]
         : [];
     });
     const newEvents = eventsRead.items.filter(
-      (event) =>
-        event.id > eventsAfter && event.issue != null && event.issue.pull_request === undefined,
+      (event) => event.id > eventsAfter && event.issue != null && event.issue.pull_request == null,
     );
     const numbers = [
       ...new Set([

@@ -148,7 +148,7 @@ const setup = (
             },
           } as never),
       }),
-      IssueService.layer.pipe(
+      Layer.effect(IssueService.IssueService, IssueService.make()).pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({

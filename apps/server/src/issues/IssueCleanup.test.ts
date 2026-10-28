@@ -20,6 +20,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as StorageCleanup from "../storageCleanup.ts";
 import * as IssueCleanup from "./IssueCleanup.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
+import * as IssueService from "./IssueService.ts";
 
 const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-issue-cleanup-" })),
@@ -122,6 +123,9 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (legacyPr = true
           removeWorktreeNow: () => Effect.succeed({ outcome: "kept", reason: "Open terminal" }),
         }),
         Layer.mock(IssueRoadmap.IssueRoadmap)({ detail: () => Effect.succeed(detail) }),
+        Layer.mock(IssueService.IssueService)({
+          isForgejoHost: (host) => Effect.succeed(host === "forge.example:3000"),
+        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadShell: () => Effect.succeed(thread),
         }),
@@ -298,4 +302,17 @@ it.effect(
       assert.deepEqual(yield* f.cleanup(input), { outcome: "kept", reason: "Open terminal" });
       assert.equal((yield* f.git(["show-ref", "--verify", "refs/heads/issue-work"])).exitCode, 0);
     }).pipe(Effect.scoped, Effect.provide(layerGit)),
+);
+
+it.effect("keeps Forgejo cleanup on ancestry or explicit unmerged consent", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture();
+    Object.assign(f.detail.issue.pullRequests![0]!, { host: "forge.example:3000" });
+    assert.equal((yield* f.cleanup(f.input).pipe(Effect.flip)).code, "unmerged");
+    yield* f.cleanup({ ...f.input, confirmUnmerged: true });
+    assert.equal((yield* f.git(["branch", "--list", "issue-work"])).stdout, "");
+    yield* f.git(["branch", "issue-work"]);
+    yield* f.cleanup(f.input);
+    assert.equal((yield* f.git(["branch", "--list", "issue-work"])).stdout, "");
+  }).pipe(Effect.scoped, Effect.provide(layerGit)),
 );
