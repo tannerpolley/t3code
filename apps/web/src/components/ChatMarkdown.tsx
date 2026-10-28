@@ -1,6 +1,6 @@
 import { MarkdownInlineCode } from "./chat/ForkMarkdownActions";
 import { markdownImageUnavailableLabel } from "./markdownImageState";
-import { knownGitHubHosts } from "../lib/openIssueLink";
+import { knownIssueHosts } from "../lib/openIssueLink";
 import { parseIssueUrl } from "../lib/openIssueLink";
 import { useOpenIssueLink } from "../lib/openIssueLink";
 import { IssueLinkPreview } from "./issues/IssueLinkPreview";
@@ -1333,7 +1333,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           />
         );
       }
-      if (parseIssueUrl(href, knownGitHubHosts(projects)) !== null) {
+      if (parseIssueUrl(href, knownIssueHosts(projects)) !== null) {
         return <IssueLinkPreview link={link} url={href} environmentId={environmentId} />;
       }
       return (

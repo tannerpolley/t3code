@@ -8,13 +8,13 @@ import { useProjects, useServerConfigs } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 
 /**
- * A GitHub issue page, `https://<host>/<owner>/<repo>/issues/<n>`, on one of `githubHosts`, or
- * null. The host must match exactly: Gitea and Forgejo use the same path, and a lookalike such as
+ * An issue page, `https://<host>/<owner>/<repo>/issues/<n>`, on one of `issueHosts`, or
+ * null. The host must match exactly, including its port: a lookalike such as
  * `github.com.example.net` must stay an ordinary link.
  */
 export function parseIssueUrl(
   value: string,
-  githubHosts: ReadonlySet<string>,
+  issueHosts: ReadonlySet<string>,
 ): { readonly host: string; readonly repository: string; readonly number: number } | null {
   let url: URL;
   try {
@@ -22,9 +22,9 @@ export function parseIssueUrl(
   } catch {
     return null;
   }
-  const host = url.hostname.toLowerCase();
+  const host = url.host.toLowerCase();
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  if (!githubHosts.has(host)) return null;
+  if (!issueHosts.has(host)) return null;
   const match = /^\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/u.exec(url.pathname);
   if (match === null) return null;
   const number = Number(match[3]);
@@ -32,20 +32,20 @@ export function parseIssueUrl(
   return { host, repository: `${match[1]}/${match[2]}`, number };
 }
 
-/** github.com plus the host of every project checked out from GitHub, Enterprise included. */
-export function knownGitHubHosts(projects: ReadonlyArray<EnvironmentProject>): Set<string> {
+/** github.com plus the host of every GitHub or Forgejo project, Enterprise included. */
+export function knownIssueHosts(projects: ReadonlyArray<EnvironmentProject>): Set<string> {
   const hosts = new Set(["github.com"]);
   for (const project of projects) {
     const identity = project.repositoryIdentity;
     // The canonical key starts with the remote's host, as the change request matcher reads it.
-    if (identity?.provider === "github")
+    if (identity?.provider === "github" || identity?.provider === "forgejo")
       hosts.add(identity.canonicalKey.split("/")[0]!.toLowerCase());
   }
   return hosts;
 }
 
 /**
- * Opens a GitHub issue link in T3's issue detail and says whether it did: beside the thread when
+ * Opens an issue link in T3's issue detail and says whether it did: beside the thread when
  * there is one, else on the Issues page. A modifier click, or no environment that reads GitHub
  * issues, leaves it an ordinary link.
  */
@@ -54,7 +54,7 @@ export function useOpenIssueLink(threadRef?: ScopedThreadRef) {
   const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projects = useProjects();
-  const githubHosts = useMemo(() => knownGitHubHosts(projects), [projects]);
+  const issueHosts = useMemo(() => knownIssueHosts(projects), [projects]);
   return useCallback(
     (
       event: Pick<
@@ -65,7 +65,7 @@ export function useOpenIssueLink(threadRef?: ScopedThreadRef) {
       environmentId?: EnvironmentId,
     ): boolean => {
       if (event.metaKey || event.ctrlKey) return false;
-      const issue = parseIssueUrl(url, githubHosts);
+      const issue = parseIssueUrl(url, issueHosts);
       if (issue === null) return false;
       const readsIssues = (id: EnvironmentId | null | undefined): id is EnvironmentId =>
         id != null && serverConfigs.get(id)?.environment.capabilities.githubIssues === true;
@@ -95,6 +95,6 @@ export function useOpenIssueLink(threadRef?: ScopedThreadRef) {
       });
       return true;
     },
-    [githubHosts, navigate, primaryEnvironmentId, serverConfigs, threadRef],
+    [issueHosts, navigate, primaryEnvironmentId, serverConfigs, threadRef],
   );
 }

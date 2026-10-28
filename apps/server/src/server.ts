@@ -47,7 +47,7 @@ import * as IssueCleanup from "./issues/IssueCleanup.ts";
 import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
 import * as IssueLinks from "./issues/IssueLinks.ts";
 import * as IssueService from "./issues/IssueService.ts";
-import * as IssueGitHubApi from "./issues/IssueGitHubApi.ts";
+import * as IssueGitHubHost from "./issues/IssueGitHubHost.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.ts";
@@ -389,7 +389,7 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 // Issue reads verify the GitHub credential the same way pull request reads do, and share the
 // GitHub quota and rate-limit pause (the built-in drivers' layer, memoized by reference) with them.
 const layerIssueService = IssueService.layer.pipe(
-  Layer.provide(IssueGitHubApi.layer),
+  Layer.provide(IssueGitHubHost.apiLayer),
   Layer.provide(gitHubServices),
 );
 

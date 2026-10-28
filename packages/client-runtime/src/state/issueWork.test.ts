@@ -8,7 +8,7 @@ import {
   type IssueWorkStartResult,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
-import { findIssueProject, issueWorkPresentation } from "./issueWork.ts";
+import { findIssueProject, issueWorkPresentation, threadIssueRepository } from "./issueWork.ts";
 
 const rootThreadId = ThreadId.make("root");
 const workerId = ThreadId.make("worker");
@@ -125,4 +125,28 @@ it("matches projects in the selected environment, including fork and upstream", 
     "first",
   );
   expect(findIssueProject(projects, { ...issue, host: "different.test" }, null)).toBeNull();
+});
+
+it("uses the origin and port of Forgejo projects without enabling other providers", () => {
+  const identity: RepositoryIdentity = {
+    provider: SourceControlProviderKind.make("forgejo"),
+    canonicalKey: "forge.example:3000/upstream/repo",
+    displayName: "upstream/repo",
+    locator: {
+      source: "git-remote",
+      remoteName: "upstream",
+      remoteUrl: "https://forge.example:3000/upstream/repo",
+    },
+    origin: { canonicalKey: "forge.example:3000/owner/repo", displayName: "owner/repo" },
+  };
+  expect(threadIssueRepository(identity)).toEqual({
+    host: "forge.example:3000",
+    repository: "owner/repo",
+  });
+  expect(
+    threadIssueRepository({ ...identity, provider: SourceControlProviderKind.make("gitlab") }),
+  ).toBeNull();
+  expect(
+    threadIssueRepository({ ...identity, provider: SourceControlProviderKind.make("github") }),
+  ).toBeNull();
 });
