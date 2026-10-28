@@ -117,14 +117,15 @@ export const make = Effect.gen(function* () {
         });
         yield* app.quit;
       },
-      Effect.mapError(
-        (cause) =>
-          new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
-            channel: null,
-            isSilent: true,
-            isForceRunAfter: true,
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        cause._tag === "ForkStagedUpdateChangedError"
+          ? cause
+          : new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+              channel: null,
+              isSilent: true,
+              isForceRunAfter: true,
+              cause,
+            }),
       ),
     ),
   };
