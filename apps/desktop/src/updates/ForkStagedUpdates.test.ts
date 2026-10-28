@@ -246,6 +246,25 @@ describe("ForkStagedUpdates", () => {
     ),
   );
 
+  it.effect("refreshes the offer when the staged build changes before installation", () =>
+    withForkHarness(({ stage, harness }) =>
+      Effect.gen(function* () {
+        yield* stage("2.12.15");
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("manual");
+        yield* stage("2.12.16");
+        const result = yield* updates.installPrepared("0.0.45-v2.12.15");
+        assert.isFalse(result.failed);
+        assert.equal(result.state.downloadedVersion, "0.0.45-v2.12.16");
+        assert.equal(result.state.status, "downloaded");
+        assert.deepEqual(harness.installSteps, []);
+        assert.equal(harness.installRecords.size, 0);
+        assert.equal(harness.updateRestartMarkers.size, 0);
+      }),
+    ),
+  );
+
   it.effect("recovers instead of quitting when the confirmed staged build disappears", () =>
     withForkHarness(({ stage, clear, harness }) =>
       Effect.gen(function* () {
@@ -255,7 +274,8 @@ describe("ForkStagedUpdates", () => {
         yield* updates.check("manual");
         yield* clear();
         const result = yield* updates.installPrepared("0.0.45-v2.12.15");
-        assert.isTrue(result.failed);
+        assert.isFalse(result.failed);
+        assert.equal(result.state.status, "up-to-date");
         assert.deepEqual(harness.installSteps, []);
         assert.deepEqual(harness.relaunches, []);
         assert.equal(harness.installRecords.size, 0);
