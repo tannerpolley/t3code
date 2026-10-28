@@ -31,8 +31,6 @@ import {
   ProjectId,
   type MessageId,
   type ModelSelection,
-  type OrchestrationV2ProjectedTurnItem,
-  type OrchestrationV2ThreadProjection,
   type OrchestrationMessageContext,
   type PreviewAnnotationPayload,
   type ProviderInteractionMode,

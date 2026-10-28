@@ -1,6 +1,6 @@
 import { toastCopyFailure } from "./ForkMarkdownActions";
-import { Check, Copy, Maximize2, Minimize2 } from "lucide";
-import { useRef, useState, type ComponentProps } from "react";
+import { Check, Copy } from "lucide";
+import { useRef, type ComponentProps } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {

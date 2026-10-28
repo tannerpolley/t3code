@@ -8,7 +8,6 @@ import {
   t3OrchestrationSections,
   t3ModelRolesInstructions,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
-  T3_CODE_ORCHESTRATION_SECTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 /** Codex silently truncates additionalContext values over 1,000 tokens, counted as UTF-8 bytes / 4. */

@@ -729,102 +729,6 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
 
 export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
 
-function needsRecovery(
-  projection: OrchestrationV2ThreadProjection,
-  kind: ProjectionRecoveryKind,
-  projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>,
-): boolean {
-  if (projection.thread.deletedAt !== null) return false;
-  switch (kind) {
-    case "queued-runs":
-      return (
-        projection.thread.archivedAt === null &&
-        projection.runs.some((run) => run.status === "queued") &&
-        !projection.runs.some((run) =>
-          ["preparing", "starting", "running", "waiting"].includes(run.status),
-        )
-      );
-    case "delegated-completions":
-      return (
-        projection.thread.delegatedCompletion?.delivery != null ||
-        projection.runs.some((run) => run.delegatedCompletion?.delivery != null) ||
-        projection.subagents.some(
-          (task) =>
-            task.origin === "app_owned" &&
-            task.result === null &&
-            task.childThreadId !== null &&
-            projections.get(task.childThreadId)?.thread.deletedAt != null,
-        )
-      );
-    case "pending-requests":
-      return projection.runtimeRequests.some((request) => request.status === "pending");
-    case "subagent-results": {
-      const parentThreadId = projection.thread.lineage.parentThreadId;
-      const parent = parentThreadId === null ? undefined : projections.get(parentThreadId);
-      return (
-        projection.thread.lineage.relationshipToParent === "subagent" &&
-        parentThreadId !== null &&
-        projection.thread.forkedFrom?.type === "node" &&
-        ((parent?.subagents ?? []).some(
-          (task) =>
-            task.origin === "app_owned" &&
-            task.result === null &&
-            task.childThreadId === projection.thread.id &&
-            (projection.thread.archivedAt !== null ||
-              !projection.runs.some((run) =>
-                ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
-              ) ||
-              projection.runs.some(
-                (run) =>
-                  run.delegatedTaskId === task.id &&
-                  ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-                    run.status,
-                  ),
-              )),
-        ) ||
-          ((["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-            latestUnheldRun(projection.runs)?.status ?? "idle",
-          ) ||
-            latestRootProviderFailure(latestExecutedRun(projection.runs), projection.turnItems)
-              ?.class === "usage_limit") &&
-            ![...projection.contextTransfers, ...(parent?.contextTransfers ?? [])].some(
-              (transfer) =>
-                transfer.type === "subagent_result" &&
-                transfer.sourceThreadId === projection.thread.id &&
-                transfer.targetThreadId === parentThreadId,
-            )))
-      );
-    }
-    case "runtime":
-      return (
-        projection.runs.some(
-          (run) =>
-            ["preparing", "starting", "running", "waiting"].includes(run.status) ||
-            (run.status === "queued" && run.queueHeld !== true),
-        ) ||
-        projection.runtimeRequests.some((request) => request.status === "pending") ||
-        projection.subagents.some(
-          (subagent) =>
-            subagent.origin === "provider_native" &&
-            ["pending", "running", "waiting"].includes(subagent.status),
-        ) ||
-        projection.providerSessions.some(
-          (session) => session.status !== "stopped" && session.status !== "error",
-        ) ||
-        projection.providerThreads.some(
-          (thread) =>
-            thread.status === "active" || (thread.pendingBackgroundTasks?.length ?? 0) > 0,
-        ) ||
-        projection.turnItems.some(
-          (item) =>
-            ["command_execution", "dynamic_tool", "subagent"].includes(item.type) &&
-            ["pending", "running", "waiting"].includes(item.status) &&
-            !projection.runs.some((run) => run.id === item.runId && run.status === "rolled_back"),
-        )
-      );
-  }
-}
-
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
   const index = items.findIndex((item) => item.id === next.id);
   if (index === -1) {
@@ -1885,27 +1789,6 @@ function nativeSubagentShellFields(
     activityRunStatus,
     activityRunStartedAt: activityRunStatus === null ? null : subagent.startedAt,
   };
-}
-
-function nativeSubagentForChild(
-  projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>,
-  child: OrchestrationV2ThreadProjection,
-): OrchestrationV2Subagent | null {
-  const parentThreadId = child.thread.lineage.parentThreadId;
-  if (parentThreadId === null) return null;
-  return (
-    projections
-      .get(parentThreadId)
-      ?.subagents.filter(
-        (subagent) =>
-          subagent.origin === "provider_native" && subagent.childThreadId === child.thread.id,
-      )
-      .toSorted(
-        (left, right) =>
-          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
-          right.id.localeCompare(left.id),
-      )[0] ?? null
-  );
 }
 
 function itemCountThroughRun(input: {

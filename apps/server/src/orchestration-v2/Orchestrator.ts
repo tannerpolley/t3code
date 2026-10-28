@@ -5779,6 +5779,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode.type === "defer_start" ||
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
+    const queueIsHeld = projection.runs.some(
+      (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
+    );
     const shouldQueue = queueBehindRun !== undefined && startsOrQueuesRun;
     // Client messages resume held queues; server continuations and scheduled tasks do not.
     // Provider failure or usage limits re-hold the queue. Failed worktree setup keeps it held
@@ -5909,9 +5912,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
-      const queueIsHeld = projection.runs.some(
-        (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
-      );
       // Buffered wakes need a T3 run for output the CLI already started producing.
       // Stop still holds wakes that arrive before the active run settles.
       const wakeSkipsHold =
@@ -6292,6 +6292,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : dispatchMode.type === "defer_start"
             ? "preparing"
             : "starting",
+        ...(admissionQueued && heldRunsToRelease.length === 0 && queueIsHeld
+          ? { queueHeld: true }
+          : {}),
         queuePosition: admissionQueued ? ordinal : null,
         requestedAt: now,
         startedAt: null,
@@ -8175,16 +8178,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: plan.task,
     });
-    if (plan.parentRun !== undefined) {
-      yield* emitEvent({
-        type: "run.updated",
-        threadId: command.parentThreadId,
-        runId: plan.parentRun.id,
-        ...(plan.parentRun.rootNodeId === null ? {} : { nodeId: plan.parentRun.rootNodeId }),
-        providerInstanceId: plan.parentRun.providerInstanceId,
-        occurredAt: now,
-        payload: plan.parentRun,
-      });
+    if (plan.cohort !== undefined) {
+      yield* emitEvent(completionCohortEvent(parentProjection.thread, parentRun, plan.cohort, now));
     }
     if (plan.message !== undefined) {
       yield* emitEvent({

@@ -6011,7 +6011,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               text: "CAPACITY_CHILD_DONE",
               turnId: RESUME_CHILD_TURN_1,
               completedAtMs: 1782622480000,
-              afterMs: 60_000,
+              // The late RPC response must still arrive within the transport deadline.
+              afterMs: parentStatus === "replied-last" ? 30_000 : 60_000,
             }),
             childTurnCompleted(RESUME_CHILD_TURN_1),
           ];
@@ -6045,6 +6046,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             if (terminal?.status === "failed") assert.isTrue(terminal.childTurnsContinue);
           }
           yield* TestClock.adjust("60 seconds");
+
           yield* harness.until(
             () => harness.subagentUpdates().at(-1)?.subagent.status === "completed",
           );

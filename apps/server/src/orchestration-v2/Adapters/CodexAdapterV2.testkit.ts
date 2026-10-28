@@ -7,7 +7,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";

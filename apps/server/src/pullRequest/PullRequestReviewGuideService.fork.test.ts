@@ -7,7 +7,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import {
   ProjectId,
   type PullRequestActivity,

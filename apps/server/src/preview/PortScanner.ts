@@ -944,7 +944,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
     for (const server of serversByKey.values()) {
       // Never probe an unidentified listener with HTTP or TLS; binary RPC servers can crash on it.
-      if (!isOwned(server)) continue;
+      if (server.reason === undefined && !isOwned(server)) continue;
       groups.push({
         server,
         urls: [`http://${server.host}:${server.port}`, `https://${server.host}:${server.port}`],

@@ -276,7 +276,6 @@ import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { forkTriggerDisplayModelName } from "./chat/ForkModelNames";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
-import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 
 import { ChatHeader } from "./chat/ChatHeader";
 import { useRemoteOpenState } from "~/remoteOpen";

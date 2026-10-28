@@ -1,9 +1,4 @@
-import {
-  type EnvironmentThreadShell,
-  type PendingSubagentRequest,
-  presentThreadShell,
-} from "@t3tools/client-runtime/state/models";
-import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import {} from "@t3tools/client-runtime/state/models";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
@@ -167,7 +162,6 @@ export function startThreadNotifications(
         focusAppWindow();
         void window.desktopBridge?.revealWindow?.().catch(() => undefined);
         window.focus();
-        void window.desktopBridge?.revealWindow().catch(() => undefined);
         void router.navigate({
           to: "/$environmentId/$threadId",
           params: { environmentId, threadId: thread.id },

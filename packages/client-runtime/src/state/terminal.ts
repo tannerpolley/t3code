@@ -12,7 +12,6 @@ import {
   type ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
@@ -22,7 +21,6 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
-  createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
   runAtomCommand,
 } from "./runtime.ts";

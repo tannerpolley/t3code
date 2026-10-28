@@ -1075,7 +1075,7 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       const { taskId } = result.structuredContent as { taskId: NodeId };
       // The role reaches the thread there, as it does a child here.
       expect(yield* Ref.get(thread.message)).toBe(
-        "Act as the review sub-agent for this task.\n\nReview the diff.",
+        "Act as the Reviewer sub-agent for this task.\n\nReview the diff.",
       );
 
       // A reply longer than one read, then a later run's reply on the same thread.

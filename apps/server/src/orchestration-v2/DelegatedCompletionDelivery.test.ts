@@ -1290,103 +1290,6 @@ const seedRestartCancelledChild = (input: {
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
-    it.effect("serializes sibling background follow-up cards on their parent", () =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const now = yield* DateTime.now;
-        const parentThreadId = ThreadId.make("thread:sibling-followups");
-        const projectId = ProjectId.make("project:sibling-followups");
-        const parentRunId = RunId.make("run:sibling-followups");
-        const rootNodeId = NodeId.make("node:sibling-followups");
-        yield* seedParentWithTerminalTask({
-          threadId: parentThreadId,
-          projectId,
-          runId: parentRunId,
-          rootNodeId,
-          taskId: NodeId.make("node:sibling-followups-seed"),
-          deliveryState: "acknowledged",
-          now,
-        });
-        const children = yield* Effect.forEach(["a", "b"], (name) =>
-          seedRestartCancelledChild({
-            parentThreadId,
-            projectId,
-            parentRunId,
-            rootNodeId,
-            name: `sibling-followups-${name}`,
-            completionWake: "always",
-            continuationPending: false,
-            runStatus: "completed",
-            now,
-          }),
-        );
-        yield* orchestrator.recoverDelegatedTasks;
-        const dispatch = (child: (typeof children)[number], index: number) =>
-          orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "agent",
-            creationSource: index === 0 ? "provider" : "server",
-            senderThreadId: parentThreadId,
-            commandId: CommandId.make(`command:sibling-followups:${index}`),
-            threadId: child.childThreadId,
-            messageId: MessageId.make(`message:sibling-followups:${index}`),
-            text: "Background command completed",
-            ...(index === 0
-              ? {
-                  notification: {
-                    source: { kind: "command" as const },
-                    outcome: "completed" as const,
-                    summary: "Background command completed",
-                  },
-                }
-              : {}),
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
-          });
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-        class HeldLocks extends Context.Reference<ReadonlyArray<ThreadId>>("test/FollowupLocks", {
-          defaultValue: () => [],
-        }) {}
-        const nextOrdinal = projections.getNextTurnItemOrdinal;
-        const withLock = executor.withLock;
-        const ordinalSpy = vi
-          .spyOn(projections, "getNextTurnItemOrdinal")
-          .mockImplementation((threadId) =>
-            Effect.gen(function* () {
-              if (threadId === parentThreadId)
-                assert.include(
-                  yield* HeldLocks,
-                  parentThreadId,
-                  "parent lock during card allocation",
-                );
-              return yield* nextOrdinal(threadId);
-            }),
-          );
-        const lockSpy = vi
-          .spyOn(executor, "withLock")
-          .mockImplementation(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) =>
-            Effect.flatMap(HeldLocks, (held) =>
-              withLock(key, effect.pipe(Effect.provideService(HeldLocks, [...held, key]))),
-            ),
-          );
-        yield* Effect.forEach(children, dispatch, { concurrency: "unbounded" }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              ordinalSpy.mockRestore();
-              lockSpy.mockRestore();
-            }),
-          ),
-        );
-        const parent = yield* orchestrator.getThreadProjection(parentThreadId);
-        const cards = parent.turnItems.filter(
-          (item) => item.type === "subagent" && item.prompt === "Background command completed",
-        );
-        assert.lengthOf(cards, 2);
-        assert.equal(new Set(cards.map((item) => item.ordinal)).size, 2);
-      }),
-    );
-
     it.effect("keeps a checkpoint completion committed between finalize's read and write", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -3372,3 +3275,105 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       }),
   );
 });
+
+it.layer(Layer.fresh(Layer.merge(layerTest, ProviderContinuationRequests.layer)))(
+  "fork sibling follow-up locking",
+  (it) => {
+    it.effect("serializes sibling background follow-up cards on their parent", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:sibling-followups");
+        const projectId = ProjectId.make("project:sibling-followups");
+        const parentRunId = RunId.make("run:sibling-followups");
+        const rootNodeId = NodeId.make("node:sibling-followups");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:sibling-followups-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const children = yield* Effect.forEach(["a", "b"], (name) =>
+          seedRestartCancelledChild({
+            parentThreadId,
+            projectId,
+            parentRunId,
+            rootNodeId,
+            name: `sibling-followups-${name}`,
+            completionWake: "always",
+            continuationPending: false,
+            runStatus: "completed",
+            now,
+          }),
+        );
+        yield* orchestrator.recoverDelegatedTasks;
+        const dispatch = (child: (typeof children)[number], index: number) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: index === 0 ? "provider" : "server",
+            senderThreadId: parentThreadId,
+            commandId: CommandId.make(`command:sibling-followups:${index}`),
+            threadId: child.childThreadId,
+            messageId: MessageId.make(`message:sibling-followups:${index}`),
+            text: "Background command completed",
+            ...(index === 0
+              ? {
+                  notification: {
+                    source: { kind: "command" as const },
+                    outcome: "completed" as const,
+                    summary: "Background command completed",
+                  },
+                }
+              : {}),
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        class HeldLocks extends Context.Reference<ReadonlyArray<ThreadId>>("test/FollowupLocks", {
+          defaultValue: () => [],
+        }) {}
+        const nextOrdinal = projections.getNextTurnItemOrdinal;
+        const withLock = executor.withLock;
+        const ordinalSpy = vi
+          .spyOn(projections, "getNextTurnItemOrdinal")
+          .mockImplementation((threadId) =>
+            Effect.gen(function* () {
+              if (threadId === parentThreadId)
+                assert.include(
+                  yield* HeldLocks,
+                  parentThreadId,
+                  "parent lock during card allocation",
+                );
+              return yield* nextOrdinal(threadId);
+            }),
+          );
+        const lockSpy = vi
+          .spyOn(executor, "withLock")
+          .mockImplementation(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) =>
+            Effect.flatMap(HeldLocks, (held) =>
+              withLock(key, effect.pipe(Effect.provideService(HeldLocks, [...held, key]))),
+            ),
+          );
+        yield* Effect.forEach(children, dispatch, { concurrency: "unbounded" }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              ordinalSpy.mockRestore();
+              lockSpy.mockRestore();
+            }),
+          ),
+        );
+        const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+        const cards = parent.turnItems.filter(
+          (item) => item.type === "subagent" && item.prompt === "Background command completed",
+        );
+        assert.lengthOf(cards, 2);
+        assert.equal(new Set(cards.map((item) => item.ordinal)).size, 2);
+      }),
+    );
+  },
+);

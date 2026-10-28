@@ -1,8 +1,4 @@
-import type {
-  ExecutionEnvironmentCapabilities,
-  ServerSettings,
-  ServerSettingsPatch,
-} from "@t3tools/contracts";
+import type { ServerSettings, ServerSettingsPatch } from "@t3tools/contracts";
 import {
   normalizeUsageLimitRecoveryPatch,
   isModelSelectionProviderEnabled,

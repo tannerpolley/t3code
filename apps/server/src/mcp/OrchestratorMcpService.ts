@@ -1,4 +1,3 @@
-import { resolveThreadRole, THREAD_ROLE_LABELS } from "@t3tools/contracts";
 import {
   CommandId,
   type EnvironmentId,
@@ -53,9 +52,7 @@ import {
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
   type ProviderInteractionMode,
-  type ProviderInstanceId,
   type ProviderOptionDescriptor,
-  type ProviderOptionSelection,
   ProviderRequestKind,
   type RuntimeMode,
   type ScheduledTask,

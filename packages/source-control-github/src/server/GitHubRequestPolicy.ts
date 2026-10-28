@@ -412,10 +412,14 @@ export const make = Effect.gen(function* () {
                     new GitHubApiRequestError({ ...context, cause: new Cause.TimeoutError() }),
                   ),
               }),
+              Effect.ensuring(
+                Effect.gen(function* () {
+                  yield* Effect.annotateCurrentSpan({
+                    "github.request.send_ms": (yield* Clock.currentTimeMillis) - startedAt,
+                  });
+                }),
+              ),
             );
-            yield* Effect.annotateCurrentSpan({
-              "github.request.send_ms": (yield* Clock.currentTimeMillis) - startedAt,
-            });
             if (held.fromApp && refusedToApp(answer)) {
               const personal = yield* Effect.option(personalCredential(host));
               if (Option.isSome(personal)) {

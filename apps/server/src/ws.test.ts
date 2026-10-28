@@ -482,14 +482,37 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
-  Layer.mock(DirectEndpoints.DirectEndpoints)({}),
-  Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
-  Layer.mock(ExternalLauncher.ExternalLauncher)({}),
-  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
-  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
-  Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
-  Layer.mock(ServerEnvironment.ServerEnvironment)({}),
-  Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+  Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
+  Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+    getDescriptor: () =>
+      Effect.succeed({
+        policy: "loopback-browser",
+        bootstrapMethods: [],
+        sessionMethods: ["browser-session-cookie"],
+        sessionCookieName: "config-test-session",
+      }),
+  }),
+  Layer.mock(ExternalLauncher.ExternalLauncher)({
+    resolveAvailableEditors: () => Effect.succeed([]),
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off - The optional result is undefined, not void.
+    resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+  }),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/unused",
+    scratchRoot: Effect.succeedNone,
+  }),
+  Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+  Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({ resolveTargets: () => Effect.succeed([]) }),
+  Layer.mock(ServerEnvironment.ServerEnvironment)({
+    getDescriptor: Effect.succeed({
+      environmentId: EnvironmentId.make("config-test"),
+      label: "Config test",
+      platform: { os: "linux", arch: "x64" },
+      serverVersion: "0.0.0",
+      capabilities: { repositoryIdentity: false },
+    }),
+  }),
+  Layer.mock(UsageLimitSources.UsageLimitSources)({ current: Effect.succeed([]) }),
   Layer.mock(InlineShellRuns.InlineShellRuns)({}),
   Layer.mock(IssueChangeService.IssueChangeService)({}),
   Layer.mock(IssueInbox.IssueInbox)({}),

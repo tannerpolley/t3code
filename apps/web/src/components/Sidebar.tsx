@@ -4,7 +4,6 @@ import { resolveProjectExpanded } from "../uiStateStore";
 import { useRemoveProjectMembers } from "../hooks/useRemoveProjectMembers";
 import { sortThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { groupRunningSubagentsByParent } from "./Sidebar.logic";
-import { resolveProjectFolderAppearance } from "../projectFolderAppearance";
 import { useProjectFolderAppearance } from "../projectFolderAppearance";
 import { newTitleRegenerationRequestId } from "./titleRegenerationFeedback";
 import { reportTitleRegenerationOutcomes } from "./titleRegenerationFeedback";

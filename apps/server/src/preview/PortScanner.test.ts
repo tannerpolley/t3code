@@ -618,6 +618,7 @@ effectIt.effect.each(["linux", "darwin"] as const)(
               if (input.args[0] === "-A") {
                 return Effect.succeed(processOutput(`4242 ${process.pid} 4242\n`));
               }
+              if (input.args[0] === "-Ao") return Effect.succeed(processOutput(""));
               if (environmentFails) {
                 return Effect.fail(
                   new ProcessRunner.ProcessTimeoutError({

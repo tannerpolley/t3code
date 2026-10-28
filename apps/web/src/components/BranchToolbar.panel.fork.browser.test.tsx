@@ -72,7 +72,7 @@ it("keeps machine choices usable when the combined row's workspace is locked", a
     })),
   });
   const trigger = screen.container.querySelector("button")!;
-  await expect.element(page.getByRole("button", { name: "Run context" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /^Run context:/ })).toBeVisible();
   expect(screen.container.querySelectorAll("button")).toHaveLength(1);
 
   // A ctrl-click is a macOS secondary click; it must not open the menu.
