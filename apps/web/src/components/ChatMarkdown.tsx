@@ -6,72 +6,22 @@ import { useOpenIssueLink } from "../lib/openIssueLink";
 import { IssueLinkPreview } from "./issues/IssueLinkPreview";
 import { IssueLinkPreviewFallback } from "./issues/IssueLinkPreview";
 import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
-import {
-  isWindowsDrivePathHref,
-  normalizeMarkdownLinkDestination,
-  extractInlineCodeSpans,
-  extractMarkdownLinkHrefs,
-  inlineCodeFilePathCandidate,
-} from "@t3tools/shared/markdownLinks";
+import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination, extractInlineCodeSpans, extractMarkdownLinkHrefs, inlineCodeFilePathCandidate } from "@t3tools/shared/markdownLinks";
 import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
-import {
-  AuthFilesystemReadScope,
-  AuthOrchestrationOperateScope,
-  SOURCE_CONTROL_MEDIA_ASSET,
-} from "@t3tools/contracts";
-import {
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
-} from "@t3tools/shared/markdownPipeline";
+import { AuthFilesystemReadScope, AuthOrchestrationOperateScope, SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
+import { CHAT_MARKDOWN_REMARK_PLUGINS, CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS, CHAT_MARKDOWN_REHYPE_PLUGINS } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  COMPOSER_CONTEXT_CLIPBOARD_MIME,
-  encodeComposerContextClipboardHtml,
-} from "@t3tools/shared/composerContextClipboard";
-import {
-  FileSpreadsheetIcon,
-  FileTextIcon,
-  GlobeIcon,
-  ImageIcon,
-  InfoIcon,
-  LightbulbIcon,
-  MailIcon,
-  MessageSquareIcon,
-  MessageSquareWarningIcon,
-  OctagonAlertIcon,
-  PresentationIcon,
-  SparklesIcon,
-  TriangleAlertIcon,
-  type LucideIcon,
-} from "lucide-react";
-import {
-  AssetWorkspaceAssetNotFoundError,
-  AuthPreviewOperateScope,
-  type EditorId,
-  type EnvironmentId,
-  type ServerConfig,
-  type ScopedThreadRef,
-  type ServerProviderSkill,
-  type ThreadPullRequestKey,
-} from "@t3tools/contracts";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import {
-  codexArtifactTemplatePresentationLabel,
-  type CodexArtifactTemplate,
-  type CodexArtifactTemplateKind,
-} from "@t3tools/shared/codexArtifactTemplates";
-import {
-  classifyMarkdownImageSource,
-  markdownImageSourceFragment,
-} from "@t3tools/client-runtime/markdown-images";
+import { COMPOSER_CONTEXT_CLIPBOARD_MIME, encodeComposerContextClipboardHtml } from "@t3tools/shared/composerContextClipboard";
+import { FileSpreadsheetIcon, FileTextIcon, GlobeIcon, ImageIcon, InfoIcon, LightbulbIcon, MailIcon, MessageSquareIcon, MessageSquareWarningIcon, OctagonAlertIcon, PresentationIcon, SparklesIcon, TriangleAlertIcon, type LucideIcon } from "lucide-react";
+import { AssetWorkspaceAssetNotFoundError, AuthPreviewOperateScope, type EditorId, type EnvironmentId, type ServerConfig, type ScopedThreadRef, type ServerProviderSkill, type ThreadPullRequestKey } from "@t3tools/contracts";
+import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { codexArtifactTemplatePresentationLabel, type CodexArtifactTemplate, type CodexArtifactTemplateKind } from "@t3tools/shared/codexArtifactTemplates";
+import { classifyMarkdownImageSource, markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import { mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 import { InlineAudioPreview } from "./files/InlineAudioPreview";
+import { HostImageUrlContext } from "./chat/hostImageUrl";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -87,11 +37,7 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
-import type {
-  Components,
-  ExtraProps as ReactMarkdownExtraProps,
-  Options as ReactMarkdownOptions,
-} from "react-markdown";
+import type { Components, ExtraProps as ReactMarkdownExtraProps, Options as ReactMarkdownOptions } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
@@ -102,54 +48,29 @@ import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import { mathKind } from "@t3tools/shared/markdownMath";
 import remarkMath from "remark-math";
-import {
-  artifactTemplateFromHastProperties,
-  renderCodexInlineDirectivesAsMarkdown,
-} from "@t3tools/shared/codexMarkdownDirectives";
+import { artifactTemplateFromHastProperties, renderCodexInlineDirectivesAsMarkdown } from "@t3tools/shared/codexMarkdownDirectives";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { MarkdownMath } from "./chat/MarkdownMath";
-import {
-  resolveMarkdownMediaPreview,
-  type ExpandedImagePreview,
-} from "./chat/ExpandedImagePreview";
+import { resolveMarkdownMediaPreview, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { markdownImageGallery } from "./chat/markdownImageGallery";
 import { type MediaActionSource } from "./media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
-import {
-  revealInFileExplorerLabelForKind,
-  revealInFileExplorerLabelForOs,
-} from "./preview/fileExplorerLabel";
-import {
-  resolveExternalWebLinkHost,
-  showExternalLinkContextMenu,
-} from "./chat/externalLinkContextMenu";
+import { revealInFileExplorerLabelForKind, revealInFileExplorerLabelForOs } from "./preview/fileExplorerLabel";
+import { resolveExternalWebLinkHost, showExternalLinkContextMenu } from "./chat/externalLinkContextMenu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
-import {
-  PreferredEditorEnvironmentRequiredError,
-  useOpenInPreferredEditor,
-  usePreferredEditor,
-} from "../editorPreferences";
+import { PreferredEditorEnvironmentRequiredError, useOpenInPreferredEditor, usePreferredEditor } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { useClientSettings } from "../hooks/useSettings";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
-import {
-  resolveInlineCodeFileLinkMeta,
-  resolveMarkdownFileLinkMeta,
-  rewriteMarkdownFileUriHref,
-  type MarkdownFileLinkMeta,
-} from "../markdown-links";
-import {
-  markdownFileCopyPaths,
-  markdownFileEditorTarget,
-  resolveMarkdownFileHostPath,
-} from "../markdownFileHostPath";
+import { resolveInlineCodeFileLinkMeta, resolveMarkdownFileLinkMeta, rewriteMarkdownFileUriHref, type MarkdownFileLinkMeta } from "../markdown-links";
+import { markdownFileCopyPaths, markdownFileEditorTarget, resolveMarkdownFileHostPath } from "../markdownFileHostPath";
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
@@ -160,66 +81,34 @@ import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
-import {
-  readEnvironmentScope,
-  readPreparedConnection,
-  useEnvironmentScope,
-} from "../state/session";
+import { readEnvironmentScope, readPreparedConnection, useEnvironmentScope } from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
 import { filesystemEnvironment } from "../state/filesystem";
-import {
-  claimWorkspaceBasenameLookup,
-  needsWorkspaceBasenameLookup,
-  pickStrippedWorkspaceMatch,
-  pickWorkspaceBasenameMatch,
-  stripRepeatedWorkspacePrefix,
-  WORKSPACE_BASENAME_LOOKUP_LIMIT,
-} from "@t3tools/client-runtime/workspace-basename-lookup";
+import { claimWorkspaceBasenameLookup, needsWorkspaceBasenameLookup, pickStrippedWorkspaceMatch, pickWorkspaceBasenameMatch, stripRepeatedWorkspacePrefix, WORKSPACE_BASENAME_LOOKUP_LIMIT } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
-import {
-  isBrowserPreviewFile,
-  openFileInPreview,
-  openUrlInPreview,
-  BrowserPreviewUnavailableError,
-  BrowserSettingsReadError,
-} from "../browser/openFileInPreview";
+import { isBrowserPreviewFile, openFileInPreview, openUrlInPreview, BrowserPreviewUnavailableError, BrowserSettingsReadError } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { MarkdownMermaidCodeBlock } from "./chat/MarkdownMermaidCodeBlock";
 import { MarkdownTable } from "./chat/MarkdownTable";
 import { MarkdownDetails } from "./chat/MarkdownDetails";
-import {
-  authoredImageSizeStyle,
-  ChatMarkdownAssetImage,
-  ChatMarkdownImage,
-  ChatMarkdownImageFallback,
-  ChatMarkdownVideo,
-  MarkdownLinkContext,
-  markdownImageCopy,
-} from "./chat/ChatMarkdownMedia";
+import { authoredImageSizeStyle, ChatMarkdownAssetImage, ChatMarkdownImage, ChatMarkdownImageFallback, ChatMarkdownVideo, MarkdownLinkContext, markdownImageCopy } from "./chat/ChatMarkdownMedia";
 import { MarkdownExternalLinkContent } from "./chat/MarkdownExternalLink";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
 import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
 import { rehypeTextDirection } from "./chat/markdownTextDirection";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
-import {
-  extractCodeBlock,
-  extractFenceLanguage,
-  extractFenceTitle,
-  extractPreCodeMeta,
-  isClosedCodeFence,
-  nodeToPlainText,
-} from "./chat/MarkdownCodeBlock.logic";
+import { extractCodeBlock, extractFenceLanguage, extractFenceTitle, extractPreCodeMeta, isClosedCodeFence, nodeToPlainText } from "./chat/MarkdownCodeBlock.logic";
 import { reportMarkdownActionFailure } from "./chat/markdownActionFailure";
 
 const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
@@ -418,7 +307,7 @@ type MarkdownServerConfigFields = ReturnType<typeof markdownServerConfigFields>;
 
 function markdownServerConfigFields(config: ServerConfig | null) {
   return {
-    pullRequestsEnabled: config?.environment.capabilities.pullRequests === true,
+    pullRequestsEnabled: config !== null,
     availableEditors: config?.availableEditors ?? NO_MARKDOWN_EDITORS,
     revealInFileManagerLabel:
       config?.shellRevealInFileManager === true && config.availableEditors.includes("file-manager")
@@ -497,6 +386,7 @@ function useChatMarkdownState({
     setLocalMedia(null);
   }
   // Layout cleanup blocks stale requests from reaching onImageExpand before paint.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- layout cleanup invalidates media requests still loading for the old scope before paint
   useLayoutEffect(
     () => () => {
       mediaRequestId.current += 1;
@@ -1086,13 +976,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const text = use(ChatMarkdownTextContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
-    const linkedThreadId = href ? parseThreadLinkHref(href) : null;
-    if (linkedThreadId) {
-      const label = hastPlainTextDeep(node) || linkedThreadId;
+    const threadLink = href ? parseThreadLinkHref(href) : null;
+    if (threadLink) {
+      const written = hastPlainTextDeep(node);
+      // An autolink's text is its own URL, which is no label.
+      const label = written && parseThreadLinkHref(written) === null ? written : null;
       return environmentId ? (
-        <MarkdownThreadLink environmentId={environmentId} threadId={linkedThreadId} label={label} />
+        <MarkdownThreadLink environmentId={environmentId} link={threadLink} label={label} />
       ) : (
-        <span>{label}</span>
+        <span>{label ?? "Thread"}</span>
       );
     }
     const contextReference = href ? parseComposerContextHref(href) : null;
@@ -1538,6 +1430,24 @@ const CHAT_MARKDOWN_COMPONENTS = {
           imageProps={imageProps}
           actionsSource={actionsSource}
           originalUrl={originalUrl}
+          onImageExpand={imageExpand}
+        />
+      );
+    }
+    const hostImageUrl = use(HostImageUrlContext);
+    if (imageSource._tag === "WorkspaceFile" && kind === "image" && hostImageUrl !== null) {
+      const hostSrc = hostImageUrl(imageSource.path);
+      return (
+        <ChatMarkdownImage
+          key={hostSrc}
+          src={hostSrc}
+          alt={altText}
+          copyMarkdown={copyMarkdown}
+          standalone={standalone}
+          className={className}
+          style={authoredSizeStyle}
+          imageProps={imageProps}
+          actionsSource={{ kind, name: altText || kind, src: hostSrc }}
           onImageExpand={imageExpand}
         />
       );

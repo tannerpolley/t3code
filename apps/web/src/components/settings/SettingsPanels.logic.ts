@@ -1,20 +1,6 @@
-import type {
-  BackgroundActivityProfile,
-  BackgroundActivitySettings,
-  ProviderInstanceConfig,
-  PreviewViewportSetting,
-  ProviderInstanceId,
-  ServerSettings,
-  SidebarProjectGroupingMode,
-  UnifiedSettings,
-} from "@t3tools/contracts";
+import type { BackgroundActivityProfile, BackgroundActivitySettings, ProviderInstanceConfig, PreviewViewportSetting, ProviderInstanceId, ServerSettings, SidebarProjectGroupingMode, UnifiedSettings } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import {
-  getBackgroundActivityBaseProfile,
-  normalizeBackgroundActivitySettings,
-  normalizeServerBackgroundActivitySettings,
-  resolveServerBackgroundActivitySettings,
-} from "@t3tools/shared/backgroundActivitySettings";
+import { getBackgroundActivityBaseProfile, normalizeBackgroundActivitySettings, normalizeServerBackgroundActivitySettings, resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 
@@ -181,7 +167,6 @@ export function resolveBackgroundActivityProfileOption(
       providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
       hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
       hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
-      idleClientTtl: resolved.idleClientTtl,
       pauseWhenHostLocked: resolved.pauseWhenHostLocked,
       pauseWhenHostLowPower: resolved.pauseWhenHostLowPower,
       pauseWhenClientLowPower: resolved.pauseWhenClientLowPower,
@@ -252,7 +237,6 @@ export function backgroundActivityOverrideSettings(
     providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
     hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
     hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
-    idleClientTtl: resolved.idleClientTtl,
     pauseWhenHostLocked: resolved.pauseWhenHostLocked,
     pauseWhenHostLowPower: resolved.pauseWhenHostLowPower,
     pauseWhenClientLowPower: resolved.pauseWhenClientLowPower,

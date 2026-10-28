@@ -1,15 +1,9 @@
-import type {
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2ThreadStreamItem,
-} from "@t3tools/contracts";
+import type { OrchestrationV2ThreadProjection, OrchestrationV2ThreadStreamItem } from "@t3tools/contracts";
 
 import { omitLocalVisibleTurnItems } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodies";
 
-import {
-  buildBoundedThreadProjection,
-  type BoundedProjectionResult,
-} from "./threadHistoryPaging.ts";
+import { buildBoundedThreadProjection, type BoundedProjectionResult } from "./threadHistoryPaging.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 export const THREAD_RESUME_MAX_REPLAY_EVENTS = 128;

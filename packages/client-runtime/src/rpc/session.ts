@@ -1,9 +1,4 @@
-import {
-  type ServerConfig,
-  type ServerConfigStreamEvent,
-  WsSubscribeServerConfigRpc,
-  WS_METHODS,
-} from "@t3tools/contracts";
+import { type ServerConfig, type ServerConfigStreamEvent, WsSubscribeServerConfigRpc, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -25,27 +20,11 @@ import * as RpcClientError from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
-import {
-  makeWsRpcProtocolClient,
-  PING_TIMEOUT,
-  LOCAL_PING_TIMEOUT,
-  type WsRpcProtocolClient,
-} from "./protocol.ts";
+import { makeWsRpcProtocolClient, PING_TIMEOUT, LOCAL_PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT, UNRESPONSIVE_HOST_HINT } from "../errors/network.ts";
-import type {
-  ConnectionAttemptError,
-  ConnectionTransientError,
-  PreparedConnection,
-} from "../connection/model.ts";
-import {
-  ConnectionBlockedError,
-  ConnectionTransientError as ConnectionTransientErrorClass,
-} from "../connection/model.ts";
-import {
-  applyServerConfigProjection,
-  type ServerConfigProjection,
-  withoutEnvironmentThemes,
-} from "../state/serverConfigProjection.ts";
+import type { ConnectionAttemptError, ConnectionTransientError, PreparedConnection } from "../connection/model.ts";
+import { ConnectionBlockedError, ConnectionTransientError as ConnectionTransientErrorClass } from "../connection/model.ts";
+import { applyServerConfigProjection, type ServerConfigProjection, withoutEnvironmentThemes } from "../state/serverConfigProjection.ts";
 import { environmentMismatchError } from "../connection/errors.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
@@ -297,17 +276,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
               themesEvent:
                 event.type === "environmentThemesUpdated"
                   ? event
-                  : event.type === "snapshot" &&
-                      event.config.environment.capabilities.environmentThemes !== true
-                    ? undefined
-                    : Option.getOrUndefined(current)?.themesEvent,
+                  : Option.getOrUndefined(current)?.themesEvent,
               sourcesEvent:
                 event.type === "usageLimitSourcesUpdated"
                   ? event
-                  : event.type === "snapshot" &&
-                      event.config.environment.capabilities.usageLimitSources !== true
-                    ? undefined
-                    : Option.getOrUndefined(current)?.sourcesEvent,
+                  : Option.getOrUndefined(current)?.sourcesEvent,
             } satisfies ServerConfigReplayState;
             return [
               Option.some({ event, replay: next, revision: next.revision }),
@@ -420,11 +393,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         ),
       );
     const probe = initialConfig.pipe(
-      Effect.flatMap((config) =>
-        (config.environment.capabilities.connectionProbe === true
-          ? protocolClient[WS_METHODS.serverProbe]({})
-          : protocolClient[WS_METHODS.serverGetConfig]({})
-        ).pipe(Effect.mapError(mapRpcError)),
+      Effect.flatMap(() =>
+        protocolClient[WS_METHODS.serverProbe]({}).pipe(Effect.mapError(mapRpcError)),
       ),
       Effect.asVoid,
       Effect.withSpan("clientRuntime.connection.rpcSession.probe"),

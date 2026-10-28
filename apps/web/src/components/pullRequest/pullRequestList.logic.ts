@@ -1,25 +1,9 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
-import type {
-  EnvironmentId,
-  PullRequestListEntry,
-  PullRequestListProjectError,
-  PullRequestListResult,
-  ProjectId,
-  RepositoryIdentity,
-  PullRequestAction,
-  PullRequestActor,
-  PullRequestDiffStat,
-  PullRequestInvolvement,
-  PullRequestLabel,
-  PullRequestListCursors,
-  PullRequestListFilters,
-  PullRequestListState,
-  PullRequestState,
-} from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestListEntry, PullRequestListProjectError, PullRequestListResult, ProjectId, RepositoryIdentity, PullRequestAction, PullRequestActor, PullRequestDiffStat, PullRequestInvolvement, PullRequestLabel, PullRequestListCursors, PullRequestListFilters, PullRequestListState, PullRequestState } from "@t3tools/contracts";
 
-import { toSortableTimestamp } from "../../lib/threadSort";
+import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { PullRequestListSort } from "./pullRequestListPreferences";
 
 export interface EnvironmentPullRequestEntry extends PullRequestListEntry {

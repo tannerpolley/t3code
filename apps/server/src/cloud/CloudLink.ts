@@ -1,46 +1,9 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createPublicKey.
 import * as NodeCrypto from "node:crypto";
-import {
-  AuthStandardClientScopes,
-  EnvironmentAuthenticatedPrincipal,
-  type EnvironmentCloudLinkStateResult,
-  type EnvironmentCloudPreferencesRequest,
-  type EnvironmentCloudRelayConfigResult,
-} from "@t3tools/contracts";
-import {
-  RelayCloudEnvironmentHealthProofPayload,
-  type RelayCloudEnvironmentHealthRequest,
-  RelayCloudMintCredentialProofPayload,
-  type RelayCloudMintCredentialRequest,
-  type RelayEnvironmentConfigRequest,
-  type RelayEnvironmentHealthResponse,
-  type RelayEnvironmentHealthResponseProofPayload,
-  type RelayEnvironmentLinkProof,
-  type RelayEnvironmentLinkProofPayload,
-  RelayEnvironmentLinkChallengeResponse,
-  RelayEnvironmentLinkResponse,
-  type RelayEnvironmentMintResponse,
-  type RelayEnvironmentMintResponseProofPayload,
-  type RelayLinkProofRequest,
-  type RelayManagedEndpointOrigin,
-  type RelayManagedEndpointRecoveryProofPayload,
-  RelayManagedEndpointRecoveryRegistrationResponse,
-  RelayManagedEndpointRecoveryResponse,
-  type RelayManagedEndpointRuntimeConfig,
-  RelayOkResponse,
-} from "@t3tools/contracts/relay";
+import { AuthStandardClientScopes, EnvironmentAuthenticatedPrincipal, type EnvironmentCloudLinkStateResult, type EnvironmentCloudPreferencesRequest, type EnvironmentCloudRelayConfigResult } from "@t3tools/contracts";
+import { RelayCloudEnvironmentHealthProofPayload, type RelayCloudEnvironmentHealthRequest, RelayCloudMintCredentialProofPayload, type RelayCloudMintCredentialRequest, type RelayEnvironmentConfigRequest, type RelayEnvironmentHealthResponse, type RelayEnvironmentHealthResponseProofPayload, type RelayEnvironmentLinkProof, type RelayEnvironmentLinkProofPayload, RelayEnvironmentLinkChallengeResponse, RelayEnvironmentLinkResponse, type RelayEnvironmentMintResponse, type RelayEnvironmentMintResponseProofPayload, type RelayLinkProofRequest, type RelayManagedEndpointOrigin, type RelayManagedEndpointRecoveryProofPayload, RelayManagedEndpointRecoveryRegistrationResponse, RelayManagedEndpointRecoveryResponse, type RelayManagedEndpointRuntimeConfig, RelayOkResponse } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
-import {
-  normalizeRelayIssuer,
-  RELAY_HEALTH_REQUEST_TYP,
-  RELAY_HEALTH_RESPONSE_TYP,
-  RELAY_LINK_PROOF_TYP,
-  RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
-  RELAY_MINT_REQUEST_TYP,
-  RELAY_MINT_RESPONSE_TYP,
-  signRelayJwt,
-  verifyRelayJwt,
-} from "@t3tools/shared/relayJwt";
+import { normalizeRelayIssuer, RELAY_HEALTH_REQUEST_TYP, RELAY_HEALTH_RESPONSE_TYP, RELAY_LINK_PROOF_TYP, RELAY_MANAGED_TUNNEL_RECOVERY_TYP, RELAY_MINT_REQUEST_TYP, RELAY_MINT_RESPONSE_TYP, signRelayJwt, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -55,12 +18,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-  type HttpServerRequest,
-} from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse, type HttpServerRequest } from "effect/http";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpServer from "effect/http/HttpServer";
 
@@ -71,51 +29,15 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { makeRelayEnvironmentClient } from "../relay/relayEnvironmentClient.ts";
 import { loopbackUrlHostForAddress } from "../startupAccess.ts";
-import {
-  type CliDesiredLinkMode,
-  readCliDesiredCloudLink,
-  readCliDesiredLinkMode,
-  setCliDesiredCloudLink,
-} from "./CliState.ts";
+import { type CliDesiredLinkMode, readCliDesiredCloudLink, readCliDesiredLinkMode, setCliDesiredCloudLink } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
-import {
-  CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
-  CLOUD_ENDPOINT_RUNTIME_CONFIG,
-  CLOUD_LINK_REVOKED,
-  CLOUD_LINKED_USER_ID,
-  CLOUD_MINT_PUBLIC_KEY,
-  decodeConfirmedOrigin,
-  decodeRuntimeConfig,
-  encodeConfirmedOriginJson,
-  encodeEndpointRuntimeConfigJson,
-  HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
-  PUBLISH_AGENT_ACTIVITY_SECRET,
-  readRelayConnection,
-  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
-  RELAY_ISSUER_SECRET,
-  RELAY_URL_SECRET,
-} from "./config.ts";
+import { CLOUD_ENDPOINT_CONFIRMED_ORIGIN, CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINK_REVOKED, CLOUD_LINKED_USER_ID, CLOUD_MINT_PUBLIC_KEY, decodeConfirmedOrigin, decodeRuntimeConfig, encodeConfirmedOriginJson, encodeEndpointRuntimeConfigJson, HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, PUBLISH_AGENT_ACTIVITY_SECRET, readRelayConnection, RELAY_ENVIRONMENT_CREDENTIAL_SECRET, RELAY_ISSUER_SECRET, RELAY_URL_SECRET } from "./config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
-import {
-  filterRelayResponse,
-  relayRequestError,
-  type RelayRequestError,
-  shouldRetryRelayRequest,
-} from "./relayResponse.ts";
-import {
-  hasBoundedCloudProofLifetime,
-  hasExactScope,
-  hasForwardedAuthorityHeaders,
-  isAllowedEndpointOrigin,
-  isSupportedLinkProviderKind,
-  linkProofScopes,
-  managedEndpointRuntimeConfigsMatch,
-  parseManagedEndpointLocalOrigin,
-  requestAbsoluteUrl,
-} from "./linkChecks.ts";
+import { filterRelayResponse, relayRequestError, type RelayRequestError, shouldRetryRelayRequest } from "./relayResponse.ts";
+import { hasBoundedCloudProofLifetime, hasExactScope, hasForwardedAuthorityHeaders, isAllowedEndpointOrigin, isSupportedLinkProviderKind, linkProofScopes, managedEndpointRuntimeConfigsMatch, parseManagedEndpointLocalOrigin, requestAbsoluteUrl } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
@@ -476,17 +398,6 @@ export class CloudLink extends Context.Service<
       | CloudLinkProofReplayedError
       | CloudLinkInternalError
       | EnvironmentAuth.ServerAuthInternalError
-    >;
-    readonly reconcileDesiredLink: (
-      localOrigin: string,
-    ) => Effect.Effect<
-      CliDesiredLinkMode,
-      | CloudLinkBackgroundError
-      | CloudLinkAccountMismatchError
-      | CloudLinkAuthorizationMissingError
-      | CloudLinkRelayConfigInvalidError
-      | EnvironmentAuth.ServerAuthInternalError
-      | CliTokenManager.CloudCliTokenManagerError
     >;
     readonly reconcileDesiredLinkIfStillDesired: (
       localOrigin: string,
@@ -917,12 +828,6 @@ const make = Effect.gen(function* () {
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("persist-desired-link")),
   );
-
-  const reconcileDesiredLink = Effect.fn("environment.cloud.reconcileDesiredLink")(function* (
-    localOrigin: string,
-  ) {
-    return yield* endpointRuntime.withLinkStateLock(reconcileDesiredCloudLinkWith(localOrigin));
-  });
 
   const reconcileDesiredLinkIfStillDesired = Effect.fn(
     "environment.cloud.reconcileDesiredLinkIfStillDesired",
@@ -1643,7 +1548,6 @@ const make = Effect.gen(function* () {
     updatePreferences,
     answerHealthRequest,
     mintCredential,
-    reconcileDesiredLink,
     reconcileDesiredLinkIfStillDesired,
     registerManagedTunnelRecovery,
     recoverManagedTunnel,

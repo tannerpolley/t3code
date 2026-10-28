@@ -1,38 +1,11 @@
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
-import {
-  ChevronDownIcon,
-  CircleXIcon,
-  EllipsisIcon,
-  FileJsonIcon,
-  MinusIcon,
-  PlusIcon,
-  SearchIcon,
-  TriangleAlertIcon,
-  XIcon,
-} from "lucide-react";
+import { ChevronDownIcon, CircleXIcon, EllipsisIcon, FileJsonIcon, MinusIcon, PlusIcon, SearchIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useLocation } from "@tanstack/react-router";
-import {
-  type KeyboardEvent,
-  type ReactNode,
-  type RefObject,
-  useReducer,
-  useRef,
-  useState,
-} from "react";
-import {
-  AuthOrchestrationOperateScope,
-  AuthSettingsWriteScope,
-  type KeybindingCommand,
-  type KeybindingWhenNode,
-  type ServerRemoveKeybindingInput,
-  type ServerUpsertKeybindingInput,
-} from "@t3tools/contracts";
+import { type KeyboardEvent, type ReactNode, type RefObject, useReducer, useRef, useState } from "react";
+import { AuthOrchestrationOperateScope, AuthSettingsWriteScope, type KeybindingCommand, type KeybindingWhenNode, type ServerRemoveKeybindingInput, type ServerUpsertKeybindingInput } from "@t3tools/contracts";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
@@ -50,26 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Toggle } from "../ui/toggle";
 import { toastManager } from "../ui/toast";
-import {
-  buildKeybindingRows,
-  filterKeybindingRows,
-  buildKeybindingCommandOptions,
-  buildWhenVariableOptions,
-  commandLabel,
-  DEFAULT_WHEN_VARIABLE,
-  isKnownWhenVariable,
-  keybindingConflictLabels,
-  keybindingFromKeyboardEvent,
-  parseWhenExpressionDraft,
-  groupKeybindingRows,
-  type KeybindingCommandOption,
-  type KeybindingGroup,
-  type KeybindingRow,
-  type WhenVariableOption,
-  unknownWhenVariables,
-  whenAstToExpression,
-  whenNodeRemoveLabel,
-} from "./KeybindingsSettings.logic";
+import { buildKeybindingRows, filterKeybindingRows, buildKeybindingCommandOptions, buildWhenVariableOptions, commandLabel, DEFAULT_WHEN_VARIABLE, isKnownWhenVariable, keybindingConflictLabels, keybindingFromKeyboardEvent, parseWhenExpressionDraft, groupKeybindingRows, type KeybindingCommandOption, type KeybindingGroup, type KeybindingRow, type WhenVariableOption, unknownWhenVariables, whenAstToExpression, whenNodeRemoveLabel } from "./KeybindingsSettings.logic";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";

@@ -1,15 +1,4 @@
-import {
-  isOlderSettledThreadShell,
-  ORCHESTRATION_V2_WS_METHODS,
-  type EnvironmentId,
-  type OrchestrationV2OlderSettledCursor,
-  type OrchestrationV2OlderSettledThreadsPage,
-  type OrchestrationV2SearchThreadsInput,
-  type OrchestrationV2ThreadFamily,
-  type OrchestrationV2ThreadShell,
-  type ProjectId,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { isOlderSettledThreadShell, ORCHESTRATION_V2_WS_METHODS, type EnvironmentId, type OrchestrationV2OlderSettledCursor, type OrchestrationV2OlderSettledThreadsPage, type OrchestrationV2SearchThreadsInput, type OrchestrationV2ThreadFamily, type OrchestrationV2ThreadShell, type ProjectId, type ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -213,7 +202,7 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, E>>,
 ) {
   const shellStateValue = (state: AsyncResult.AsyncResult<EnvironmentShellState, E>) =>
-    Option.getOrNull(AsyncResult.value(state));
+    AsyncResult.getOrElse(state, () => null);
 
   const countReadAtom = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:orchestration:older-settled-counts",

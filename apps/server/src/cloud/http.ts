@@ -1,14 +1,4 @@
-import {
-  AuthRelayReadScope,
-  AuthRelayWriteScope,
-  EnvironmentCloudEndpointUnavailableError,
-  EnvironmentHttpApi,
-  EnvironmentHttpBadRequestError,
-  EnvironmentHttpConflictError,
-  EnvironmentHttpForbiddenError,
-  EnvironmentHttpInternalServerError,
-  EnvironmentHttpUnauthorizedError,
-} from "@t3tools/contracts";
+import { AuthRelayReadScope, AuthRelayWriteScope, EnvironmentCloudEndpointUnavailableError, EnvironmentHttpApi, EnvironmentHttpBadRequestError, EnvironmentHttpConflictError, EnvironmentHttpForbiddenError, EnvironmentHttpInternalServerError, EnvironmentHttpUnauthorizedError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -144,11 +134,6 @@ export const layer = HttpApiBuilder.group(
       )
       .handle("health", ({ payload }) =>
         toHttpError(cloudLink.answerHealthRequest(payload)).pipe(
-          Effect.tap(() => appendCloudCredentialResponseHeaders),
-        ),
-      )
-      .handle("mintCredential", ({ payload }) =>
-        toHttpError(cloudLink.mintCredential(payload)).pipe(
           Effect.tap(() => appendCloudCredentialResponseHeaders),
         ),
       )

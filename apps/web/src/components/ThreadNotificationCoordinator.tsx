@@ -1,3 +1,9 @@
+import {
+  type EnvironmentThreadShell,
+  type PendingSubagentRequest,
+  presentThreadShell,
+} from "@t3tools/client-runtime/state/models";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
@@ -14,6 +20,7 @@ import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
+import { environmentThreadShells } from "../state/threads";
 import {
   focusAppWindow,
   hasDesktopNotifications,
@@ -159,6 +166,8 @@ export function startThreadNotifications(
         notification.close();
         focusAppWindow();
         void window.desktopBridge?.revealWindow?.().catch(() => undefined);
+        window.focus();
+        void window.desktopBridge?.revealWindow().catch(() => undefined);
         void router.navigate({
           to: "/$environmentId/$threadId",
           params: { environmentId, threadId: thread.id },
@@ -178,10 +187,11 @@ export function startThreadNotifications(
         (threadId) => retract(environmentId, threadId),
       ),
     };
+    let threads: ReadonlyArray<import("@t3tools/contracts").OrchestrationV2ThreadShell> | null = null;
     const unsubscribeShell = registry.subscribe(
       environmentShell.stateValueAtom(environmentId),
       (shell) => {
-        const threads =
+        threads =
           shell.status === "live" && Option.isSome(shell.snapshot)
             ? shell.snapshot.value.threads
             : null;
@@ -193,9 +203,22 @@ export function startThreadNotifications(
       },
       { immediate: true },
     );
+    const reobserve = () => {
+      if (threads !== null) entry.observer.observe(threads);
+    };
+    const unsubscribeRequests = registry.subscribe(
+      environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
+      reobserve,
+    );
+    const unsubscribeDelegated = registry.subscribe(
+      environmentThreadShells.delegatedUnderParentAtom,
+      reobserve,
+    );
     entry.unsubscribe = () => {
       unsubscribeShell();
       entry.observer.clear();
+      unsubscribeRequests();
+      unsubscribeDelegated();
     };
     return entry;
   };

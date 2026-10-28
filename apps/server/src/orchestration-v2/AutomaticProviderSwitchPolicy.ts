@@ -1,42 +1,16 @@
-import {
-  CommandId,
-  type OrchestrationV2AppThread,
-  type OrchestrationV2Command,
-  type OrchestrationV2DomainEvent,
-  type OrchestrationV2Run,
-  type OrchestrationV2ServerCommand,
-  type OrchestrationV2ThreadProjection,
-  type RunId,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { CommandId, type OrchestrationV2AppThread, type OrchestrationV2Command, type OrchestrationV2DomainEvent, type OrchestrationV2Run, type OrchestrationV2ServerCommand, type OrchestrationV2ThreadProjection, type RunId, type ThreadId } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import {
-  latestExecutedRun,
-  latestRootProviderFailure,
-  runRanAfter,
-} from "@t3tools/shared/orchestrationV2ThreadError";
+import { latestExecutedRun, latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as Ref from "effect/Ref";
 import type { ForkCommandHooks } from "./IssueWorkCommands.ts";
-import type {
-  OrchestratorProjectionError,
-  OrchestratorV2DispatchResult,
-  OrchestratorV2Error,
-} from "./Orchestrator.ts";
-import type {
-  threadShellFromProjection,
-  ProjectionRecordField,
-  ProjectionRecordFilter,
-  ProjectionRecords,
-} from "./ProjectionStore.ts";
+import type { OrchestratorProjectionError, OrchestratorV2DispatchResult, OrchestratorV2Error } from "./Orchestrator.ts";
+import type { threadShellFromProjection, ProjectionRecordField, ProjectionRecordFilter, ProjectionRecords } from "./ProjectionStore.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import type { isSnoozed } from "./ThreadSettlementService.ts";
 import { usageLimitQueuedRunEvents } from "./usageLimitQueuedRuns.ts";
-import type {
-  usageLimitRecoveryPending,
-  usageLimitSwitchMessageId,
-} from "./usageLimitRecoveryPending.ts";
+import type { usageLimitRecoveryPending, usageLimitSwitchMessageId } from "./usageLimitRecoveryPending.ts";
 
 interface AutomaticProviderSwitchHooks<RestartError> extends Pick<
   ForkCommandHooks,

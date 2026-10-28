@@ -5,38 +5,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
 import { EasDeviceHostsSettings } from "./EasDeviceHostsSettings";
-import {
-  AuthSettingsWriteScope,
-  BrowserImportFailureReason,
-  BROWSER_PROFILE_MAX_COUNT,
-  type BrowserLinkTarget,
-  type BrowserProfile,
-  BrowserSearchEngine,
-  BROWSER_CUSTOM_SEARCH_URL_MAX_LENGTH,
-  type EnvironmentId,
-  BROWSER_PROFILE_NAME_MAX_LENGTH,
-  BROWSER_RECORDING_FRAME_RATES,
-  DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
-  DEFAULT_BROWSER_PROFILE_ID,
-  DEFAULT_BROWSER_LINK_TARGET,
-  DEFAULT_BROWSER_RECORDING_FRAME_RATE,
-  DEFAULT_BROWSER_SEARCH_ENGINE,
-  DEFAULT_BROWSER_VIEWPORT,
-  DEFAULT_PREVIEW_APPEARANCE,
-  DEFAULT_PREVIEW_ZOOM_FACTOR,
-  DEFAULT_SERVER_SETTINGS,
-  FILL_PREVIEW_VIEWPORT,
-  PREVIEW_VIEWPORT_MAX_AREA,
-  PREVIEW_VIEWPORT_MAX_DIMENSION,
-  PREVIEW_VIEWPORT_MIN_DIMENSION,
-  PREVIEW_ZOOM_LEVELS,
-  findBrowserProfile,
-  isBuiltInBrowserProfileId,
-  resolveBrowserProfiles,
-  type BrowserImportSource,
-  type PreviewAppearancePreference,
-  type PreviewViewportSetting,
-} from "@t3tools/contracts";
+import { AuthSettingsWriteScope, BrowserImportFailureReason, BROWSER_PROFILE_MAX_COUNT, type BrowserLinkTarget, type BrowserProfile, BrowserSearchEngine, BROWSER_CUSTOM_SEARCH_URL_MAX_LENGTH, type EnvironmentId, BROWSER_PROFILE_NAME_MAX_LENGTH, BROWSER_RECORDING_FRAME_RATES, DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW, DEFAULT_BROWSER_PROFILE_ID, DEFAULT_BROWSER_LINK_TARGET, DEFAULT_BROWSER_RECORDING_FRAME_RATE, DEFAULT_BROWSER_SEARCH_ENGINE, DEFAULT_BROWSER_VIEWPORT, DEFAULT_PREVIEW_APPEARANCE, DEFAULT_PREVIEW_ZOOM_FACTOR, DEFAULT_SERVER_SETTINGS, FILL_PREVIEW_VIEWPORT, PREVIEW_VIEWPORT_MAX_AREA, PREVIEW_VIEWPORT_MAX_DIMENSION, PREVIEW_VIEWPORT_MIN_DIMENSION, PREVIEW_ZOOM_LEVELS, findBrowserProfile, isBuiltInBrowserProfileId, resolveBrowserProfiles, type BrowserImportSource, type PreviewAppearancePreference, type PreviewViewportSetting } from "@t3tools/contracts";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
@@ -55,69 +24,24 @@ import { formatEnvironmentQueryError } from "~/state/query";
 import { previewEnvironment } from "~/state/preview";
 import { useServerConfigs } from "~/state/entities";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import {
-  AgentDeviceSetupStatus,
-  DeviceHubSetupStatus,
-  deviceHubReadiness,
-  PlatformStatus,
-  platformSetupStatus,
-  deviceHubDescription,
-  agentDeviceDescription,
-  DeviceHostDiagnostics,
-} from "~/components/device/DeviceSetup";
+import { AgentDeviceSetupStatus, DeviceHubSetupStatus, deviceHubReadiness, PlatformStatus, platformSetupStatus, deviceHubDescription, agentDeviceDescription, DeviceHostDiagnostics } from "~/components/device/DeviceSetup";
 import { isElectron } from "../../env";
 
 import { Badge } from "../ui/badge";
-import {
-  Menu,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
+import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { readLocalApi } from "~/localApi";
 
 import { toastManager } from "../ui/toast";
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
+import { AlertDialog, AlertDialogClose, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogPopup, AlertDialogTitle } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
-import {
-  Select,
-  SelectGroup,
-  SelectGroupLabel,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
+import { Select, SelectGroup, SelectGroupLabel, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  getClientSettings,
-  persistClientSettingsUpdate,
-  useClientSettings,
-  useClientSettingsHydrated,
-  useUpdatePrimarySettings,
-} from "~/hooks/useSettings";
+import { getClientSettings, persistClientSettingsUpdate, useClientSettings, useClientSettingsHydrated, useUpdatePrimarySettings } from "~/hooks/useSettings";
 
-import {
-  SettingsUnavailableGroup,
-  SettingResetButton,
-  SettingsPageContainer,
-  SettingsRow,
-  SettingsSection,
-} from "./settingsLayout";
+import { SettingsUnavailableGroup, SettingResetButton, SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -1578,8 +1502,8 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
           }
           onRefreshSource={() => refreshImportSource(importSession.source.id)}
           onCheckFullDiskAccess={
-            window.desktopBridge?.checkSystemPermission
-              ? () => window.desktopBridge!.checkSystemPermission!("full-disk-access")
+            window.desktopBridge
+              ? () => window.desktopBridge!.checkSystemPermission("full-disk-access")
               : undefined
           }
           onOpenFullDiskAccessSettings={async () => {

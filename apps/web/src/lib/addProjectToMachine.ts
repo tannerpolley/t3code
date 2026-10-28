@@ -1,18 +1,10 @@
-import {
-  executeAtomQuery,
-  runAtomCommand,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
-import type {
-  EnvironmentId,
-  ProjectCloneSnapshot,
-  ProjectId,
-  ScopedProjectRef,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ProjectCloneSnapshot, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -143,6 +135,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     setFileCopy(copyKey, null);
     throw new Error(failureMessage(started));
   }
+  void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
   if (reads.length === 0) return;
 
   void (async () => {

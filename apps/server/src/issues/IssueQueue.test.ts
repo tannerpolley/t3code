@@ -1,18 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  CommandId,
-  EventId,
-  IssueReadError,
-  MessageId,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ServerProvider,
-  ThreadId,
-  type OrchestrationV2Run,
-  type ThreadRole,
-} from "@t3tools/contracts";
+import { CommandId, EventId, IssueReadError, MessageId, ProviderDriverKind, ProviderInstanceId, type ServerProvider, ThreadId, type OrchestrationV2Run, type ThreadRole } from "@t3tools/contracts";
 import * as IssueInbox from "./IssueInbox.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -43,12 +32,7 @@ import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import {
-  adapter,
-  makeHarness,
-  modelSelection,
-  projectId,
-} from "../orchestration-v2/ThreadLaunchService.testHarness.ts";
+import { adapter, makeHarness, modelSelection, projectId } from "../orchestration-v2/ThreadLaunchService.testHarness.ts";
 
 const reference = { host: "github.com", repository: "owner/repo" };
 const issue = (number: number) => ({

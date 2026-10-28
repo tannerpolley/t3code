@@ -17,85 +17,18 @@ import { useUiStateStore } from "../uiStateStore";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
-import {
-  scopedThreadKey,
-  scopeProjectRef,
-  scopeThreadRef,
-} from "@t3tools/client-runtime/environment";
-import {
-  canCreateProjectInEnvironment,
-  getCloneDestinationBrowsePath,
-  getCloneDestinationPath,
-  getCloneDirectoryName,
-  getDefaultCloneUrl,
-  getNewProjectPathPreview,
-  getNewProjectPublishTarget,
-  getNewProjectPublishTargets,
-  getNewProjectRepository,
-  normalizePastedCloneUrl,
-  addProjectRemoteSourceLabel,
-  addProjectRemoteSourcePathHint,
-  addProjectRemoteSourceProvider,
-  sortAddProjectProviderSources,
-  type AddProjectRemoteSource,
-  type AddProjectRemoteSourceReadiness,
-} from "@t3tools/client-runtime/operations/projects";
+import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { canCreateProjectInEnvironment, getCloneDestinationBrowsePath, getCloneDestinationPath, getCloneDirectoryName, getDefaultCloneUrl, getNewProjectPathPreview, getNewProjectPublishTarget, getNewProjectPublishTargets, getNewProjectRepository, normalizePastedCloneUrl, addProjectRemoteSourceLabel, addProjectRemoteSourcePathHint, addProjectRemoteSourceProvider, sortAddProjectProviderSources, type AddProjectRemoteSource, type AddProjectRemoteSourceReadiness } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
-import {
-  canPreloadBrowsePath,
-  createBrowseNavigationCoordinator,
-  filterFilesystemBrowseEntries,
-  getFilesystemBrowsePath,
-} from "@t3tools/client-runtime/state/filesystem";
-import {
-  isAtomCommandInterrupted,
-  settlePromise,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import {
-  AuthOrchestrationOperateScope,
-  AuthSourceControlWriteScope,
-  AuthFilesystemReadScope,
-  type DesktopWslState,
-  type EnvironmentId,
-  type FilesystemBrowseResult,
-  SourceControlProviderKind,
-  PRIMARY_LOCAL_ENVIRONMENT_ID,
-  resolveEnvironmentMachineKind,
-} from "@t3tools/contracts";
+import { canPreloadBrowsePath, createBrowseNavigationCoordinator, filterFilesystemBrowseEntries, getFilesystemBrowsePath } from "@t3tools/client-runtime/state/filesystem";
+import { isAtomCommandInterrupted, settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope, AuthFilesystemReadScope, type DesktopWslState, type EnvironmentId, type FilesystemBrowseResult, SourceControlProviderKind, PRIMARY_LOCAL_ENVIRONMENT_ID, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import {
-  ArrowLeftIcon,
-  ChartNoAxesColumnIcon,
-  CheckIcon,
-  ChevronRightIcon,
-  CornerLeftUpIcon,
-  FileSearchIcon,
-  FolderGit2Icon,
-  FolderIcon,
-  FolderPlusIcon,
-  MessageSquareDashedIcon,
-  LinkIcon,
-  MessageSquareIcon,
-  PaletteIcon,
-  RotateCcwIcon,
-  SettingsIcon,
-  SquarePenIcon,
-  TextSearchIcon,
-  UserPlusIcon,
-} from "lucide-react";
+import { ArrowLeftIcon, BugIcon, ChartNoAxesColumnIcon, CheckIcon, ChevronRightIcon, CornerLeftUpIcon, FileSearchIcon, FolderGit2Icon, FolderIcon, FolderPlusIcon, MessageSquareDashedIcon, LinkIcon, MessageSquareIcon, PaletteIcon, RotateCcwIcon, SettingsIcon, MonitorIcon, SquarePenIcon, TextSearchIcon, UserPlusIcon } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
-import {
-  useDeferredValue,
-  useEffect,
-  useReducer,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import { useDeferredValue, useEffect, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 
@@ -103,12 +36,9 @@ import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
-import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import {
-  composerPromptLink,
-  copyPromptLink,
-  promptLinkRepositoryOf,
-} from "./promptLinks/copyPromptLink";
+import { copyThreadReference } from "../lib/copyThreadReference";
+import { queueWorkspaceFocusFromPalette, restoreWorkspaceFocusFromPalette } from "../lib/workspaceFocus";
+import { composerPromptLink, copyPromptLink, promptLinkRepositoryOf } from "./promptLinks/copyPromptLink";
 import { useClientSettings } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
@@ -123,108 +53,29 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
+import { useStartTriage } from "../hooks/useStartTriage";
+import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
-import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import {
-  useEnvironmentProviders,
-  useEnvironments,
-  usePrimaryEnvironmentId,
-} from "../state/environments";
+import { useEnvironmentProviders, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
-import {
-  appendBrowsePathSegment,
-  ensureBrowseDirectoryPath,
-  findProjectByPath,
-  getBrowseDirectoryPath,
-  hasTrailingPathSeparator,
-  inferProjectTitleFromPath,
-  isExplicitRelativeProjectPath,
-  isUnsupportedWindowsProjectPath,
-  resolveProjectPathForDispatch,
-} from "../lib/projectPaths";
-import {
-  dispatchCommandPalette,
-  useCommandPaletteMount,
-  useCommandPaletteStore,
-} from "../commandPaletteStore";
+import { appendBrowsePathSegment, ensureBrowseDirectoryPath, findProjectByPath, getBrowseDirectoryPath, hasTrailingPathSeparator, inferProjectTitleFromPath, isExplicitRelativeProjectPath, isScratchProject, isUnsupportedWindowsProjectPath, resolveProjectPathForDispatch } from "@t3tools/client-runtime/state/projects";
+import { dispatchCommandPalette, getCommandPaletteReturnFocus, useCommandPaletteMount, useCommandPaletteStore } from "../commandPaletteStore";
 import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
-import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
-import {
-  cn,
-  getLocalFileManagerName,
-  isMacPlatform,
-  isWindowsPlatform,
-  newProjectId,
-} from "../lib/utils";
+import { getLatestThreadForProject, sortThreads } from "@t3tools/client-runtime/state/thread-sort";
+import { cn, getLocalFileManagerName, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
-import {
-  applyWslEnvironmentConfiguration,
-  parseWslUncPath,
-  resolveProjectPickerTarget,
-  resolveWslProjectSelection,
-} from "../wslPaths";
-import {
-  ADDON_ICON_CLASS,
-  browseInputEndPaddingClass,
-  buildBrowseGroups,
-  buildRootGroups,
-  buildLinkedThreadActionItems,
-  buildCommandPaletteRows,
-  enumerateCommandPaletteItems,
-  findHighlightedCommandPaletteItem,
-  type CommandPaletteActionItem,
-  type CommandPaletteOpenIntent,
-  type CommandPaletteProject,
-  type CommandPaletteReturnContext,
-  type CommandPaletteSubmenuItem,
-  type CommandPaletteView,
-  filterCommandPaletteGroups,
-  buildNestedSearchItems,
-  filterPinnedBrowseEntries,
-  getCommandPaletteInputPlaceholder,
-  getCommandPaletteMode,
-  ITEM_ICON_CLASS,
-  RECENT_THREAD_LIMIT,
-  createCommandPaletteSearchState,
-  type CommandPaletteGroup,
-  resolveAddProjectEntry,
-  type AddProjectCloneFlow,
-  type AddProjectEnvironmentOption,
-  buildPaletteRemoteSourceReadiness,
-  errorMessage,
-  getEnvironmentBrowsePlatform,
-  remoteProjectInputPlaceholder,
-  reduceCommandPaletteSearchState,
-  type SearchOverlayMode,
-} from "./CommandPalette.logic";
+import { applyWslEnvironmentConfiguration, parseWslUncPath, resolveProjectPickerTarget, resolveWslProjectSelection } from "../wslPaths";
+import { ADDON_ICON_CLASS, browseInputEndPaddingClass, buildBrowseGroups, buildRootGroups, buildLinkedThreadActionItems, buildCommandPaletteRows, enumerateCommandPaletteItems, findHighlightedCommandPaletteItem, type CommandPaletteActionItem, type CommandPaletteOpenIntent, type CommandPaletteProject, type CommandPaletteReturnContext, type CommandPaletteSubmenuItem, type CommandPaletteView, filterCommandPaletteGroups, buildNestedSearchItems, filterPinnedBrowseEntries, getCommandPaletteInputPlaceholder, getCommandPaletteMode, ITEM_ICON_CLASS, RECENT_THREAD_LIMIT, createCommandPaletteSearchState, type CommandPaletteGroup, resolveAddProjectEntry, type AddProjectCloneFlow, type AddProjectEnvironmentOption, buildPaletteRemoteSourceReadiness, errorMessage, getEnvironmentBrowsePlatform, remoteProjectInputPlaceholder, reduceCommandPaletteSearchState, type SearchOverlayMode } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
-import {
-  selectCommandPaletteClientSettings,
-  useEnvironmentLookups,
-  useProjectLookups,
-  useSortedProjectGroups,
-} from "./CommandPaletteLookups";
-import {
-  buildNewThreadInProjectItems,
-  buildProjectSearchItems,
-} from "./CommandPaletteProjectItems";
-import {
-  CommandPaletteSubmitButton,
-  NewProjectPublishHostPicker,
-  NewProjectSummary,
-  RemoteRepositorySummary,
-  remoteProjectSourceIcon,
-  sourceControlHostIcon,
-} from "./CommandPaletteAddProject";
+import { selectCommandPaletteClientSettings, useEnvironmentLookups, useProjectLookups, useSortedProjectGroups } from "./CommandPaletteLookups";
+import { buildNewThreadInProjectItems, buildProjectSearchItems } from "./CommandPaletteProjectItems";
+import { CommandPaletteSubmitButton, NewProjectPublishHostPicker, NewProjectSummary, RemoteRepositorySummary, remoteProjectSourceIcon, sourceControlHostIcon } from "./CommandPaletteAddProject";
 import { useCommandPaletteThreadItems } from "./CommandPaletteThreadItems";
 import { useCommandPaletteThemeItems } from "./CommandPaletteThemeItems";
-import {
-  CommandPaletteVirtualizedResults,
-  scrollCommandPaletteRowIntoView,
-} from "./CommandPaletteResults";
+import { CommandPaletteVirtualizedResults, scrollCommandPaletteRowIntoView } from "./CommandPaletteResults";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
@@ -238,6 +89,7 @@ import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindin
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { suggestAppAccessForRemote } from "./sourceControlAppAccessToast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
@@ -344,8 +196,12 @@ function CommandPaletteDialog(props: {
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
+        if (restoreWorkspaceFocusFromPalette()) return false;
+        const returnFocus = getCommandPaletteReturnFocus();
+        if (returnFocus === false) return false;
         const composer = composerHandleRef?.current;
-        if (!composer) return true;
+        // Behind the Settings modal the composer is inert and cannot take focus.
+        if (!composer || document.querySelector("[data-app-modal]")) return returnFocus;
         composer.focusAtEnd();
         return false;
       }}
@@ -415,6 +271,7 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
+  const startTriage = useStartTriage();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -422,9 +279,7 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
     reportDefect: false,
   });
-  const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
-    reportFailure: false,
-  });
+  const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, { operation: "Clone repository" });
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
@@ -444,9 +299,7 @@ function OpenCommandPaletteDialog(props: {
   const projects = useProjects();
   const referenceThreadRef =
     pathname === "/pull-requests"
-      ? environments.some(
-          (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
-        )
+      ? environments.some((environment) => environment.serverConfig !== null)
         ? PULL_REQUESTS_PANEL_REF
         : null
       : pathname === "/issues"
@@ -476,26 +329,8 @@ function OpenCommandPaletteDialog(props: {
             activeThread?.linkedPullRequest?.url ?? activeThread?.branchPullRequest?.url ?? null,
         }));
   const copyActiveThreadReference = async () => {
-    const target = activeThreadReferenceCopyTarget;
-    if (target === null) return;
-    try {
-      const didCopy = await writeTextToClipboard(target.value, target.clipboardTarget);
-      if (!didCopy) return;
-      toastManager.add({
-        type: "success",
-        title: target.successTitle,
-        description: target.value,
-      });
-    } catch (error) {
-      console.error(error);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: target.failureTitle,
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    }
+    if (activeThreadReferenceCopyTarget === null) return;
+    await copyThreadReference(activeThreadReferenceCopyTarget);
   };
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -683,9 +518,21 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
-  const scratchTargetEnvironmentId = scratchEnvironmentId(
-    currentProjectEnvironmentId ?? primaryEnvironmentId,
-  );
+  const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
+  const supportsTriage = (environmentId: EnvironmentId | null) =>
+    environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
+      ?.environment.capabilities.triage === true;
+  const triageEnvironmentId = pickTriageEnvironment({
+    onScreen: currentProjectEnvironmentId,
+    primary: primaryEnvironmentId,
+    connected: environments
+      .filter((environment) => environment.connection.phase === "connected")
+      .map((environment) => environment.environmentId),
+    supportsTriage,
+  });
+  const canTriage =
+    useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
+    supportsTriage(triageEnvironmentId);
   const currentProjectCwd = currentProjectId
     ? (projectCwdById.get(currentProjectId) ?? null)
     : null;
@@ -756,6 +603,7 @@ function OpenCommandPaletteDialog(props: {
     });
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates the browse navigation coordinator and in-flight clone lookups when the palette session unmounts
   useEffect(
     () => () => {
       browseNavigation.invalidate();
@@ -1257,6 +1105,18 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (triageEnvironmentId !== null && canTriage) {
+    actionItems.push({
+      kind: "action",
+      value: "action:triage",
+      searchTerms: ["triage", "bug", "issue", "report", "broken", "debug", "help", "support"],
+      title: "Triage an issue",
+      description: "An agent investigates a T3 Code problem and helps file an issue",
+      icon: <BugIcon className={ITEM_ICON_CLASS} />,
+      run: () => startTriage(triageEnvironmentId),
+    });
+  }
+
   if (activeThreadKey !== null && supportsThreadFind) {
     actionItems.push({
       kind: "action",
@@ -1353,19 +1213,17 @@ function OpenCommandPaletteDialog(props: {
         openLinkPullRequestDialog(threadRef);
       },
     });
-    if (activeThreadServerConfig?.environment.capabilities.threadPullRequests === true) {
-      actionItems.push({
-        kind: "action",
-        value: "action:open-thread-pull-requests",
-        searchTerms: ["pull requests", "linked", "stack", "prs"],
-        title: "Show linked pull requests",
-        disabled: visibleThreadPullRequests(activeThread.pullRequests).length === 0,
-        icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
-        run: async () => {
-          useRightPanelStore.getState().open(threadRef, "pull-requests");
-        },
-      });
-    }
+    actionItems.push({
+      kind: "action",
+      value: "action:open-thread-pull-requests",
+      searchTerms: ["pull requests", "linked", "stack", "prs"],
+      title: "Show linked pull requests",
+      disabled: visibleThreadPullRequests(activeThread.pullRequests).length === 0,
+      icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "pull-requests");
+      },
+    });
   }
 
   if (
@@ -1576,11 +1434,7 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push(themeEditorItem);
 
-  if (
-    environments.some(
-      (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
-    )
-  ) {
+  if (environments.some((environment) => environment.serverConfig !== null)) {
     actionItems.push({
       kind: "action",
       value: "action:pull-requests",
@@ -1619,6 +1473,21 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  for (const direction of [1, -1] as const) {
+    const title = direction === 1 ? "Focus Next Workspace Area" : "Focus Previous Workspace Area";
+    actionItems.push({
+      kind: "action",
+      value: `action:workspace-focus:${direction}`,
+      title,
+      searchTerms: [title, "accessibility", "navigation", "focus", "F6"],
+      icon: <MonitorIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: direction === 1 ? "workspace.focusNext" : "workspace.focusPrevious",
+      run: async () => {
+        queueWorkspaceFocusFromPalette(direction);
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",
@@ -2155,6 +2024,11 @@ function OpenCommandPaletteDialog(props: {
       }
       return;
     }
+    setOpen(false);
+    void suggestAppAccessForRemote(
+      addProjectCloneFlow.environmentId,
+      addProjectCloneFlow.remoteUrl,
+    );
     const projectRef = scopeProjectRef(addProjectCloneFlow.environmentId, projectId);
     completeProjectSectionPlacement(projectRef, sectionId);
     setAddProjectSection(null);

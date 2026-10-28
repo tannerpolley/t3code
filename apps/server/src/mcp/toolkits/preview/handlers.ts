@@ -2,32 +2,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
-import {
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
-  PREVIEW_RECORDING_STOP_TIMEOUT_MS,
-  PreviewAutomationRecordingTransferError,
-  PreviewAutomationRecordingDesktopUpdateRequiredError,
-  PreviewAutomationRecordingArtifact,
-  PreviewAutomationActInputs,
-  OrchestratorMcpFailure,
-  type ToolActivityIcon,
-  type ThreadId,
-  type PreviewAutomationOperation,
-  type PreviewAutomationOpenInput,
-  type PreviewAutomationRecordingStatus,
-  type PreviewAutomationResizeResult,
-  type PreviewAutomationSetColorSchemeResult,
-  type PreviewAutomationSnapshot,
-  type PreviewAutomationStatus,
-  type PreviewTabId,
-} from "@t3tools/contracts";
+import { PROVIDER_SEND_TURN_MAX_FILE_BYTES, PREVIEW_RECORDING_STOP_TIMEOUT_MS, PreviewAutomationRecordingTransferError, PreviewAutomationRecordingDesktopUpdateRequiredError, PreviewAutomationRecordingArtifact, PreviewAutomationActInputs, OrchestratorMcpFailure, type ToolActivityIcon, type ThreadId, type PreviewAutomationOperation, type PreviewAutomationOpenInput, type PreviewAutomationRecordingStatus, type PreviewAutomationResizeResult, type PreviewAutomationSetColorSchemeResult, type PreviewAutomationSnapshot, type PreviewAutomationStatus, type PreviewTabId } from "@t3tools/contracts";
 
-import {
-  parseAttachmentUuid,
-  parseAttachmentFileExtension,
-  PENDING_ATTACHMENT_THREAD_SEGMENT,
-  toSafeThreadAttachmentSegment,
-} from "../../../attachmentStore.ts";
+import { parseAttachmentUuid, parseAttachmentFileExtension, PENDING_ATTACHMENT_THREAD_SEGMENT, toSafeThreadAttachmentSegment } from "../../../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";

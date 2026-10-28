@@ -1,13 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import {
-  applyTerminalAttachStreamEvent,
-  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
-  INITIAL_TERMINAL_OUTPUT_CURSOR,
-  nextTerminalAttachSeedState,
-  readTerminalOutputUpdate,
-  terminalOutputText,
-  type TerminalBufferState,
-} from "@t3tools/client-runtime/state/terminal";
+import { applyTerminalAttachStreamEvent, DEFAULT_MAX_TERMINAL_BUFFER_BYTES, INITIAL_TERMINAL_OUTPUT_CURSOR, nextTerminalAttachSeedState, readTerminalOutputUpdate, terminalOutputText, type TerminalBufferState } from "@t3tools/client-runtime/state/terminal";
 
 import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer";
 import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, ghosttyCellText } from "./core";

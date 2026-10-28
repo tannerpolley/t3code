@@ -1,21 +1,4 @@
-import {
-  GUEST_ATTACHMENT_ROUTE,
-  GUEST_COMMAND_OUTPUT_ROUTE,
-  GUEST_ITEM_ROUTE,
-  GUEST_RENDER_ROUTE,
-  GUEST_ROUTE_PREFIX,
-  GUEST_SHARE_PARAM,
-  GUEST_MESSAGE_MAX_ATTACHMENT_BYTES,
-  GUEST_MESSAGE_MAX_ATTACHMENTS,
-  GUEST_SHARE_TTL_MS,
-  GuestRedeemRequest,
-  GuestStreamEvent,
-  GuestSubmitRequest,
-  guestSessionCookieName,
-  isProviderSendTurnSupportedImageMimeType,
-  OrchestrationV2CommandOutputFrame,
-  OrchestrationV2GetTurnItemResult,
-} from "@t3tools/contracts";
+import { GUEST_ATTACHMENT_ROUTE, GUEST_COMMAND_OUTPUT_ROUTE, GUEST_ITEM_ROUTE, GUEST_MEDIA_ROUTE, GUEST_RENDER_ROUTE, GUEST_ROUTE_PREFIX, GUEST_SHARE_PARAM, GUEST_MESSAGE_MAX_ATTACHMENT_BYTES, GUEST_MESSAGE_MAX_ATTACHMENTS, GUEST_SHARE_TTL_MS, GuestRedeemRequest, GuestStreamEvent, GuestSubmitRequest, guestSessionCookieName, isProviderSendTurnSupportedImageMimeType, OrchestrationV2CommandOutputFrame, OrchestrationV2GetTurnItemResult } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -34,6 +17,12 @@ import { GuestShareAccessError, GuestShareService } from "./GuestShareService.ts
 // Cloudflare closes idle streams after about 100 seconds.
 const HEARTBEAT_INTERVAL = Duration.seconds(20);
 const NO_STORE = { "cache-control": "no-store" };
+// A file never runs as a page on this origin, whatever its bytes.
+const FILE_HEADERS = {
+  ...NO_STORE,
+  "x-content-type-options": "nosniff",
+  "content-security-policy": "default-src 'none'; sandbox",
+};
 
 const decodeRedeem = Schema.decodeUnknownEffect(GuestRedeemRequest);
 const decodeSubmit = Schema.decodeUnknownEffect(GuestSubmitRequest);
@@ -315,9 +304,7 @@ const attachmentRoute = HttpRouter.add(
       Effect.flatMap(({ path, attachment }) =>
         HttpServerResponse.file(path, {
           headers: {
-            ...NO_STORE,
-            "x-content-type-options": "nosniff",
-            "content-security-policy": "default-src 'none'; sandbox",
+            ...FILE_HEADERS,
             ...(attachment.type === "image" &&
             isProviderSendTurnSupportedImageMimeType(attachment.mimeType)
               ? { "content-type": attachment.mimeType }
@@ -334,6 +321,25 @@ const attachmentRoute = HttpRouter.add(
   }),
 );
 
+// Only an image an agent reply shows loads; anything else on the host is refused.
+const mediaRoute = HttpRouter.add(
+  "GET",
+  GUEST_MEDIA_ROUTE,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const path = new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("path");
+    if (!path) return yield* badRequest;
+    const guestShares = yield* GuestShareService;
+    return yield* guestShares.media(yield* sessionToken, path).pipe(
+      Effect.flatMap(({ path, mimeType }) =>
+        HttpServerResponse.file(path, { headers: { ...FILE_HEADERS, "content-type": mimeType } }),
+      ),
+      Effect.catchTags({ GuestShareAccessError: errorResponse }),
+      Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 500, headers: NO_STORE })),
+    );
+  }),
+);
+
 export const layer = Layer.mergeAll(
   redeemRoute,
   sessionRoute,
@@ -343,4 +349,5 @@ export const layer = Layer.mergeAll(
   itemRoute,
   commandOutputRoute,
   attachmentRoute,
+  mediaRoute,
 );

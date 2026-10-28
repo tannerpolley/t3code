@@ -178,7 +178,7 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
 });
 
 it.effect.each([
-  ["memory", ProjectionStore.layerMemory],
+  ["memory", ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))],
   ["SQL", layerTest],
 ] as const)(
   "%s shells use the latest subagent owner for duplicate provider-thread ids",
@@ -1076,7 +1076,7 @@ it.effect("native subagent child shells report the subagent status (SQL)", () =>
 );
 
 it.effect("native subagent child shells report the subagent status (memory)", () =>
-  assertNativeSubagentChildShell().pipe(Effect.provide(ProjectionStore.layerMemory)),
+  assertNativeSubagentChildShell().pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)))),
 );
 
 it.effect("runtime discovery preserves queued-run rules while searching the recovery index", () =>
@@ -1177,7 +1177,7 @@ it.effect("subagent discovery retains usage-limit failures behind held continuat
 );
 
 it.effect.each([
-  ["memory", ProjectionStore.layerMemory],
+  ["memory", ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))],
   ["SQL", layerTest],
 ] as const)("%s thread count matches visible shells, including archived threads", ([, layer]) =>
   Effect.gen(function* () {

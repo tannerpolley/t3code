@@ -1,29 +1,11 @@
 import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
-import {
-  sourceControlClients,
-  UNKNOWN_SOURCE_CONTROL_CLIENT,
-} from "@t3tools/client-runtime/source-control-clients";
-import {
-  type PullRequestListLine,
-  pullRequestListLines,
-  resolveThreadPullRequestChains,
-  visibleThreadPullRequests,
-} from "@t3tools/client-runtime/thread-pull-requests";
-import {
-  ArrowUpRightIcon,
-  EyeIcon,
-  EyeOffIcon,
-  LinkIcon,
-  MoreHorizontalIcon,
-  PlusIcon,
-} from "lucide-react";
+import { sourceControlClients, UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/client-runtime/source-control-clients";
+import { type PullRequestListLine, pullRequestListLines, resolveThreadPullRequestChains, visibleThreadPullRequests } from "@t3tools/client-runtime/thread-pull-requests";
+import { ArrowUpRightIcon, EyeIcon, EyeOffIcon, LinkIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
 import { LegendList } from "@legendapp/list/react";
 import { memo, useState } from "react";
 
-import {
-  COMPOSER_PULL_REQUEST_DRAG_TYPE,
-  encodePullRequestDragPayload,
-} from "~/components/chat/composerMentionDrag";
+import { COMPOSER_PULL_REQUEST_DRAG_TYPE, encodePullRequestDragPayload } from "~/components/chat/composerMentionDrag";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { findProjectForChangeRequest } from "@t3tools/client-runtime/change-request-links";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
@@ -40,19 +22,8 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
-import {
-  PULL_REQUEST_ROW_CLASS,
-  PULL_REQUEST_ROW_NUMBER_CLASS,
-  PullRequestRowAuthor,
-  PullRequestRowBranches,
-  PullRequestRowGlyph,
-  PullRequestRowLines,
-} from "./PullRequestListRow";
-import {
-  PullRequestDiffStat,
-  PullRequestReviewDecisionGlyph,
-  pullRequestChecksStatePresentation,
-} from "./pullRequestPresentation";
+import { PULL_REQUEST_ROW_CLASS, PULL_REQUEST_ROW_NUMBER_CLASS, PullRequestRowAuthor, PullRequestRowBranches, PullRequestRowGlyph, PullRequestRowLines } from "./PullRequestListRow";
+import { PullRequestDiffStat, PullRequestReviewDecisionGlyph, pullRequestChecksStatePresentation } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { pullRequestQuickActions } from "./pullRequestList.logic";
 import { PullRequestSpeedActions, PullRequestSpeedModeContext } from "./PullRequestSpeedActions";
@@ -363,7 +334,7 @@ const lineKey = (line: PullRequestListLine) =>
 
 export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
   const configs = useServerConfigs();
-  if (configs.get(threadRef.environmentId)?.environment.capabilities.threadPullRequests !== true) {
+  if (configs.get(threadRef.environmentId) === undefined) {
     return (
       <PullRequestsUnavailableState
         title="Linked pull requests unavailable"
@@ -456,7 +427,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
               line={line}
               threadRef={threadRef}
               projectId={
-                capabilities?.pullRequests === true
+                capabilities !== undefined
                   ? (findProjectForChangeRequest(environmentProjects, line.link)?.id ??
                     thread?.projectId ??
                     null)

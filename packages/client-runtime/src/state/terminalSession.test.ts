@@ -2,16 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { EnvironmentId, TerminalSessionSnapshot, ThreadId } from "@t3tools/contracts";
 
-import {
-  applyTerminalAttachStreamEvent,
-  applyTerminalMetadataStreamEvent,
-  combineTerminalSessionState,
-  EMPTY_TERMINAL_BUFFER_STATE,
-  INITIAL_TERMINAL_OUTPUT_CURSOR,
-  nextTerminalAttachSeedState,
-  readTerminalOutputUpdate,
-  terminalOutputText,
-} from "./terminalSession.ts";
+import { applyTerminalAttachStreamEvent, applyTerminalMetadataStreamEvent, combineTerminalSessionState, EMPTY_TERMINAL_BUFFER_STATE, INITIAL_TERMINAL_OUTPUT_CURSOR, nextTerminalAttachSeedState, readTerminalOutputUpdate, terminalOutputText } from "./terminalSession.ts";
 
 const TARGET = {
   environmentId: EnvironmentId.make("env-local"),
@@ -65,6 +56,30 @@ describe("terminal session reducers", () => {
       error: "Terminal disconnected.",
       version: 1,
     });
+  });
+
+  it("follows the shared PTY grid from snapshots and activity without disturbing output", () => {
+    const attached = applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
+      type: "snapshot",
+      snapshot: { ...BASE_SNAPSHOT, cols: 130, rows: 15 },
+    });
+    const activity = {
+      type: "activity",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      hasRunningSubprocess: false,
+      label: "Terminal 1",
+    } as const;
+    const narrowed = applyTerminalAttachStreamEvent(attached, { ...activity, cols: 54, rows: 15 });
+    // Activity from a server without geometry, or a repeat, must not reset the renderer.
+    const unchanged = applyTerminalAttachStreamEvent(
+      applyTerminalAttachStreamEvent(narrowed, activity),
+      { ...activity, cols: 54, rows: 15 },
+    );
+
+    expect(attached.grid).toEqual({ cols: 130, rows: 15 });
+    expect(narrowed).toEqual({ ...attached, grid: { cols: 54, rows: 15 } });
+    expect(unchanged).toBe(narrowed);
   });
 
   it("preserves a BOM code point at a new output chunk boundary", () => {

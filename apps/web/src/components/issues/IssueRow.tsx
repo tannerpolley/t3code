@@ -10,17 +10,9 @@ import type { ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  PULL_REQUEST_ROW_CLASS,
-  PULL_REQUEST_ROW_NUMBER_CLASS,
-  PullRequestRowAuthor,
-  PullRequestRowLines,
-} from "../pullRequest/PullRequestListRow";
+import { PULL_REQUEST_ROW_CLASS, PULL_REQUEST_ROW_NUMBER_CLASS, PullRequestRowAuthor, PullRequestRowLines } from "../pullRequest/PullRequestListRow";
 import { IssuePullRequests } from "./IssuePullRequests";
-import {
-  PullRequestActorAvatar,
-  PullRequestLabelChip,
-} from "../pullRequest/pullRequestPresentation";
+import { PullRequestActorAvatar, PullRequestLabelChip } from "../pullRequest/pullRequestPresentation";
 import { issueProjectChips } from "./issueProjects.logic";
 import { IssueStateIcon } from "./IssueStateIcon";
 import { IssueLiveWork } from "./IssueLiveWork";

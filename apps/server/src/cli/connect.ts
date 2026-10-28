@@ -1,13 +1,4 @@
-import {
-  AuthRelayReadScope,
-  AuthRelayWriteScope,
-  type AuthEnvironmentScope,
-  type EnvironmentConnectReachability,
-  EnvironmentHttpApi,
-  formatConnectReachable,
-  type RelayClientInstallProgressEvent,
-  type RelayClientInstallProgressStage,
-} from "@t3tools/contracts";
+import { AuthRelayReadScope, AuthRelayWriteScope, type AuthEnvironmentScope, type EnvironmentConnectReachability, EnvironmentHttpApi, formatConnectReachable, type RelayClientInstallProgressEvent, type RelayClientInstallProgressStage } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -36,13 +27,7 @@ import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { formatReachabilityFailure } from "../cloud/ConnectReachability.ts";
 import { filterRelayResponse } from "../cloud/relayResponse.ts";
-import {
-  CLOUD_LINK_REVOKED,
-  CLOUD_LINKED_USER_ID,
-  isAgentActivityPublishingEnabledValue,
-  PUBLISH_AGENT_ACTIVITY_SECRET,
-  RELAY_URL_SECRET,
-} from "../cloud/config.ts";
+import { CLOUD_LINK_REVOKED, CLOUD_LINKED_USER_ID, isAgentActivityPublishingEnabledValue, PUBLISH_AGENT_ACTIVITY_SECRET, RELAY_URL_SECRET } from "../cloud/config.ts";
 import { relayUrlConfig } from "../cloud/publicConfig.ts";
 import * as RelayTracing from "../cloud/relayTracing.ts";
 import * as ServerConfig from "../config.ts";

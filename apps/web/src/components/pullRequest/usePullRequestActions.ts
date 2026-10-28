@@ -1,48 +1,25 @@
 import { useAtomCommand } from "~/state/use-atom-command";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  ProjectId,
-  PullRequestAction,
-  PullRequestDetail,
-  PullRequestMergeMethod,
-  PullRequestRef,
-} from "@t3tools/contracts";
+import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentId, ProjectId, PullRequestAction, PullRequestDetail, PullRequestMergeMethod, PullRequestRef } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-  type ChangeRequestTerminology,
-} from "@t3tools/client-runtime/source-control-clients";
+import { capitalizeTerm, sourceControlClients, type ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
-import {
-  deriveLogicalProjectKeyFromSettings,
-  derivePhysicalProjectKey,
-  selectProjectGroupingSettings,
-} from "~/logicalProject";
+import { deriveLogicalProjectKeyFromSettings, derivePhysicalProjectKey, selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
+import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { toastManager } from "../ui/toast";
 import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
-import {
-  checkoutFailureDescription,
-  handoffPrompt,
-  handoffReviewComments,
-  readableFailure,
-} from "./pullRequestDetail.logic";
+import { checkoutFailureDescription, handoffPrompt, handoffReviewComments, readableFailure } from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
 export function usePullRequestDefaultMergeMethodResolver(

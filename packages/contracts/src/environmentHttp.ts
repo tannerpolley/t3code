@@ -9,70 +9,13 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
-import {
-  AuthAccessTokenResult,
-  AuthBrowserSessionRequest,
-  AuthBrowserSessionResult,
-  AuthClientSession,
-  AuthCreatePairingCredentialInput,
-  AuthMcpApprovalDecisionRequest,
-  AuthMcpApprovalDetails,
-  AuthMcpApprovalError,
-  AuthMcpApprovalRedirect,
-  AuthMcpAuthorizationRequest,
-  AuthMcpAuthorizationServerMetadata,
-  AuthMcpClientRegistration,
-  AuthMcpProtectedResourceMetadata,
-  AuthMcpRegisteredClient,
-  AuthMcpRegistrationError,
-  AuthMcpTokenError,
-  AuthMcpTokenRequest,
-  AuthMcpTokenResult,
-  AuthPairingCredentialResult,
-  AuthPairingLink,
-  AuthRevokeClientSessionInput,
-  AuthRevokePairingLinkInput,
-  AuthEnvironmentScope,
-  AuthTokenExchangeRequest,
-  AuthSessionState,
-  AuthWebSocketTicketParams,
-  AuthWebSocketTicketResult,
-  ServerAuthSessionMethod,
-} from "./auth.ts";
-import {
-  ExecutionEnvironmentDescriptor,
-  ORCHESTRATION_PROTOCOL_HEADER,
-  ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-} from "./environment.ts";
-import {
-  DpopFailureReason,
-  AuthSessionId,
-  ThreadId,
-  TrimmedNonEmptyString,
-} from "./baseSchemas.ts";
-import {
-  OrchestrationV2ShellSnapshot,
-  OrchestrationV2ThreadBoundedSnapshot,
-  OrchestrationV2ThreadDetailSnapshot,
-  OrchestrationV2ThreadHistoryPage,
-  OrchestrationV2ThreadTranscript,
-} from "./orchestrationV2.ts";
+import { AuthAccessTokenResult, AuthBrowserSessionRequest, AuthBrowserSessionResult, AuthCreatePairingCredentialInput, AuthMcpApprovalDecisionRequest, AuthMcpApprovalDetails, AuthMcpApprovalError, AuthMcpApprovalRedirect, AuthMcpAuthorizationRequest, AuthMcpAuthorizationServerMetadata, AuthMcpClientRegistration, AuthMcpProtectedResourceMetadata, AuthMcpRegisteredClient, AuthMcpRegistrationError, AuthMcpTokenError, AuthMcpTokenRequest, AuthMcpTokenResult, AuthPairingCredentialResult, AuthRevokeClientSessionInput, AuthRevokePairingLinkInput, AuthEnvironmentScope, AuthTokenExchangeRequest, AuthSessionState, AuthWebSocketTicketParams, AuthWebSocketTicketResult, ServerAuthSessionMethod } from "./auth.ts";
+import { ExecutionEnvironmentDescriptor, ORCHESTRATION_PROTOCOL_HEADER, ORCHESTRATION_PROTOCOL_VERSION_TEXT } from "./environment.ts";
+import { DpopFailureReason, AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { OrchestrationV2ShellSnapshot, OrchestrationV2ThreadBoundedSnapshot, OrchestrationV2ThreadDetailSnapshot, OrchestrationV2ThreadHistoryPage, OrchestrationV2ThreadTranscript } from "./orchestrationV2.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
-import {
-  PullRequestDiffInput,
-  PullRequestDiffResult,
-  PullRequestOperationError,
-  PullRequestUnavailableError,
-} from "./pullRequest.ts";
-import {
-  RelayCloudEnvironmentHealthRequest,
-  RelayCloudMintCredentialRequest,
-  RelayEnvironmentConfigRequest,
-  RelayEnvironmentHealthResponse,
-  RelayEnvironmentLinkProof,
-  RelayEnvironmentMintResponse,
-  RelayLinkProofRequest,
-} from "./relay.ts";
+import { PullRequestDiffInput, PullRequestDiffResult, PullRequestOperationError, PullRequestUnavailableError } from "./pullRequest.ts";
+import { RelayCloudEnvironmentHealthRequest, RelayCloudMintCredentialRequest, RelayEnvironmentConfigRequest, RelayEnvironmentHealthResponse, RelayEnvironmentLinkProof, RelayEnvironmentMintResponse, RelayLinkProofRequest } from "./relay.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -580,24 +523,10 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.get("pairingLinks", "/api/auth/pairing-links", {
-      headers: OptionalBearerHeaders,
-      success: Schema.Array(AuthPairingLink),
-      error: EnvironmentScopedOperationErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
     HttpApiEndpoint.post("revokePairingLink", "/api/auth/pairing-links/revoke", {
       headers: OptionalBearerHeaders,
       payload: AuthRevokePairingLinkInput,
       success: AuthPairingLinkRevokeResult,
-      error: EnvironmentScopedOperationErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.get("clients", "/api/auth/clients", {
-      headers: OptionalBearerHeaders,
-      success: Schema.Array(AuthClientSession),
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -673,6 +602,7 @@ const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
 });
 
 const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
+  deferWork: Schema.optionalKey(Schema.String),
   compactTurnItems: Schema.optionalKey(Schema.String),
   dedupeBodies: Schema.optionalKey(Schema.String),
   compactIds: Schema.optionalKey(Schema.String),
@@ -681,7 +611,8 @@ const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
 const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   cursor: TrimmedNonEmptyString,
   throughEntryId: Schema.optional(TrimmedNonEmptyString),
-  view: Schema.optional(Schema.Literals(["conversation", "activity"])),
+  view: Schema.optional(Schema.Literals(["conversation", "activity", "work"])),
+  deferWork: Schema.optionalKey(Schema.String),
   compactIds: Schema.optionalKey(Schema.String),
 });
 
@@ -818,13 +749,6 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     HttpApiEndpoint.post("health", "/api/t3-connect/health", {
       payload: RelayCloudEnvironmentHealthRequest,
       success: RelayEnvironmentHealthResponse,
-      error: EnvironmentHttpCloudErrors,
-    }),
-  )
-  .add(
-    HttpApiEndpoint.post("mintCredential", "/api/connect/mint-credential", {
-      payload: RelayCloudMintCredentialRequest,
-      success: RelayEnvironmentMintResponse,
       error: EnvironmentHttpCloudErrors,
     }),
   )

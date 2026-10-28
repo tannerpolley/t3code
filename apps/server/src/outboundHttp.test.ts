@@ -12,11 +12,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import * as Undici from "undici";
 import { afterAll, afterEach, beforeAll, describe, expect } from "vite-plus/test";
 
-import {
-  builtinFetchUsesHttp2,
-  ignoreMacosTypeOfServiceEinval,
-  installHttp1FetchDispatcher,
-} from "./outboundHttp.ts";
+import { builtinFetchUsesHttp2, ignoreMacosTypeOfServiceEinval, installHttp1FetchDispatcher } from "./outboundHttp.ts";
 
 // Non-secret, self-signed 127.0.0.1 certificate, valid until 2126; ALPN h2 requires TLS.
 const TEST_KEY = `-----BEGIN PRIVATE KEY-----
@@ -144,8 +140,8 @@ describe("ignoreMacosTypeOfServiceEinval", () => {
         "--input-type=module",
         "--eval",
         `
-import * as NodeNet from "node:net";
-import * as NodeTls from "node:tls";
+
+
 import { ignoreMacosTypeOfServiceEinval } from ${JSON.stringify(new URL("./outboundHttp.ts", import.meta.url).href)};
 
 NodeTls.setDefaultCACertificates([${JSON.stringify(TEST_CERT)}]);

@@ -3,10 +3,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { SearchIcon } from "lucide-react";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import { PullRequestStackPopover } from "./PullRequestStackPopover";
-import {
-  PullRequestSpeedActions,
-  type PullRequestSpeedActionResult,
-} from "./PullRequestSpeedActions";
+import { PullRequestSpeedActions, type PullRequestSpeedActionResult } from "./PullRequestSpeedActions";
 import { memo, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
@@ -16,13 +13,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
-import {
-  PULL_REQUEST_ROW_CLASS,
-  PULL_REQUEST_ROW_NUMBER_CLASS,
-  PullRequestRowAuthor,
-  PullRequestRowGlyph,
-  PullRequestRowLines,
-} from "./PullRequestListRow";
+import { PULL_REQUEST_ROW_CLASS, PULL_REQUEST_ROW_NUMBER_CLASS, PullRequestRowAuthor, PullRequestRowGlyph, PullRequestRowLines } from "./PullRequestListRow";
 import { PullRequestLabelChip, PullRequestReviewDecisionGlyph } from "./pullRequestPresentation";
 
 const LABEL_SLOTS = [

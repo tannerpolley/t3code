@@ -3,13 +3,7 @@ import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  buildDocJson,
-  ComposerBlockExtensions,
-  ComposerCodeBlockExtension,
-  ComposerCodeExtension,
-  ComposerListExtensions,
-} from "./composer-rich-text-doc";
+import { buildDocJson, ComposerBlockExtensions, ComposerCodeBlockExtension, ComposerCodeExtension, ComposerListExtensions } from "./composer-rich-text-doc";
 import { composerTextDirections } from "./composer-text-direction";
 
 const schema = getSchemaByResolvedExtensions(

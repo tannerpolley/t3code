@@ -1,25 +1,7 @@
-import {
-  runtimeRequestIsOwnerVisible,
-  type RoutedRequestParent,
-} from "@t3tools/shared/delegatedRequestVisibility";
+import { runtimeRequestIsOwnerVisible, type RoutedRequestParent } from "@t3tools/shared/delegatedRequestVisibility";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "../threadPullRequests.ts";
-import type {
-  ThreadLinkedPullRequest,
-  EnvironmentId,
-  MessageId,
-  OrchestrationProjectShell,
-  OrchestrationV2ProviderGoal,
-  OrchestrationV2RunStatus,
-  OrchestrationV2ProviderFailureClass,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2ThreadShell,
-  PlanId,
-  ProjectId,
-  ProviderInstanceId,
-  RunId,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { ThreadLinkedPullRequest, EnvironmentId, MessageId, OrchestrationProjectShell, OrchestrationV2ProviderGoal, OrchestrationV2RunStatus, OrchestrationV2ProviderFailureClass, OrchestrationV2ThreadProjection, OrchestrationV2ThreadShell, PlanId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
@@ -151,6 +133,9 @@ export interface EnvironmentThreadShell {
   readonly worktreePath: string | null;
   readonly lineage: OrchestrationV2ThreadShell["lineage"];
   readonly forkedFrom: OrchestrationV2ThreadShell["forkedFrom"];
+  readonly linkOrigin: OrchestrationV2ThreadShell["linkOrigin"] | null;
+  /** The thread in a linked environment that delegated this one, if one did. */
+  readonly delegatedFrom: OrchestrationV2ThreadShell["delegatedFrom"] | null;
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
@@ -316,6 +301,8 @@ export function presentThreadShell(
     branchPullRequest: thread.branchPullRequest ?? null,
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
+    linkOrigin: thread.linkOrigin ?? null,
+    delegatedFrom: thread.delegatedFrom ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,
     runtime,

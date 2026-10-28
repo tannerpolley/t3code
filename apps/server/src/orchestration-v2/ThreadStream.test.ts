@@ -1,26 +1,10 @@
-import {
-  EventId,
-  OrchestrationV2ThreadStreamItem,
-  ThreadId,
-  TurnItemId,
-  type OrchestrationV2ProjectedTurnItem,
-  type OrchestrationV2ThreadProjection,
-  type OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
+import { EventId, OrchestrationV2ThreadStreamItem, ThreadId, TurnItemId, type OrchestrationV2ProjectedTurnItem, type OrchestrationV2ThreadProjection, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 
-import {
-  buildBoundedThreadStreamSnapshot,
-  decideThreadResume,
-  isThreadReplayRawPayloadSafe,
-  threadReplayEncodedBytes,
-  THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES,
-  THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES,
-  THREAD_RESUME_MAX_REPLAY_EVENTS,
-} from "./ThreadStream.ts";
+import { buildBoundedThreadStreamSnapshot, decideThreadResume, isThreadReplayRawPayloadSafe, threadReplayEncodedBytes, THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES, THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES, THREAD_RESUME_MAX_REPLAY_EVENTS } from "./ThreadStream.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
 const NOW = DateTime.makeUnsafe("2026-09-08T00:00:00.000Z");

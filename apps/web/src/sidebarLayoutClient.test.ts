@@ -1,16 +1,7 @@
 import { applySidebarLayoutMutation } from "@t3tools/shared/sidebarLayout";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import {
-  EMPTY_SIDEBAR_LAYOUT,
-  EnvironmentId,
-  type SidebarLayoutUpdate,
-  type SidebarLayoutRecord,
-} from "@t3tools/contracts";
-import {
-  createSidebarLayoutClient,
-  SIDEBAR_WRITE_DELAY,
-  usesServerSidebar,
-} from "./sidebarLayoutClient";
+import { EMPTY_SIDEBAR_LAYOUT, EnvironmentId, type SidebarLayoutUpdate, type SidebarLayoutRecord } from "@t3tools/contracts";
+import { createSidebarLayoutClient, SIDEBAR_WRITE_DELAY, usesServerSidebar } from "./sidebarLayoutClient";
 const local = EnvironmentId.make("local");
 const remote = EnvironmentId.make("remote");
 const record: SidebarLayoutRecord = {

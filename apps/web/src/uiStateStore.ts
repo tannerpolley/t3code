@@ -18,7 +18,7 @@ import { Debouncer } from "@tanstack/react-pacer";
 import { ProjectIconColor, type PullRequestMergeMethod } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { create } from "zustand";
-import { normalizeProjectPathForComparison } from "./lib/projectPaths";
+import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
 import { randomUUID } from "./lib/utils";
 import { type FolderOrganizedProject } from "./sidebarSectionFolders";
 
@@ -59,6 +59,7 @@ export interface PersistedUiState {
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
   sidebarProjectScopeKey?: string | null;
+  sidebarProjectScopeKeys?: string[];
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
@@ -75,7 +76,7 @@ export interface UiProjectState {
   sidebarOtherProjectsExpanded: boolean;
   sidebarMode: SidebarMode;
 
-  sidebarProjectScopeKey: string | null;
+  sidebarProjectScopeKeys?: string[];
 }
 
 export interface UiThreadState {
@@ -120,7 +121,7 @@ const initialState: UiState = {
   sidebarProjectSections: [],
   sidebarOtherProjectsExpanded: true,
   sidebarMode: "activity",
-  sidebarProjectScopeKey: null,
+  sidebarProjectScopeKeys: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -303,7 +304,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
         : {},
     defaultAdvertisedEndpointKey: sanitizeOptionalKey(parsed.defaultAdvertisedEndpointKey),
-    sidebarProjectScopeKey: sanitizeOptionalKey(parsed.sidebarProjectScopeKey),
+    sidebarProjectScopeKeys: sanitizeStringArray(
+      parsed.sidebarProjectScopeKeys ?? [parsed.sidebarProjectScopeKey],
+    ),
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
@@ -383,7 +386,12 @@ export function persistState(state: UiState): void {
         sidebarMode: state.sidebarMode,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
-        sidebarProjectScopeKey: state.sidebarProjectScopeKey,
+        sidebarProjectScopeKeys: state.sidebarProjectScopeKeys,
+        // Older clients read only this field.
+        sidebarProjectScopeKey:
+          state.sidebarProjectScopeKeys.length === 1
+            ? (state.sidebarProjectScopeKeys[0] ?? null)
+            : null,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
@@ -486,14 +494,17 @@ function setDefaultAdvertisedEndpointKey(state: UiState, key: string | null): Ui
   };
 }
 
-function setSidebarProjectScopeKey(state: UiState, projectKey: string | null): UiState {
-  const nextKey = sanitizeOptionalKey(projectKey);
-  if (state.sidebarProjectScopeKey === nextKey) {
+function setSidebarProjectScopeKeys(state: UiState, projectKeys: readonly string[]): UiState {
+  const nextKeys = sanitizeStringArray(projectKeys);
+  if (
+    nextKeys.length === (state.sidebarProjectScopeKeys ?? []).length &&
+    nextKeys.every((key, index) => key === state.sidebarProjectScopeKeys?.[index])
+  ) {
     return state;
   }
   return {
     ...state,
-    sidebarProjectScopeKey: nextKey,
+    sidebarProjectScopeKeys: nextKeys,
   };
 }
 
@@ -706,6 +717,7 @@ interface UiStateStore extends UiState {
   setLineageDetailsExpanded: (keys: readonly string[], expanded: boolean) => void;
   setLineageAgentsClearedAt: (key: string, clearedAt: string | null) => void;
   setIssueMilestoneCollapsed: (key: string, collapsed: boolean) => void;
+  setSidebarProjectScopeKeys: (projectKeys: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setBranchPickerGroupCollapsed: (group: BranchPickerGroup, collapsed: boolean) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
@@ -744,7 +756,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setSidebarProjectScopeKey: (projectKey) =>
-    set((state) => setSidebarProjectScopeKey(state, projectKey)),
+    set((state) => setSidebarProjectScopeKeys(state, projectKey === null ? [] : [projectKey])),
   setSidebarMode: (mode) => set((state) => setSidebarMode(state, mode)),
   setSidebarOtherProjectsExpanded: (expanded) =>
     sendSidebarMutation({ type: "otherExpanded", expanded }),
@@ -783,6 +795,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setLineageAgentsClearedAt(state, key, clearedAt)),
   setIssueMilestoneCollapsed: (key, collapsed) =>
     set((state) => setIssueMilestoneCollapsed(state, key, collapsed)),
+  setSidebarProjectScopeKeys: (projectKeys) =>
+    set((state) => setSidebarProjectScopeKeys(state, projectKeys)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setBranchPickerGroupCollapsed: (group, collapsed) =>
     set((state) => setBranchPickerGroupCollapsed(state, group, collapsed)),

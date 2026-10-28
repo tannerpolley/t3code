@@ -4,35 +4,16 @@ import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
-import {
-  ProviderDriverKind,
-  USAGE_CONTRACT_VERSION,
-  type EnvironmentId,
-  type UsageProviderKind,
-  type UsageSummaryInput,
-} from "@t3tools/contracts";
+import { ProviderDriverKind, USAGE_CONTRACT_VERSION, type EnvironmentId, type UsageProviderKind, type UsageSummaryInput } from "@t3tools/contracts";
 import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import {
-  cursorKeychainAccessEnvironments,
-  refreshUsageLimits,
-} from "@t3tools/client-runtime/state/usage";
-import {
-  updatingProvidersLabel,
-  usageEnvironmentProgress,
-  usageLoadingState,
-} from "@t3tools/client-runtime/state/usage-progress";
+import { cursorKeychainAccessEnvironments, refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
+import { updatingProvidersLabel, usageEnvironmentProgress, usageLoadingState } from "@t3tools/client-runtime/state/usage-progress";
 
-import {
-  isCompatibleUsageContractVersion,
-  isModelCostUnknown,
-  type DailyTotals,
-  type HourlyTotals,
-  type MergedUsage,
-} from "@t3tools/shared/usageMerge";
+import { isCompatibleUsageContractVersion, isModelCostUnknown, type DailyTotals, type HourlyTotals, type MergedUsage } from "@t3tools/shared/usageMerge";
 
 import { cn } from "../../lib/utils";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -45,29 +26,10 @@ import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
-import {
-  enumerateDays,
-  enumerateHourStarts,
-  formatCount,
-  formatDateTimeShort,
-  formatDayShort,
-  formatHourShort,
-  formatPercent,
-  formatTokens,
-  formatUsageContractMismatch,
-  formatUsd,
-  makeWindow,
-} from "@t3tools/shared/usageFormat";
+import { enumerateDays, enumerateHourStarts, formatCount, formatDateTimeShort, formatDayShort, formatHourShort, formatPercent, formatTokens, formatUsageContractMismatch, formatUsd, makeWindow } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
+import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
@@ -75,37 +37,17 @@ import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import {
-  WorkspaceBreadcrumb,
-  WorkspaceBreadcrumbItem,
-  WorkspaceBreadcrumbSeparator,
-  WorkspaceBreadcrumbText,
-} from "../WorkspaceBreadcrumb";
+import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem, WorkspaceBreadcrumbSeparator, WorkspaceBreadcrumbText } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
 import { UsageShareBar } from "./UsageShareBar";
-import {
-  costTypeSegments,
-  modelShare,
-  sortModelsByTokens,
-  speedCostSegments,
-  tokenTypeSegments,
-} from "./usageBreakdown";
-import {
-  METRIC_OPTIONS,
-  WINDOW_OPTIONS,
-  resolveUsageShortcut,
-  type UsageMetric,
-} from "./usageShortcuts";
+import { costTypeSegments, modelShare, sortModelsByTokens, speedCostSegments, tokenTypeSegments } from "./usageBreakdown";
+import { METRIC_OPTIONS, WINDOW_OPTIONS, resolveUsageShortcut, type UsageMetric } from "./usageShortcuts";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
-import {
-  readUsagePagePreferences,
-  saveUsagePagePreferences,
-  type UsagePagePreferences,
-} from "./usagePagePreferences";
+import { readUsagePagePreferences, saveUsagePagePreferences, type UsagePagePreferences } from "./usagePagePreferences";
 
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
@@ -154,6 +96,7 @@ function UsageModelDialogHost({
   readonly onSetPrice: (model: string) => void;
 }) {
   const selectedKey = useAtomValue(selectedUsageModelKeyAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the shared selected-model atom on unmount
   useEffect(() => () => selectUsageModel(null), []);
   const model =
     selectedKey === null
@@ -295,6 +238,7 @@ export function UsagePage() {
     if (periodOption && !showingLimits) selectWindow(periodOption.days);
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window capture keydown listener for usage metric and period shortcuts
   useEffect(() => {
     globalThis.window.addEventListener("keydown", onUsageKeyDown, true);
     return () => globalThis.window.removeEventListener("keydown", onUsageKeyDown, true);
@@ -341,6 +285,7 @@ export function UsagePage() {
   const autoRefreshLimits = useEffectEvent(() => {
     void refreshLimits(true);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes provider limits from the server when the connected environment set changes
   useEffect(() => {
     if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
   }, [showingLimits, connectedLimitsEnvironments]);

@@ -1,107 +1,28 @@
-import { documentIconColorForFileName } from "~/pierre-icons";
+import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
-import {
-  Extension,
-  findChildren,
-  InputRule,
-  Node,
-  wrappingInputRule,
-  type JSONContent,
-  type TiptapEditorHTMLElement,
-} from "@tiptap/core";
+import { Extension, findChildren, InputRule, Node, wrappingInputRule, type JSONContent, type TiptapEditorHTMLElement } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { isHistoryTransaction } from "@tiptap/pm/history";
-import {
-  type EditorState,
-  NodeSelection,
-  Plugin,
-  PluginKey,
-  TextSelection,
-} from "@tiptap/pm/state";
+import { type EditorState, NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import type { NodeType, ResolvedPos } from "@tiptap/pm/model";
-import type {
-  AssistantCitation,
-  ComposerContextClipboardFragment,
-  ServerProviderSkill,
-} from "@t3tools/contracts";
-import {
-  serializeAssistantCitation,
-  withAssistantCitationComment,
-} from "@t3tools/shared/assistantCitations";
-import {
-  COMPOSER_CONTEXT_CLIPBOARD_MIME,
-  encodeComposerContextClipboardHtml,
-} from "@t3tools/shared/composerContextClipboard";
-import {
-  createContext,
-  use,
-  useEffect,
-  useEffectEvent,
-  useImperativeHandle,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type RefObject,
-} from "react";
+import type { AssistantCitation, ComposerContextClipboardFragment, ServerProviderSkill } from "@t3tools/contracts";
+import { serializeAssistantCitation, withAssistantCitationComment } from "@t3tools/shared/assistantCitations";
+import { COMPOSER_CONTEXT_CLIPBOARD_MIME, encodeComposerContextClipboardHtml } from "@t3tools/shared/composerContextClipboard";
+import { createContext, use, useEffect, useEffectEvent, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 
-import {
-  clampCollapsedComposerCursor,
-  collapseExpandedComposerCursor,
-  expandCollapsedComposerCursor,
-  pastedPathQueryLength,
-} from "~/composer-logic";
+import { clampCollapsedComposerCursor, collapseExpandedComposerCursor, expandCollapsedComposerCursor, pastedPathQueryLength } from "~/composer-logic";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { caretLineDirection, ComposerTextDirectionExtension } from "~/composer-text-direction";
-import {
-  collectComposerPromptInlineTokens,
-  selectionTouchesMentionBoundary,
-} from "~/composer-editor-mentions";
-import {
-  buildDocJson,
-  ComposerBlockExtensions,
-  ComposerCodeBlockExtension,
-  ComposerListExtensions,
-  buildTiptapContent,
-  caretTakesMarksBefore,
-  ComposerBoldSelectionOnlyExtension,
-  convertBulletItemToTask,
-  ComposerCodeExtension,
-  ComposerItalicExtension,
-  ComposerTaskItemExtension,
-  ComposerTaskListExtension,
-  flatToMarkdown,
-  flatToPm,
-  markdownToFlat,
-  pmToFlat,
-  serializeEditorDoc,
-  serializeSelection,
-  skillChipReplacements,
-  splitOrLiftListItem,
-  stepCaretAcrossStyledEdge,
-  type SkillMeta,
-} from "~/composer-rich-text-doc";
-import {
-  convertCodeFenceOnEnter,
-  exitCodeBlockOnClosingFence,
-  exitCodeBlockOnTrailingBlankLines,
-  indentCodeBlock,
-  indentedNewlineInCodeBlock,
-  selectionInOneCodeBlock,
-} from "~/composer-code-block";
-import {
-  COMPOSER_UNDO_GROUP_DELAY,
-  type ComposerChangeKind,
-  groupUndoByChangeKind,
-  markAsClipboardEdit,
-} from "~/composer-undo-grouping";
+import { collectComposerPromptInlineTokens, selectionTouchesMentionBoundary } from "~/composer-editor-mentions";
+import { buildDocJson, ComposerBlockExtensions, ComposerCodeBlockExtension, ComposerListExtensions, buildTiptapContent, caretTakesMarksBefore, ComposerBoldSelectionOnlyExtension, convertBulletItemToTask, ComposerCodeExtension, ComposerItalicExtension, ComposerTaskItemExtension, ComposerTaskListExtension, flatToMarkdown, flatToPm, markdownToFlat, pmToFlat, serializeEditorDoc, serializeSelection, skillChipReplacements, splitOrLiftListItem, stepCaretAcrossStyledEdge, type SkillMeta } from "~/composer-rich-text-doc";
+import { convertCodeFenceOnEnter, exitCodeBlockOnClosingFence, exitCodeBlockOnTrailingBlankLines, indentCodeBlock, indentedNewlineInCodeBlock, selectionInOneCodeBlock } from "~/composer-code-block";
+import { COMPOSER_UNDO_GROUP_DELAY, type ComposerChangeKind, groupUndoByChangeKind, markAsClipboardEdit } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn, isMacPlatform } from "~/lib/utils";
@@ -112,11 +33,7 @@ import { SkillChipPopover, skillPopoverDescription } from "./chat/SkillInlineTex
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChip } from "./ContextChip";
-import {
-  ComposerContextActionsContext,
-  ComposerContextReferenceChip,
-  ComposerContextRecordsContext,
-} from "./composerContextPresentation";
+import { ComposerContextActionsContext, ComposerContextReferenceChip, ComposerContextRecordsContext } from "./composerContextPresentation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
@@ -232,7 +149,7 @@ function resolvedThemeFromDocument(): "light" | "dark" {
 }
 
 const CHIP_NODE_SELECTION_CLASS_NAME =
-  "relative inline-flex select-none items-center align-middle leading-none data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
+  "relative inline-flex min-w-0 max-w-full select-none items-baseline data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
 
 const ComposerMentionExtension = Node.create({
   name: "composer-mention",
@@ -260,11 +177,9 @@ const ComposerMentionExtension = Node.create({
 function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
-  const accent = documentIconColorForFileName(path);
   const chip = (
     <ContextChip
-      kind="mention"
-      style={accent ? ({ "--context-chip-accent": accent } as CSSProperties) : undefined}
+      kind={documentChipKindForFileName(path) ?? "mention"}
       dir="ltr"
       render={<button type="button" />}
       onClick={() => actions.openMention(path)}
@@ -442,7 +357,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
     <NodeViewWrapper
       as="span"
-      className={cn(CHIP_NODE_SELECTION_CLASS_NAME, "min-w-0 max-w-full")}
+      className={CHIP_NODE_SELECTION_CLASS_NAME}
       contentEditable={false}
       spellCheck={false}
       data-composer-citation-chip="true"
@@ -1077,7 +992,7 @@ function ComposerPromptEditorTiptapInner(
 
   const editorAttributes = {
     class: cn(
-      "composer-tiptap -m-1 block max-h-52 min-h-12 overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+      "composer-tiptap -m-1 block max-h-52 min-h-[calc(2lh+--spacing(2))] overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
       className,
     ),
     "data-testid": "composer-editor",
@@ -1448,11 +1363,13 @@ function ComposerPromptEditorTiptapInner(
     [],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the disabled prop into the imperative Tiptap editor via setEditable
   useEffect(() => {
     editor?.setEditable(!disabled);
   }, [disabled, editor]);
 
   // Push attributes before layout measurements; Tiptap updates them later in a passive effect.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes DOM attributes into the ProseMirror view before layout measurements read them
   useLayoutEffect(() => {
     if (!editor?.isInitialized) return;
     editor.view.setProps({ attributes: editorAttributes });
@@ -1513,6 +1430,7 @@ function ComposerPromptEditorTiptapInner(
 
   // The one place the controlled value reaches the editor. Imperative handlers compare against
   // the committed value, so it is recorded here even before the editor exists.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the controlled value and cursor into the Tiptap document before paint
   useLayoutEffect(() => {
     latestValueRef.current = value;
     if (!editor) return;
@@ -1597,6 +1515,7 @@ function ComposerPromptEditorTiptapInner(
   ]);
 
   // Reconcile loaded or switched provider skills without rebuilding citation node views.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- replaces skill chip nodes in the Tiptap document when the provider skill list loads or changes
   useEffect(() => {
     if (!editor || literalText) return;
     const replacements = skillChipReplacements(editor.state.doc, (name) =>
@@ -1605,6 +1524,7 @@ function ComposerPromptEditorTiptapInner(
     if (replacements.length > 0) replaceSkillChips(editor, replacements);
   }, [editor, literalText, skills]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores ProseMirror focus and caret scroll when the keyed editor remounts, capturing focus on teardown
   useLayoutEffect(() => {
     if (!editor) return;
     if (restoreFocusRef.current) {

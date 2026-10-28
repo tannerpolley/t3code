@@ -1,8 +1,4 @@
-import {
-  AuthOrchestrationReadScope,
-  EnvironmentHttpApi,
-  type OrchestrationProjectShell,
-} from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, EnvironmentHttpApi, type OrchestrationProjectShell } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -11,32 +7,15 @@ import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import {
-  annotateEnvironmentRequest,
-  failEnvironmentInternal,
-  failEnvironmentInvalidRequest,
-  failEnvironmentNotFound,
-  requireEnvironmentScope,
-} from "../auth/http.ts";
+import { annotateEnvironmentRequest, failEnvironmentInternal, failEnvironmentInvalidRequest, failEnvironmentNotFound, requireEnvironmentScope } from "../auth/http.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
-import {
-  buildBoundedThreadProjection,
-  decodeThreadHistoryCursor,
-  InvalidThreadHistoryCursorError,
-  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
-  THREAD_HISTORY_PAGE_POLICY,
-  OLDER_THREAD_USER_TURN_LIMIT,
-} from "./threadHistoryPaging.ts";
+import { buildBoundedThreadProjection, decodeThreadHistoryCursor, InvalidThreadHistoryCursorError, THREAD_HISTORY_SNAPSHOT_ROW_LIMIT, THREAD_HISTORY_PAGE_POLICY, OLDER_THREAD_USER_TURN_LIMIT } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import {
-  buildActiveShellSnapshot,
-  loadShellSnapshotParts,
-  shellSnapshotForSubscriber,
-} from "./ShellStream.ts";
+import { buildActiveShellSnapshot, loadShellSnapshotParts, shellSnapshotForSubscriber } from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
@@ -133,10 +112,12 @@ export const layer = HttpApiBuilder.group(
         anchorThreadId?: Parameters<
           typeof threadManagement.getThreadSnapshotWindow
         >[1]["anchorThreadId"],
+        deferWork = false,
       ) {
         return yield* threadManagement
           .getThreadSnapshotWindow(threadId, {
             rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+            deferWork,
             userTurnLimit:
               anchorItemId === undefined
                 ? THREAD_HISTORY_PAGE_POLICY.maxUserTurns
@@ -223,9 +204,12 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          const snapshot = yield* loadThreadSnapshotWindow(args.params.threadId).pipe(
-            traceLocalHandlerWork,
-          );
+          const snapshot = yield* loadThreadSnapshotWindow(
+            args.params.threadId,
+            undefined,
+            undefined,
+            args.query.deferWork === "1",
+          ).pipe(traceLocalHandlerWork);
           const bounded = buildBoundedThreadProjection({
             projection: snapshot.projection,
             snapshotSequence: snapshot.snapshotSequence,
@@ -261,6 +245,11 @@ export const layer = HttpApiBuilder.group(
               args.query.cursor,
               args.query.throughEntryId,
               args.query.view === "conversation",
+              args.query.view === "work"
+                ? "work"
+                : args.query.deferWork === "1"
+                  ? "deferred"
+                  : undefined,
             )
             .pipe(
               Effect.map((page) =>

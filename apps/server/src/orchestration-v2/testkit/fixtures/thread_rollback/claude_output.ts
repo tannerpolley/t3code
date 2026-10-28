@@ -2,20 +2,7 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import {
-  assertBaseProjection,
-  assertRunOrdinals,
-  assertSemanticProjectionIntegrity,
-  assertTurnItemTypeSequence,
-  assertUserMessagesInclude,
-  assertVisibleTurnItemTypeSequence,
-  assertVisibleUserMessagesExclude,
-  assertVisibleUserMessagesInclude,
-  projectionFor,
-  THREAD_ROLLBACK_AFTER_PROMPT,
-  THREAD_ROLLBACK_FIRST_PROMPT,
-  THREAD_ROLLBACK_SECOND_PROMPT,
-} from "../shared.ts";
+import { assertBaseProjection, assertRunOrdinals, assertSemanticProjectionIntegrity, assertTurnItemTypeSequence, assertUserMessagesInclude, assertVisibleTurnItemTypeSequence, assertVisibleUserMessagesExclude, assertVisibleUserMessagesInclude, projectionFor, THREAD_ROLLBACK_AFTER_PROMPT, THREAD_ROLLBACK_FIRST_PROMPT, THREAD_ROLLBACK_SECOND_PROMPT } from "../shared.ts";
 
 export function assertClaudeThreadRollbackOutput(
   result: OrchestratorV2ScenarioResult,

@@ -1,10 +1,4 @@
-import {
-  type ClaudeSettings,
-  type ModelCapabilities,
-  type ServerProvider,
-  type ServerProviderSlashCommand,
-  type ServerProviderResetCredits,
-} from "@t3tools/contracts";
+import { type ClaudeSettings, type ModelCapabilities, type ServerProvider, type ServerProviderSlashCommand, type ServerProviderResetCredits } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -16,42 +10,16 @@ import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import {
-  query as claudeQuery,
-  type Options as ClaudeQueryOptions,
-  type SlashCommand as ClaudeSlashCommand,
-  type SDKControlGetUsageResponse,
-  type SDKUserMessage,
-  type SettingSource,
-} from "@anthropic-ai/claude-agent-sdk";
+import { query as claudeQuery, type Options as ClaudeQueryOptions, type SlashCommand as ClaudeSlashCommand, type SDKControlGetUsageResponse, type SDKUserMessage, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
 
-import {
-  buildServerProvider,
-  COMPACT_SLASH_COMMAND,
-  DEFAULT_TIMEOUT_MS,
-  isCommandMissingCause,
-  parseGenericCliVersion,
-  providerModelsFromSettings,
-  spawnAndCollect,
-  type ServerProviderDraft,
-} from "@t3tools/provider-core/server/snapshotProbe";
+import { buildServerProvider, COMPACT_SLASH_COMMAND, DEFAULT_TIMEOUT_MS, isCommandMissingCause, parseGenericCliVersion, providerModelsFromSettings, spawnAndCollect, type ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills, discoverClaudeSkillsAndPlugins } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
-import {
-  type ClaudeScopedLimitNames,
-  claudeUsageResponseToLimits,
-  recordClaudeUsageResponse,
-} from "./claudeUsageLimits.ts";
-import {
-  BUNDLED_CLAUDE_MODEL_CATALOG,
-  type ClaudeModelCatalog,
-  formatClaudeVersionUpgradeMessage,
-  resolveClaudeModelsForVersion,
-  resolveClaudeUpdateRequiredModels,
-} from "./ClaudeModelCatalog.ts";
+import { type ClaudeScopedLimitNames, claudeUsageResponseToLimits, recordClaudeUsageResponse } from "./claudeUsageLimits.ts";
+import { BUNDLED_CLAUDE_MODEL_CATALOG, type ClaudeModelCatalog, formatClaudeVersionUpgradeMessage, resolveClaudeModelsForVersion, resolveClaudeUpdateRequiredModels } from "./ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],

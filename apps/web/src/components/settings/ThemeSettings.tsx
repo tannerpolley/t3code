@@ -1,57 +1,17 @@
-import {
-  CheckIcon,
-  CopyIcon,
-  MoonIcon,
-  PaintbrushIcon,
-  PenLineIcon,
-  PlusIcon,
-  SunIcon,
-  Trash2Icon,
-  UploadIcon,
-} from "lucide-react";
+import { CheckIcon, CopyIcon, MoonIcon, PaintbrushIcon, PenLineIcon, PlusIcon, SunIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
-import {
-  getThemeDefinition,
-  singleAppearanceOf,
-  getThemeModes,
-  removeCustomThemes,
-  serializeThemeFile,
-  type ThemeAppearance,
-  type ThemeDefinition,
-  type ThemeHalves,
-  T3_CHAT_THEME,
-  EMBER_THEME,
-  GROVE_THEME,
-  IRIS_THEME,
-  OCEAN_THEME,
-} from "../../themePalette";
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
+import { getThemeDefinition, singleAppearanceOf, getThemeModes, removeCustomThemes, serializeThemeFile, type ThemeAppearance, type ThemeDefinition, type ThemeHalves, T3_CHAT_THEME, EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME } from "../../themePalette";
+import { AlertDialog, AlertDialogClose, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogPopup, AlertDialogTitle } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { ThemeImportDialog } from "./ThemeImportDialog";
 import { searchableSetting } from "./settingsSearch";
 import { useThemeEditorStore } from "./themeEditorStore";
-import {
-  STANDARD_THEME_CARDS,
-  getThemeCardDefinition,
-  previewColorsOf,
-  ThemePreviewCircles,
-  ThemePreviewCircle,
-  type ThemeCardDefinition,
-  type ThemeMode,
-} from "./ThemePreviewCircles";
+import { STANDARD_THEME_CARDS, getThemeCardDefinition, previewColorsOf, ThemePreviewCircles, ThemePreviewCircle, type ThemeCardDefinition, type ThemeMode } from "./ThemePreviewCircles";
 import { ThemeWireframe } from "./ThemeWireframe";
 
 const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [

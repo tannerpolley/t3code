@@ -11,12 +11,7 @@ import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 
-import {
-  increment,
-  metricAttributes,
-  orchestrationEffectClaimsTotal,
-  orchestrationEffectQueueWait,
-} from "../observability/Metrics.ts";
+import { increment, metricAttributes, orchestrationEffectClaimsTotal, orchestrationEffectQueueWait } from "../observability/Metrics.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -859,7 +854,6 @@ export class OrchestrationEffectWorkerV2 extends Context.Service<
 
 export interface OrchestrationEffectWorkerOptions {
   readonly workerId?: string;
-  readonly leaseDurationMs?: number;
   readonly maxAttempts?: number;
 }
 
@@ -876,7 +870,6 @@ export const layerWithOptions = (
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const executor = yield* OrchestrationEffectExecutorV2;
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
-      const leaseDurationMs = Math.max(1, options.leaseDurationMs ?? 30_000);
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
       const wasCancelled = (effectId: string) =>
         outbox.get(effectId).pipe(
@@ -974,7 +967,6 @@ export const layerWithOptions = (
           const claimExit = yield* Effect.exit(
             outbox.claimNext({
               workerId,
-              leaseDurationMs,
               excludeRestartContinuations,
               ...(lane === undefined ? {} : { lane }),
             }),

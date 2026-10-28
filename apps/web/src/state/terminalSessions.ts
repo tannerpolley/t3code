@@ -1,19 +1,5 @@
-import {
-  combineTerminalSessionState,
-  EMPTY_TERMINAL_BUFFER_STATE,
-  EMPTY_TERMINAL_SESSION_STATE,
-  selectRunningSubprocessTerminalIds,
-  type KnownTerminalSession,
-  type TerminalSessionState,
-} from "@t3tools/client-runtime/state/terminal";
-import {
-  EnvironmentId,
-  ThreadId,
-  AuthTerminalReadScope,
-  AuthTerminalOperateScope,
-  TerminalAttachInput,
-  type TerminalSummary,
-} from "@t3tools/contracts";
+import { combineTerminalSessionState, EMPTY_TERMINAL_BUFFER_STATE, EMPTY_TERMINAL_SESSION_STATE, selectRunningSubprocessTerminalIds, type KnownTerminalSession, type TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
+import { EnvironmentId, ThreadId, AuthTerminalReadScope, AuthTerminalOperateScope, TerminalAttachInput, type TerminalSummary } from "@t3tools/contracts";
 
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -159,8 +145,9 @@ const attachedTerminalSessionFamily = Atom.family((key: string) => {
           )
         : null;
     const metadata = canRead
-      ? Option.getOrNull(
-          AsyncResult.value(get(terminalEnvironment.metadata({ environmentId, input: null }))),
+      ? AsyncResult.getOrElse(
+          get(terminalEnvironment.metadata({ environmentId, input: null })),
+          () => null,
         )
       : null;
     const summary =
@@ -172,7 +159,7 @@ const attachedTerminalSessionFamily = Atom.family((key: string) => {
     const buffer =
       attach === null
         ? EMPTY_TERMINAL_BUFFER_STATE
-        : Option.getOrElse(AsyncResult.value(attach), () => EMPTY_TERMINAL_BUFFER_STATE);
+        : AsyncResult.getOrElse(attach, () => EMPTY_TERMINAL_BUFFER_STATE);
     const state = combineTerminalSessionState(summary, buffer);
     return attach?._tag === "Failure"
       ? { ...state, error: formatEnvironmentQueryError(attach.cause), status: "error" }

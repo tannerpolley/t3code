@@ -3,15 +3,7 @@ import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  buildDocJson,
-  ComposerBlockExtensions,
-  ComposerCodeBlockExtension,
-  ComposerListExtensions,
-  ComposerTaskItemExtension,
-  ComposerTaskListExtension,
-  serializeEditorDoc,
-} from "./composer-rich-text-doc";
+import { buildDocJson, ComposerBlockExtensions, ComposerCodeBlockExtension, ComposerListExtensions, ComposerTaskItemExtension, ComposerTaskListExtension, serializeEditorDoc } from "./composer-rich-text-doc";
 
 const mac = typeof navigator !== "undefined" && /Mac|iP(hone|[oa]d)/.test(navigator.platform);
 

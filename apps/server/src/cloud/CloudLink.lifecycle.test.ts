@@ -16,27 +16,13 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
 import { writeServiceState } from "../serviceLauncher.ts";
-import {
-  SERVICE_LAUNCHER_PROTOCOL,
-  SERVICE_STATE_FILE,
-  SERVICE_STOP_MARKER_FILE,
-  type ServiceUpdateRecord,
-} from "./serviceProtocol.ts";
+import { SERVICE_LAUNCHER_PROTOCOL, SERVICE_STATE_FILE, SERVICE_STOP_MARKER_FILE, type ServiceUpdateRecord } from "./serviceProtocol.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { RelayManagedEndpointRecoveryRegistrationRequest } from "@t3tools/contracts/relay";
-import {
-  CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
-  CLOUD_ENDPOINT_RUNTIME_CONFIG,
-  CLOUD_LINK_REVOKED,
-  CLOUD_LINKED_USER_ID,
-  decodeRuntimeConfig,
-  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
-  RELAY_ISSUER_SECRET,
-  RELAY_URL_SECRET,
-} from "./config.ts";
+import { CLOUD_ENDPOINT_CONFIRMED_ORIGIN, CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINK_REVOKED, CLOUD_LINKED_USER_ID, decodeRuntimeConfig, RELAY_ENVIRONMENT_CREDENTIAL_SECRET, RELAY_ISSUER_SECRET, RELAY_URL_SECRET } from "./config.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import { consumeCloudReplayGuards } from "./CloudLink.ts";

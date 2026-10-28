@@ -1,17 +1,8 @@
-import {
-  AuthOrchestrationReadScope,
-  EnvironmentHttpApi,
-  requiredScopesForProjectMutation,
-} from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, EnvironmentHttpApi, requiredScopesForProjectMutation } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
-import {
-  annotateEnvironmentRequest,
-  failEnvironmentInternal,
-  failEnvironmentInvalidRequest,
-  requireEnvironmentScope,
-} from "../auth/http.ts";
+import { annotateEnvironmentRequest, failEnvironmentInternal, failEnvironmentInvalidRequest, requireEnvironmentScope } from "../auth/http.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ProjectService from "./ProjectService.ts";

@@ -1,19 +1,4 @@
-import {
-  Box3,
-  BufferAttribute,
-  Group,
-  Mesh,
-  MeshBasicMaterial,
-  Matrix4,
-  Quaternion,
-  Plane,
-  Raycaster,
-  Triangle,
-  Vector2,
-  Vector3,
-  type PerspectiveCamera,
-  type Texture,
-} from "three";
+import { Box3, BufferAttribute, Group, Mesh, MeshBasicMaterial, Matrix4, Quaternion, Plane, Raycaster, Triangle, Vector2, Vector3, type PerspectiveCamera, type Texture } from "three";
 import type { DuoRestFrame } from "./duoSnap.ts";
 import type { DeviceScreenSize } from "./stream.ts";
 

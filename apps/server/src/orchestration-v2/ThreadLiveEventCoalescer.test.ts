@@ -1,26 +1,11 @@
-import {
-  EventId,
-  MessageId,
-  ProjectId,
-  ProviderInstanceId,
-  type OrchestrationV2ThreadProjection,
-  ThreadId,
-  RunId,
-  TurnItemId,
-  type OrchestrationV2ThreadStreamItem,
-  type OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
+import { EventId, MessageId, ProjectId, ProviderInstanceId, type OrchestrationV2ThreadProjection, ThreadId, RunId, TurnItemId, type OrchestrationV2ThreadStreamItem, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
-import {
-  coalesceLiveUpdatedEvents,
-  coalesceThreadLiveStream,
-  makeThreadLiveEventCoalescer,
-} from "./ThreadLiveEventCoalescer.ts";
+import { coalesceLiveUpdatedEvents, coalesceThreadLiveStream, makeThreadLiveEventCoalescer } from "./ThreadLiveEventCoalescer.ts";
 
 import { applyOrchestrationV2ProjectionEvent } from "../../../../packages/client-runtime/src/state/orchestrationV2Projection.ts";
 
@@ -426,7 +411,7 @@ describe("ThreadLiveEventCoalescer", () => {
   it.effect("keeps the flush timer alive when an offer's shorter scope closes", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const coalescer = yield* makeThreadLiveEventCoalescer({ coalesceWindow: "50 millis" });
+        const coalescer = yield* makeThreadLiveEventCoalescer();
         yield* Effect.scoped(coalescer.offer(makeToolActivity(1)));
         yield* TestClock.adjust("50 millis");
         const items = yield* coalescer.stream.pipe(Stream.take(1), Stream.runCollect);

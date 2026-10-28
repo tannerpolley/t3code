@@ -1,11 +1,7 @@
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 
 import { cn } from "~/lib/utils";
-import {
-  DIALOG_BACKDROP_CLASS,
-  DIALOG_MOBILE_SHEET_CLASS,
-  DIALOG_POPUP_CLASS,
-} from "~/components/ui/dialog-styles";
+import { DIALOG_BACKDROP_CLASS, DIALOG_MOBILE_SHEET_CLASS, DIALOG_POPUP_CLASS } from "~/components/ui/dialog-styles";
 import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
 
 function AlertDialog<Payload>(props: AlertDialogPrimitive.Root.Props<Payload>) {

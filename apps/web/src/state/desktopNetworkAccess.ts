@@ -1,8 +1,4 @@
-import type {
-  AdvertisedEndpoint,
-  DesktopBridge,
-  DesktopServerExposureState,
-} from "@t3tools/contracts";
+import type { AdvertisedEndpoint, DesktopBridge, DesktopServerExposureState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";

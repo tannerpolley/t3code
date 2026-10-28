@@ -15,20 +15,7 @@ import * as Ndjson from "effect/encoding/Ndjson";
 import * as AcpErrors from "effect-acp/errors";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
-import {
-  ANTIGRAVITY_AUTH_BROWSER_MARKER,
-  ANTIGRAVITY_AUTH_STDOUT_PREFIX,
-  ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
-  type AntigravityAuthConfig,
-  type AntigravityProfile,
-  buildAntigravityAcpSpawnInput,
-  isAntigravitySignInRequiredError,
-  makeAntigravityStderrHandler,
-  makeAntigravityStdoutTransform,
-  parseAntigravityAuthorizationUrl,
-  prepareAntigravityProfile,
-  resolveAntigravityInstanceDirectories,
-} from "./antigravityAuthSupport.ts";
+import { ANTIGRAVITY_AUTH_BROWSER_MARKER, ANTIGRAVITY_AUTH_STDOUT_PREFIX, ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE, type AntigravityAuthConfig, type AntigravityProfile, buildAntigravityAcpSpawnInput, isAntigravitySignInRequiredError, makeAntigravityStderrHandler, makeAntigravityStdoutTransform, parseAntigravityAuthorizationUrl, prepareAntigravityProfile, resolveAntigravityInstanceDirectories } from "./antigravityAuthSupport.ts";
 
 const authorizationUrl =
   "https://accounts.google.com/o/oauth2/v2/auth?response_type=code" +

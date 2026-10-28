@@ -1,24 +1,8 @@
 import * as NodePath from "@effect/platform-node/NodePath";
-import {
-  EDITORS,
-  ExternalLauncherError,
-  ExternalLauncherBrowserSpawnError,
-  ExternalLauncherCommandNotFoundError,
-  ExternalLauncherEditorSpawnError,
-  ExternalLauncherUnknownEditorError,
-  ExternalLauncherUnsupportedEditorError,
-  ExternalLauncherUnsupportedTargetError,
-  type EditorId,
-  type FileManagerRevealKind,
-  type LaunchEditorInput,
-} from "@t3tools/contracts";
+import { EDITORS, ExternalLauncherError, ExternalLauncherBrowserSpawnError, ExternalLauncherCommandNotFoundError, ExternalLauncherEditorSpawnError, ExternalLauncherUnknownEditorError, ExternalLauncherUnsupportedEditorError, ExternalLauncherUnsupportedTargetError, type EditorId, type FileManagerRevealKind, type LaunchEditorInput } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  isCommandAvailable,
-  resolveSpawnCommand,
-  withPathDirectoryListings,
-} from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveSpawnCommand, withPathDirectoryListings } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";

@@ -1,19 +1,5 @@
-import type {
-  HostPowerSnapshot,
-  ResourceMonitorCapabilities,
-  ResourceMonitorCommand,
-  ResourceMonitorEvent,
-  ResourceMonitorExternalProcess,
-  ResourceMonitorHelloEvent,
-  ResourceMonitorProcessTableEntry,
-  ResourceMonitorSnapshotEvent,
-  ResourceTelemetrySourceStatus,
-} from "@t3tools/contracts";
-import {
-  RESOURCE_MONITOR_PROTOCOL_VERSION,
-  ResourceMonitorCommand as ResourceMonitorCommandSchema,
-  ResourceMonitorEvent as ResourceMonitorEventSchema,
-} from "@t3tools/contracts";
+import type { HostPowerSnapshot, ResourceMonitorCapabilities, ResourceMonitorCommand, ResourceMonitorEvent, ResourceMonitorExternalProcess, ResourceMonitorHelloEvent, ResourceMonitorProcessTableEntry, ResourceMonitorSnapshotEvent, ResourceTelemetrySourceStatus } from "@t3tools/contracts";
+import { RESOURCE_MONITOR_PROTOCOL_VERSION, ResourceMonitorCommand as ResourceMonitorCommandSchema, ResourceMonitorEvent as ResourceMonitorEventSchema } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -326,7 +312,7 @@ const isProtocolMismatch = Schema.is(NativeTelemetryProtocolMismatch);
 const isDecodeFailed = Schema.is(NativeTelemetryDecodeFailed);
 const isCommandFailed = Schema.is(NativeTelemetryCommandFailed);
 
-function eventVersion(value: unknown): number | undefined {
+export function eventVersion(value: unknown): number | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const version = Reflect.get(value, "version");
   return typeof version === "number" ? version : undefined;

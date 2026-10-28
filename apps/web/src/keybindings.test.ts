@@ -1,28 +1,8 @@
 import { assert, describe, it } from "vite-plus/test";
-import {
-  compileResolvedKeybindingsConfig,
-  DEFAULT_RESOLVED_KEYBINDINGS,
-  mergeWithDefaultKeybindings,
-} from "@t3tools/shared/keybindings";
+import { compileResolvedKeybindingsConfig, DEFAULT_RESOLVED_KEYBINDINGS, mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
 
-import {
-  type KeybindingCommand,
-  type KeybindingShortcut,
-  type KeybindingWhenNode,
-  type ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
-import {
-  effectiveShortcutsForCommand,
-  formatShortcutLabel,
-  isRichTextBoldShortcut,
-  isTerminalNewShortcut,
-  isTerminalSplitShortcut,
-  resolveChatShortcutCommand,
-  resolveShortcutCommand,
-  shouldShowThreadJumpHintsForModifiers,
-  shortcutLabelForCommand,
-  type ShortcutEventLike,
-} from "./keybindings";
+import { type KeybindingCommand, type KeybindingShortcut, type KeybindingWhenNode, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { effectiveShortcutsForCommand, formatShortcutLabel, isRichTextBoldShortcut, isTerminalNewShortcut, isTerminalSplitShortcut, resolveChatShortcutCommand, resolveShortcutCommand, shouldShowThreadJumpHintsForModifiers, shortcutLabelForCommand, type ShortcutEventLike } from "./keybindings";
 
 function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
   return {

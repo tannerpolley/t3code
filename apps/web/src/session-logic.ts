@@ -1,53 +1,20 @@
 import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
-import {
-  type AssetResource,
-  type OrchestrationV2Checkpoint,
-  type OrchestrationV2ExecutionNode,
-  type OrchestrationV2PlanArtifact,
-  type OrchestrationV2ProjectedTurnItem,
-  type OrchestrationV2RunAttempt,
-  type OrchestrationV2TurnItem,
-  type PlanId,
-  type RunId,
-  type ToolActivitySurface,
-  type ToolActivityIcon,
-  type ToolActivitySource,
-  type ThreadId,
-  type TurnItemId,
-} from "@t3tools/contracts";
+import { type AssetResource, type OrchestrationV2Checkpoint, type OrchestrationV2ExecutionNode, type OrchestrationV2PlanArtifact, type OrchestrationV2ProjectedTurnItem, type OrchestrationV2RunAttempt, type OrchestrationV2TurnItem, type PlanId, type RunId, type ToolActivitySurface, type ToolActivityIcon, type ToolActivitySource, type ThreadId, type TurnItemId } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
-import {
-  classifyToolActivity,
-  collectToolFilePaths,
-  formatReadToolLabel,
-  formatSearchToolLabel,
-} from "@t3tools/shared/toolActivity";
+import { classifyToolActivity, collectToolFilePaths, formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
 import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
-import {
-  contextCompactionLabel,
-  workEntryIndicatesToolFailure,
-} from "@t3tools/client-runtime/work-log/presentation";
+import { contextCompactionLabel, workEntryIndicatesToolFailure } from "@t3tools/client-runtime/work-log/presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import type {
-  ThreadPendingApproval,
-  ThreadPendingUserInput,
-} from "@t3tools/client-runtime/state/thread-requests";
+import type { ThreadPendingApproval, ThreadPendingUserInput } from "@t3tools/client-runtime/state/thread-requests";
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { threadRuntimeHasInterruptibleRun } from "@t3tools/client-runtime/state/thread-execution";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 
-import {
-  isImageAttachment,
-  type ChatAttachment,
-  type ChatMessage,
-  type ProposedPlan,
-  type SessionPhase,
-  type TurnDiffSummary,
-} from "./types";
+import { isImageAttachment, type ChatAttachment, type ChatMessage, type ProposedPlan, type SessionPhase, type TurnDiffSummary } from "./types";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
@@ -300,6 +267,7 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "run_interrupt_request",
   "run_interrupt_result",
   "secret_request",
+  "link_request",
   "subagent",
 ]);
 
@@ -308,6 +276,7 @@ const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"
   "thread_created",
   // Still answerable after a steer supersedes the attempt that asked.
   "secret_request",
+  "link_request",
 ]);
 
 export function timelineEntryIsPersistentResourceCard(entry: TimelineEntry): boolean {
@@ -599,8 +568,14 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   );
   for (const row of input.visibleTurnItems) {
     const { item } = row;
-    if (turnItemIsWorkspacePreparation(item)) continue;
+    if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
     if (item.type === "checkpoint") continue;
+    if (
+      item.type === "user_message" &&
+      item.inputIntent === "queued_turn" &&
+      item.status === "pending"
+    )
+      continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);

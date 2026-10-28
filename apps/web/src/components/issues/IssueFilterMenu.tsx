@@ -2,25 +2,9 @@ import * as Schema from "effect/Schema";
 import { ListFilterIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuRadioItemIndicator,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
+import { Menu, MenuCheckboxItem, MenuGroup, MenuGroupLabel, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuRadioItemIndicator, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import {
-  changedIssueFilterCount,
-  DEFAULT_ISSUE_FILTER_PREFERENCES,
-  IssueFilterPreferences,
-  repositoryKey,
-} from "./issueWorkspace.logic";
+import { changedIssueFilterCount, DEFAULT_ISSUE_FILTER_PREFERENCES, IssueFilterPreferences, repositoryKey } from "./issueWorkspace.logic";
 
 /** The Filter menu's saved choices, shared by the Issues page and the thread's issue list. */
 export function useIssueFilterPreferences() {

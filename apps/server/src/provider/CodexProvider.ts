@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,40 +17,16 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
-import type {
-  CodexSettings,
-  CustomModelSetting,
-  ServerProvider,
-  ServerProviderState,
-  ModelCapabilities,
-  ProviderOptionDescriptor,
-  ServerProviderModel,
-  ServerProviderPlugin,
-  ServerProviderSkill,
-} from "@t3tools/contracts";
+import type { CodexSettings, CustomModelSetting, ServerProvider, ServerProviderState, ModelCapabilities, ProviderOptionDescriptor, ServerProviderModel, ServerProviderPlugin, ServerProviderSkill } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
-import {
-  codexModelFamily,
-  createModelCapabilities,
-  formatCodexModelName,
-} from "@t3tools/shared/model";
+import { codexModelFamily, createModelCapabilities, formatCodexModelName } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
-import {
-  buildServerProvider,
-  COMPACT_SLASH_COMMAND,
-  providerModelsFromSettings,
-  type ServerProviderDraft,
-} from "@t3tools/provider-core/server/snapshotProbe";
+import { buildServerProvider, COMPACT_SLASH_COMMAND, providerModelsFromSettings, type ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
-import {
-  codexRateLimitsFailureMessage,
-  codexRateLimitsToLimits,
-  type CodexRateLimitSnapshot,
-  type CodexResetCreditsSummary,
-} from "./codexUsageLimits.ts";
+import { codexRateLimitsFailureMessage, codexRateLimitsToLimits, type CodexRateLimitSnapshot, type CodexResetCreditsSummary } from "./codexUsageLimits.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
@@ -918,11 +895,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     presentation: CODEX_PRESENTATION,
     enabled: codexSettings.enabled,
     checkedAt,
-    models: applyConfiguredCodexServiceTier(
-      applyPreferredCodexDefaultModel(
-        appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
-      ),
-      snapshot.serviceTier,
+    models: pipe(
+      appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
+      applyPreferredCodexDefaultModel,
+      (models) => applyConfiguredCodexServiceTier(models, snapshot.serviceTier),
     ),
     skills: snapshot.skills,
     ...(snapshot.plugins ? { plugins: snapshot.plugins } : {}),

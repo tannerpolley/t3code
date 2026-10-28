@@ -1,14 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import {
-  EventId,
-  ProjectId,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  ThreadId,
-  type ApplicationStoredEvent,
-  type OrchestrationV2AppThread,
-  type OrchestrationV2ProviderThread,
-} from "@t3tools/contracts";
+import { EventId, ProjectId, ProviderDriverKind, ProviderInstanceId, ThreadId, type ApplicationStoredEvent, type OrchestrationV2AppThread, type OrchestrationV2ProviderThread } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -24,10 +15,7 @@ import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import {
-  CLAUDE_MODEL_SELECTION,
-  CODEX_MODEL_SELECTION,
-} from "../orchestration-v2/testkit/fixtures/shared.ts";
+import { CLAUDE_MODEL_SELECTION, CODEX_MODEL_SELECTION } from "../orchestration-v2/testkit/fixtures/shared.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AgentSessionImporter from "./AgentSessionImporter.ts";

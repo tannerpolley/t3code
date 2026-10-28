@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import {
-  GitCommandError,
-  GitPreparePullRequestThreadResult,
-  GitRunStackedActionInput,
-} from "./git.ts";
+import { GitCommandError, GitPreparePullRequestThreadResult, GitRunStackedActionInput } from "./git.ts";
 
 const decodeGitCommandError = Schema.decodeUnknownSync(Schema.toCodecJson(GitCommandError));
 const decodePreparePullRequestThreadResult = Schema.decodeUnknownSync(

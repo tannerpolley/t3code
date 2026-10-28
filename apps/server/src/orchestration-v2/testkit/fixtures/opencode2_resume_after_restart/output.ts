@@ -2,15 +2,7 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import {
-  assertBaseProjection,
-  assertSemanticProjectionIntegrity,
-  assertUserMessagesInclude,
-  assertVisibleTurnItemsMirrorLocalTurnItems,
-  OPENCODE2_RESTART_PROMPT,
-  OPENCODE2_RESTART_RECALL_PROMPT,
-  projectionFor,
-} from "../shared.ts";
+import { assertBaseProjection, assertSemanticProjectionIntegrity, assertUserMessagesInclude, assertVisibleTurnItemsMirrorLocalTurnItems, OPENCODE2_RESTART_PROMPT, OPENCODE2_RESTART_RECALL_PROMPT, projectionFor } from "../shared.ts";
 
 export function assertOpenCode2ResumeAfterRestartOutput(
   result: OrchestratorV2ScenarioResult,

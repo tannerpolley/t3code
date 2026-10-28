@@ -1,12 +1,7 @@
 import { lazy, Suspense, useSyncExternalStore } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
-import {
-  getThemeDefinition,
-  subscribeToCustomThemes,
-  type ThemeAppearance,
-  type ThemeDefinition,
-} from "../../themePalette";
+import { getThemeDefinition, subscribeToCustomThemes, type ThemeAppearance, type ThemeDefinition } from "../../themePalette";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { useThemeEditorStore } from "./themeEditorStore";
 

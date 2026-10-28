@@ -15,65 +15,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import {
-  PullRequestOperationError,
-  PullRequestUnavailableError,
-  resolvePullRequestAuthorFilter,
-  type OrchestrationProjectShell,
-  type ProjectId,
-  type PullRequestAction,
-  type PullRequestActionInput,
-  type PullRequestActivity,
-  type PullRequestCommentInput,
-  type PullRequestCommentUpdateInput,
-  type PullRequestDetail,
-  type PullRequestPreview,
-  type PullRequestChecks,
-  type PullRequestDiffFileContentsInput,
-  type PullRequestDiffFileContentsResult,
-  type PullRequestDiffStat,
-  type PullRequestDiffInput,
-  type PullRequestChangeBreakdown,
-  type PullRequestFilesViewedResult,
-  type PullRequestDiffResult,
-  type PullRequestInvalidateInput,
-  type PullRequestReportStateInput,
-  type PullRequestListEntry,
-  type PullRequestListFilters,
-  type PullRequestListInput,
-  type PullRequestListProjectError,
-  type PullRequestListResult,
-  type PullRequestListStatsInput,
-  type PullRequestFilterOptions,
-  type PullRequestFilterOptionsInput,
-  type PullRequestActor,
-  type PullRequestLabel,
-  type PullRequestListStatsResult,
-  type PullRequestProviderSummary,
-  type PullRequestReactionInput,
-  type PullRequestRef,
-  type PullRequestRoutingResult,
-  type PullRequestRoutingIdentityInput,
-  type PullRequestRoutingIdentityResult,
-  type PullRequestReviewVerdict,
-  type PullRequestReviewerCandidateList,
-  type PullRequestReviewerRequestInput,
-  type PullRequestLabelCandidateList,
-  type PullRequestLabelChangeInput,
-  type PullRequestSetFilesViewedInput,
-  type PullRequestState,
-  type PullRequestSubmitReviewInput,
-  PullRequestStack,
-  PullRequestSummary,
-  type PullRequestThreadReplyInput,
-  type PullRequestThreadResolutionInput,
-  type PullRequestThreadCommentsInput,
-  type PullRequestThreadCommentsResult,
-  type PullRequestUpdateInput,
-  type SourceControlProviderInfo,
-  SourceControlProviderKind,
-  type ThreadPullRequestKey,
-} from "@t3tools/contracts";
+import { PullRequestOperationError, PullRequestUnavailableError, resolvePullRequestAuthorFilter, type OrchestrationProjectShell, type ProjectId, type PullRequestAction, type PullRequestActionInput, type PullRequestActivity, type PullRequestCommentInput, type PullRequestCommentUpdateInput, type PullRequestDetail, type PullRequestPreview, type PullRequestChecks, type PullRequestDiffFileContentsInput, type PullRequestDiffFileContentsResult, type PullRequestDiffStat, type PullRequestDiffInput, type PullRequestChangeBreakdown, type PullRequestFilesViewedResult, type PullRequestDiffResult, type PullRequestInvalidateInput, type PullRequestReportStateInput, type PullRequestListEntry, type PullRequestListFilters, type PullRequestListInput, type PullRequestListProjectError, type PullRequestListResult, type PullRequestListStatsInput, type PullRequestFilterOptions, type PullRequestFilterOptionsInput, type PullRequestActor, type PullRequestLabel, type PullRequestListStatsResult, type PullRequestProviderSummary, type PullRequestReactionInput, type PullRequestRef, type PullRequestRoutingResult, type PullRequestRoutingIdentityInput, type PullRequestRoutingIdentityResult, type PullRequestReviewVerdict, type PullRequestReviewerCandidateList, type PullRequestReviewerRequestInput, type PullRequestLabelCandidateList, type PullRequestLabelChangeInput, type PullRequestSetFilesViewedInput, type PullRequestState, type PullRequestSubmitReviewInput, PullRequestStack, PullRequestSummary, type PullRequestThreadReplyInput, type PullRequestThreadResolutionInput, type PullRequestThreadCommentsInput, type PullRequestThreadCommentsResult, type PullRequestUpdateInput, type SourceControlProviderInfo, SourceControlProviderKind, type ThreadPullRequestKey } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
@@ -84,15 +26,7 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import {
-  type ProviderChangeRequest,
-  type ProviderDiffFilePaths,
-  type ProviderFilterOptionPage,
-  type ProviderListCursor,
-  type ProviderChangeRequestWatchFingerprint,
-  type PullRequestProviderApi,
-  PullRequestProviderError,
-} from "@t3tools/source-control-core/server/PullRequestProvider";
+import { type ProviderChangeRequest, type ProviderDiffFilePaths, type ProviderFilterOptionPage, type ProviderListCursor, type ProviderChangeRequestWatchFingerprint, type PullRequestProviderApi, PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
@@ -1565,7 +1499,7 @@ export const make = Effect.gen(function* () {
     }
     const result = yield* api
       .withVerifiedCredential(
-        { cwd: project.project.workspaceRoot, host: project.host },
+        { cwd: project.project.workspaceRoot, host: project.host, repository: project.repository },
         (identity) =>
           identity.accountId === input.expectedAccountId
             ? operation.pipe(Effect.provideService(routingCredential, identity), Effect.result)
@@ -2066,7 +2000,11 @@ export const make = Effect.gen(function* () {
         return input.action === "delete-branch" && project.api.withVerifiedCredential !== undefined
           ? project.api
               .withVerifiedCredential(
-                { cwd: project.project.workspaceRoot, host: project.host },
+                {
+                  cwd: project.project.workspaceRoot,
+                  host: project.host,
+                  repository: project.repository,
+                },
                 () => operation.pipe(Effect.result),
               )
               .pipe(
@@ -2696,14 +2634,9 @@ export const make = Effect.gen(function* () {
           },
         }),
       );
-    const serveHeld = (
-      key: string,
-      effect: Effect.Effect<A, PullRequestError>,
-      mode: "reuse" | "revalidate",
-    ) => {
+    const serveHeld = (key: string, effect: Effect.Effect<A, PullRequestError>) => {
       const snapshot = held.get(key);
       if (snapshot === undefined) return read(key, effect);
-      if (mode === "reuse") return Effect.succeed(snapshot.value);
       return revalidate(read(key, effect)).pipe(Effect.as(snapshot.value));
     };
     return { peek: (key: string) => held.get(key)?.value, read, record, serveHeld };
@@ -3179,7 +3112,7 @@ export const make = Effect.gen(function* () {
     );
     return input.allowStale === false
       ? read.pipe(Effect.tap((value) => lastGoodDetail.record(key, value)))
-      : lastGoodDetail.serveHeld(key, read, "revalidate");
+      : lastGoodDetail.serveHeld(key, read);
   };
 
   const activityCache = yield* Cache.makeWith(

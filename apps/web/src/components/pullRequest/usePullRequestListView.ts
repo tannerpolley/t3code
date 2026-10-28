@@ -1,38 +1,11 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
-import {
-  type EnvironmentId,
-  type ProjectId,
-  type PullRequestInvolvement,
-  type PullRequestListFilters,
-  type PullRequestListResult,
-  type PullRequestListState,
-} from "@t3tools/contracts";
+import { type EnvironmentId, type ProjectId, type PullRequestInvolvement, type PullRequestListFilters, type PullRequestListResult, type PullRequestListState } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
-import {
-  applyPullRequestOverrides,
-  findProjectForRepository,
-  findScopedProject,
-  matchesPullRequestFilters,
-  pullRequestDiffStatKey,
-  pullRequestEntryKey,
-  pullRequestEntryViewer,
-  pullRequestEnvironmentSetKey,
-  pullRequestHostActions,
-  resolveProjectScope,
-  resolveQueryEnvironmentIds,
-  resolveSelectedEnvironmentId,
-  sortPullRequestGroups,
-  withDiffStat,
-  type EnvironmentPullRequestEntry,
-  type MergedPullRequestList,
-  type PullRequestDiffStats,
-  type PullRequestGroup,
-  type PullRequestListOverride,
-} from "./pullRequestList.logic";
+import { applyPullRequestOverrides, findProjectForRepository, findScopedProject, matchesPullRequestFilters, pullRequestDiffStatKey, pullRequestEntryKey, pullRequestEntryViewer, pullRequestEnvironmentSetKey, pullRequestHostActions, resolveProjectScope, resolveQueryEnvironmentIds, resolveSelectedEnvironmentId, sortPullRequestGroups, withDiffStat, type EnvironmentPullRequestEntry, type MergedPullRequestList, type PullRequestDiffStats, type PullRequestGroup, type PullRequestListOverride } from "./pullRequestList.logic";
 import type { PullRequestExpectedHost } from "./PullRequestListFilters";
 import type { PullRequestListPreferences, PullRequestListSort } from "./pullRequestListPreferences";
 import { assignProjectsToEnvironments } from "./pullRequestProjectAssignment.logic";
@@ -58,9 +31,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
   const allProjects = useProjects();
   const projectsKnown = useAllEnvironmentShellsBootstrapped();
   const capableEnvironments = environments
-    .filter(
-      (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
-    )
+    .filter((environment) => environment.serverConfig !== null)
     .toSorted((left, right) => left.environmentId.localeCompare(right.environmentId));
   const scopedEnvironmentId =
     capableEnvironments.find((environment) => environment.environmentId === search.environmentId)
@@ -185,6 +156,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
 
 export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuery: string) {
   const [sentQuery, setSentQuery] = useState(typedQuery);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- debounce timer that sends the typed query after SEARCH_DEBOUNCE_MS
   useEffect(() => {
     const timer = window.setTimeout(() => setSentQuery(typedQuery), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);

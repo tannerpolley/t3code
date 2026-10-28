@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import type { Project } from "./types";
 import { buildSidebarProjectSnapshots } from "./sidebarProjectGrouping";
-import { derivePhysicalProjectKey } from "./logicalProject";
+import { derivePhysicalProjectKey } from "@t3tools/client-runtime/state/project-grouping";
 import { applySidebarLayoutMutation } from "@t3tools/shared/sidebarLayout";
 import { resolveProjectDrop } from "./components/sidebar/SidebarProjectSections.logic";
 import {

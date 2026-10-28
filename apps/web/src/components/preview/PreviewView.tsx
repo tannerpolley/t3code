@@ -1,58 +1,24 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { previewStreamDownloadUrl } from "@t3tools/client-runtime/preview/server-browser-stream";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import {
-  AuthOrchestrationOperateScope,
-  DEFAULT_BROWSER_PROFILE_ID,
-  FILL_PREVIEW_VIEWPORT,
-  type PreviewAnnotationPayload,
-  type ScopedThreadRef,
-  DEFAULT_PREVIEW_ZOOM_FACTOR,
-  PREVIEW_ZOOM_LEVELS,
-  type PreviewAdjustInput,
-} from "@t3tools/contracts";
-import {
-  normalizePreviewUrl,
-  resolveAddressBarInput,
-  previewPdfAssetUrl,
-  resolveSearchUrlTemplate,
-} from "@t3tools/shared/preview";
+import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AuthOrchestrationOperateScope, DEFAULT_BROWSER_PROFILE_ID, FILL_PREVIEW_VIEWPORT, type PreviewAnnotationPayload, type ScopedThreadRef, DEFAULT_PREVIEW_ZOOM_FACTOR, PREVIEW_ZOOM_LEVELS, type PreviewAdjustInput } from "@t3tools/contracts";
+import { normalizePreviewUrl, resolveAddressBarInput, previewPdfAssetUrl, resolveSearchUrlTemplate } from "@t3tools/shared/preview";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-import {
-  BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
-  recordVisitForThread,
-  removeUrlForThread,
-  useThreadRecentHistory,
-} from "~/browserHistoryStore";
+import { BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT, recordVisitForThread, removeUrlForThread, useThreadRecentHistory } from "~/browserHistoryStore";
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
 import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import { getClientSettings } from "~/hooks/useSettings";
-import {
-  rememberPreviewUrl,
-  updatePreviewServerSnapshot,
-  useThreadPreviewState,
-} from "~/previewStateStore";
+import { rememberPreviewUrl, updatePreviewServerSnapshot, useThreadPreviewState } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
-import {
-  useEnvironment,
-  useEnvironmentHttpBaseUrl,
-  usePrimaryEnvironmentId,
-} from "~/state/environments";
+import { useEnvironment, useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { usePreviewStreamAccess } from "~/state/previewStream";
 import { useAtomCommand } from "~/state/use-atom-command";
-import {
-  browserMiniPlayerSource,
-  selectThreadPreviewMiniPlayerTabId,
-  usePreviewMiniPlayerStore,
-} from "~/previewMiniPlayerStore";
+import { browserMiniPlayerSource, selectThreadPreviewMiniPlayerTabId, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useRightPanelStore } from "~/rightPanelStore";
 
@@ -83,13 +49,7 @@ import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
 import { AgentBrowserCursor } from "./AgentBrowserCursor";
-import {
-  findActiveBrowserRecordingRuntimeTabId,
-  isBrowserRecordingStartCancelledError,
-  startBrowserRecording,
-  stopBrowserRecording,
-  useActiveBrowserRecordingTabIds,
-} from "~/browser/browserRecording";
+import { findActiveBrowserRecordingRuntimeTabId, isBrowserRecordingStartCancelledError, startBrowserRecording, stopBrowserRecording, useActiveBrowserRecordingTabIds } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
@@ -192,6 +152,7 @@ export function PreviewView({
   const serverToolbarShown =
     snapshot?.runtime === "server" && (snapshot.viewport ?? FILL_PREVIEW_VIEWPORT)._tag !== "fill";
   const serverBodyRef = useRef<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ResizeObserver on the server preview body sizes the viewport toolbar
   useEffect(() => {
     const element = serverBodyRef.current;
     if (!element || !serverToolbarShown) return;
@@ -202,7 +163,9 @@ export function PreviewView({
   const [serverControlledTabId, setServerControlledTabId] = useState<string | null>(null);
   const serverInputDisabled = isServerTab && serverControlledTabId !== runtimeTabId;
   const [serverFrameTabId, setServerFrameTabId] = useState<string | null>(null);
-  const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
+  // A desktop page that mounted before its tab went headless leaves its stale state here.
+  const desktopOverlay =
+    tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
@@ -733,7 +696,7 @@ export function PreviewView({
     };
     const bridge = previewBridge;
     void settlePromise(async () => {
-      await bridge.setAnnotationSendEnabled?.(
+      await bridge.setAnnotationSendEnabled(
         runtimeTabId,
         Boolean(onSendAnnotation) &&
           readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
@@ -788,13 +751,15 @@ export function PreviewView({
     }).then(finishPick);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the preview bridge whether an element pick may send annotations
   useEffect(() => {
     if (!pickActive || !previewBridge || !runtimeTabId) return;
     void previewBridge
-      .setAnnotationSendEnabled?.(runtimeTabId, canSendAnnotation)
+      .setAnnotationSendEnabled(runtimeTabId, canSendAnnotation)
       .catch(() => undefined);
   }, [canSendAnnotation, pickActive, runtimeTabId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels an in-progress element pick on the preview bridge when the tab changes or on unmount
   useEffect(() => {
     return () => {
       if (!pickActiveRef.current) return;
@@ -831,6 +796,7 @@ export function PreviewView({
       }
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview actions while the view is visible
   useEffect(() => {
     if (!visible) return;
     return subscribePreviewAction((action) => onPreviewAction(action));

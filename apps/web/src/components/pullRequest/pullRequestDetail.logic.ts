@@ -1,41 +1,7 @@
-import {
-  capitalizeTerm,
-  sourceControlClients,
-  type ChangeRequestTerminology,
-} from "@t3tools/client-runtime/source-control-clients";
+import { capitalizeTerm, sourceControlClients, type ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
-import {
-  GitCommandError,
-  PullRequestDetail,
-  PullRequestOperationError,
-  type PullRequestAction,
-  type PullRequestActor,
-  type PullRequestBaseComparison,
-  type PullRequestCheck,
-  type PullRequestChecksState as ContractPullRequestChecksState,
-  type PullRequestComment,
-  type PullRequestCommit,
-  type PullRequestContextMetadata,
-  type PullRequestDetailView,
-  type PullRequestMergeability,
-  type PullRequestReaction,
-  type PullRequestMergeMethod,
-  type PullRequestRef,
-  type RepositoryIdentity,
-  type PullRequestReviewThread,
-  type PullRequestState,
-  type PullRequestUpdateMethod,
-  SourceControlProviderKind,
-  type ThreadLinkedPullRequest,
-  type ThreadPullRequestLink,
-  type VcsRef,
-} from "@t3tools/contracts";
-import {
-  legacyThreadPullRequestKey,
-  resolveThreadCurrentPullRequestLink,
-  threadPullRequestKeysEqual,
-  visibleThreadPullRequests,
-} from "@t3tools/client-runtime/thread-pull-requests";
+import { GitCommandError, PullRequestDetail, PullRequestOperationError, type PullRequestAction, type PullRequestActor, type PullRequestBaseComparison, type PullRequestCheck, type PullRequestChecksState as ContractPullRequestChecksState, type PullRequestComment, type PullRequestCommit, type PullRequestContextMetadata, type PullRequestDetailView, type PullRequestMergeability, type PullRequestReaction, type PullRequestMergeMethod, type PullRequestRef, type RepositoryIdentity, type PullRequestReviewThread, type PullRequestState, type PullRequestUpdateMethod, SourceControlProviderKind, type ThreadLinkedPullRequest, type ThreadPullRequestLink, type VcsRef } from "@t3tools/contracts";
+import { legacyThreadPullRequestKey, resolveThreadCurrentPullRequestLink, threadPullRequestKeysEqual, visibleThreadPullRequests } from "@t3tools/client-runtime/thread-pull-requests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 import { reviewCommentContextId } from "~/lib/composerContextRecords";
@@ -71,7 +37,7 @@ export function resolvePullRequestMergeMethod(
   return allowed[0] ?? "merge";
 }
 
-export type PullRequestPrimaryControl =
+type PullRequestPrimaryControl =
   | "resolve"
   | "ready"
   | "merge"
@@ -274,7 +240,7 @@ export function isStackedPullRequestBase(
   return defaultBranch !== baseBranch;
 }
 
-export type PullRequestActionableDetail = Pick<
+type PullRequestActionableDetail = Pick<
   PullRequestDetail,
   "state" | "isDraft" | "mergeability" | "capabilities" | "viewerPermissions" | "mergeCapabilities"
 >;
@@ -349,7 +315,7 @@ export function groupPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) 
   };
 }
 
-export type ThreadPanelPullRequestAction = "resolve" | "ready" | "fix" | "merge";
+type ThreadPanelPullRequestAction = "resolve" | "ready" | "fix" | "merge";
 
 export function resolveThreadPanelPullRequestAction(
   detail: (PullRequestActionableDetail & Pick<PullRequestDetail, "checks">) | null,
@@ -419,7 +385,7 @@ export function isPullRequestVerdictStale(at: string, newestCommitAt: string | n
   return !Number.isNaN(verdictAt) && !Number.isNaN(commitAt) && verdictAt < commitAt;
 }
 
-export interface PullRequestReviewOutcomeEntry {
+interface PullRequestReviewOutcomeEntry {
   readonly key: string;
   readonly actor: PullRequestActor | null;
   readonly outcome: PullRequestReviewOutcome;
@@ -483,7 +449,7 @@ export interface PullRequestTimelineThread
   readonly replies: ReadonlyArray<PullRequestTimelineEvent>;
 }
 
-export type PullRequestTimelineRow =
+type PullRequestTimelineRow =
   | { readonly kind: "event"; readonly event: PullRequestTimelineEvent }
   | { readonly kind: "comments"; readonly events: ReadonlyArray<PullRequestTimelineEvent> };
 
@@ -820,7 +786,7 @@ function handoffPreamble(input: {
   ];
 }
 
-export interface FixFindingsHandoff {
+interface FixFindingsHandoff {
   readonly prompt: string;
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
 }
@@ -1310,7 +1276,7 @@ export function resolvePullRequestReferenceHost(
   return host === null ? reference : { ...reference, host };
 }
 
-export interface PullRequestDetailSnapshotRef {
+interface PullRequestDetailSnapshotRef {
   readonly host?: string | undefined;
   readonly projectId: string;
   readonly repository: string;

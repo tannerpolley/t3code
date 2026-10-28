@@ -2,27 +2,9 @@ import type { IssueContextMetadata } from "@t3tools/contracts";
 import { IssueStateIcon } from "../issues/IssueStateIcon";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
-import {
-  resolveProviderSkillSourceKind,
-  type ProviderSkillSourceKind,
-} from "@t3tools/client-runtime/providerSkills";
-import {
-  type ProjectEntry,
-  type ProviderDriverKind,
-  type PullRequestContextMetadata,
-  type ScopedThreadRef,
-  type ServerProviderSkill,
-  type ServerProviderSlashCommand,
-} from "@t3tools/contracts";
-import {
-  BlocksIcon,
-  FolderIcon,
-  MessagesSquareIcon,
-  PackageIcon,
-  SettingsIcon,
-  UserRoundIcon,
-  type LucideIcon,
-} from "lucide-react";
+import { resolveProviderSkillSourceKind, type ProviderSkillSourceKind } from "@t3tools/client-runtime/providerSkills";
+import { type EnvironmentId, type EnvironmentMachineKind, type ProjectEntry, type ProviderDriverKind, type PullRequestContextMetadata, type ScopedThreadRef, type ServerProviderSkill, type ServerProviderSlashCommand } from "@t3tools/contracts";
+import { BlocksIcon, FolderIcon, MessagesSquareIcon, PackageIcon, SettingsIcon, UserRoundIcon, type LucideIcon } from "lucide-react";
 import { memo, useLayoutEffect, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -30,6 +12,8 @@ import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandGroupLabel, CommandItem, CommandList } from "../ui/command";
+
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
@@ -88,6 +72,14 @@ export type ComposerCommandItem =
       thread: ScopedThreadRef;
       label: string;
       description: string;
+    }
+  | {
+      id: string;
+      type: "environment";
+      environmentId: EnvironmentId;
+      machine: EnvironmentMachineKind;
+      label: string;
+      description: string;
     };
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
@@ -103,6 +95,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the highlighted menu item's DOM node into view
   useLayoutEffect(() => {
     if (!props.activeItemId || !listRef.current) return;
     const el = listRef.current.querySelector<HTMLElement>(
@@ -234,6 +227,13 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             state: props.item.issue.state,
             queued: props.item.queued,
           }}
+        />
+      ) : null}
+      {props.item.type === "environment" ? (
+        <EnvironmentMachineIcon
+          kind={props.item.machine}
+          aria-hidden="true"
+          className="size-4 shrink-0 text-secondary-label"
         />
       ) : null}
       {pullRequestPresentation ? (

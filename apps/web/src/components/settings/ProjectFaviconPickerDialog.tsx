@@ -10,10 +10,7 @@ import { CommandPaletteContent } from "../CommandPaletteContent";
 import type { CommandPaletteActionItem } from "../CommandPalette.logic";
 import { CommandPaletteResults } from "../CommandPaletteResults";
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
-import {
-  getProjectFilePickerMatches,
-  PROJECT_FILE_PICKER_RESULT_LIMIT,
-} from "../files/ProjectFilePicker.logic";
+import { getProjectFilePickerMatches, PROJECT_FILE_PICKER_RESULT_LIMIT } from "../files/ProjectFilePicker.logic";
 import { useProjectFilePickerQuery } from "../files/projectFilesQueryState";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "../ui/command";
 import { toastManager } from "../ui/toast";

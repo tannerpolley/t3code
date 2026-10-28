@@ -1,21 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  ASSISTANT_CITATION_CONTEXT_LENGTH,
-  EnvironmentId,
-  MessageId,
-  ThreadId,
-} from "@t3tools/contracts";
-import {
-  formatAssistantCitationHref,
-  parseAssistantCitationHref,
-} from "@t3tools/shared/assistantCitations";
+import { ASSISTANT_CITATION_CONTEXT_LENGTH, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { formatAssistantCitationHref, parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 
-import {
-  type AssistantTextSelector,
-  captureAssistantTextSelection,
-  createAssistantTextSelector,
-  findAssistantCitationText,
-} from "./assistantTextSelection";
+import { type AssistantTextSelector, captureAssistantTextSelection, createAssistantTextSelector, findAssistantCitationText } from "./assistantTextSelection";
 
 function selector(
   text: string,

@@ -24,7 +24,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
 import { useClientSettings } from "../hooks/useSettings";
-import { selectProjectGroupingSettings } from "../logicalProject";
+import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import {
   buildSidebarProjectSnapshots,
   type SidebarProjectSnapshot,

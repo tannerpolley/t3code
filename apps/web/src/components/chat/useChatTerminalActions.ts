@@ -1,27 +1,14 @@
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { Dispatch } from "react";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { selectThreadTerminalUiState } from "../../terminalUiStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useThreadTerminalActions } from "../terminal/useThreadTerminalActions";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import {
-  AuthTerminalReadScope,
-  AuthTerminalOperateScope,
-  type EnvironmentId,
-  type ProjectScript,
-  type ScopedThreadRef,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { AuthTerminalReadScope, AuthTerminalOperateScope, type EnvironmentId, type ProjectScript, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import { projectScriptTerminalInput } from "@t3tools/shared/projectScripts";
 import { type SetStateAction } from "react";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { MAX_TERMINALS_PER_GROUP } from "../../types";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
 import { isPreviewSupportedInRuntime } from "../../previewStateStore";
@@ -31,17 +18,9 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { confirmTerminalClose } from "../../lib/terminalCloseConfirm";
 import { findReusableProjectScriptTerminal } from "../../lib/projectScriptTerminal";
 import { type TerminalContextSelection } from "../../lib/terminalContext";
-import {
-  focusActiveDrawerTerminal,
-  focusActivePanelTerminal,
-  focusTerminal,
-} from "../../lib/terminalFocus";
+import { focusActiveDrawerTerminal, focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
 import { useTerminalUiStateStore } from "../../terminalUiStateStore";
-import {
-  LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
-  LastInvokedScriptByProjectSchema,
-  makeThreadErrorSetter,
-} from "../ChatView.logic";
+import { LAST_INVOKED_SCRIPT_BY_PROJECT_KEY, LastInvokedScriptByProjectSchema, makeThreadErrorSetter } from "../ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { previewEnvironment } from "../../state/preview";
 import { readEnvironmentScope } from "../../state/session";

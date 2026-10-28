@@ -1,8 +1,6 @@
+import { pipe } from "effect/Function";
 import type { AssistantCitation } from "@t3tools/contracts";
-import {
-  formatAssistantCitationHref,
-  parseAssistantCitationHref,
-} from "@t3tools/shared/assistantCitations";
+import { formatAssistantCitationHref, parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 
@@ -27,8 +25,11 @@ export function assistantCitationFromLocation(href: string) {
   const hash = href.slice(hashIndex + 1);
   if (!hash.startsWith(CITATION_HASH_PREFIX) || hash.length > 140_000) return null;
   try {
-    return parseAssistantCitationHref(
-      Result.getOrThrow(Base64Url.decodeString(hash.slice(CITATION_HASH_PREFIX.length))),
+    return pipe(
+      hash.slice(CITATION_HASH_PREFIX.length),
+      Base64Url.decodeString,
+      Result.getOrThrow,
+      parseAssistantCitationHref,
     );
   } catch {
     return null;

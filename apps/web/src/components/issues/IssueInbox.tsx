@@ -1,13 +1,7 @@
 import { IssueHoverCard } from "./IssueHoverCard";
 import { startIssueDrag } from "./issueComposerContext";
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  IssueInboxEvent,
-  IssueRepositoryRef,
-  ScopedThreadRef,
-  IssueSummary,
-} from "@t3tools/contracts";
+import type { EnvironmentId, IssueInboxEvent, IssueRepositoryRef, ScopedThreadRef, IssueSummary } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { CheckCheckIcon, CheckIcon } from "lucide-react";
 import * as Option from "effect/Option";
@@ -21,11 +15,7 @@ import { environmentServerConfigsAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
-import {
-  PULL_REQUEST_ROW_CLASS,
-  PULL_REQUEST_ROW_NUMBER_CLASS,
-  PullRequestRowLines,
-} from "../pullRequest/PullRequestListRow";
+import { PULL_REQUEST_ROW_CLASS, PULL_REQUEST_ROW_NUMBER_CLASS, PullRequestRowLines } from "../pullRequest/PullRequestListRow";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";

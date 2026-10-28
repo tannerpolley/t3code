@@ -15,14 +15,7 @@ import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import {
-  createReviewRoot,
-  modelSelection,
-  projectId,
-  reviewHarness,
-  reviewIssue,
-  reviewRead,
-} from "./ThreadLaunchService.testHarness.ts";
+import { createReviewRoot, modelSelection, projectId, reviewHarness, reviewIssue, reviewRead } from "./ThreadLaunchService.testHarness.ts";
 
 function milestoneReads(statuses: ReadonlyMap<number, number>, calls: number[]) {
   return IssueService.layer.pipe(

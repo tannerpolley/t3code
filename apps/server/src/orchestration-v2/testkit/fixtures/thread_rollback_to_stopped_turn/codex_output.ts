@@ -2,18 +2,7 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import {
-  assertBaseProjection,
-  assertRunOrdinals,
-  assertSemanticProjectionIntegrity,
-  assertVisibleUserMessagesExclude,
-  assertVisibleUserMessagesInclude,
-  projectionFor,
-  THREAD_ROLLBACK_AFTER_PROMPT,
-  THREAD_ROLLBACK_FIRST_PROMPT,
-  THREAD_ROLLBACK_SECOND_PROMPT,
-  TURN_INTERRUPT_MID_TOOL_PROMPT,
-} from "../shared.ts";
+import { assertBaseProjection, assertRunOrdinals, assertSemanticProjectionIntegrity, assertVisibleUserMessagesExclude, assertVisibleUserMessagesInclude, projectionFor, THREAD_ROLLBACK_AFTER_PROMPT, THREAD_ROLLBACK_FIRST_PROMPT, THREAD_ROLLBACK_SECOND_PROMPT, TURN_INTERRUPT_MID_TOOL_PROMPT } from "../shared.ts";
 
 export function assertThreadRollbackToStoppedTurnOutput(
   result: OrchestratorV2ScenarioResult,

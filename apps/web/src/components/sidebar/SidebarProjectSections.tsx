@@ -1,11 +1,6 @@
 import { sidebarSectionChildOrder } from "@t3tools/shared/sidebarLayout";
 import { useSidebarWorkExpansion } from "./useSidebarWorkExpansion";
-import {
-  collectDisplayedFamilyRows,
-  resolveSidebarFamilySeparators,
-  sidebarSeparatorStyle,
-  type SidebarFamilySeparator,
-} from "./SidebarFamilySeparators.logic";
+import { collectDisplayedFamilyRows, resolveSidebarFamilySeparators, sidebarSeparatorStyle, type SidebarFamilySeparator } from "./SidebarFamilySeparators.logic";
 import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSidebarTextSizes } from "./ForkSidebarTextSizes";
 import { sectionTarget, useProjectSectionPlacementReady } from "../../projectSectionPlacement";
@@ -13,106 +8,28 @@ import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermissi
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
-import {
-  closestCorners,
-  DragOverlay,
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  pointerWithin,
-  useDroppable,
-  useSensor,
-  useSensors,
-  type CollisionDetection,
-  type DragCancelEvent,
-  type DragEndEvent,
-  type DragOverEvent,
-  type DragStartEvent,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
+import { closestCorners, DragOverlay, DndContext, KeyboardSensor, PointerSensor, pointerWithin, useDroppable, useSensor, useSensors, type CollisionDetection, type DragCancelEvent, type DragEndEvent, type DragOverEvent, type DragStartEvent } from "@dnd-kit/core";
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import {
-  CheckIcon,
-  CornerDownRightIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  EllipsisIcon,
-  FilterIcon,
-  FolderIcon,
-  FolderOpenIcon,
-  FilePlusIcon,
-  FolderPlusIcon,
-  FolderTreeIcon,
-  RotateCcwIcon,
-  GripVerticalIcon,
-  PaletteIcon,
-  PlusIcon,
-  SettingsIcon,
-  SquarePenIcon,
-  Trash2Icon,
-} from "lucide-react";
-import {
-  SidebarProjectThreadName,
-  ThreadIssueBadge,
-  ThreadPullRequestBadge,
-  SidebarProjectThreadTooltip,
-} from "./SidebarProjectThreadTooltip";
+import { CheckIcon, CornerDownRightIcon, ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FilterIcon, FolderIcon, FolderOpenIcon, FilePlusIcon, FolderPlusIcon, FolderTreeIcon, RotateCcwIcon, GripVerticalIcon, PaletteIcon, PlusIcon, SettingsIcon, SquarePenIcon, Trash2Icon } from "lucide-react";
+import { SidebarProjectThreadName, ThreadIssueBadge, ThreadPullRequestBadge, SidebarProjectThreadTooltip } from "./SidebarProjectThreadTooltip";
 import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { SidebarBackgroundWorkRows, type NestedWork } from "./SidebarBackgroundWorkRows";
-import {
-  SidebarProcessGroupRows,
-  useSidebarThreadProcesses,
-  type SidebarProcessRows,
-} from "./SidebarThreadProcesses";
-import {
-  sidebarSubagentRowStatus,
-  resolveSidebarProjectStatusMark,
-} from "./SidebarThreadProcesses.logic";
-import {
-  SidebarCaretSlot,
-  SidebarCaretToggle,
-  SidebarTrailingColumns,
-  SidebarThreadColumns,
-  SidebarThreadTitle,
-  threadGroupHue,
-  PROJECTS_WORK_ROW_HEIGHT,
-} from "./SidebarColumns";
+import { SidebarProcessGroupRows, useSidebarThreadProcesses, type SidebarProcessRows } from "./SidebarThreadProcesses";
+import { sidebarSubagentRowStatus, resolveSidebarProjectStatusMark } from "./SidebarThreadProcesses.logic";
+import { SidebarCaretSlot, SidebarCaretToggle, SidebarTrailingColumns, SidebarThreadColumns, SidebarThreadTitle, threadGroupHue, PROJECTS_WORK_ROW_HEIGHT } from "./SidebarColumns";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
-import {
-  describeSidebarBackgroundWork,
-  type BackgroundWorkTaskRow,
-  resolveSidebarThreadModelLabel,
-  sameSidebarSubagentTree,
-  sidebarRoleLabel,
-} from "./SidebarBackgroundWork.logic";
+import { describeSidebarBackgroundWork, type BackgroundWorkTaskRow, resolveSidebarThreadModelLabel, sameSidebarSubagentTree, sidebarRoleLabel } from "./SidebarBackgroundWork.logic";
 import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
-import {
-  Fragment,
-  memo,
-  useState,
-  type ComponentProps,
-  type CSSProperties,
-  type FormEvent,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
-} from "react";
+import { Fragment, memo, useState, type ComponentProps, type CSSProperties, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
 import { type EnvironmentId, type ProjectIconColor, type ThreadId } from "@t3tools/contracts";
 import { PROJECT_ICON_COLORS } from "../../projectIconColors";
-import {
-  inheritedSectionFolderAppearance,
-  useProjectFolderAppearance,
-} from "../../projectFolderAppearance";
+import { inheritedSectionFolderAppearance, useProjectFolderAppearance } from "../../projectFolderAppearance";
 import { openCommandPalette } from "../../commandPaletteBus";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
@@ -121,47 +38,19 @@ import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
-import {
-  flattenRunningSubagents,
-  resolveLocationLeads,
-  resolveSidebarThreadStatus,
-  type SidebarThreadStatus,
-  withChildNeeds,
-} from "../Sidebar.logic";
+import { flattenRunningSubagents, resolveLocationLeads, resolveSidebarThreadStatus, type SidebarThreadStatus, withChildNeeds } from "../Sidebar.logic";
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { Button } from "../ui/button";
-import {
-  Dialog,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
+import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
-import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuSub,
-  MenuSubPopup,
-  MenuSubTrigger,
-  MenuTrigger,
-} from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuSub, MenuSubPopup, MenuSubTrigger, MenuTrigger } from "../ui/menu";
 import { SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { NewSectionProjectDialog, type NewSectionProjectTarget } from "./NewSectionProjectDialog";
-import {
-  resolveProjectDrop,
-  resolveSubsectionDrop,
-  type ProjectDrop,
-  type ProjectDropOver,
-} from "./SidebarProjectSections.logic";
+import { resolveProjectDrop, resolveSubsectionDrop, type ProjectDrop, type ProjectDropOver } from "./SidebarProjectSections.logic";
 
 const UNGROUPED_SECTION_ID = "__ungrouped__";
 const NO_THREADS: readonly SidebarThreadSummary[] = [];

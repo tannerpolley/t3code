@@ -91,10 +91,6 @@ export function useRelayEnvironmentDiscovery(): Discovery.RelayEnvironmentDiscov
   return useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
 }
 
-export function useEnvironmentIds() {
-  return useAtomValue(environmentSummaries.environmentIdsAtom);
-}
-
 export function useEnvironmentIdentities() {
   return useAtomValue(environmentSummaries.identitiesAtom);
 }
@@ -114,3 +110,5 @@ export function useEnvironmentMachines() {
 export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
 }
+
+export function useEnvironmentIds() { return useEnvironments().environments.map(({ environmentId }) => environmentId); }

@@ -1,8 +1,4 @@
-import type {
-  ModelSelection,
-  OrchestrationV2ThreadShell,
-  ServerProvider,
-} from "@t3tools/contracts";
+import type { ModelSelection, OrchestrationV2ThreadShell, ServerProvider } from "@t3tools/contracts";
 
 /**
  * Drivers whose model catalogs are published by the vendor. Other drivers

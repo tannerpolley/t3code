@@ -18,64 +18,18 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import {
-  GitActionProgressEvent,
-  GitActionProgressPhase,
-  GitCommandError,
-  GitPreparePullRequestThreadInput,
-  GitPreparePullRequestThreadResult,
-  GitPullRequestRefInput,
-  GitResolvePullRequestResult,
-  GitRunStackedActionInput,
-  GitRunStackedActionResult,
-  GitStackedAction,
-  VcsStatusInput,
-  type VcsStatusLocalResult,
-  type VcsStatusRemoteResult,
-  VcsStatusResult,
-  ModelSelection,
-  type OrchestrationV2TurnItem,
-  type ProjectId,
-  SourceControlProviderError,
-  type SourceControlWritingStyleSettings,
-  type ThreadId,
-  type ThreadPullRequestKey,
-  type VcsCreateWorktreeInput,
-  type VcsCreateWorktreeResult,
-} from "@t3tools/contracts";
-import {
-  hasProjectSettingsOverrides,
-  resolveProjectSettings,
-} from "@t3tools/shared/projectSettings";
-import {
-  mergeGitStatusParts,
-  resolveAutoFeatureBranchName,
-  sanitizeBranchFragment,
-  sanitizeFeatureBranchName,
-} from "@t3tools/shared/git";
+import { GitActionProgressEvent, GitActionProgressPhase, GitCommandError, GitPreparePullRequestThreadInput, GitPreparePullRequestThreadResult, GitPullRequestRefInput, GitResolvePullRequestResult, GitRunStackedActionInput, GitRunStackedActionResult, GitStackedAction, VcsStatusInput, type VcsStatusLocalResult, type VcsStatusRemoteResult, VcsStatusResult, ModelSelection, type OrchestrationV2TurnItem, type ProjectId, SourceControlProviderError, type SourceControlWritingStyleSettings, type ThreadId, type ThreadPullRequestKey, type VcsCreateWorktreeInput, type VcsCreateWorktreeResult } from "@t3tools/contracts";
+import { hasProjectSettingsOverrides, resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { mergeGitStatusParts, resolveAutoFeatureBranchName, sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
-import {
-  type ChangeRequestTerminology,
-  UNKNOWN_SOURCE_CONTROL_CLIENT,
-} from "@t3tools/source-control-core/shared/definition";
-import {
-  normalizeThreadPullRequestKey,
-  threadPullRequestKeyOf,
-} from "../sourceControl/threadPullRequests.ts";
+import { type ChangeRequestTerminology, UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/source-control-core/shared/definition";
+import { normalizeThreadPullRequestKey, threadPullRequestKeyOf } from "../sourceControl/threadPullRequests.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
-import {
-  historicalMessage,
-  renderHistory,
-  selectHistory,
-} from "@t3tools/provider-core/server/handoffBudget";
+import { historicalMessage, renderHistory, selectHistory } from "@t3tools/provider-core/server/handoffBudget";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import {
-  conventionalCommitsTextGenerationPolicy,
-  customTextGenerationPolicy,
-  repositoryConventionsTextGenerationPolicy,
-} from "../textGeneration/TextGenerationPresets.ts";
+import { conventionalCommitsTextGenerationPolicy, customTextGenerationPolicy, repositoryConventionsTextGenerationPolicy } from "../textGeneration/TextGenerationPresets.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";

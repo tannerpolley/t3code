@@ -1,6 +1,6 @@
 import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
-import { buildProjectGroups, selectProjectGroupingSettings } from "../../logicalProject";
+import { buildProjectGroups, selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import {
   useClientSettings,
   usePrimarySettings,

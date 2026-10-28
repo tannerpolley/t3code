@@ -2,19 +2,7 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import {
-  assertAssistantTextIncludes,
-  assertBaseProjection,
-  assertSemanticProjectionIntegrity,
-  assertUserMessageInputIntents,
-  assertUserMessagesInclude,
-  assertVisibleTurnItemsMirrorLocalTurnItems,
-  OPENCODE2_CANCELLED_PROMPT,
-  OPENCODE2_QUEUED_PROMPT,
-  OPENCODE2_STEER_PROMPT,
-  OPENCODE2_STEER_TEXT,
-  projectionFor,
-} from "../shared.ts";
+import { assertAssistantTextIncludes, assertBaseProjection, assertSemanticProjectionIntegrity, assertUserMessageInputIntents, assertUserMessagesInclude, assertVisibleTurnItemsMirrorLocalTurnItems, OPENCODE2_CANCELLED_PROMPT, OPENCODE2_QUEUED_PROMPT, OPENCODE2_STEER_PROMPT, OPENCODE2_STEER_TEXT, projectionFor } from "../shared.ts";
 
 export function assertOpenCode2InboxOutput(
   result: OrchestratorV2ScenarioResult,

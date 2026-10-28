@@ -14,16 +14,7 @@ import { isElectron } from "../env";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
-import {
-  ISSUES_PANEL_REF,
-  selectSelectedRightPanelSurface,
-  selectThreadRightPanelState,
-  selectActiveRightPanelSurface,
-  issueSurface,
-  useRightPanelStore,
-  type IssueSurface,
-  type RightPanelSurface,
-} from "../rightPanelStore";
+import { ISSUES_PANEL_REF, selectSelectedRightPanelSurface, selectThreadRightPanelState, selectActiveRightPanelSurface, issueSurface, useRightPanelStore, type IssueSurface, type RightPanelSurface } from "../rightPanelStore";
 import { useThreadShell } from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
 

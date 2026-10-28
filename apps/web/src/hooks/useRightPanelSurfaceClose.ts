@@ -1,8 +1,4 @@
-import {
-  AuthPreviewOperateScope,
-  AuthTerminalOperateScope,
-  type ScopedThreadRef,
-} from "@t3tools/contracts";
+import { AuthPreviewOperateScope, AuthTerminalOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
@@ -11,12 +7,7 @@ import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
 import { readLocalApi } from "../localApi";
 import { setActivePreviewTab, useThreadPreviewState } from "../previewStateStore";
-import {
-  selectActiveRightPanelSurface,
-  selectThreadRightPanelState,
-  useRightPanelStore,
-  type RightPanelSurface,
-} from "../rightPanelStore";
+import { selectActiveRightPanelSurface, selectThreadRightPanelState, useRightPanelStore, type RightPanelSurface } from "../rightPanelStore";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -88,8 +79,10 @@ export function useRightPanelSurfaceClose(input: {
       (left, right) => Number(left.id === activeId) - Number(right.id === activeId),
     );
     for (const surface of ordered) {
-      releaseSurfaceResources(threadRef, surface);
+      // Releasing a browser drops its session, which prunes the tab automatically; close it
+      // first so the close stays a user action that hides the panel after the last tab.
       store.closeSurface(threadRef, surface.id);
+      releaseSurfaceResources(threadRef, surface);
     }
     const nextActiveSurface = selectActiveRightPanelSurface(
       useRightPanelStore.getState().byThreadKey,

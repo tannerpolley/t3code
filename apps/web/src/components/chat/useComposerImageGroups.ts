@@ -1,10 +1,6 @@
 import { type ComposerImageAttachment, type DraftId } from "../../composerDraftStore";
 import { type ScopedThreadRef } from "@t3tools/contracts";
-import {
-  getPendingSnapShotAnimations,
-  pendingSnapShotAnimationIdsForTarget,
-  subscribeToPendingSnapShotAnimations,
-} from "../../lib/snapShotAnimation";
+import { getPendingSnapShotAnimations, pendingSnapShotAnimationIdsForTarget, subscribeToPendingSnapShotAnimations } from "../../lib/snapShotAnimation";
 import { useSyncExternalStore } from "react";
 
 /**

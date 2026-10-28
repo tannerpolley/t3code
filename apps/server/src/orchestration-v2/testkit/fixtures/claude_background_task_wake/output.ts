@@ -3,17 +3,8 @@ import * as DateTime from "effect/DateTime";
 import type { OrchestrationV2ThreadProjection, ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import {
-  assertBaseProjection,
-  assertSemanticProjectionIntegrity,
-  assertUserMessagesInclude,
-  backgroundNotifications,
-  projectionFor,
-} from "../shared.ts";
-import {
-  CLAUDE_BACKGROUND_TASK_WAKE_FOLLOW_UP_PROMPT,
-  CLAUDE_BACKGROUND_TASK_WAKE_PROMPT,
-} from "./input.ts";
+import { assertBaseProjection, assertSemanticProjectionIntegrity, assertUserMessagesInclude, backgroundNotifications, projectionFor } from "../shared.ts";
+import { CLAUDE_BACKGROUND_TASK_WAKE_FOLLOW_UP_PROMPT, CLAUDE_BACKGROUND_TASK_WAKE_PROMPT } from "./input.ts";
 
 const BACKGROUND_TASK_ID = "bdqirlcyw";
 const WAKE_SUMMARY = 'Background command "Background sleep test" completed (exit code 0)';

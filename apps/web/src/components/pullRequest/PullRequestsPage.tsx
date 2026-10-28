@@ -7,69 +7,23 @@ import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
 import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
-import type {
-  EnvironmentId,
-  ProjectId,
-  PullRequestAction,
-  PullRequestInvolvement,
-  PullRequestListCursors,
-  PullRequestListInput,
-  PullRequestListResult,
-  PullRequestListState,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, PullRequestAction, PullRequestInvolvement, PullRequestListCursors, PullRequestListInput, PullRequestListResult, PullRequestListState } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { ArrowDownUpIcon, LayersIcon, Plug2Icon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState, type ComponentProps } from "react";
 
-import {
-  collectPullRequestListFacets,
-  narrowPullRequestsToFilters,
-  mergePullRequestDiffStats,
-  pullRequestDiffStatKey,
-  pullRequestEntryKey,
-  rankPullRequestMatches,
-  pullRequestStatsRefreshBatches,
-  pullRequestStatsRequestBatches,
-  retainVisiblePullRequestStatsBatches,
-  type EnvironmentPullRequestEntry,
-  type MergedPullRequestList,
-  type PullRequestDiffStats,
-  type PullRequestStatsBatch,
-  type PullRequestStatsPolicy,
-  type PullRequestStatsScope,
-  type PullRequestPartitionsSnapshot,
-  type PullRequestListOverride,
-  pullRequestOverrideAfterAction,
-  reusePullRequestEntries,
-  settlePullRequestOverrides,
-  largestPullRequestReadCount,
-} from "./pullRequestList.logic";
-import {
-  pullRequestListPreferences,
-  type PullRequestListPreferencePatch,
-  writePullRequestListPreferences,
-} from "./pullRequestListPreferences";
+import { collectPullRequestListFacets, narrowPullRequestsToFilters, mergePullRequestDiffStats, pullRequestDiffStatKey, pullRequestEntryKey, rankPullRequestMatches, pullRequestStatsRefreshBatches, pullRequestStatsRequestBatches, retainVisiblePullRequestStatsBatches, type EnvironmentPullRequestEntry, type MergedPullRequestList, type PullRequestDiffStats, type PullRequestStatsBatch, type PullRequestStatsPolicy, type PullRequestStatsScope, type PullRequestPartitionsSnapshot, type PullRequestListOverride, pullRequestOverrideAfterAction, reusePullRequestEntries, settlePullRequestOverrides, largestPullRequestReadCount } from "./pullRequestList.logic";
+import { pullRequestListPreferences, type PullRequestListPreferencePatch, writePullRequestListPreferences } from "./pullRequestListPreferences";
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useOwnerDecisionsPane } from "../issues/OwnerDecisionCards";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
-import {
-  PullRequestFiltersMenu,
-  PullRequestSearchInput,
-  pullRequestHostLabel,
-  pullRequestProjectKey,
-  type PullRequestFilterOption,
-} from "./PullRequestListFilters";
+import { PullRequestFiltersMenu, PullRequestSearchInput, pullRequestHostLabel, pullRequestProjectKey, type PullRequestFilterOption } from "./PullRequestListFilters";
 import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
 import { INVOLVEMENT_TABS, SORT_OPTIONS, STATE_TABS } from "./pullRequestListOptions";
 import { PullRequestsColumn } from "./PullRequestsColumn";
 import { PullRequestListGroups } from "./PullRequestListGroups";
-import {
-  usePullRequestDisplayGroups,
-  usePullRequestQueryFilters,
-  usePullRequestScope,
-  type PullRequestsSearch,
-} from "./usePullRequestListView";
+import { usePullRequestDisplayGroups, usePullRequestQueryFilters, usePullRequestScope, type PullRequestsSearch } from "./usePullRequestListView";
 import { pullRequestGroups, pullRequestListEntryId } from "./pullRequestListGroups.logic";
 import { PullRequestListEmptyState } from "./PullRequestListEmptyState";
 import { PullRequestListGhost } from "./PullRequestGhosts";
@@ -90,24 +44,9 @@ import { useOpenPanelPullRequestUrl } from "~/hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { toastManager } from "../ui/toast";
 import { usePanelAnimationSettings, usePanelPresence } from "~/panelAnimations";
-import {
-  PULL_REQUESTS_PANEL_REF,
-  selectActiveRightPanelSurface,
-  selectSelectedRightPanelSurface,
-  selectThreadRightPanelState,
-  useRightPanelStore,
-  type PullRequestSurface,
-} from "~/rightPanelStore";
+import { PULL_REQUESTS_PANEL_REF, selectActiveRightPanelSurface, selectSelectedRightPanelSurface, selectThreadRightPanelState, useRightPanelStore, type PullRequestSurface } from "~/rightPanelStore";
 import { useSidebarProjectGroups } from "~/hooks/useSidebarProjectGroups";
-import {
-  pullRequestEnvironment,
-  usePullRequestList,
-  usePullRequestListStats,
-  restoredPullRequestList,
-  usePullRequestTurnRefreshes,
-  useSharedPullRequestSummary,
-  type EnvironmentQueryTarget,
-} from "~/state/pullRequests";
+import { pullRequestEnvironment, usePullRequestList, usePullRequestListStats, restoredPullRequestList, usePullRequestTurnRefreshes, useSharedPullRequestSummary, type EnvironmentQueryTarget } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -766,6 +705,7 @@ export function PullRequestsPage() {
     statsByRow,
     pending: statsQuery.isPending,
   }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- queues eager stats batches for the rows, reading known stats and visible keys held outside render
   useEffect(() => {
     if (statsPolicy !== "eager") return;
     const { statsByRow: known } = readStatsProgress();
@@ -785,6 +725,7 @@ export function PullRequestsPage() {
   }, [filterKey, entriesByStatsKey, statsPolicy]);
   // The observer outlives the rows it watches, so it reads the rows held at the time it fires.
   const readStatsRows = useEffectEvent(() => entriesByStatsKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- IntersectionObserver on rows requests stats for rows that scroll into view
   useEffect(() => {
     if (statsPolicy !== "visible" || typeof IntersectionObserver === "undefined") return;
     visibleStatsKeys.current = { key: filterKey, values: new Set() };
@@ -834,6 +775,7 @@ export function PullRequestsPage() {
       if (statsObserver.current === observer) statsObserver.current = null;
     };
   }, [filterKey, statsPolicy]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prunes stats batches to the observer's visible rows once a stats request settles
   useEffect(() => {
     if (statsPolicy !== "visible" || statsQuery.isPending) return;
     const visible = visibleStatsKeys.current;
@@ -920,6 +862,7 @@ export function PullRequestsPage() {
     closeBatch,
     hostActionsOf,
   }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pointer close-sweep sensor when the list changes or on unmount
   useEffect(
     () => () => closeSensorRef.current?.cancel(),
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The pointer sensor lives outside React; a new list under a sweep in progress must end it.
@@ -1015,6 +958,7 @@ export function PullRequestsPage() {
     if (rightPanelState.isOpen) setMaximized((value) => !value);
   };
   const onGuideShown = () => setMaximized(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the URL-linked pull request in the right panel store
   useEffect(() => {
     if (!pullRequestsSupported || rightPanelRef === null || linkedSelection === null) return;
     useRightPanelStore.getState().openPullRequest(rightPanelRef, linkedSelection);
@@ -1439,6 +1383,7 @@ export function PullRequestsPage() {
     event.stopPropagation();
     if (!event.repeat) toggleRightPanelMaximized();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document keydown listener for the right panel and copy-reference shortcuts
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isCommandPaletteOpen()) return;

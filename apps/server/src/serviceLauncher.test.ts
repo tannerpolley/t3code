@@ -9,23 +9,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
-import {
-  databaseBackupBlocker,
-  Launcher,
-  main,
-  readServiceEnvironment,
-  type BackupSpaceProbe,
-  readServiceState,
-  writeServiceState,
-} from "./serviceLauncher.ts";
-import {
-  compareExactServiceVersions,
-  decodeServiceState,
-  isExactServiceVersion,
-  SERVICE_ENV_FILE,
-  SERVICE_LAUNCHER_PROTOCOL,
-  SERVICE_RESTART_PENDING_FILE,
-} from "./cloud/serviceProtocol.ts";
+import { databaseBackupBlocker, Launcher, main, readServiceEnvironment, type BackupSpaceProbe, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import { compareExactServiceVersions, decodeServiceState, isExactServiceVersion, SERVICE_ENV_FILE, SERVICE_LAUNCHER_PROTOCOL, SERVICE_RESTART_PENDING_FILE } from "./cloud/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
 
@@ -406,7 +391,7 @@ if (context.update?.status === "pending") {
         if (kind !== "file") yield* fs.symlink(linkTarget, databasePath);
         const encodedDatabasePath = JSON.stringify(databasePath);
         const childSource = `
-import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { realpathSync, unlinkSync } from "node:fs";
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status === "pending") {
   writeFileSync(context.update.dbPath, "database after migration");
@@ -474,7 +459,7 @@ if (context.update?.status === "pending") {
       yield* fs.writeFileString(databasePath, "database");
       const encoded = JSON.stringify({ databasePath, replyPath, trialMarker });
       const childSource = `
-import { writeFileSync } from "node:fs";
+
 const paths = ${encoded};
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status === "pending") {

@@ -1,11 +1,4 @@
-import {
-  extractCopilotSubagentUpdate,
-  makeCopilotSubagentRouting,
-  normalizeDevinSessionUpdate,
-  normalizeDevinToolCall,
-  extractDevinSubagentUpdate,
-  makeAcpRegistryAdapterV2,
-} from "@t3tools/provider-acp-registry/testing";
+import { extractCopilotSubagentUpdate, makeCopilotSubagentRouting, normalizeDevinSessionUpdate, normalizeDevinToolCall, extractDevinSubagentUpdate, makeAcpRegistryAdapterV2 } from "@t3tools/provider-acp-registry/testing";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import { AcpRegistryCatalog } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import { decodeAcpReplayTranscript, makeAcpReplayRuntime } from "./AcpAdapterV2.testkit.ts";
@@ -15,19 +8,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { assert, describe, it } from "@effect/vitest";
-import {
-  CheckpointId,
-  EnvironmentId,
-  type ModelSelection,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  ProviderSessionId,
-  ThreadId,
-  type OrchestrationV2ProviderThread,
-  type OrchestrationV2TurnItem,
-  type ProviderOptionDescriptor,
-  type ProviderUserInputAnswers,
-} from "@t3tools/contracts";
+import { CheckpointId, EnvironmentId, type ModelSelection, ProviderDriverKind, ProviderInstanceId, ProviderSessionId, ThreadId, type OrchestrationV2ProviderThread, type OrchestrationV2TurnItem, type ProviderOptionDescriptor, type ProviderUserInputAnswers } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { deriveBlockedOnThreadWait } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -58,42 +39,18 @@ import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import {
-  ACP_EMPTY_OPTION_VALUE,
-  ACP_SESSION_MODE_OPTION_ID,
-  acpProviderOptionDescriptors,
-} from "@t3tools/provider-acp/server/sessionConfig";
-import {
-  extractXAiAcpSubagentUpdate,
-  makeGrokAdapterV2,
-  makeXAiPromptCompletionRuntime,
-  normalizeXAiAcpToolCallState,
-  registerXAiBackgroundTaskTracking,
-} from "@t3tools/provider-grok/testing";
+import { ACP_EMPTY_OPTION_VALUE, ACP_SESSION_MODE_OPTION_ID, acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
+import { extractXAiAcpSubagentUpdate, makeGrokAdapterV2, makeXAiPromptCompletionRuntime, normalizeXAiAcpToolCallState, registerXAiBackgroundTaskTracking } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import {
-  AcpProviderCapabilitiesV2,
-  acpScopedNativeId,
-  acpPostSettleContinuationOfferEvidence,
-  acpPostSettleWakeEvidence,
-  acpToolCallDiffPatch,
-  makeAcpAdapterV2,
-  type AcpAdapterV2ExtensionContext,
-  type AcpAdapterV2Flavor,
-  type AcpAdapterV2RuntimeInput,
-  type AcpAdapterV2SubagentUpdate,
-} from "@t3tools/provider-acp/server/adapter";
+import { AcpProviderCapabilitiesV2, acpScopedNativeId, acpPostSettleContinuationOfferEvidence, acpPostSettleWakeEvidence, acpToolCallDiffPatch, makeAcpAdapterV2, type AcpAdapterV2ExtensionContext, type AcpAdapterV2Flavor, type AcpAdapterV2RuntimeInput, type AcpAdapterV2SubagentUpdate } from "@t3tools/provider-acp/server/adapter";
 
 import { appendUserInputAttachmentPaths } from "../../provider/userInputAttachments.ts";
 
 import { makeGrokAcpAdapterFlavor } from "@t3tools/provider-grok/testing";
-import {
-  acpRegistryPromptFailure,
-  registerMistralVibeAcpExtensions,
-} from "@t3tools/provider-acp-registry/testing";
+import { acpRegistryPromptFailure, registerMistralVibeAcpExtensions } from "@t3tools/provider-acp-registry/testing";
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
@@ -111,7 +68,25 @@ const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 describe("acpToolCallDiffPatch", () => {
-  it("builds a patch per file from ACP v1 oldText/newText, with /dev/null for a new file", () => {
+  it("builds per-file patches from ACP hunks and recorded old/new text", () => {
+    for (const operation of ["add", "delete"]) {
+      const text = operation === "add" ? "@@ -0,0 +1 @@\n+content\n" : "@@ -1 +0,0 @@\n-content\n";
+      assert.equal(
+        acpToolCallDiffPatch([
+          {
+            type: "diff",
+            changes: [{ operation, path: "/repo/a.ts" }],
+            patch: { format: "git_patch", text },
+          },
+        ]),
+        [
+          'diff --git "a//repo/a.ts" "b//repo/a.ts"',
+          operation === "add" ? "--- /dev/null" : '--- "a//repo/a.ts"',
+          operation === "delete" ? "+++ /dev/null" : '+++ "b//repo/a.ts"',
+          text,
+        ].join("\n"),
+      );
+    }
     assert.equal(
       acpToolCallDiffPatch([
         { type: "diff", path: "/repo/new.txt", oldText: null, newText: "hello\n" },
@@ -909,7 +884,11 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
-          makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+          }),
         },
         selfInvocation,
       });
@@ -2404,6 +2383,99 @@ describe("AcpAdapterV2", () => {
           }),
         );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("creates a fresh ACP identity when recovering an exhausted target", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-exhausted-target");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            wrapRuntime: (runtime, ordinal) => ({
+              ...runtime,
+              start: () =>
+                runtime.start().pipe(
+                  Effect.map((started) => ({
+                    ...started,
+                    sessionId: `mock-recovery-session-${ordinal}`,
+                  })),
+                ),
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-exhausted-target");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-exhausted-target"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const original = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: original,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 1,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runDrain,
+      );
+      const replacement = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        existingProviderThread: { ...original, nativeThreadRef: null },
+        forceNewNativeThread: true,
+      });
+      assert.notEqual(replacement.nativeThreadRef?.nativeId, original.nativeThreadRef?.nativeId);
+      assert.equal(replacement.id, original.id);
+      assert.equal(replacement.nativeMetadata?.itemIdentityVersion, 2);
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: replacement,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 2,
+        }),
+      );
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      assert.isTrue(
+        events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
+      );
+      const methods = yield* pollProtocolMethods(protocolEvents);
+      assert.equal(methods.filter((method) => method === "session/new").length, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("preserves new-session fallback when an eager ACP session load is stale", () =>
@@ -5240,6 +5312,19 @@ describe("AcpAdapterV2", () => {
           yield* hasPendingBackgroundWork,
           "carryover live subagent must pin hasPendingBackgroundWork after root settle",
         );
+        const refusedReplacement = yield* runtime
+          .ensureThread({
+            threadId,
+            modelSelection,
+            runtimePolicy,
+            existingProviderThread: { ...providerThread, nativeThreadRef: null },
+            forceNewNativeThread: true,
+          })
+          .pipe(Effect.flip);
+        assert.equal(refusedReplacement._tag, "ProviderAdapterEnsureThreadError");
+        const preserved = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+        assert.equal(preserved.nativeThreadRef?.nativeId, providerThread.nativeThreadRef?.nativeId);
+        assert.isTrue(yield* hasPendingBackgroundWork);
         assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
 
         subagentPhase = "complete";

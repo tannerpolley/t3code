@@ -1,17 +1,4 @@
-import {
-  OrchestratorMcpFailure,
-  OrchestratorMcpThreadListResult,
-  OrchestratorMcpThreadReadResult,
-  OrchestratorMcpThreadSendResult,
-  OrchestratorMcpThreadWaitResult,
-  ProjectId,
-  RunId,
-  ThreadId,
-  TrimmedNonEmptyString,
-  type OrchestratorMcpThreadListItem,
-  type OrchestratorMcpThreadStatus,
-  type OrchestratorMcpThreadTimelineItem,
-} from "@t3tools/contracts";
+import { OrchestratorMcpFailure, OrchestratorMcpThreadListResult, OrchestratorMcpThreadReadResult, OrchestratorMcpThreadSendResult, OrchestratorMcpThreadWaitResult, ProjectId, RunId, ThreadId, TrimmedNonEmptyString, type OrchestratorMcpThreadListItem, type OrchestratorMcpThreadStatus, type OrchestratorMcpThreadTimelineItem } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -221,6 +208,7 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
         // The CLI runs as the machine's owner. New threads still start at
         // the project's default mode, never at this ceiling by default.
         access: "full-access",
+        peerLink: false,
         client: { deviceType: "bot" },
       }),
       (session) =>

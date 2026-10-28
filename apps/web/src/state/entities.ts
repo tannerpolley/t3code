@@ -1,40 +1,17 @@
 import type * as DateTime from "effect/DateTime";
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentProject,
-  EnvironmentThread,
-  EnvironmentThreadShell,
-  EnvironmentThreadStructure,
-  ThreadStructureVisibleTurnItem,
-} from "@t3tools/client-runtime/state/shell";
-import {
-  EMPTY_THREAD_HISTORY_META,
-  type EnvironmentThreadStatus,
-  type ThreadHistoryMeta,
-} from "@t3tools/client-runtime/state/threads";
-import {
-  arrayElementsEqual,
-  parseThreadKey,
-  threadKey,
-} from "@t3tools/client-runtime/state/entities";
+import type { EnvironmentProject, EnvironmentThread, EnvironmentThreadShell, EnvironmentThreadStructure, ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
+import { EMPTY_THREAD_HISTORY_META, type EnvironmentThreadStatus, type ThreadHistoryMeta } from "@t3tools/client-runtime/state/threads";
+import { arrayElementsEqual, parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
-import type {
-  EnvironmentId,
-  OrchestrationV2ProjectedTurnItem,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2ThreadShell,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationV2ProjectedTurnItem, OrchestrationV2ThreadProjection, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentPresentations } from "./presentation";
 import { environmentServerConfigsAtom } from "./server";
-import {
-  allEnvironmentProjectSnapshotsReadyAtom,
-  allEnvironmentShellsBootstrappedAtom,
-} from "./shell";
+import { allEnvironmentProjectSnapshotsReadyAtom, allEnvironmentShellsBootstrappedAtom } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 import { waitForAtomValue } from "./waitForAtomValue";
 
@@ -110,6 +87,11 @@ export function useAllEnvironmentShellsBootstrapped(): boolean {
 
 export function useAllEnvironmentProjectSnapshotsReady(): boolean {
   return useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
+}
+
+/** Tasks linked environments run for a listed thread, by thread key; lists show them under it. */
+export function useDelegatedUnderParent(): ReadonlySet<string> {
+  return useAtomValue(environmentThreadShells.delegatedUnderParentAtom);
 }
 
 export function useThreadShellsForProjectRefs(
@@ -320,59 +302,14 @@ export function readEnvironmentSupportsServerBrowser(environmentId: EnvironmentI
   );
 }
 
-export function readEnvironmentSupportsTitleRegeneration(environmentId: EnvironmentId): boolean {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadTitleRegeneration === true
-  );
-}
-
-export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): boolean {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadPinning === true
-  );
-}
-
-export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId): boolean {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadPinReorder === true
-  );
+export function readEnvironmentServerConfigLoaded(environmentId: EnvironmentId): boolean {
+  return appAtomRegistry.get(environmentServerConfigsAtom).has(environmentId);
 }
 
 export function readEnvironmentSupportsAutoSettleOptOut(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadAutoSettleOptOut === true
-  );
-}
-
-export function readEnvironmentSupportsActiveReorder(environmentId: EnvironmentId): boolean {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadActiveReorder === true
-  );
-}
-
-export function readEnvironmentSupportsSettlement(environmentId: EnvironmentId): boolean {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadSettlement === true
-  );
-}
-
-export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boolean {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadSnooze === true
-  );
-}
-
-export function readEnvironmentSupportsVisitedTracking(environmentId: EnvironmentId): boolean {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadVisitedTracking === true
   );
 }
 

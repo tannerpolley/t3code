@@ -2,22 +2,9 @@ import { DownloadIcon } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import type { RelayClientInstallProgressStage } from "@t3tools/contracts";
 
-import {
-  completeRelayClientInstallDialogClose,
-  readRelayClientInstallDialogState,
-  respondToRelayClientInstallConfirmation,
-  subscribeRelayClientInstallDialog,
-} from "../../cloud/relayClientInstallDialog";
+import { completeRelayClientInstallDialogClose, readRelayClientInstallDialogState, respondToRelayClientInstallConfirmation, subscribeRelayClientInstallDialog } from "../../cloud/relayClientInstallDialog";
 import { Button } from "../ui/button";
-import {
-  Dialog,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
+import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../ui/dialog";
 const installSteps: ReadonlyArray<{
   readonly stage: RelayClientInstallProgressStage;
   readonly label: string;

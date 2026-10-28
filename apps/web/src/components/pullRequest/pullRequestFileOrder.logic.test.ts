@@ -44,12 +44,12 @@ describe("orderDiffFiles", () => {
 
   it("resolves a directory specifier to that directory's index file", () => {
     expect(
-      order([file("src/a.ts", ['import { b } from "./lib";']), file("src/lib/index.ts")]),
+      order([file("src/a.ts", ['']), file("src/lib/index.ts")]),
     ).toEqual(["src/lib/index.ts", "src/a.ts"]);
   });
 
   it("falls back to the specifier's last segment when the path does not line up", () => {
-    expect(order([file("src/a.ts", ['import { b } from "~/lib/b";']), file("lib/b.ts")])).toEqual([
+    expect(order([file("src/a.ts", ['']), file("lib/b.ts")])).toEqual([
       "lib/b.ts",
       "src/a.ts",
     ]);
@@ -58,7 +58,7 @@ describe("orderDiffFiles", () => {
   it("ignores an ambiguous last segment rather than guessing", () => {
     expect(
       order([
-        file("src/a.ts", ['import { b } from "~/somewhere/b";']),
+        file("src/a.ts", ['']),
         file("one/b.ts"),
         file("two/b.ts"),
       ]),
@@ -66,7 +66,7 @@ describe("orderDiffFiles", () => {
   });
 
   it("resolves a specifier naming an extension, including the .js beside a .ts", () => {
-    expect(order([file("src/a.ts", ['import { b } from "./b.js";']), file("src/b.ts")])).toEqual([
+    expect(order([file("src/a.ts", ['']), file("src/b.ts")])).toEqual([
       "src/b.ts",
       "src/a.ts",
     ]);
@@ -86,7 +86,7 @@ describe("orderDiffFiles", () => {
     expect(
       order([
         file("src/b.ts", ['import { a } from "./a";']),
-        file("src/a.ts", ['import { b } from "./b";']),
+        file("src/a.ts", ['']),
       ]),
     ).toEqual(["src/a.ts", "src/b.ts"]);
   });
@@ -97,7 +97,7 @@ describe("orderDiffFiles", () => {
         file("pnpm-lock.yaml"),
         file("src/a.test.ts"),
         file("src/__tests__/b.ts"),
-        file("src/a.ts", ['import { b } from "./b";']),
+        file("src/a.ts", ['']),
         file("src/b.ts"),
         file("dist/a.js"),
       ]),

@@ -1,18 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import {
-  applyTerminalAttachStreamEvent,
-  combineTerminalSessionState,
-  EMPTY_TERMINAL_BUFFER_STATE,
-  INITIAL_TERMINAL_OUTPUT_CURSOR,
-  nextTerminalAttachSeedState,
-} from "@t3tools/client-runtime/state/terminal";
+import { applyTerminalAttachStreamEvent, combineTerminalSessionState, EMPTY_TERMINAL_BUFFER_STATE, INITIAL_TERMINAL_OUTPUT_CURSOR, nextTerminalAttachSeedState } from "@t3tools/client-runtime/state/terminal";
 
-import {
-  shouldClearTerminalSelectionAction,
-  shouldHandleTerminalExit,
-  synchronizeTerminalOutput,
-  synchronizeTerminalSession,
-} from "./ThreadTerminalDrawer";
+import { shouldClearTerminalSelectionAction, shouldHandleTerminalExit, synchronizeTerminalOutput, synchronizeTerminalSession } from "./ThreadTerminalDrawer";
 
 describe("terminal selection actions", () => {
   it("does not let an old selection popup cancel its replacement right-click menu", () => {

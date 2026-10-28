@@ -1,9 +1,5 @@
 import * as Mime from "effect/http/Mime";
-import {
-  AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
-  EnvironmentHttpApi,
-} from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope, EnvironmentHttpApi } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
@@ -16,16 +12,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { cast } from "effect/Function";
-import {
-  HttpClient,
-  HttpClientResponse,
-  HttpMiddleware,
-  HttpRouter,
-  HttpServerResponse,
-  HttpServerRequest,
-  HttpServerRespondable,
-} from "effect/http";
+import { cast, pipe } from "effect/Function";
+import { HttpClient, HttpClientResponse, HttpMiddleware, HttpRouter, HttpServerResponse, HttpServerRequest, HttpServerRespondable } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
@@ -33,27 +21,14 @@ import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
 import { sourceControlMediaResponse } from "./assets/sourceControlMediaResponse.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
-import {
-  ATTACHMENT_UPLOAD_ROUTE_PREFIX,
-  storeAttachmentUpload,
-  validateAttachmentUploadToken,
-} from "./assets/AttachmentUpload.ts";
+import { ATTACHMENT_UPLOAD_ROUTE_PREFIX, storeAttachmentUpload, validateAttachmentUploadToken } from "./assets/AttachmentUpload.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
-import {
-  annotateEnvironmentRequest,
-  failEnvironmentScopeRequired,
-  failEnvironmentAuthInvalid,
-  failEnvironmentInternal,
-} from "./auth/http.ts";
+import { annotateEnvironmentRequest, failEnvironmentScopeRequired, failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
-import {
-  browserApiCorsAllowedHeaders,
-  browserApiCorsAllowedMethods,
-  DESKTOP_RENDERER_ORIGINS,
-} from "./httpCors.ts";
+import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods, DESKTOP_RENDERER_ORIGINS } from "./httpCors.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -182,8 +157,11 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     if (bytes === null) {
       return HttpServerResponse.text("MCP app is too large to preview.", { status: 413 });
     }
-    const body = new TextEncoder().encode(
-      injectMcpAppCookieBootstrap(injectMcpAppThemeBootstrap(new TextDecoder().decode(bytes))),
+    const body = pipe(
+      new TextDecoder().decode(bytes),
+      injectMcpAppThemeBootstrap,
+      injectMcpAppCookieBootstrap,
+      (html) => new TextEncoder().encode(html),
     );
     headers["Content-Length"] = String(body.byteLength);
     return method === "HEAD"

@@ -1,12 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type {
-  IssueRepositoryRef,
-  IssueSummary,
-  IssueRef,
-  IssuePullRequest,
-} from "@t3tools/contracts";
+import type { IssueRepositoryRef, IssueSummary, IssueRef, IssuePullRequest } from "@t3tools/contracts";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 
 const PageInfo = Schema.Struct({
