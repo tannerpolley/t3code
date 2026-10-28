@@ -171,12 +171,7 @@ export const make = Effect.gen(function* () {
   >();
   let nextDiscoveryRetryAt = 0;
   const watched = Effect.gen(function* () {
-    // Forgejo has no activitySince yet; exclude both discovery and registered polling.
-    const supportsInbox = (host: string) =>
-      issues.isForgejoHost(host).pipe(Effect.map((forgejo) => !forgejo));
-    const repositories = yield* Effect.filter(yield* registered, (repo) =>
-      supportsInbox(repo.host),
-    );
+    const repositories = [...(yield* registered)];
     const shells = yield* projects.listShells();
     const current = new Set<string>(shells.map((project) => project.id));
     for (const id of discoveryIdentities.keys())
@@ -192,7 +187,6 @@ export const make = Effect.gen(function* () {
       const issueRepository = issueRepositoryOf(identity);
       if (issueRepository === null || identity == null) continue;
       const { host, repository } = issueRepository;
-      if (!(yield* supportsInbox(host))) continue;
       if (
         repositories.some(
           (repo) =>

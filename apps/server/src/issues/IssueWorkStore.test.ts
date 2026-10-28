@@ -113,3 +113,28 @@ it.effect(
       ]);
     }).pipe(Effect.provide(dependencies)),
 );
+
+it.effect("keeps roots with persisted blocker suspensions eligible for automatic recovery", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+      VALUES ('root', 'project', 'Root', 'codex', 'full-access', 'default', '2026-10-28', '2026-10-28', '{}')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_repository_orchestration(host, repository_id, repository, root_thread_id, project_id, workspace, launch_command_id, revision, paused, worker_limit, publish_status_comments, publish_closeout_comments, created_at, updated_at)
+      VALUES ('github.com', 'repo', 'owner/repo', 'root', 'project', 'project', 'start', 1, 0, 4, 1, 1, '2026-10-28', '2026-10-28')`;
+    for (const reason of [
+      "A GitHub blocker is open. Resolve it before resuming.",
+      "An issue host blocker is open. Resolve it before resuming.",
+      "Paused by owner",
+    ]) {
+      const payload = JSON.stringify({
+        repositoryOrchestration: { suspendedIssues: [{ id: "issue", reason }] },
+      });
+      yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${payload} WHERE thread_id = 'root'`;
+      assert.deepEqual(
+        yield* store.activeRoots(),
+        reason === "Paused by owner" ? [] : [ThreadId.make("root")],
+      );
+    }
+  }).pipe(Effect.provide(dependencies)),
+);

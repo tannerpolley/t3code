@@ -54,15 +54,14 @@ const issue = (number: number, overrides: Record<string, unknown> = {}) => ({
   updated_at: date,
   ...overrides,
 });
-function setup(respond: (path: string) => unknown, next?: string) {
+function setup(respond: (path: string, method: string, body: unknown) => unknown, next?: string) {
   const calls: string[] = [];
   const layer = Layer.mock(ForgejoCli.ForgejoCli)({
     api: (input) =>
       Effect.gen(function* () {
         expect(input.host).toBe(host);
-        expect(input.method ?? "GET").toBe("GET");
         calls.push(input.path);
-        const value = respond(input.path);
+        const value = respond(input.path, input.method ?? "GET", input.body);
         if (isForgejoCliError(value)) return yield* value;
         return {
           stdout: JSON.stringify(value),
@@ -228,46 +227,21 @@ it.effect("maps migrated comments and deduplicated timeline PR references", () =
   }),
 );
 
-it.effect(
-  "lists owned and organization repositories and rejects writes and inbox without requests",
-  () =>
-    Effect.gen(function* () {
-      const fixture = setup((path) =>
-        path === "user"
-          ? { id: 1, login: "owner" }
-          : path.startsWith("user/orgs")
-            ? [{ username: "team" }]
-            : [repo],
-      );
-      const transport = yield* fixture.make;
-      const repositories = yield* transport.repositories();
-      yield* decodeRepositories(repositories);
-      expect(repositories.repositories).toMatchObject([
-        { repository, openIssuesAndPullRequests: 5 },
-      ]);
-      expect(repositories.repositories).toHaveLength(1);
-      const calls = fixture.calls.length;
-      for (const effect of [
-        transport.updateBody({ ...scope, number: 7, body: "edit" }),
-        transport.postComment({ ...scope, number: 7 }, "comment"),
-        transport.listComments({ ...scope, number: 7 }),
-        transport.activitySince(scope, {
-          issuesSince: date,
-          commentsSince: date,
-          eventsAfter: 0,
-          issuesEtag: null,
-          commentsEtag: null,
-          eventsEtag: null,
-        }),
-      ]) {
-        const result = yield* Effect.result(effect);
-        expect(result).toMatchObject({
-          _tag: "Failure",
-          failure: { code: "unsupported", message: "Not supported on this issue host yet." },
-        });
-      }
-      expect(fixture.calls).toHaveLength(calls);
-    }),
+it.effect("lists owned and organization repositories", () =>
+  Effect.gen(function* () {
+    const fixture = setup((path) =>
+      path === "user"
+        ? { id: 1, login: "owner" }
+        : path.startsWith("user/orgs")
+          ? [{ username: "team" }]
+          : [repo],
+    );
+    const transport = yield* fixture.make;
+    const repositories = yield* transport.repositories();
+    yield* decodeRepositories(repositories);
+    expect(repositories.repositories).toMatchObject([{ repository, openIssuesAndPullRequests: 5 }]);
+    expect(repositories.repositories).toHaveLength(1);
+  }),
 );
 
 it.effect("reads headerless full dependency pages before proving completeness", () =>
@@ -329,4 +303,307 @@ it.effect("keeps detail readable and work conservative when dependencies are dis
       code: "invalid-response",
     });
   }),
+);
+
+it.effect("maps body, milestone clearing, state, labels and posted issue writes", () =>
+  Effect.gen(function* () {
+    const writes: Array<{ path: string; method: string; body: unknown }> = [];
+    const fixture = setup((path, method, body) => {
+      if (method !== "GET") {
+        writes.push({ path, method, body });
+        return { id: 107, number: 7, html_url: issue(7).html_url };
+      }
+      return [
+        { id: 3, name: "bug" },
+        { id: 4, name: "old" },
+      ];
+    });
+    const transport = yield* fixture.make;
+    const ref = { ...scope, number: 7 };
+    yield* transport.updateBody({ ...ref, body: "new body" });
+    yield* transport.setMilestone({ ...ref, milestoneNumber: 39 });
+    yield* transport.setMilestone({ ...ref, milestoneNumber: null });
+    yield* transport.setState({ ...ref, state: "closed" });
+    yield* transport.setState({ ...ref, state: "open" });
+    yield* transport.ensureLabels(scope, [
+      { name: "BUG", color: "ff0000" },
+      { name: "new", color: "#00aabb" },
+    ]);
+    yield* transport.setLabels(ref, ["bug"], ["OLD", "absent"]);
+    yield* transport.postComment(ref, "hello");
+    yield* transport.postIssue(scope, { title: "posted", body: "body", labels: ["BUG"] });
+    expect(writes).toEqual([
+      { path: "repos/owner/repo/issues/7", method: "PATCH", body: { body: "new body" } },
+      { path: "repos/owner/repo/issues/7", method: "PATCH", body: { milestone: 39 } },
+      { path: "repos/owner/repo/issues/7", method: "PATCH", body: { milestone: 0 } },
+      { path: "repos/owner/repo/issues/7", method: "PATCH", body: { state: "closed" } },
+      { path: "repos/owner/repo/issues/7", method: "PATCH", body: { state: "open" } },
+      { path: "repos/owner/repo/labels", method: "POST", body: { name: "new", color: "#00aabb" } },
+      { path: "repos/owner/repo/issues/7/labels", method: "POST", body: { labels: ["bug"] } },
+      { path: "repos/owner/repo/issues/7/labels/4", method: "DELETE", body: undefined },
+      { path: "repos/owner/repo/issues/7/comments", method: "POST", body: { body: "hello" } },
+      {
+        path: "repos/owner/repo/issues",
+        method: "POST",
+        body: { title: "posted", body: "body", labels: [3] },
+      },
+    ]);
+  }),
+);
+it.effect("edits only the child's parent marker and refuses cross-repository links", () =>
+  Effect.gen(function* () {
+    let body = "Keep this text.\n\nPart of #3 <!-- t3:parent=3 -->\n\nKeep this too.";
+    const fixture = setup((path, method, payload) => {
+      if (path === "repos/owner/repo") return repo;
+      if (method === "PATCH") {
+        body = (payload as { body: string }).body;
+        return issue(8, { body });
+      }
+      return issue(Number(path.split("/").at(-1)), { body });
+    });
+    const transport = yield* fixture.make;
+    const child = yield* transport.resolveLinkedIssue({ ...scope, number: 8 });
+    const parent = { ...child, number: 7 };
+    yield* transport.setParent({ child, parent, action: "add" });
+    expect(body).toBe("Keep this text.\n\nPart of #7 <!-- t3:parent=7 -->\n\nKeep this too.");
+    yield* transport.setParent({ child, parent: { ...parent, number: 3 }, action: "remove" });
+    expect(Forgejo.parseParentMarker(body)).toBe(7);
+    yield* transport.setParent({ child, parent, action: "remove" });
+    expect(body).toContain("Keep this text.");
+    expect(body).toContain("Keep this too.");
+    expect(body).not.toContain("t3:parent");
+    const count = fixture.calls.length;
+    expect(
+      yield* transport
+        .setParent({ child, parent: { ...parent, repository: "other/repo" }, action: "add" })
+        .pipe(Effect.flip),
+    ).toMatchObject({ code: "unsupported" });
+    expect(fixture.calls).toHaveLength(count);
+  }),
+);
+it.effect("explains dependency-blocked close failures", () =>
+  Effect.gen(function* () {
+    const fixture = setup(
+      () =>
+        new ForgejoCli.ForgejoCliError({
+          command: "fj",
+          cwd: "/tmp",
+          detail: "precondition",
+          httpStatus: 412,
+        }),
+    );
+    const transport = yield* fixture.make;
+    const error = yield* transport
+      .setState({ ...scope, number: 7, state: "closed" })
+      .pipe(Effect.flip);
+    expect(error.message).toContain("open dependencies");
+  }),
+);
+
+it.effect("creates with a durable receipt and recovers by marker without duplicate writes", () =>
+  Effect.gen(function* () {
+    const marker = "<!-- t3-issue-change:key -->";
+    let createdBody = "";
+    let posts = 0;
+    const fixture = setup((path, method, payload) => {
+      if (path === "repos/owner/repo") return repo;
+      if (method === "POST") {
+        posts++;
+        expect(payload).toMatchObject({ title: "new", milestone: 39 });
+        createdBody = (payload as { body: string }).body;
+        return issue(7, { body: createdBody });
+      }
+      return createdBody ? [issue(7, { body: createdBody })] : [];
+    });
+    const transport = yield* fixture.make;
+    const input = { ...scope, title: "new", body: "text", milestoneNumber: 39, writeKey: "key" };
+    let receipt = "";
+    const created = yield* transport.createIssue({
+      ...input,
+      recover: false,
+      onCreated: (issue) =>
+        Effect.sync(() => {
+          receipt = issue.nodeId;
+        }),
+    });
+    expect(receipt).toBe("12/7");
+    expect(created.body).toBe(`text\n\n${marker}`);
+    expect(yield* transport.createIssue(input)).toEqual(created);
+    createdBody = "";
+    expect(yield* transport.createIssue(input).pipe(Effect.flip)).toMatchObject({
+      createOutcome: "unresolved",
+    });
+    expect(posts).toBe(1);
+  }),
+);
+
+it.effect("keeps a successful create receipt even when mutable fields are invalid", () =>
+  Effect.gen(function* () {
+    let receipt = "";
+    const fixture = setup((path) =>
+      path === "repos/owner/repo" ? repo : issue(7, { state: "invalid" }),
+    );
+    const transport = yield* fixture.make;
+    const error = yield* transport
+      .createIssue({
+        ...scope,
+        title: "new",
+        body: "text",
+        milestoneNumber: null,
+        writeKey: "key",
+        recover: false,
+        onCreated: (issue) =>
+          Effect.sync(() => {
+            receipt = issue.nodeId;
+          }),
+      })
+      .pipe(Effect.flip);
+    expect(receipt).toBe("12/7");
+    expect(error.createOutcome).toBe("uncertain");
+  }),
+);
+
+it.effect(
+  "reconciles managed comments by marker across pages and replaces a deleted status comment",
+  () =>
+    Effect.gen(function* () {
+      const marker = "<!-- managed -->";
+      const writes: string[] = [];
+      let found = true;
+      const fixture = setup((path, method, payload) => {
+        if (method === "PATCH" && path.endsWith("/999"))
+          return new ForgejoCli.ForgejoCliError({
+            command: "fj",
+            cwd: "/tmp",
+            detail: "missing",
+            reason: "not-found",
+            httpStatus: 404,
+          });
+        if (method !== "GET") {
+          writes.push(path);
+          expect(payload).toEqual({ body: `status\n\n${marker}` });
+          return { id: 51, html_url: issue(7).html_url };
+        }
+        if (!found) return [];
+        return path.endsWith("page=1")
+          ? Array.from({ length: 50 }, (_, i) => ({
+              id: i + 1,
+              body: "other",
+              html_url: issue(7).html_url,
+            }))
+          : [{ id: 51, body: marker, html_url: issue(7).html_url }];
+      });
+      const transport = yield* fixture.make;
+      const linked = {
+        ...scope,
+        repositoryId: "12",
+        id: "107",
+        nodeId: "12/7",
+        number: 7,
+        title: "issue",
+        url: issue(7).html_url,
+      };
+      expect(
+        yield* transport.writeManagedComment({
+          issue: linked,
+          marker,
+          body: "status",
+          operation: "closeout_create",
+        }),
+      ).toEqual({ commentId: "51" });
+      expect(writes).toEqual([]);
+      yield* transport.writeManagedComment({
+        issue: linked,
+        marker,
+        body: "status",
+        operation: "status_sync",
+        commentId: "999",
+      });
+      expect(writes).toEqual(["repos/owner/repo/issues/comments/51"]);
+      const limited = yield* transport.listComments(linked, { maxPages: 1 });
+      expect(limited.complete).toBe(false);
+      found = false;
+      yield* transport.writeManagedComment({
+        issue: linked,
+        marker,
+        body: "status",
+        operation: "closeout_create",
+      });
+      expect(writes.at(-1)).toBe("repos/owner/repo/issues/7/comments");
+    }),
+);
+
+it.effect(
+  "reads all headerless activity pages, normalizes migrated actors, and maps close/reopen timelines",
+  () =>
+    Effect.gen(function* () {
+      const fixture = setup((path) => {
+        if (path.includes("/timeline"))
+          return path.endsWith("page=1")
+            ? Array.from({ length: 50 }, (_, i) => ({
+                id: i + 1,
+                type: "comment",
+                created_at: date,
+              }))
+            : [
+                { id: 101, type: "close", created_at: date },
+                { id: 102, type: "reopen", created_at: date },
+              ];
+        if (path.includes("/issues/comments"))
+          return path.endsWith("page=1")
+            ? Array.from({ length: 50 }, (_, i) => ({
+                id: i + 1,
+                body: "hello",
+                created_at: date,
+                updated_at: date,
+                original_author: "migrated",
+                user: { login: "ghost" },
+                issue_url: issue(7).html_url,
+                html_url: `${issue(7).html_url}#issuecomment-${i + 1}`,
+              }))
+            : [
+                {
+                  id: 99,
+                  body: "last page",
+                  created_at: date,
+                  updated_at: date,
+                  issue_url: issue(7).html_url,
+                  html_url: `${issue(7).html_url}#issuecomment-99`,
+                },
+              ];
+        return path.endsWith("page=1")
+          ? Array.from({ length: 50 }, (_, i) => issue(i + 1, { pull_request: { merged: false } }))
+          : [issue(7)];
+      });
+      const transport = yield* fixture.make;
+      const cursors = {
+        issuesSince: date,
+        commentsSince: date,
+        eventsAfter: 0,
+        issuesEtag: null,
+        commentsEtag: null,
+        eventsEtag: null,
+      };
+      const initial = yield* transport.activitySince(scope, { ...cursors, initial: true });
+      expect(initial.eventsAfter).toBe(0);
+      expect(fixture.calls).toEqual([]);
+      const activity = yield* transport.activitySince(scope, cursors);
+      expect(activity.issues.items).toMatchObject([
+        { number: 7, milestone: { number: 39 }, user: { login: "migrated" } },
+      ]);
+      expect(activity.comments.items).toHaveLength(51);
+      expect(activity.comments.items[0]?.user?.login).toBe("migrated");
+      expect(activity.comments.items.at(-1)?.body).toBe("last page");
+      expect(activity.stateChanges).toMatchObject({
+        complete: true,
+        items: [
+          { id: 101, event: "closed", issue: { number: 7 } },
+          { id: 102, event: "reopened", issue: { number: 7 } },
+        ],
+      });
+      expect(activity.eventsAfter).toBe(102);
+      expect(fixture.calls).toContain(
+        `repos/owner/repo/issues/7/timeline?since=${encodeURIComponent(date)}&limit=50&page=2`,
+      );
+    }),
 );

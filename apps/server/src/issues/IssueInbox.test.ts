@@ -1078,7 +1078,7 @@ it.effect(
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("skips Forgejo inbox discovery and registered polling until activity is supported", () =>
+it.effect("includes Forgejo inbox discovery and registered polling", () =>
   Effect.gen(function* () {
     yield* seedRepository;
     const github = fakeGitHub();
@@ -1120,7 +1120,7 @@ it.effect("skips Forgejo inbox discovery and registered polling until activity i
     yield* inbox.pollDue;
     yield* TestClock.adjust("15 minutes");
     yield* inbox.pollDue;
-    assert.deepEqual(github.identityReads, []);
-    assert.deepEqual(github.requests, []);
+    assert.isTrue(github.identityReads.some((read) => read.repository === "acme/discovery"));
+    assert.isTrue(github.requests.length > 0);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory), Effect.scoped),
 );

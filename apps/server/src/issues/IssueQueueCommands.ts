@@ -1,5 +1,6 @@
 import { issueQueueMessage } from "./IssueQueueMessage.ts";
 import {
+  type IssueQueueEntry,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";

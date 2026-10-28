@@ -86,6 +86,26 @@ const Comment = Schema.Struct({
   created_at: IsoDateTime,
   html_url: Schema.String,
 });
+const Label = Schema.Struct({ id: Id, name: Schema.String });
+const decodeCreatedIdentity = Schema.decodeUnknownEffect(
+  Schema.Struct({ id: Id, number: Id, title: Schema.String, html_url: Schema.String }),
+);
+const decodeIssue = Schema.decodeUnknownEffect(Issue);
+const Posted = Schema.Struct({ id: Id, number: Schema.optional(Id), html_url: Schema.String });
+const ListedComment = Schema.Struct({
+  id: Id,
+  body: Schema.NullOr(Schema.String),
+  html_url: Schema.String,
+});
+const ActivityComment = Schema.Struct({
+  ...ListedComment.fields,
+  user: Schema.optional(Schema.NullOr(Actor)),
+  original_author: Schema.optional(Schema.String),
+  created_at: IsoDateTime,
+  updated_at: IsoDateTime,
+  issue_url: Schema.String,
+});
+const StateEvent = Schema.Struct({ id: Id, type: Schema.String, created_at: IsoDateTime });
 const Timeline = Schema.Struct({
   type: Schema.String,
   ref_issue: Schema.optional(Schema.NullOr(Issue)),
@@ -143,7 +163,7 @@ const summary = (scope: { host: string; repository: string }, raw: RawIssue): Is
 const linked = (
   scope: { host: string; repository: string },
   repositoryId: number,
-  raw: RawIssue,
+  raw: Pick<RawIssue, "id" | "number" | "title" | "html_url">,
 ): ThreadLinkedIssue => ({
   host: scope.host,
   repository: scope.repository,
@@ -173,9 +193,16 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
     path: string,
     schema: S,
     operation: IssueReadError["operation"] = "detail",
+    write?: { method: "POST" | "PATCH" | "DELETE"; body?: unknown },
   ) {
     const response = yield* cli
-      .api({ cwd: scope.cwd, host: scope.host, repository: scope.repository || "_/_", path })
+      .api({
+        cwd: scope.cwd,
+        host: scope.host,
+        repository: scope.repository || "_/_",
+        path,
+        ...write,
+      })
       .pipe(
         Effect.mapError((error) =>
           failure(
@@ -189,11 +216,15 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
                   : error.reason === "rate-limit"
                     ? "rate-limited"
                     : "upstream",
-            "Forgejo issue request failed. Check this host's credentials and access.",
+            error.httpStatus === 412 && write?.method === "PATCH"
+              ? "Forgejo refused this issue update because it has open dependencies. Close or remove its open dependencies before closing the issue."
+              : "Forgejo issue request failed. Check this host's credentials and access.",
           ),
         ),
       );
-    const value = yield* Schema.decodeEffect(Schema.fromJsonString(schema))(response.stdout).pipe(
+    const value = yield* Schema.decodeEffect(Schema.fromJsonString(schema))(
+      response.stdout || "null",
+    ).pipe(
       Effect.mapError(() =>
         failure(operation, "invalid-response", "Forgejo returned an invalid issue response."),
       ),
@@ -347,15 +378,32 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
       blockersComplete: dependencies.complete,
     };
   });
-  const unsupported = () =>
-    Effect.fail(
-      new IssueReadError({
-        operation: "detail",
-        code: "unsupported",
-        message: "Not supported on this issue host yet.",
-        createOutcome: "rejected",
-      }),
+  const patchIssue = Effect.fn("IssueForgejoHost.patchIssue")(function* (
+    ref: IssueRef,
+    body: unknown,
+  ) {
+    const scope = yield* context.resolveScope("detail", ref);
+    yield* request(
+      scope,
+      `${repositoryPath(scope.repository)}/issues/${ref.number}`,
+      Schema.Unknown,
+      "detail",
+      { method: "PATCH", body },
     );
+  });
+  const labelsFor = Effect.fn("IssueForgejoHost.labelsFor")(function* (
+    scope: IssueRepositoryScope,
+    path: string,
+  ) {
+    const result = yield* all(scope, path, Label);
+    if (!result.complete)
+      return yield* failure(
+        "detail",
+        "invalid-response",
+        "Forgejo label pagination is incomplete.",
+      );
+    return result.items;
+  });
   const transport: IssueHost = {
     repositoryIdentity,
     resolveLinkedIssue,
@@ -638,18 +686,333 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
             : yield* resolveLinkedIssue({ ...input, number: parseParentMarker(raw.body ?? "")! }),
       };
     }),
-    createIssue: unsupported,
-    updateBody: unsupported,
-    setMilestone: unsupported,
-    setState: unsupported,
-    setParent: unsupported,
-    writeManagedComment: unsupported,
-    activitySince: unsupported,
-    listComments: unsupported,
-    postComment: unsupported,
-    postIssue: unsupported,
-    ensureLabels: unsupported,
-    setLabels: unsupported,
+    createIssue: Effect.fn("IssueForgejoHost.createIssue")(function* (input) {
+      let attempted = false;
+      return yield* Effect.gen(function* () {
+        const scope = yield* context.resolveScope("detail", input);
+        const identity = yield* repositoryIdentity(input);
+        const marker = `<!-- t3-issue-change:${input.writeKey} -->`;
+        let raw: RawIssue;
+        if (input.recover !== false) {
+          const rows = yield* all(
+            scope,
+            `${repositoryPath(scope.repository)}/issues?type=issues&state=all`,
+            Issue,
+          );
+          const existing = rows.items.find(
+            (row) => !row.pull_request && row.body?.includes(marker),
+          );
+          if (existing === undefined) {
+            return yield* new IssueReadError({
+              operation: "detail",
+              code: "upstream",
+              createOutcome: rows.complete ? "unresolved" : "uncertain",
+              message:
+                "The earlier create may have succeeded. Check the issue host and mark this change resolved; creation was not retried.",
+            });
+          }
+          raw = existing;
+        } else {
+          attempted = true;
+          const response = yield* request(
+            scope,
+            `${repositoryPath(scope.repository)}/issues`,
+            Schema.Unknown,
+            "detail",
+            {
+              method: "POST",
+              body: {
+                title: input.title,
+                body: `${input.body}\n\n${marker}`,
+                milestone: input.milestoneNumber ?? 0,
+              },
+            },
+          );
+          const receipt = yield* decodeCreatedIdentity(response.value).pipe(
+            Effect.mapError(() =>
+              failure(
+                "detail",
+                "invalid-response",
+                "Forgejo returned an invalid created issue identity.",
+              ),
+            ),
+          );
+          yield* (
+            input.onCreated?.(linked(scope, Number(identity.repositoryId), receipt)) ?? Effect.void
+          );
+          raw = yield* decodeIssue(response.value).pipe(
+            Effect.mapError(() =>
+              failure("detail", "invalid-response", "Forgejo returned an invalid created issue."),
+            ),
+          );
+        }
+        return {
+          issue: linked(scope, Number(identity.repositoryId), raw),
+          body: raw.body ?? "",
+          state: raw.state,
+          milestoneNumber: raw.milestone?.id ?? null,
+          parent:
+            parseParentMarker(raw.body ?? "") === null
+              ? null
+              : yield* resolveLinkedIssue({ ...input, number: parseParentMarker(raw.body ?? "")! }),
+        };
+      }).pipe(
+        Effect.mapError(
+          (error) =>
+            new IssueReadError({
+              operation: error.operation,
+              code: error.code,
+              message: error.message,
+              retryAt: error.retryAt,
+              createOutcome:
+                error.createOutcome ??
+                (input.recover !== false || attempted ? "uncertain" : "rejected"),
+            }),
+        ),
+      );
+    }),
+    updateBody: Effect.fn("IssueForgejoHost.updateBody")((input) =>
+      patchIssue(input, { body: input.body }),
+    ),
+    setMilestone: Effect.fn("IssueForgejoHost.setMilestone")((input) =>
+      patchIssue(input, { milestone: input.milestoneNumber ?? 0 }),
+    ),
+    setState: Effect.fn("IssueForgejoHost.setState")((input) =>
+      patchIssue(input, { state: input.state }),
+    ),
+    setParent: Effect.fn("IssueForgejoHost.setParent")(function* ({ parent, child, action }) {
+      if (
+        parent.host !== child.host ||
+        parent.repository !== child.repository ||
+        parent.repositoryId !== child.repositoryId ||
+        parent.number === child.number
+      )
+        return yield* failure(
+          "detail",
+          "unsupported",
+          "Parent and child must be different issues in the same repository.",
+        );
+      const raw = yield* readIssue(child);
+      const body = raw.body ?? "";
+      const current = parseParentMarker(body);
+      if (action === "remove" && current !== parent.number) return;
+      const marker = `Part of #${parent.number} <!-- t3:parent=${parent.number} -->`;
+      const pattern = /(?:Part of #[1-9]\d* )?<!-- t3:parent=[1-9]\d* -->/g;
+      let replaced = false;
+      const edited = body.replace(pattern, () => {
+        if (action === "remove" || replaced) return "";
+        replaced = true;
+        return marker;
+      });
+      const next = action === "add" && !replaced ? `${body}${body ? "\n\n" : ""}${marker}` : edited;
+      if (next !== body) yield* patchIssue(child, { body: next });
+    }),
+    writeManagedComment: Effect.fn("IssueForgejoHost.writeManagedComment")(function* (input) {
+      const scope = yield* context.resolveScope("detail", input.issue);
+      const body = input.body.includes(input.marker)
+        ? input.body
+        : `${input.body.trimEnd()}\n\n${input.marker}`;
+      const write = (id?: string) =>
+        request(
+          scope,
+          id === undefined
+            ? `${repositoryPath(scope.repository)}/issues/${input.issue.number}/comments`
+            : `${repositoryPath(scope.repository)}/issues/comments/${id}`,
+          Posted,
+          "detail",
+          { method: id === undefined ? "POST" : "PATCH", body: { body } },
+        );
+      if (input.operation === "status_sync" && input.commentId !== undefined) {
+        if (!/^[1-9]\d*$/.test(input.commentId))
+          return yield* failure("detail", "invalid-response", "The stored comment ID is invalid.");
+        const updated = yield* write(input.commentId).pipe(
+          Effect.catchTags({
+            IssueReadError: (error) =>
+              error.code === "inaccessible" ? Effect.succeed(null) : Effect.fail(error),
+          }),
+        );
+        if (updated !== null) return { commentId: String(updated.value.id) };
+      }
+      const comments = yield* transport.listComments(input.issue, {
+        until: (rows) => rows.some((row) => row.body?.includes(input.marker)),
+      });
+      const existing = comments.comments.find((row) => row.body?.includes(input.marker));
+      if (existing === undefined && !comments.complete)
+        return yield* failure(
+          "detail",
+          "invalid-response",
+          "Forgejo comment pagination is incomplete; comment was not created.",
+        );
+      if (existing !== undefined && input.operation === "closeout_create")
+        return { commentId: String(existing.id) };
+      return {
+        commentId: String(
+          (yield* write(existing === undefined ? undefined : String(existing.id))).value.id,
+        ),
+      };
+    }),
+    activitySince: Effect.fn("IssueForgejoHost.activitySince")(function* (input, cursors) {
+      if (cursors.initial)
+        return {
+          issues: { items: [], etag: null, complete: true },
+          comments: { items: [], etag: null, complete: true },
+          stateChanges: { items: [], etag: null, complete: true },
+          eventsAfter: 0,
+        };
+      const scope = yield* context.resolveScope("detail", input);
+      const base = repositoryPath(scope.repository);
+      const issues = yield* all(
+        scope,
+        `${base}/issues?type=issues&state=all&since=${encodeURIComponent(cursors.issuesSince)}`,
+        Issue,
+      );
+      const comments = yield* all(
+        scope,
+        `${base}/issues/comments?since=${encodeURIComponent(cursors.commentsSince)}`,
+        ActivityComment,
+      );
+      const timelines = yield* Effect.forEach(
+        issues.items.filter((raw) => !raw.pull_request),
+        (raw) =>
+          all(
+            scope,
+            `${base}/issues/${raw.number}/timeline?since=${encodeURIComponent(cursors.issuesSince)}`,
+            StateEvent,
+          ).pipe(
+            Effect.map((result) => ({
+              complete: result.complete,
+              items: result.items
+                .filter((event) => event.type === "close" || event.type === "reopen")
+                .map((event) => ({
+                  id: event.id,
+                  event: event.type === "close" ? "closed" : "reopened",
+                  created_at: event.created_at,
+                  issue: { number: raw.number },
+                })),
+            })),
+          ),
+        { concurrency: 8 },
+      );
+      if (!issues.complete || !comments.complete || timelines.some((result) => !result.complete))
+        return yield* failure(
+          "detail",
+          "invalid-response",
+          "Forgejo activity pagination is incomplete; the inbox cursor was not advanced.",
+        );
+      const events = timelines.flatMap((result) => result.items);
+      return {
+        issues: {
+          items: issues.items
+            .filter((raw) => !raw.pull_request)
+            .map((raw) => ({
+              ...raw,
+              user: actor(raw.user, raw.original_author),
+              milestone: raw.milestone ? { number: raw.milestone.id } : null,
+            })),
+          etag: null,
+          complete: issues.complete,
+        },
+        comments: {
+          items: comments.items
+            .filter((raw) => !raw.html_url.includes("/pulls/"))
+            .map((raw) => ({ ...raw, user: actor(raw.user, raw.original_author) })),
+          etag: null,
+          complete: comments.complete,
+        },
+        stateChanges: {
+          items: events,
+          etag: null,
+          complete: issues.complete && timelines.every((result) => result.complete),
+        },
+        eventsAfter: Math.max(cursors.eventsAfter, ...events.map((event) => event.id)),
+      };
+    }),
+    listComments: Effect.fn("IssueForgejoHost.listComments")(function* (ref, options) {
+      const scope = yield* context.resolveScope("detail", ref);
+      const comments: Array<typeof ListedComment.Type> = [];
+      let current: number | null = 1;
+      for (let count = 0; current !== null && count < (options?.maxPages ?? 100); count++) {
+        const result: { items: ReadonlyArray<typeof ListedComment.Type>; nextPage: number | null } =
+          yield* page(
+            scope,
+            `${repositoryPath(scope.repository)}/issues/${ref.number}/comments`,
+            ListedComment,
+            current,
+          );
+        comments.push(...result.items);
+        current = result.nextPage;
+        if (options?.until?.(comments)) return { comments, complete: true };
+      }
+      return { comments, complete: current === null };
+    }),
+    postComment: Effect.fn("IssueForgejoHost.postComment")(function* (ref, body) {
+      const scope = yield* context.resolveScope("detail", ref);
+      return (yield* request(
+        scope,
+        `${repositoryPath(scope.repository)}/issues/${ref.number}/comments`,
+        Posted,
+        "detail",
+        { method: "POST", body: { body } },
+      )).value;
+    }),
+    postIssue: Effect.fn("IssueForgejoHost.postIssue")(function* (input, payload) {
+      const scope = yield* context.resolveScope("detail", input);
+      const labels =
+        payload.labels.length === 0
+          ? []
+          : yield* labelsFor(scope, `${repositoryPath(scope.repository)}/labels`);
+      const ids: number[] = [];
+      for (const name of payload.labels) {
+        const label = labels.find((row) => row.name.toLowerCase() === name.toLowerCase());
+        if (!label)
+          return yield* failure(
+            "detail",
+            "inaccessible",
+            `Forgejo label '${name}' does not exist.`,
+          );
+        ids.push(label.id);
+      }
+      return (yield* request(
+        scope,
+        `${repositoryPath(scope.repository)}/issues`,
+        Posted,
+        "detail",
+        { method: "POST", body: { ...payload, labels: ids } },
+      )).value;
+    }),
+    ensureLabels: Effect.fn("IssueForgejoHost.ensureLabels")(function* (input, labels) {
+      const scope = yield* context.resolveScope("detail", input);
+      const base = `${repositoryPath(scope.repository)}/labels`;
+      const existing = new Set(
+        (yield* labelsFor(scope, base)).map((row) => row.name.toLowerCase()),
+      );
+      for (const label of labels)
+        if (!existing.has(label.name.toLowerCase())) {
+          yield* request(scope, base, Schema.Unknown, "detail", {
+            method: "POST",
+            body: { ...label, color: `#${label.color.replace(/^#/, "")}` },
+          });
+          existing.add(label.name.toLowerCase());
+        }
+    }),
+    setLabels: Effect.fn("IssueForgejoHost.setLabels")(function* (ref, add, remove) {
+      const scope = yield* context.resolveScope("detail", ref);
+      const base = `${repositoryPath(scope.repository)}/issues/${ref.number}/labels`;
+      if (add.length > 0)
+        yield* request(scope, base, Schema.Unknown, "detail", {
+          method: "POST",
+          body: { labels: add },
+        });
+      if (remove.length === 0) return;
+      const labels = yield* labelsFor(scope, base);
+      for (const name of remove) {
+        const label = labels.find((row) => row.name.toLowerCase() === name.toLowerCase());
+        if (label)
+          yield* request(scope, `${base}/${label.id}`, Schema.Unknown, "detail", {
+            method: "DELETE",
+          });
+      }
+    }),
   };
   return transport;
 });
