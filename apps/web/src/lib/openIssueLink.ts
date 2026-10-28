@@ -1,3 +1,4 @@
+import { supportsIssueHost } from "@t3tools/client-runtime/state/issue-work";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -32,13 +33,15 @@ export function parseIssueUrl(
   return { host, repository: `${match[1]}/${match[2]}`, number };
 }
 
-/** github.com plus the host of every GitHub or Forgejo project, Enterprise included. */
-export function knownIssueHosts(projects: ReadonlyArray<EnvironmentProject>): Set<string> {
+/** github.com plus the host of every issue-capable project, Enterprise included. */
+export function knownIssueHosts(
+  projects: ReadonlyArray<Pick<EnvironmentProject, "repositoryIdentity">>,
+): Set<string> {
   const hosts = new Set(["github.com"]);
   for (const project of projects) {
     const identity = project.repositoryIdentity;
     // The canonical key starts with the remote's host, as the change request matcher reads it.
-    if (identity?.provider === "github" || identity?.provider === "forgejo")
+    if (identity && supportsIssueHost(identity))
       hosts.add(identity.canonicalKey.split("/")[0]!.toLowerCase());
   }
   return hosts;

@@ -32,6 +32,7 @@ import {
   type IssueRepositoryScope,
   type IssuePageResult,
   type PageResult,
+  type PageResponse,
   type ListMetadata,
 } from "./IssueHost.ts";
 import { LIVE_ISSUE_REFRESH_MS, IssueListResult, TrimmedNonEmptyString } from "@t3tools/contracts";
@@ -129,6 +130,18 @@ export class IssueService extends Context.Service<
     IssueHost,
     "withIdentity" | "listIssuePage" | "listMilestonePage" | "listMetadata" | "detail" | "statuses"
   > & {
+    readonly milestoneIssues: (input: {
+      readonly host: string;
+      readonly repository: string;
+      readonly milestoneNumber: number;
+    }) => Effect.Effect<
+      {
+        readonly issues: ReadonlyArray<import("@t3tools/contracts").IssueSummary>;
+        readonly complete: boolean;
+        readonly missing?: true;
+      },
+      IssueReadError
+    >;
     readonly statusBatch: (
       input: import("@t3tools/contracts").IssueStatusBatchInput,
     ) => ReturnType<IssueHost["statuses"]>;
@@ -216,11 +229,94 @@ export const make = Effect.fn("IssueService.make")(function* () {
   const github = yield* IssueGitHubHost.make({
     safeRepository,
     resolveScope,
-    advanceRepositoryGeneration,
-    repositoryGeneration,
-    repositoryPages,
   });
   const hostFor = (host: string) => issueHostFor(host, github);
+  const pageResult = <A>(
+    response: PageResponse<A>,
+    cached: { readonly page: PageResult<A>; readonly etag: string | undefined } | undefined,
+  ): Effect.Effect<PageResult<A>, IssueReadError> => {
+    if (!("notModified" in response)) return Effect.succeed(response);
+    if (cached === undefined)
+      return Effect.fail(
+        readError("list", "invalid-response", "The issue host returned an uncached page."),
+      );
+    return Effect.succeed({
+      ...cached.page,
+      nextPage: response.nextPage === undefined ? cached.page.nextPage : response.nextPage,
+      etag: response.etag ?? cached.etag,
+    });
+  };
+  const readIssuePage = Effect.fn("IssueService.readIssuePage")(function* (
+    scope: IssueRepositoryScope,
+    pages: ReturnType<typeof makePageCaches>,
+    state: IssueListState,
+    page: number,
+    milestoneNumber?: number,
+  ): Effect.fn.Return<IssuePageResult & { readonly missing?: true }, IssueReadError> {
+    const cached = pages.issues.get(issueListEndpoint(scope, state, page, milestoneNumber));
+    const response = yield* hostFor(scope.host).listIssuePage(
+      scope,
+      state,
+      page,
+      milestoneNumber,
+      cached?.etag,
+    );
+    if (response.missing) return { items: [], nextPage: null, missing: true as const };
+    return yield* pageResult(response, cached);
+  });
+  const readMilestonePage = Effect.fn("IssueService.readMilestonePage")(function* (
+    scope: IssueRepositoryScope,
+    pages: ReturnType<typeof makePageCaches>,
+    state: IssueListState,
+    page: number,
+  ) {
+    const cached = pages.milestones.get(milestoneListEndpoint(scope, state, page));
+    return yield* pageResult(
+      yield* hostFor(scope.host).listMilestonePage(scope, state, page, cached?.etag),
+      cached,
+    );
+  });
+  const milestoneIssues: IssueService["Service"]["milestoneIssues"] = Effect.fn(
+    "IssueService.milestoneIssues",
+  )(function* (input) {
+    const scope = yield* resolveScope("list", input);
+    return yield* hostFor(scope.host).withIdentity(scope, "list", (identity) =>
+      Effect.gen(function* () {
+        const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
+        const generation = repositoryGeneration(scope);
+        const issues: Array<import("@t3tools/contracts").IssueSummary> = [];
+        let page: number | null = 1;
+        for (let count = 0; count < 10 && page !== null; count++) {
+          const result: IssuePageResult & { readonly missing?: true } = yield* readIssuePage(
+            scope,
+            pages,
+            "all",
+            page,
+            input.milestoneNumber,
+          );
+          if (result.missing) return { issues: [], complete: true, missing: true as const };
+          if (generation === repositoryGeneration(scope))
+            pages.issues.set(
+              issueListEndpoint(scope, "all", page, input.milestoneNumber),
+              result.etag,
+              { ...result, generation },
+            );
+          issues.push(...result.items);
+          page = result.nextPage;
+        }
+        return { issues, complete: page === null };
+      }).pipe(Effect.scoped),
+    );
+  });
+  const afterWrite = Effect.fn("IssueService.afterWrite")(function* <A>(
+    input: { readonly host: string; readonly repository: string },
+    write: Effect.Effect<A, IssueReadError>,
+  ) {
+    const scope = yield* resolveScope("detail", input);
+    const result = yield* write;
+    advanceRepositoryGeneration(scope);
+    return result;
+  });
   const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
     const scope = yield* resolveScope("list", input);
     const state = input.state ?? "open";
@@ -302,17 +398,12 @@ export const make = Effect.fn("IssueService.make")(function* () {
             const issueRead = yield* (
               issuePage === null
                 ? Effect.succeed<IssuePageResult>({ items: [], nextPage: null })
-                : hostFor(scope.host).listIssuePage(scope, pages.issues, state, issuePage)
+                : readIssuePage(scope, pages, state, issuePage)
             ).pipe(Effect.forkChild);
             const milestoneRead = yield* (
               milestonePage === null
                 ? Effect.succeed<PageResult<IssueMilestone>>({ items: [], nextPage: null })
-                : hostFor(scope.host).listMilestonePage(
-                    scope,
-                    pages.milestones,
-                    state,
-                    milestonePage,
-                  )
+                : readMilestonePage(scope, pages, state, milestonePage)
             ).pipe(Effect.forkChild);
             const issueResult = yield* Fiber.join(issueRead);
             const [milestoneResult, projects] = yield* Effect.all(
@@ -476,20 +567,20 @@ export const make = Effect.fn("IssueService.make")(function* () {
       hostFor(input.host).readChangeState(input),
     ),
     createIssue: Effect.fn("IssueService.createIssue")((input) =>
-      hostFor(input.host).createIssue(input),
+      afterWrite(input, hostFor(input.host).createIssue(input)),
     ),
     updateBody: Effect.fn("IssueService.updateBody")((input) =>
-      hostFor(input.host).updateBody(input),
+      afterWrite(input, hostFor(input.host).updateBody(input)),
     ),
     setMilestone: Effect.fn("IssueService.setMilestone")((input) =>
-      hostFor(input.host).setMilestone(input),
+      afterWrite(input, hostFor(input.host).setMilestone(input)),
     ),
-    setState: Effect.fn("IssueService.setState")((input) => hostFor(input.host).setState(input)),
+    setState: Effect.fn("IssueService.setState")((input) =>
+      afterWrite(input, hostFor(input.host).setState(input)),
+    ),
     detail,
     workRead: Effect.fn("IssueService.workRead")((input) => hostFor(input.host).workRead(input)),
-    milestoneIssues: Effect.fn("IssueService.milestoneIssues")((input) =>
-      hostFor(input.host).milestoneIssues(input),
-    ),
+    milestoneIssues,
     repositoryIdentity: Effect.fn("IssueService.repositoryIdentity")((input) =>
       hostFor(input.host).repositoryIdentity(input),
     ),
@@ -503,26 +594,26 @@ export const make = Effect.fn("IssueService.make")(function* () {
       hostFor(input.host).listComments(input, ...args),
     ),
     postComment: Effect.fn("IssueService.postComment")((input, ...args) =>
-      hostFor(input.host).postComment(input, ...args),
+      afterWrite(input, hostFor(input.host).postComment(input, ...args)),
     ),
     postIssue: Effect.fn("IssueService.postIssue")((input, ...args) =>
-      hostFor(input.host).postIssue(input, ...args),
+      afterWrite(input, hostFor(input.host).postIssue(input, ...args)),
     ),
     ensureLabels: Effect.fn("IssueService.ensureLabels")((input, ...args) =>
-      hostFor(input.host).ensureLabels(input, ...args),
+      afterWrite(input, hostFor(input.host).ensureLabels(input, ...args)),
     ),
     setLabels: Effect.fn("IssueService.setLabels")((input, ...args) =>
-      hostFor(input.host).setLabels(input, ...args),
+      afterWrite(input, hostFor(input.host).setLabels(input, ...args)),
     ),
     repositories: Effect.fn("IssueService.repositories")(() =>
       hostFor("github.com").repositories(),
     ),
     statusBatch,
     setParent: Effect.fn("IssueService.setParent")((input) =>
-      hostFor(input.parent.host).setParent(input),
+      afterWrite(input.parent, hostFor(input.parent.host).setParent(input)),
     ),
     writeManagedComment: Effect.fn("IssueService.writeManagedComment")((input) =>
-      hostFor(input.issue.host).writeManagedComment(input),
+      afterWrite(input.issue, hostFor(input.issue.host).writeManagedComment(input)),
     ),
   });
 });

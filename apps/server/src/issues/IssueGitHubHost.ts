@@ -1,10 +1,4 @@
-import type {
-  IssueHost,
-  IssueHostContext,
-  IssueRepositoryScope,
-  PageResult,
-  IssuePageResult,
-} from "./IssueHost.ts";
+import type { IssueHost, IssueHostContext, IssueRepositoryScope, PageResult } from "./IssueHost.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -35,7 +29,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import { readIssueListMetadata } from "./IssueProjects.ts";
-import { IssueListPageCache } from "./IssueListPageCache.ts";
 
 const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 // A detail read carries up to DETAIL_COMMENT_LIMIT comment bodies of up to 64 KiB each.
@@ -768,13 +761,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
   const api = yield* GitHubApi.GitHubApi;
   const githubPullRequests = yield* GitHubPullRequestApi.GitHubPullRequestApi;
   const homeDirectory = yield* HostProcess.HomeDirectory;
-  const {
-    safeRepository,
-    resolveScope,
-    advanceRepositoryGeneration,
-    repositoryGeneration,
-    repositoryPages,
-  } = context;
+  const { safeRepository, resolveScope } = context;
   const executeApi = Effect.fn("IssueService.executeApi")(function* (input: {
     readonly operation: IssueOperation;
     readonly scope: IssueRepositoryScope;
@@ -841,7 +828,6 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
         ),
       ),
     );
-    if (input.requestMethod !== undefined) advanceRepositoryGeneration(input.scope);
     if (response === null) {
       return yield* readError(
         input.operation,
@@ -1237,89 +1223,112 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       );
   });
 
-  const listIssuePage = Effect.fn("IssueService.listIssuePage")(function* (
-    scope: IssueRepositoryScope,
-    cache: IssueListPageCache<IssuePageResult>,
-    state: IssueListState,
-    page: number,
-    milestoneNumber?: number,
-  ): Effect.fn.Return<IssuePageResult, IssueReadError> {
-    const endpoint = issueListEndpoint(scope, state, page, milestoneNumber);
-    const cached = cache.get(`${state}:${page}:${milestoneNumber ?? ""}`);
-    const response = yield* executeApi({
-      operation: "list",
-      scope,
-      endpoint,
-      ifNoneMatch: cached?.etag,
-      maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-    });
-    const nextPage =
-      response.status === 304 && cached !== undefined && response.headers["link"] === undefined
-        ? cached.page.nextPage
-        : nextPageFromHeaders(response.headers, page);
-    if (nextPage === undefined) {
-      return yield* readError(
-        "list",
-        "invalid-response",
-        "GitHub returned invalid pagination metadata.",
+  const listIssuePage = Effect.fn("IssueService.listIssuePage")(
+    function* (
+      scope: IssueRepositoryScope,
+      state: IssueListState,
+      page: number,
+      milestoneNumber?: number,
+      etag?: string,
+    ) {
+      const endpoint = issueListEndpoint(scope, state, page, milestoneNumber);
+      const response = yield* executeApi({
+        operation: "list",
+        scope,
+        endpoint,
+        ifNoneMatch: etag,
+        maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+      });
+      const nextPage =
+        response.status === 304 && response.headers["link"] === undefined
+          ? undefined
+          : nextPageFromHeaders(response.headers, page);
+      if (
+        nextPage === undefined &&
+        !(response.status === 304 && response.headers["link"] === undefined)
+      ) {
+        return yield* readError(
+          "list",
+          "invalid-response",
+          "GitHub returned invalid pagination metadata.",
+        );
+      }
+      if (response.status === 304) {
+        return { notModified: true as const, nextPage, etag: response.headers["etag"] };
+      }
+      const raw = yield* decodeRawIssueList(response.body).pipe(
+        Effect.mapError(() =>
+          readError("list", "invalid-response", "GitHub returned an invalid issue list."),
+        ),
       );
-    }
-    if (response.status === 304 && cached !== undefined) {
       const result = {
-        ...cached.page,
-        nextPage,
-        etag: response.headers["etag"] ?? cached.etag,
+        items: raw
+          .filter((issue) => !Object.hasOwn(issue, "pull_request"))
+          .map((issue) => normalizeIssue(scope.host, scope.repository, issue)),
+        nextPage: nextPage ?? null,
       };
-      return result;
-    }
-    const raw = yield* decodeRawIssueList(response.body).pipe(
-      Effect.mapError(() =>
-        readError("list", "invalid-response", "GitHub returned an invalid issue list."),
-      ),
-    );
-    const result = {
-      items: raw
-        .filter((issue) => !Object.hasOwn(issue, "pull_request"))
-        .map((issue) => normalizeIssue(scope.host, scope.repository, issue)),
-      nextPage,
-    };
-    const pageResult = {
-      ...result,
-      etag: response.headers["etag"],
-      metadata: cached?.page.metadata,
-    };
-    return pageResult;
-  });
+      const pageResult = {
+        ...result,
+        etag: response.headers["etag"],
+      };
+      return pageResult;
+    },
+    (effect, scope, _state, _page, milestoneNumber) =>
+      milestoneNumber === undefined
+        ? effect
+        : effect.pipe(
+            // GitHub also uses 422 for its spam guard; only a milestone 404 proves it is missing.
+            Effect.catchIf(
+              (error) => isIssueResponseError(error) && error.status === 422,
+              (listError) =>
+                executeApi({
+                  operation: "list",
+                  scope,
+                  endpoint: `repos/${encodeRepositoryPath(scope.repository)}/milestones/${milestoneNumber}`,
+                  maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+                }).pipe(
+                  Effect.matchEffect({
+                    onSuccess: () => Effect.fail(listError),
+                    onFailure: (lookupError) =>
+                      isIssueResponseError(lookupError) && lookupError.status === 404
+                        ? Effect.succeed({ items: [], nextPage: null, missing: true as const })
+                        : Effect.fail(listError),
+                  }),
+                ),
+            ),
+          ),
+  );
 
   const listMilestonePage = Effect.fn("IssueService.listMilestonePage")(function* (
     scope: IssueRepositoryScope,
-    cache: IssueListPageCache<PageResult<IssueMilestone>>,
     state: IssueListState,
     page: number,
-  ): Effect.fn.Return<PageResult<IssueMilestone>, IssueReadError> {
+    etag?: string,
+  ) {
     const endpoint = milestoneListEndpoint(scope, state, page);
-    const cached = cache.get(`${state}:${page}`);
     const response = yield* executeApi({
       operation: "list",
       scope,
       endpoint,
-      ifNoneMatch: cached?.etag,
+      ifNoneMatch: etag,
       maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     });
     const nextPage =
-      response.status === 304 && cached !== undefined && response.headers["link"] === undefined
-        ? cached.page.nextPage
+      response.status === 304 && response.headers["link"] === undefined
+        ? undefined
         : nextPageFromHeaders(response.headers, page);
-    if (nextPage === undefined) {
+    if (
+      nextPage === undefined &&
+      !(response.status === 304 && response.headers["link"] === undefined)
+    ) {
       return yield* readError(
         "list",
         "invalid-response",
         "GitHub returned invalid pagination metadata.",
       );
     }
-    if (response.status === 304 && cached !== undefined) {
-      const result = { ...cached.page, nextPage, etag: response.headers["etag"] ?? cached.etag };
-      return result;
+    if (response.status === 304) {
+      return { notModified: true as const, nextPage, etag: response.headers["etag"] };
     }
     const raw = yield* decodeRawMilestoneList(response.body).pipe(
       Effect.mapError(() =>
@@ -1328,7 +1337,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     );
     const result = {
       items: raw.map((milestone) => normalizeMilestone(scope.host, scope.repository, milestone)),
-      nextPage,
+      nextPage: nextPage ?? null,
     };
     const pageResult = { ...result, etag: response.headers["etag"] };
     return pageResult;
@@ -1476,64 +1485,6 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     },
   );
 
-  const milestoneIssues: IssueHost["milestoneIssues"] = Effect.fn("IssueService.milestoneIssues")(
-    function* (input) {
-      const scope = yield* resolveScope("list", input);
-      return yield* githubPullRequests
-        .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, (identity) =>
-          Effect.gen(function* () {
-            const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
-            const generation = repositoryGeneration(scope);
-            const issues: IssueSummaryType[] = [];
-            let page: number | null = 1;
-            for (let count = 0; count < 10 && page !== null; count++) {
-              const result: PageResult<IssueSummaryType> = yield* listIssuePage(
-                scope,
-                pages.issues,
-                "all",
-                page,
-                input.milestoneNumber,
-              );
-              if (generation === repositoryGeneration(scope))
-                pages.issues.set(`all:${page}:${input.milestoneNumber}`, result.etag, {
-                  ...result,
-                  generation,
-                });
-              issues.push(...result.items);
-              page = result.nextPage;
-            }
-            return { issues, complete: page === null };
-          }).pipe(
-            Effect.scoped,
-            // GitHub answers 422 for an invalid milestone and for its spam guard, so only a 404 from
-            // the milestone itself proves it is missing. Any other answer keeps the list failure.
-            Effect.catchIf(
-              (error) => isIssueResponseError(error) && error.status === 422,
-              (listError) =>
-                executeApi({
-                  operation: "list",
-                  scope,
-                  endpoint: `repos/${encodeRepositoryPath(scope.repository)}/milestones/${input.milestoneNumber}`,
-                  maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-                }).pipe(
-                  Effect.matchEffect({
-                    onSuccess: () => Effect.fail(listError),
-                    onFailure: (lookupError) =>
-                      isIssueResponseError(lookupError) && lookupError.status === 404
-                        ? Effect.succeed({ issues: [], complete: true, missing: true as const })
-                        : Effect.fail(listError),
-                  }),
-                ),
-            ),
-          ),
-        )
-        .pipe(
-          Effect.mapError((error) =>
-            isIssueReadError(error) ? error : mapGitHubError("list", error),
-          ),
-        );
-    },
-  );
   const ChangeIssue = Schema.Struct({
     ...RawIssueIdentitySchema.fields,
     body: Schema.NullOr(Schema.String),
@@ -1781,7 +1732,6 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
           ),
         ),
     );
-    if (input.method !== undefined) advanceRepositoryGeneration(scope);
     if (response.truncated)
       return yield* readError(
         "detail",
@@ -2006,7 +1956,6 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     detail,
     workRead,
     statuses,
-    milestoneIssues,
     repositoryIdentity,
     resolveLinkedIssue,
     writeManagedComment,

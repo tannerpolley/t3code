@@ -42,6 +42,14 @@ export type ListMetadata = Map<
     >
   >
 >;
+export type PageResponse<A> =
+  | PageResult<A>
+  | {
+      readonly notModified: true;
+      readonly nextPage: number | null | undefined;
+      readonly etag: string | undefined;
+    };
+
 export interface IssuePageResult extends PageResult<IssueSummaryType> {
   readonly metadata?: Partial<Record<"projects" | "roadmap", ListMetadata>> | undefined;
 }
@@ -145,17 +153,17 @@ export interface IssueHost {
   ) => Effect.Effect<A, IssueReadError, R>;
   readonly listIssuePage: (
     scope: IssueRepositoryScope,
-    cache: import("./IssueListPageCache.ts").IssueListPageCache<IssuePageResult>,
     state: IssueListState,
     page: number,
     milestoneNumber?: number,
-  ) => Effect.Effect<IssuePageResult, IssueReadError>;
+    etag?: string,
+  ) => Effect.Effect<PageResponse<IssueSummaryType> & { readonly missing?: true }, IssueReadError>;
   readonly listMilestonePage: (
     scope: IssueRepositoryScope,
-    cache: import("./IssueListPageCache.ts").IssueListPageCache<PageResult<IssueMilestone>>,
     state: IssueListState,
     page: number,
-  ) => Effect.Effect<PageResult<IssueMilestone>, IssueReadError>;
+    etag?: string,
+  ) => Effect.Effect<PageResponse<IssueMilestone>, IssueReadError>;
   readonly listMetadata: (
     scope: IssueRepositoryScope,
     numbers: ReadonlyArray<number>,
@@ -170,18 +178,6 @@ export interface IssueHost {
     identity: IssueHostIdentity,
   ) => Effect.Effect<IssueDetailResultType, IssueReadError>;
   readonly workRead: (input: IssueDetailInputType) => Effect.Effect<IssueWorkRead, IssueReadError>;
-  readonly milestoneIssues: (input: {
-    readonly host: string;
-    readonly repository: string;
-    readonly milestoneNumber: number;
-  }) => Effect.Effect<
-    {
-      readonly issues: ReadonlyArray<IssueSummaryType>;
-      readonly complete: boolean;
-      readonly missing?: true;
-    },
-    IssueReadError
-  >;
   readonly repositoryIdentity: (input: {
     readonly host: string;
     readonly repository: string;
@@ -253,16 +249,6 @@ export interface IssueHostContext {
     operation: IssueReadError["operation"],
     input: IssueRepositoryRef,
   ) => Effect.Effect<IssueRepositoryScope, IssueReadError>;
-  readonly advanceRepositoryGeneration: (scope: IssueRepositoryScope) => void;
-  readonly repositoryGeneration: (scope: IssueRepositoryScope) => number;
-  readonly repositoryPages: (
-    scope: IssueRepositoryScope,
-    fingerprint: string,
-  ) => Effect.Effect<
-    { issues: import("./IssueListPageCache.ts").IssueListPageCache<IssuePageResult> },
-    never,
-    import("effect/Scope").Scope
-  >;
 }
 
 export const issueHostFor = (_host: string, github: IssueHost): IssueHost => github;
