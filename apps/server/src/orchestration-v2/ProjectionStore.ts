@@ -23,7 +23,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   latestRootProviderFailure,
-  latestExecutedRun,
   latestUnheldRun,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
