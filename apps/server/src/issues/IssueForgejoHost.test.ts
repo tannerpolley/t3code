@@ -7,7 +7,9 @@ import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import { IssueDetailResult, IssueWorkRead, IssueRepositoriesResult } from "@t3tools/contracts";
 import * as Forgejo from "./IssueForgejoHost.ts";
 import { issueHostFor } from "./IssueHost.ts";
+import { issueEligibility } from "./IssueEligibility.ts";
 
+const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 const decodeWork = Schema.decodeEffect(IssueWorkRead);
 const decodeDetail = Schema.decodeEffect(IssueDetailResult);
 const decodeRepositories = Schema.decodeEffect(IssueRepositoriesResult);
@@ -56,12 +58,14 @@ function setup(respond: (path: string) => unknown, next?: string) {
   const calls: string[] = [];
   const layer = Layer.mock(ForgejoCli.ForgejoCli)({
     api: (input) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         expect(input.host).toBe(host);
         expect(input.method ?? "GET").toBe("GET");
         calls.push(input.path);
+        const value = respond(input.path);
+        if (isForgejoCliError(value)) return yield* value;
         return {
-          stdout: JSON.stringify(respond(input.path)),
+          stdout: JSON.stringify(value),
           stderr:
             next && input.path.includes("page=1")
               ? `link: <https://${host}/api/v1/${next}>; rel="next"`
@@ -194,9 +198,9 @@ it.effect("maps migrated comments and deduplicated timeline PR references", () =
           },
         ];
       if (path.includes("/timeline"))
-        return [1, 2].map(() => ({
+        return ["closes", "none"].map((action) => ({
           type: "issue_ref",
-          ref_action: "closes",
+          ref_action: action,
           ref_issue: issue(11, {
             repository: { id: 22, full_name: "other/lib" },
             pull_request: {
@@ -264,4 +268,65 @@ it.effect(
       }
       expect(fixture.calls).toHaveLength(calls);
     }),
+);
+
+it.effect("reads headerless full dependency pages before proving completeness", () =>
+  Effect.gen(function* () {
+    const fixture = setup((path) => {
+      if (path === "repos/owner/repo") return repo;
+      if (path.includes("/dependencies"))
+        return path.endsWith("page=1")
+          ? Array.from({ length: 50 }, (_, i) => issue(i + 100, { state: "closed" }))
+          : [issue(150)];
+      if (path.includes("?type=issues")) return [];
+      return issue(7);
+    });
+    const transport = yield* fixture.make;
+    const work = yield* transport.workRead({ ...scope, number: 7 });
+    expect(work.blockersComplete).toBe(true);
+    expect(work.blockedBy).toHaveLength(51);
+    expect(work.blockedBy.at(-1)?.state).toBe("open");
+    expect(issueEligibility(work)).toBe("blocked");
+    expect(fixture.calls).toContain("repos/owner/repo/issues/7/dependencies?limit=50&page=2");
+  }),
+);
+
+it.effect("keeps detail readable and work conservative when dependencies are disabled", () =>
+  Effect.gen(function* () {
+    const fixture = setup((path) => {
+      if (path === "repositories/12" || path === "repos/owner/repo") return repo;
+      if (path.includes("/dependencies"))
+        return new ForgejoCli.ForgejoCliError({
+          command: "fj",
+          cwd: scope.cwd,
+          detail: "Not Found",
+          reason: "not-found",
+          httpStatus: 404,
+        });
+      if (path.includes("/comments"))
+        return [
+          {
+            body: "hello",
+            created_at: date,
+            html_url: `https://${host}/owner/repo/issues/7#comment-1`,
+          },
+        ];
+      if (path.includes("/timeline") || path.includes("?type=issues")) return [];
+      return issue(7, { body: "issue body" });
+    });
+    const transport = yield* fixture.make;
+    const detail = yield* transport.detail(
+      { ...scope, number: 7 },
+      { accountId: "1", viewer: "owner", credentialFingerprint: "test" },
+    );
+    expect(detail.body).toBe("issue body");
+    expect(detail.comments[0]?.body).toBe("hello");
+    expect(detail.issue.relationshipsComplete).toBe(false);
+    const work = yield* transport.workRead({ ...scope, number: 7 });
+    expect(work.blockersComplete).toBe(false);
+    expect(issueEligibility(work)).toBe("unknown");
+    expect(yield* transport.statuses(host, ["12/7"]).pipe(Effect.flip)).toMatchObject({
+      code: "invalid-response",
+    });
+  }),
 );

@@ -180,13 +180,15 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
         Effect.mapError((error) =>
           failure(
             operation,
-            error.reason === "authentication"
-              ? "unauthenticated"
-              : error.reason === "not-found" || error.reason === "forbidden"
-                ? "inaccessible"
-                : error.reason === "rate-limit"
-                  ? "rate-limited"
-                  : "upstream",
+            error.httpStatus === 404 && /\/dependencies(?:\?|$)/.test(path)
+              ? "unsupported"
+              : error.reason === "authentication"
+                ? "unauthenticated"
+                : error.reason === "not-found" || error.reason === "forbidden"
+                  ? "inaccessible"
+                  : error.reason === "rate-limit"
+                    ? "rate-limited"
+                    : "upstream",
             "Forgejo issue request failed. Check this host's credentials and access.",
           ),
         ),
@@ -218,7 +220,9 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
           catch: () =>
             failure(operation, "invalid-response", "Forgejo returned invalid pagination."),
         })
-      : null;
+      : result.value.length === 50
+        ? current + 1
+        : null;
     if (
       nextPage !== null &&
       (!Number.isSafeInteger(nextPage) || nextPage <= current || nextPage > 1_000_000)
@@ -276,6 +280,13 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
       scopeFor(ref),
       `${repositoryPath(ref.repository)}/issues/${ref.number}/dependencies`,
       Issue,
+    ).pipe(
+      Effect.catchTags({
+        IssueReadError: (error) =>
+          error.code === "unsupported"
+            ? Effect.succeed({ items: [], complete: false })
+            : Effect.fail(error),
+      }),
     );
   });
   const children = Effect.fn("IssueForgejoHost.children")(function* (ref: IssueRef) {
@@ -554,11 +565,16 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
         ],
         { concurrency: 3 },
       );
-      const refs = new Map(
-        timeline.items.flatMap((event) =>
-          event.ref_issue?.pull_request ? [[event.ref_issue.html_url, event] as const] : [],
-        ),
-      );
+      const refs = new Map<string, typeof Timeline.Type>();
+      for (const event of timeline.items) {
+        if (!event.ref_issue?.pull_request) continue;
+        const url = event.ref_issue.html_url;
+        const previous = refs.get(url);
+        refs.set(url, {
+          ...event,
+          ref_action: previous?.ref_action === "closes" ? "closes" : event.ref_action,
+        });
+      }
       return {
         repository: { host, repository: input.repository },
         viewer: { accountId: identity.accountId, login: identity.viewer },

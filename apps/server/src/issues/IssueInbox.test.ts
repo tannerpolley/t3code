@@ -1077,3 +1077,50 @@ it.effect(
       assert.equal(threads.dispatched.length, 2);
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("skips Forgejo inbox discovery and registered polling until activity is supported", () =>
+  Effect.gen(function* () {
+    yield* seedRepository;
+    const github = fakeGitHub();
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE orchestration_v2_projection_repository_orchestration SET host = 'forge.example:3000'`;
+    const base = yield* IssueService.IssueService.pipe(Effect.provide(github.service));
+    const inbox = yield* IssueInbox.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(IssueService.IssueService, {
+            ...base,
+            isForgejoHost: (host) => Effect.succeed(host === "forge.example:3000"),
+          }),
+          fakeThreads().service,
+          Layer.mock(IssueWorkService.IssueWorkService)({
+            repositoryStatus: () => Effect.succeed({ rootThreadId: null } as never),
+          }),
+          Layer.mock(ProjectService.ProjectService)({
+            listShells: () =>
+              Effect.succeed([
+                {
+                  id: ProjectId.make("forge"),
+                  repositoryIdentity: {
+                    provider: "forgejo",
+                    canonicalKey: "forge.example:3000/acme/discovery",
+                    displayName: "acme/discovery",
+                    locator: {
+                      source: "git-remote",
+                      remoteName: "origin",
+                      remoteUrl: "https://forge.example:3000/acme/discovery",
+                    },
+                  },
+                },
+              ] as never),
+          }),
+        ),
+      ),
+    );
+    yield* inbox.pollDue;
+    yield* TestClock.adjust("15 minutes");
+    yield* inbox.pollDue;
+    assert.deepEqual(github.identityReads, []);
+    assert.deepEqual(github.requests, []);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory), Effect.scoped),
+);

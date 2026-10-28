@@ -132,6 +132,7 @@ export class IssueService extends Context.Service<
     IssueHost,
     "withIdentity" | "listIssuePage" | "listMilestonePage" | "listMetadata" | "detail" | "statuses"
   > & {
+    readonly isForgejoHost: (host: string) => Effect.Effect<boolean>;
     readonly milestoneIssues: (input: {
       readonly host: string;
       readonly repository: string;
@@ -236,7 +237,9 @@ export const make = Effect.fn("IssueService.make")(function* () {
   const forgejo = new Map<string, IssueHost>();
   const logins = yield* (
     cli?.listLogins?.({ cwd: homeDirectory, command: "fj" }) ?? Effect.succeed([])
-  ).pipe(Effect.orElseSucceed(() => []));
+  ).pipe(
+    Effect.catch(() => Effect.logWarning("Forgejo login discovery failed").pipe(Effect.as([]))),
+  );
   for (const login of logins) {
     forgejo.set(
       login.name,
@@ -576,6 +579,9 @@ export const make = Effect.fn("IssueService.make")(function* () {
     },
   );
   return IssueService.of({
+    isForgejoHost: Effect.fn("IssueService.isForgejoHost")((host) =>
+      Effect.succeed(forgejo.has(host.toLowerCase())),
+    ),
     refreshes: SubscriptionRef.changes(refreshes),
     list,
     readChangeState: Effect.fn("IssueService.readChangeState")((input) =>
