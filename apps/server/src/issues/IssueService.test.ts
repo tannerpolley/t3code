@@ -2601,14 +2601,15 @@ it.effect("inbox labels preserve existing labels and tolerate a failed create", 
   }),
 );
 
-it.effect("routes an fj login key including its port to Forgejo without GitHub fallthrough", () =>
-  Effect.gen(function* () {
+it.effect("routes an fj login key including its port to Forgejo without GitHub fallthrough", () => {
+  const forgejoHosts: Array<string> = [];
+  return Effect.gen(function* () {
     const harness = makeHarness({ responses: [] });
     const issues = yield* service(harness);
-    const result = yield* issues
+    yield* issues
       .updateBody({ host: "forge.example:3000", repository: REPOSITORY, number: 7, body: "edit" })
       .pipe(Effect.result);
-    assert.deepStrictEqual(result._tag === "Failure" && result.failure.code, "unsupported");
+    assert.deepStrictEqual(forgejoHosts, ["forge.example:3000"]);
     assert.strictEqual(harness.calls.length, 0);
   }).pipe(
     Effect.provide(
@@ -2622,7 +2623,19 @@ it.effect("routes an fj login key including its port to Forgejo without GitHub f
               default: "false",
             },
           ]),
+        api: (input) => {
+          forgejoHosts.push(input.host ?? "");
+          return Effect.fail(
+            new ForgejoCli.ForgejoCliError({
+              command: "fj",
+              cwd: input.cwd,
+              detail: "stop",
+              reason: "not-found",
+              httpStatus: 404,
+            }),
+          );
+        },
       }),
     ),
-  ),
-);
+  );
+});
