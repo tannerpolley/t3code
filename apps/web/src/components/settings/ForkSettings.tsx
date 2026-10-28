@@ -149,13 +149,6 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Model labels drop the company name the provider icon already shows and use each provider's short model name: Opus 5.5, Sonnet 5, 6 Sol. Applies to the sidebar, Lineage, agent details and the composer's model button, always right after the icon; the model list keeps full names. Off restores the full names.",
   },
   {
-    key: "chatMath",
-    searchId: "chat-math",
-    section: "composer",
-    description:
-      "Render math in chat messages: $…$, $$…$$, \\( \\) and \\[ \\]. Dollar amounts such as $5 stay text. Off shows the formula source as plain text.",
-  },
-  {
     key: "openQuestionsAutomatically",
     searchId: "open-questions-automatically",
     section: "composer",

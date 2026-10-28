@@ -8,8 +8,6 @@ import * as IssueInbox from "../issues/IssueInbox.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
-import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import {
   CommandId,
   EnvironmentId,
@@ -60,6 +58,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
@@ -1733,11 +1732,8 @@ describe("orchestrator MCP toolkit", () => {
               items: [{ queuedRunId: queueRace.queuedRun.id }],
               nextCursor: 1,
             });
-            const queueDefinition = server.tools.find(({ tool }) => tool.name === "t3_queue");
-            const validateQueue = new AjvJsonSchemaValidator().getValidator(
-              queueDefinition!.tool.outputSchema! as JsonSchemaType,
-            );
-            expect(validateQueue(queueFirstPage.structuredContent).valid).toBe(true);
+            const isQueueResult = Schema.is(ThreadToolkit.tools.t3_queue.successSchema);
+            expect(isQueueResult(queueFirstPage.structuredContent)).toBe(true);
             const missingThreadId = ThreadId.make("00000000-0000-4000-8000-000000000000");
             const missingThreadQueue = yield* invoke("t3_queue", {
               action: "list",
@@ -1751,7 +1747,7 @@ describe("orchestrator MCP toolkit", () => {
               message: "The thread was not found.",
             });
             expect(missingThreadQueue.structuredContent).toBeUndefined();
-            expect(validateQueue({ items: "invalid", nextCursor: null }).valid).toBe(false);
+            expect(isQueueResult({ items: "invalid", nextCursor: null })).toBe(false);
             const missingThreadRead = yield* invoke("t3_thread_read", {
               threadId: missingThreadId,
             });

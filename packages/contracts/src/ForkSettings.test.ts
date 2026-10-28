@@ -88,7 +88,6 @@ const storedSettingsFile = JSON.stringify({
     lineageInDetails: true,
     threadDetailsRedesign: false,
     fastShimmer: false,
-    chatMath: false,
   },
 });
 
@@ -190,7 +189,6 @@ describe("stored fork settings compatibility", () => {
       lineageInDetails: false,
       threadDetailsRedesign: true,
       fastShimmer: true,
-      chatMath: true,
     });
   });
 });
