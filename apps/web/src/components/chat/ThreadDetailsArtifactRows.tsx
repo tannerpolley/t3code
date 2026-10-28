@@ -330,7 +330,7 @@ export function ThreadDetailsArtifactRows({
                   onOpenChange={setPickerOpen}
                   onSelect={(selected) => {
                     setPath(selected);
-                    setLabel(artifactLabelSuggestion(selected));
+                    setLabel((current) => current.trim() || artifactLabelSuggestion(selected));
                   }}
                 />
               ) : null}
