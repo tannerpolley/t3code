@@ -145,7 +145,7 @@ const setup = Effect.gen(function* () {
         subIssuesComplete: true,
         blockersComplete: true,
       })),
-    setSubIssue: (input) =>
+    setParent: (input) =>
       Effect.gen(function* () {
         calls.link++;
         if (failLink) {

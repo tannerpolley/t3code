@@ -701,7 +701,8 @@ export function IssueDetailPanel({
       <PullRequestMarkdownContext
         value={{
           autolinks: changeRequestReferenceAutolinker({
-            provider: SourceControlProviderKind.make("github"),
+            provider:
+              project?.repositoryIdentity?.provider ?? SourceControlProviderKind.make("github"),
             url: `https://${repository.host}/${repository.repository}/issues/${issue.number}`,
           }),
           threadRef,

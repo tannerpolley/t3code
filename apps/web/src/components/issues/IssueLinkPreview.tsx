@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState, type ReactElement } from "react";
 
-import { knownGitHubHosts, parseIssueUrl } from "~/lib/openIssueLink";
+import { knownIssueHosts, parseIssueUrl } from "~/lib/openIssueLink";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
@@ -15,7 +15,7 @@ export function useIssuePreviewTarget(
   const projects = useProjects();
   const configs = useServerConfigs();
   const primary = usePrimaryEnvironmentId();
-  const input = parseIssueUrl(url, knownGitHubHosts(projects));
+  const input = parseIssueUrl(url, knownIssueHosts(projects));
   // A chat's environment owns its credentials; do not silently read through another account.
   const candidates = environmentId == null ? [primary, ...configs.keys()] : [environmentId];
   const target = candidates.find(

@@ -29,7 +29,6 @@ import {
   type ProjectId,
   type IssueWorkRead,
   type ThreadLinkedIssue,
-  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -45,6 +44,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { issueRepositoryOf } from "./issueRepositoryOf.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import * as Layer from "effect/Layer";
 import { IssueService } from "./IssueService.ts";
@@ -242,10 +242,7 @@ export const layer = Layer.effect(
           identity?.origin?.displayName ?? sourceControlDefinitions.repositorySelector(identity);
         const upstream = sourceControlDefinitions.repositorySelector(identity);
         if (
-          identity?.provider !== "github" ||
-          sourceControlDefinitions
-            .changeRequestHost(identity, SourceControlProviderKind.make("github"))
-            .toLowerCase() !== repositoryRef.host.toLowerCase() ||
+          issueRepositoryOf(identity)?.host !== repositoryRef.host.toLowerCase() ||
           (repository?.toLowerCase() !== repositoryRef.repository.toLowerCase() &&
             upstream?.toLowerCase() !== repositoryRef.repository.toLowerCase())
         )
@@ -1682,10 +1679,7 @@ export const layer = Layer.effect(
             sourceControlDefinitions.repositorySelector(identity),
           ];
           if (
-            identity?.provider !== "github" ||
-            sourceControlDefinitions
-              .changeRequestHost(identity, SourceControlProviderKind.make("github"))
-              .toLowerCase() !== input.host.toLowerCase() ||
+            issueRepositoryOf(identity)?.host !== input.host.toLowerCase() ||
             !names.some((name) => name?.toLowerCase() === input.repository.toLowerCase())
           )
             continue;

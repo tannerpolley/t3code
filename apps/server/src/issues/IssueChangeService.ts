@@ -472,7 +472,7 @@ const make = Effect.gen(function* () {
               if (relation.parent === null) {
                 yield* startStep(`link:${index}`);
                 yield* issues
-                  .setSubIssue({ parent, child, action: "add" })
+                  .setParent({ parent, child, action: "add" })
                   .pipe(Effect.mapError(githubError));
               }
               yield* saveStep(`link:${index}`);
@@ -501,7 +501,7 @@ const make = Effect.gen(function* () {
             if (!applied) {
               yield* startStep("write");
               yield* issues
-                .setSubIssue({ parent: baseline.issue, child: current.issue, action: op.action })
+                .setParent({ parent: baseline.issue, child: current.issue, action: op.action })
                 .pipe(Effect.mapError(githubError));
             }
           } else {

@@ -6,7 +6,6 @@
 import {
   CommandId,
   IssueReadError,
-  SourceControlProviderKind,
   IssueWorkError,
   MessageId,
   RepositoryIdentity,
@@ -27,6 +26,7 @@ import {
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { issueRepositoryOf } from "./issueRepositoryOf.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -184,14 +184,10 @@ export const make = Effect.gen(function* () {
         identity != null &&
         sameRepositoryIdentity(cached.identity, identity);
       if (!unchanged) discoveryIdentities.delete(project.id);
-      if (identity?.provider !== "github") continue;
-      const host = sourceControlDefinitions
-        .changeRequestHost(identity, SourceControlProviderKind.make("github"))
-        .toLowerCase();
-      const repository =
-        identity.origin?.displayName ?? sourceControlDefinitions.repositorySelector(identity);
+      const issueRepository = issueRepositoryOf(identity);
+      if (issueRepository === null || identity == null) continue;
+      const { host, repository } = issueRepository;
       if (
-        repository === null ||
         repositories.some(
           (repo) =>
             repo.host === host && repo.repository.toLowerCase() === repository.toLowerCase(),
@@ -505,17 +501,9 @@ export const make = Effect.gen(function* () {
         identity?.origin?.displayName,
         sourceControlDefinitions.repositorySelector(identity),
       ].flatMap((name) => (name == null ? [] : [name.toLowerCase()]));
-      const ownHost =
-        identity === null
-          ? null
-          : sourceControlDefinitions
-              .changeRequestHost(identity, SourceControlProviderKind.make("github"))
-              .toLowerCase();
-      const crossProject = !(
-        identity?.provider === "github" &&
-        ownHost === target.host &&
-        own.includes(target.repository)
-      );
+      const issueRepository = issueRepositoryOf(identity);
+      const ownHost = issueRepository?.host ?? null;
+      const crossProject = !(ownHost === target.host && own.includes(target.repository));
       const projectName = projectSlug(
         own[0]?.slice(own[0].indexOf("/") + 1) ?? project?.title ?? "project",
       );

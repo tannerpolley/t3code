@@ -1,8 +1,10 @@
 import { expect, it } from "vite-plus/test";
 
-import { parseIssueUrl } from "./openIssueLink";
+import { SourceControlProviderKind, type RepositoryIdentity } from "@t3tools/contracts";
 
-const hosts = new Set(["github.com", "github.example.com"]);
+import { knownIssueHosts, parseIssueUrl } from "./openIssueLink";
+
+const hosts = new Set(["github.com", "github.example.com", "forge.example:3000"]);
 
 it("reads GitHub issue pages and leaves every other link alone", () => {
   expect(parseIssueUrl("https://github.com/Acme/web/issues/12", hosts)).toEqual({
@@ -17,6 +19,12 @@ it("reads GitHub issue pages and leaves every other link alone", () => {
     repository: "acme/web",
     number: 3,
   });
+  expect(parseIssueUrl("https://forge.example:3000/acme/web/issues/7", hosts)).toEqual({
+    host: "forge.example:3000",
+    repository: "acme/web",
+    number: 7,
+  });
+  expect(parseIssueUrl("https://forge.example:3001/acme/web/issues/7", hosts)).toBeNull();
   // Pull requests, issue sub-pages, other forges and non-web schemes stay ordinary links.
   expect(parseIssueUrl("https://github.com/acme/web/pull/12", hosts)).toBeNull();
   expect(
@@ -27,4 +35,29 @@ it("reads GitHub issue pages and leaves every other link alone", () => {
   expect(parseIssueUrl("https://github.com.example.net/acme/web/issues/12", hosts)).toBeNull();
   expect(parseIssueUrl("javascript://github.com/acme/web/issues/12", hosts)).toBeNull();
   expect(parseIssueUrl("https://github.com/acme/web/issues/0", hosts)).toBeNull();
+});
+
+it("keeps Forgejo links external until their issue host is available", () => {
+  const identity: RepositoryIdentity = {
+    provider: SourceControlProviderKind.make("forgejo"),
+    canonicalKey: "forge.example:3000/owner/repo",
+    displayName: "owner/repo",
+    locator: {
+      source: "git-remote",
+      remoteName: "origin",
+      remoteUrl: "https://forge.example:3000/owner/repo",
+    },
+  };
+  const issueHosts = knownIssueHosts([
+    { repositoryIdentity: identity },
+    {
+      repositoryIdentity: {
+        ...identity,
+        provider: SourceControlProviderKind.make("github"),
+        canonicalKey: "github.example/owner/repo",
+      },
+    },
+  ]);
+  expect([...issueHosts]).toEqual(["github.com", "github.example"]);
+  expect(parseIssueUrl("https://forge.example:3000/owner/repo/issues/1", issueHosts)).toBeNull();
 });

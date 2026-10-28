@@ -847,8 +847,8 @@ it.effect(
       yield* issues.setMilestone({ ...ref, milestoneNumber: null });
       yield* issues.setState({ ...ref, state: "closed" });
       yield* issues.setState({ ...ref, state: "open" });
-      yield* issues.setSubIssue({ parent, child, action: "add" });
-      yield* issues.setSubIssue({ parent, child, action: "remove" });
+      yield* issues.setParent({ parent, child, action: "add" });
+      yield* issues.setParent({ parent, child, action: "remove" });
       const payloads = yield* Effect.forEach(harness.calls, (call) => decodeJson(call.body!));
       assert.deepEqual(payloads, [
         { body: "Exact replacement\n" },

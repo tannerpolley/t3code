@@ -1,6 +1,6 @@
 import { IssueHoverCard } from "./IssueHoverCard";
 import { IssueQueueAction, useIssueQueued } from "./IssueQueueAction";
-import { parseIssueUrl, knownGitHubHosts } from "~/lib/openIssueLink";
+import { parseIssueUrl, knownIssueHosts } from "~/lib/openIssueLink";
 import { useProjects } from "~/state/entities";
 import { startIssueDrag } from "./issueComposerContext";
 import type { EnvironmentId, IssueActor, IssueSummary } from "@t3tools/contracts";
@@ -69,7 +69,7 @@ export function IssueRow({
   readonly referenceLabel?: string;
 }) {
   const projects = useProjects();
-  const reference = parseIssueUrl(issue.url, knownGitHubHosts(projects));
+  const reference = parseIssueUrl(issue.url, knownIssueHosts(projects));
   const queued = useIssueQueued(environmentId, reference);
   const projectChips = issueProjectChips(issue.projects);
   const assignees = issue.assignees.slice(0, 3);

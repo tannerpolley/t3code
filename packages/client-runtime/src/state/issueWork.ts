@@ -5,20 +5,24 @@ import {
   type IssueWorkStatusResult,
   type ProjectId,
   type RepositoryIdentity,
-  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { sourceControlClients } from "../sourceControlClients.ts";
 
+export function supportsIssueHost(identity: RepositoryIdentity | null | undefined) {
+  return identity?.provider === "github";
+}
+
 /** Issues belong to the checkout's origin, including when pull requests target upstream. */
 export function threadIssueRepository(identity: RepositoryIdentity | null | undefined) {
-  if (identity?.provider !== "github") return null;
+  if (!identity || !supportsIssueHost(identity)) return null;
   const repository =
     identity.origin?.displayName ?? sourceControlClients.repositorySelector(identity);
-  const host = sourceControlClients.changeRequestHost(
-    identity,
-    SourceControlProviderKind.make("github"),
-  );
-  return repository === null || host !== "github.com" ? null : { host, repository };
+  const host = sourceControlClients.changeRequestHost(identity, identity.provider);
+  return host === undefined ||
+    repository === null ||
+    (identity.provider === "github" && host !== "github.com")
+    ? null
+    : { host, repository };
 }
 
 /** Match the owning environment and fork/upstream, preferring the reader's project. */
