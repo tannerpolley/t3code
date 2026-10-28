@@ -9,7 +9,7 @@ import {
 import { sourceControlClients } from "../sourceControlClients.ts";
 
 export function supportsIssueHost(identity: RepositoryIdentity | null | undefined) {
-  return identity?.provider === "github";
+  return identity?.provider === "github" || identity?.provider === "forgejo";
 }
 
 /** Issues belong to the checkout's origin, including when pull requests target upstream. */

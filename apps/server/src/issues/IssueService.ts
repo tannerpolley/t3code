@@ -25,6 +25,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { IssueListPageCache } from "./IssueListPageCache.ts";
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
+import * as IssueForgejoHost from "./IssueForgejoHost.ts";
 import * as IssueGitHubHost from "./IssueGitHubHost.ts";
 import {
   issueHostFor,
@@ -230,7 +232,20 @@ export const make = Effect.fn("IssueService.make")(function* () {
     safeRepository,
     resolveScope,
   });
-  const hostFor = (host: string) => issueHostFor(host, github);
+  const cli = Option.getOrUndefined(yield* Effect.serviceOption(ForgejoCli.ForgejoCli));
+  const forgejo = new Map<string, IssueHost>();
+  const logins = yield* (
+    cli?.listLogins?.({ cwd: homeDirectory, command: "fj" }) ?? Effect.succeed([])
+  ).pipe(Effect.orElseSucceed(() => []));
+  for (const login of logins) {
+    forgejo.set(
+      login.name,
+      yield* IssueForgejoHost.make({ safeRepository, resolveScope }, login.name).pipe(
+        Effect.provideService(ForgejoCli.ForgejoCli, cli!),
+      ),
+    );
+  }
+  const hostFor = (host: string) => issueHostFor(host, github, forgejo);
   const pageResult = <A>(
     response: PageResponse<A>,
     cached: { readonly page: PageResult<A>; readonly etag: string | undefined } | undefined,
@@ -605,9 +620,27 @@ export const make = Effect.fn("IssueService.make")(function* () {
     setLabels: Effect.fn("IssueService.setLabels")((input, ...args) =>
       afterWrite(input, hostFor(input.host).setLabels(input, ...args)),
     ),
-    repositories: Effect.fn("IssueService.repositories")(() =>
-      hostFor("github.com").repositories(),
-    ),
+    repositories: Effect.fn("IssueService.repositories")(function* () {
+      if (forgejo.size === 0) return yield* github.repositories();
+      const results = yield* Effect.forEach(
+        [github, ...forgejo.values()],
+        (transport) => transport.repositories().pipe(Effect.result),
+        { concurrency: 8 },
+      );
+      const successful = results.flatMap((result) =>
+        result._tag === "Success" ? [result.success] : [],
+      );
+      if (successful.length === 0) {
+        const first = results[0]!;
+        if (first._tag === "Failure") return yield* first.failure;
+      }
+      return {
+        ...successful[0]!,
+        repositories: successful.flatMap((result) => result.repositories),
+        complete:
+          successful.length === results.length && successful.every((result) => result.complete),
+      };
+    }),
     statusBatch,
     setParent: Effect.fn("IssueService.setParent")((input) =>
       afterWrite(input.parent, hostFor(input.parent.host).setParent(input)),
@@ -617,4 +650,4 @@ export const make = Effect.fn("IssueService.make")(function* () {
     ),
   });
 });
-export const layer = Layer.effect(IssueService, make());
+export const layer = Layer.effect(IssueService, make()).pipe(Layer.provide(ForgejoCli.layer));

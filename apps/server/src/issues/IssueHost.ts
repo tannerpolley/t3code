@@ -36,6 +36,7 @@ export type ListMetadata = Map<
       | "projects"
       | "parent"
       | "blockedBy"
+      | "subIssues"
       | "relationshipsComplete"
       | "pullRequestRefs"
       | "pullRequests"
@@ -251,4 +252,8 @@ export interface IssueHostContext {
   ) => Effect.Effect<IssueRepositoryScope, IssueReadError>;
 }
 
-export const issueHostFor = (_host: string, github: IssueHost): IssueHost => github;
+export const issueHostFor = (
+  host: string,
+  github: IssueHost,
+  forgejo: ReadonlyMap<string, IssueHost> = new Map(),
+): IssueHost => forgejo.get(host) ?? github;

@@ -18,6 +18,7 @@ import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/Git
 import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
 
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as IssueService from "./IssueService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
@@ -2598,4 +2599,30 @@ it.effect("inbox labels preserve existing labels and tolerate a failed create", 
     assert.equal(harness.calls[5]?.method, "DELETE");
     assert.isTrue(harness.calls[5]!.url.endsWith("/issues/7/labels/decision-needed"));
   }),
+);
+
+it.effect("routes an fj login key including its port to Forgejo without GitHub fallthrough", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({ responses: [] });
+    const issues = yield* service(harness);
+    const result = yield* issues
+      .updateBody({ host: "forge.example:3000", repository: REPOSITORY, number: 7, body: "edit" })
+      .pipe(Effect.result);
+    assert.deepStrictEqual(result._tag === "Failure" && result.failure.code, "unsupported");
+    assert.strictEqual(harness.calls.length, 0);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        listLogins: () =>
+          Effect.succeed([
+            {
+              name: "forge.example:3000",
+              url: "https://forge.example:3000",
+              user: "",
+              default: "false",
+            },
+          ]),
+      }),
+    ),
+  ),
 );

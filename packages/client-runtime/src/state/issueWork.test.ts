@@ -127,7 +127,7 @@ it("matches projects in the selected environment, including fork and upstream", 
   expect(findIssueProject(projects, { ...issue, host: "different.test" }, null)).toBeNull();
 });
 
-it("keeps Forgejo projects disabled until their issue host is available", () => {
+it("addresses Forgejo origins with their port", () => {
   const identity: RepositoryIdentity = {
     provider: SourceControlProviderKind.make("forgejo"),
     canonicalKey: "forge.example:3000/upstream/repo",
@@ -139,7 +139,10 @@ it("keeps Forgejo projects disabled until their issue host is available", () => 
     },
     origin: { canonicalKey: "forge.example:3000/owner/repo", displayName: "owner/repo" },
   };
-  expect(threadIssueRepository(identity)).toBeNull();
+  expect(threadIssueRepository(identity)).toEqual({
+    host: "forge.example:3000",
+    repository: "owner/repo",
+  });
   expect(
     threadIssueRepository({ ...identity, provider: SourceControlProviderKind.make("gitlab") }),
   ).toBeNull();
