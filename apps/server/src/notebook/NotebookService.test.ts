@@ -628,6 +628,21 @@ it.effect(
           )
           .pipe(Effect.flip),
       ).toMatchObject({ reason: "invalid-document" });
+      const reloadInput = { ...handle, revision: saved.revision, diskHash: saved.diskHash };
+      expect(
+        yield* service.reload(reloadInput, { scopes: ["filesystem:read"] }).pipe(Effect.flip),
+      ).toMatchObject({ reason: "permission-denied" });
+      expect(
+        yield* service.reload({ ...reloadInput, revision: -1 }, caller).pipe(Effect.flip),
+      ).toMatchObject({ reason: "stale-revision" });
+      const reloaded = yield* service.reload(reloadInput, caller);
+      expect(reloaded.document.extra).toBeUndefined();
+      expect(reloaded.document.external).toBe(true);
+      expect(reloaded.savedRevision).toBe(reloaded.revision);
+      expect(reloaded.executions).toEqual({});
+      expect(yield* fs.readFileString(`${root}/test.ipynb`)).toBe(
+        JSON.stringify({ ...fixture, external: true }),
+      );
       const outside = yield* fs.makeTempDirectoryScoped();
       yield* fs.writeFileString(`${outside}/other.ipynb`, JSON.stringify(fixture));
       yield* fs.remove(`${root}/test.ipynb`);

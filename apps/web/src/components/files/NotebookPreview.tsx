@@ -1,13 +1,13 @@
 /* oxlint-disable react/no-array-index-key -- Notebook cells and outputs retain their saved source order. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Root, RootContent } from "mdast";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { Button } from "~/components/ui/button";
 import ReadOnlySourcePreview from "./ReadOnlySourcePreview";
 import DocumentPages from "./DocumentPages";
 import { FileSurfaceNotice } from "./fileSurfaceChrome";
-import type { OfficeWorkerResult } from "./officePreviewProtocol";
+import type { NotebookCell, OfficeWorkerResult } from "./officePreviewProtocol";
 
 // Saved notebooks must not load URLs or turn authored links into app actions.
 function inertNotebookMarkdown() {
@@ -44,6 +44,8 @@ function NotebookSource(props: { readonly name: string; readonly text: string })
 export default function NotebookPreview(props: {
   readonly notebook: Extract<OfficeWorkerResult, { type: "notebook" }>;
   readonly sizeBytes?: number | undefined;
+  readonly notice?: ReactNode;
+  readonly renderCell?: (index: number, outputView: OutputView) => ReactNode;
 }) {
   const [visible, setVisible] = useState(20);
   const scroll = useRef<HTMLDivElement>(null);
@@ -51,16 +53,10 @@ export default function NotebookPreview(props: {
     mounted: new Set<string>(),
     heights: new Map<string, number>(),
   }));
-  const outputCount = props.notebook.cells
-    .slice(0, visible)
-    .reduce(
-      (count, cell) => count + cell.outputs.filter((output) => output.kind === "html").length,
-      0,
-    );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe output visibility and measure departing outputs to bound iframe lifetimes while preserving scroll height.
   useEffect(() => {
     const root = scroll.current;
-    if (!root || !outputCount) return;
+    if (!root) return;
     const candidates = new Map<Element, string>();
     let active: Element[] = [];
     const observer = new IntersectionObserver(
@@ -89,9 +85,17 @@ export default function NotebookPreview(props: {
       },
       { root, rootMargin: "160px" },
     );
-    for (const node of root.querySelectorAll("[data-notebook-output]")) observer.observe(node);
-    return () => observer.disconnect();
-  }, [outputCount]);
+    const observe = () => {
+      for (const node of root.querySelectorAll("[data-notebook-output]")) observer.observe(node);
+    };
+    observe();
+    const mutations = new MutationObserver(observe);
+    mutations.observe(root, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      mutations.disconnect();
+    };
+  }, []);
   return (
     <>
       <div
@@ -103,70 +107,26 @@ export default function NotebookPreview(props: {
           ? ` · ${props.sizeBytes === 0 ? "0 bytes" : formatAttachmentSize(props.sizeBytes)}`
           : ""}
       </div>
-      <FileSurfaceNotice>Saved outputs only. Code is never executed.</FileSurfaceNotice>
+      <FileSurfaceNotice>
+        {props.notice ?? "Saved outputs only. Code is never executed."}
+      </FileSurfaceNotice>
       <div ref={scroll} className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-4xl space-y-5 px-5 py-6">
-          {props.notebook.cells.slice(0, visible).map((cell, index) => (
-            <section
-              key={index}
-              aria-label={`Cell ${index + 1}`}
-              className="min-w-0 overflow-hidden rounded-md border border-border/60"
-            >
-              <div className="border-b border-border/60 bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
-                {cell.kind === "code" ? props.notebook.language : cell.kind} · {index + 1}
-              </div>
-              {cell.kind === "markdown" ? (
-                <ChatMarkdown
-                  text={cell.source}
-                  cwd={undefined}
-                  parseRawHtml={false}
-                  extraRemarkPlugins={NOTEBOOK_PLUGINS}
-                  className="px-4 py-3"
+          {props.notebook.cells
+            .slice(0, visible)
+            .map((cell, index) =>
+              props.renderCell ? (
+                props.renderCell(index, outputView)
+              ) : (
+                <NotebookCellSurface
+                  key={index}
+                  cell={cell}
+                  index={index}
+                  language={props.notebook.language}
+                  outputView={outputView}
                 />
-              ) : cell.source.trim() ? (
-                <NotebookSource
-                  name={`cell.${cell.kind === "code" ? (({ python: "py", javascript: "js", typescript: "ts", julia: "jl" } as Record<string, string>)[props.notebook.language] ?? props.notebook.language) : "txt"}`}
-                  text={cell.source}
-                />
-              ) : null}
-              {cell.outputs.map((output, outputIndex) => (
-                <div
-                  key={outputIndex}
-                  data-notebook-output={
-                    output.kind === "html" ? `${index}-${outputIndex}` : undefined
-                  }
-                  className="border-t border-border/60"
-                  style={{
-                    minHeight:
-                      output.kind !== "html" || outputView.mounted.has(`${index}-${outputIndex}`)
-                        ? undefined
-                        : (outputView.heights.get(`${index}-${outputIndex}`) ?? 80),
-                  }}
-                >
-                  {output.kind === "html" ? (
-                    !outputView.mounted.has(`${index}-${outputIndex}`) ? null : (
-                      <DocumentPages
-                        html={output.text}
-                        name={`Cell ${index + 1} HTML output`}
-                        output
-                      />
-                    )
-                  ) : output.kind === "image" ? (
-                    <img
-                      src={output.text}
-                      alt={`Cell ${index + 1} output`}
-                      loading="lazy"
-                      className="max-h-96 max-w-full p-4 object-contain"
-                    />
-                  ) : (
-                    <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
-                      {output.text}
-                    </pre>
-                  )}
-                </div>
-              ))}
-            </section>
-          ))}
+              ),
+            )}
           {props.notebook.cells.length === 0 ? (
             <p className="text-sm text-muted-foreground">This notebook is empty.</p>
           ) : null}
@@ -178,5 +138,77 @@ export default function NotebookPreview(props: {
         </div>
       </div>
     </>
+  );
+}
+
+export type OutputView = { mounted: Set<string>; heights: Map<string, number> };
+export function NotebookCellSurface({
+  cell,
+  index,
+  language,
+  outputView,
+  controls,
+}: {
+  readonly cell: NotebookCell;
+  readonly index: number;
+  readonly language: string;
+  readonly outputView: OutputView;
+  readonly controls?: ReactNode;
+}) {
+  return (
+    <section
+      key={index}
+      aria-label={`Cell ${index + 1}`}
+      className="min-w-0 overflow-hidden rounded-md border border-border/60"
+    >
+      <div className="border-b border-border/60 bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
+        {cell.kind === "code" ? language : cell.kind} · {index + 1}
+      </div>
+      {controls}
+      {cell.kind === "markdown" ? (
+        <ChatMarkdown
+          text={cell.source}
+          cwd={undefined}
+          parseRawHtml={false}
+          extraRemarkPlugins={NOTEBOOK_PLUGINS}
+          className="px-4 py-3"
+        />
+      ) : cell.source.trim() ? (
+        <NotebookSource
+          name={`cell.${cell.kind === "code" ? (({ python: "py", javascript: "js", typescript: "ts", julia: "jl" } as Record<string, string>)[language] ?? language) : "txt"}`}
+          text={cell.source}
+        />
+      ) : null}
+      {cell.outputs.map((output, outputIndex) => (
+        <div
+          key={outputIndex}
+          data-notebook-output={output.kind === "html" ? `${index}-${outputIndex}` : undefined}
+          className="border-t border-border/60"
+          style={{
+            minHeight:
+              output.kind !== "html" || outputView.mounted.has(`${index}-${outputIndex}`)
+                ? undefined
+                : (outputView.heights.get(`${index}-${outputIndex}`) ?? 80),
+          }}
+        >
+          {output.kind === "html" ? (
+            !outputView.mounted.has(`${index}-${outputIndex}`) ? null : (
+              <DocumentPages html={output.text} name={`Cell ${index + 1} HTML output`} output />
+            )
+          ) : output.kind === "image" ? (
+            <img
+              src={output.text}
+              alt={`Cell ${index + 1} output`}
+              loading="lazy"
+              className="max-h-96 max-w-full p-4 object-contain"
+            />
+          ) : (
+            <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
+              {output.text}
+            </pre>
+          )}
+        </div>
+      ))}
+    </section>
   );
 }

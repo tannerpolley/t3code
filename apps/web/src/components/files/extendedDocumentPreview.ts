@@ -432,35 +432,37 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   const language = String(record(record(notebook.metadata).language_info).name ?? "text")
     .replaceAll(/[^a-z\d+#-]/gi, "")
     .slice(0, 40);
-  const cells: NotebookCell[] = notebook.cells.map((value) => {
-    const cell = record(value);
-    const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
-    if (outputs.length > 100) throw new Error("A notebook cell has too many outputs to preview.");
-    return {
-      kind: cell.cell_type === "markdown" ? "markdown" : cell.cell_type === "code" ? "code" : "raw",
-      source: notebookText(cell.source),
-      outputs: outputs
-        .map((value) => {
-          const output = record(value);
-          const data = record(output.data);
-          for (const mime of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
-            if (data[mime]) {
-              const base64 = notebookText(data[mime], 4 * 1024 * 1024).replaceAll(/\s/g, "");
-              if (base64ImageFits(base64))
-                return { kind: "image" as const, text: `data:${mime};base64,${base64}` };
-            }
-          }
-          const html = notebookText(data["text/html"]);
-          if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
-          return {
-            kind: "text" as const,
-            text: notebookText(output.text ?? data["text/plain"] ?? output.traceback),
-          };
-        })
-        .filter((output) => output.text.trim().length > 0),
-    };
-  });
+  const cells = notebook.cells.map(notebookPreviewCell);
   return { type: "notebook", language, cells };
+}
+
+export function notebookPreviewCell(value: unknown): NotebookCell {
+  const cell = record(value);
+  const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
+  if (outputs.length > 100) throw new Error("A notebook cell has too many outputs to preview.");
+  return {
+    kind: cell.cell_type === "markdown" ? "markdown" : cell.cell_type === "code" ? "code" : "raw",
+    source: notebookText(cell.source),
+    outputs: outputs
+      .map((value) => {
+        const output = record(value);
+        const data = record(output.data);
+        for (const mime of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
+          if (data[mime]) {
+            const base64 = notebookText(data[mime], 4 * 1024 * 1024).replaceAll(/\s/g, "");
+            if (base64ImageFits(base64))
+              return { kind: "image" as const, text: `data:${mime};base64,${base64}` };
+          }
+        }
+        const html = notebookText(data["text/html"]);
+        if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
+        return {
+          kind: "text" as const,
+          text: notebookText(output.text ?? data["text/plain"] ?? output.traceback),
+        };
+      })
+      .filter((output) => output.text.trim().length > 0),
+  };
 }
 
 export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {

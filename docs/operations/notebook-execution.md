@@ -2,8 +2,8 @@
 
 Notebook execution is an optional fork extension. The server attaches to an existing
 project Jupyter Server; it does not install packages or launch Jupyter. The saved-output
-viewer continues to work without configuration. Native viewer controls and agent tools
-are separate delivery phases.
+viewer continues to work without configuration. Web and desktop workspace notebooks provide explicit Run, Interrupt, Restart and Save controls.
+Attachments and unconfigured projects keep the saved-output viewer. Agent tools are a separate delivery phase.
 
 A trusted server operator configures `<T3 home>/notebooks.json`, outside the workspace.
 It is an array with one entry per canonical project root:

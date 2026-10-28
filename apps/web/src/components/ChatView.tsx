@@ -1,3 +1,4 @@
+import NotebookCloseDialog from "./files/NotebookCloseDialog";
 import { ThreadIssueSurface } from "./issues/ThreadIssueSurface";
 import { InlineShellRunProvider } from "./chat/InlineShellRun";
 import { automaticProviderSwitchBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -3869,6 +3870,7 @@ export default function ChatView(props: ChatViewProps) {
       checkpoints={serverProjection?.checkpoints}
     >
       {content}
+      <NotebookCloseDialog />
     </FileMetadataThreadProvider>
   );
 }

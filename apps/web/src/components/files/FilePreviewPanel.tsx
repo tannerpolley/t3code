@@ -1,3 +1,4 @@
+import { environmentProjects } from "~/state/projects";
 import { useWorkspaceMutationRefresh } from "../../hooks/useWorkspaceMutationRefresh";
 import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -127,6 +128,8 @@ import {
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
+
+const RunnableNotebookPreview = lazy(() => import("./RunnableNotebookPreview"));
 
 const NO_FILE_REVISION_ATOM = Atom.make(null);
 
@@ -1022,6 +1025,8 @@ export default function FilePreviewPanel({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
+  const notebookProjects = useAtomValue(environmentProjects.environmentProjectsAtom(environmentId));
+  const notebookProject = notebookProjects.find((project) => project.workspaceRoot === cwd);
   const isVideo = relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
   const isAudio = relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
@@ -1419,6 +1424,37 @@ export default function FilePreviewPanel({
               revealRequestId={revealRequestId}
               wordWrap={wordWrap}
             />
+          ) : relativePath?.endsWith(".ipynb") &&
+            attachment === undefined &&
+            !draft &&
+            !isHostFile &&
+            notebookProject ? (
+            <Suspense fallback={<FileSurfaceLoading />}>
+              <RunnableNotebookPreview
+                key={`${environmentId}:${notebookProject.id}:${relativePath}`}
+                environmentId={environmentId}
+                projectId={notebookProject.id}
+                relativePath={relativePath}
+                threadRef={threadRef}
+                onPendingChange={onPendingChange}
+                fallback={
+                  <AttachmentFilePreview
+                    name={relativePath}
+                    mimeType="application/octet-stream"
+                    sizeBytes={0}
+                    asset={{
+                      environmentId,
+                      resource: {
+                        _tag: "media-file",
+                        threadId: threadRef.threadId,
+                        path: absolutePath!,
+                      },
+                    }}
+                    origin="File"
+                  />
+                }
+              />
+            </Suspense>
           ) : relativePath &&
             absolutePath &&
             (isDocument || file.readError?.failure === "binary_file") ? (

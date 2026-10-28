@@ -1,4 +1,4 @@
-import { PROJECT_ARTIFACT_METHODS } from "@t3tools/contracts";
+import { NOTEBOOK_METHODS, PROJECT_ARTIFACT_METHODS } from "@t3tools/contracts";
 import {
   EnvironmentAuthorizationError,
   clientRpcRequiredScopes,
@@ -50,6 +50,7 @@ export type EnvironmentRpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
 
 export type EnvironmentSubscriptionRpcTag =
+  | typeof NOTEBOOK_METHODS.subscribe
   | typeof PROJECT_ARTIFACT_METHODS.subscribe
   | typeof WS_METHODS.providerAuthSubscribe
   | typeof WS_METHODS.providerInstallSubscribe

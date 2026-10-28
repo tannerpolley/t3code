@@ -76,6 +76,10 @@ export class NotebookService extends Context.Service<
       },
       NotebookError
     >;
+    readonly reload: (
+      input: NotebookSave,
+      caller: Caller,
+    ) => Effect.Effect<NotebookSnapshot, NotebookError>;
     readonly save: (
       input: NotebookSave,
       caller: Caller,
@@ -730,6 +734,45 @@ const make = Effect.gen(function* () {
       }),
     );
   });
+  const reload = Effect.fn("NotebookService.reload")(function* (
+    input: NotebookSave,
+    caller: Caller,
+  ) {
+    yield* writable(caller);
+    const session = yield* get(input, caller);
+    return yield* session.lock.withPermit(
+      Effect.gen(function* () {
+        yield* get(input, caller);
+        if (session.snapshot.outcome === "running" || session.snapshot.kernel === "unknown")
+          return yield* new NotebookError({ reason: "busy" });
+        if (
+          input.revision !== session.snapshot.revision ||
+          input.diskHash !== session.snapshot.diskHash
+        )
+          return yield* new NotebookError({ reason: "stale-revision" });
+        const stat = yield* fs
+          .stat(session.path)
+          .pipe(Effect.mapError(() => new NotebookError({ reason: "not-found" })));
+        if (stat.size > NOTEBOOK_LIMITS.bytes)
+          return yield* new NotebookError({ reason: "output-limit" });
+        const text = yield* fs
+          .readFileString(session.path)
+          .pipe(Effect.mapError(() => new NotebookError({ reason: "not-found" })));
+        const parsed = yield* Effect.try({
+          try: () => parseNotebook(text),
+          catch: () => new NotebookError({ reason: "invalid-document" }),
+        });
+        session.reducer = new ExecutionReducer(parsed.document);
+        session.snapshot.document = parsed.document;
+        session.snapshot.executions = {};
+        session.snapshot.diskHash = hash(text);
+        session.snapshot.revision++;
+        session.snapshot.savedRevision = session.snapshot.revision - (parsed.changed ? 1 : 0);
+        changed(session, null, [], true, false);
+        return snapshotOf(session);
+      }),
+    );
+  });
   const edit = Effect.fn("NotebookService.edit")(function* (input: NotebookEdit, caller: Caller) {
     yield* writable(caller);
     const session = yield* get(input, caller);
@@ -880,6 +923,7 @@ const make = Effect.gen(function* () {
 
   return NotebookService.of({
     readOutputs,
+    reload,
     save,
     edit,
     create,

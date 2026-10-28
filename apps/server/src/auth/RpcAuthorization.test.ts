@@ -86,7 +86,12 @@ describe("RPC authorization scopes", () => {
   });
 
   it("requires read and write authority for notebook document mutations", () => {
-    for (const method of [NOTEBOOK_METHODS.save, NOTEBOOK_METHODS.edit, NOTEBOOK_METHODS.create]) {
+    for (const method of [
+      NOTEBOOK_METHODS.reload,
+      NOTEBOOK_METHODS.save,
+      NOTEBOOK_METHODS.edit,
+      NOTEBOOK_METHODS.create,
+    ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemWriteScope);
       expect(clientRpcRequiredScopes(method, {})).toEqual([
         AuthFilesystemReadScope,

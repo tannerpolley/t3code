@@ -1,4 +1,9 @@
-import { PROJECT_ARTIFACT_METHODS } from "@t3tools/contracts";
+import {
+  NOTEBOOK_METHODS,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
+  PROJECT_ARTIFACT_METHODS,
+} from "@t3tools/contracts";
 import { requestGuarded, runStreamGuarded } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -72,6 +77,43 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("notebook commands require read plus the destination mutation grant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.mount(sessions(other));
+        for (const [method, mutation] of [
+          [NOTEBOOK_METHODS.save, AuthFilesystemWriteScope],
+          [NOTEBOOK_METHODS.reload, AuthFilesystemWriteScope],
+          [NOTEBOOK_METHODS.execute, AuthTerminalOperateScope],
+          [NOTEBOOK_METHODS.interrupt, AuthTerminalOperateScope],
+          [NOTEBOOK_METHODS.restart, AuthTerminalOperateScope],
+        ] as const) {
+          const command = createCommandPermissions(runtime, method);
+          registry.set(
+            sessions(other),
+            AsyncResult.success({ ...grant(true), permissions: [mutation] }),
+          );
+          expect(registry.get(command.permissionAtom(other))).toBe(false);
+          registry.set(
+            sessions(other),
+            AsyncResult.success({
+              ...grant(true),
+              permissions: [AuthFilesystemReadScope, mutation],
+            }),
+          );
+          expect(registry.get(command.permissionAtom(other))).toBe(true);
+          yield* command.authorize(registry, other, {});
+          registry.set(sessions(env), AsyncResult.success(grant(false)));
+          expect(registry.get(command.permissionAtom(env))).toBe(false);
+          expect(yield* command.authorize(registry, env, {}).pipe(Effect.flip)).toMatchObject({
+            _tag: "EnvironmentAuthorizationError",
+          });
+        }
+      }),
+    ),
+  );
+
   it.effect("artifact mutations never reach transport without the destination grant", () =>
     Effect.scoped(
       Effect.gen(function* () {

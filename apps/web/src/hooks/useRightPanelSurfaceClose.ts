@@ -1,4 +1,8 @@
 import {
+  allowNotebookClose,
+  releaseNotebookSurface,
+} from "../components/files/notebookCloseAdapter";
+import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   type ScopedThreadRef,
@@ -42,6 +46,7 @@ export function useRightPanelSurfaceClose(input: {
   );
 
   const releaseSurfaceResources = (ref: ScopedThreadRef, surface: RightPanelSurface) => {
+    releaseNotebookSurface(ref, surface);
     // Without preview access, server state remains until an authorized close or restart.
     if (canOperatePreview && surface.kind === "preview" && surface.resourceId) {
       void closePreviewSession({
@@ -80,8 +85,8 @@ export function useRightPanelSurfaceClose(input: {
     );
   };
   // The active surface closes last so the panel does not flash through it.
-  const finishClose = (toClose: readonly RightPanelSurface[]) => {
-    if (!threadRef) return;
+  const finishClose = async (toClose: readonly RightPanelSurface[]) => {
+    if (!threadRef || !(await allowNotebookClose(threadRef, toClose))) return;
     const store = useRightPanelStore.getState();
     const activeId = selectThreadRightPanelState(store.byThreadKey, threadRef).activeSurfaceId;
     const ordered = toClose.toSorted(

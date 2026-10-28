@@ -19,6 +19,7 @@ import {
 export const NOTEBOOK_METHODS = {
   open: "notebook.open",
   save: "notebook.save",
+  reload: "notebook.reload",
   edit: "notebook.edit",
   create: "notebook.create",
   close: "notebook.close",
@@ -32,6 +33,7 @@ export const NOTEBOOK_METHODS = {
 } as const;
 const error = Schema.Union([NotebookError, EnvironmentAuthorizationError]);
 export const notebookRpcs = [
+  Rpc.make(NOTEBOOK_METHODS.reload, { payload: NotebookSave, success: NotebookSnapshot, error }),
   Rpc.make(NOTEBOOK_METHODS.save, { payload: NotebookSave, success: NotebookSnapshot, error }),
   Rpc.make(NOTEBOOK_METHODS.edit, { payload: NotebookEdit, success: NotebookSnapshot, error }),
   Rpc.make(NOTEBOOK_METHODS.create, { payload: NotebookCreate, success: NotebookSnapshot, error }),
