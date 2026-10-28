@@ -145,6 +145,8 @@ export interface IssueHost {
     readonly child: ThreadLinkedIssueType;
     readonly action: "add" | "remove";
   }) => Effect.Effect<void, IssueReadError>;
+  /** Forgejo only: GitHub itself closes the issues a merged pull request's body names. */
+  readonly closeIssuesFixedBy?: (pullRequest: IssueRef) => Effect.Effect<void, IssueReadError>;
   readonly repositories: () => Effect.Effect<IssueRepositoriesResultType, IssueReadError>;
 
   readonly withIdentity: <A, R>(

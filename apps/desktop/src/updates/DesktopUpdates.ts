@@ -772,6 +772,13 @@ export const make = Effect.gen(function* () {
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
+            ForkStagedUpdateChangedError: Effect.fn("desktop.updates.refreshChangedStagedBuild")(
+              function* () {
+                yield* resetInstallAction;
+                yield* checkForUpdates("staged-build-changed");
+                return { accepted: true, completed: false, failed: false };
+              },
+            ),
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
               function* (error) {
                 yield* recoverFailedInstall(error.message);

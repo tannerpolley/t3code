@@ -130,8 +130,16 @@ export class IssueService extends Context.Service<
   IssueService,
   Omit<
     IssueHost,
-    "withIdentity" | "listIssuePage" | "listMilestonePage" | "listMetadata" | "detail" | "statuses"
+    | "withIdentity"
+    | "listIssuePage"
+    | "listMilestonePage"
+    | "listMetadata"
+    | "detail"
+    | "statuses"
+    | "closeIssuesFixedBy"
   > & {
+    /** Closes the issues a merged pull request's body names where its host does not. */
+    readonly closeIssuesFixedBy: (pullRequest: IssueRef) => Effect.Effect<void, IssueReadError>;
     readonly isForgejoHost: (host: string) => Effect.Effect<boolean>;
     readonly milestoneIssues: (input: {
       readonly host: string;
@@ -599,6 +607,10 @@ export const make = Effect.fn("IssueService.make")(function* () {
     setState: Effect.fn("IssueService.setState")((input) =>
       afterWrite(input, hostFor(input.host).setState(input)),
     ),
+    closeIssuesFixedBy: Effect.fn("IssueService.closeIssuesFixedBy")((pullRequest) => {
+      const close = hostFor(pullRequest.host).closeIssuesFixedBy;
+      return close === undefined ? Effect.void : afterWrite(pullRequest, close(pullRequest));
+    }),
     detail,
     workRead: Effect.fn("IssueService.workRead")((input) => hostFor(input.host).workRead(input)),
     milestoneIssues,

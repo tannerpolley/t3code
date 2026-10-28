@@ -9,6 +9,39 @@ Only Codex and Claude matter here; mobile is out of scope.
 Plans and bugs live in the fork's GitHub issues. Issue #1 is the roadmap and maintenance tracker.
 Every task starts from an issue: the orchestrator creates one before delegating, and links each worker thread to it (`link_issue`), so the Issues pane shows it In progress. Close an issue when its fix lands on `main`.
 
+## Forgejo issue host
+
+The fork's issue features (Issues pane, inbox, roadmap, managed `delegate_task(issue=…)`,
+`t3_issue_post`, and `propose_issue_change`) support Forgejo. The pilot runs Forgejo 17 on the
+Chromebox at `https://chromebox.taila72856.ts.net:3000` (home-server `forgejo`). A host is
+Forgejo when an `fj` login key matches it, including the port; other hosts use GitHub. Logins
+are read at server start, so restart T3 after adding one.
+
+Forgejo has no sub-issues: T3 writes `Part of #N <!-- t3:parent=N -->` in the child body,
+within the same repository. Blockers use Forgejo issue dependencies; Forgejo refuses to close
+an issue with open dependencies (HTTP 412). A fast-forward push marks a pull request merged
+when manual merge detection is enabled, but Forgejo does not close the issues its body names.
+T3 closes them, with a comment, once it sees a pull request linked to a thread merge; for an
+unlinked pull request, put `Closes #N` in a pushed commit message or close the issue explicitly.
+
+The pilot `tannerpolley/process-monitor` lives on Forgejo, with HTTPS `origin` at
+`https://chromebox.taila72856.ts.net:3000/tannerpolley/process-monitor.git` and a read-only
+`github` remote. Store the Forgejo token with `git credential approve` in the git libsecret
+helper; `fj` does not install a git credential helper. GitHub Issues are disabled on the copy.
+There is no push mirror: code and issues live only on the Chromebox (owner decision 2026-10-28).
+
+To move another repository, drain and pause its T3 orchestration. Call `POST /api/v1/repos/migrate`
+with `service: github`, `mirror: false`, and issues, labels, milestones, pull requests and releases
+enabled; read the GitHub credential inside the command with `gh auth token` and never print it.
+Compare counts, then `PATCH` the repository with `autodetect_manual_merge: true` and
+`internal_tracker.enable_issue_dependencies: true`. Re-create blockers with
+`POST issues/{n}/dependencies` and parent markers, set HTTPS `origin` and its libsecret
+credential, then run `gh repo edit --enable-issues=false` on the GitHub copy.
+
+Migrated issues and comments show `Ghost` and an empty `original_author`; the migrator retained
+no GitHub authorship. T3's Forgejo host reads no Projects, and Forgejo sends no ETags, so lists
+are plain re-reads. The `state_reason` “not planned” is represented by a close and a comment.
+
 ## Branches and worktrees
 
 - `main` is the only long-lived branch, and GitHub `main` mirrors local `main`.

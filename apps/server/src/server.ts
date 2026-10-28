@@ -50,6 +50,7 @@ import * as IssueCleanup from "./issues/IssueCleanup.ts";
 import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
 import * as IssueLinks from "./issues/IssueLinks.ts";
 import * as IssueService from "./issues/IssueService.ts";
+import * as IssueMergeClosing from "./issues/IssueMergeClosing.ts";
 import * as IssueGitHubHost from "./issues/IssueGitHubHost.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
@@ -621,6 +622,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   layerThreadPullRequestWorker,
   DelegatedTaskAnalytics.layer,
+  IssueMergeClosing.layer.pipe(Layer.provide(layerIssueService)),
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;
