@@ -1,3 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off
+// The save regression compares the service hash with the actual committed bytes.
+import { vi } from "vite-plus/test";
+vi.mock("effect/Queue", { spy: true });
+import * as Context from "effect/Context";
+import * as NodeCrypto from "node:crypto";
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NotebookError, ProjectId, type AuthEnvironmentScope } from "@t3tools/contracts";
@@ -40,6 +46,9 @@ const fixture = {
 };
 const setup = Effect.fn("Test.setup")(function* (
   overrides: Partial<JupyterTransport.JupyterTransport["Service"]> = {},
+  options: {
+    readonly fileSystem?: (fs: FileSystem.FileSystem) => FileSystem.FileSystem;
+  } = {},
 ) {
   const messages = yield* Queue.unbounded<JupyterTransport.Message, NotebookError>();
   const requests = yield* Queue.unbounded<{ id: string; code: string }>();
@@ -79,11 +88,20 @@ const setup = Effect.fn("Test.setup")(function* (
           owned: Effect.fn("Fake.owned")(() => Effect.void),
           released: Effect.fn("Fake.released")(() => Effect.void),
           endpoint: Effect.fn("Fake.endpoint")(() =>
-            Effect.succeed({ url: "http://127.0.0.1:1", token: "test", kernelName: "python3" }),
+            Effect.succeed({
+              url: "http://127.0.0.1:1",
+              token: "test",
+              kernelName: "python3",
+              profileHash: "test-profile",
+            }),
           ),
         }),
       ),
-      Layer.provide(Layer.succeedContext(context)),
+      Layer.provide(
+        Layer.succeedContext(
+          Context.add(context, FileSystem.FileSystem, options.fileSystem?.(fs) ?? fs),
+        ),
+      ),
     ),
   );
   const service = yield* NotebookService.NotebookService.pipe(Effect.provide(serviceContext));
@@ -747,4 +765,263 @@ it.effect(
       expect(controls).toEqual(["shutdown"]);
       yield* Fiber.interrupt(b);
     }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect(
+  "concurrent first opens share a canonical owner and its Busy guard across project aliases",
+  () =>
+    Effect.gen(function* () {
+      const arrived = yield* Queue.unbounded<void>();
+      const release = yield* Deferred.make<void>();
+      let block = false;
+      const { service, handle, fs, root, sql, requests } = yield* setup({
+        probe: Effect.fn("Concurrent.probe")(() =>
+          block
+            ? Queue.offer(arrived, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void,
+        ),
+      });
+      const alias = ProjectId.make("concurrent-alias");
+      yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at) VALUES (${alias}, 'Alias', ${root}, '[]', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z')`;
+      yield* fs.writeFileString(`${root}/concurrent.ipynb`, JSON.stringify(fixture));
+      block = true;
+      const first = yield* service
+        .open({ projectId: handle.projectId, relativePath: "concurrent.ipynb" }, caller)
+        .pipe(Effect.forkScoped);
+      const second = yield* service
+        .open({ projectId: alias, relativePath: "concurrent.ipynb" }, caller)
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(arrived);
+      yield* Queue.take(arrived);
+      yield* Deferred.succeed(release, undefined);
+      const a = yield* Fiber.join(first);
+      const b = yield* Fiber.join(second);
+      expect(a.handle).toBe(b.handle);
+      const target = { ...handle, handle: a.handle };
+      yield* service.execute(
+        { ...target, revision: a.revision, cellIds: ["a"], requestId: "first-owner" },
+        caller,
+      );
+      yield* Queue.take(requests);
+      expect(
+        yield* service
+          .execute(
+            {
+              projectId: alias,
+              handle: b.handle,
+              revision: b.revision,
+              cellIds: ["a"],
+              requestId: "second-owner",
+            },
+            caller,
+          )
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "busy" });
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("concurrent first opens cannot exceed the retained document cap", () =>
+  Effect.gen(function* () {
+    const arrived = yield* Queue.unbounded<void>();
+    const release = yield* Deferred.make<void>();
+    let block = false;
+    const { service, handle, fs, root } = yield* setup({
+      probe: Effect.fn("Capacity.probe")(() =>
+        block
+          ? Queue.offer(arrived, undefined).pipe(Effect.andThen(Deferred.await(release)))
+          : Effect.void,
+      ),
+    });
+    for (let i = 0; i < 14; i++) {
+      yield* fs.writeFileString(`${root}/${i}.ipynb`, JSON.stringify(fixture));
+      yield* service.open({ projectId: handle.projectId, relativePath: `${i}.ipynb` }, caller);
+    }
+    yield* fs.writeFileString(`${root}/last-a.ipynb`, JSON.stringify(fixture));
+    yield* fs.writeFileString(`${root}/last-b.ipynb`, JSON.stringify(fixture));
+    block = true;
+    const a = yield* service
+      .open({ projectId: handle.projectId, relativePath: "last-a.ipynb" }, caller)
+      .pipe(Effect.result, Effect.forkScoped);
+    const b = yield* service
+      .open({ projectId: handle.projectId, relativePath: "last-b.ipynb" }, caller)
+      .pipe(Effect.result, Effect.forkScoped);
+    yield* Queue.take(arrived);
+    yield* Queue.take(arrived);
+    yield* Deferred.succeed(release, undefined);
+    const results = [yield* Fiber.join(a), yield* Fiber.join(b)];
+    expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
+    expect(results.find((result) => result._tag === "Failure")).toMatchObject({
+      failure: { reason: "output-limit" },
+    });
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect(
+  "channel loss protects uncertain execution from detach and idle cleanup until explicit recovery",
+  () =>
+    Effect.gen(function* () {
+      const { service, opened, handle, requests, controls, messages, finished } = yield* setup();
+      const ready = yield* Deferred.make<void>();
+      const observer = yield* service.subscribe({ ...handle, leaseId: "viewer" }, caller).pipe(
+        Stream.tap((event) =>
+          event.type === "snapshot" ? Deferred.succeed(ready, undefined) : Effect.void,
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(ready);
+      const runId = yield* service.execute(
+        { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "unknown-active" },
+        caller,
+      );
+      yield* Queue.take(requests);
+      yield* Queue.fail(messages, new NotebookError({ reason: "disconnected" }));
+      yield* finished(runId);
+      yield* Fiber.interrupt(observer);
+      yield* TestClock.adjust("60 minutes");
+      expect(controls).toEqual([]);
+      const current = yield* service.snapshot(handle, caller);
+      expect(current.outcome).toBe("unknown");
+      expect(current.idleDeadline).toBeNull();
+      yield* service.shutdown({ ...handle, generation: current.generation }, caller);
+      expect(controls).toEqual(["shutdown"]);
+      expect((yield* service.snapshot(handle, caller)).kernel).toBe("stopped");
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect(
+  "cancelling a committed save during temporary cleanup acknowledges the committed disk hash",
+  () =>
+    Effect.gen(function* () {
+      const cleaning = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const { service, opened, handle, fs, root } = yield* setup(
+        {},
+        {
+          fileSystem: (fs) => ({
+            ...fs,
+            remove: (path, options) =>
+              path.includes(".t3-notebook-")
+                ? Deferred.succeed(cleaning, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.andThen(fs.remove(path, options)),
+                  )
+                : fs.remove(path, options),
+          }),
+        },
+      );
+      const edited = yield* service.edit(
+        { ...handle, revision: opened.revision, document: { ...opened.document, committed: true } },
+        caller,
+      );
+      const saving = yield* service
+        .save({ ...handle, revision: edited.revision, diskHash: opened.diskHash }, caller)
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(cleaning);
+      saving.interruptUnsafe();
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.await(saving);
+      const disk = yield* fs.readFileString(`${root}/test.ipynb`);
+      const current = yield* service.snapshot(handle, caller);
+      expect(current.diskHash).toBe(NodeCrypto.createHash("sha256").update(disk).digest("hex"));
+      expect(current.savedRevision).toBe(edited.revision);
+      yield* service.save(
+        { ...handle, revision: current.revision, diskHash: current.diskHash },
+        caller,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect(
+  "subscription snapshot handoff stays ordered while an old cleanup timer is cancelling",
+  () =>
+    Effect.gen(function* () {
+      const deleting = yield* Deferred.make<void>();
+      const cancelling = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let controls = 0;
+      const { service, opened, handle, requests, messages, send, finished } = yield* setup({
+        control: Effect.fn("Timer.control")(() =>
+          ++controls === 1
+            ? Deferred.succeed(deleting, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.ensuring(
+                  Deferred.succeed(cancelling, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                  ),
+                ),
+              )
+            : Effect.void,
+        ),
+      });
+      const runId = yield* service.execute(
+        { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "handoff" },
+        caller,
+      );
+      const request = yield* Queue.take(requests);
+      yield* send(request.id, "execute_reply", { status: "ok" });
+      yield* send(request.id, "status", { execution_state: "idle" });
+      yield* finished(runId);
+      const monitorReady = yield* Deferred.make<void>();
+      const unknown = yield* Deferred.make<void>();
+      const monitor = yield* service.subscribe({ ...handle, leaseId: "monitor" }, caller).pipe(
+        Stream.runForEach((event) =>
+          event.type === "snapshot"
+            ? Deferred.succeed(monitorReady, undefined)
+            : event.type === "changed" && event.outcome === "unknown"
+              ? Deferred.succeed(unknown, undefined)
+              : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(monitorReady);
+      yield* service.close({ ...handle, leaseId: "monitor" }, caller);
+      const advancing = yield* TestClock.adjust(0).pipe(Effect.forkScoped);
+      yield* Deferred.await(deleting);
+      const events = yield* Queue.unbounded<import("@t3tools/contracts").NotebookEvent>();
+      const subscriber = yield* service.subscribe(handle, caller).pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(cancelling);
+      yield* Queue.fail(messages, new NotebookError({ reason: "disconnected" }));
+      yield* Deferred.await(unknown);
+      yield* Deferred.succeed(release, undefined);
+      const initial = yield* Queue.take(events);
+      const current = yield* service.snapshot(handle, caller);
+      yield* service.shutdown({ ...handle, generation: current.generation }, caller);
+      const next = yield* Queue.take(events);
+      expect(initial.type).toBe("snapshot");
+      expect(next.type).toBe("changed");
+      if (initial.type === "snapshot" && next.type === "changed")
+        expect(next.sequence).toBeGreaterThan(initial.snapshot.sequence);
+      yield* Fiber.interrupt(subscriber);
+      yield* Fiber.interrupt(monitor);
+      yield* Fiber.join(advancing);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("rejected subscriptions do not retain queues in subsequent output fanout", () =>
+  Effect.gen(function* () {
+    const { service, handle, opened, requests, send, finished } = yield* setup();
+    const full = Array.from({ length: 128 }, (_, i) => `lease-${i}`);
+    for (const leaseId of full) yield* service.acquire({ ...handle, leaseId }, caller);
+    for (const leaseId of ["", "x".repeat(129), "over-capacity", "", "over-capacity"]) {
+      expect(
+        yield* service.subscribe({ ...handle, leaseId }, caller).pipe(Stream.runHead, Effect.flip),
+      ).toMatchObject({ reason: "output-limit" });
+    }
+    yield* service.close({ ...handle, leaseId: full[0]! }, caller);
+    const offers = vi.mocked(Queue.offerUnsafe);
+    offers.mockClear();
+    const runId = yield* service.execute(
+      { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "no-abandoned-observers" },
+      caller,
+    );
+    const request = yield* Queue.take(requests);
+    yield* send(request.id, "execute_reply", { status: "ok" });
+    yield* send(request.id, "status", { execution_state: "idle" });
+    yield* finished(runId);
+    expect(new Set(offers.mock.calls.map(([queue]) => queue)).size).toBeLessThanOrEqual(1);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );

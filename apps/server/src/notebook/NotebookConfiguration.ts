@@ -32,7 +32,6 @@ const make = Effect.gen(function* () {
   const transport = yield* JupyterTransport.JupyterTransport;
   const lock = Semaphore.makeUnsafe(1);
   const reconciled = new Set<string>();
-  const profiles = new Map<string, string>();
   const journalPath = NodePath.join(server.baseDir, "notebook-kernels.json");
   const read = Effect.fn("NotebookConfiguration.read")(function* <A>(
     path: string,
@@ -50,8 +49,12 @@ const make = Effect.gen(function* () {
     const temp = `${journalPath}.${NodeCrypto.randomUUID()}.tmp`;
     yield* Effect.gen(function* () {
       yield* fs.writeFileString(temp, encodeJson(next), { flag: "wx", mode: 0o600 });
-      yield* fs.rename(temp, journalPath);
-      journal = next;
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* fs.rename(temp, journalPath);
+          journal = next;
+        }),
+      );
     }).pipe(
       Effect.ensuring(fs.remove(temp).pipe(Effect.ignore)),
       Effect.mapError(() => new NotebookError({ reason: "unavailable" })),
@@ -104,20 +107,15 @@ const make = Effect.gen(function* () {
             }
             reconciled.add(root);
           }
-          profiles.set(root, profileHash);
-          return value;
+          return { ...value, profileHash };
         }),
       )
       .pipe(Effect.mapError(() => new NotebookError({ reason: "unavailable" })));
   });
   return NotebookService.NotebookConfiguration.of({
     endpoint,
-    owned: Effect.fn("NotebookConfiguration.owned")((root, id) =>
-      lock.withPermit(
-        Effect.suspend(() =>
-          persist([...journal, { root, id, profileHash: profiles.get(root) ?? "" }]),
-        ),
-      ),
+    owned: Effect.fn("NotebookConfiguration.owned")((root, profileHash, id) =>
+      lock.withPermit(Effect.suspend(() => persist([...journal, { root, id, profileHash }]))),
     ),
     released: Effect.fn("NotebookConfiguration.released")((root, id) =>
       lock.withPermit(

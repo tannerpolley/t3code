@@ -43,8 +43,14 @@ import { ExecutionReducer } from "./executionReducer.ts";
 export class NotebookConfiguration extends Context.Service<
   NotebookConfiguration,
   {
-    readonly endpoint: (root: string) => Effect.Effect<JupyterTransport.Endpoint, NotebookError>;
-    readonly owned: (root: string, id: string) => Effect.Effect<void, NotebookError>;
+    readonly endpoint: (
+      root: string,
+    ) => Effect.Effect<JupyterTransport.Endpoint & { readonly profileHash: string }, NotebookError>;
+    readonly owned: (
+      root: string,
+      profileHash: string,
+      id: string,
+    ) => Effect.Effect<void, NotebookError>;
     readonly released: (root: string, id: string) => Effect.Effect<void, NotebookError>;
   }
 >()("t3/notebook/NotebookService/NotebookConfiguration") {}
@@ -243,6 +249,7 @@ const make = Effect.gen(function* () {
     session.cancelled = true;
     session.snapshot.kernel = "unknown";
     session.snapshot.outcome = "unknown";
+    session.snapshot.idleDeadline = null;
     if (session.pending) yield* Deferred.succeed(session.pending.done, true);
     changed(session);
   });
@@ -325,7 +332,11 @@ const make = Effect.gen(function* () {
   });
   const arm = Effect.fn("NotebookService.arm")(function* (session: Session, grace = true) {
     if (session.timer) yield* Fiber.interrupt(session.timer);
-    if (!session.kernel || session.snapshot.outcome === "running") {
+    if (
+      !session.kernel ||
+      session.snapshot.outcome === "running" ||
+      session.snapshot.outcome === "unknown"
+    ) {
       session.snapshot.idleDeadline = null;
       return;
     }
@@ -338,7 +349,8 @@ const make = Effect.gen(function* () {
       Effect.andThen(
         session.lock.withPermit(
           Effect.gen(function* () {
-            if (session.snapshot.outcome === "running") return;
+            if (session.snapshot.outcome === "running" || session.snapshot.outcome === "unknown")
+              return;
             const kernel = session.kernel;
             if (!kernel) return;
             yield* transport.control(kernel.endpoint, kernel.id, "shutdown");
@@ -388,57 +400,60 @@ const make = Effect.gen(function* () {
       try: () => parseNotebook(text),
       catch: () => new NotebookError({ reason: "invalid-document" }),
     });
-    for (const session of sessions.values()) {
-      if (session.path === path && session.root === root) {
-        session.projects.add(input.projectId);
-        session.snapshot.availability = yield* config.endpoint(root).pipe(
-          Effect.tap(transport.probe),
-          Effect.as("available" as const),
-          Effect.orElseSucceed(() => "unavailable" as const),
-        );
+    const availability = yield* config.endpoint(root).pipe(
+      Effect.tap(transport.probe),
+      Effect.as("available" as const),
+      Effect.orElseSucceed(() => "unavailable" as const),
+    );
+    const now = yield* Clock.currentTimeMillis;
+    return yield* Effect.try({
+      try: () => {
+        for (const session of sessions.values()) {
+          if (session.path === path && session.root === root) {
+            session.projects.add(input.projectId);
+            session.snapshot.availability = availability;
+            return snapshotOf(session);
+          }
+        }
+        if (sessions.size >= NOTEBOOK_LIMITS.sessions)
+          throw new NotebookError({ reason: "output-limit" });
+        const handle = NodeCrypto.randomUUID();
+        const snapshot: NotebookSnapshot = {
+          handle,
+          epoch,
+          sequence: 0,
+          revision: parsed.changed ? 1 : 0,
+          savedRevision: 0,
+          idleDeadline: null,
+          availability,
+          environment: "unverified",
+          diskHash: NodeCrypto.createHash("sha256").update(text).digest("hex"),
+          generation: 0,
+          executions: {},
+          document: parsed.document,
+          kernel: "stopped",
+          runId: null,
+          outcome: "none",
+          truncated: false,
+        };
+        const session: Session = {
+          projects: new Set([input.projectId]),
+          lock: Semaphore.makeUnsafe(1),
+          path,
+          root,
+          snapshot,
+          reducer: new ExecutionReducer(parsed.document),
+          cancelled: false,
+          requests: new Map(),
+          observers: new Set(),
+          leases: new Map(),
+          lastExecution: now,
+        };
+        sessions.set(handle, session);
         return snapshotOf(session);
-      }
-    }
-    if (sessions.size >= NOTEBOOK_LIMITS.sessions)
-      return yield* new NotebookError({ reason: "output-limit" });
-    const handle = NodeCrypto.randomUUID();
-    const snapshot: NotebookSnapshot = {
-      handle,
-      epoch,
-      sequence: 0,
-      revision: parsed.changed ? 1 : 0,
-      savedRevision: 0,
-      idleDeadline: null,
-      availability: yield* config.endpoint(root).pipe(
-        Effect.tap(transport.probe),
-        Effect.as("available" as const),
-        Effect.orElseSucceed(() => "unavailable" as const),
-      ),
-      environment: "unverified",
-      diskHash: NodeCrypto.createHash("sha256").update(text).digest("hex"),
-      generation: 0,
-      executions: {},
-      document: parsed.document,
-      kernel: "stopped",
-      runId: null,
-      outcome: "none",
-      truncated: false,
-    };
-    const session: Session = {
-      projects: new Set([input.projectId]),
-      lock: Semaphore.makeUnsafe(1),
-      path,
-      root,
-      snapshot,
-      reducer: new ExecutionReducer(parsed.document),
-      cancelled: false,
-      requests: new Map(),
-      observers: new Set(),
-      leases: new Map(),
-      lastExecution: yield* Clock.currentTimeMillis,
-    };
-    sessions.set(handle, session);
-    return snapshotOf(session);
+      },
+      catch: () => new NotebookError({ reason: "output-limit" }),
+    });
   });
   const snapshot = Effect.fn("NotebookService.snapshot")(function* (
     input: NotebookHandle,
@@ -488,7 +503,7 @@ const make = Effect.gen(function* () {
           const id = yield* transport.create(endpoint, session.root);
           session.kernel = { id, endpoint };
           yield* config
-            .owned(session.root, id)
+            .owned(session.root, endpoint.profileHash, id)
             .pipe(
               Effect.onError(() => transport.control(endpoint, id, "shutdown").pipe(Effect.ignore)),
             );
@@ -699,14 +714,18 @@ const make = Effect.gen(function* () {
           const current = yield* fs.readFileString(session.path);
           if (hash(current) !== input.diskHash)
             return yield* new NotebookError({ reason: "save-conflict" });
-          yield* fs.rename(temporary, session.path);
+          yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              yield* fs.rename(temporary, session.path);
+              session.snapshot.diskHash = hash(text);
+              session.snapshot.savedRevision = session.snapshot.revision;
+              changed(session, null, [], false, false);
+            }),
+          );
         }).pipe(
           Effect.ensuring(fs.remove(temporary).pipe(Effect.ignore)),
           Effect.mapError(() => new NotebookError({ reason: "save-conflict" })),
         );
-        session.snapshot.diskHash = hash(text);
-        session.snapshot.savedRevision = session.snapshot.revision;
-        changed(session, null, [], false, false);
         return snapshotOf(session);
       }),
     );
@@ -805,28 +824,37 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const session = yield* get(input, caller);
         const queue = yield* Queue.dropping<NotebookEvent>(32);
-        session.observers.add(queue);
         const leaseId = input.leaseId ?? NodeCrypto.randomUUID();
-        if (
-          !leaseId ||
-          leaseId.length > 128 ||
-          (session.leases.size >= 128 && !session.leases.has(leaseId))
-        )
-          return yield* new NotebookError({ reason: "output-limit" });
         const leaseToken = Symbol();
-        session.leases.set(leaseId, leaseToken);
-        yield* arm(session);
-        const initial = snapshotOf(session);
-        yield* Effect.addFinalizer(() =>
-          Effect.gen(function* () {
-            session.observers.delete(queue);
-            Queue.shutdownUnsafe(queue);
-            if (session.leases.get(leaseId) === leaseToken) {
-              session.leases.delete(leaseId);
-              yield* arm(session);
-            }
+        yield* Effect.acquireRelease(
+          Effect.try({
+            try: () => {
+              if (
+                !leaseId ||
+                leaseId.length > 128 ||
+                (session.leases.size >= 128 && !session.leases.has(leaseId))
+              )
+                throw new NotebookError({ reason: "output-limit" });
+              session.leases.set(leaseId, leaseToken);
+            },
+            catch: () => new NotebookError({ reason: "output-limit" }),
           }),
+          () =>
+            Effect.gen(function* () {
+              session.observers.delete(queue);
+              Queue.shutdownUnsafe(queue);
+              if (session.leases.get(leaseId) === leaseToken) {
+                session.leases.delete(leaseId);
+                yield* arm(session);
+              }
+            }),
         );
+        yield* arm(session);
+        const initial = yield* Effect.sync(() => {
+          const snapshot = snapshotOf(session);
+          session.observers.add(queue);
+          return snapshot;
+        });
         return Stream.concat(
           Stream.make({ type: "snapshot", snapshot: initial } as NotebookEvent),
           Stream.fromQueue(queue),
