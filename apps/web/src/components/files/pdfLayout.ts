@@ -1,3 +1,5 @@
+import type { PDFDocumentProxy } from "pdfjs-dist";
+
 const PDF_PAGE_GAP = 16;
 export const PDF_MIN_ZOOM = 0.25;
 export const PDF_MAX_ZOOM = 3;
@@ -117,4 +119,42 @@ export function pdfFindMatchRuns(runs: readonly string[], query: string) {
   )
     for (let index = match; index < match + needle.length; index++) hits[owner[index]!] = true;
   return hits;
+}
+
+export type PdfOutlineEntry = { title: string; page: number | null; depth: number };
+
+type OutlineItem = { title: string; dest: string | unknown[] | null; items: OutlineItem[] };
+
+export async function resolvePdfOutline(pdf: PDFDocumentProxy): Promise<PdfOutlineEntry[]> {
+  const outline: OutlineItem[] = (await pdf.getOutline()) ?? [];
+  const entries: PdfOutlineEntry[] = [];
+  async function visit(items: OutlineItem[], depth: number) {
+    for (const item of items) {
+      let page: number | null = null;
+      try {
+        const dest =
+          typeof item.dest === "string" ? await pdf.getDestination(item.dest) : item.dest;
+        if (dest?.[0] != null) {
+          const index = typeof dest[0] === "number" ? dest[0] : await pdf.getPageIndex(dest[0]);
+          if (index >= 0 && index < pdf.numPages) page = index;
+        }
+      } catch {
+        // Invalid bookmarks should not prevent the rest of the outline from loading.
+      }
+      entries.push({ title: item.title, page, depth });
+      await visit(item.items, depth + 1);
+    }
+  }
+  await visit(outline, 0);
+  return entries;
+}
+
+export function currentPdfSection(entries: readonly PdfOutlineEntry[], page: number) {
+  let current = -1;
+  for (let index = 0; index < entries.length; index++) {
+    const target = entries[index]!.page;
+    if (target !== null && target <= page && (current === -1 || target >= entries[current]!.page!))
+      current = index;
+  }
+  return current;
 }

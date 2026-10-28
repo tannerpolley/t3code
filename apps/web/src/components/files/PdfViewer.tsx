@@ -8,6 +8,8 @@ import {
 } from "react";
 import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
 import { ChevronDownIcon, ChevronUpIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
+import { Button } from "~/components/ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { Input } from "~/components/ui/input";
 import { observeResize } from "~/lib/observeResize";
 import { FileSurfaceAction, FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
@@ -15,6 +17,9 @@ import { readBoundedDocument } from "./readBoundedDocument";
 import { openPdf } from "./pdfDocument";
 import {
   currentPdfPage,
+  currentPdfSection,
+  resolvePdfOutline,
+  type PdfOutlineEntry,
   pdfFindIncludes,
   pdfFindMatchRuns,
   pdfPageOffsets,
@@ -118,6 +123,7 @@ function PdfPage(props: {
 
 export default function PdfViewer(props: { src: string; title: string }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [outline, setOutline] = useState<PdfOutlineEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [ratios, setRatios] = useState<number[]>([]);
@@ -135,6 +141,8 @@ export default function PdfViewer(props: { src: string; title: string }) {
   const zoomAnchor = useRef<{ page: number; offset: number; width: number } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Clear bookmarks while loading a different document.
+    setOutline([]);
     const controller = new AbortController();
     let disposed = false;
     let task: ReturnType<typeof openPdf> | undefined;
@@ -160,6 +168,13 @@ export default function PdfViewer(props: { src: string; title: string }) {
         setPageWidth(first.width);
         setRatios(Array.from({ length: document.numPages }, () => first.height / first.width));
         setPdf(document);
+        void resolvePdfOutline(document)
+          .then((entries) => {
+            if (!controller.signal.aborted) setOutline(entries);
+          })
+          .catch(() => {
+            if (!controller.signal.aborted) setOutline([]);
+          });
       })
       .catch((cause: unknown) => {
         if (!disposed && !controller.signal.aborted)
@@ -184,6 +199,7 @@ export default function PdfViewer(props: { src: string; title: string }) {
   const { scale, width } = pdfPageWidth(viewport.width, pageWidth, zoom);
   const offsets = pdfPageOffsets(ratios, width);
   const current = currentPdfPage(offsets, ratios.length, scrollTop);
+  const section = currentPdfSection(outline, current);
   const visible = visiblePdfPages(ratios, offsets, scrollTop, viewport.height);
   // Stable callbacks let page canvases survive scroll and find updates.
   const [onSize] = useState(
@@ -349,6 +365,37 @@ export default function PdfViewer(props: { src: string; title: string }) {
           </>
         ) : null}
       </div>
+      {outline.length > 0 && (
+        <Collapsible>
+          <CollapsibleTrigger render={<Button variant="ghost" size="compact" />}>
+            Contents
+          </CollapsibleTrigger>
+          <CollapsiblePanel animate={false}>
+            <nav aria-label="PDF contents" className="max-h-48 overflow-auto border-b">
+              <ul>
+                {outline.map((entry, index) => (
+                  <li
+                    key={`${entry.title}-${entry.page}-${entry.depth}`}
+                    style={{ paddingLeft: `${entry.depth * 16}px` }}
+                  >
+                    <Button
+                      variant={index === section ? "secondary" : "ghost"}
+                      size="sm-multiline"
+                      disabled={entry.page === null}
+                      aria-current={index === section ? "location" : undefined}
+                      onClick={() => {
+                        if (entry.page !== null) showPage(entry.page);
+                      }}
+                    >
+                      {entry.title}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </CollapsiblePanel>
+        </Collapsible>
+      )}
       <div
         ref={scroll}
         role="region"
