@@ -6,7 +6,7 @@ const titleCh = 11;
 // Optional columns stay until the title would shrink below this; a role name such as
 // "Orchestrator" truncates first, since its role icon and tooltip still name it.
 const titleReserveCh = 6;
-// With role icons no role name shares the title's cell, so it reserves enough for a short program
+// With role icons, thread titles are empty, so it reserves enough for a short program
 // name such as "node", which keeps icons from costing more than names.
 const labelCh = 4;
 const modelStepCh = 0.5;
@@ -27,10 +27,7 @@ export const sidebarColumnLayout = {
     // status stay right-aligned.
     name: { ch: titleCh },
     spacer: 0,
-    // Every row reserves both badge slots, so issue and pull request icons line up whichever it has:
-    // each fits its icon and three digits (an orchestrator can hold 100+ pull requests).
-    issue: 2.25,
-    pr: 2.25,
+    badge: 2.25,
     time: 4.4375,
     work: 0.875,
   },
@@ -42,7 +39,7 @@ export const sidebarColumnLayout = {
    */
   dropOrder: [
     ["model", "effort"],
-    ["issue", "pr"],
+    ["badge"],
   ],
   rowPaddingRem: 1,
   titleCh,
@@ -97,7 +94,7 @@ export function generateSidebarColumnLayoutCss() {
     .concat(chWidths.map(([name, ch]) => `  --sidebar-${name}: ${ch}ch;`))
     .join(
       "\n",
-    )}\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template};\n  column-gap: 0;\n}\n`;
+    )}\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template};\n  column-gap: 0;\n}\n[data-sidebar-role-display="name"]:has(.sidebar-role-title) {\n  --sidebar-name-track: var(--sidebar-name-width);\n}\n`;
   css += entries.map(([name]) => `.sidebar-thread-${name} { grid-column: ${name}; }\n`).join("");
   for (const roleDisplay of ["name", "icon"] as const) {
     const hidden = new Set<string>();

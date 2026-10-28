@@ -18,7 +18,7 @@ const optionalColumns = (sidebarRem: number, roleDisplay: "name" | "icon" = "nam
     if (container < budget.rem * 16 + budget.px + budget.ch * ch)
       for (const column of group) hidden.add(column);
   }
-  return ["model", "effort", "issue"].filter((column) => !hidden.has(column));
+  return ["model", "effort", "badge"].filter((column) => !hidden.has(column));
 };
 /** Title width left in a row once every optional column has dropped. */
 const minimumTitlePx = (sidebarRem: number) => {
@@ -34,17 +34,17 @@ const minimumTitlePx = (sidebarRem: number) => {
 describe("sidebar width budget", () => {
   it("keeps optional columns until the role name would shrink below its reserve", () => {
     expect(optionalColumns(16)).toEqual([]);
-    expect(optionalColumns(20.5)).toEqual([]);
-    expect(optionalColumns(20.6)).toEqual(["issue"]);
-    expect(optionalColumns(23.5)).toEqual(["issue"]);
-    expect(optionalColumns(23.6)).toEqual(["model", "effort", "issue"]);
+    expect(optionalColumns(18.1)).toEqual([]);
+    expect(optionalColumns(18.2)).toEqual(["badge"]);
+    expect(optionalColumns(21.1)).toEqual(["badge"]);
+    expect(optionalColumns(21.2)).toEqual(["model", "effort", "badge"]);
   });
 
   it("never drops a column sooner with role icons", () => {
-    expect(optionalColumns(20.4, "icon")).toEqual([]);
-    expect(optionalColumns(20.5, "icon")).toEqual(["issue"]);
-    expect(optionalColumns(23.4, "icon")).toEqual(["issue"]);
-    expect(optionalColumns(23.5, "icon")).toEqual(["model", "effort", "issue"]);
+    expect(optionalColumns(18, "icon")).toEqual([]);
+    expect(optionalColumns(18.2, "icon")).toEqual(["badge"]);
+    expect(optionalColumns(21, "icon")).toEqual(["badge"]);
+    expect(optionalColumns(21.1, "icon")).toEqual(["model", "effort", "badge"]);
     for (let rem = 16; rem <= 30; rem += 0.1) {
       expect(optionalColumns(rem, "icon").length).toBeGreaterThanOrEqual(
         optionalColumns(rem).length,

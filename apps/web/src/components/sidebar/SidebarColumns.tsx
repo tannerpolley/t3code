@@ -151,6 +151,7 @@ export function SidebarThreadColumns(props: {
   readonly name: ReactNode;
   /** The row has no model or effort, so its name starts in the model's column. */
   readonly wideName?: boolean | undefined;
+  readonly badgeKind?: "issue" | "pr" | undefined;
   readonly issue?: ReactNode;
   readonly pr?: ReactNode;
   readonly trailingClassName?: string | undefined;
@@ -166,10 +167,14 @@ export function SidebarThreadColumns(props: {
     effort: !settings.codexStyleSidebar || settings.sidebarShowEffort,
     issue: !settings.codexStyleSidebar || settings.sidebarShowIssueBadge,
     pr: !settings.codexStyleSidebar || settings.sidebarShowPullRequestBadge,
+    badge:
+      !settings.codexStyleSidebar ||
+      settings.sidebarShowIssueBadge ||
+      settings.sidebarShowPullRequestBadge,
   }));
   const style = Object.fromEntries(
     Object.entries(columns).flatMap(([column, visible]) =>
-      visible === false
+      visible === false && column !== "issue" && column !== "pr"
         ? [
             [`--sidebar-${column}-track`, "0px"],
             [`--sidebar-${column}-gap`, "0px"],
@@ -202,16 +207,10 @@ export function SidebarThreadColumns(props: {
       <span className={cn("sidebar-thread-name", props.wideName && "sidebar-thread-name-wide")}>
         {props.name}
       </span>
-      {columns.issue !== false ? (
-        <span className={cn("sidebar-thread-badge sidebar-thread-issue", props.trailingClassName)}>
-          {props.issue}
-        </span>
-      ) : null}
-      {columns.pr !== false ? (
-        <span className={cn("sidebar-thread-badge sidebar-thread-pr", props.trailingClassName)}>
-          {props.pr}
-        </span>
-      ) : null}
+      <span className={cn("sidebar-thread-badge", props.trailingClassName)}>
+        {props.badgeKind === "issue" && columns.issue ? props.issue : null}
+        {props.badgeKind === "pr" && columns.pr ? props.pr : null}
+      </span>
       <span className={cn("sidebar-thread-time", props.trailingClassName)}>{props.time}</span>
       <span className={cn("sidebar-thread-icon sidebar-thread-work", props.trailingClassName)}>
         {props.status}
@@ -232,17 +231,10 @@ export function threadGroupHue(rootThreadId: string): number {
   return THREAD_GROUP_HUES[Math.abs(hash) % THREAD_GROUP_HUES.length]!;
 }
 
-/**
- * A thread row's title after its role name. The role name gives up its width first and hides
- * with role icons, so the title always shows.
- */
 export function SidebarThreadTitle(props: { readonly role: string; readonly title: string }) {
   return (
-    <span className="flex min-w-0 items-baseline gap-1.5">
-      <span className="sidebar-role-title min-w-0 shrink-[999] truncate text-muted-foreground">
-        {props.role}
-      </span>
-      <span className="min-w-0 truncate">{props.title}</span>
+    <span className="sidebar-role-title" title={props.title}>
+      {props.role}
     </span>
   );
 }
