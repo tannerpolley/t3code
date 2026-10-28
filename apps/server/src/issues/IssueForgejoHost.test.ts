@@ -49,6 +49,7 @@ const issue = (number: number, overrides: Record<string, unknown> = {}) => ({
   labels: [{ name: "bug", color: "ff0000" }],
   assignees: [],
   milestone,
+  pull_request: null,
   comments: 1,
   created_at: date,
   updated_at: date,
@@ -313,10 +314,12 @@ it.effect("maps body, milestone clearing, state, labels and posted issue writes"
         writes.push({ path, method, body });
         return { id: 107, number: 7, html_url: issue(7).html_url };
       }
-      return [
-        { id: 3, name: "bug" },
-        { id: 4, name: "old" },
-      ];
+      if (path.includes("/issues/7/labels"))
+        return Array.from({ length: 50 }, (_, index) => ({
+          id: index + 4,
+          name: index === 0 ? "old" : `label-${index}`,
+        }));
+      return [{ id: 3, name: "bug" }];
     });
     const transport = yield* fixture.make;
     const ref = { ...scope, number: 7 };
@@ -332,6 +335,11 @@ it.effect("maps body, milestone clearing, state, labels and posted issue writes"
     yield* transport.setLabels(ref, ["bug"], ["OLD", "absent"]);
     yield* transport.postComment(ref, "hello");
     yield* transport.postIssue(scope, { title: "posted", body: "body", labels: ["BUG"] });
+    expect(
+      fixture.calls.filter(
+        (path) => path.startsWith("repos/owner/repo/issues/7/labels") && !path.endsWith("/4"),
+      ),
+    ).toEqual(["repos/owner/repo/issues/7/labels", "repos/owner/repo/issues/7/labels"]);
     expect(writes).toEqual([
       { path: "repos/owner/repo/issues/7", method: "PATCH", body: { body: "new body" } },
       { path: "repos/owner/repo/issues/7", method: "PATCH", body: { milestone: 39 } },
@@ -565,10 +573,10 @@ it.effect(
                 {
                   id: 99,
                   body: "last page",
+                  html_url: `https://${host}/${repository}/pulls/8#issuecomment-99`,
                   created_at: date,
                   updated_at: date,
                   issue_url: issue(7).html_url,
-                  html_url: `${issue(7).html_url}#issuecomment-99`,
                 },
               ];
         return path.endsWith("page=1")
@@ -606,4 +614,56 @@ it.effect(
         `repos/owner/repo/issues/7/timeline?since=${encodeURIComponent(date)}&limit=50&page=2`,
       );
     }),
+);
+
+it.effect("returns capped activity feeds and timelines as incomplete within the page budget", () =>
+  Effect.gen(function* () {
+    const fixture = setup((path) => {
+      if (path.includes("/timeline"))
+        return Array.from({ length: 50 }, (_, index) => ({
+          id: index + 1,
+          type: "close",
+          created_at: date,
+        }));
+      if (path.includes("/issues/comments"))
+        return Array.from({ length: 50 }, (_, index) => ({
+          id: index + 1,
+          body: "PR comment",
+          created_at: date,
+          updated_at: date,
+          issue_url: issue(8).html_url,
+          html_url: `https://${host}/${repository}/pulls/8#issuecomment-${index + 1}`,
+        }));
+      const page = Number(new URLSearchParams(path.split("?")[1]).get("page"));
+      return Array.from({ length: 50 }, (_, index) =>
+        issue(
+          (page - 1) * 50 + index + 1,
+          page === 1 && index === 0 ? {} : { pull_request: { merged: false } },
+        ),
+      );
+    });
+    const transport = yield* fixture.make;
+    const activity = yield* transport.activitySince(scope, {
+      issuesSince: date,
+      commentsSince: date,
+      eventsAfter: 0,
+      issuesEtag: null,
+      commentsEtag: null,
+      eventsEtag: null,
+    });
+    expect(activity.issues).toMatchObject({
+      complete: false,
+      items: [{ number: 1, pull_request: null }],
+    });
+    expect(activity.comments.complete).toBe(false);
+    expect(activity.comments.items).toHaveLength(5000);
+    expect(activity.stateChanges.complete).toBe(false);
+    expect(activity.stateChanges.items).toHaveLength(5000);
+    expect(fixture.calls).toHaveLength(300);
+    expect(
+      fixture.calls
+        .filter((path) => path.includes("/timeline"))
+        .every((path) => path.includes("/issues/1/timeline")),
+    ).toBe(true);
+  }),
 );

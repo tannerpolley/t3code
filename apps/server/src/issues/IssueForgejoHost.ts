@@ -893,12 +893,6 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
           ),
         { concurrency: 8 },
       );
-      if (!issues.complete || !comments.complete || timelines.some((result) => !result.complete))
-        return yield* failure(
-          "detail",
-          "invalid-response",
-          "Forgejo activity pagination is incomplete; the inbox cursor was not advanced.",
-        );
       const events = timelines.flatMap((result) => result.items);
       return {
         issues: {
@@ -913,9 +907,10 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
           complete: issues.complete,
         },
         comments: {
-          items: comments.items
-            .filter((raw) => !raw.html_url.includes("/pulls/"))
-            .map((raw) => ({ ...raw, user: actor(raw.user, raw.original_author) })),
+          items: comments.items.map((raw) => ({
+            ...raw,
+            user: actor(raw.user, raw.original_author),
+          })),
           etag: null,
           complete: comments.complete,
         },
@@ -1004,7 +999,8 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
           body: { labels: add },
         });
       if (remove.length === 0) return;
-      const labels = yield* labelsFor(scope, base);
+      // Forgejo's issue-labels endpoint is unpaginated, unlike repository labels.
+      const labels = (yield* request(scope, base, Schema.Array(Label), "detail")).value;
       for (const name of remove) {
         const label = labels.find((row) => row.name.toLowerCase() === name.toLowerCase());
         if (label)
