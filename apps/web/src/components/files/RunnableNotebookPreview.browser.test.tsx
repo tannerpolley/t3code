@@ -1,3 +1,17 @@
+import {
+  EnvironmentRegistry,
+  EnvironmentSupervisor,
+  AVAILABLE_CONNECTION_STATE,
+  PrimaryConnectionTarget,
+} from "@t3tools/client-runtime/connection";
+import { createEnvironmentRpcSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
+import type { RpcSession } from "@t3tools/client-runtime/rpc";
+import { NOTEBOOK_METHODS } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import "~/index.css";
 import { RegistryContext } from "@effect/atom-react";
 import {
@@ -14,6 +28,14 @@ import { render, act } from "../../../test/render";
 
 vi.mock(import("~/state/notebooks"), async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
+  const { AVAILABLE_CONNECTION_STATE } = await import("@t3tools/client-runtime/connection");
+  const connection = Atom.make(
+    AsyncResult.success({
+      ...AVAILABLE_CONNECTION_STATE,
+      phase: "connected" as const,
+      generation: 1,
+    }),
+  ).pipe(Atom.keepAlive);
   const event = Atom.make(AsyncResult.initial<NotebookEvent>()).pipe(Atom.keepAlive);
   const permission = Atom.make(true).pipe(Atom.keepAlive);
   const command = () => ({
@@ -22,6 +44,7 @@ vi.mock(import("~/state/notebooks"), async () => {
   });
   return {
     notebooks: {
+      connectionStateAtom: () => connection,
       open: command(),
       execute: command(),
       save: command(),
@@ -29,7 +52,7 @@ vi.mock(import("~/state/notebooks"), async () => {
       interrupt: command(),
       restart: command(),
       close: command(),
-      events: Object.assign(() => event, { event, permission }),
+      events: Object.assign(vi.fn(), { event, permission }),
     },
   } as never;
 });
@@ -74,7 +97,14 @@ function setup() {
     },
   };
   const registry = AtomRegistry.make();
-  const events = notebooks.events as unknown as {
+  const connection = notebooks.connectionStateAtom(
+    EnvironmentId.make("test-notebook"),
+  ) as Atom.Writable<AsyncResult.AsyncResult<typeof AVAILABLE_CONNECTION_STATE>>;
+  registry.set(
+    connection,
+    AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, phase: "connected", generation: 1 }),
+  );
+  const events = notebooks.events as unknown as ReturnType<typeof vi.fn> & {
     event: Atom.Writable<AsyncResult.AsyncResult<NotebookEvent>>;
     permission: Atom.Writable<boolean>;
   };
@@ -97,6 +127,43 @@ function setup() {
     onPendingChange: vi.fn(),
     fallback: <p>Static notebook fallback</p>,
   };
+  const runtime = Atom.runtime(
+    Layer.effect(
+      EnvironmentRegistry.EnvironmentRegistry,
+      Effect.gen(function* () {
+        const session = yield* SubscriptionRef.make(
+          Option.some({
+            client: {
+              [NOTEBOOK_METHODS.subscribe]: () =>
+                AtomRegistry.toStream(registry, events.event).pipe(
+                  Stream.filter(AsyncResult.isSuccess),
+                  Stream.map((value) => value.value),
+                ),
+            },
+          } as unknown as RpcSession),
+        );
+        const supervisor = {
+          session,
+          target: new PrimaryConnectionTarget({
+            environmentId: ref.environmentId,
+            label: "Notebook",
+            httpBaseUrl: "http://localhost",
+            wsBaseUrl: "ws://localhost",
+          }),
+        } as EnvironmentSupervisor.EnvironmentSupervisor["Service"];
+        return {
+          followStream: (_id, stream) =>
+            Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        } as EnvironmentRegistry.EnvironmentRegistry["Service"];
+      }),
+    ),
+  );
+  const actualEvents = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "test:notebook",
+    tag: NOTEBOOK_METHODS.subscribe,
+    idleTtlMs: 0,
+  });
+  events.mockReset().mockImplementation(actualEvents);
   const ui = (
     <RegistryContext.Provider value={registry}>
       <div className="flex h-[700px] flex-col">
@@ -105,7 +172,16 @@ function setup() {
       </div>
     </RegistryContext.Provider>
   );
-  return { initial, registry, events, props, ref, ui, [Symbol.dispose]: () => registry.dispose() };
+  return {
+    initial,
+    registry,
+    events,
+    connection,
+    props,
+    ref,
+    ui,
+    [Symbol.dispose]: () => registry.dispose(),
+  };
 }
 it("opens without execution, routes explicit run, disables permissions, recovers snapshots and retains a dirty draft on close", async () => {
   using h = setup();
@@ -127,8 +203,43 @@ it("opens without execution, routes explicit run, disables permissions, recovers
       }),
     }),
   );
+  await act(() =>
+    h.registry.set(
+      h.connection,
+      AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, phase: "backoff", generation: 1 }),
+    ),
+  );
+  await expect.element(screen.getByRole("button", { name: "Run all", exact: true })).toBeDisabled();
+  await act(() =>
+    h.registry.set(
+      h.connection,
+      AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, phase: "connected", generation: 2 }),
+    ),
+  );
+  await expect.element(screen.getByRole("button", { name: "Run all", exact: true })).toBeDisabled();
+  await act(() =>
+    h.registry.set(h.events.event, AsyncResult.success({ type: "snapshot", snapshot: h.initial })),
+  );
+  await expect.element(screen.getByRole("button", { name: "Run all", exact: true })).toBeEnabled();
   await act(() => h.registry.set(h.events.permission, false));
   await expect.element(screen.getByRole("button", { name: "Run all", exact: true })).toBeDisabled();
+  const { handle: _handle, executions: _executions, document: _document, ...metadata } = h.initial;
+  await act(() =>
+    h.registry.set(
+      h.events.event,
+      AsyncResult.success({
+        ...metadata,
+        type: "changed",
+        sequence: 1,
+        revision: 1,
+        cellId: "a",
+        patches: [
+          { type: "append", cellId: "a", output: { output_type: "stream", text: "Live delta" } },
+        ],
+      }),
+    ),
+  );
+  await expect.element(screen.getByText("Live delta", { exact: true })).toBeVisible();
   const dirty = {
     ...h.initial,
     sequence: 2,
@@ -226,7 +337,7 @@ it("keeps a conflicted draft and closes only after server reload acknowledges di
   await screen.getByRole("button", { name: "Save", exact: true }).click();
   await expect.element(screen.getByRole("alert")).toBeVisible();
   expect(h.props.onPendingChange).toHaveBeenLastCalledWith("test.ipynb", true);
-  const reloaded = { ...dirty, sequence: 2, revision: 2, savedRevision: 2 };
+  const reloaded = { ...dirty, sequence: 2, revision: 2, savedRevision: 1 };
   (notebooks.reload as unknown as FakeCommand).run.mockResolvedValue(AsyncResult.success(reloaded));
   const closing = allowNotebookClose(h.ref, [
     { kind: "file", relativePath: "test.ipynb" } as never,
@@ -236,6 +347,12 @@ it("keeps a conflicted draft and closes only after server reload acknowledges di
   expect(await closing).toBe(true);
   expect((notebooks.reload as unknown as FakeCommand).run).toHaveBeenCalledWith({
     environmentId: h.ref.environmentId,
-    input: { projectId: h.props.projectId, handle: "handle", revision: 1, diskHash: "disk" },
+    input: {
+      projectId: h.props.projectId,
+      threadId: h.ref.threadId,
+      handle: "handle",
+      revision: 1,
+      diskHash: "disk",
+    },
   });
 });

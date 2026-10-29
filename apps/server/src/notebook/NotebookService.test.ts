@@ -1,3 +1,4 @@
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 // The save regression compares the service hash with the actual committed bytes.
 import { vi } from "vite-plus/test";
@@ -6,7 +7,7 @@ import * as Context from "effect/Context";
 import * as NodeCrypto from "node:crypto";
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { NotebookError, ProjectId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import { NotebookError, ProjectId, ThreadId, type AuthEnvironmentScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -21,6 +22,7 @@ import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as NotebookService from "./NotebookService.ts";
 import * as JupyterTransport from "./JupyterTransport.ts";
+import { applyNotebookEvent } from "../../../web/src/components/files/notebookLiveState.ts";
 import { parseNotebook } from "./notebookDocument.ts";
 
 const caller = {
@@ -47,6 +49,7 @@ const fixture = {
 const setup = Effect.fn("Test.setup")(function* (
   overrides: Partial<JupyterTransport.JupyterTransport["Service"]> = {},
   options: {
+    readonly worktrees?: readonly string[];
     readonly fileSystem?: (fs: FileSystem.FileSystem) => FileSystem.FileSystem;
   } = {},
 ) {
@@ -82,6 +85,12 @@ const setup = Effect.fn("Test.setup")(function* (
   const context = yield* Effect.context<FileSystem.FileSystem | ProjectStore.ProjectStoreV2>();
   const serviceContext = yield* Layer.build(
     NotebookService.layer.pipe(
+      Layer.provide(
+        Layer.succeed(GitVcsDriver.GitVcsDriver, {
+          listWorktreePaths: () => Effect.succeed(options.worktrees ?? []),
+        } as unknown as GitVcsDriver.GitVcsDriver["Service"]),
+      ),
+      Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
       Layer.provide(Layer.succeed(JupyterTransport.JupyterTransport, transport)),
       Layer.provide(
         Layer.succeed(NotebookService.NotebookConfiguration, {
@@ -432,20 +441,52 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const { service, opened, handle, requests, send, finished } = yield* setup();
-      const input = { ...handle, revision: opened.revision, cellIds: ["a", "b"], requestId: "run" };
+      const input = { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "run" };
+      let client = opened;
+      const ready = yield* Deferred.make<void>();
+      const late = yield* Deferred.make<void>();
+      yield* service.subscribe(handle, caller).pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            client = applyNotebookEvent(client, event)!;
+            if (event.type === "snapshot") yield* Deferred.succeed(ready, undefined);
+            if (
+              event.type === "changed" &&
+              event.cellId === "a" &&
+              event.patches.some((p) => p.type === "append" || p.type === "stream")
+            )
+              yield* Deferred.succeed(late, undefined);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(ready);
       const runId = yield* service.execute(input, caller);
       expect(yield* service.execute(input, caller)).toBe(runId);
       const first = yield* Queue.take(requests);
       yield* send("unrelated", "stream", { name: "stdout", text: "ignore" });
       yield* send(first.id, "execute_reply", { status: "ok" });
       yield* send(first.id, "status", { execution_state: "idle" });
+      yield* finished(runId);
+      const next = yield* service.snapshot(handle, caller);
+      const runB = yield* service.execute(
+        { ...handle, revision: next.revision, cellIds: ["b"], requestId: "run-b" },
+        caller,
+      );
       const second = yield* Queue.take(requests);
       yield* send(first.id, "stream", { name: "stdout", text: "late" });
+      yield* Deferred.await(late);
+      expect(client.runId).toBe(runB);
+      expect(client.executions.a?.runId).toBe(runId);
+      yield* service.interrupt(
+        { ...handle, generation: client.generation, runId: client.runId! },
+        caller,
+      );
       yield* send(second.id, "status", { execution_state: "idle" });
       yield* send(second.id, "execute_reply", { status: "ok" });
-      yield* finished(runId);
+      yield* finished(runB);
       const result = yield* service.snapshot(handle, caller);
-      expect(result.outcome).toBe("ok");
+      expect(result.outcome).toBe("aborted");
       expect((result.document.cells as Array<{ outputs: unknown[] }>)[0]?.outputs).toEqual([
         { output_type: "stream", name: "stdout", text: "late" },
       ]);
@@ -643,6 +684,18 @@ it.effect(
       expect(yield* fs.readFileString(`${root}/test.ipynb`)).toBe(
         JSON.stringify({ ...fixture, external: true }),
       );
+      const older = JSON.stringify({
+        ...fixture,
+        nbformat_minor: 4,
+        cells: fixture.cells.map(({ id: _id, ...cell }) => cell),
+      });
+      yield* fs.writeFileString(`${root}/test.ipynb`, older);
+      const normalized = yield* service.reload(
+        { ...handle, revision: reloaded.revision, diskHash: reloaded.diskHash },
+        caller,
+      );
+      expect(normalized.revision).toBe(normalized.savedRevision + 1);
+      expect(yield* fs.readFileString(`${root}/test.ipynb`)).toBe(older);
       const outside = yield* fs.makeTempDirectoryScoped();
       yield* fs.writeFileString(`${outside}/other.ipynb`, JSON.stringify(fixture));
       yield* fs.remove(`${root}/test.ipynb`);
@@ -1039,4 +1092,60 @@ it.effect("rejected subscriptions do not retain queues in subsequent output fano
     yield* finished(runId);
     expect(new Set(offers.mock.calls.map(([queue]) => queue)).size).toBeLessThanOrEqual(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect(
+  "resolves a project's registered thread worktree and revalidates its binding and containment",
+  () =>
+    Effect.gen(function* () {
+      const worktrees: string[] = [];
+      const verified: string[] = [];
+      const { service, handle, root, fs, sql, requests } = yield* setup(
+        {
+          verify: Effect.fn("Fake.verify")((_endpoint, _id, cwd) =>
+            Effect.sync(() => {
+              verified.push(cwd);
+            }),
+          ),
+        },
+        { worktrees },
+      );
+      const workspace = yield* fs.makeTempDirectoryScoped();
+      const alias = `${root}/worktree-alias`;
+      yield* fs.symlink(workspace, alias);
+      worktrees.push(workspace);
+      const threadId = ThreadId.make("worktree-thread");
+      const binding = { projectId: handle.projectId, threadId, relativePath: "test.ipynb" };
+      yield* fs.writeFileString(`${workspace}/test.ipynb`, JSON.stringify(fixture));
+      const payload = JSON.stringify({ worktreePath: alias });
+      yield* sql`INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json) VALUES (${threadId}, ${handle.projectId}, 'Worktree', 'codex', 'full-access', 'default', '2026-10-28', '2026-10-28', ${payload})`;
+      const tree = yield* service.open(binding, caller);
+      const artifact = yield* service.open({ ...binding, relativePath: "./test.ipynb" }, caller);
+      expect(artifact.handle).toBe(tree.handle);
+      expect(tree.handle).not.toBe(handle.handle);
+      expect(yield* Queue.size(requests)).toBe(0);
+      expect(verified).toEqual([]);
+      const target = { projectId: handle.projectId, threadId, handle: tree.handle };
+      yield* service.execute(
+        { ...target, revision: tree.revision, cellIds: ["a"], requestId: "worktree-run" },
+        caller,
+      );
+      yield* Queue.take(requests);
+      expect(verified).toEqual([workspace]);
+      const current = yield* service.snapshot(target, caller);
+      yield* service.shutdown({ ...target, generation: current.generation }, caller);
+      expect(
+        yield* service
+          .open({ ...binding, projectId: ProjectId.make("wrong") }, caller)
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "not-found" });
+      yield* fs.symlink(`${root}/test.ipynb`, `${workspace}/escape.ipynb`);
+      expect(
+        yield* service.open({ ...binding, relativePath: "escape.ipynb" }, caller).pipe(Effect.flip),
+      ).toMatchObject({ reason: "invalid-path" });
+      worktrees.length = 0;
+      expect(yield* service.snapshot(target, caller).pipe(Effect.flip)).toMatchObject({
+        reason: "invalid-path",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer)),
 );

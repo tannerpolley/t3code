@@ -6,7 +6,8 @@ viewer continues to work without configuration. Web and desktop workspace notebo
 Attachments and unconfigured projects keep the saved-output viewer. Agent tools are a separate delivery phase.
 
 A trusted server operator configures `<T3 home>/notebooks.json`, outside the workspace.
-It is an array with one entry per canonical project root:
+It is an array with one entry per canonical workspace root. For a thread using a Git worktree,
+configure that worktree’s root; execution verifies its own working directory:
 
 ```json
 [

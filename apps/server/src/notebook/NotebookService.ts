@@ -1,3 +1,6 @@
+import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 // Canonical filesystem identities and disk hashes use Node primitives.
 import * as NodeCrypto from "node:crypto";
@@ -131,6 +134,8 @@ export class NotebookService extends Context.Service<
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const sql = yield* SqlClient.SqlClient;
+  const git = yield* GitVcsDriver.GitVcsDriver;
   const config = yield* NotebookConfiguration;
   const transport = yield* JupyterTransport.JupyterTransport;
   const scope = yield* Scope.Scope;
@@ -167,7 +172,9 @@ const make = Effect.gen(function* () {
     )
       return yield* new NotebookError({ reason: "permission-denied" });
   });
-  const resolve = Effect.fn("NotebookService.resolve")(function* (input: NotebookIdentity) {
+  const rootFor = Effect.fn("NotebookService.rootFor")(function* (
+    input: Pick<NotebookIdentity, "projectId" | "threadId">,
+  ) {
     const project = yield* projects
       .get(input.projectId)
       .pipe(Effect.mapError(() => new NotebookError({ reason: "not-found" })));
@@ -176,6 +183,34 @@ const make = Effect.gen(function* () {
     const root = yield* fs
       .realPath(project.value.workspaceRoot)
       .pipe(Effect.mapError(() => new NotebookError({ reason: "invalid-path" })));
+    if (!input.threadId) return root;
+    const rows = yield* sql<{ readonly worktreePath: string | null }>`
+      SELECT json_extract(payload_json, '$.worktreePath') AS "worktreePath"
+      FROM orchestration_v2_projection_threads
+      WHERE thread_id = ${input.threadId} AND project_id = ${input.projectId} AND deleted_at IS NULL
+    `.pipe(
+      NodeSqliteClient.readOnly,
+      Effect.mapError(() => new NotebookError({ reason: "not-found" })),
+    );
+    if (!rows[0]) return yield* new NotebookError({ reason: "not-found" });
+    if (rows[0].worktreePath === null) return root;
+    const requested = rows[0].worktreePath;
+    if (!NodePath.isAbsolute(requested))
+      return yield* new NotebookError({ reason: "invalid-path" });
+    const candidate = yield* fs
+      .realPath(requested)
+      .pipe(Effect.mapError(() => new NotebookError({ reason: "invalid-path" })));
+    const worktrees = yield* git
+      .listWorktreePaths(root)
+      .pipe(Effect.mapError(() => new NotebookError({ reason: "invalid-path" })));
+    const canonical = yield* Effect.forEach(worktrees, (path) =>
+      fs.realPath(path).pipe(Effect.orElseSucceed(() => null)),
+    );
+    if (!canonical.includes(candidate)) return yield* new NotebookError({ reason: "invalid-path" });
+    return candidate;
+  });
+  const resolve = Effect.fn("NotebookService.resolve")(function* (input: NotebookIdentity) {
+    const root = yield* rootFor(input);
     if (NodePath.isAbsolute(input.relativePath) || !input.relativePath.endsWith(".ipynb"))
       return yield* new NotebookError({ reason: "invalid-path" });
     const path = yield* fs
@@ -202,6 +237,7 @@ const make = Effect.gen(function* () {
       return yield* new NotebookError({ reason: "not-found" });
     const resolved = yield* resolve({
       projectId: input.projectId,
+      threadId: input.threadId,
       relativePath: NodePath.relative(session.root, session.path),
     });
     if (resolved.path !== session.path || resolved.root !== session.root)
@@ -235,7 +271,7 @@ const make = Effect.gen(function* () {
       sequence: s.sequence,
       revision: s.revision,
       generation: s.generation,
-      runId: cellId === null ? s.runId : (s.executions[cellId]?.runId ?? s.runId),
+      runId: s.runId,
       cellId,
     };
     const event: NotebookEvent =
@@ -812,14 +848,7 @@ const make = Effect.gen(function* () {
           try: () => parseNotebook(fingerprintOf(input.document)),
           catch: () => new NotebookError({ reason: "invalid-document" }),
         });
-        const project = yield* projects
-          .get(input.projectId)
-          .pipe(Effect.mapError(() => new NotebookError({ reason: "not-found" })));
-        if (Option.isNone(project) || project.value.deletedAt !== null)
-          return yield* new NotebookError({ reason: "not-found" });
-        const root = yield* fs
-          .realPath(project.value.workspaceRoot)
-          .pipe(Effect.mapError(() => new NotebookError({ reason: "invalid-path" })));
+        const root = yield* rootFor(input);
         const parent = yield* fs
           .realPath(NodePath.resolve(root, NodePath.dirname(input.relativePath)))
           .pipe(Effect.mapError(() => new NotebookError({ reason: "invalid-path" })));

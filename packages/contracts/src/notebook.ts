@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { ProjectId } from "./baseSchemas.ts";
+import { ProjectId, ThreadId } from "./baseSchemas.ts";
 
 export const NOTEBOOK_LIMITS = {
   bytes: 8 * 1024 * 1024,
@@ -33,10 +33,15 @@ export const NotebookDocument = Schema.Record(Schema.String, Schema.Unknown);
 export type NotebookDocument = typeof NotebookDocument.Type;
 export const NotebookIdentity = Schema.Struct({
   projectId: ProjectId,
+  threadId: Schema.optional(ThreadId),
   relativePath: Schema.String,
 });
 export type NotebookIdentity = typeof NotebookIdentity.Type;
-export const NotebookHandle = Schema.Struct({ projectId: ProjectId, handle: Schema.String });
+export const NotebookHandle = Schema.Struct({
+  projectId: ProjectId,
+  threadId: Schema.optional(ThreadId),
+  handle: Schema.String,
+});
 export type NotebookHandle = typeof NotebookHandle.Type;
 export const NotebookExecute = Schema.Struct({
   ...NotebookHandle.fields,

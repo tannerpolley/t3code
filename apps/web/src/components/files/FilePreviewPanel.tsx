@@ -1,3 +1,5 @@
+import { notebookWorkspaceIdentity } from "./notebookWorkspaceIdentity";
+import type { ProjectId } from "@t3tools/contracts";
 import { environmentProjects } from "~/state/projects";
 import { useWorkspaceMutationRefresh } from "../../hooks/useWorkspaceMutationRefresh";
 import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
@@ -137,6 +139,7 @@ interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
+  projectId?: ProjectId | null;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
   threadRef: ScopedThreadRef;
@@ -990,6 +993,7 @@ export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
+  projectId,
   relativePath: requestedPath,
   attachment,
   threadRef,
@@ -1027,6 +1031,13 @@ export default function FilePreviewPanel({
   });
   const notebookProjects = useAtomValue(environmentProjects.environmentProjectsAtom(environmentId));
   const notebookProject = notebookProjects.find((project) => project.workspaceRoot === cwd);
+  const notebookIdentity = notebookWorkspaceIdentity({
+    projectId: projectId ?? notebookProject?.id ?? null,
+    threadId: threadRef.threadId,
+    workspaceRoot: cwd,
+    path: relativePath,
+    staticOnly: attachment !== undefined || draft,
+  });
   const isVideo = relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
   const isAudio = relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
@@ -1424,16 +1435,13 @@ export default function FilePreviewPanel({
               revealRequestId={revealRequestId}
               wordWrap={wordWrap}
             />
-          ) : relativePath?.endsWith(".ipynb") &&
-            attachment === undefined &&
-            !draft &&
-            !isHostFile &&
-            notebookProject ? (
+          ) : notebookIdentity && relativePath ? (
             <Suspense fallback={<FileSurfaceLoading />}>
               <RunnableNotebookPreview
-                key={`${environmentId}:${notebookProject.id}:${relativePath}`}
+                key={`${environmentId}:${notebookIdentity.projectId}:${relativePath}`}
                 environmentId={environmentId}
-                projectId={notebookProject.id}
+                projectId={notebookIdentity.projectId}
+                workspacePath={notebookIdentity.relativePath}
                 relativePath={relativePath}
                 threadRef={threadRef}
                 onPendingChange={onPendingChange}

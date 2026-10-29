@@ -764,6 +764,7 @@ const layerIssueRoadmap = IssueRoadmap.layer.pipe(
 const layerRouterServices = Layer.mergeAll(
   ProjectArtifacts.layer,
   NotebookService.layer.pipe(
+    Layer.provide(GitVcsDriver.layer),
     Layer.provide(NotebookConfiguration.layer),
     Layer.provide(NotebookJupyterTransport.layer),
     Layer.provide(ServerSecretStore.layer),

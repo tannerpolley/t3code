@@ -1,3 +1,7 @@
+import {
+  AVAILABLE_CONNECTION_STATE,
+  connectionProjectionPhase,
+} from "@t3tools/client-runtime/connection";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
 import { randomUUID } from "~/lib/utils";
@@ -50,6 +54,7 @@ type Props = {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   relativePath: string;
+  workspacePath?: string;
   threadRef: ScopedThreadRef;
   fallback: ReactNode;
   onPendingChange: (path: string, pending: boolean) => void;
@@ -65,7 +70,11 @@ export default function RunnableNotebookPreview(props: Props) {
     let active = true;
     void open({
       environmentId: props.environmentId,
-      input: { projectId: props.projectId, relativePath: props.relativePath },
+      input: {
+        projectId: props.projectId,
+        threadId: props.threadRef.threadId,
+        relativePath: props.workspacePath ?? props.relativePath,
+      },
     }).then((result) => {
       if (!active) return;
       if (AsyncResult.isSuccess(result)) setOpened(result.value);
@@ -74,8 +83,16 @@ export default function RunnableNotebookPreview(props: Props) {
     return () => {
       active = false;
     };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Explicit retry must reopen the server resource even when its identity is unchanged.
-  }, [props.environmentId, props.projectId, props.relativePath, attempt, open]);
+  }, [
+    props.environmentId,
+    props.projectId,
+    props.relativePath,
+    props.workspacePath,
+    props.threadRef.threadId,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Explicit retry reopens an unchanged server identity.
+    attempt,
+    open,
+  ]);
   if (opened)
     return (
       <NotebookSession
@@ -117,7 +134,19 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
   const [store] = useState(() => createNotebookStore(props.initial));
   const snapshot = useSyncExternalStore(store.subscribe, store.read);
   const [leaseId] = useState(() => randomUUID());
-  const [connection, setConnection] = useState("Connecting");
+  const [streamConnection, setConnection] = useState("Connecting");
+  const [synchronizedGeneration, setSynchronizedGeneration] = useState<number | null>(null);
+  const connectionAtom = notebooks.connectionStateAtom(props.environmentId);
+  const transport = AsyncResult.getOrElse(
+    useAtomValue(connectionAtom),
+    () => AVAILABLE_CONNECTION_STATE,
+  );
+  const connection =
+    connectionProjectionPhase(transport) !== "ready"
+      ? "Disconnected. Reconnect to recover current state"
+      : synchronizedGeneration !== transport.generation
+        ? "Reconnecting"
+        : streamConnection;
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const open = useAtomCommand(notebooks.open, { reportFailure: false });
@@ -133,7 +162,11 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
   const canRun = useAtomValue(notebooks.execute.permissionAtom(props.environmentId));
   const canInterrupt = useAtomValue(notebooks.interrupt.permissionAtom(props.environmentId));
   const canRestart = useAtomValue(notebooks.restart.permissionAtom(props.environmentId));
-  const input = { projectId: props.projectId, handle: snapshot.handle };
+  const input = {
+    projectId: props.projectId,
+    threadId: props.threadRef.threadId,
+    handle: snapshot.handle,
+  };
   const events = notebooks.events({
     environmentId: props.environmentId,
     input: { ...input, leaseId },
@@ -144,10 +177,17 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
       registry.subscribe(
         events,
         (result) => {
-          if (AsyncResult.isSuccess(result) && !result.waiting) {
+          if (AsyncResult.isSuccess(result)) {
             const next = applyNotebookEvent(store.read(), result.value);
             if (next) {
               store.update(next);
+              if (result.value.type === "snapshot")
+                setSynchronizedGeneration(
+                  AsyncResult.getOrElse(
+                    registry.get(connectionAtom),
+                    () => AVAILABLE_CONNECTION_STATE,
+                  ).generation,
+                );
               setConnection("Connected");
             } else {
               setConnection("Reconnecting");
@@ -157,7 +197,7 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
         },
         { immediate: true },
       ),
-    [registry, events, store],
+    [registry, events, store, connectionAtom],
   );
   const dirty = snapshot.revision !== snapshot.savedRevision;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Adapt the authoritative dirty revision to the outer file tab pending marker, without registering a file writer.
@@ -171,6 +211,7 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
       environmentId: props.environmentId,
       input: {
         projectId: props.projectId,
+        threadId: props.threadRef.threadId,
         handle: current.handle,
         revision: current.revision,
         diskHash: current.diskHash,
@@ -180,7 +221,13 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
     if (AsyncResult.isSuccess(result)) {
       store.update(result.value);
       setError(null);
-      return store.read().revision === store.read().savedRevision;
+      const acknowledged = store.read();
+      return (
+        acknowledged.epoch === result.value.epoch &&
+        (discard
+          ? acknowledged.revision === result.value.revision
+          : acknowledged.revision === acknowledged.savedRevision)
+      );
     }
     setError(
       "Save or reload failed: the file may have changed on disk, the revision changed, or access was lost. Retain the draft or reconnect before retrying.",
@@ -190,7 +237,11 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
   const requestClose = useStableCallback(async () => {
     const result = await open({
       environmentId: props.environmentId,
-      input: { projectId: props.projectId, relativePath: props.relativePath },
+      input: {
+        projectId: props.projectId,
+        threadId: props.threadRef.threadId,
+        relativePath: props.workspacePath ?? props.relativePath,
+      },
     });
     const online = AsyncResult.isSuccess(result);
     if (AsyncResult.isSuccess(result)) store.update(result.value);
@@ -214,7 +265,12 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
       props.onPendingChange(props.relativePath, false);
       void close({
         environmentId: props.environmentId,
-        input: { projectId: props.projectId, handle: store.read().handle, leaseId },
+        input: {
+          projectId: props.projectId,
+          threadId: props.threadRef.threadId,
+          handle: store.read().handle,
+          leaseId,
+        },
       });
     });
   }, [props, requestClose, close, store, leaseId]);

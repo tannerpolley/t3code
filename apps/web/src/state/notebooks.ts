@@ -1,3 +1,4 @@
+import { environmentCatalog } from "../connection/catalog";
 import { NOTEBOOK_METHODS } from "@t3tools/contracts";
 import {
   createEnvironmentRpcCommand,
@@ -6,6 +7,7 @@ import {
 import { connectionAtomRuntime } from "../connection/runtime";
 
 export const notebooks = {
+  connectionStateAtom: environmentCatalog.stateAtom,
   open: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "notebook:open",
     tag: NOTEBOOK_METHODS.open,
