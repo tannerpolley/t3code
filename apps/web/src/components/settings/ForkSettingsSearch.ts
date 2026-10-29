@@ -159,7 +159,13 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     id: "sidebar-show-model",
     title: "Model",
     to: "/settings/appearance",
-    searchTerms: ["codex sidebar projects thread show hide model name version"],
+    searchTerms: ["codex sidebar projects thread show hide model name"],
+  },
+  {
+    id: "sidebar-show-model-version",
+    title: "Model version",
+    to: "/settings/appearance",
+    searchTerms: ["codex sidebar projects thread show hide model version number"],
   },
   {
     id: "sidebar-show-effort",

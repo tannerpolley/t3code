@@ -72,14 +72,7 @@ export function SidebarThreadProcessesGroup(props: {
     ) : null;
     const status = <ThreadStatusMark status="working" />;
     return props.columns ? (
-      <SidebarThreadColumns
-        caret={caret}
-        provider={icon}
-        name={name}
-        wideName
-        time={time}
-        status={status}
-      />
+      <SidebarThreadColumns caret={caret} provider={icon} name={name} time={time} status={status} />
     ) : (
       <>
         {caret ?? <SidebarCaretSlot />}
@@ -174,7 +167,6 @@ export function SidebarThreadProcessesGroup(props: {
                         +{group.count - members.length} more
                       </span>
                     }
-                    wideName
                   />
                 ) : (
                   <span className="fork-sidebar-title">+{group.count - members.length} more</span>

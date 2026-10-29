@@ -12,11 +12,11 @@ import { environmentCatalog } from "../connection/catalog";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   buildPendingUserInputAnswers,
-  derivePendingUserInputProgress,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
-} from "../pendingUserInput";
+} from "@t3tools/client-runtime/state/pending-user-input";
+import { derivePendingUserInputProgress } from "../pendingUserInput";
 import { derivePendingUserInputs } from "../session-logic";
 import { useProject, useThreadShell } from "../state/entities";
 import { environmentThreadDetails, threadEnvironment } from "../state/threads";
@@ -208,6 +208,7 @@ function QuestionPopupCard({
               setAnswers((existing) => ({
                 ...existing,
                 [activeQuestion.id]: setPendingUserInputCustomAnswer(
+                  activeQuestion,
                   existing[activeQuestion.id],
                   value,
                 ),

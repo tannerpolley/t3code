@@ -85,7 +85,6 @@ const storedSettingsFile = JSON.stringify({
     backgroundProcessOutput: false,
     runningCommandsAndProcesses: false,
     shortModelNames: false,
-    lineageInDetails: true,
     threadDetailsRedesign: false,
     fastShimmer: false,
   },
@@ -186,7 +185,6 @@ describe("stored fork settings compatibility", () => {
       backgroundProcessOutput: true,
       runningCommandsAndProcesses: true,
       shortModelNames: true,
-      lineageInDetails: false,
       threadDetailsRedesign: true,
       fastShimmer: true,
     });
@@ -223,6 +221,7 @@ it("defaults to lines without role icons and persists display customizations", (
     sidebarRoleDisplay: "name",
     sidebarShowProvider: true,
     sidebarShowModel: true,
+    sidebarShowModelVersion: true,
     sidebarShowEffort: true,
     sidebarShowIssueBadge: true,
     sidebarShowPullRequestBadge: true,
@@ -265,6 +264,17 @@ it("migrates full legacy client files and saves only the role display choice", (
     ).sidebarRoleDisplay,
   ).toBe("name");
   expect(() => decodeClientPatch({ sidebarRoleDisplay: "unknown" })).toThrow();
+  for (const [lineageInDetails, threadDetailsItems, expected] of [
+    [false, {}, { lineage: false }],
+    [true, {}, {}],
+    [false, { lineage: true }, { lineage: true }],
+  ] as const) {
+    const migrated = decodeClientSettingsFile(
+      JSON.stringify({ ...oldSettings, lineageInDetails, threadDetailsItems }),
+    );
+    expect(migrated.threadDetailsItems).toEqual(expected);
+    expect(encodeClientSettings(migrated)).not.toHaveProperty("lineageInDetails");
+  }
 });
 
 it("defaults banked reset automation and reminders on and preserves opt-outs", () => {

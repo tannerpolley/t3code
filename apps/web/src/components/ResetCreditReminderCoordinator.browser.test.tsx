@@ -43,6 +43,7 @@ vi.mock("../hooks/useSettings", () => ({
 }));
 
 import { ResetCreditReminderCoordinator } from "./ResetCreditReminderCoordinator";
+import { toastManager } from "./ui/toast";
 
 const now = Date.parse("2026-10-22T12:00:00Z");
 const expiry = "2026-10-22T12:40:00.000Z";
@@ -119,32 +120,28 @@ it("shows one audible missed reminder across simultaneous coordinators and remou
   localStorage.removeItem(storageKey);
 });
 
-it("leaves an undelivered reminder available until permission is granted and respects opt-out", async () => {
+it("shows the reminder in the app when desktop notifications are blocked, and respects opt-out", async () => {
   setup();
   using _now = vi.spyOn(Date, "now").mockReturnValue(now);
-  let permission: NotificationPermission = "denied";
-  using notifications = vi
-    .spyOn(window, "Notification")
-    .mockImplementation(function (_title, options) {
-      return {
-        tag: options?.tag,
-        close: vi.fn(),
-        addEventListener: vi.fn(),
-      } as unknown as Notification;
-    });
-  Object.defineProperty(notifications, "permission", { get: () => permission });
-  await using screen = await render(<ResetCreditReminderCoordinator />);
-  await navigator.locks.request("t3-reset-credit-reminders", () => {});
-  expect(notifications).not.toHaveBeenCalled();
-  expect(localStorage.getItem(storageKey)).toBeNull();
-  permission = "granted";
+  using notifications = vi.spyOn(window, "Notification").mockImplementation(function () {
+    return { close: vi.fn(), addEventListener: vi.fn() } as unknown as Notification;
+  });
+  Object.defineProperty(notifications, "permission", { get: () => "denied" });
+  using toasts = vi.spyOn(toastManager, "add");
   state.reminders = false;
-  await screen.rerender(<ResetCreditReminderCoordinator key={String(state.reminders)} />);
+  await using screen = await render(<ResetCreditReminderCoordinator key="off" />);
   await navigator.locks.request("t3-reset-credit-reminders", () => {});
-  expect(notifications).not.toHaveBeenCalled();
+  expect(toasts).not.toHaveBeenCalled();
+  expect(localStorage.getItem(storageKey)).toBeNull();
   state.reminders = true;
-  await screen.rerender(<ResetCreditReminderCoordinator key={String(state.reminders)} />);
-  await vi.waitFor(() => expect(notifications).toHaveBeenCalledTimes(1));
+  await screen.rerender(<ResetCreditReminderCoordinator key="on" />);
+  await vi.waitFor(() =>
+    expect(toasts).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Banked reset expiring", timeout: 0 }),
+    ),
+  );
+  expect(notifications).not.toHaveBeenCalled();
+  expect(localStorage.getItem(storageKey)).toBe("shown");
   localStorage.removeItem(storageKey);
 });
 

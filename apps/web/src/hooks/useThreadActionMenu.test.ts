@@ -70,8 +70,8 @@ vi.mock("../state/entities", () => ({
 }));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
-vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: () => async () => {
+vi.mock("../state/use-orchestration-command", () => ({
+  useOrchestrationCommand: () => async () => {
     recordEffect("metadata");
     return AsyncResult.success(undefined);
   },
@@ -126,6 +126,7 @@ vi.mock("./useSettings", () => ({
     }),
 }));
 vi.mock("./useThreadActions", () => ({
+  canTurnThreadIntoProject: () => false,
   useThreadActions: () =>
     Object.fromEntries(
       [

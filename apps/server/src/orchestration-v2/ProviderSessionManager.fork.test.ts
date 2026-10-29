@@ -1,3 +1,4 @@
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -62,6 +63,15 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+
+const layerProviderEventIngestor = ProviderEventIngestor.layer.pipe(
+  Layer.provide(
+    Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+      // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
+      getInstance: () => Effect.succeed(undefined),
+    }),
+  ),
+);
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -557,7 +567,7 @@ function layerTest(input: {
     input.pauseResolve === undefined
       ? layerTestMcpRegistry
       : layerPausingMcpRegistry(input.pauseResolve);
-  const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
+  const layerProviderEventIngestorTest = layerProviderEventIngestor.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerConfiguredEventSink,

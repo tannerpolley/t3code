@@ -80,6 +80,7 @@ it("keeps workspace controls through expanding and collapsing PRs beside another
   try {
     await using screen = await render(
       <ThreadDetailsCard
+        contentKey="test"
         threadRef={threadRef}
         anchor={{ current: null }}
         handle={PopoverPrimitive.createHandle()}

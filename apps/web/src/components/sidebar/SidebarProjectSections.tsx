@@ -1359,6 +1359,7 @@ const SidebarProjectThreadRow = memo(
           ? runningSubagents
           : flattenRunningSubagents(runningSubagents, props.runningSubagentsByParentKey),
         undefined,
+        props.thread.worktreePath,
       ),
     );
     // Finished while you were away and not opened since: a green dot where the spinner was.
@@ -1623,6 +1624,7 @@ function SidebarSubagentTree(props: {
       pendingBackgroundWorkOfThread(child.id, child.pendingBackgroundTasks, props.parentTasks),
       grandchildren,
       child.id,
+      child.worktreePath,
     );
     return { child, grandchildren, rows };
   };

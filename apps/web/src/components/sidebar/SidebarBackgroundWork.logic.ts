@@ -104,13 +104,15 @@ export function sidebarRoleLabel(thread: RoleDisplayThread): string {
 }
 
 /**
- * A short model label as the sidebar's model cell shows it: the name and version number ("GPT-5.3
- * Codex" → "GPT 5.3"). Text after the version, such as "Codex" or "(High)", shows only on hover; a
- * label without a version keeps its name alone.
+ * A short model label's name and version, name first: "6.1 Sol" → Sol 6.1, "GPT-5.3 Codex" →
+ * GPT 5.3. Text after a trailing version, such as "Codex" or "(High)", shows only on hover.
  */
-export function sidebarModelCellLabel(label: string): string {
-  const match = /^(.*?)[\s-]+(\d+(?:\.\d+)*)/.exec(label);
-  return match ? `${match[1]!.trim()} ${match[2]}` : label.trim();
+export function sidebarModelParts(label: string): { name: string; version?: string } {
+  const trimmed = label.trim();
+  const leading = /^(\d+(?:\.\d+)*)\s+(\S+)/.exec(trimmed);
+  if (leading) return { name: leading[2]!, version: leading[1]! };
+  const trailing = /^(.*?)[\s-]+(\d+(?:\.\d+)*)/.exec(trimmed);
+  return trailing ? { name: trailing[1]!.trim(), version: trailing[2]! } : { name: trimmed };
 }
 
 /** Separates subagent threads from other pending work without changing either group's order. */
@@ -121,11 +123,15 @@ export function groupBackgroundWorkTaskRows(rows: ReadonlyArray<BackgroundWorkTa
   };
 }
 
-/** Joins provider-reported subagents to their thread rows, matching roster-only tasks by count. */
+/**
+ * Joins provider-reported subagents to their thread rows, matching roster-only tasks by count.
+ * Children in the owner's checkout (`ownerWorktreePath`) list first, inside its checkout lines.
+ */
 export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<ChildThread>,
   ownerThreadId?: ThreadId,
+  ownerWorktreePath?: string | null,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
   const listedChildIds = new Set(runningChildren.map((child) => child.id));
   const linked = tasks.filter(
@@ -143,8 +149,11 @@ export function describeSidebarBackgroundWork(
   ).length;
 
   const roleOrder = { implementor: 0, reviewer: 1, investigator: 2, checker: 3, orchestrator: 4 };
+  const elsewhere = (child: ChildThread) =>
+    ownerWorktreePath !== undefined && child.worktreePath !== ownerWorktreePath ? 1 : 0;
   const orderedChildren = runningChildren.toSorted(
     (a, b) =>
+      elsewhere(a) - elsewhere(b) ||
       roleOrder[effectiveThreadRole(a.source)] - roleOrder[effectiveThreadRole(b.source)] ||
       Date.parse(b.createdAt) - Date.parse(a.createdAt) ||
       a.id.localeCompare(b.id),

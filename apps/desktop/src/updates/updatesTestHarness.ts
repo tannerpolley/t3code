@@ -33,7 +33,6 @@ export interface UpdatesHarnessOptions {
   readonly backendDesiredRunning?: boolean;
   readonly backendInstances?: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>;
   readonly env?: Record<string, string | undefined>;
-  readonly appVersion?: string;
   readonly platform?: NodeJS.Platform;
   readonly homeDirectory?: string;
   readonly fileSystem?: Partial<FileSystem.FileSystem>;
@@ -41,6 +40,11 @@ export interface UpdatesHarnessOptions {
 
   readonly packageType?: string | undefined;
   readonly installRecord?: string | undefined;
+  readonly appVersion?: string;
+  /** Starts from in-memory settings with this track saved, as after a restart. */
+  readonly savedChannel?: DesktopAppSettings.DesktopSettings["updateChannel"];
+  /** Adds a WSL backend beside the primary, as on a Windows host with WSL enabled. */
+  readonly wslBackend?: boolean;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
@@ -48,6 +52,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let quitAndInstallCount = 0;
   let downloadCount = 0;
   let allowDowngrade = false;
+  const checkAllowedDowngrade: boolean[] = [];
   let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
@@ -103,6 +108,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     setDisableDifferentialDownload: () => options.setDisableDifferentialDownload ?? Effect.void,
     checkForUpdates: Effect.sync(() => {
       checkCount += 1;
+      checkAllowedDowngrade.push(allowDowngrade);
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
     downloadUpdate: Effect.sync(() => {
       downloadCount += 1;
@@ -166,7 +172,17 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     waitForReady: () => Effect.succeed(true),
   };
   const layerBackend = DesktopBackendPool.layerTest(
-    options.backendInstances ?? [stubBackendInstance],
+    options.backendInstances ??
+      (options.wslBackend
+        ? [
+            stubBackendInstance,
+            {
+              ...stubBackendInstance,
+              id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
+              label: Effect.succeed("Ubuntu"),
+            },
+          ]
+        : [stubBackendInstance]),
   );
 
   const layerEnvironment = DesktopEnvironment.layer({
@@ -195,10 +211,13 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   let testSettings: DesktopAppSettings.DesktopSettings = {
     ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+    ...(options.savedChannel === undefined
+      ? {}
+      : { updateChannel: options.savedChannel, updateChannelConfiguredByUser: true }),
   };
   const setUpdateChannelError = options.setUpdateChannelError;
   const layerSettings =
-    setUpdateChannelError || options.beforeSetUpdateChannel
+    setUpdateChannelError || options.beforeSetUpdateChannel || options.savedChannel
       ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
           get: Effect.sync(() => testSettings),
           load: Effect.sync(() => testSettings),
@@ -299,6 +318,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,
+    /** Whether each feed check could offer an older release, and the flag now. */
+    checkAllowedDowngrade,
+    allowDowngrade: () => allowDowngrade,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,

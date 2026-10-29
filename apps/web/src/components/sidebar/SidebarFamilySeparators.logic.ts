@@ -70,6 +70,7 @@ export function collectDisplayedFamilyRows(input: {
           ),
       input.runningSubagentsByParentKey.get(key) ?? [],
       parent === undefined ? undefined : thread.id,
+      thread.worktreePath,
     );
     if (
       !sidebarWorkExpanded(

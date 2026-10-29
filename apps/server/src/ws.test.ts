@@ -66,6 +66,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -483,6 +484,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
+  Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
   Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
   Layer.mock(EnvironmentAuth.EnvironmentAuth)({
     getDescriptor: () =>
@@ -734,6 +736,7 @@ it.effect(
           scratchRoot: Effect.succeedNone,
           namedProjectsRoot: process.cwd(),
         }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getDescriptor: Effect.succeed({
             environmentId: EnvironmentId.make("config-test"),
@@ -910,6 +913,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         scratchRoot: Effect.succeedNone,
         namedProjectsRoot: process.cwd(),
       }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getDescriptor: Effect.succeed({
           environmentId: EnvironmentId.make("config-test"),

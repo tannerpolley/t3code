@@ -1,4 +1,3 @@
-import { sidebarColumnBudget, sidebarColumnLayout } from "./SidebarColumns.layout";
 import "./ForkSidebarDebug.css";
 import { observeResize } from "../../lib/observeResize";
 
@@ -40,10 +39,7 @@ function showWidth() {
   const label = document.createElement("output");
   label.className = "fork-sidebar-debug-width";
   label.dataset.sidebarDebug = "";
-  const measure = document.createElement("span");
-  measure.dataset.sidebarDebug = "";
-  measure.className = "fork-sidebar-debug-measure";
-  document.body.append(label, measure);
+  document.body.append(label);
   const observed = new Map<Element, () => void>();
   let frame = 0;
   const schedule = () => {
@@ -78,29 +74,8 @@ function showWidth() {
         ? "Sidebar unavailable"
         : `Sidebar ${width.toFixed(0)}px / ${(width / rem).toFixed(2)}rem`,
     ];
-    // Projects can use different container fonts; report each distinct set of boundaries.
-    const budgets = new Set<string>();
-    for (const container of containers) {
-      measure.style.font = getComputedStyle(container).font;
-      const ch = measure.getBoundingClientRect().width;
-      const roleDisplay =
-        container.querySelector<HTMLElement>("[data-sidebar-role-display]")?.dataset
-          .sidebarRoleDisplay === "icon"
-          ? "icon"
-          : "name";
-      const hidden = new Set<string>();
-      const thresholds = sidebarColumnLayout.dropOrder.map((group) => {
-        const budget = sidebarColumnBudget(hidden, roleDisplay);
-        const boundary = budget.rem * rem + budget.px + budget.ch * ch;
-        group.forEach((column) => hidden.add(column));
-        return `${group.join("+")} < ${boundary.toFixed(0)}px / ${(boundary / rem).toFixed(2)}rem`;
-      });
-      budgets.add(
-        `Rows ${container.getBoundingClientRect().width.toFixed(0)}px (${roleDisplay}): ${thresholds.join("; ")}`,
-      );
-    }
-    lines.push(...budgets);
-    if (containers.length === 0) lines.push("Expand a project to see column drop widths");
+    for (const container of containers)
+      lines.push(`Rows ${container.getBoundingClientRect().width.toFixed(0)}px`);
     const text = lines.join("\n");
     if (label.textContent !== text) label.textContent = text;
   };
@@ -131,7 +106,6 @@ function showWidth() {
     mutations.disconnect();
     document.fonts.removeEventListener("loadingdone", schedule);
     label.remove();
-    measure.remove();
   };
 }
 

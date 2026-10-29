@@ -246,6 +246,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           ) : null}
         </>
       )}
+      <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
       <SidebarWorkerProviderItem />
       {isOnUtilityPage ? null : <SidebarAskModeItem />}
@@ -253,14 +254,9 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   );
 });
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter({
-  showUndoNotice = false,
-}: {
-  showUndoNotice?: boolean;
-}) {
+export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter>
-      {showUndoNotice ? <SidebarThreadUndoNotice /> : null}
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
       <SidebarUtilityMenu />

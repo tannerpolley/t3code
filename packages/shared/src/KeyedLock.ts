@@ -44,11 +44,22 @@ export const make = Effect.fn("KeyedLock.make")(function* <Key>(): Effect.fn.Ret
       return next;
     });
 
+  const waitForPermit = Effect.fn("KeyedLock.waitForPermit")((semaphore: Semaphore.Semaphore) =>
+    semaphore.take(1),
+  );
+
   return {
     withLock: (key, effect) =>
       Effect.acquireUseRelease(
         acquire(key),
-        (semaphore) => semaphore.withPermit(effect),
+        (semaphore) =>
+          Effect.uninterruptibleMask((restore) =>
+            Effect.acquireUseRelease(
+              restore(waitForPermit(semaphore)),
+              () => restore(effect),
+              () => semaphore.release(1),
+            ),
+          ),
         () => release(key),
       ),
     activeKeys: Effect.map(Ref.get(locks), (current) => Array.from(current.keys())),

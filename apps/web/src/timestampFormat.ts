@@ -315,23 +315,15 @@ export function formatExpiresInLabel(isoDate: string, nowMs: number = Date.now()
   return tail.length > 0 ? `Expires in ${days}d ${tail.join(" ")}` : `Expires in ${days}d`;
 }
 
-/**
- * Zero-padded "05m 09s", with "01h " in front only once a time reaches an hour. Times sit in a
- * right-aligned column sized for the hour part. Hour digits grow beyond 99 instead of switching units.
- */
+/** The two largest units, zero-padded: "05m 09s", "01h 05m", then "03d 04h". */
 export function formatElapsedSeconds(totalSeconds: number): string {
   const seconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
-  const hours = Math.floor(seconds / 3600);
-  const minutes = String(Math.floor(seconds / 60) % 60).padStart(2, "0");
-  // Hours keep two digits so the label fits the sidebar's time column; from 100 hours on it
-  // counts days and drops the seconds instead.
-  if (hours >= 100) {
-    return `${Math.floor(hours / 24)}d ${String(hours % 24).padStart(2, "0")}h ${minutes}m`;
-  }
-  const minutesAndSeconds = `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
-  return hours === 0
-    ? minutesAndSeconds
-    : `${String(hours).padStart(2, "0")}h ${minutesAndSeconds}`;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  if (hours >= 24) return `${pad(Math.floor(hours / 24))}d ${pad(hours % 24)}h`;
+  if (hours > 0) return `${pad(hours)}h ${pad(minutes % 60)}m`;
+  return `${pad(minutes)}m ${pad(seconds % 60)}s`;
 }
 
 /** Short form for tight rows; at most four characters, rounded down. */

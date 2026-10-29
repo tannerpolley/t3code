@@ -22,11 +22,11 @@ describe("formatElapsedSeconds", () => {
     [0, "00m 00s"],
     [65, "01m 05s"],
     [3599, "59m 59s"],
-    [3600, "01h 00m 00s"],
-    [99 * 3600, "99h 00m 00s"],
-    [100 * 3600, "4d 04h 00m"],
-    [123 * 3600, "5d 03h 00m"],
-    [12 * 3600 + 4 * 60, "12h 04m 00s"],
+    [3600, "01h 00m"],
+    [12 * 3600 + 4 * 60 + 59, "12h 04m"],
+    [24 * 3600 - 1, "23h 59m"],
+    [24 * 3600, "01d 00h"],
+    [123 * 3600 + 59 * 60, "05d 03h"],
   ])("formats %d seconds as %s", (seconds, expected) => {
     expect(formatElapsedSeconds(seconds)).toBe(expected);
   });

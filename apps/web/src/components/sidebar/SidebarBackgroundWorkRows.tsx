@@ -279,7 +279,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   </RowLabel>
                 </span>
               }
-              wideName={row.kind !== "subagent"}
               badgeKind={
                 row.kind === "subagent" && row.child
                   ? sidebarBadgeKind(

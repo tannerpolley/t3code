@@ -42,6 +42,7 @@ function EnvironmentResetCreditReminders({
   );
   const navigate = useNavigate();
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules reminder timers and focus listeners while mounted.
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -81,7 +82,7 @@ function EnvironmentResetCreditReminders({
               return false;
             }
           };
-          if (remindersEnabled && nativeAllowed && limits?.resetCredits?.availableCount) {
+          if (remindersEnabled && limits?.resetCredits?.availableCount) {
             const expiries = limits.resetCredits.expiries ?? [];
             const shown = new Set(
               expiries.flatMap((expiry) =>
@@ -94,11 +95,17 @@ function EnvironmentResetCreditReminders({
             for (const reminder of dueResetCreditReminders(expiries, now, shown)) {
               const key =
                 prefix + resetCreditReminderKey(reminder.expiresAt, reminder.offsetMinutes);
-              if (
-                showNative(resetCreditReminderBody(label, reminder.expiresAt, now, autoUse), key)
-              ) {
-                localStorage.setItem(key, "shown");
-              }
+              const body = resetCreditReminderBody(label, reminder.expiresAt, now, autoUse);
+              showNative(body, key);
+              // Desktop notifications can be silent or blocked, so the reminder also stays in the app.
+              toastManager.add({
+                type: "warning",
+                title: "Banked reset expiring",
+                description: body,
+                timeout: 0,
+                actionProps: { children: "Open Usage", onClick: openUsage },
+              });
+              localStorage.setItem(key, "shown");
             }
             for (const expiry of expiries) {
               for (const offset of RESET_CREDIT_REMINDER_MINUTES) {
@@ -119,6 +126,7 @@ function EnvironmentResetCreditReminders({
               toastManager.add({
                 type: result.status === "used" ? "success" : "error",
                 title: body,
+                timeout: 0,
                 actionProps: {
                   children: result.status === "used" ? "View usage" : "Use now",
                   onClick: openUsage,
