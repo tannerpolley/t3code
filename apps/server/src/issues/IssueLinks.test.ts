@@ -913,7 +913,8 @@ it.effect(
         Effect.provide(
           IssueLinks.layer.pipe(
             Layer.provide(ProjectionStore.layer),
-            Layer.provideMerge(SqlitePersistence.layerFromPath(filename)),
+            // Avoid a competing checkpoint while testing the reader's lifetime.
+            Layer.provideMerge(SqlitePersistence.layerFromPath(filename, { checkpointWorker: false })),
           ),
         ),
       );
