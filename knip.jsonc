@@ -27,6 +27,8 @@
       "entry": [
         // These fixture scripts are injected into a browser page by path.
         "fixtures/*/*.js",
+        // Fork dev-preview tools run by hand; see fork-dev/README.md.
+        "fork-dev/*.{cjs,mjs}",
         "knip-schemas.ts",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",

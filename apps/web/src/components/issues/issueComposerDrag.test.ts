@@ -1,13 +1,16 @@
+import {
+  COMPOSER_ISSUE_DRAG_TYPE,
+  encodeIssueDragPayload,
+  issueComposerDrag,
+} from "./issueComposerDrag";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
   COMPOSER_MENTION_DRAG_TYPE,
-  COMPOSER_ISSUE_DRAG_TYPE,
-  encodeIssueDragPayload,
   type ComposerMentionDropHost,
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
-} from "./composerMentionDrag.ts";
+} from "../chat/composerMentionDrag.ts";
 
 const makeDragEvent = (options?: {
   mention?: string;
@@ -35,7 +38,6 @@ const makeDragEvent = (options?: {
 const makeHost = (insertResult = true) => {
   const log: Array<string> = [];
   const host: ComposerMentionDropHost = {
-    supportsIssueContexts: true,
     insertMentionAtEnd: (text) => {
       log.push(`insert:${text}`);
       return insertResult;
@@ -44,10 +46,10 @@ const makeHost = (insertResult = true) => {
       log.push(`pr:${pullRequest.number}`);
       return insertResult;
     },
-    insertIssueAtEnd: (issue) => {
+    additionalMention: issueComposerDrag(true, (issue) => {
       log.push(`issue:${issue.number}:${issue.repository}`);
       return insertResult;
-    },
+    }),
     setDragActive: (active) => void log.push(`active:${active}`),
     onInsertRejected: () => void log.push("rejected"),
   };
@@ -70,7 +72,7 @@ const issue = {
 describe("issue row drags", () => {
   it("leaves issue drags unclaimed when the server does not support issue contexts", () => {
     const { host, log } = makeHost();
-    const handlers = makeComposerMentionDragHandlers({ ...host, supportsIssueContexts: false });
+    const handlers = makeComposerMentionDragHandlers({ ...host, additionalMention: undefined });
     const { event, calls } = makeDragEvent({
       format: COMPOSER_ISSUE_DRAG_TYPE,
       mention: encodeIssueDragPayload(issue),
@@ -90,7 +92,9 @@ describe("issue row drags", () => {
       format: COMPOSER_ISSUE_DRAG_TYPE,
       mention: encodeIssueDragPayload(issue),
     });
-    expect(dataTransferHasComposerMention(event.dataTransfer.types, true)).toBe(true);
+    expect(dataTransferHasComposerMention(event.dataTransfer.types, COMPOSER_ISSUE_DRAG_TYPE)).toBe(
+      true,
+    );
     handlers.onDragEnter(event);
     handlers.onDragOver(event);
     handlers.onDrop(event);

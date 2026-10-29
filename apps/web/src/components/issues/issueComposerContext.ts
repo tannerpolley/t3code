@@ -4,7 +4,7 @@ import {
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 import type { DragEvent } from "react";
-import { COMPOSER_ISSUE_DRAG_TYPE, encodeIssueDragPayload } from "../chat/composerMentionDrag";
+import { COMPOSER_ISSUE_DRAG_TYPE, encodeIssueDragPayload } from "./issueComposerDrag";
 
 export function issueContextMetadata(
   issue: Pick<IssueSummary, "number" | "title" | "url"> &

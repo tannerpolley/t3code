@@ -44,7 +44,10 @@ const layerSetup = (databasePath?: string) =>
     }),
   );
 
-export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {
+export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (
+  dbPath: string,
+  options?: { readonly checkpointWorker?: boolean },
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
@@ -55,7 +58,7 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
       filename: dbPath,
       readerWorker: true,
       // Run checkpoint fsyncs off the event loop so slow disk flushes cannot stall clients.
-      checkpointWorker: true,
+      checkpointWorker: options?.checkpointWorker ?? true,
       spanAttributes: {
         "db.name": path.basename(dbPath),
         "service.name": "t3code-server",

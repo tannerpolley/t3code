@@ -1,15 +1,10 @@
-import { IssueContextMetadata, PullRequestContextMetadata } from "@t3tools/contracts";
+import { PullRequestContextMetadata } from "@t3tools/contracts";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { Option, Schema } from "effect";
 
 export const COMPOSER_MENTION_DRAG_TYPE = "application/x-t3code-composer-mention";
 
 export const COMPOSER_PULL_REQUEST_DRAG_TYPE = "application/x-t3code-pull-request";
-
-export const COMPOSER_ISSUE_DRAG_TYPE = "application/x-t3code-issue";
-const IssueDragPayload = Schema.fromJsonString(IssueContextMetadata);
-const decodeIssuePayload = Schema.decodeUnknownOption(IssueDragPayload);
-export const encodeIssueDragPayload = Schema.encodeSync(IssueDragPayload);
 
 const PullRequestDragPayload = Schema.fromJsonString(PullRequestContextMetadata);
 const decodePullRequestPayload = Schema.decodeUnknownOption(PullRequestDragPayload);
@@ -26,12 +21,12 @@ export function composerMentionFromTreePath(treePath: string): string | null {
 
 export function dataTransferHasComposerMention(
   types: ReadonlyArray<string>,
-  supportsIssueContexts = false,
+  additionalType?: string,
 ): boolean {
   return (
     types.includes(COMPOSER_MENTION_DRAG_TYPE) ||
     types.includes(COMPOSER_PULL_REQUEST_DRAG_TYPE) ||
-    (supportsIssueContexts && types.includes(COMPOSER_ISSUE_DRAG_TYPE))
+    (additionalType !== undefined && types.includes(additionalType))
   );
 }
 
@@ -50,10 +45,14 @@ interface ComposerMentionDragEvent {
 
 /** Insertion focuses next frame; synchronous focus would overwrite the unreconciled mention. */
 export interface ComposerMentionDropHost {
-  readonly supportsIssueContexts?: boolean;
+  readonly additionalMention?:
+    | {
+        readonly type: string;
+        insert(payload: string): boolean | undefined;
+      }
+    | undefined;
   insertMentionAtEnd(text: string): boolean;
   insertPullRequestAtEnd(pullRequest: PullRequestContextMetadata): boolean;
-  insertIssueAtEnd?(issue: IssueContextMetadata): boolean;
   setDragActive(active: boolean): void;
   onInsertRejected(): void;
 }
@@ -69,7 +68,7 @@ export function makeComposerMentionDragHandlers(
 ): ComposerMentionDragHandlers {
   // Stop native propagation so the editor cannot process claimed drags.
   const claim = (event: ComposerMentionDragEvent): boolean => {
-    if (!dataTransferHasComposerMention(event.dataTransfer.types, host.supportsIssueContexts)) {
+    if (!dataTransferHasComposerMention(event.dataTransfer.types, host.additionalMention?.type)) {
       return false;
     }
     event.preventDefault();
@@ -97,11 +96,14 @@ export function makeComposerMentionDragHandlers(
       }
       host.setDragActive(false);
       if (
-        host.supportsIssueContexts &&
-        event.dataTransfer.types.includes(COMPOSER_ISSUE_DRAG_TYPE)
+        host.additionalMention &&
+        event.dataTransfer.types.includes(host.additionalMention.type)
       ) {
-        const issue = decodeIssuePayload(event.dataTransfer.getData(COMPOSER_ISSUE_DRAG_TYPE));
-        if (Option.isSome(issue) && host.insertIssueAtEnd?.(issue.value) === false) host.onInsertRejected();
+        if (
+          host.additionalMention.insert(event.dataTransfer.getData(host.additionalMention.type)) ===
+          false
+        )
+          host.onInsertRejected();
         return;
       }
       if (event.dataTransfer.types.includes(COMPOSER_PULL_REQUEST_DRAG_TYPE)) {
