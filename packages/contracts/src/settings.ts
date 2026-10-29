@@ -536,6 +536,8 @@ const ClientSettingsFieldsSchema = Schema.Struct({
 export const ClientSettingsSchema = Schema.Struct({
   ...ClientSettingsFieldsSchema.fields,
   sidebarShowRole: Schema.optionalKey(Schema.Unknown),
+  // Retired fork toggle; upstream's threadDetailsItems now owns lineage visibility.
+  lineageInDetails: Schema.optionalKey(Schema.Unknown),
 }).pipe(
   Schema.decodeTo(
     Schema.toType(
@@ -545,9 +547,13 @@ export const ClientSettingsSchema = Schema.Struct({
       }),
     ),
     SchemaTransformation.transform({
-      decode: ({ sidebarShowRole, ...settings }) => ({
+      decode: ({ sidebarShowRole, lineageInDetails, ...settings }) => ({
         ...settings,
         sidebarRoleDisplay: migrateSidebarRoleDisplay({ ...settings, sidebarShowRole }),
+        threadDetailsItems:
+          lineageInDetails === false && settings.threadDetailsItems.lineage === undefined
+            ? { ...settings.threadDetailsItems, lineage: false }
+            : settings.threadDetailsItems,
       }),
       encode: (settings) => settings,
     }),

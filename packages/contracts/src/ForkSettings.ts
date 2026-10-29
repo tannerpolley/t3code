@@ -326,7 +326,6 @@ export const ForkClientSettingsFields = {
   ),
   /** Model labels drop the company name the provider icon already shows: "Opus 5.5", "Sol 6". */
   shortModelNames: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** The thread details pane lists the thread's Lineage; off hides the section. */
   /** Lineage rows led by model and effort, with status marks, details and clearing. */
   threadDetailsRedesign: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** The quicker running-activity shimmer. */

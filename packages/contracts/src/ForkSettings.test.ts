@@ -263,6 +263,17 @@ it("migrates full legacy client files and saves only the role display choice", (
     ).sidebarRoleDisplay,
   ).toBe("name");
   expect(() => decodeClientPatch({ sidebarRoleDisplay: "unknown" })).toThrow();
+  for (const [lineageInDetails, threadDetailsItems, expected] of [
+    [false, {}, { lineage: false }],
+    [true, {}, {}],
+    [false, { lineage: true }, { lineage: true }],
+  ] as const) {
+    const migrated = decodeClientSettingsFile(
+      JSON.stringify({ ...oldSettings, lineageInDetails, threadDetailsItems }),
+    );
+    expect(migrated.threadDetailsItems).toEqual(expected);
+    expect(encodeClientSettings(migrated)).not.toHaveProperty("lineageInDetails");
+  }
 });
 
 it("defaults banked reset automation and reminders on and preserves opt-outs", () => {
