@@ -5040,6 +5040,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   )
                   OR item.type IN ('command_execution', 'dynamic_tool', 'subagent')
                   OR (
+                    item.status = 'running'
+                    AND item.type NOT IN ('command_execution', 'dynamic_tool', 'subagent')
+                  )
+                  OR (
                     item.type = 'user_input_request'
                     AND json_extract(item.payload_json, '$.requestId') IN (
                       SELECT runtime_request_id FROM orchestration_v2_projection_runtime_requests
