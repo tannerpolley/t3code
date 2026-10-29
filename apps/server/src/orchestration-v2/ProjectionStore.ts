@@ -3312,6 +3312,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           readonly work_last_ordinal?: number | null;
           readonly work_item_count?: number | null;
         };
+        // ORDER BY otherwise favors scanning the thread's entire ordinal index.
+        const useRecoveryIndex =
+          filter?.turnItemTypes !== undefined &&
+          filter.turnItemTypes.every((type) =>
+            ["command_execution", "dynamic_tool", "subagent"].includes(type),
+          ) &&
+          filter.turnItemStatuses !== undefined &&
+          filter.turnItemStatuses.every((status) =>
+            ["pending", "running", "waiting"].includes(status),
+          );
         const boundedTurnItemRows: ReadonlyArray<WindowPayloadRow> =
           (fields !== undefined && !fields.includes("turnItems")) ||
           (window === undefined &&
@@ -3321,7 +3331,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? yield* sql<PayloadRow>`
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
+                  ${useRecoveryIndex ? sql`INDEXED BY orchestration_v2_projection_turn_items_recovery_idx` : sql``}
                 WHERE thread_id = ${threadId}
+                  ${useRecoveryIndex ? sql`AND type IN ('command_execution', 'dynamic_tool', 'subagent') AND status IN ('pending', 'running', 'waiting')` : sql``}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}

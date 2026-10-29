@@ -1081,6 +1081,77 @@ it.effect("native subagent child shells report the subagent status (memory)", ()
   ),
 );
 
+it.effect("live command records search the recovery index and retain filtering and order", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = yield* addRolledBackRecoveryCandidate("process-lookup");
+    yield* addRolledBackRecoveryCandidate("other-process-lookup");
+    const original = (yield* store.getThreadRecords(threadId, ["turnItems"])).turnItems[0]!;
+    for (const [id, ordinal, status, runId] of [
+      ["pending", 3, "pending", original.runId],
+      ["waiting-b", 2, "waiting", original.runId],
+      ["waiting-a", 2, "waiting", null],
+      ["completed", 0, "completed", original.runId],
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:process-lookup:${id}`),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: original.updatedAt,
+        payload: { ...original, id: TurnItemId.make(id), ordinal, status, runId },
+      });
+    }
+    const all = (yield* store.getThreadRecords(threadId, ["turnItems"])).turnItems;
+    const filter = {
+      turnItemTypes: ["command_execution"],
+      turnItemStatuses: ["pending", "running", "waiting"],
+    } as const;
+    const { statements, tracer } = traceSqlStatements();
+    const records = yield* store
+      .getThreadRecords(threadId, ["providerThreads", "turnItems"], filter)
+      .pipe(Effect.withTracer(tracer));
+    assert.deepEqual(
+      records.turnItems,
+      all.filter((item) => item.status !== "completed"),
+    );
+    assert.deepEqual(
+      records.turnItems.map((item) => item.id),
+      [original.id, "waiting-a", "waiting-b", "pending"],
+    );
+    const query = statements.find((statement) =>
+      statement.includes("FROM orchestration_v2_projection_turn_items"),
+    )!;
+    const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, [
+      threadId,
+      JSON.stringify(filter.turnItemTypes),
+      JSON.stringify(filter.turnItemStatuses),
+    ]);
+    assert.ok(
+      plan.some((row) =>
+        row.detail.includes(
+          "SEARCH orchestration_v2_projection_turn_items USING INDEX orchestration_v2_projection_turn_items_recovery_idx (thread_id=?)",
+        ),
+      ),
+    );
+    const byRun = yield* store.getThreadRecords(threadId, ["turnItems"], {
+      ...filter,
+      turnItemRunIds: [null],
+    });
+    assert.deepEqual(
+      byRun.turnItems.map((item) => item.id),
+      ["waiting-a"],
+    );
+    assert.deepEqual(
+      (yield* store.getThreadRecords(threadId, ["turnItems"], {
+        turnItemTypes: ["command_execution"],
+        turnItemStatuses: ["completed"],
+      })).turnItems.map((item) => item.id),
+      ["completed"],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("runtime discovery preserves queued-run rules while searching the recovery index", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

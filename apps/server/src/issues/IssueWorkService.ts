@@ -1024,8 +1024,11 @@ export const layer = Layer.effect(
         if (priorReason !== undefined && !isAutomaticIssueSuspension(priorReason)) continue;
         const read = yield* issues.workRead(shell.linkedIssue).pipe(Effect.result);
         let reason: string | null = null;
-        if (read._tag === "Failure" || issueEligibility(read.success) === "unknown")
+        if (read._tag === "Failure") {
+          if (read.failure.code !== "inaccessible" && read.failure.code !== "unauthenticated")
+            continue;
           reason = unreadableRelationshipsSuspensionReason;
+        } else if (issueEligibility(read.success) === "unknown") continue;
         else if (read.success.state === "closed") reason = CLOSED_ISSUE_SUSPENSION_REASON;
         else if (issueEligibility(read.success) === "blocked") reason = openBlockerSuspensionReason;
         else {

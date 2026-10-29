@@ -1820,14 +1820,21 @@ it.effect.each(["blocker", "unreadable"] as const)(
   (suspension) => {
     let suspended = false;
     const harness = reviewHarness((input) =>
-      Effect.succeed({
-        ...reviewRead(reviewIssue(input.number)),
-        blockersComplete: suspension !== "unreadable" || !suspended,
-        blockedBy:
-          suspension === "blocker" && suspended
-            ? [{ issue: reviewIssue(99), state: "open" as const }]
-            : [],
-      }),
+      suspension === "unreadable" && suspended
+        ? Effect.fail(
+            new IssueReadError({
+              code: "inaccessible",
+              operation: "detail",
+              message: "Access denied",
+            }),
+          )
+        : Effect.succeed({
+            ...reviewRead(reviewIssue(input.number)),
+            blockedBy:
+              suspension === "blocker" && suspended
+                ? [{ issue: reviewIssue(99), state: "open" as const }]
+                : [],
+          }),
     );
     return Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
@@ -2107,10 +2114,49 @@ it.effect("periodic root selection retains a blocker suspension without mileston
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect.each(["partial", "failed"] as const)(
+it.effect.each(["partial", "rate-limited", "upstream", "invalid-response"] as const)(
+  "keeps running workers and their notices unchanged after a transient %s relationship read",
+  (failure) => {
+    let failing = false;
+    const harness = reviewHarness((input) =>
+      failing && failure !== "partial"
+        ? Effect.fail(
+            new IssueReadError({ code: failure, operation: "detail", message: "Read failed" }),
+          )
+        : Effect.succeed({ ...reviewRead(reviewIssue(input.number)), parentComplete: !failing }),
+    );
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const root = yield* createReviewRoot();
+      yield* delegateReviewIssue(root, reviewIssue(1), "transient-worker");
+      yield* worker.drain();
+      const child = (yield* store.issueOwner(reviewIssue(1)))!;
+      const before = yield* threads.getThreadRecords(child, ["runs"]);
+      for (const failed of [true, true, false]) {
+        failing = failed;
+        yield* service.reconcile(root);
+        yield* worker.drain();
+        assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, []);
+        assert.deepEqual((yield* threads.getThreadRecords(child, ["runs"])).runs, before.runs);
+        assert.isFalse(
+          (yield* threads.getThreadRecords(root, ["turnItems"])).turnItems.some(
+            (item) =>
+              item.type === "system_notice" && /Issue #1 (paused|resumed):/.test(item.message),
+          ),
+        );
+      }
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect.each(["inaccessible", "unauthenticated"] as const)(
   "recovers an unreadable suspension after a %s read on the next successful reconcile without milestone work",
   (failure) => {
     let unreadable = false;
+    let transient = false;
     let recovery:
       | { entered: Deferred.Deferred<void>; proceed: Deferred.Deferred<void> }
       | undefined;
@@ -2120,13 +2166,19 @@ it.effect.each(["partial", "failed"] as const)(
           yield* Deferred.succeed(recovery.entered, undefined);
           yield* Deferred.await(recovery.proceed);
         }
-        if (unreadable && failure === "failed")
+        if (transient)
           return yield* new IssueReadError({
-            code: "rate-limited",
+            code: "upstream",
             operation: "detail",
-            message: "Rate limited",
+            message: "Unavailable",
           });
-        return { ...reviewRead(reviewIssue(input.number)), parentComplete: !unreadable };
+        if (unreadable)
+          return yield* new IssueReadError({
+            code: failure,
+            operation: "detail",
+            message: "Access denied",
+          });
+        return reviewRead(reviewIssue(input.number));
       }),
     );
     return Effect.gen(function* () {
@@ -2152,6 +2204,11 @@ it.effect.each(["partial", "failed"] as const)(
       yield* service.reconcile(root);
       assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 1);
       assert.deepEqual(yield* store.activeRoots(), [root]);
+      transient = true;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 1);
+      transient = false;
       unreadable = false;
       recovery = { entered: yield* Deferred.make<void>(), proceed: yield* Deferred.make<void>() };
       yield* Effect.scoped(
@@ -2166,6 +2223,11 @@ it.effect.each(["partial", "failed"] as const)(
       yield* worker.drain();
       assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, []);
       assert.isTrue(yield* store.canAdmit(reviewIssue(1), child));
+      assert.isTrue(
+        (yield* threads.getThreadRecords(root, ["turnItems"])).turnItems.some(
+          (item) => item.type === "system_notice" && item.message.startsWith("Issue #1 resumed:"),
+        ),
+      );
       const resumed = yield* threads.getThreadRecords(child, ["runs"]);
       assert.lengthOf(resumed.runs, 2);
       assert.equal(resumed.runs.at(-1)!.status, "starting");
@@ -2281,7 +2343,15 @@ it.effect(
   () => {
     let unreadable = false;
     const harness = reviewHarness((input) =>
-      Effect.succeed({ ...reviewRead(reviewIssue(input.number)), parentComplete: !unreadable }),
+      unreadable
+        ? Effect.fail(
+            new IssueReadError({
+              code: "inaccessible",
+              operation: "detail",
+              message: "Access denied",
+            }),
+          )
+        : Effect.succeed(reviewRead(reviewIssue(input.number))),
     );
     return Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
@@ -2398,11 +2468,18 @@ it.effect(
     let unreadable = false;
     let blocked = false;
     const harness = reviewHarness((input) =>
-      Effect.succeed({
-        ...reviewRead(reviewIssue(input.number)),
-        blockersComplete: !unreadable,
-        blockedBy: blocked ? [{ issue: reviewIssue(99), state: "open" as const }] : [],
-      }),
+      unreadable
+        ? Effect.fail(
+            new IssueReadError({
+              code: "inaccessible",
+              operation: "detail",
+              message: "Access denied",
+            }),
+          )
+        : Effect.succeed({
+            ...reviewRead(reviewIssue(input.number)),
+            blockedBy: blocked ? [{ issue: reviewIssue(99), state: "open" as const }] : [],
+          }),
     );
     return Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
