@@ -1,3 +1,4 @@
+import { NotebookToolkit } from "./notebook/tools.ts";
 import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
@@ -926,6 +927,7 @@ it("keeps fork tools in their toolkits with presentation labels", () => {
     ...OrchestratorToolkit.tools,
     ...ThreadToolkit.tools,
     ...ProjectArtifactsToolkit.tools,
+    ...NotebookToolkit.tools,
     ...WorktreeToolkit.tools,
   };
   for (const name of [
@@ -954,6 +956,7 @@ it("keeps fork tools in their toolkits with presentation labels", () => {
     "unqueue_issue",
     "withdraw_owner_decision",
     "work_through_milestone",
+    ...Object.keys(NotebookToolkit.tools),
   ]) {
     expect(Object.hasOwn(tools, name), name).toBe(true);
     expect(resolveT3McpToolDefinition(name), name).not.toBeNull();

@@ -1,3 +1,5 @@
+import { NotebookToolkit } from "./toolkits/notebook/tools.ts";
+import * as NotebookHandlers from "./toolkits/notebook/handlers.ts";
 import { ProjectArtifactsToolkit } from "./toolkits/projectArtifacts/tools.ts";
 import * as ProjectArtifactsHandlers from "./toolkits/projectArtifacts/handlers.ts";
 import * as Cause from "effect/Cause";
@@ -1155,6 +1157,7 @@ export const layerTools = Layer.mergeAll(
   layerAttachmentToolkit,
   layerProjectRegistration,
   toolkitRegistration(ProjectArtifactsToolkit, ProjectArtifactsHandlers.layer),
+  toolkitRegistration(NotebookToolkit, NotebookHandlers.layer),
   layerEnvironmentToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,

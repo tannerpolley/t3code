@@ -7,6 +7,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import {
   NotebookError,
+  type NotebookEditCells,
+  type NotebookKernelList,
   NOTEBOOK_LIMITS,
   type NotebookSubscribe,
   type NotebookSave,
@@ -62,11 +64,20 @@ type Caller = { readonly scopes: readonly AuthEnvironmentScope[] };
 export class NotebookService extends Context.Service<
   NotebookService,
   {
+    readonly editCells: (
+      input: NotebookEditCells,
+      caller: Caller,
+    ) => Effect.Effect<NotebookSnapshot, NotebookError>;
+    readonly listKernels: (
+      input: Pick<NotebookIdentity, "projectId" | "threadId"> & { cursor: number; limit: number },
+      caller: Caller,
+    ) => Effect.Effect<NotebookKernelList, NotebookError>;
     readonly readOutputs: (
       input: NotebookHandle & {
         readonly cellId: string;
         readonly cursor: number;
         readonly byteLimit: number;
+        readonly afterSequence?: number | undefined;
       },
       caller: Caller,
     ) => Effect.Effect<
@@ -75,6 +86,12 @@ export class NotebookService extends Context.Service<
         readonly nextCursor: number | null;
         readonly truncated: boolean;
         readonly epoch: string;
+        readonly sequence: number;
+        readonly revision: number;
+        readonly generation: number;
+        readonly runId: string | null;
+        readonly outcome: NotebookSnapshot["outcome"];
+        readonly kernel: NotebookSnapshot["kernel"];
         readonly execution: NotebookSnapshot["executions"][string] | null;
       },
       NotebookError
@@ -108,6 +125,15 @@ export class NotebookService extends Context.Service<
       input: NotebookHandle,
       caller: Caller,
     ) => Effect.Effect<NotebookSnapshot, NotebookError>;
+    readonly run: (
+      input: NotebookHandle & {
+        revision: number;
+        requestId: string;
+        cellIds?: readonly string[] | undefined;
+        all?: boolean | undefined;
+      },
+      caller: Caller,
+    ) => Effect.Effect<string, NotebookError>;
     readonly execute: (
       input: NotebookExecute,
       caller: Caller,
@@ -160,6 +186,7 @@ const make = Effect.gen(function* () {
     leases: Map<string, symbol>;
     timer?: Fiber.Fiber<void, never>;
     lastExecution: number;
+    updated: Deferred.Deferred<void>;
   };
   const sessions = new Map<string, Session>();
   const authorize = Effect.fn("NotebookService.authorize")(function* (
@@ -252,6 +279,8 @@ const make = Effect.gen(function* () {
     resync = false,
     advance = true,
   ) => {
+    Deferred.doneUnsafe(session.updated, Effect.void);
+    session.updated = Deferred.makeUnsafe<void>();
     const s = session.snapshot;
     s.sequence++;
     if (advance) s.revision++;
@@ -485,6 +514,7 @@ const make = Effect.gen(function* () {
           reducer: new ExecutionReducer(parsed.document),
           cancelled: false,
           requests: new Map(),
+          updated: Deferred.makeUnsafe<void>(),
           observers: new Set(),
           leases: new Map(),
           lastExecution: now,
@@ -630,6 +660,26 @@ const make = Effect.gen(function* () {
       }),
     );
   });
+  const run = Effect.fn("NotebookService.run")(function* (
+    input: NotebookHandle & {
+      revision: number;
+      requestId: string;
+      cellIds?: readonly string[] | undefined;
+      all?: boolean | undefined;
+    },
+    caller: Caller,
+  ) {
+    const session = yield* get(input, caller, true);
+    if ((input.all === true) === (input.cellIds !== undefined))
+      return yield* new NotebookError({ reason: "invalid-document" });
+    const cellIds =
+      input.all === true
+        ? session.reducer.document.cells
+            .filter((cell) => cell.cell_type === "code")
+            .map((cell) => cell.id)
+        : input.cellIds!;
+    return yield* execute({ ...input, cellIds }, caller);
+  });
   const control = (action: "interrupt" | "restart" | "shutdown") =>
     Effect.fn(`NotebookService.${action}`)(function* (
       input: NotebookControl & { runId?: string },
@@ -685,10 +735,15 @@ const make = Effect.gen(function* () {
       readonly cellId: string;
       readonly cursor: number;
       readonly byteLimit: number;
+      readonly afterSequence?: number | undefined;
     },
     caller: Caller,
   ) {
     const session = yield* get(input, caller);
+    if (input.afterSequence !== undefined && input.afterSequence >= session.snapshot.sequence) {
+      yield* Deferred.await(session.updated).pipe(Effect.timeoutOption("25 seconds"));
+      yield* get(input, caller);
+    }
     const cell = session.reducer.document.cells.find((cell) => cell.id === input.cellId);
     if (!cell) return yield* new NotebookError({ reason: "not-found" });
     if (
@@ -718,6 +773,12 @@ const make = Effect.gen(function* () {
       nextCursor: cursor < outputs.length ? cursor : null,
       truncated: session.snapshot.truncated,
       epoch,
+      sequence: session.snapshot.sequence,
+      revision: session.snapshot.revision,
+      generation: session.snapshot.generation,
+      runId: session.snapshot.runId,
+      outcome: session.snapshot.outcome,
+      kernel: session.snapshot.kernel,
       execution: session.snapshot.executions[input.cellId] ?? null,
     });
   });
@@ -835,6 +896,96 @@ const make = Effect.gen(function* () {
       }),
     );
   });
+  const editCells = Effect.fn("NotebookService.editCells")(function* (
+    input: NotebookEditCells,
+    caller: Caller,
+  ) {
+    yield* writable(caller);
+    const current = yield* snapshot(input, caller);
+    if (current.revision !== input.revision)
+      return yield* new NotebookError({ reason: "stale-revision" });
+    const document = yield* Effect.try({
+      try: () => {
+        const document = parseNotebook(fingerprintOf(current.document)).document;
+        if (!input.operations.length || input.operations.length > NOTEBOOK_LIMITS.cells)
+          throw new Error();
+        for (const operation of input.operations) {
+          if (operation.type === "insert") {
+            if (
+              !Number.isInteger(operation.index) ||
+              operation.index < 0 ||
+              operation.index > document.cells.length
+            )
+              throw new Error();
+            const cell = parseNotebook(fingerprintOf({ ...document, cells: [operation.cell] }))
+              .document.cells[0]!;
+            if (document.cells.some((c) => c.id === cell.id)) throw new Error();
+            document.cells.splice(operation.index, 0, cell);
+          } else {
+            const index = document.cells.findIndex((c) => c.id === operation.cellId);
+            if (index < 0) throw new Error();
+            if (operation.type === "update")
+              document.cells[index] = { ...document.cells[index]!, source: operation.source };
+            else {
+              const [cell] = document.cells.splice(index, 1);
+              if (operation.type === "move") {
+                if (
+                  !Number.isInteger(operation.index) ||
+                  operation.index < 0 ||
+                  operation.index > document.cells.length
+                )
+                  throw new Error();
+                document.cells.splice(operation.index, 0, cell!);
+              }
+            }
+          }
+        }
+        return document;
+      },
+      catch: () => new NotebookError({ reason: "invalid-document" }),
+    });
+    return yield* edit({ ...input, document }, caller);
+  });
+  const listKernels = Effect.fn("NotebookService.listKernels")(function* (
+    input: Pick<NotebookIdentity, "projectId" | "threadId"> & { cursor: number; limit: number },
+    caller: Caller,
+  ) {
+    yield* authorize(caller);
+    if (
+      !Number.isInteger(input.cursor) ||
+      input.cursor < 0 ||
+      !Number.isInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > 100
+    )
+      return yield* new NotebookError({ reason: "output-limit" });
+    const root = yield* rootFor(input);
+    const endpoint = yield* config.endpoint(root);
+    const specs = yield* transport.listSpecs(endpoint);
+    const owned = [...sessions.values()].filter(
+      (s) => s.root === root && s.projects.has(input.projectId) && s.kernel,
+    );
+    const selectedSpecs = specs.slice(input.cursor, input.cursor + input.limit);
+    const kernelStart = Math.max(0, input.cursor - specs.length);
+    const kernels = owned
+      .slice(kernelStart, kernelStart + input.limit - selectedSpecs.length)
+      .map((s) => ({
+        handle: s.snapshot.handle,
+        relativePath: NodePath.relative(root, s.path),
+        kernel: s.snapshot.kernel,
+        generation: s.snapshot.generation,
+        environment: s.snapshot.environment,
+        idleDeadline: s.snapshot.idleDeadline,
+      }));
+    return {
+      specs: selectedSpecs,
+      kernels,
+      nextCursor:
+        input.cursor + input.limit < specs.length + owned.length
+          ? input.cursor + input.limit
+          : null,
+    };
+  });
   const createLock = Semaphore.makeUnsafe(1);
   const create = Effect.fn("NotebookService.create")(function* (
     input: NotebookCreate,
@@ -951,6 +1102,8 @@ const make = Effect.gen(function* () {
   );
 
   return NotebookService.of({
+    editCells,
+    listKernels,
     readOutputs,
     reload,
     save,
@@ -960,6 +1113,7 @@ const make = Effect.gen(function* () {
     close,
     open,
     snapshot,
+    run,
     execute,
     interrupt: control("interrupt"),
     restart: control("restart"),

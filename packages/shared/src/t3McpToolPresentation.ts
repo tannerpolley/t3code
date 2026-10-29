@@ -70,7 +70,8 @@ export type T3McpToolSummaryAction =
   | "device"
   | "html-preview"
   | "html-render"
-  | "issue-work";
+  | "issue-work"
+  | "notebook";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -91,6 +92,20 @@ function tool(
 const T3_MCP_SERVER_ALIASES = new Set(["t3-code", "t3_code", "t3code"]);
 
 const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
+  notebook_open: tool(["Read", "Reading", "Read", "a notebook"], "notebook"),
+  notebook_create: tool(["Create", "Creating", "Created", "a notebook"], "notebook"),
+  notebook_edit_cells: tool(["Edit", "Editing", "Edited", "notebook cells"], "notebook"),
+  notebook_run: tool(["Run", "Running", "Ran", "notebook cells"], "notebook"),
+  notebook_read_outputs: tool(["Read", "Reading", "Read", "notebook outputs"], "notebook"),
+  notebook_list_kernels: tool(["List", "Listing", "Listed", "notebook kernels"], "notebook"),
+  notebook_save: tool(["Save", "Saving", "Saved", "a notebook"], "notebook"),
+  notebook_interrupt: tool(
+    ["Interrupt", "Interrupting", "Interrupted", "a notebook run"],
+    "notebook",
+  ),
+  notebook_restart: tool(["Restart", "Restarting", "Restarted", "a notebook kernel"], "notebook"),
+  notebook_shutdown: tool(["Stop", "Stopping", "Stopped", "a notebook kernel"], "notebook"),
+
   link_pull_request: tool(
     ["Link", "Linking", "Linked", "a pull request"],
     "link-pr",

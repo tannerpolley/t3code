@@ -1,3 +1,16 @@
+import * as Schema from "effect/Schema";
+import { NotebookToolkit } from "../mcp/toolkits/notebook/tools.ts";
+import * as NotebookHandlers from "../mcp/toolkits/notebook/handlers.ts";
+import * as McpToolAccess from "../mcp/McpToolAccess.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  NotebookSnapshot,
+  NotebookKernelList,
+} from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 // The save regression compares the service hash with the actual committed bytes.
@@ -24,6 +37,10 @@ import * as NotebookService from "./NotebookService.ts";
 import * as JupyterTransport from "./JupyterTransport.ts";
 import { applyNotebookEvent } from "../../../web/src/components/files/notebookLiveState.ts";
 import { parseNotebook } from "./notebookDocument.ts";
+
+const decodeSnapshot = Schema.decodeUnknownSync(NotebookSnapshot);
+const decodeKernels = Schema.decodeUnknownSync(NotebookKernelList);
+const decodeRun = Schema.decodeUnknownSync(Schema.Struct({ runId: Schema.String }));
 
 const caller = {
   scopes: [
@@ -57,6 +74,7 @@ const setup = Effect.fn("Test.setup")(function* (
   const requests = yield* Queue.unbounded<{ id: string; code: string }>();
   const controls: string[] = [];
   const transport = JupyterTransport.JupyterTransport.of({
+    listSpecs: () => Effect.succeed(["python3"]),
     probe: Effect.fn("Fake.probe")(() => Effect.void),
     verify: Effect.fn("Fake.verify")(() => Effect.void),
     create: Effect.fn("Fake.create")(() => Effect.succeed("owned")),
@@ -843,6 +861,7 @@ it.effect(
       const release = yield* Deferred.make<void>();
       let block = false;
       const { service, handle, fs, root, sql, requests } = yield* setup({
+        listSpecs: () => Effect.succeed(["python3"]),
         probe: Effect.fn("Concurrent.probe")(() =>
           block
             ? Queue.offer(arrived, undefined).pipe(Effect.andThen(Deferred.await(release)))
@@ -894,6 +913,7 @@ it.effect("concurrent first opens cannot exceed the retained document cap", () =
     const release = yield* Deferred.make<void>();
     let block = false;
     const { service, handle, fs, root } = yield* setup({
+      listSpecs: () => Effect.succeed(["python3"]),
       probe: Effect.fn("Capacity.probe")(() =>
         block
           ? Queue.offer(arrived, undefined).pipe(Effect.andThen(Deferred.await(release)))
@@ -1148,4 +1168,251 @@ it.effect(
         reason: "invalid-path",
       });
     }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect(
+  "headless scheduled callers create, edit, run, read, save and recover through the toolkit",
+  () =>
+    Effect.gen(function* () {
+      const { service, root, fs, handle, sql, requests, send } = yield* setup();
+      const threadId = ThreadId.make("scheduled-notebook");
+      yield* sql`INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json) VALUES (${threadId}, ${handle.projectId}, 'Scheduled', 'codex', 'full-access', 'default', '2026-10-28', '2026-10-28', '{"worktreePath":null}')`;
+      const shell = {
+        ...liveThreadShell(threadId),
+        projectId: handle.projectId,
+        createdBy: "system" as const,
+      };
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(NotebookService.NotebookService, service),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(shell),
+        }),
+        Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          environmentId: EnvironmentId.make("test"),
+          requestNamespace: "scheduled",
+          thread: {
+            threadId,
+            providerSessionId: "scheduled-session",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          },
+          client: undefined,
+          issuedAt: 0,
+          capabilities: new Set(["orchestration" as const]),
+        }),
+      );
+      const toolkit = yield* NotebookToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(NotebookHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const created = yield* toolkit
+        .handle("notebook_create", { relativePath: "headless.ipynb", document: fixture })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((rows) => decodeSnapshot(rows.at(-1)!.result)),
+          Effect.provide(dependencies),
+        );
+      const edited = yield* toolkit
+        .handle("notebook_edit_cells", {
+          handle: created.handle,
+          revision: created.revision,
+          operations: [
+            { type: "update", cellId: "a", source: "print(84)" },
+            { type: "move", cellId: "b", index: 0 },
+            {
+              type: "insert",
+              index: 2,
+              cell: { id: "notes", cell_type: "markdown", source: "Result", metadata: {} },
+            },
+            { type: "delete", cellId: "notes" },
+          ],
+        })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((rows) => decodeSnapshot(rows.at(-1)!.result)),
+          Effect.provide(dependencies),
+        );
+      const result = yield* toolkit
+        .handle("notebook_run", {
+          handle: edited.handle,
+          revision: edited.revision,
+          cellIds: ["a"],
+          requestId: "headless",
+        })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((rows) => decodeRun(rows.at(-1)!.result)),
+          Effect.provide(dependencies),
+        );
+      const request = yield* Queue.take(requests);
+      expect(request.code).toBe("print(84)");
+      yield* send(request.id, "stream", { name: "stdout", text: "84\n" });
+      yield* send(request.id, "execute_reply", { status: "ok" });
+      yield* send(request.id, "status", { execution_state: "idle" });
+      const target = { projectId: handle.projectId, threadId, handle: edited.handle };
+      yield* service.subscribe(target, caller).pipe(
+        Stream.mapEffect(() => service.snapshot(target, caller)),
+        Stream.filter((snapshot) => snapshot.runId === result.runId && snapshot.outcome === "ok"),
+        Stream.runHead,
+      );
+      const outputs = yield* toolkit
+        .handle("notebook_read_outputs", {
+          handle: edited.handle,
+          cellId: "a",
+          cursor: 0,
+          byteLimit: 1024,
+        })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((rows) => rows.at(-1)!.result),
+          Effect.provide(dependencies),
+        );
+      expect(outputs).toMatchObject({
+        outcome: "ok",
+        runId: result.runId,
+        outputs: [{ text: "84\n" }],
+        truncated: false,
+      });
+      const current = yield* service.snapshot(target, caller);
+      const saved = yield* toolkit
+        .handle("notebook_save", {
+          handle: edited.handle,
+          revision: current.revision,
+          diskHash: current.diskHash,
+        })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((rows) => decodeSnapshot(rows.at(-1)!.result)),
+          Effect.provide(dependencies),
+        );
+      const disk = parseNotebook(yield* fs.readFileString(root + "/headless.ipynb")).document;
+      expect(disk.metadata).toEqual(fixture.metadata);
+      expect(disk.cells.map((cell) => cell.id)).toEqual(["b", "a"]);
+      expect(disk.cells[1]?.outputs).toMatchObject([{ text: "84\n" }]);
+      expect(saved.savedRevision).toBe(saved.revision);
+      const kernels = yield* toolkit.handle("notebook_list_kernels", { cursor: 0, limit: 10 }).pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.map((rows) => decodeKernels(rows.at(-1)!.result)),
+        Effect.provide(dependencies),
+      );
+      expect(kernels).toMatchObject({
+        specs: ["python3"],
+        kernels: [{ handle: edited.handle, relativePath: "headless.ipynb" }],
+      });
+      yield* toolkit
+        .handle("notebook_restart", { handle: edited.handle, generation: current.generation })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((rows) => rows.at(-1)!.result),
+          Effect.provide(dependencies),
+        );
+      const restarted = yield* service.snapshot(target, caller);
+      yield* toolkit
+        .handle("notebook_shutdown", { handle: edited.handle, generation: restarted.generation })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((rows) => rows.at(-1)!.result),
+          Effect.provide(dependencies),
+        );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect.each([
+  ["approval-required", "default", true, "normal"],
+  ["auto-accept-edits", "default", true, "normal"],
+  ["full-access", "plan", true, "normal"],
+  ["full-access", "default", false, "normal"],
+  ["full-access", "default", true, "read-only-client"],
+  ["full-access", "default", true, "missing-capability"],
+  ["full-access", "default", true, "wrong-provider"],
+] as const)(
+  "refuses notebook execution for runtime %s interaction %s live %s",
+  ([runtimeMode, interactionMode, live, condition]) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("caller");
+      const shell = liveThreadShell(threadId, {
+        runtimeMode,
+        interactionMode,
+        ...(live ? {} : { activeRunId: null }),
+      });
+      const dependencies = Layer.mergeAll(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(shell),
+        }),
+        Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          environmentId: EnvironmentId.make("test"),
+          requestNamespace: "auth",
+          thread: {
+            threadId,
+            providerSessionId: "session",
+            providerInstanceId: ProviderInstanceId.make(
+              condition === "wrong-provider" ? "claudeAgent" : "codex",
+            ),
+          },
+          client:
+            condition === "read-only-client"
+              ? { sessionId: "read-only", label: "Read only", access: "read-only" }
+              : undefined,
+          issuedAt: 0,
+          capabilities: new Set(
+            condition === "missing-capability" ? [] : ["orchestration" as const],
+          ),
+        }),
+      );
+      const toolkit = yield* NotebookToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(NotebookHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const result = yield* toolkit
+        .handle("notebook_run", {
+          handle: "unreachable",
+          revision: 0,
+          all: true,
+          requestId: "denied",
+        })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((rows) => rows.at(-1)!.result),
+          Effect.provide(dependencies),
+        );
+      expect(result).toMatchObject({
+        code: live && condition !== "wrong-provider" ? "capability_denied" : "parent_not_active",
+      });
+    }),
+);
+
+it.effect("output waits return the changed service sequence", () =>
+  Effect.gen(function* () {
+    const { service, opened, handle } = yield* setup();
+    const waiting = yield* service
+      .readOutputs(
+        { ...handle, cellId: "a", cursor: 0, byteLimit: 1024, afterSequence: opened.sequence },
+        caller,
+      )
+      .pipe(Effect.forkChild);
+    const edited = yield* service.editCells(
+      {
+        ...handle,
+        revision: opened.revision,
+        operations: [{ type: "update", cellId: "a", source: "print(85)" }],
+      },
+      caller,
+    );
+    const changed = yield* Fiber.join(waiting);
+    expect(changed.sequence).toBe(edited.sequence);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );

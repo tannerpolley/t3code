@@ -465,6 +465,9 @@ export function summarizeT3ToolCalls(
     case "capabilities":
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);
       break;
+    case "notebook":
+      label = phrase("Used", "use", `notebook tools ${times}`);
+      break;
     case "issue-work":
       label = phrase("Used", "use", `issue orchestration ${times}`);
       break;

@@ -35,6 +35,7 @@ export type Channels = {
 export class JupyterTransport extends Context.Service<
   JupyterTransport,
   {
+    readonly listSpecs: (endpoint: Endpoint) => Effect.Effect<readonly string[], NotebookError>;
     readonly probe: (endpoint: Endpoint) => Effect.Effect<void, NotebookError>;
     readonly verify: (
       endpoint: Endpoint,
@@ -229,5 +230,18 @@ print(json.dumps([os.path.realpath(sys.executable), os.path.realpath(os.getcwd()
       }),
     );
   });
-  return JupyterTransport.of({ create, control, connect, probe, verify });
+  return JupyterTransport.of({
+    listSpecs: Effect.fn("JupyterTransport.listSpecs")(function* (endpoint: Endpoint) {
+      const specs = yield* request(endpoint, "specs", "GET").pipe(
+        Effect.flatMap(decodeSpecs),
+        Effect.mapError(() => new NotebookError({ reason: "kernel-failure" })),
+      );
+      return Object.keys(specs.kernelspecs).sort();
+    }),
+    create,
+    control,
+    connect,
+    probe,
+    verify,
+  });
 });

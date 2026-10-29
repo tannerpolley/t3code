@@ -156,3 +156,34 @@ export const NotebookSubscribe = Schema.Struct({
   leaseId: Schema.optional(Schema.String),
 });
 export type NotebookSubscribe = typeof NotebookSubscribe.Type;
+
+export const NotebookCellOperation = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("insert"), index: Schema.Int, cell: NotebookDocument }),
+  Schema.Struct({ type: Schema.Literal("update"), cellId: Schema.String, source: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("delete"), cellId: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("move"), cellId: Schema.String, index: Schema.Int }),
+]);
+export const NotebookEditCells = Schema.Struct({
+  ...NotebookHandle.fields,
+  revision: Schema.Int,
+  operations: Schema.Array(NotebookCellOperation).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(500),
+  ),
+});
+export type NotebookEditCells = typeof NotebookEditCells.Type;
+export const NotebookKernelList = Schema.Struct({
+  specs: Schema.Array(Schema.String),
+  kernels: Schema.Array(
+    Schema.Struct({
+      handle: Schema.String,
+      relativePath: Schema.String,
+      kernel: NotebookSnapshot.fields.kernel,
+      generation: Schema.Int,
+      environment: NotebookSnapshot.fields.environment,
+      idleDeadline: Schema.NullOr(Schema.Number),
+    }),
+  ),
+  nextCursor: Schema.NullOr(Schema.Int),
+});
+export type NotebookKernelList = typeof NotebookKernelList.Type;
