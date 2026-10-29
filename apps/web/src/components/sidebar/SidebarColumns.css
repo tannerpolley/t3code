@@ -40,7 +40,7 @@
   min-width: 0;
 }
 /*
- * The name, then its model pieces. The name truncates to its reserve first; then the pieces
+ * The model pieces, then the name. The name truncates to its reserve first; then the pieces
  * narrow, and one that no longer fits wraps onto the clipped second line, so it drops whole.
  */
 @utility sidebar-thread-main {

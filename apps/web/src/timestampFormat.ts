@@ -315,13 +315,13 @@ export function formatExpiresInLabel(isoDate: string, nowMs: number = Date.now()
   return tail.length > 0 ? `Expires in ${days}d ${tail.join(" ")}` : `Expires in ${days}d`;
 }
 
-/** The two largest units, zero-padded: "05m 09s", "01h 05m", then "3d 04h". */
+/** The two largest units, zero-padded: "05m 09s", "01h 05m", then "03d 04h". */
 export function formatElapsedSeconds(totalSeconds: number): string {
   const seconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
   const pad = (value: number) => String(value).padStart(2, "0");
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
-  if (hours >= 24) return `${Math.floor(hours / 24)}d ${pad(hours % 24)}h`;
+  if (hours >= 24) return `${pad(Math.floor(hours / 24))}d ${pad(hours % 24)}h`;
   if (hours > 0) return `${pad(hours)}h ${pad(minutes % 60)}m`;
   return `${pad(minutes)}m ${pad(seconds % 60)}s`;
 }

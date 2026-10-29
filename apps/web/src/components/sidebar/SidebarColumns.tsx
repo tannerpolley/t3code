@@ -140,8 +140,8 @@ export function SidebarTrailingColumns(props: {
 const LEFT_TRACKS = { location: "0.75rem", role: "0.75rem", provider: "1rem" } as const;
 
 /**
- * A thread row: fixed icon tracks, then the name with its model name, version and effort flowing
- * after it, then the badge hugging the time, then the status mark.
+ * A thread row: fixed icon tracks, then the model name, version and effort with the name flowing
+ * after them, then the badge hugging the time, then the status mark.
  */
 export function SidebarThreadColumns(props: {
   readonly caret?: ReactNode;
@@ -200,7 +200,6 @@ export function SidebarThreadColumns(props: {
         </span>
       ))}
       <span className="sidebar-thread-main">
-        <span className="sidebar-thread-name">{props.name}</span>
         {modelName || version || effort ? (
           <span className="sidebar-thread-model">
             {modelName ? (
@@ -210,6 +209,7 @@ export function SidebarThreadColumns(props: {
             {effort ? <SidebarEffortMeter effort={effort} /> : null}
           </span>
         ) : null}
+        <span className="sidebar-thread-name">{props.name}</span>
       </span>
       <span className={cn("sidebar-thread-trailing", props.trailingClassName)}>
         {badge ? <span className="sidebar-thread-badge">{badge}</span> : null}
