@@ -21,7 +21,7 @@ import * as Persistable from "effect/persistence/Persistable";
 import * as PersistedCache from "effect/persistence/PersistedCache";
 import * as Persistence from "effect/persistence/Persistence";
 import * as ServerConfig from "../config.ts";
-import { detachStackFrame } from "../git/detachStackFrame.ts";
+import { detachStackFrame } from "@t3tools/shared/detachStackFrame";
 import { forkParked } from "../serverActivation.ts";
 
 const CONCURRENT_READS = 512;

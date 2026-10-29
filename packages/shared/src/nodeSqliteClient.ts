@@ -26,6 +26,7 @@ import * as Client from "effect/sql/SqlClient";
 import type { Borrower, Connection } from "effect/sql/SqlConnection";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
+import { detachStackFrame } from "./detachStackFrame.ts";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
@@ -1025,7 +1026,16 @@ const make = Effect.fn("makeWithDatabase")(function* (
     });
 
     const statementFor = (sql: string, params: ReadonlyArray<unknown>) =>
-      hasLargeBinding(params) ? prepare(sql) : Cache.get(prepareCache, sql);
+      hasLargeBinding(params)
+        ? prepare(sql)
+        : Cache.getOption(prepareCache, sql).pipe(
+            Effect.flatMap(
+              Option.match({
+                onSome: Effect.succeed,
+                onNone: () => detachStackFrame(Cache.get(prepareCache, sql)),
+              }),
+            ),
+          );
 
     const runStatement = (
       statement: NodeSqlite.StatementSync,

@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./detachStackFrame": {
+      "types": "./src/detachStackFrame.ts",
+      "import": "./src/detachStackFrame.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
