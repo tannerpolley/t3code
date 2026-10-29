@@ -36,7 +36,7 @@
 .sidebar-thread-location { grid-column: location; }
 .sidebar-thread-role { grid-column: role; }
 .sidebar-thread-provider { grid-column: provider; }
-.sidebar-thread-model { grid-column: model; }
+.sidebar-thread-model { grid-column: model / name; }
 .sidebar-thread-effort { grid-column: effort; }
 .sidebar-thread-name { grid-column: name; }
 .sidebar-thread-spacer { grid-column: spacer; }

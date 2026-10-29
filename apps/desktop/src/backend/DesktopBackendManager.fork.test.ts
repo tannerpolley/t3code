@@ -303,6 +303,60 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
+  it.effect("does not report a readiness timeout while migrations run", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const migrationsDone = yield* Deferred.make<void>();
+        const statuses = yield* Queue.unbounded<boolean>();
+        const failures = yield* Queue.unbounded<void>();
+        const layerSpawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                stdout: Stream.encodeText(
+                  Stream.concat(
+                    Stream.make("Running database migrations\n"),
+                    Stream.fromEffect(
+                      Deferred.await(migrationsDone).pipe(
+                        Effect.as("Migrations ran successfully\n"),
+                      ),
+                    ),
+                  ).pipe(Stream.concat(Stream.never)),
+                ),
+                exitCode: Effect.never,
+              }),
+            ),
+          ),
+        );
+        yield* DesktopBackendManager.runBackendProcess({
+          ...baseConfig,
+          desktopTelemetryStream: Stream.empty,
+          readinessTimeout: Duration.seconds(1),
+          onMigrationStatus: (running) => Queue.offer(statuses, running).pipe(Effect.asVoid),
+          onReadinessFailure: () => Queue.offer(failures, void 0).pipe(Effect.asVoid),
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              layerSpawner,
+              layerHttpClient((request) => Effect.succeed(responseForRequest(request, 503))),
+            ),
+          ),
+          Effect.forkScoped,
+        );
+
+        assert.isTrue(yield* Queue.take(statuses));
+        yield* TestClock.adjust(Duration.seconds(5));
+        assert.equal(yield* Queue.size(failures), 0);
+
+        yield* Deferred.succeed(migrationsDone, void 0);
+        assert.isFalse(yield* Queue.take(statuses));
+        yield* TestClock.adjust(Duration.seconds(2));
+        yield* Queue.take(failures);
+      }),
+    ),
+  );
+
   it.effect("notifies shutdown when the backend exits before readiness", () =>
     Effect.scoped(
       Effect.gen(function* () {

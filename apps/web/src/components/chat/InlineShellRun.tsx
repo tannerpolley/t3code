@@ -42,19 +42,13 @@ export function InlineShellRunProvider({
   environmentId,
   threadId,
   children,
-  className,
 }: {
-  className?: string;
   environmentId: EnvironmentId;
   threadId: ThreadId;
   children: ReactNode;
 }) {
   const value = useMemo(() => ({ environmentId, threadId }), [environmentId, threadId]);
-  return (
-    <InlineShellContext value={value}>
-      <div className={className}>{children}</div>
-    </InlineShellContext>
-  );
+  return <InlineShellContext value={value}>{children}</InlineShellContext>;
 }
 
 export function InlineShellBlock({
