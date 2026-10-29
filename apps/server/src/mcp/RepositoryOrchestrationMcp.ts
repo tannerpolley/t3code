@@ -54,9 +54,7 @@ export interface RepositoryMcpMethods {
 
 interface RepositoryMcpHooks {
   readonly issueWork: Option.Option<IssueWorkService.IssueWorkService["Service"]>;
-  readonly loadCaller: (
-    scope: McpInvocationScope,
-  ) => Effect.Effect<
+  readonly loadCaller: (scope: McpInvocationScope) => Effect.Effect<
     {
       readonly limits: {
         readonly runtimeMode: RuntimeMode;
