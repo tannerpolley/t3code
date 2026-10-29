@@ -72,11 +72,12 @@ export const NotebookToolkit = Toolkit.make(
   Tool.make("notebook_read_outputs", {
     ...shared,
     description:
-      "Read one cell's bounded output page plus run status, source/generation provenance and truncation. cursor starts at 0; byteLimit is 1..1048576. nextCursor=null ends the page sequence. afterSequence optionally waits up to 25 seconds for a service update; use the returned sequence for event waits instead of busy polling. A page too small for one output returns output-limit; increase byteLimit.",
+      "Read one cell's outputs with status, provenance and capture truncation. byteLimit (1..1048576) bounds the complete response. Start cursor=0, offset=0. Follow nextCursor and nextOffset until nextCursor=null. Oversized records return outputs=[] and fragment={offset,json}: concatenate fragment.json strings at their UTF-16 offsets, then JSON.parse the completed record. No data is discarded by pagination; truncated reports capture loss. Continue only within the same sequence; if it changes, restart pagination. afterSequence waits up to 25 seconds for an update instead of busy polling. output-limit means the budget cannot fit metadata plus any data; increase byteLimit up to its cap.",
     parameters: Schema.Struct({
       ...handle,
       cellId: Schema.String,
       ...page,
+      offset: Schema.optional(Schema.Int),
       afterSequence: Schema.optional(Schema.Int),
     }),
     success: Schema.Unknown,

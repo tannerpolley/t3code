@@ -77,6 +77,7 @@ export class NotebookService extends Context.Service<
         readonly cellId: string;
         readonly cursor: number;
         readonly byteLimit: number;
+        readonly offset?: number | undefined;
         readonly afterSequence?: number | undefined;
       },
       caller: Caller,
@@ -84,6 +85,8 @@ export class NotebookService extends Context.Service<
       {
         readonly outputs: readonly Record<string, unknown>[];
         readonly nextCursor: number | null;
+        readonly nextOffset: number;
+        readonly fragment: { readonly offset: number; readonly json: string } | null;
         readonly truncated: boolean;
         readonly epoch: string;
         readonly sequence: number;
@@ -735,6 +738,7 @@ const make = Effect.gen(function* () {
       readonly cellId: string;
       readonly cursor: number;
       readonly byteLimit: number;
+      readonly offset?: number | undefined;
       readonly afterSequence?: number | undefined;
     },
     caller: Caller,
@@ -755,22 +759,14 @@ const make = Effect.gen(function* () {
     )
       return yield* new NotebookError({ reason: "output-limit" });
     const outputs = cell.outputs ?? [];
-    const page: Record<string, unknown>[] = [];
-    let used = 2;
-    let cursor = input.cursor;
-    while (cursor < outputs.length) {
-      const output = outputs[cursor]!;
-      const size = byteLength(output) + (page.length ? 1 : 0);
-      if (size + used > input.byteLimit) break;
-      page.push(output);
-      used += size;
-      cursor++;
-    }
-    if (cursor === input.cursor && cursor < outputs.length)
-      return yield* new NotebookError({ reason: "output-limit" });
-    return structuredClone({
-      outputs: page,
-      nextCursor: cursor < outputs.length ? cursor : null,
+    const offset = input.offset ?? 0;
+    if (!Number.isInteger(offset) || offset < 0 || (offset > 0 && input.cursor >= outputs.length))
+      return yield* new NotebookError({ reason: "invalid-document" });
+    const reply = {
+      outputs: [] as Record<string, unknown>[],
+      fragment: null as { offset: number; json: string } | null,
+      nextCursor: input.cursor < outputs.length ? input.cursor : null,
+      nextOffset: 0,
       truncated: session.snapshot.truncated,
       epoch,
       sequence: session.snapshot.sequence,
@@ -780,7 +776,42 @@ const make = Effect.gen(function* () {
       outcome: session.snapshot.outcome,
       kernel: session.snapshot.kernel,
       execution: session.snapshot.executions[input.cellId] ?? null,
-    });
+    };
+    let cursor = input.cursor;
+    if (offset === 0) {
+      while (cursor < outputs.length) {
+        reply.outputs.push(outputs[cursor]!);
+        reply.nextCursor = cursor + 1 < outputs.length ? cursor + 1 : null;
+        if (byteLength(reply) > input.byteLimit) {
+          reply.outputs.pop();
+          reply.nextCursor = cursor;
+          break;
+        }
+        cursor++;
+      }
+    }
+    if (!reply.outputs.length && cursor < outputs.length) {
+      const json = fingerprintOf(outputs[cursor]);
+      if (offset >= json.length) return yield* new NotebookError({ reason: "invalid-document" });
+      const fragmentAt = (end: number) => ({
+        ...reply,
+        fragment: { offset, json: json.slice(offset, end) },
+        nextCursor: end < json.length ? cursor : cursor + 1 < outputs.length ? cursor + 1 : null,
+        nextOffset: end < json.length ? end : 0,
+      });
+      let low = offset;
+      let high = Math.min(json.length, offset + input.byteLimit);
+      while (low < high) {
+        const end = Math.ceil((low + high) / 2);
+        if (byteLength(fragmentAt(end)) <= input.byteLimit) low = end;
+        else high = end - 1;
+      }
+      if (low === offset) return yield* new NotebookError({ reason: "output-limit" });
+      return fragmentAt(low);
+    }
+    if (byteLength(reply) > input.byteLimit)
+      return yield* new NotebookError({ reason: "output-limit" });
+    return structuredClone(reply);
   });
   const writable = Effect.fn("NotebookService.writable")(function* (caller: Caller) {
     if (!caller.scopes.includes("filesystem:write"))

@@ -1416,3 +1416,131 @@ it.effect("output waits return the changed service sequence", () =>
     expect(changed.sequence).toBe(edited.sequence);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
+
+it.effect(
+  "pages merged oversized outputs losslessly through the toolkit, including saved notebooks",
+  () =>
+    Effect.gen(function* () {
+      const { service, handle, opened, sql, requests, send, finished, root, fs } = yield* setup();
+      const threadId = ThreadId.make("bounded-output");
+      yield* sql`INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json) VALUES (${threadId}, ${handle.projectId}, 'Bounded', 'codex', 'full-access', 'default', '2026-10-28', '2026-10-28', '{"worktreePath":null}')`;
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(NotebookService.NotebookService, service),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () =>
+            Effect.succeed({ ...liveThreadShell(threadId), projectId: handle.projectId }),
+        }),
+        Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          environmentId: EnvironmentId.make("test"),
+          requestNamespace: "bounded-output",
+          thread: {
+            threadId,
+            providerSessionId: "session",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          },
+          client: undefined,
+          issuedAt: 0,
+          capabilities: new Set(["orchestration" as const]),
+        }),
+      );
+      const toolkit = yield* NotebookToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(NotebookHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const runId = yield* service.execute(
+        { ...handle, revision: opened.revision, cellIds: ["a"], requestId: "merged-output" },
+        caller,
+      );
+      const request = yield* Queue.take(requests);
+      const chunk = "x".repeat(600000);
+      yield* send(request.id, "stream", { name: "stdout", text: chunk });
+      yield* send(request.id, "stream", { name: "stdout", text: chunk });
+      yield* send(request.id, "stream", { name: "stderr", text: "tail" });
+      yield* send(request.id, "execute_reply", { status: "ok" });
+      yield* send(request.id, "status", { execution_state: "idle" });
+      yield* finished(runId);
+      const current = yield* service.snapshot(handle, caller);
+      yield* service.save(
+        { ...handle, revision: current.revision, diskHash: current.diskHash },
+        caller,
+      );
+      const saved = parseNotebook(yield* fs.readFileString(root + "/test.ipynb")).document;
+      expect(saved.cells[0]?.outputs?.[0]?.text).toBe(chunk + chunk);
+      const read = (cursor: number, offset = 0, notebookHandle = opened.handle) =>
+        toolkit
+          .handle("notebook_read_outputs", {
+            handle: notebookHandle,
+            cellId: "a",
+            cursor,
+            offset,
+            byteLimit: 1048576,
+          })
+          .pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map(
+              (rows) =>
+                rows.at(-1)!.result as {
+                  outputs: Record<string, unknown>[];
+                  fragment: { json: string; offset: number } | null;
+                  nextCursor: number | null;
+                  nextOffset: number;
+                  sequence: number;
+                },
+            ),
+            Effect.provide(dependencies),
+          );
+      const first = yield* read(0);
+      expect(first).toMatchObject({
+        outputs: [],
+        fragment: { offset: 0 },
+        nextCursor: 0,
+        outcome: "ok",
+        runId,
+        truncated: false,
+        execution: { runId },
+      });
+      expect(Buffer.byteLength(JSON.stringify(first))).toBeLessThanOrEqual(1048576);
+      expect(first.nextOffset).toBeGreaterThan(0);
+      const second = yield* read(first.nextCursor!, first.nextOffset);
+      expect(second).toMatchObject({
+        outputs: [],
+        fragment: { offset: first.nextOffset },
+        nextCursor: 1,
+        nextOffset: 0,
+        outcome: "ok",
+        truncated: false,
+      });
+      expect(Buffer.byteLength(JSON.stringify(second))).toBeLessThanOrEqual(1048576);
+      expect(JSON.parse(first.fragment!.json + second.fragment!.json)).toEqual(
+        saved.cells[0]?.outputs?.[0],
+      );
+      const last = yield* read(second.nextCursor!, second.nextOffset);
+      expect(last).toMatchObject({
+        outputs: [{ name: "stderr", text: "tail" }],
+        fragment: null,
+        nextCursor: null,
+        outcome: "ok",
+        truncated: false,
+      });
+      expect(last.sequence).toBe(first.sequence);
+      yield* fs.writeFileString(root + "/saved.ipynb", JSON.stringify(saved));
+      const loaded = yield* toolkit.handle("notebook_open", { relativePath: "saved.ipynb" }).pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.map((rows) => decodeSnapshot(rows.at(-1)!.result)),
+        Effect.provide(dependencies),
+      );
+      const savedFirst = yield* read(0, 0, loaded.handle);
+      const savedSecond = yield* read(savedFirst.nextCursor!, savedFirst.nextOffset, loaded.handle);
+      expect(savedFirst).toMatchObject({ outcome: "none", execution: null, truncated: false });
+      expect(Buffer.byteLength(JSON.stringify(savedFirst))).toBeLessThanOrEqual(1048576);
+      expect(Buffer.byteLength(JSON.stringify(savedSecond))).toBeLessThanOrEqual(1048576);
+      expect(JSON.parse(savedFirst.fragment!.json + savedSecond.fragment!.json)).toEqual(
+        saved.cells[0]?.outputs?.[0],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
