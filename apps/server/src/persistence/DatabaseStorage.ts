@@ -15,6 +15,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { resolveHostCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 
 // Bound each reclaim pass to one minute of churn.
@@ -34,6 +35,7 @@ export class DatabaseStorage extends Context.Service<
 // Deleted events have newer retained replacements; old cursors replay to the same state.
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const settings = yield* ServerSettingsService;
   const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
@@ -96,13 +98,17 @@ const make = Effect.gen(function* () {
       yield* Effect.sleep((Number(elapsed) / 1_000_000) * 9);
       sliceStarted = yield* Clock.monotonicTimeNanos;
     });
-    const result = yield* maintenance.compactEventStore(betweenPages);
+    const result = yield* maintenance.compactEventStore(
+      betweenPages,
+      (yield* settings.getSettings).toolOutputRetentionDays,
+    );
     const completedAt = yield* Clock.currentTimeMillis;
     yield* fs.writeFileString(compactedAtPath, String(completedAt)).pipe(Effect.ignore);
     if (
       result.deletedEventCount > 0 ||
       result.deletedReceiptCount > 0 ||
-      result.purgedThreadCount > 0
+      result.purgedThreadCount > 0 ||
+      result.trimmedEventCount > 0
     ) {
       yield* Effect.logInfo("Compacted orchestration history", result);
     }

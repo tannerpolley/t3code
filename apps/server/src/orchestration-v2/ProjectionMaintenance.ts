@@ -33,8 +33,12 @@ export class ProjectionMaintenanceError extends Schema.TaggedError<ProjectionMai
 export interface ProjectionMaintenanceV2Shape {
   readonly verify: Effect.Effect<ProjectionVerificationV2, ProjectionMaintenanceError>;
   readonly rebuild: Effect.Effect<ProjectionVerificationV2, ProjectionMaintenanceError>;
-  readonly compactEventStore: (betweenPages?: Effect.Effect<void>) => Effect.Effect<
+  readonly compactEventStore: (
+    betweenPages?: Effect.Effect<void>,
+    toolOutputRetentionDays?: number | null,
+  ) => Effect.Effect<
     {
+      readonly trimmedEventCount: number;
       readonly deletedEventCount: number;
       readonly deletedReceiptCount: number;
       readonly purgedThreadCount: number;
@@ -237,14 +241,8 @@ export const layer: Layer.Layer<
     // follow a delete (provider stop, worktree cleanup) finish first.
     const DELETED_THREAD_RETENTION = Duration.days(7);
 
-    /**
-     * A deleted thread is purged only when nothing kept still reaches it. A run
-     * fork reads its source's turn items, a subagent child's provider thread is
-     * recorded on its parent's stream, and a successor repository root's replay
-     * moves ownership from the roots in its handoff history. Live parents'
-     * unresolved tasks, unconsumed transfers, unfinished effects and issue
-     * owners also still load the thread. Children go first, freeing parents.
-     */
+    // Forks, subagents, handoff successors and unfinished work can still replay a deleted
+    // thread. Purge unreferenced children first so their parents become eligible.
     const purgeCandidates = (cutoff: string) =>
       sql<{ readonly thread_id: string }>`
         WITH thread_payload AS (
@@ -420,7 +418,18 @@ export const layer: Layer.Layer<
     // Keep first/latest keyed events for replay order; page every event to bound sparse scans.
     const compactEventStore = Effect.fn("ProjectionMaintenance.compactEventStore")(function* (
       betweenPages: Effect.Effect<void> = Effect.void,
+      toolOutputRetentionDays: number | null = null,
     ) {
+      const trimCutoff =
+        toolOutputRetentionDays !== null &&
+        Number.isSafeInteger(toolOutputRetentionDays) &&
+        toolOutputRetentionDays > 0
+          ? DateTime.formatIso(
+              DateTime.subtract(yield* DateTime.now, { days: toolOutputRetentionDays }),
+            )
+          : null;
+      const marker = "[Tool output removed for age]";
+      let trimmedEventCount = 0;
       const bounds = yield* sql<{
         readonly event_sequence: number;
         readonly receipt_row_id: number;
@@ -528,6 +537,45 @@ export const layer: Layer.Layer<
             }
           }
         }
+        if (trimCutoff !== null) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              for (const row of page) {
+                if (row.event_type !== "turn-item.updated" || row.application_event_version !== 2)
+                  continue;
+                const trimmed = yield* sql<{
+                  readonly item_id: string;
+                  readonly provider_turn_id: string;
+                }>`
+                UPDATE orchestration_events
+                SET payload_json = json_remove(json_set(payload_json, '$.output', ${marker}), '$.viewedImagePath')
+                WHERE sequence = ${row.sequence}
+                  AND json_extract(payload_json, '$.type') IN ('command_execution', 'dynamic_tool')
+                  AND json_type(payload_json, '$.output') IS NOT NULL
+                  AND json_extract(payload_json, '$.output') IS NOT ${marker}
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_provider_turns AS turn
+                    WHERE turn.provider_turn_id = json_extract(orchestration_events.payload_json, '$.providerTurnId')
+                      AND turn.thread_id = orchestration_events.stream_id
+                      AND turn.status IN ('completed', 'failed', 'cancelled', 'interrupted')
+                      AND turn.completed_at < ${trimCutoff}
+                  )
+                RETURNING json_extract(payload_json, '$.id') AS item_id,
+                  json_extract(payload_json, '$.providerTurnId') AS provider_turn_id
+              `;
+                for (const item of trimmed) {
+                  yield* sql`
+                  UPDATE orchestration_v2_projection_turn_items
+                  SET payload_json = json_remove(json_set(payload_json, '$.output', ${marker}), '$.viewedImagePath')
+                  WHERE turn_item_id = ${item.item_id} AND thread_id = ${row.stream_id}
+                    AND provider_turn_id = ${item.provider_turn_id}
+                `;
+                  trimmedEventCount++;
+                }
+              }
+            }),
+          );
+        }
         // Never hold a transaction or the reader lock across a yield or a rest.
         yield* Effect.yieldNow;
         if (obsolete.length > 0) {
@@ -595,7 +643,13 @@ export const layer: Layer.Layer<
       const reclaimableBytes =
         (freelistRows[0]?.freelist_count ?? 0) * (pageSizeRows[0]?.page_size ?? 0);
 
-      return { deletedEventCount, deletedReceiptCount, purgedThreadCount, reclaimableBytes };
+      return {
+        trimmedEventCount,
+        deletedEventCount,
+        deletedReceiptCount,
+        purgedThreadCount,
+        reclaimableBytes,
+      };
     }, mapError("compact event store"));
 
     return ProjectionMaintenanceV2.of({

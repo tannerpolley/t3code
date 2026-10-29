@@ -1,3 +1,4 @@
+import * as ServerSettings from "../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -27,6 +28,7 @@ const storageLayer = <E>(
   config: Layer.Layer<ServerConfig.ServerConfig, E, FileSystem.FileSystem | Path.Path>,
 ) =>
   DatabaseStorage.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provide(ProjectionMaintenance.layer),
     Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
     Layer.provideMerge(Sqlite.layerMemory),
@@ -57,6 +59,7 @@ const compactionLayer = (
   compactEventStore: ProjectionMaintenance.ProjectionMaintenanceV2["Service"]["compactEventStore"],
 ) =>
   DatabaseStorage.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provide(
       Layer.succeed(ProjectionMaintenance.ProjectionMaintenanceV2, {
         compactEventStore,
@@ -73,6 +76,7 @@ const emptyCompaction = {
   deletedEventCount: 0,
   deletedReceiptCount: 0,
   purgedThreadCount: 0,
+  trimmedEventCount: 0,
   reclaimableBytes: 0,
 };
 

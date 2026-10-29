@@ -1,3 +1,4 @@
+import * as ServerSettings from "../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -349,6 +350,7 @@ it.effect("scheduled compaction trims ordinary items and leaves subagent rows wh
   }).pipe(
     Effect.provide(
       DatabaseStorage.layer.pipe(
+        Layer.provide(ServerSettings.layerTest()),
         Layer.provideMerge(services),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "scheduled-compaction-" })),
         Layer.provide(NodeServices.layer),

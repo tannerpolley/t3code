@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -357,6 +358,7 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
     }).pipe(
       Effect.provide(
         DatabaseStorage.layer.pipe(
+          Layer.provide(ServerSettings.layerTest()),
           Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "compaction-" })),
           Layer.provide(NodeServices.layer),
         ),
@@ -398,7 +400,7 @@ const tablesMentioning = (text: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const tables = yield* sql<{ readonly name: string }>`
-      SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'orchestration_v2_message_search%' ORDER BY name
     `;
     const found: Array<string> = [];
     for (const { name } of tables) {
@@ -1013,6 +1015,155 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       assert.isTrue((yield* maintenance.verify).valid);
       assert.isTrue((yield* maintenance.rebuild).valid);
     }),
+  );
+
+  it.effect(
+    "trims only aged completed turns, preserves metadata and messages, and replays idempotently",
+    () =>
+      Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const old = DateTime.subtract(now, { days: 15 });
+        const boundary = DateTime.subtract(now, { days: 14 });
+        const threadId = ThreadId.make("thread:retention");
+        const thread = makeThread(threadId, old);
+        const events: OrchestrationV2DomainEvent[] = [
+          threadCreatedEvent({ id: "retention:create", thread, now: old }),
+        ];
+        for (const [index, completedAt, status] of [
+          [0, old, "completed"],
+          [1, boundary, "completed"],
+          [2, old, "running"],
+          [3, null, "completed"],
+          [4, now, "completed"],
+          [5, old, "failed"],
+          [6, old, "cancelled"],
+          [7, old, "interrupted"],
+        ] as const) {
+          const turnId = ProviderTurnId.make("retention:turn:" + index);
+          events.push({
+            id: EventId.make("retention:turn:" + index),
+            type: "provider-turn.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: turnId,
+              providerThreadId: ProviderThreadId.make("retention:provider"),
+              nodeId: NodeId.make("retention:node"),
+              runAttemptId: null,
+              nativeTurnRef: null,
+              ordinal: index + 1,
+              status,
+              startedAt: old,
+              completedAt,
+            },
+          });
+          for (const type of ["command_execution", "dynamic_tool", "reasoning"] as const) {
+            const base = {
+              id: TurnItemId.make("retention:" + index + ":" + type),
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: turnId,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal:
+                index * 3 + (type === "command_execution" ? 1 : type === "dynamic_tool" ? 2 : 3),
+              status: "completed" as const,
+              title: null,
+              startedAt: old,
+              completedAt: old,
+              updatedAt: old,
+            };
+            const payload: OrchestrationV2TurnItem =
+              type === "command_execution"
+                ? { ...base, type, input: "echo keep", output: "large output", exitCode: 7 }
+                : type === "dynamic_tool"
+                  ? {
+                      ...base,
+                      type,
+                      toolName: "test_tool",
+                      input: { query: "keep" },
+                      output: { content: [{ type: "text", text: "large output" }] },
+                    }
+                  : { ...base, type, text: "keep reasoning", streaming: false };
+            events.push({
+              id: EventId.make("first:" + payload.id),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: old,
+              payload,
+            });
+            events.push({
+              id: EventId.make("event:" + payload.id),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: old,
+              payload,
+            });
+          }
+        }
+        for (const role of ["user", "assistant"] as const) {
+          events.push({
+            id: EventId.make("retention:message:" + role),
+            type: "message.updated",
+            threadId,
+            occurredAt: old,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: MessageId.make("retention:" + role),
+              threadId,
+              runId: null,
+              nodeId: null,
+              role,
+              text: "keep " + role,
+              attachments: [],
+              streaming: false,
+              createdAt: old,
+              updatedAt: old,
+            },
+          });
+        }
+        yield* sink.write({ events });
+        const before = yield* projections.getThreadProjection(threadId);
+        yield* maintenance.compactEventStore(Effect.void, null);
+        assert.deepEqual(yield* projections.getThreadProjection(threadId), before);
+        let batches = 0;
+        const summary = yield* maintenance.compactEventStore(
+          Effect.gen(function* () {
+            assert.isTrue((yield* maintenance.verify.pipe(Effect.orDie)).valid);
+            batches++;
+          }),
+          14,
+        );
+        assert.isAbove(batches, 0);
+        const after = yield* projections.getThreadProjection(threadId);
+        assert.deepEqual(after.messages, before.messages);
+        for (const entry of after.turnItems) {
+          const original = before.turnItems.find((candidate) => candidate.id === entry.id)!;
+          if (
+            [0, 5, 6, 7].some(
+              (index) =>
+                entry.id === TurnItemId.make("retention:" + index + ":command_execution") ||
+                entry.id === TurnItemId.make("retention:" + index + ":dynamic_tool"),
+            )
+          ) {
+            if (original.type !== "command_execution" && original.type !== "dynamic_tool") {
+              return assert.fail("expected tool item");
+            }
+            assert.deepEqual(entry, { ...original, output: "[Tool output removed for age]" });
+          } else assert.deepEqual(entry, original);
+        }
+        assert.equal(summary.trimmedEventCount, 16);
+        assert.isTrue((yield* maintenance.verify).valid);
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.deepEqual(yield* projections.getThreadProjection(threadId), after);
+        assert.equal((yield* maintenance.compactEventStore(Effect.void, 14)).trimmedEventCount, 0);
+      }),
   );
 
   it.effect("compacts superseded state events, imported v1 events, and legacy receipts", () =>
