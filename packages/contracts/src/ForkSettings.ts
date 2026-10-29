@@ -281,6 +281,7 @@ export const ForkClientSettingsFields = {
   sidebarRoleDisplay: Schema.optionalKey(SidebarRoleDisplay),
   sidebarShowProvider: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowModel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarShowModelVersion: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowEffort: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowIssueBadge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowPullRequestBadge: Schema.Boolean.pipe(
@@ -389,6 +390,7 @@ export const ForkClientSettingsPatchFields = {
   sidebarRoleDisplay: Schema.optionalKey(SidebarRoleDisplay),
   sidebarShowProvider: Schema.optionalKey(Schema.Boolean),
   sidebarShowModel: Schema.optionalKey(Schema.Boolean),
+  sidebarShowModelVersion: Schema.optionalKey(Schema.Boolean),
   sidebarShowEffort: Schema.optionalKey(Schema.Boolean),
   sidebarShowIssueBadge: Schema.optionalKey(Schema.Boolean),
   sidebarShowPullRequestBadge: Schema.optionalKey(Schema.Boolean),

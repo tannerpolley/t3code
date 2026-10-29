@@ -94,18 +94,18 @@ it("compares only displayed rows, following role order, nesting and expansion", 
     expandedByKey: {},
   };
   const rows = collectDisplayedFamilyRows(input);
+  // The reviewer shares the parent's checkout, so it lists first, inside the parent's lines.
   expect(rows.map((row) => row.key)).toEqual([
     key(parent),
+    key(reviewer),
     key(worker),
     key(helper),
     `${key(worker)}:task:unknown-child`,
-    key(reviewer),
     key(standalone),
   ]);
-  expect(rows[3]?.workspace).toBe(worker.worktreePath);
+  expect(rows[4]?.workspace).toBe(worker.worktreePath);
   expect([...resolveSidebarFamilySeparators(rows)]).toEqual([
     [key(worker), "checkout change"],
-    [key(reviewer), "checkout change"],
     [key(standalone), "family"],
   ]);
   const collapsed = collectDisplayedFamilyRows({
@@ -119,7 +119,7 @@ it("compares only displayed rows, following role order, nesting and expansion", 
       ...input,
       expandedByKey: { [key(worker)]: false },
     }).map((row) => row.key),
-  ).toEqual([key(parent), key(worker), key(reviewer), key(standalone)]);
+  ).toEqual([key(parent), key(reviewer), key(worker), key(standalone)]);
 });
 
 it("puts a checkout's lead icon on its first displayed implementor", () => {

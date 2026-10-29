@@ -26,11 +26,9 @@ const NO_COMMAND_ROWS: ReadonlyArray<BackgroundWorkTaskRow> = [];
 const NO_GROUPS: ReadonlyArray<ThreadProcessGroup> = [];
 
 /**
- * A thread's work rows, with its tasks, running commands and spawned processes folded into one
- * list controlled by the thread caret. Commands and processes are experimental ("Show running
- * commands and processes"): they poll with task usage's cadence, only while the setting is on,
- * work is known from the thread state or the last sample still found some, and the element given
- * `watchRow` as its ref (the thread's row) is on screen.
+ * A thread's tasks, running commands and spawned processes as one list under the thread caret.
+ * Commands and processes poll only while their setting is on, work is known or last seen, and
+ * the `watchRow` element (the thread's row) is on screen.
  */
 export function useSidebarThreadProcesses(
   thread: SidebarThreadSummary,
@@ -133,7 +131,6 @@ export function SidebarProcessGroupRows(props: ProcessRowsProps) {
             {props.columns ? (
               <SidebarThreadColumns
                 name={<span className="fork-sidebar-title">+{props.hiddenGroupCount} more</span>}
-                wideName
               />
             ) : (
               <span className="fork-sidebar-title">+{props.hiddenGroupCount} more</span>

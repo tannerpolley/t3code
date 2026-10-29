@@ -221,6 +221,7 @@ it("defaults to lines without role icons and persists display customizations", (
     sidebarRoleDisplay: "name",
     sidebarShowProvider: true,
     sidebarShowModel: true,
+    sidebarShowModelVersion: true,
     sidebarShowEffort: true,
     sidebarShowIssueBadge: true,
     sidebarShowPullRequestBadge: true,

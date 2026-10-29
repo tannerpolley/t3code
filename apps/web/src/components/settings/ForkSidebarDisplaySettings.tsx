@@ -10,6 +10,7 @@ const DISPLAY_ROWS = [
   { key: "sidebarShowLocation", searchId: "sidebar-show-location" },
   { key: "sidebarShowProvider", searchId: "sidebar-show-provider" },
   { key: "sidebarShowModel", searchId: "sidebar-show-model" },
+  { key: "sidebarShowModelVersion", searchId: "sidebar-show-model-version" },
   { key: "sidebarShowEffort", searchId: "sidebar-show-effort" },
   { key: "sidebarShowIssueBadge", searchId: "sidebar-show-issue-badge" },
   { key: "sidebarShowPullRequestBadge", searchId: "sidebar-show-pull-request-badge" },

@@ -1,9 +1,16 @@
-@import "./SidebarColumns.layout.css";
+@utility sidebar-columns-container {
+  --sidebar-caret-width: 1.5rem;
+  container: sidebar-columns / inline-size;
+  min-width: 0;
+  font-size: 0.75rem;
+}
+/* Each row sets its own track list from the columns it shows; see SidebarThreadColumns. */
 @utility sidebar-thread-columns {
   display: grid;
   width: 100%;
   min-width: 0;
   align-items: center;
+  column-gap: 2px;
   box-sizing: border-box;
   font-size: inherit;
   font-weight: normal;
@@ -32,31 +39,50 @@
   justify-content: center;
   min-width: 0;
 }
+/*
+ * The name, then its model pieces. The name truncates to its reserve first; then the pieces
+ * narrow, and one that no longer fits wraps onto the clipped second line, so it drops whole.
+ */
+@utility sidebar-thread-main {
+  @apply flex min-w-0 items-center gap-1.5 overflow-hidden;
+}
+@utility sidebar-thread-name {
+  @apply min-w-0 truncate;
+  flex-shrink: 1000;
+  font-size: inherit;
+}
+[data-sidebar-role-display="name"] .sidebar-thread-name:has(.sidebar-role-title) {
+  min-width: 6ch;
+}
 @utility sidebar-thread-model {
-  @apply flex min-w-0 items-center gap-0.75;
+  @apply flex h-4.75 min-w-0 flex-wrap items-center gap-x-0.75 overflow-hidden;
   font-size: 0.6875rem;
 }
 /* The fixed height keeps a hover target when no bars show. */
 @utility sidebar-thread-effort {
   @apply flex h-4.75 shrink-0 items-center justify-center text-sidebar-muted-foreground;
 }
-@utility sidebar-thread-name {
-  @apply min-w-0 truncate;
-  font-size: inherit;
+/* The badge hugs the time, and both end at the status track. */
+@utility sidebar-thread-trailing {
+  @apply flex min-w-0 items-center justify-end gap-1;
 }
 @utility sidebar-thread-time {
   font-size: 0.625rem;
   white-space: nowrap;
-  text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
-/* A longer number clips at its slot instead of painting over the time beside it. */
 @utility sidebar-thread-badge {
   display: flex;
   min-width: 0;
   align-items: center;
   overflow: hidden;
+}
+/* Below this width the badge would squeeze the name past its reserve. */
+@container sidebar-columns (width < 14rem) {
+  .sidebar-thread-badge {
+    display: none;
+  }
 }
 .sidebar-caret-count {
   font-size: 0.625rem;
@@ -77,11 +103,7 @@
 /* One caret width for the overlay toggle and the in-row slot, so both carets sit at the same x. */
 .sidebar-caret-toggle > span,
 .sidebar-thread-caret > span {
-  width: var(--sidebar-caret-width, 1rem);
-}
-/* Rows without a model (commands, processes) start their name at the model's x. */
-.sidebar-thread-name-wide {
-  grid-column: model / badge;
+  width: var(--sidebar-caret-width, 1.5rem);
 }
 [data-sidebar-role-display="icon"] .sidebar-role-title {
   display: none;
@@ -100,8 +122,4 @@
 }
 [data-family-separator="dashed"]::before {
   border-top-style: dashed;
-}
-
-.sidebar-columns-container:has([data-sidebar-role-display="name"]) {
-  container-name: sidebar-columns-name;
 }

@@ -15,7 +15,7 @@ import { makeThreadFixture } from "../../test-fixtures";
 import {
   childWorktreeLabel,
   sidebarRoleLabel,
-  sidebarModelCellLabel,
+  sidebarModelParts,
   sameSidebarSubagentTree,
   describeSidebarBackgroundWork,
   groupBackgroundWorkTaskRows,
@@ -139,6 +139,13 @@ describe("describeSidebarBackgroundWork", () => {
       expected,
     );
     expect(children[0]?.id).toBe("investigator");
+    const sharedCheckout = children.map((child) => ({
+      ...child,
+      worktreePath: child.id === "reviewer-old" ? null : `/worktrees/${child.id}`,
+    }));
+    expect(
+      describeSidebarBackgroundWork([], sharedCheckout, undefined, null).map((row) => row.taskId),
+    ).toEqual(["reviewer-old", ...expected.filter((id) => id !== "reviewer-old")]);
   });
 
   it("uses the pending-work kind to distinguish waiting from a leftover command", () => {
@@ -409,12 +416,15 @@ describe("sidebarRoleLabel", () => {
   });
 });
 
-describe("sidebarModelCellLabel", () => {
-  it("keeps a short label's name and version and drops text after the version", () => {
-    expect(sidebarModelCellLabel("Opus 5.5")).toBe("Opus 5.5");
-    expect(sidebarModelCellLabel("GPT-5.3 Codex")).toBe("GPT 5.3");
-    expect(sidebarModelCellLabel("Flash 3.8 (High)")).toBe("Flash 3.8");
-    expect(sidebarModelCellLabel("Default")).toBe("Default");
+describe("sidebarModelParts", () => {
+  it.each([
+    ["Opus 5.5", { name: "Opus", version: "5.5" }],
+    ["6.1 Sol", { name: "Sol", version: "6.1" }],
+    ["GPT-5.3 Codex", { name: "GPT", version: "5.3" }],
+    ["Flash 3.8 (High)", { name: "Flash", version: "3.8" }],
+    ["Default", { name: "Default" }],
+  ])("splits %s into its name, then its version", (label, parts) => {
+    expect(sidebarModelParts(label)).toEqual(parts);
   });
 });
 
