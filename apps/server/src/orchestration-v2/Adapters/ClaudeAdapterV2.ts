@@ -7,6 +7,7 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { field, text } from "../unknownField.ts";
+import { mergeWorkflowAgentMetadata, type WorkflowAgentMetadata } from "../workflowAgentAnswers.ts";
 import {
   initialWorkflowAgentTranscriptCursor,
   readWorkflowAgentTranscript,
@@ -110,6 +111,7 @@ import {
   resolveIdleCompaction,
 } from "@t3tools/contracts";
 
+import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -2988,6 +2990,44 @@ function claudeNativeToolOutputText(output: ClaudeNativeToolOutput): string {
   return typeof value === "string" ? value : value === undefined ? "" : jsonStringifyForTool(value);
 }
 
+const decodeClaudeFileEditResult = Schema.decodeUnknownOption(
+  Schema.Struct({
+    type: Schema.optional(Schema.String),
+    filePath: Schema.String,
+    content: Schema.optional(Schema.String),
+    structuredPatch: Schema.mutable(
+      Schema.Array(
+        Schema.Struct({
+          oldStart: Schema.Number,
+          oldLines: Schema.Number,
+          newStart: Schema.Number,
+          newLines: Schema.Number,
+          lines: Schema.mutable(Schema.Array(Schema.String)),
+        }),
+      ),
+    ),
+  }),
+);
+
+function claudeFileChangeText(output: ClaudeNativeToolOutput): string {
+  const result =
+    output.type === "structured_tool_use_result"
+      ? Option.getOrUndefined(decodeClaudeFileEditResult(output.value))
+      : undefined;
+  if (result === undefined) return claudeNativeToolOutputText(output);
+  const patch =
+    result.structuredPatch.length === 0 && result.type === "create" && result.content !== undefined
+      ? structuredPatch("/dev/null", result.filePath, "", result.content)
+      : {
+          oldFileName: result.filePath,
+          newFileName: result.filePath,
+          oldHeader: undefined,
+          newHeader: undefined,
+          hunks: result.structuredPatch,
+        };
+  return patch.hunks.length === 0 ? "" : formatPatch(patch, FILE_HEADERS_ONLY);
+}
+
 function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   if (typeof value === "object" && value !== null) {
@@ -4613,6 +4653,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               readonly finalTranscriptRead: boolean;
               readonly agentId: string | undefined;
               readonly transcriptCursor: WorkflowAgentTranscriptCursor;
+              readonly transcriptMetadata: WorkflowAgentMetadata;
               readonly nextItemOrdinal: number;
               readonly toolCalls: Map<string, ActiveClaudeToolCall>;
               readonly textShown: boolean;
@@ -5603,7 +5644,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const outputText =
             itemType === "command_execution"
               ? claudeCommandOutputText(input.output)
-              : claudeNativeToolOutputText(input.output);
+              : itemType === "file_change"
+                ? claudeFileChangeText(input.output)
+                : claudeNativeToolOutputText(input.output);
           const turnItem: OrchestrationV2TurnItem =
             itemType === "command_execution"
               ? {
@@ -5833,8 +5876,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const now = yield* DateTime.now;
           const seen = yield* Ref.get(workflowMemberStates);
           const transcriptDir = input.workflow.runHandles?.transcriptDir;
+          const membersWithMetadata = input.workflow.agents.slice();
 
-          for (const member of input.workflow.agents) {
+          for (const [memberIndex, member] of input.workflow.agents.entries()) {
             if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId) !== input.coordinator)
               return;
             const memberKey = `${input.coordinator.childThreadId}:agent:${member.index}`;
@@ -6020,6 +6064,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               previous === undefined || restarted || previous.agentId !== agentId
                 ? initialWorkflowAgentTranscriptCursor
                 : previous.transcriptCursor;
+            let transcriptMetadata =
+              previous === undefined || restarted || previous.agentId !== agentId
+                ? {}
+                : previous.transcriptMetadata;
             let textShown = !restarted && previous?.textShown === true;
             let resultShown = !restarted && previous?.resultShown === true;
             let turnEnded = !restarted && previous?.turnEnded === true;
@@ -6064,6 +6112,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   transcriptRead = true;
                   const advanced = read.value.cursor.offset !== transcriptCursor.offset;
                   transcriptCursor = read.value.cursor;
+                  transcriptMetadata = mergeWorkflowAgentMetadata(
+                    read.value.lines,
+                    transcriptMetadata,
+                  );
                   for (const line of read.value.lines) {
                     if (yield* projectSubagentTranscriptLine(target, line)) textShown = true;
                     turnEnded = isClaudeTranscriptTurnEnd(line);
@@ -6085,6 +6137,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Effect.sleep(waitLeft);
                 if (!(yield* drain())) return;
               }
+            }
+            if (
+              transcriptRead &&
+              (transcriptMetadata.effort !== member.effort ||
+                transcriptMetadata.speed !== member.speed)
+            ) {
+              membersWithMetadata[memberIndex] = {
+                ...member,
+                effort: transcriptMetadata.effort,
+                speed: transcriptMetadata.speed,
+              };
             }
             if (settled) {
               // Open calls receive no results after their member settles.
@@ -6128,6 +6191,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     textShown &&
                     input.coordinator.task.status !== "running"),
                 transcriptCursor,
+                transcriptMetadata,
                 nextItemOrdinal,
                 toolCalls,
                 textShown,
@@ -6138,6 +6202,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 completedAt,
               }),
             );
+          }
+          if (
+            membersWithMetadata.some((member, index) => member !== input.workflow.agents[index])
+          ) {
+            if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId) !== input.coordinator)
+              return;
+            input.coordinator.task = {
+              ...input.coordinator.task,
+              workflow: { ...input.workflow, agents: membersWithMetadata },
+            };
+            yield* emitProviderEvent({
+              type: "subagent.updated",
+              driver: CLAUDE_PROVIDER,
+              subagent: input.coordinator.task,
+            });
           }
         });
 
@@ -9781,11 +9860,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
+          // The user approves the command itself; Claude's title and description only summarize it.
+          const command = inputRecordValue(nativeToolInput, "command");
           const prompt =
+            (typeof command === "string" && command.trim() !== "" ? command : undefined) ??
             combineApprovalPrompt(
               [callbackOptions.title, callbackOptions.description, callbackOptions.decisionReason],
               summarizeClaudeToolRequest(toolName, nativeToolInput),
-            ) ?? toolName;
+            ) ??
+            toolName;
           const artifacts = yield* buildApprovalRequestArtifacts({
             context,
             nativeItemId: nativeRequestId,

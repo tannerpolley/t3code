@@ -85,7 +85,6 @@ const storedSettingsFile = JSON.stringify({
     backgroundProcessOutput: false,
     runningCommandsAndProcesses: false,
     shortModelNames: false,
-    lineageInDetails: true,
     threadDetailsRedesign: false,
     fastShimmer: false,
   },
@@ -186,7 +185,6 @@ describe("stored fork settings compatibility", () => {
       backgroundProcessOutput: true,
       runningCommandsAndProcesses: true,
       shortModelNames: true,
-      lineageInDetails: false,
       threadDetailsRedesign: true,
       fastShimmer: true,
     });

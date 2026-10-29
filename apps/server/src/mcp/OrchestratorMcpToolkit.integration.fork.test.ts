@@ -697,6 +697,7 @@ describe("orchestrator MCP toolkit", () => {
                 Ref.update(scheduledStore, (all) =>
                   all.filter((candidate) => candidate.id !== input.id),
                 ).pipe(Effect.as({ id: input.id })),
+              moveThreadTasks: () => Effect.void,
               deleteForThread: () => Effect.die("unused in this test"),
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
               rotateWebhookToken: () => Effect.die("unused in this test"),

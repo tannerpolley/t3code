@@ -327,7 +327,6 @@ export const ForkClientSettingsFields = {
   /** Model labels drop the company name the provider icon already shows: "Opus 5.5", "Sol 6". */
   shortModelNames: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** The thread details pane lists the thread's Lineage; off hides the section. */
-  lineageInDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Lineage rows led by model and effort, with status marks, details and clearing. */
   threadDetailsRedesign: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** The quicker running-activity shimmer. */
@@ -414,7 +413,6 @@ export const ForkClientSettingsPatchFields = {
   openQuestionsAutomatically: Schema.optionalKey(Schema.Boolean),
   onboardingCodexSettings: Schema.optionalKey(Schema.Boolean),
   shortModelNames: Schema.optionalKey(Schema.Boolean),
-  lineageInDetails: Schema.optionalKey(Schema.Boolean),
   threadDetailsRedesign: Schema.optionalKey(Schema.Boolean),
   fastShimmer: Schema.optionalKey(Schema.Boolean),
 };

@@ -16,6 +16,7 @@ export function MarkdownInlineCode(props: React.ComponentProps<"code">) {
   return (
     <code
       {...props}
+      onDoubleClick={(event) => window.getSelection()?.selectAllChildren(event.currentTarget)}
       tabIndex={0}
       aria-description="Copy"
       data-copyable=""

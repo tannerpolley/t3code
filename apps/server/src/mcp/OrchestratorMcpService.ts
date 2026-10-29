@@ -1,6 +1,5 @@
 import {
   CommandId,
-  type EnvironmentId,
   type RunId,
   MessageId,
   type ModelSelection,
@@ -119,6 +118,7 @@ import {
   type McpInvocationScope,
   type McpThreadInvocationScope,
   requireThreadScope,
+  threadLinkFor,
 } from "./McpInvocationContext.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import {
@@ -817,7 +817,7 @@ function threadPullRequests(
 }
 
 function listItemFromShell(
-  environmentId: EnvironmentId,
+  scope: McpInvocationScope,
   shell: OrchestrationV2ThreadShell,
   nowMs: number,
 ): OrchestratorMcpThreadListItem {
@@ -825,7 +825,7 @@ function listItemFromShell(
     threadId: shell.id,
     projectId: shell.projectId,
     title: shell.title,
-    link: formatThreadLink({ environmentId, threadId: shell.id }),
+    link: threadLinkFor(scope, shell.id),
     createdBy: shell.createdBy,
     creationSource: shell.creationSource,
     status: shell.activityRunStatus ?? shell.status,
@@ -848,7 +848,7 @@ function listItemFromShell(
 }
 
 function threadDetail(
-  environmentId: EnvironmentId,
+  scope: McpInvocationScope,
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
   itemCount: number,
   shell: OrchestrationV2ThreadShell,
@@ -860,7 +860,7 @@ function threadDetail(
     threadId: projection.thread.id,
     projectId: projection.thread.projectId,
     title: projection.thread.title,
-    link: formatThreadLink({ environmentId, threadId: projection.thread.id }),
+    link: threadLinkFor(scope, projection.thread.id),
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
     status: active?.status ?? latest?.status ?? "idle",
@@ -3136,7 +3136,7 @@ const make = Effect.gen(function* () {
       return {
         projectId,
         currentThreadId: parent?.thread.id ?? null,
-        threads: page.map((shell) => listItemFromShell(scope.environmentId, shell, nowMs)),
+        threads: page.map((shell) => listItemFromShell(scope, shell, nowMs)),
         nextCursor,
         total: filtered.length,
       } satisfies OrchestratorMcpThreadListResult;
@@ -3217,7 +3217,7 @@ const make = Effect.gen(function* () {
       }
       return {
         thread: threadDetail(
-          scope.environmentId,
+          scope,
           target,
           timeline.totalItems,
           shell,
@@ -3282,7 +3282,7 @@ const make = Effect.gen(function* () {
         );
       return {
         threadId: input.threadId,
-        link: formatThreadLink({ environmentId: scope.environmentId, threadId: input.threadId }),
+        link: threadLinkFor(scope, input.threadId),
         messageId,
         runId: result.run.id,
         ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),

@@ -1,3 +1,4 @@
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -34,6 +35,15 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { makeHarness } from "./ThreadLaunchService.testHarness.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
+const layerProviderEventIngestor = ProviderEventIngestor.layer.pipe(
+  Layer.provide(
+    Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+      // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
+      getInstance: () => Effect.succeed(undefined),
+    }),
+  ),
+);
+
 const layerTestDatabase = SqlitePersistence.layerMemory;
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provide(layerTestDatabase),
@@ -55,7 +65,7 @@ const layerTest = Layer.mergeAll(
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
   layerGit,
-  ProviderEventIngestor.layer.pipe(
+  layerProviderEventIngestor.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerTestStores,
@@ -268,7 +278,7 @@ layer("ProviderEventIngestorV2", (it) => {
             }),
         });
         const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
-          Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
+          Effect.provide(Layer.fresh(layerProviderEventIngestor)),
           Effect.provideService(EventSink.EventSinkV2, checkedSink),
         );
         const {
@@ -382,7 +392,7 @@ function syncModelDuringThreadChanges(issueLinked: boolean) {
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   );
   const testLayer = dependencies.pipe(
-    Layer.provideMerge(ProviderEventIngestor.layer.pipe(Layer.provide(dependencies))),
+    Layer.provideMerge(layerProviderEventIngestor.pipe(Layer.provide(dependencies))),
   );
   return Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
