@@ -1,7 +1,11 @@
+import { COMPOSER_ISSUE_DRAG_TYPE, issueComposerDrag } from "../issues/issueComposerDrag";
 import type { IssueContextRecord } from "@t3tools/contracts";
 import type { IssueRepositoryRef } from "@t3tools/contracts";
-import { buildIssueReferenceContext } from "../issues/issueComposerContext";
-import { issueContextReference } from "../issues/issueComposerContext";
+import {
+  insertIssueComposerReference,
+  reconcileIssueComposerReferences,
+  selectIssueComposerReference,
+} from "../issues/issueComposerEditor";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -1666,22 +1670,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftThreadContexts(composerDraftTarget, nextThreads);
     }
 
-    const liveIssueIds = new Set<string>(composerIssueContexts.map((record) => record.contextId));
-    const restoredIssues = [...referenced].flatMap((contextId) => {
-      if (liveIssueIds.has(contextId)) return [];
-      const record = retained.issues.get(contextId);
-      return record ? [record] : [];
-    });
-    const nextIssues = [
-      ...composerIssueContexts.filter((record) => referenced.has(record.contextId)),
-      ...restoredIssues,
-    ];
-    for (const record of composerIssueContexts) {
-      if (!referenced.has(record.contextId)) retained.issues.set(record.contextId, record);
-    }
-    if (nextIssues.length !== composerIssueContexts.length || restoredIssues.length > 0) {
-      setComposerDraftIssueContexts(composerDraftTarget, nextIssues);
-    }
+    reconcileIssueComposerReferences(
+      composerIssueContexts,
+      referenced,
+      retained.issues,
+      (records) => setComposerDraftIssueContexts(composerDraftTarget, records),
+    );
     const liveEnvironmentIds = new Set<string>(
       composerEnvironmentContexts.map((record) => record.contextId),
     );
@@ -1981,28 +1975,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "issue") {
-      if (
-        trigger.kind !== "pull-request" ||
-        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
-      ) {
-        return;
-      }
-      const record = buildIssueReferenceContext(item.issue);
-      const replacement = `${formatInlineContextReference(issueContextReference(record))} `;
-      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
-        snapshot.value,
-        trigger.rangeEnd,
-        replacement,
-      );
-      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
-        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      selectIssueComposerReference({
+        item,
+        trigger,
+        prompt: snapshot.value,
+        items: composerMenuItemsRef.current,
+        applyPromptReplacement,
+        attach: (record) =>
+          addComposerDraftIssueContexts(composerDraftTarget, [record], { appendReference: false }),
+        clearHighlight: () => setComposerHighlightedItemId(null),
       });
-      if (applied) {
-        addComposerDraftIssueContexts(composerDraftTarget, [record], {
-          appendReference: false,
-        });
-        setComposerHighlightedItemId(null);
-      }
       return;
     }
     if (item.type === "thread") {
@@ -2610,7 +2592,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   // Capture drops before the editor; mention handlers own native propagation and moves.
   const composerMentionDragHandlers = makeComposerMentionDragHandlers({
-    supportsIssueContexts: supportsIssueContexts,
     insertMentionAtEnd: (text) =>
       insertComposerTextAtEndStable(text, { ensureLeadingBoundary: true }),
     insertPullRequestAtEnd: (pullRequest) => {
@@ -2624,16 +2605,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       return inserted;
     },
-    insertIssueAtEnd: (issue) => {
-      const record = buildIssueReferenceContext(issue);
-      const inserted = insertComposerTextAtEndStable(
-        `${formatInlineContextReference(issueContextReference(record))} `,
-        { ensureLeadingBoundary: true },
-      );
-      if (inserted)
-        addComposerDraftIssueContexts(composerDraftTarget, [record], { appendReference: false });
-      return inserted;
-    },
+    additionalMention: issueComposerDrag(supportsIssueContexts, (issue) =>
+      insertIssueComposerReference(
+        issue,
+        (text) => insertComposerTextAtEndStable(text, { ensureLeadingBoundary: true }),
+        (record) =>
+          addComposerDraftIssueContexts(composerDraftTarget, [record], { appendReference: false }),
+      ),
+    ),
     setDragActive: setIsDragOverComposer,
     onInsertRejected: () => {
       toastManager.add({
@@ -2750,7 +2729,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
 
   const onComposerMentionDragLeaveCapture = (event: React.DragEvent<HTMLFormElement>) => {
-    if (!dataTransferHasComposerMention(event.dataTransfer.types, supportsIssueContexts)) return;
+    if (
+      !dataTransferHasComposerMention(
+        event.dataTransfer.types,
+        supportsIssueContexts ? COMPOSER_ISSUE_DRAG_TYPE : undefined,
+      )
+    )
+      return;
     event.stopPropagation();
     const nextTarget = event.relatedTarget;
     if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
