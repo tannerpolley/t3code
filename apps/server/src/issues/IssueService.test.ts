@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import { IssueReadError, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
@@ -677,11 +677,10 @@ it.effect(
       const partial = makeHarness({
         responses: [httpResponse({ ...payload, errors: [{ message: "Forbidden" }] })],
       });
-      assert.equal(
-        (yield* (yield* service(partial)).workRead({ ...listInput, number: 2 }).pipe(Effect.result))
-          ._tag,
-        "Failure",
-      );
+      const partialError = yield* (yield* service(partial))
+        .workRead({ ...listInput, number: 2 })
+        .pipe(Effect.flip);
+      assert.equal(partialError.code, "invalid-response");
       const missingNodes = makeHarness({
         responses: Array.from({ length: 10 }, () =>
           httpResponse({
@@ -1462,7 +1461,6 @@ it.effect("rejects a repository that cannot be addressed before calling GitHub",
       .list({ host: HOST, repository: "not-a-repository" })
       .pipe(Effect.flip);
 
-    assert.isTrue(Schema.is(IssueReadError)(error));
     assert.equal(error.code, "scope-unavailable");
     assert.deepEqual(harness.calls, []);
   }),

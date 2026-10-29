@@ -632,7 +632,11 @@ function mapGitHubError(
       if (error.status < 300) {
         return error.githubErrors === undefined
           ? readError(operation, "invalid-response", "GitHub returned a truncated response.")
-          : readError(operation, "inaccessible", "GitHub did not return every requested field.");
+          : readError(
+              operation,
+              "invalid-response",
+              "GitHub did not return every requested field.",
+            );
       }
       return new IssueResponseError({
         operation,
@@ -1005,7 +1009,13 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
               "Issue hierarchy or dependencies could not be read.",
             );
             const node = decoded.data.repository?.issue;
-            if (node == null || (decoded.errors?.length ?? 0) > 0)
+            if ((decoded.errors?.length ?? 0) > 0)
+              return yield* readError(
+                "detail",
+                "invalid-response",
+                "Issue hierarchy or dependencies could not be read completely.",
+              );
+            if (node == null)
               return yield* readError(
                 "detail",
                 "inaccessible",
