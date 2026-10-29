@@ -1245,7 +1245,18 @@ export const layerWsRpc = (
         | ServerConfig.ServerConfig
         | ServerSettings.ServerSettingsService
         | DocumentText.DocumentText
-      >();
+      >().pipe(
+        Effect.map(
+          Context.pick(
+            ThreadManagementService.ThreadManagementService,
+            ThreadLaunchService.ThreadLaunchService,
+            FileSystem.FileSystem,
+            ServerConfig.ServerConfig,
+            ServerSettings.ServerSettingsService,
+            DocumentText.DocumentText,
+          ),
+        ),
+      );
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectStore = yield* ProjectStore.ProjectStoreV2;
       const projectService = yield* ProjectService.ProjectService;
