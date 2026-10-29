@@ -28,7 +28,7 @@ it.effect("enables shrinking once, preserves data, and skips when disk space is 
       const sql = yield* SqlClient.SqlClient;
       yield* sql`PRAGMA journal_mode = WAL`;
       using disk = vi.spyOn(NodeFSP, "statfs");
-      disk.mockResolvedValueOnce({ bavail: 0, bsize: 4096 } as Awaited<
+      disk.mockResolvedValueOnce({ bavail: before * 1.5, bsize: 1 } as Awaited<
         ReturnType<typeof NodeFSP.statfs>
       >);
       yield* enableIncrementalVacuum(filename);
@@ -43,4 +43,32 @@ it.effect("enables shrinking once, preserves data, and skips when disk space is 
       assert.isFalse(vacuum.mock.calls.some(([query]) => query === "VACUUM"));
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(["SQLITE_FULL", "SQLITE_IOERR"])(
+  "continues startup after %s and leaves the database readable and writable",
+  (code) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const filename = path.join(yield* fs.makeTempDirectoryScoped(), "failed-vacuum.sqlite");
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`CREATE TABLE keep(value TEXT)`;
+        yield* sql`INSERT INTO keep VALUES ('before')`;
+        const prepare = NodeSqlite.DatabaseSync.prototype.prepare;
+        using _failure = vi
+          .spyOn(NodeSqlite.DatabaseSync.prototype, "prepare")
+          .mockImplementation(function (this: NodeSqlite.DatabaseSync, query) {
+            if (query === "VACUUM") throw Object.assign(new Error("disk full"), { code });
+            return prepare.call(this, query);
+          });
+        yield* enableIncrementalVacuum(filename);
+        yield* sql`INSERT INTO keep VALUES ('after')`;
+        assert.deepEqual(yield* sql`SELECT value FROM keep ORDER BY rowid`, [
+          { value: "before" },
+          { value: "after" },
+        ]);
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

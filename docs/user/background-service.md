@@ -148,8 +148,9 @@ has a retention window.
 
 On the first startup that needs it, T3 enables automatic database shrinking.
 This appears as a database migration and can take time on a large database.
-It requires free disk space at least equal to the database size; otherwise T3 logs
-a skip and tries again at a later startup. Settings > Maintenance also offers an
+It requires free disk space at least twice the database size; otherwise T3 logs
+a skip and tries again at a later startup. Conversion failures are logged and do
+not prevent startup. Settings > Maintenance also offers an
 offline repair when at least 1 GiB can be reclaimed.
 
 Run `t3 doctor` on the machine that hosts the environment. It reports the

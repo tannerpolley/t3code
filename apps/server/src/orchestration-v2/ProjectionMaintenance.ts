@@ -243,33 +243,35 @@ export const layer: Layer.Layer<
 
     // Forks, subagents, handoff successors and unfinished work can still replay a deleted
     // thread. Purge unreferenced children first so their parents become eligible.
-    const purgeCandidates = (cutoff: string) =>
-      sql<{ readonly thread_id: string }>`
-        WITH thread_payload AS (
-          SELECT CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END AS payload
-          FROM orchestration_v2_projection_threads
-        ), referenced(thread_id) AS (
-          SELECT json_extract(payload, '$.lineage.parentThreadId') FROM thread_payload
-          UNION SELECT json_extract(payload, '$.forkedFrom.threadId') FROM thread_payload
-          UNION SELECT json_extract(entry.value, '$.threadId')
-            FROM thread_payload, json_each(payload, '$.repositoryOrchestration.handoffHistory') AS entry
-          UNION SELECT task.child_thread_id
-            FROM orchestration_v2_projection_subagents AS task
-            JOIN orchestration_v2_projection_threads AS owner ON owner.thread_id = task.thread_id
-            WHERE task.origin = 'app_owned' AND owner.deleted_at IS NULL
-              AND CASE WHEN json_valid(task.payload_json)
-                THEN json_extract(task.payload_json, '$.result') END IS NULL
-          UNION SELECT source_thread_id FROM orchestration_v2_projection_context_transfers
-            WHERE status NOT IN ('consumed', 'failed', 'superseded')
-          UNION SELECT owner_thread_id FROM orchestration_v2_projection_issue_work
-          UNION SELECT thread_id FROM orchestration_v2_effect_outbox
-            WHERE status IN ('pending', 'running')
-        )
-        SELECT thread_id FROM orchestration_v2_projection_threads
+    const purgeCandidates = (cutoff: string, afterDeletedAt: string, afterThreadId: string) =>
+      sql<{ readonly thread_id: string; readonly deleted_at: string }>`
+        SELECT thread_id, deleted_at FROM orchestration_v2_projection_threads
         WHERE deleted_at <= ${cutoff}
-          AND thread_id NOT IN (SELECT thread_id FROM referenced WHERE thread_id IS NOT NULL)
+          AND (deleted_at, thread_id) > (${afterDeletedAt}, ${afterThreadId})
         ORDER BY deleted_at ASC, thread_id ASC
         LIMIT ${COMPACTION_PAGE_SIZE}
+      `.pipe(NodeSqliteClient.readOnly);
+
+    const isReferenced = (threadId: string) =>
+      sql<{ readonly referenced: number }>`
+        SELECT
+          EXISTS (SELECT 1 FROM orchestration_v2_projection_thread_references
+            WHERE referenced_thread_id = ${threadId})
+          OR EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_subagents AS task
+            JOIN orchestration_v2_projection_threads AS owner ON owner.thread_id = task.thread_id
+            WHERE task.child_thread_id = ${threadId}
+              AND task.origin = 'app_owned' AND owner.deleted_at IS NULL
+              AND CASE WHEN json_valid(task.payload_json)
+                THEN json_extract(task.payload_json, '$.result') END IS NULL
+          )
+          OR EXISTS (SELECT 1 FROM orchestration_v2_projection_context_transfers
+            WHERE source_thread_id = ${threadId} AND status NOT IN ('consumed', 'failed', 'superseded'))
+          OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work
+            WHERE owner_thread_id = ${threadId})
+          OR EXISTS (SELECT 1 FROM orchestration_v2_effect_outbox
+            WHERE thread_id = ${threadId} AND status IN ('pending', 'running'))
+          AS referenced
       `.pipe(NodeSqliteClient.readOnly);
 
     // Each batch is its own statement, so the writer is never held for long.
@@ -293,6 +295,7 @@ export const layer: Layer.Layer<
       ["orchestration_v2_projection_subagents", "thread_id"],
       ["orchestration_v2_effect_outbox", "thread_id"],
       ["projection_thread_messages", "thread_id"],
+      ["inline_shell_delivery_events", "thread_id"],
       ["inline_shell_runs", "thread_id"],
       ["mcp_app_model_context", "thread_id"],
     ] as const;
@@ -324,9 +327,11 @@ export const layer: Layer.Layer<
       // Runs while the thread's nodes and subagents still exist: a provider
       // thread they own may carry an already purged child's id. Rows another
       // thread still reaches stay, as that thread's replay recreates them.
-      yield* sql`
+      yield* drainBatches(sql`
         DELETE FROM orchestration_v2_projection_provider_threads
-        WHERE (
+        WHERE rowid IN (
+          SELECT rowid FROM orchestration_v2_projection_provider_threads
+          WHERE (
             thread_id = ${threadId}
             OR owner_node_id IN (
               SELECT node_id FROM orchestration_v2_projection_nodes WHERE thread_id = ${threadId}
@@ -352,7 +357,10 @@ export const layer: Layer.Layer<
                 orchestration_v2_projection_provider_threads.provider_thread_id
               AND task.thread_id <> ${threadId}
           )
-      `;
+          LIMIT ${COMPACTION_PAGE_SIZE}
+        )
+        RETURNING rowid
+      `);
       // thread.created and the stream's newest event go with the thread row,
       // so verify never sees the thread or the newest sequence half removed.
       yield* drainBatches(sql`
@@ -545,7 +553,6 @@ export const layer: Layer.Layer<
                   continue;
                 const trimmed = yield* sql<{
                   readonly item_id: string;
-                  readonly provider_turn_id: string;
                 }>`
                 UPDATE orchestration_events
                 SET payload_json = json_remove(json_set(payload_json, '$.output', ${marker}), '$.viewedImagePath')
@@ -560,15 +567,23 @@ export const layer: Layer.Layer<
                       AND turn.status IN ('completed', 'failed', 'cancelled', 'interrupted')
                       AND turn.completed_at < ${trimCutoff}
                   )
-                RETURNING json_extract(payload_json, '$.id') AS item_id,
-                  json_extract(payload_json, '$.providerTurnId') AS provider_turn_id
+                RETURNING json_extract(payload_json, '$.id') AS item_id
               `;
                 for (const item of trimmed) {
                   yield* sql`
                   UPDATE orchestration_v2_projection_turn_items
                   SET payload_json = json_remove(json_set(payload_json, '$.output', ${marker}), '$.viewedImagePath')
                   WHERE turn_item_id = ${item.item_id} AND thread_id = ${row.stream_id}
-                    AND provider_turn_id = ${item.provider_turn_id}
+                    AND type IN ('command_execution', 'dynamic_tool')
+                    AND json_type(payload_json, '$.output') IS NOT NULL
+                    AND json_extract(payload_json, '$.output') IS NOT ${marker}
+                    AND EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_provider_turns AS turn
+                      WHERE turn.provider_turn_id = orchestration_v2_projection_turn_items.provider_turn_id
+                        AND turn.thread_id = orchestration_v2_projection_turn_items.thread_id
+                        AND turn.status IN ('completed', 'failed', 'cancelled', 'interrupted')
+                        AND turn.completed_at < ${trimCutoff}
+                    )
                 `;
                   trimmedEventCount++;
                 }
@@ -630,12 +645,27 @@ export const layer: Layer.Layer<
         DateTime.subtractDuration(yield* DateTime.now, DELETED_THREAD_RETENTION),
       );
       let purgedThreadCount = 0;
-      // Purging a child can free its parent, so ask again until nothing qualifies.
+      // Purging a child can free a parent already visited in this sweep.
       while (true) {
-        const candidates = yield* purgeCandidates(cutoff);
-        if (candidates.length === 0) break;
-        for (const { thread_id } of candidates) yield* purgeDeletedThread(thread_id);
-        purgedThreadCount += candidates.length;
+        const beforeSweep = purgedThreadCount;
+        let afterDeletedAt = "";
+        let afterThreadId = "";
+        while (true) {
+          const candidates = yield* purgeCandidates(cutoff, afterDeletedAt, afterThreadId);
+          if (candidates.length === 0) break;
+          for (const candidate of candidates) {
+            const references = yield* isReferenced(candidate.thread_id);
+            if (references[0]?.referenced === 0) {
+              yield* purgeDeletedThread(candidate.thread_id);
+              purgedThreadCount++;
+            }
+            afterDeletedAt = candidate.deleted_at;
+            afterThreadId = candidate.thread_id;
+            yield* Effect.yieldNow;
+            yield* betweenPages;
+          }
+        }
+        if (beforeSweep === purgedThreadCount) break;
       }
 
       const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;

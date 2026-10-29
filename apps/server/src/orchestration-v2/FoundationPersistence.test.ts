@@ -547,6 +547,13 @@ it.effect("purges threads deleted over a week ago and keeps everything still rea
       )
       VALUES ('command:purge:expired', 'thread', ${expired.id}, ${nowIso}, 1, 'accepted', 'thread.create')
     `;
+    for (const id of [expired.id, live.id]) {
+      yield* sql`INSERT INTO inline_shell_runs (thread_id, block_id, run_id, status, record_json)
+        VALUES (${id}, 'block', 'shell-run', 'completed', '{}')`;
+      yield* sql`INSERT INTO inline_shell_delivery_events
+        (delivery_id, thread_id, run_id, message_id, record_ids_json, created_at)
+        VALUES (${"delivery:" + id}, ${id}, 'shell-run', 'message', '["shell-run"]', ${nowIso})`;
+    }
     const kept = [heldChild.id, heldParent.id, live.id, recent.id];
     const projectionsBefore = yield* Effect.forEach(kept, (id) =>
       projections.getThreadProjection(id),
@@ -556,11 +563,16 @@ it.effect("purges threads deleted over a week ago and keeps everything still rea
       "orchestration_events",
       "orchestration_v2_projection_messages",
       "projection_threads",
+      "inline_shell_runs",
+      "inline_shell_delivery_events",
     ]);
 
     const summary = yield* maintenance.compactEventStore();
 
     assert.equal(summary.purgedThreadCount, 3);
+    assert.deepEqual(yield* sql`SELECT thread_id FROM inline_shell_delivery_events`, [
+      { thread_id: live.id },
+    ]);
     // The prefix also covers the expired child.
     assert.deepEqual(yield* tablesMentioning(expired.id), []);
     assert.deepEqual(
@@ -578,6 +590,81 @@ it.effect("purges threads deleted over a week ago and keeps everything still rea
     assert.deepEqual(
       yield* Effect.forEach(kept, (id) => projections.getThreadProjection(id)),
       projectionsBefore,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("bounds purge discovery and provider-thread deletions", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const sink = yield* EventSink.EventSinkV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const now = yield* DateTime.now;
+    const expired = makeThread(ThreadId.make("bounded-purge"), now);
+    yield* sink.write({
+      events: [
+        threadCreatedEvent({ id: "bounded-create", thread: expired, now }),
+        {
+          id: EventId.make("bounded-delete"),
+          type: "thread.deleted",
+          threadId: expired.id,
+          occurredAt: now,
+          payload: { ...expired, deletedAt: DateTime.subtract(now, { days: 8 }) },
+        },
+      ],
+    });
+    for (let index = 0; index < 120; index++) {
+      yield* sql`INSERT INTO orchestration_v2_projection_provider_threads
+        (provider_thread_id, thread_id, provider, provider_instance_id, status, updated_at, payload_json)
+        VALUES (${"bounded-provider:" + index}, ${expired.id}, 'codex', 'codex', 'idle', ${DateTime.formatIso(now)}, '{}')`;
+    }
+    const deleted: number[] = [];
+    const plans: string[] = [];
+    const run = NodeSqlite.StatementSync.prototype.run;
+    const all = NodeSqlite.StatementSync.prototype.all;
+    const prepare = NodeSqlite.DatabaseSync.prototype.prepare;
+    const databases = new WeakMap<NodeSqlite.StatementSync, NodeSqlite.DatabaseSync>();
+    using _reads = vi
+      .spyOn(NodeSqlite.DatabaseSync.prototype, "prepare")
+      .mockImplementation(function (this: NodeSqlite.DatabaseSync, query) {
+        const statement = prepare.call(this, query);
+        databases.set(statement, this);
+        return statement;
+      });
+    using _writes = vi
+      .spyOn(NodeSqlite.StatementSync.prototype, "run")
+      .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
+        const result = run.apply(this, params);
+        if (/DELETE FROM orchestration_v2_projection_provider_threads/.test(this.sourceSQL))
+          deleted.push(Number(result.changes));
+        return result;
+      });
+    using _returning = vi
+      .spyOn(NodeSqlite.StatementSync.prototype, "all")
+      .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
+        if (
+          !this.sourceSQL.startsWith("EXPLAIN") &&
+          /WITH thread_payload|FROM orchestration_v2_projection_thread_references|FROM orchestration_v2_projection_threads\s+WHERE deleted_at|DELETE FROM orchestration_v2_projection_provider_threads/.test(
+            this.sourceSQL,
+          )
+        ) {
+          const plan = prepare.call(databases.get(this)!, "EXPLAIN QUERY PLAN " + this.sourceSQL);
+          plans.push(...all.apply(plan, params).map((row) => String(row.detail)));
+        }
+        const result = all.apply(this, params);
+        if (/DELETE FROM orchestration_v2_projection_provider_threads/.test(this.sourceSQL))
+          deleted.push(result.length);
+        return result;
+      });
+    assert.equal((yield* maintenance.compactEventStore()).purgedThreadCount, 1);
+    assert.equal(
+      deleted.reduce((sum, count) => sum + count, 0),
+      120,
+    );
+    assert.isAtMost(Math.max(...deleted), 50);
+    assert.isAbove(plans.length, 0);
+    assert.isFalse(
+      plans.some((line) => /\bSCAN\b/.test(line) && !line.includes("SCAN CONSTANT ROW")),
     );
   }).pipe(Effect.provide(layerTest)),
 );
@@ -1102,7 +1189,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
               type: "turn-item.updated",
               threadId,
               occurredAt: old,
-              payload,
+              payload:
+                index === 0 && payload.type === "dynamic_tool"
+                  ? (({ output: _output, ...rest }) => rest)(payload)
+                  : payload,
             });
           }
         }
@@ -1149,7 +1239,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             [0, 5, 6, 7].some(
               (index) =>
                 entry.id === TurnItemId.make("retention:" + index + ":command_execution") ||
-                entry.id === TurnItemId.make("retention:" + index + ":dynamic_tool"),
+                (index !== 0 &&
+                  entry.id === TurnItemId.make("retention:" + index + ":dynamic_tool")),
             )
           ) {
             if (original.type !== "command_execution" && original.type !== "dynamic_tool") {
@@ -1158,7 +1249,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             assert.deepEqual(entry, { ...original, output: "[Tool output removed for age]" });
           } else assert.deepEqual(entry, original);
         }
-        assert.equal(summary.trimmedEventCount, 16);
+        assert.equal(summary.trimmedEventCount, 15);
         assert.isTrue((yield* maintenance.verify).valid);
         assert.isTrue((yield* maintenance.rebuild).valid);
         assert.deepEqual(yield* projections.getThreadProjection(threadId), after);

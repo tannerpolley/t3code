@@ -21,7 +21,7 @@ export const enableIncrementalVacuum = Effect.fn("DatabaseMaintenance.enableIncr
       );
       return;
     }
-    if (disk.bavail * disk.bsize < beforeBytes) {
+    if (disk.bavail * disk.bsize < beforeBytes * 2) {
       yield* Effect.logWarning(
         "Skipping automatic database shrinking migration: insufficient free disk",
         { beforeBytes, freeBytes: disk.bavail * disk.bsize },
@@ -43,4 +43,7 @@ export const enableIncrementalVacuum = Effect.fn("DatabaseMaintenance.enableIncr
       afterBytes: (after[0]?.page_count ?? 0) * (size[0]?.page_size ?? 0),
     });
   },
+  Effect.catchCause((cause) =>
+    Effect.logWarning("Database shrinking migration skipped", { cause }),
+  ),
 );

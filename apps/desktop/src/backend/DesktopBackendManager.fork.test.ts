@@ -283,7 +283,7 @@ describe("DesktopBackendManager", () => {
                 Stream.make(
                   "unrelated log\nRunning database ",
                   "migrations\nMigrations ran success",
-                  "fully\nRunning database ",
+                  "fully\nRunning database migrations\nDatabase shrinking migration skipped\nRunning database ",
                 ),
               ),
               stderr: Stream.encodeText(Stream.make("migrations\n")),
@@ -299,7 +299,7 @@ describe("DesktopBackendManager", () => {
             statuses.push(running);
           }),
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
-      assert.deepEqual(statuses, [true, false]);
+      assert.deepEqual(statuses, [true, false, true, false]);
     }),
   );
 
