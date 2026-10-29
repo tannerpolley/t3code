@@ -449,7 +449,26 @@ export function makeIssueWorkCommands({
       yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
   });
 
+  // Thread creation's enclosing dispatch span owns this validation.
+  const guardThreadCreate = Effect.fnUntraced(function* (
+    command: Extract<OrchestrationV2Command, { type: "thread.create" }>,
+  ) {
+    if (command.linkedIssue !== undefined) {
+      const adapter = yield* providerAdapters
+        .get(command.modelSelection.instanceId)
+        .pipe(mapDispatchError(command));
+      if (!supportsManagedIssueWork(adapter.driver)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          detail: managedIssueProviderError,
+        });
+      }
+    }
+  });
+
   return {
+    guardThreadCreate,
     canStartRun: canStartIssueRun,
     guardFormerWorkerMessage,
     start,

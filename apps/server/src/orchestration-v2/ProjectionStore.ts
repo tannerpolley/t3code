@@ -1,15 +1,15 @@
-import { readIssueWorkThreads, type IssueWorkThread } from "../issues/IssueWorkProjection.ts";
+import {
+  makeIssueWorkCommentReads,
+  readIssueWorkThreads,
+  type IssueWorkThread,
+} from "../issues/IssueWorkProjection.ts";
 import {
   USAGE_LIMIT_SWITCH_RESUME_PREFIX,
   USAGE_LIMIT_SWITCH_HOLD_MS,
   USAGE_LIMIT_SWITCH_RELEASE_MARGIN_MS,
 } from "./usageLimitRecoveryPending.ts";
-import {
-  applyIssueQueueEvent,
-  claimQueuedIssue,
-  finishIssueQueueNotice,
-} from "../issues/IssueQueueStore.ts";
-import { IssueWorkCancelled, IssueWorkRequested } from "@t3tools/contracts";
+import { finishIssueQueueNotice } from "../issues/IssueQueueStore.ts";
+import { makeIssueWorkProjection } from "../issues/IssueWorkEventProjection.ts";
 import { pendingRoutedRequestThreadIds } from "./ForkProjectionReads.ts";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
@@ -1080,8 +1080,6 @@ const encodeTimelineSources = Schema.encodeEffect(
     Schema.Array(Schema.Struct({ threadId: Schema.String, id: Schema.String })),
   ),
 );
-const encodeIssueCancellation = Schema.encodeEffect(Schema.fromJsonString(IssueWorkCancelled));
-const encodeIssueRequest = Schema.encodeEffect(Schema.fromJsonString(IssueWorkRequested));
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 // Empty filters still scan SQLite rows; short-circuit them, including turnItemTypes: [].
@@ -1983,24 +1981,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       END
     `;
 
-    const registerRepositoryOwner = (
-      owner: import("@t3tools/contracts").RepositoryOrchestration,
-      threadId: ThreadId,
-      occurredAt: DateTime.Utc,
-    ) =>
-      sql`
-        INSERT INTO orchestration_v2_projection_repository_orchestration (
-          host, repository_id, repository, root_thread_id, project_id, workspace,
-          launch_command_id, revision, paused, worker_limit, publish_status_comments,
-          publish_closeout_comments, created_at, updated_at
-        ) VALUES (
-          ${owner.host}, ${owner.repositoryId}, ${owner.repository}, ${threadId},
-          ${owner.projectId}, ${"worktree"}, ${owner.launchCommandId},
-          ${owner.revision}, ${owner.paused ? 1 : 0}, ${owner.workerLimit},
-          ${owner.publishStatusComments ? 1 : 0}, ${owner.publishCloseoutComments ? 1 : 0},
-          ${DateTime.formatIso(occurredAt)}, ${DateTime.formatIso(occurredAt)}
-        )
-      `;
+    const issueProjection = makeIssueWorkProjection(sql, ProjectionStoreApplyEventError);
 
     const apply: ProjectionStoreV2Shape["apply"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -2008,96 +1989,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         function* (event) {
           switch (event.type) {
             case "repository.work.restored":
-              // Existing roots have no thread.created event to register their first owner.
-              if (event.payload.previousRootThreadId === null) {
-                yield* registerRepositoryOwner(
-                  event.payload.repositoryOrchestration,
-                  event.payload.targetThreadId,
-                  event.occurredAt,
-                );
-              }
-              return;
             case "issue.queue.updated":
-              yield* applyIssueQueueEvent(event).pipe(
-                Effect.provideService(SqlClient.SqlClient, sql),
-              );
+            case "issue.work.cancelled":
+            case "issue.work.requested":
+              yield* issueProjection.applyEvent(event);
               return;
-            case "issue.work.cancelled": {
-              const payload = yield* encodeIssueCancellation(event.payload);
-              yield* sql`
-                UPDATE orchestration_v2_projection_issue_work_requests
-                SET payload_json = json_set(payload_json, '$.cancellation', json_extract(${payload}, '$.cancellation'))
-                WHERE request_id = ${event.payload.requestId}
-                  AND json_type(payload_json, '$.cancellation') IS NULL
-              `;
-              return;
-            }
-            case "issue.work.requested": {
-              const request = event.payload;
-              yield* claimQueuedIssue(request.issue).pipe(
-                Effect.provideService(SqlClient.SqlClient, sql),
-              );
-              if (request.issueThreadId === null) {
-                yield* sql`
-                  INSERT INTO orchestration_v2_projection_issue_work
-                    (host, repository_id, issue_id, issue_number, repository, node_id, issue_url,
-                     issue_title, owner_thread_id, status_marker, updated_at)
-                  VALUES (${request.issue.host}, ${request.issue.repositoryId}, ${request.issue.id},
-                    ${request.issue.number}, ${request.issue.repository}, ${request.issue.nodeId},
-                    ${request.issue.url}, ${request.issue.title}, ${null},
-                    ${`<!-- t3-issue-status:${request.issue.host}:${request.issue.repositoryId}:${request.issue.id} -->`},
-                    ${DateTime.formatIso(event.occurredAt)})
-                  ON CONFLICT(host, repository_id, issue_id) DO UPDATE SET
-                    repository = excluded.repository,
-                    issue_number = excluded.issue_number,
-                    node_id = excluded.node_id,
-                    issue_url = excluded.issue_url,
-                    issue_title = excluded.issue_title,
-                    updated_at = excluded.updated_at
-                `;
-              }
-              const payloadJson = yield* encodeIssueRequest(request);
-              yield* sql`
-                INSERT INTO orchestration_v2_projection_issue_work_requests
-                  (request_id, host, repository_id, repository, issue_id, issue_number, attempt_key, root_thread_id, payload_json, created_at)
-                VALUES (${request.requestId}, ${request.issue.host}, ${request.issue.repositoryId}, ${request.issue.repository}, ${request.issue.id}, ${request.issue.number}, ${request.attemptKey}, ${request.rootThreadId}, ${payloadJson}, ${DateTime.formatIso(event.occurredAt)})
-                ON CONFLICT(request_id) DO NOTHING
-              `;
-              return;
-            }
-            case "issue.github-comment.recorded": {
-              const receipt = event.payload;
-              if (receipt.operation === "status_sync") {
-                yield* sql`
-                  INSERT INTO orchestration_v2_projection_issue_work
-                    (host, repository_id, issue_id, issue_number, repository, node_id, issue_url,
-                     issue_title, owner_thread_id, status_comment_id, status_marker, updated_at)
-                  VALUES (${receipt.issue.host}, ${receipt.issue.repositoryId}, ${receipt.issue.id},
-                    ${receipt.issue.number}, ${receipt.issue.repository}, ${receipt.issue.nodeId},
-                    ${receipt.issue.url}, ${receipt.issue.title}, ${null},
-                    ${receipt.commentId}, ${receipt.marker}, ${DateTime.formatIso(event.occurredAt)})
-                  ON CONFLICT(host, repository_id, issue_id) DO UPDATE SET
-                    status_comment_id = excluded.status_comment_id,
-                    status_marker = excluded.status_marker,
-                    updated_at = excluded.updated_at
-                `;
-              } else {
-                yield* sql`
-                  INSERT INTO orchestration_v2_projection_issue_comment_receipts
-                    (write_key, host, repository_id, issue_id, issue_number, thread_id,
-                     result_event_id, comment_id, marker, created_at, updated_at)
-                  VALUES (${receipt.writeKey}, ${receipt.issue.host}, ${receipt.issue.repositoryId},
-                    ${receipt.issue.id}, ${receipt.issue.number}, ${receipt.threadId},
-                    ${receipt.resultEventId ?? null}, ${receipt.commentId}, ${receipt.marker},
-                    ${DateTime.formatIso(event.occurredAt)}, ${DateTime.formatIso(event.occurredAt)})
-                  ON CONFLICT(write_key) DO UPDATE SET
-                    comment_id = excluded.comment_id,
-                    marker = excluded.marker,
-                    updated_at = excluded.updated_at
-                `;
-              }
+            case "issue.github-comment.recorded":
+              yield* issueProjection.applyEvent(event);
               break;
-            }
             case "thread.pull-request-link-updated": {
               const thread = yield* getThread(event.threadId);
               yield* apply({
@@ -2129,89 +2028,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.model-selection-updated":
             case "thread.provider-switched":
             case "thread.guest-share-updated": {
-              if (
-                event.type === "thread.created" &&
-                event.payload.repositoryOrchestration !== undefined
-              ) {
-                yield* registerRepositoryOwner(
-                  event.payload.repositoryOrchestration,
-                  event.threadId,
-                  event.occurredAt,
-                );
-              }
-              if (event.type === "thread.created" && event.payload.linkedIssue !== undefined) {
-                const issue = event.payload.linkedIssue;
-                yield* claimQueuedIssue(issue).pipe(
-                  Effect.provideService(SqlClient.SqlClient, sql),
-                );
-                yield* sql`
-                  INSERT INTO orchestration_v2_projection_issue_work
-                    (host, repository_id, issue_id, issue_number, repository, node_id, issue_url,
-                     issue_title, owner_thread_id, status_marker, updated_at)
-                  VALUES (${issue.host}, ${issue.repositoryId}, ${issue.id}, ${issue.number},
-                    ${issue.repository}, ${issue.nodeId}, ${issue.url}, ${issue.title},
-                    ${event.threadId}, ${`<!-- t3-issue-status:${issue.host}:${issue.repositoryId}:${issue.id} -->`},
-                    ${DateTime.formatIso(event.occurredAt)})
-                  ON CONFLICT(host, repository_id, issue_id) DO UPDATE SET
-                    repository = excluded.repository,
-                    issue_number = excluded.issue_number,
-                    node_id = excluded.node_id,
-                    issue_url = excluded.issue_url,
-                    issue_title = excluded.issue_title,
-                    owner_thread_id = excluded.owner_thread_id,
-                    updated_at = excluded.updated_at
-                `;
-              }
-              if (
-                event.payload.repositoryOrchestration !== undefined &&
-                event.payload.repositoryOrchestration.retiredToThreadId === undefined
-              ) {
-                const owner = event.payload.repositoryOrchestration;
-                const updated = yield* sql<{ readonly root_thread_id: string }>`
-                  UPDATE orchestration_v2_projection_repository_orchestration
-                  SET paused = ${owner.paused ? 1 : 0}, worker_limit = ${owner.workerLimit},
-                      revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
-                  WHERE root_thread_id = ${event.threadId} RETURNING root_thread_id
-                `;
-                if (updated.length === 0) {
-                  const previous = owner.handoffHistory?.at(-1);
-                  const transferred =
-                    previous === undefined
-                      ? []
-                      : yield* sql<{ readonly root_thread_id: string }>`
-                          UPDATE orchestration_v2_projection_repository_orchestration
-                          SET root_thread_id = ${event.threadId}, launch_command_id = ${owner.launchCommandId},
-                            paused = ${owner.paused ? 1 : 0}, worker_limit = ${owner.workerLimit},
-                            revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
-                          WHERE host = ${owner.host} AND repository_id = ${owner.repositoryId}
-                            AND root_thread_id IN ${sql.in(owner.handoffHistory!.map((entry) => entry.threadId))}
-                            AND revision < ${owner.revision}
-                          RETURNING root_thread_id
-                        `;
-                  if (transferred.length === 0) {
-                    return yield* new ProjectionStoreApplyEventError({
-                      eventType: event.type,
-                      cause: "Repository ownership revision conflict during handoff.",
-                    });
-                  }
-                  // Only unclaimed admissions move. Attempts and child lineage stay historical.
-                  yield* sql`
-                    UPDATE orchestration_v2_projection_issue_work_requests
-                    SET root_thread_id = ${event.threadId},
-                        payload_json = json_set(payload_json, '$.rootThreadId', ${event.threadId})
-                    WHERE root_thread_id IN ${sql.in(owner.handoffHistory!.map((entry) => entry.threadId))}
-                      AND queue_state IS NULL AND json_type(payload_json, '$.cancellation') IS NULL
-                      AND NOT EXISTS (
-                        SELECT 1 FROM orchestration_v2_projection_issue_work work
-                        WHERE work.host = orchestration_v2_projection_issue_work_requests.host
-                          AND work.repository_id = orchestration_v2_projection_issue_work_requests.repository_id
-                          AND work.issue_id = orchestration_v2_projection_issue_work_requests.issue_id
-                          AND work.owner_thread_id IS NOT NULL
-                          AND work.owner_thread_id <> orchestration_v2_projection_issue_work_requests.attempt_key
-                      )
-                  `;
-                }
-              }
+              yield* issueProjection.applyThread(event);
               const payloadJson = yield* encodeThreadPayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
@@ -7341,73 +7158,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         method(...args).pipe(NodeSqliteClient.readOnly);
 
     return {
-      getIssueWorkCommentState: (input) =>
-        sql<{
-          readonly owner_thread_id: string | null;
-          readonly status_comment_id: string | null;
-          readonly request_cancelled: number;
-          readonly request_root_id: string | null;
-          readonly attempt_key: string | null;
-          readonly latest_write_key: string | null;
-        }>`
-          SELECT work.owner_thread_id, work.status_comment_id,
-            COALESCE((SELECT json_type(request.payload_json, '$.cancellation') IS NOT NULL
-              FROM orchestration_v2_projection_issue_work_requests request
-              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id AND request.queue_state IS NULL
-              ORDER BY request.rowid DESC LIMIT 1), 0) AS request_cancelled,
-            (SELECT root_thread_id FROM orchestration_v2_projection_issue_work_requests request
-              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id AND request.queue_state IS NULL
-              ORDER BY request.rowid DESC LIMIT 1) AS request_root_id,
-            (SELECT attempt_key FROM orchestration_v2_projection_issue_work_requests request
-              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id AND request.queue_state IS NULL
-              ORDER BY request.rowid DESC LIMIT 1) AS attempt_key,
-            (SELECT json_extract(effect.payload_json, '$.writeKey') FROM orchestration_v2_effect_outbox effect
-              WHERE effect.effect_type = 'issue.github.comment' AND json_extract(effect.payload_json, '$.operation') = 'status_sync'
-                AND json_extract(effect.payload_json, '$.issue.host') = work.host
-                AND json_extract(effect.payload_json, '$.issue.repositoryId') = work.repository_id
-                AND json_extract(effect.payload_json, '$.issue.id') = work.issue_id
-              ORDER BY coalesce(json_extract(effect.payload_json, '$.revision'), 0) DESC, effect.rowid DESC LIMIT 1) AS latest_write_key
-          FROM orchestration_v2_projection_issue_work work
-          WHERE work.host = ${input.host} AND work.repository_id = ${input.repositoryId} AND work.issue_id = ${input.issueId}
-          LIMIT 1
-        `.pipe(
-          Effect.map((rows) => {
-            const row = rows[0];
-            if (row === undefined) return null;
-            const effectiveId =
-              row.owner_thread_id === null || row.attempt_key === row.owner_thread_id
-                ? row.request_root_id
-                : row.owner_thread_id;
-            return {
-              requestCancelled: row.request_cancelled === 1,
-              ownerThreadId:
-                row.owner_thread_id === null ? null : ThreadId.make(row.owner_thread_id),
-              effectiveStatusThreadId: effectiveId === null ? null : ThreadId.make(effectiveId),
-              latestStatusWriteKey: row.latest_write_key,
-              statusCommentId: row.status_comment_id,
-            };
-          }),
-          Effect.mapError(
-            (cause) => new ProjectionStoreReadError({ threadId: input.threadId, cause }),
-          ),
-        ),
-      getIssueCommentReceipt: (input) =>
-        sql<{ readonly comment_id: string | null; readonly result_event_id: string | null }>`
-          SELECT comment_id, result_event_id
-          FROM orchestration_v2_projection_issue_comment_receipts
-          WHERE write_key = ${input.writeKey}
-          LIMIT 1
-        `.pipe(
-          Effect.map((rows) => {
-            const row = rows[0];
-            return row === undefined
-              ? null
-              : { commentId: row.comment_id, resultEventId: row.result_event_id };
-          }),
-          Effect.mapError(
-            (cause) => new ProjectionStoreReadError({ threadId: input.threadId, cause }),
-          ),
-        ),
+      ...makeIssueWorkCommentReads(sql, ProjectionStoreReadError),
       apply,
       getShellSnapshot: readOnReader(getShellSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),

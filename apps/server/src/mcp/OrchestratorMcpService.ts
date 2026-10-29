@@ -1,3 +1,8 @@
+import { makeManagedIssueDelegation } from "./ManagedIssueDelegation.ts";
+import {
+  makeRepositoryMcpMethods,
+  type RepositoryMcpMethods,
+} from "./RepositoryOrchestrationMcp.ts";
 import {
   CommandId,
   type RunId,
@@ -81,10 +86,6 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import * as IssueService from "../issues/IssueService.ts";
-import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
-import * as IssueLinks from "../issues/IssueLinks.ts";
-import { isReadOnlyIssueRole, requiresManagedIssueAdmission } from "../issues/IssueEligibility.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -158,51 +159,11 @@ type TerminalTaskStatus = Extract<
   "completed" | "failed" | "cancelled" | "interrupted"
 >;
 
-export interface OrchestratorMcpServiceShape {
+export interface OrchestratorMcpServiceShape extends RepositoryMcpMethods {
   readonly proposeIssueChange: (
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").IssueChangeProposeInput,
   ) => Effect.Effect<import("@t3tools/contracts").IssueChange, OrchestratorMcpFailure>;
-  readonly requestRepositoryHandoff: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").RepositoryHandoffRequestInput,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
-  readonly workMilestone: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").RepositoryWorkInput,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
-  readonly queueIssue: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").IssueQueueInput,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
-  readonly unqueueIssue: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").IssueQueueInput,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
-  readonly repositoryStatus: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").IssueRepositoryRef,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
-  readonly setRepositoryWorkerLimit: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").RepositoryConcurrencyLimitInput,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
-  readonly closeOutIssue: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").IssueWorkCloseOutInput,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
-  readonly setRepositoryPaused: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").RepositoryWorkControlInput,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
-  readonly cancelIssueRequest: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").IssueWorkCancelInput,
-  ) => Effect.Effect<import("@t3tools/contracts").IssueWorkRequested, OrchestratorMcpFailure>;
-  readonly restoreRepositoryRoot: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").RepositoryWorkRestoreInput,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly capabilities: (
     scope: McpInvocationScope,
     input?: OrchestratorMcpCapabilitiesInput,
@@ -1039,10 +1000,8 @@ const make = Effect.gen(function* () {
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const issueService = yield* Effect.serviceOption(IssueService.IssueService);
-  const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
+  const managedIssueDelegation = yield* makeManagedIssueDelegation;
   const issueWork = yield* Effect.serviceOption(IssueWorkService.IssueWorkService);
-  const issueLinks = yield* Effect.serviceOption(IssueLinks.IssueLinks);
   const issueChanges = yield* Effect.serviceOption(IssueChangeService.IssueChangeService);
   const remoteDelegation = yield* Effect.serviceOption(RemoteDelegation.RemoteDelegation);
 
@@ -1908,23 +1867,8 @@ const make = Effect.gen(function* () {
     return task;
   });
 
-  /** A retired repository root and its descendants keep history but cannot change orchestration. */
-  const assertCurrentRepositoryCaller = (scope: McpInvocationScope) =>
-    scope.thread === undefined || Option.isNone(issueWork)
-      ? Effect.void
-      : issueWork.value
-          .assertCurrentCaller(scope.thread.threadId)
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-
-  /** Repository-wide control needs a caller in full access and default mode. */
-  const requireRepositoryController = Effect.fn(
-    "OrchestratorMcpService.requireRepositoryController",
-  )(function* (scope: McpInvocationScope) {
-    const { limits } = yield* loadCaller(scope);
-    yield* assertCurrentRepositoryCaller(scope);
-    yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
-    yield* resolveInteractionMode(limits.interactionMode, "default");
-  });
+  const repositoryMcp = makeRepositoryMcpMethods({ issueWork, loadCaller, loadThreadCaller });
+  const { assertCurrentRepositoryCaller } = repositoryMcp;
 
   return OrchestratorMcpService.of({
     proposeIssueChange: Effect.fn("OrchestratorMcpService.proposeIssueChange")(
@@ -1942,106 +1886,7 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       },
     ),
-    requestRepositoryHandoff: Effect.fn("OrchestratorMcpService.requestRepositoryHandoff")(
-      function* (scope, input) {
-        const caller = yield* loadThreadCaller(scope, "request_repository_handoff");
-        if (Option.isNone(issueWork))
-          return yield* failure("orchestration_error", "Issue work is unavailable.");
-        return yield* issueWork.value
-          .requestHandoff(caller.parent.thread.id, input)
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-      },
-    ),
-    workMilestone: Effect.fn("OrchestratorMcpService.workMilestone")(function* (scope, input) {
-      yield* requireRepositoryController(scope);
-      if (Option.isNone(issueWork))
-        return yield* failure("orchestration_error", "Issue work is unavailable.");
-      return yield* issueWork.value
-        .workMilestone(input)
-        .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-    }),
-    queueIssue: Effect.fn("OrchestratorMcpService.queueIssue")(function* (scope, input) {
-      yield* requireRepositoryController(scope);
-      if (Option.isNone(issueWork))
-        return yield* failure("orchestration_error", "Issue work is unavailable.");
-      return yield* issueWork.value
-        .queueIssue(input)
-        .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-    }),
-    unqueueIssue: Effect.fn("OrchestratorMcpService.unqueueIssue")(function* (scope, input) {
-      yield* requireRepositoryController(scope);
-      if (Option.isNone(issueWork))
-        return yield* failure("orchestration_error", "Issue work is unavailable.");
-      return yield* issueWork.value
-        .unqueueIssue(input)
-        .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-    }),
-    repositoryStatus: Effect.fn("OrchestratorMcpService.repositoryStatus")(
-      function* (scope, input) {
-        yield* loadCaller(scope);
-        if (Option.isNone(issueWork))
-          return yield* failure("orchestration_error", "Issue work is unavailable.");
-        return yield* issueWork.value
-          .repositoryStatus(input)
-          .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
-      },
-    ),
-    setRepositoryWorkerLimit: Effect.fn("OrchestratorMcpService.setRepositoryWorkerLimit")(
-      function* (scope, input) {
-        yield* requireRepositoryController(scope);
-        if (Option.isNone(issueWork))
-          return yield* failure("orchestration_error", "Issue work is unavailable.");
-        if ((input.workerLimit === undefined) === (input.readOnlyLimit === undefined))
-          return yield* failure(
-            "invalid_request",
-            "Provide exactly one of workerLimit or readOnlyLimit.",
-          );
-        return yield* (
-          input.readOnlyLimit !== undefined
-            ? issueWork.value.setReadOnlyLimit({ ...input, readOnlyLimit: input.readOnlyLimit })
-            : issueWork.value.setWorkerLimit({ ...input, workerLimit: input.workerLimit! })
-        ).pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-      },
-    ),
-    closeOutIssue: Effect.fn("OrchestratorMcpService.closeOutIssue")(function* (scope, input) {
-      const caller = yield* loadThreadCaller(scope, "close_out_issue_attempt");
-      yield* requireRepositoryController(scope);
-      if (Option.isNone(issueWork))
-        return yield* failure("orchestration_error", "Issue work is unavailable.");
-      return yield* issueWork.value
-        .closeOut(input, caller.parent.thread.id)
-        .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-    }),
-    setRepositoryPaused: Effect.fn("OrchestratorMcpService.setRepositoryPaused")(
-      function* (scope, input) {
-        yield* requireRepositoryController(scope);
-        if (Option.isNone(issueWork))
-          return yield* failure("orchestration_error", "Issue work is unavailable.");
-        return yield* issueWork.value
-          .setPaused(input)
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-      },
-    ),
-    cancelIssueRequest: Effect.fn("OrchestratorMcpService.cancelIssueRequest")(
-      function* (scope, input) {
-        yield* requireRepositoryController(scope);
-        if (Option.isNone(issueWork))
-          return yield* failure("orchestration_error", "Issue work is unavailable.");
-        return yield* issueWork.value
-          .cancelRequest(input)
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-      },
-    ),
-    restoreRepositoryRoot: Effect.fn("OrchestratorMcpService.restoreRepositoryRoot")(
-      function* (scope, input) {
-        yield* requireRepositoryController(scope);
-        if (Option.isNone(issueWork))
-          return yield* failure("orchestration_error", "Issue work is unavailable.");
-        return yield* issueWork.value
-          .restoreRoot(input)
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-      },
-    ),
+    ...repositoryMcp.methods,
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       yield* assertCurrentRepositoryCaller(scope);
       const { parent, limits } = yield* loadCaller(scope);
@@ -2455,53 +2300,15 @@ const make = Effect.gen(function* () {
           "Delegated tasks require an active run owned by this MCP provider session.",
         );
       }
-      const readOnly = isReadOnlyIssueRole(input.role);
-      const root =
-        readOnly || parent.thread.lineage.rootThreadId === parent.thread.id
-          ? parent.thread
-          : (yield* threadManagement
-              .getThreadRecords(parent.thread.lineage.rootThreadId, [])
-              .pipe(Effect.mapError(threadManagementFailure))).thread;
-      const managed = requiresManagedIssueAdmission(input.role, parent.thread, root);
-      if (readOnly && input.issue !== undefined && Option.isNone(issueLinks))
-        return yield* failure(
-          "orchestration_error",
-          "Issue linking is unavailable on this server.",
-        );
-      if (managed && input.issue === undefined)
-        return yield* failure(
-          "invalid_request",
-          "Repository-managed children require an explicit issue argument.",
-        );
-      if (managed && input.mode === "wait")
-        return yield* failure(
-          "invalid_request",
-          "Managed issue delegation uses async mode so the root can finish its turn while workers run.",
-        );
-      let linkedIssue: import("@t3tools/contracts").ThreadLinkedIssue | undefined;
-      if (input.issue !== undefined && !readOnly) {
-        if (Option.isNone(issueService) || Option.isNone(issueWorkStore))
-          return yield* failure(
-            "orchestration_error",
-            "Issue-managed delegation is unavailable on this server.",
-          );
-        const detail = yield* issueService.value
-          .detail(input.issue)
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-        if (detail.issue.state !== "open")
-          return yield* failure("invalid_request", "Only open issues can be delegated.");
-        linkedIssue = yield* issueService.value
-          .resolveLinkedIssue({ ...input.issue, host: input.issue.host ?? "github.com" })
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-        const repositoryOwner = yield* issueWorkStore.value
-          .repositoryOwner(linkedIssue)
-          .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
-        if (repositoryOwner === null || repositoryOwner.paused)
-          return yield* failure(
-            "invalid_request",
-            "The repository orchestrator is unavailable or paused.",
-          );
-      }
+      const { readOnly, linkedIssue } = yield* managedIssueDelegation.resolveIssue(
+        input,
+        parent,
+        (id) =>
+          threadManagement.getThreadRecords(id, []).pipe(
+            Effect.map((records) => records.thread),
+            Effect.mapError(threadManagementFailure),
+          ),
+      );
       const providers = yield* loadProviders;
       const key = yield* requestKey(input.clientRequestId);
       const commandId = stableCommandId({
@@ -2585,21 +2392,8 @@ const make = Effect.gen(function* () {
         import("@t3tools/contracts").OrchestrationV2ServerCommand,
         { type: "delegated_task.request" }
       >;
-      if (linkedIssue !== undefined && Option.isNone(issueWork))
-        return yield* failure(
-          "orchestration_error",
-          "Issue-managed delegation is unavailable on this server.",
-        );
-      const result = yield* linkedIssue !== undefined && Option.isSome(issueWork)
-        ? issueWork.value
-            .startWorker(taskCommand)
-            .pipe(
-              Effect.mapError((error) =>
-                error._tag === "ThreadManagementProviderInstanceDisabledError"
-                  ? threadManagementFailure(error)
-                  : failure("orchestration_error", error.message),
-              ),
-            )
+      const result = yield* linkedIssue !== undefined
+        ? managedIssueDelegation.startWorker(taskCommand, threadManagementFailure)
         : threadManagement
             .dispatch(taskCommand)
             .pipe(
@@ -2624,15 +2418,12 @@ const make = Effect.gen(function* () {
       }
       const taskId = taskEvent.event.payload.id;
       const childThreadId = taskEvent.event.payload.childThreadId;
-      if (
-        readOnly &&
-        input.issue !== undefined &&
-        childThreadId !== null &&
-        Option.isSome(issueLinks)
-      )
-        yield* issueLinks.value
-          .link({ ...input.issue, threadId: childThreadId }, parent.thread.id)
-          .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+      yield* managedIssueDelegation.linkReadOnly(
+        readOnly,
+        input.issue,
+        childThreadId,
+        parent.thread.id,
+      );
       const childRunEvent = result.storedEvents.find(
         (stored) => stored.event.type === "run.created" && stored.event.threadId === childThreadId,
       );

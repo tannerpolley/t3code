@@ -9,12 +9,7 @@ import { makeIssueQueueCommands } from "../issues/IssueQueueCommands.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { makeAppOwnedUserInputCommands } from "./AppOwnedUserInputCommands.ts";
 import { supportsManagedIssueWork, managedIssueProviderError } from "../issues/IssueEligibility.ts";
-import {
-  effectiveThreadRole,
-  isRepositoryOrchestratorEligible,
-  issueThreadTitle,
-  worktreeRole,
-} from "@t3tools/contracts";
+import { effectiveThreadRole, issueThreadTitle, worktreeRole } from "@t3tools/contracts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -1083,8 +1078,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
-  const { threadExecutor, threadDispatch, readIssueSnapshots, readIssueQueueSnapshots } =
-    yield* makeIssueWorkDispatch;
+  const {
+    threadExecutor,
+    threadDispatch,
+    readIssueSnapshots,
+    readIssueQueueSnapshots,
+    promoteOtherIssueQueues,
+  } = yield* makeIssueWorkDispatch;
   const issueWorkRecovery = yield* makeIssueWorkRecovery;
 
   /** The driver when this provider runs `/goal` natively, else undefined. */
@@ -2645,18 +2645,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
 
-    if (command.linkedIssue !== undefined) {
-      const adapter = yield* providerAdapters
-        .get(command.modelSelection.instanceId)
-        .pipe(mapDispatchError(command));
-      if (!supportsManagedIssueWork(adapter.driver)) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          detail: managedIssueProviderError,
-        });
-      }
-    }
+    yield* issueWork.guardThreadCreate(command);
 
     // Tombstones reserve their ids too; recreating one would overwrite its history.
     const existing = yield* projectionStore.getThread(command.threadId).pipe(
@@ -2716,18 +2705,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       deletedAt: null,
     };
 
-    if (thread.repositoryOrchestration !== undefined) {
-      const adapter = yield* providerAdapters
-        .get(thread.modelSelection.instanceId)
-        .pipe(mapDispatchError(command));
-      if (!isRepositoryOrchestratorEligible(thread, adapter.driver, thread.repositoryOrchestration))
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          detail:
-            "Select an active top-level Orchestrator thread in the same repository project using Codex or Claude.",
-        });
-    }
+    yield* repositoryWork.guardThreadCreate(command, thread);
 
     yield* emitEvent({
       type: "thread.created",
@@ -13358,27 +13336,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.catchCause((cause) => Effect.logWarning("Failed to deliver held steers", { cause })),
   );
 
-  const promoteOtherIssueQueues = Effect.fn("Orchestrator.promoteOtherIssueQueues")(function* (
-    threadId: ThreadId,
-  ) {
-    const shell = yield* projectionStore.getThreadShell(threadId);
-    if (shell === null || Option.isNone(issueWorkStore)) return;
-    const rootThreadId = shell.lineage.rootThreadId;
-    if ((yield* issueWorkStore.value.configuration(rootThreadId)) === null) return;
-    for (const queuedThreadId of yield* issueWorkStore.value.admissionThreads(rootThreadId)) {
-      if (
-        queuedThreadId === threadId ||
-        !(yield* projectionStore.canStartQueuedRun(queuedThreadId))
-      )
-        continue;
-      const reads = yield* readIssueSnapshots(queuedThreadId);
-      yield* threadDispatch.withLock(
-        queuedThreadId,
-        startNextQueuedRun(queuedThreadId).pipe(Effect.provideService(IssueReadSnapshots, reads)),
-      );
-    }
-  });
-
   const withdrawReleasedUsageLimitContinuation = (threadId: ThreadId) =>
     threadDispatch.withLock(
       threadId,
@@ -13446,12 +13403,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ),
           );
         }
-        if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
-          for (const threadId of yield* issueWorkStore.value
-            .admissionThreads(command.threadId)
-            .pipe(mapDispatchError(command)))
-            yield* mapDispatchError(command)(startNextQueuedRun(threadId));
-        }
+        yield* repositoryWork.continueQueues(command, startNextQueuedRun);
         return {
           sequence: receipt.resultSequence,
           storedEvents,
@@ -13558,12 +13510,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
-        if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
-          for (const threadId of yield* issueWorkStore.value
-            .admissionThreads(command.threadId)
-            .pipe(mapDispatchError(command)))
-            yield* mapDispatchError(command)(startNextQueuedRun(threadId));
-        }
+        yield* repositoryWork.continueQueues(command, startNextQueuedRun);
         return {
           sequence: resultSequence,
           storedEvents: [],
@@ -13612,12 +13559,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
       }
-      if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
-        for (const threadId of yield* issueWorkStore.value
-          .admissionThreads(command.threadId)
-          .pipe(mapDispatchError(command)))
-          yield* mapDispatchError(command)(startNextQueuedRun(threadId));
-      }
+      yield* repositoryWork.continueQueues(command, startNextQueuedRun);
       for (const stored of committed.storedEvents) {
         if (stored.event.type !== "run.created" || stored.event.payload.status !== "queued")
           continue;
@@ -13721,39 +13663,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ? { ...command, issueReads }
       : command;
     const dispatchEffect = dispatchWithReceiptEffect(dispatchCommand);
-    if (command.type === "repository.work.restore") {
-      // The target may have a linked issue, so coordinate with its existing root before restoring.
-      const keys = yield* issueWorkRecovery
-        .restoreLockKeys(command)
-        .pipe(mapDispatchError(command));
-      return yield* keys.reduceRight(
+    const repositoryLocks = yield* repositoryWork.dispatchLockKeys(command);
+    if (repositoryLocks !== undefined)
+      return yield* repositoryLocks.reduceRight(
         (effect, key) => threadExecutor.withLock(key, effect),
         dispatchEffect,
       );
-    }
-    if (command.type === "repository.work.handoff") {
-      const root = yield* projectionStore
-        .getThread(command.threadId)
-        .pipe(mapDispatchError(command));
-      const targetId = root.repositoryOrchestration?.handoff?.nextThreadId;
-      if (targetId !== undefined) {
-        const target = yield* projectionStore
-          .getThreadShell(targetId)
-          .pipe(mapDispatchError(command));
-        if (
-          target !== null &&
-          (target.lineage.parentThreadId !== null || target.lineage.rootThreadId !== target.id)
-        )
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "Select an existing active top-level thread in the same repository project.",
-          });
-        return yield* [...new Set([command.threadId, targetId])]
-          .sort()
-          .reduceRight((effect, key) => threadExecutor.withLock(key, effect), dispatchEffect);
-      }
-    }
     const dispatch = threadDispatch.withLock(commandThreadId(command), dispatchEffect);
     if (
       command.type !== "runtime-request.respond" &&
@@ -13812,7 +13727,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         yield* withdrawReleasedUsageLimitContinuation(threadId);
       }
-      yield* promoteOtherIssueQueues(threadId);
+      yield* promoteOtherIssueQueues(threadId, startNextQueuedRun);
     },
     (effect, stored) =>
       effect.pipe(
@@ -13854,7 +13769,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     .pipe(
       Stream.filter((stored) => stored.event.type === "runtime-request.updated"),
       Stream.runForEach((stored) =>
-        promoteOtherIssueQueues(stored.event.threadId).pipe(
+        promoteOtherIssueQueues(stored.event.threadId, startNextQueuedRun).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Failed to resume issue work after a user response", { cause }),
           ),

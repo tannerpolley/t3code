@@ -4,7 +4,7 @@ import {
   OrchestrationV2RunJson,
   OrchestrationV2ProviderFailure,
   type OrchestrationV2ThreadShell,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { threadErrorSummary } from "@t3tools/shared/orchestrationV2ThreadError";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -222,3 +222,77 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
     }),
   );
 });
+
+export function makeIssueWorkCommentReads(
+  sql: SqlClient.SqlClient,
+  ReadError: typeof import("../orchestration-v2/ProjectionStore.ts").ProjectionStoreReadError,
+) {
+  const methods: Pick<
+    import("../orchestration-v2/ProjectionStore.ts").ProjectionStoreV2Shape,
+    "getIssueWorkCommentState" | "getIssueCommentReceipt"
+  > = {
+    getIssueWorkCommentState: (input) =>
+      sql<{
+        readonly owner_thread_id: string | null;
+        readonly status_comment_id: string | null;
+        readonly request_cancelled: number;
+        readonly request_root_id: string | null;
+        readonly attempt_key: string | null;
+        readonly latest_write_key: string | null;
+      }>`
+          SELECT work.owner_thread_id, work.status_comment_id,
+            COALESCE((SELECT json_type(request.payload_json, '$.cancellation') IS NOT NULL
+              FROM orchestration_v2_projection_issue_work_requests request
+              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id AND request.queue_state IS NULL
+              ORDER BY request.rowid DESC LIMIT 1), 0) AS request_cancelled,
+            (SELECT root_thread_id FROM orchestration_v2_projection_issue_work_requests request
+              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id AND request.queue_state IS NULL
+              ORDER BY request.rowid DESC LIMIT 1) AS request_root_id,
+            (SELECT attempt_key FROM orchestration_v2_projection_issue_work_requests request
+              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id AND request.queue_state IS NULL
+              ORDER BY request.rowid DESC LIMIT 1) AS attempt_key,
+            (SELECT json_extract(effect.payload_json, '$.writeKey') FROM orchestration_v2_effect_outbox effect
+              WHERE effect.effect_type = 'issue.github.comment' AND json_extract(effect.payload_json, '$.operation') = 'status_sync'
+                AND json_extract(effect.payload_json, '$.issue.host') = work.host
+                AND json_extract(effect.payload_json, '$.issue.repositoryId') = work.repository_id
+                AND json_extract(effect.payload_json, '$.issue.id') = work.issue_id
+              ORDER BY coalesce(json_extract(effect.payload_json, '$.revision'), 0) DESC, effect.rowid DESC LIMIT 1) AS latest_write_key
+          FROM orchestration_v2_projection_issue_work work
+          WHERE work.host = ${input.host} AND work.repository_id = ${input.repositoryId} AND work.issue_id = ${input.issueId}
+          LIMIT 1
+        `.pipe(
+        Effect.map((rows) => {
+          const row = rows[0];
+          if (row === undefined) return null;
+          const effectiveId =
+            row.owner_thread_id === null || row.attempt_key === row.owner_thread_id
+              ? row.request_root_id
+              : row.owner_thread_id;
+          return {
+            requestCancelled: row.request_cancelled === 1,
+            ownerThreadId: row.owner_thread_id === null ? null : ThreadId.make(row.owner_thread_id),
+            effectiveStatusThreadId: effectiveId === null ? null : ThreadId.make(effectiveId),
+            latestStatusWriteKey: row.latest_write_key,
+            statusCommentId: row.status_comment_id,
+          };
+        }),
+        Effect.mapError((cause) => new ReadError({ threadId: input.threadId, cause })),
+      ),
+    getIssueCommentReceipt: (input) =>
+      sql<{ readonly comment_id: string | null; readonly result_event_id: string | null }>`
+          SELECT comment_id, result_event_id
+          FROM orchestration_v2_projection_issue_comment_receipts
+          WHERE write_key = ${input.writeKey}
+          LIMIT 1
+        `.pipe(
+        Effect.map((rows) => {
+          const row = rows[0];
+          return row === undefined
+            ? null
+            : { commentId: row.comment_id, resultEventId: row.result_event_id };
+        }),
+        Effect.mapError((cause) => new ReadError({ threadId: input.threadId, cause })),
+      ),
+  };
+  return methods;
+}

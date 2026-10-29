@@ -486,7 +486,75 @@ export function makeRepositoryWorkCommands({
     );
   });
 
+  // Reads and validation occur before the caller takes these locks.
+  const dispatchLockKeys = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+    if (command.type === "repository.work.restore") {
+      // The target may have a linked issue, so coordinate with its existing root before restoring.
+      const keys = yield* issueWorkRecovery
+        .restoreLockKeys(command)
+        .pipe(mapDispatchError(command));
+      return keys;
+    }
+    if (command.type === "repository.work.handoff") {
+      const root = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(mapDispatchError(command));
+      const targetId = root.repositoryOrchestration?.handoff?.nextThreadId;
+      if (targetId !== undefined) {
+        const target = yield* projectionStore
+          .getThreadShell(targetId)
+          .pipe(mapDispatchError(command));
+        if (
+          target !== null &&
+          (target.lineage.parentThreadId !== null || target.lineage.rootThreadId !== target.id)
+        )
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Select an existing active top-level thread in the same repository project.",
+          });
+        return [...new Set([command.threadId, targetId])].sort();
+      }
+    }
+    return undefined;
+  });
+
+  // Receipt replay, empty plans and committed commands resume admissions at the same point.
+  const continueQueues = Effect.fnUntraced(function* <E, R>(
+    command: OrchestrationV2ServerCommand,
+    startNextQueuedRun: (id: ThreadId) => Effect.Effect<void, E, R>,
+  ) {
+    if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
+      for (const threadId of yield* issueWorkStore.value
+        .admissionThreads(command.threadId)
+        .pipe(mapDispatchError(command)))
+        yield* mapDispatchError(command)(startNextQueuedRun(threadId));
+    }
+  });
+
+  // Thread creation's enclosing dispatch span owns this validation.
+  const guardThreadCreate = Effect.fnUntraced(function* (
+    command: Extract<OrchestrationV2Command, { type: "thread.create" }>,
+    thread: OrchestrationV2AppThread,
+  ) {
+    if (thread.repositoryOrchestration !== undefined) {
+      const adapter = yield* providerAdapters
+        .get(thread.modelSelection.instanceId)
+        .pipe(mapDispatchError(command));
+      if (!isRepositoryOrchestratorEligible(thread, adapter.driver, thread.repositoryOrchestration))
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          detail:
+            "Select an active top-level Orchestrator thread in the same repository project using Codex or Claude.",
+        });
+    }
+  });
+
   return {
+    guardThreadCreate,
+    continueQueues,
+    dispatchLockKeys,
     guardRootLifecycle,
     guardDelegationParent,
     guardScheduledMessage,

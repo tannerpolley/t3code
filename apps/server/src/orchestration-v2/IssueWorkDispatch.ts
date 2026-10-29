@@ -207,5 +207,33 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     return { reads, queueLength: queue.length };
   });
 
-  return { threadExecutor, threadDispatch, readIssueSnapshots, readIssueQueueSnapshots };
+  const promoteOtherIssueQueues = Effect.fn("Orchestrator.promoteOtherIssueQueues")(function* <
+    E,
+    R,
+  >(threadId: ThreadId, startNextQueuedRun: (id: ThreadId) => Effect.Effect<void, E, R>) {
+    const shell = yield* projectionStore.getThreadShell(threadId);
+    if (shell === null || Option.isNone(issueWorkStore)) return;
+    const rootThreadId = shell.lineage.rootThreadId;
+    if ((yield* issueWorkStore.value.configuration(rootThreadId)) === null) return;
+    for (const queuedThreadId of yield* issueWorkStore.value.admissionThreads(rootThreadId)) {
+      if (
+        queuedThreadId === threadId ||
+        !(yield* projectionStore.canStartQueuedRun(queuedThreadId))
+      )
+        continue;
+      const reads = yield* readIssueSnapshots(queuedThreadId);
+      yield* threadDispatch.withLock(
+        queuedThreadId,
+        startNextQueuedRun(queuedThreadId).pipe(Effect.provideService(IssueReadSnapshots, reads)),
+      );
+    }
+  });
+
+  return {
+    promoteOtherIssueQueues,
+    threadExecutor,
+    threadDispatch,
+    readIssueSnapshots,
+    readIssueQueueSnapshots,
+  };
 });
