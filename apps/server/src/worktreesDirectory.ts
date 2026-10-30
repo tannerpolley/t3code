@@ -1,4 +1,4 @@
-import { PROJECT_LOCAL_WORKTREES, PROJECT_WORKTREES_FOLDER } from "@t3tools/contracts";
+import { projectLocalWorktreesDirectory, projectLocalWorktreeRoots } from "./forkWorktreePaths.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,10 +17,8 @@ export function resolveWorktreesDirectory(
   home: string,
   repositoryRoot?: string,
 ): string | null {
-  if (setting === PROJECT_LOCAL_WORKTREES)
-    return repositoryRoot === undefined
-      ? null
-      : path.join(repositoryRoot, PROJECT_WORKTREES_FOLDER);
+  const local = projectLocalWorktreesDirectory(setting, path, repositoryRoot);
+  if (local !== undefined) return local;
   if (setting === "") return defaultDir;
   const expanded = expandHomePath(setting, home);
   if (!path.isAbsolute(expanded)) return null;
@@ -41,14 +39,9 @@ export function resolveWorktreePath(
   const directory = resolveWorktreesDirectory(setting, defaultDir, path, home, repositoryRoot);
   if (directory === null) return null;
   const folder = name.replaceAll("/", "-");
-  return setting === PROJECT_LOCAL_WORKTREES
+  return projectLocalWorktreesDirectory(setting, path, repositoryRoot) !== undefined
     ? path.join(directory, folder)
     : path.join(directory, path.basename(path.resolve(cwd)), folder);
-}
-
-/** Exclude nested worktree trees from T3-controlled workspace scans. */
-export function isProjectLocalWorktreePath(value: string): boolean {
-  return value.replaceAll("\\", "/").split("/").includes(PROJECT_WORKTREES_FOLDER);
 }
 
 /** Callers re-check after resolving symlinks: a link can point at a root. */
@@ -72,7 +65,7 @@ export function managedWorktreesDirectories(
     if (directory !== null) directories.add(directory);
   }
   // Keep local worktrees managed after switching back to a home or custom folder.
-  for (const root of repositoryRoots) directories.add(path.join(root, PROJECT_WORKTREES_FOLDER));
+  for (const root of projectLocalWorktreeRoots(repositoryRoots, path)) directories.add(root);
   return [...directories];
 }
 

@@ -25,7 +25,7 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
-import { isProjectLocalWorktreePath } from "../worktreesDirectory.ts";
+import { isProjectLocalWorktreePath } from "../forkWorktreePaths.ts";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.

@@ -24,7 +24,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
-  PROJECT_LOCAL_WORKTREES,
   type GitCommandFailureReason,
   T3_PROJECT_FILE_NAME,
   type ReviewDiffFileContentsInput,
@@ -42,8 +41,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
-import { resolveWorktreePath } from "../worktreesDirectory.ts";
-import { excludeProjectWorktrees } from "../projectLocalWorktrees.ts";
+import { prepareWorktreeLocation } from "../projectLocalWorktrees.ts";
 import { removeEmptyDirectory } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
@@ -3915,40 +3913,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     let worktreePath = input.path;
     let added = false;
     if (worktreePath == null) {
-      const repositoryRoot =
-        options?.worktreesDirectory === PROJECT_LOCAL_WORKTREES
-          ? (yield* listWorktreePaths(input.cwd))[0]
-          : undefined;
-      const home = yield* HostProcess.HomeDirectory;
-      const resolve = (name: string) =>
-        resolveWorktreePath(
-          options?.worktreesDirectory ?? "",
-          worktreesDir,
-          path,
-          home,
-          input.cwd,
-          name,
-          repositoryRoot,
-        );
-      const resolvedPath = resolve(directoryName);
-      if (resolvedPath === null) {
-        return yield* new GitCommandError({
-          operation: "GitVcsDriver.createWorktree",
-          command: "git worktree add",
-          cwd: input.cwd,
-          detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Worktrees.`,
-        });
-      }
-      if (repositoryRoot !== undefined) {
-        const repository = yield* resolveRepositoryPaths(input.cwd);
-        if (repository !== null)
-          yield* worktreeExcludeSemaphore.withPermits(1)(
-            excludeProjectWorktrees(input.cwd, repository.gitCommonDir, repositoryRoot).pipe(
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(Path.Path, path),
-            ),
-          );
-      }
+      const resolve = yield* prepareWorktreeLocation({
+        cwd: input.cwd,
+        setting: options?.worktreesDirectory,
+        worktreesDir,
+        directoryName,
+        repositoryRoot: listWorktreePaths(input.cwd).pipe(Effect.map((paths) => paths[0])),
+        repositoryPaths: resolveRepositoryPaths(input.cwd),
+        semaphore: worktreeExcludeSemaphore,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+      const resolvedPath = resolve(directoryName)!;
       worktreePath = resolvedPath;
       if (options?.uniqueName && newRefName !== undefined) {
         // Each attempt is the creation itself, so concurrent requests cannot
