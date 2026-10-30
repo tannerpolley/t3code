@@ -1,13 +1,19 @@
 import {
+  ThreadId,
+  RuntimeRequestId,
   type OrchestrationV2DomainEvent,
-  type ThreadId,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
+import {
+  type pendingUserRequests,
+  runtimeRequestNeedsUser,
+} from "@t3tools/provider-core/server/subagentProjection";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import type { ThreadManagementServiceShape } from "./ThreadManagementService.ts";
 
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 
@@ -122,7 +128,7 @@ export const routeDelegatedRequests = Effect.fn("routeDelegatedRequests")(functi
   );
 });
 
-export const isDelegatedDescendant = Effect.fn("isDelegatedDescendant")(function* <E>(
+const isDelegatedDescendant = Effect.fn("isDelegatedDescendant")(function* <E>(
   threads: Threads<E>,
   ancestorThreadId: ThreadId,
   targetThreadId: ThreadId,
@@ -170,4 +176,89 @@ export function delegatedRequestResponseInstructions(
       ? 'answers: {questionId: "answer"}'
       : 'decision: "accept" or "decline"';
   return `Answer with t3_pending_request action="respond" using threadId: ${childThreadId}, requestId: ${request.id}, and ${response}. If you need the owner's decision, ask with your own question tool and relay their answer with t3_pending_request action="respond". Child questions and approvals are routed to you while you are active. Requests left unanswered become visible to the owner when you stop.`;
+}
+
+export class ThreadManagementPendingRequestError extends Schema.TaggedError<ThreadManagementPendingRequestError>()(
+  "ThreadManagementPendingRequestError",
+  {
+    reason: Schema.Literals(["not-found", "invalid-response", "outside-descendants"]),
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+  },
+) {
+  override get message() {
+    return this.reason === "outside-descendants"
+      ? "An orchestrator may answer or approve only requests in its own delegated descendant subtree."
+      : this.reason === "not-found"
+        ? "The pending question or approval was not found."
+        : "Pass answers for a question, or an accept/decline decision for an approval.";
+  }
+}
+
+export const delegatedRequestResponse = Effect.fn("delegatedRequestResponse")(function* <E>(
+  orchestrator: Threads<E>,
+  input: Parameters<ThreadManagementServiceShape["respondToPendingRequest"]>[0],
+  runtimeRequests: ReadonlyArray<OrchestrationV2RuntimeRequest>,
+) {
+  const request = runtimeRequests.find(
+    (request) => request.id === input.requestId && request.status === "pending",
+  );
+  const fail = (reason: ThreadManagementPendingRequestError["reason"]) =>
+    new ThreadManagementPendingRequestError({ ...input, reason });
+  if (
+    request === undefined ||
+    request.kind === "auth_refresh" ||
+    request.kind === "dynamic_tool_call"
+  )
+    return yield* fail("not-found");
+  const question = request.kind === "user_input";
+  if (
+    question
+      ? input.answers === undefined || input.decision !== undefined
+      : input.decision === undefined || input.answers !== undefined
+  )
+    return yield* fail("invalid-response");
+  const descendant =
+    input.callerThreadId !== undefined &&
+    input.callerThreadId !== input.threadId &&
+    (yield* isDelegatedDescendant(orchestrator, input.callerThreadId, input.threadId));
+  if (
+    (!question && !descendant) ||
+    (input.callerThreadId !== undefined && input.callerThreadId !== input.threadId && !descendant)
+  )
+    return yield* fail("outside-descendants");
+  return {
+    type: "runtime-request.respond" as const,
+    commandId: input.commandId,
+    threadId: input.threadId,
+    requestId: input.requestId,
+    ...(input.answers === undefined ? {} : { answers: input.answers }),
+    ...(input.decision === undefined ? {} : { decision: input.decision }),
+    ...(descendant ? { respondedBy: "orchestrator" as const } : {}),
+  };
+});
+
+export function delegatedRequestWaitingOnUser(
+  childThreadId: ThreadId,
+  runtimeRequests: ReadonlyArray<OrchestrationV2RuntimeRequest>,
+  requestItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  waitingRequests: ReturnType<typeof pendingUserRequests>,
+) {
+  return {
+    kind: waitingRequests[0]!.kind,
+    requestIds: waitingRequests.map((request) => request.id),
+    ...(runtimeRequests.some(
+      (request) => request.id === waitingRequests[0]?.id && request.routedTo !== undefined,
+    )
+      ? { waitingOn: "orchestrator" as const }
+      : {}),
+    preview: runtimeRequests
+      .filter((request) => waitingRequests.some((waiting) => waiting.id === request.id))
+      .map((request) =>
+        request.routedTo === undefined
+          ? waitingRequests.find((waiting) => waiting.id === request.id)!.summary
+          : `${delegatedRequestDetails(request, requestItems)}\n${delegatedRequestResponseInstructions(childThreadId, request)}`,
+      )
+      .join("\n\n"),
+  };
 }

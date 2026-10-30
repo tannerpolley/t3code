@@ -5,6 +5,7 @@ import type {
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import { makeDelegatedRequestWakeDispatcher } from "./DelegatedRequestWake.ts";
 import { makeIssueQueueCommands } from "../issues/IssueQueueCommands.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { makeAppOwnedUserInputCommands } from "./AppOwnedUserInputCommands.ts";
@@ -14012,29 +14013,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore);
     }),
     dispatch: dispatchWithReceipt,
-    // Issue reads can wait on GitHub, so read them before taking the parent thread lock.
-    dispatchDelegatedRequestWake: Effect.fn("Orchestrator.dispatchDelegatedRequestWake")(
-      function* (task, request, command) {
-        const receipt = yield* commandReceipts
-          .getByCommandId(command.commandId)
-          .pipe(mapDispatchError(command));
-        const issueReads = Option.isNone(receipt)
-          ? yield* readIssueSnapshots(command.threadId).pipe(mapDispatchError(command))
-          : [];
-        const dispatchCommand: OrchestrationV2ServerCommand = {
-          ...command,
-          issueReads,
-        };
-        yield* threadDispatch.withLock(
-          command.threadId,
-          Effect.gen(function* () {
-            const allowed = yield* appOwnedUserInput.canWake(task, request);
-            if (!allowed) return;
-            yield* dispatchWithReceiptEffect(dispatchCommand);
-          }),
-        );
-      },
-    ),
+    dispatchDelegatedRequestWake: makeDelegatedRequestWakeDispatcher({
+      getReceipt: (command) =>
+        commandReceipts.getByCommandId(command.commandId).pipe(mapDispatchError(command)),
+      readIssueSnapshots: (command) =>
+        readIssueSnapshots(command.threadId).pipe(mapDispatchError(command)),
+      withLock: threadDispatch.withLock,
+      canWake: appOwnedUserInput.canWake,
+      dispatch: dispatchWithReceiptEffect,
+    }),
     autoArmLimitRecovery: Effect.fn("OrchestratorV2.autoArmLimitRecovery")(function (input) {
       return threadDispatch.withLock(
         input.threadId,

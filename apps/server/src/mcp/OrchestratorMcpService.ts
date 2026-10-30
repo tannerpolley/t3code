@@ -94,10 +94,7 @@ import {
   delegatedTaskProgress,
   pendingUserRequests,
 } from "@t3tools/provider-core/server/subagentProjection";
-import {
-  delegatedRequestDetails,
-  delegatedRequestResponseInstructions,
-} from "../orchestration-v2/DelegatedRequestRouting.ts";
+import { delegatedRequestWaitingOnUser } from "../orchestration-v2/DelegatedRequestRouting.ts";
 import { checkDelegateTarget, modelRoleStatuses } from "./delegateTaskTarget.ts";
 import {
   DispatchModeLimit,
@@ -1572,24 +1569,12 @@ const make = Effect.gen(function* () {
       ...(isTerminalTaskStatus(status) || waitingRequests[0] === undefined
         ? {}
         : {
-            waitingOnUser: {
-              kind: waitingRequests[0].kind,
-              requestIds: waitingRequests.map((request) => request.id),
-              ...(childControls.runtimeRequests.some(
-                (request) =>
-                  request.id === waitingRequests[0]?.id && request.routedTo !== undefined,
-              )
-                ? { waitingOn: "orchestrator" as const }
-                : {}),
-              preview: childControls.runtimeRequests
-                .filter((request) => waitingRequests.some((waiting) => waiting.id === request.id))
-                .map((request) =>
-                  request.routedTo === undefined
-                    ? waitingRequests.find((waiting) => waiting.id === request.id)!.summary
-                    : `${delegatedRequestDetails(request, requestItems)}\n${delegatedRequestResponseInstructions(task.childThreadId!, request)}`,
-                )
-                .join("\n\n"),
-            },
+            waitingOnUser: delegatedRequestWaitingOnUser(
+              task.childThreadId,
+              childControls.runtimeRequests,
+              requestItems,
+              waitingRequests,
+            ),
           }),
     } satisfies OrchestratorMcpDelegateTaskResult;
     const response: OrchestratorMcpDelegateTaskResult =

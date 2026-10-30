@@ -61,7 +61,10 @@ import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimi
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { isDelegatedDescendant } from "./DelegatedRequestRouting.ts";
+import {
+  delegatedRequestResponse,
+  ThreadManagementPendingRequestError,
+} from "./DelegatedRequestRouting.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
@@ -222,23 +225,6 @@ export type ThreadManagementUserInputResult =
   /** Dismissed, interrupted, or its run or session ended. */
   | { readonly type: "dismissed" }
   | { readonly type: "stream_ended" };
-
-export class ThreadManagementPendingRequestError extends Schema.TaggedError<ThreadManagementPendingRequestError>()(
-  "ThreadManagementPendingRequestError",
-  {
-    reason: Schema.Literals(["not-found", "invalid-response", "outside-descendants"]),
-    threadId: ThreadId,
-    requestId: RuntimeRequestId,
-  },
-) {
-  override get message() {
-    return this.reason === "outside-descendants"
-      ? "An orchestrator may answer or approve only requests in its own delegated descendant subtree."
-      : this.reason === "not-found"
-        ? "The pending question or approval was not found."
-        : "Pass answers for a question, or an accept/decline decision for an approval.";
-  }
-}
 
 export class ThreadManagementThreadNotFoundError extends Schema.TaggedError<ThreadManagementThreadNotFoundError>()(
   "ThreadManagementThreadNotFoundError",
@@ -1191,44 +1177,12 @@ const make = Effect.gen(function* () {
   const respondToPendingRequest: ThreadManagementServiceShape["respondToPendingRequest"] =
     Effect.fn("orchestrationV2.threadManagement.respondToPendingRequest")(function* (input) {
       const projection = yield* getProjectThreadRecords(input, ["runtimeRequests"]);
-      const request = projection.runtimeRequests.find(
-        (request) => request.id === input.requestId && request.status === "pending",
+      const command = yield* delegatedRequestResponse(
+        orchestrator,
+        input,
+        projection.runtimeRequests,
       );
-      const fail = (reason: ThreadManagementPendingRequestError["reason"]) =>
-        new ThreadManagementPendingRequestError({ ...input, reason });
-      if (
-        request === undefined ||
-        request.kind === "auth_refresh" ||
-        request.kind === "dynamic_tool_call"
-      )
-        return yield* fail("not-found");
-      const question = request.kind === "user_input";
-      if (
-        question
-          ? input.answers === undefined || input.decision !== undefined
-          : input.decision === undefined || input.answers !== undefined
-      )
-        return yield* fail("invalid-response");
-      const descendant =
-        input.callerThreadId !== undefined &&
-        input.callerThreadId !== input.threadId &&
-        (yield* isDelegatedDescendant(orchestrator, input.callerThreadId, input.threadId));
-      if (
-        (!question && !descendant) ||
-        (input.callerThreadId !== undefined &&
-          input.callerThreadId !== input.threadId &&
-          !descendant)
-      )
-        return yield* fail("outside-descendants");
-      return yield* dispatch({
-        type: "runtime-request.respond",
-        commandId: input.commandId,
-        threadId: input.threadId,
-        requestId: input.requestId,
-        ...(input.answers === undefined ? {} : { answers: input.answers }),
-        ...(input.decision === undefined ? {} : { decision: input.decision }),
-        ...(descendant ? { respondedBy: "orchestrator" as const } : {}),
-      });
+      return yield* dispatch(command);
     });
 
   const stopWorkflow: ThreadManagementServiceShape["stopWorkflow"] = Effect.fn(

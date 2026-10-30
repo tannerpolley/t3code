@@ -4,19 +4,15 @@ import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
   Project,
-  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
+import { makeDelegatedRequestAlerts } from "./DelegatedRequestAlerts.ts";
 import {
   RelayApi,
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
-import {
-  ROUTED_REQUEST_ALERT_SETTLE_MS,
-  runtimeRequestIsOwnerVisible,
-  runtimeRequestOwnerAlertIsSettled,
-} from "@t3tools/shared/delegatedRequestVisibility";
+import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker, type DrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -395,7 +391,7 @@ export const make = Effect.gen(function* () {
   const activeSnapshotPublishedRef = yield* Ref.make(false);
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
-  const settlingRequests = new Map<ThreadId, { requestId: RuntimeRequestId; since: number }>();
+  const requestAlerts = makeDelegatedRequestAlerts(scope, (threadId) => worker.enqueue(threadId));
 
   const readSecretString = (name: string) =>
     secrets
@@ -457,7 +453,7 @@ export const make = Effect.gen(function* () {
     publishConfirmDeadlines.clear();
     heldCompletions.clear();
     yield* Ref.set(publishedStateByThreadRef, new Map());
-    settlingRequests.clear();
+    requestAlerts.clear();
   });
 
   const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
@@ -544,32 +540,7 @@ export const make = Effect.gen(function* () {
         ? undefined
         : yield* threads.getThreadShell(threadShell.pendingRuntimeRequest.routedTo);
     const ownerVisible = runtimeRequestIsOwnerVisible(threadShell?.pendingRuntimeRequest, parent);
-    const request = threadShell?.pendingRuntimeRequest;
-    if (
-      request?.routedTo === undefined ||
-      !ownerVisible ||
-      threadShell?.archivedAt !== null ||
-      threadShell.deletedAt !== null
-    ) {
-      settlingRequests.delete(threadId);
-    } else {
-      const now = (yield* DateTime.now).epochMilliseconds;
-      let settling = settlingRequests.get(threadId);
-      if (settling?.requestId !== request.id) {
-        settling = { requestId: request.id, since: now };
-        settlingRequests.set(threadId, settling);
-        const pending = settling;
-        yield* Effect.sleep(ROUTED_REQUEST_ALERT_SETTLE_MS).pipe(
-          Effect.andThen(
-            Effect.suspend(() =>
-              settlingRequests.get(threadId) === pending ? worker.enqueue(threadId) : Effect.void,
-            ),
-          ),
-          Effect.forkIn(scope),
-        );
-      }
-      if (!runtimeRequestOwnerAlertIsSettled(request, settling.since, now)) return;
-    }
+    if (!(yield* requestAlerts.isSettled(threadId, threadShell, ownerVisible))) return;
     const parentHandlingRequest =
       threadShell?.pendingRuntimeRequest?.routedTo !== undefined && !ownerVisible;
     if (

@@ -11,10 +11,7 @@ import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import {
-  prepareDelegatedRequestWake,
-  delegatedRequestPromptEvent,
-} from "./DelegatedRequestWake.ts";
+import { wakeRoutedDelegatedRequest, delegatedRequestPromptEvent } from "./DelegatedRequestWake.ts";
 import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
 import { reportLabel } from "@t3tools/provider-core/server/notification";
 
@@ -70,16 +67,8 @@ const make = Effect.gen(function* () {
       import("@t3tools/contracts").OrchestrationV2ServerCommand,
       { type: "message.dispatch" }
     >;
-    const wake =
-      request.routedTo === undefined
-        ? request.kind === "user_input"
-          ? command
-          : undefined
-        : yield* prepareDelegatedRequestWake(projections, task, request, command);
-    if (wake !== undefined) {
-      if (request.routedTo === undefined) yield* engine.dispatch(wake);
-      else yield* engine.dispatchDelegatedRequestWake(task, request, wake);
-    }
+    if (yield* wakeRoutedDelegatedRequest(engine, projections, task, request, command)) return;
+    if (request.kind === "user_input") yield* engine.dispatch(command);
   });
 
   // Runs for every domain event; most events return before any work is needed.

@@ -1,10 +1,17 @@
 import {
+  type ThreadId,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
 import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import type {
+  OrchestratorV2Shape,
+  OrchestratorV2Error,
+  OrchestratorV2DispatchResult,
+} from "./Orchestrator.ts";
 import type * as ProjectionStore from "./ProjectionStore.ts";
 import {
   delegatedRequestDetails,
@@ -12,7 +19,7 @@ import {
 } from "./DelegatedRequestRouting.ts";
 
 /** Load the routed prompt before the parent lock; admission is rechecked at dispatch. */
-export const prepareDelegatedRequestWake = Effect.fn("prepareDelegatedRequestWake")(function* (
+const prepareDelegatedRequestWake = Effect.fn("prepareDelegatedRequestWake")(function* (
   projections: ProjectionStore.ProjectionStoreV2["Service"],
   task: OrchestrationV2Subagent,
   request: OrchestrationV2RuntimeRequest,
@@ -92,4 +99,61 @@ export const delegatedRequestPromptEvent = Effect.fn("delegatedRequestPromptEven
   const request = yield* projections.getRuntimeRequest(event.threadId, event.payload.requestId);
   if (request?.status !== "pending" || request.routedTo === undefined) return;
   return { ...event, type: "runtime-request.updated", payload: request } as const;
+});
+
+type WakeCommand = Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }>;
+
+export function makeDelegatedRequestWakeDispatcher(dependencies: {
+  readonly getReceipt: (
+    command: WakeCommand,
+  ) => Effect.Effect<Option.Option<unknown>, OrchestratorV2Error>;
+  readonly readIssueSnapshots: (
+    command: WakeCommand,
+  ) => Effect.Effect<NonNullable<WakeCommand["issueReads"]>, OrchestratorV2Error>;
+  readonly withLock: <A, E, R>(
+    threadId: ThreadId,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
+  readonly canWake: (
+    task: OrchestrationV2Subagent,
+    request: OrchestrationV2RuntimeRequest,
+  ) => Effect.Effect<boolean, OrchestratorV2Error>;
+  readonly dispatch: (
+    command: OrchestrationV2ServerCommand,
+  ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+}) {
+  // Issue reads can wait on GitHub, so read them before taking the parent thread lock.
+  return Effect.fn("Orchestrator.dispatchDelegatedRequestWake")(function* (
+    task: OrchestrationV2Subagent,
+    request: OrchestrationV2RuntimeRequest,
+    command: WakeCommand,
+  ) {
+    const receipt = yield* dependencies.getReceipt(command);
+    const issueReads = Option.isNone(receipt)
+      ? yield* dependencies.readIssueSnapshots(command)
+      : [];
+    const dispatchCommand: OrchestrationV2ServerCommand = { ...command, issueReads };
+    yield* dependencies.withLock(
+      command.threadId,
+      Effect.gen(function* () {
+        const allowed = yield* dependencies.canWake(task, request);
+        if (!allowed) return;
+        yield* dependencies.dispatch(dispatchCommand);
+      }),
+    );
+  });
+}
+
+// The question reactor owns the enclosing wake span.
+export const wakeRoutedDelegatedRequest = Effect.fnUntraced(function* (
+  engine: Pick<OrchestratorV2Shape, "dispatchDelegatedRequestWake">,
+  projections: ProjectionStore.ProjectionStoreV2["Service"],
+  task: OrchestrationV2Subagent,
+  request: OrchestrationV2RuntimeRequest,
+  command: WakeCommand,
+) {
+  if (request.routedTo === undefined) return false;
+  const wake = yield* prepareDelegatedRequestWake(projections, task, request, command);
+  if (wake !== undefined) yield* engine.dispatchDelegatedRequestWake(task, request, wake);
+  return true;
 });
