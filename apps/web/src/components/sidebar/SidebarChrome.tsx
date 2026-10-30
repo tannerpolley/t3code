@@ -107,7 +107,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   const toggleOnRight = useClientSettings((s) => s.sidebarTogglePosition === "right");
   return (
     <Link
-      aria-label="Go to threads"
+      aria-label="T3 Code home"
       className={cn(
         toggleOnRight
           ? "md:ml-[var(--workspace-controls-left)]"

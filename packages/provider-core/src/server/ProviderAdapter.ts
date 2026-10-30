@@ -184,6 +184,7 @@ export class ProviderAdapterOpenSessionError extends Schema.TaggedError<Provider
   {
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
+    requiresSignIn: Schema.optional(Schema.Literal(true)),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -327,6 +328,21 @@ export class ProviderAdapterInterruptError extends Schema.TaggedError<ProviderAd
   }
 }
 
+/** The provider did not confirm a stop in time; its processes may still be running. */
+export class ProviderAdapterInterruptTimeoutError extends Schema.TaggedError<ProviderAdapterInterruptTimeoutError>()(
+  "ProviderAdapterInterruptTimeoutError",
+  {
+    driver: ProviderDriverKind,
+    providerThreadId: ProviderThreadId,
+    providerTurnId: ProviderTurnId,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `The ${this.driver} provider did not confirm stopping turn ${this.providerTurnId} within ${this.timeoutMs} ms.`;
+  }
+}
+
 export class ProviderAdapterRuntimeRequestResponseError extends Schema.TaggedError<ProviderAdapterRuntimeRequestResponseError>()(
   "ProviderAdapterRuntimeRequestResponseError",
   {
@@ -388,6 +404,7 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterSteerRunUnsupportedError,
   ProviderAdapterSteerRunError,
   ProviderAdapterInterruptError,
+  ProviderAdapterInterruptTimeoutError,
   ProviderAdapterRuntimeRequestResponseError,
   ProviderAdapterEventStreamError,
   ProviderAdapterProtocolError,

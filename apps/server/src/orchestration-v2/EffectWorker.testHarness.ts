@@ -68,6 +68,12 @@ function layerExecutorFor(input: {
       ProviderSessionManager.ProviderSessionManagerV2,
       ProviderSessionManager.ProviderSessionManagerV2.of({
         shutdown: Effect.void,
+        releaseUnlessBusy: Effect.fn(
+          "ProviderSessionManager.ProviderSessionManagerV2.releaseUnlessBusy",
+        )(() => Effect.succeed(true)),
+        otherWorkingThreads: Effect.fn(
+          "ProviderSessionManager.ProviderSessionManagerV2.otherWorkingThreads",
+        )(() => Effect.succeed([])),
         open: Effect.fn("ProviderSessionManager.ProviderSessionManagerV2.open")(() =>
           Effect.die("unused open"),
         ),

@@ -1255,7 +1255,7 @@ it.effect.each([
 ] as const)("%s thread count matches visible shells, including archived threads", ([, layer]) =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
-    assert.equal(yield* store.countThreads, 0);
+    assert.equal(yield* store.countThreads(), 0);
     const active = yield* addRolledBackRecoveryCandidate("count-active");
     const archived = yield* addRolledBackRecoveryCandidate("count-archived");
     const deleted = yield* addRolledBackRecoveryCandidate("count-deleted");
@@ -1282,7 +1282,10 @@ it.effect.each([
       shells.archivedThreads.map((t) => t.id),
       [archived],
     );
-    assert.equal(yield* store.countThreads, shells.threads.length + shells.archivedThreads.length);
+    assert.equal(
+      yield* store.countThreads(),
+      shells.threads.length + shells.archivedThreads.length,
+    );
     const selected = yield* store.getShellSnapshot({ threadIds: [archived] });
     assert.deepEqual(selected.threads, []);
     assert.deepEqual(selected.archivedThreads, shells.archivedThreads);
@@ -1330,7 +1333,7 @@ it.effect("recovery discovery uses the reader and sees each preceding commit", (
         assert.deepEqual(yield* store.getRecoveryThreadIds("runtime"), []);
         assert.deepEqual(yield* store.getRecoveryThreadIds("subagent-results"), [child]);
         assert.deepEqual(yield* store.getRecoveryThreadIds("delegated-completions"), []);
-        assert.equal(yield* store.countThreads, 1);
+        assert.equal(yield* store.countThreads(), 1);
       }).pipe(Effect.withTracer(after.tracer));
       assert.deepEqual(after.connections, ["reader", "reader", "reader", "reader"]);
     }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(persistence))));

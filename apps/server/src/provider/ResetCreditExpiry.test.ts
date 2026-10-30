@@ -1,3 +1,4 @@
+import { ProviderInstanceRegistryMutator } from "./ProviderInstanceRegistryMutator.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -783,6 +784,7 @@ it.effect("paces failed refreshes when the registry retains a stale selected cre
       Layer.mergeAll(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-credit-pacing-" }),
         ModelManifest.layerTest,
+        Layer.mock(ProviderInstanceRegistryMutator)({ reloadSecrets: () => Effect.void }),
         ProviderLatestVersions.layer,
       ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),

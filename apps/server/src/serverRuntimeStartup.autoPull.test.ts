@@ -142,15 +142,9 @@ it.effect("parks automatic pull until activation without delaying command readin
           listShells: () => Effect.succeed(snapshot.projects),
         }),
         Layer.mock(ProjectService.ProjectService)({ snapshot: Effect.succeed(snapshot) }),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({ countThreads: Effect.succeed(0) }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({ countThreads: () => Effect.succeed(0) }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              schemaVersion: 1,
-              snapshotSequence: 0,
-              threads: [],
-              archivedThreads: [],
-            }),
+          countThreads: () => Effect.succeed(0),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({

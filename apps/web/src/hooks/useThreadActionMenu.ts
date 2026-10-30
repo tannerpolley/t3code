@@ -66,9 +66,10 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
+  readonly onFind?: ((threadRef: ScopedThreadRef) => void) | undefined;
   readonly canShareWithGuest: boolean;
 }) {
-  const { threadRef, projectCwd, onStartRename, canShareWithGuest } = input;
+  const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
   const router = useRouter();
   const repositoryOrchestratorAction = useRepositoryOrchestratorAction();
   const projects = useProjects();
@@ -141,6 +142,7 @@ export function useThreadActionMenu(input: {
       const items = buildThreadActionMenuItems({
         ...(assignOrchestrator ? { repositoryOrchestrator: assignOrchestrator.item } : {}),
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
+        canFind: onFind !== undefined,
         branch: thread.branch ?? null,
         projectFilter: null,
         isPinned: thread.pinnedAt != null,
@@ -197,6 +199,9 @@ export function useThreadActionMenu(input: {
       switch (action) {
         case "make-repository-orchestrator":
           await assignOrchestrator?.run();
+          break;
+        case "find":
+          onFind?.(threadRef);
           return;
         case "project-settings": {
           const project = projects.find(

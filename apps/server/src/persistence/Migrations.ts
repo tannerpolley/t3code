@@ -76,6 +76,7 @@ import Migration0069 from "./Migrations/069_ThreadMessageSearch.ts";
 import Migration0070 from "./Migrations/070_PeerLinks.ts";
 import Migration0071 from "./Migrations/071_PeerLinkFence.ts";
 import Migration0072 from "./Migrations/072_WaitingLinkRequestIndex.ts";
+import Migration0073 from "./Migrations/073_ActiveTurnItemIndexes.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -151,6 +152,7 @@ const migrationEntries = [
   [70, "PeerLinks", Migration0070],
   [71, "PeerLinkFence", Migration0071],
   [72, "WaitingLinkRequestIndex", Migration0072],
+  [73, "ActiveTurnItemIndexes", Migration0073],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -210,17 +212,7 @@ export interface RunMigrationsOptions {
   readonly toForkMigrationInclusive?: number | undefined;
 }
 
-/**
- * Run all pending migrations.
- *
- * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
- * then runs any migrations with ID greater than the latest recorded migration.
- *
- * Returns array of [id, name] tuples for upstream migrations that were run;
- * fork migrations (ForkMigrations.ts) run after them and are only logged.
- *
- * @returns Effect containing array of executed migrations
- */
+// Upstream ids and returned tuples use effect_sql_migrations; fork ids run afterward in ForkMigrations.
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
   toForkMigrationInclusive,

@@ -154,7 +154,7 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
 
   const { threadCount, projectCount } = yield* Effect.all({
     projectCount: projects.count,
-    threadCount: threads.countThreads,
+    threadCount: threads.countThreads(),
   }).pipe(
     Effect.catch((cause) =>
       Effect.logWarning("failed to gather V2 startup counts for telemetry", {
@@ -276,8 +276,7 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
       title: path.basename(serverConfig.cwd) || "project",
       workspaceRoot: serverConfig.cwd,
     });
-    const shell = yield* threads.getShellSnapshot();
-    const existingThread = shell.threads.find(
+    const existingThread = (yield* threads.listActiveShellIndex()).find(
       (thread) =>
         thread.projectId === project.id && thread.lineage.relationshipToParent !== "subagent",
     );

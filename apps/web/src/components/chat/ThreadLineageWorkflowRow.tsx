@@ -18,7 +18,7 @@ import type {
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, LoaderCircleIcon, SquareIcon } from "lucide-react";
+import { ChevronDownIcon, SquareIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { AgentElapsed } from "./AgentElapsed";
@@ -29,6 +29,7 @@ import { cn } from "../../lib/utils";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Spinner } from "../ui/spinner";
 import {
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
@@ -213,7 +214,7 @@ export function ThreadLineageWorkflowRow({
                 }
               >
                 {stopping ? (
-                  <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+                  <Spinner aria-hidden size="xs" />
                 ) : (
                   <SquareIcon aria-hidden className="size-3 fill-current" />
                 )}

@@ -30,6 +30,7 @@ const layerSetup = (databasePath?: string) =>
       yield* sql`PRAGMA synchronous = NORMAL;`;
       // macOS fsync misses drive caches; F_FULLFSYNC flushes them at checkpoints and is ignored elsewhere.
       yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
+      yield* sql`PRAGMA temp_store = MEMORY;`;
       // PASSIVE checkpoints retain peak WAL size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
       yield* runMigrations();

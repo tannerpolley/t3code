@@ -22,7 +22,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -93,6 +92,9 @@ class WorktreeRecreateNoBaseError extends Schema.TaggedError<WorktreeRecreateNoB
 }
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
+const isProviderAdapterOpenSessionError = Schema.is(
+  ProviderAdapter.ProviderAdapterOpenSessionError,
+);
 
 /**
  * Claude refuses these before it reads the prompt: replacing a process running background work,
@@ -131,7 +133,6 @@ export const layer: Layer.Layer<
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
   | FileSystem.FileSystem
-  | Path.Path
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService
   | GitWorkflowService.GitWorkflowService
@@ -149,7 +150,6 @@ export const layer: Layer.Layer<
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
@@ -734,7 +734,12 @@ export const layer: Layer.Layer<
         }),
       );
       if (sessionResult._tag === "Failure") {
-        if (input.willRetry === true) return yield* sessionResult.failure;
+        const failure = sessionResult.failure;
+        const requiresSignIn =
+          "cause" in failure &&
+          isProviderAdapterOpenSessionError(failure.cause) &&
+          failure.cause.requiresSignIn === true;
+        if (input.willRetry === true && !requiresSignIn) return yield* failure;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",

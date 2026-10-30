@@ -153,7 +153,7 @@ it.effect.each([
           }),
         }),
         Layer.mock(ProjectStore.ProjectStoreV2)({ count: Effect.succeed(0) }),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({ countThreads: Effect.succeed(0) }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({ countThreads: () => Effect.succeed(0) }),
         Layer.mock(ProjectService.ProjectService)({
           bootstrap: () =>
             scenario === "project-failure"
@@ -178,13 +178,8 @@ it.effect.each([
                 }),
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              threads: [],
-              archivedThreads: [],
-              schemaVersion: 1,
-              snapshotSequence: 0,
-            }),
+          countThreads: () => Effect.succeed(0),
+          listActiveShellIndex: () => Effect.succeed([]),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           launch: (input) => {
@@ -394,7 +389,9 @@ it.effect.each([false, true])(
                   )
                 : Effect.succeed(3),
             }),
-            Layer.mock(ProjectionStore.ProjectionStoreV2)({ countThreads: Effect.succeed(7) }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              countThreads: () => Effect.succeed(7),
+            }),
             Layer.mock(AnalyticsService.AnalyticsService)({
               record: (event, properties) =>
                 Effect.sync(() => {
