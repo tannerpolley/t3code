@@ -189,6 +189,7 @@ describe("thread menu permissions", () => {
 
   it("offers find only to a header that can open it, without task permission", async () => {
     createMenu().openMenu(position);
+    await vi.waitFor(() => expect(state.show).toHaveBeenCalledTimes(1));
     expect(state.show.mock.calls[0]![0].some((item) => item.id === "find")).toBe(false);
     state.show.mockResolvedValue("find");
     const onFind = vi.fn(() => recordEffect("find"));

@@ -58,6 +58,11 @@ describe("fork migration ledger", () => {
           { referenced_thread_id: "parent" },
           { referenced_thread_id: "root" },
         ]);
+        yield* sql`INSERT INTO orchestration_v2_projection_threads
+          (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+          VALUES ('owner', 'project', 'updated', 'codex', 'full-access', 'default', '2026-10-29', '2026-10-29', json_set(${payload}, '$.title', 'updated'))
+          ON CONFLICT(thread_id) DO UPDATE SET payload_json = excluded.payload_json`;
+        assert.equal((yield* references).length, 3);
         yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{"lineage":{"parentThreadId":"replacement"}}' WHERE thread_id = 'owner'`;
         assert.deepEqual(yield* references, [{ referenced_thread_id: "replacement" }]);
         yield* sql`DELETE FROM orchestration_v2_projection_threads`;
@@ -81,6 +86,7 @@ describe("fork migration ledger", () => {
           { migration_id: 24, name: "RetireTurnItemCounts" },
           { migration_id: 25, name: "ProjectArtifactDescriptions" },
           { migration_id: 26, name: "PurgeThreadReferences" },
+          { migration_id: 27, name: "DeduplicateThreadReferences" },
         ],
       );
       const columns = yield* sql<{ name: string }>`PRAGMA table_info(owner_decisions)`;
@@ -290,6 +296,7 @@ describe("fork migration ledger", () => {
           { migration_id: 24, name: "RetireTurnItemCounts" },
           { migration_id: 25, name: "ProjectArtifactDescriptions" },
           { migration_id: 26, name: "PurgeThreadReferences" },
+          { migration_id: 27, name: "DeduplicateThreadReferences" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

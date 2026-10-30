@@ -187,7 +187,7 @@ export const messageHitsQuery = (
             json_extract(messages.payload_json, '$.text') AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_projection_messages AS messages
-          INNER JOIN eligible ON eligible.thread_id = messages.thread_id
+          CROSS JOIN eligible ON eligible.thread_id = messages.thread_id
           WHERE ${indexedMessageCondition(sql)}
             -- A scan reads every message it passes, so it stops at the newest ones.
             AND messages.rowid > (
@@ -206,7 +206,7 @@ export const messageHitsQuery = (
           FROM orchestration_v2_message_search
           INNER JOIN orchestration_v2_projection_messages AS messages
             ON messages.rowid = orchestration_v2_message_search.rowid
-          INNER JOIN eligible ON eligible.thread_id = messages.thread_id
+          CROSS JOIN eligible ON eligible.thread_id = messages.thread_id
           WHERE orchestration_v2_message_search MATCH ${match}
             AND orchestration_v2_message_search.rowid >= coalesce((
               SELECT rowid FROM orchestration_v2_message_search

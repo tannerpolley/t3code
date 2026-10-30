@@ -20,6 +20,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import type * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -133,6 +134,7 @@ export const layer: Layer.Layer<
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
   | FileSystem.FileSystem
+  | Path.Path
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService
   | GitWorkflowService.GitWorkflowService

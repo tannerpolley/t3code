@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import DeduplicateThreadReferences from "./ForkMigrations/027_DeduplicateThreadReferences.ts";
 import PurgeThreadReferences from "./ForkMigrations/026_PurgeThreadReferences.ts";
 import ProjectionMessagesLatestAssistant from "./ForkMigrations/001_ProjectionMessagesLatestAssistant.ts";
 import RetireTurnItemCounts from "./ForkMigrations/024_RetireTurnItemCounts.ts";
@@ -64,6 +65,7 @@ export const forkMigrationEntries = [
   [24, "RetireTurnItemCounts", RetireTurnItemCounts],
   [25, "ProjectArtifactDescriptions", ProjectArtifactDescriptions],
   [26, "PurgeThreadReferences", PurgeThreadReferences],
+  [27, "DeduplicateThreadReferences", DeduplicateThreadReferences],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.
