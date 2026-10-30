@@ -31,6 +31,7 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
+import { retainPendingTaskShellReferences } from "./ForkShellReferences.ts";
 import { bufferLatestLiveStream } from "./LiveStreamBudget.ts";
 import type { ActiveShellIndexEntry } from "./ProjectionStore.ts";
 
@@ -305,7 +306,13 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
     const read = yield* input.sql
       .withTransaction(
         Effect.gen(function* () {
-          const index = trims ? yield* input.listShellIndex : null;
+          const index = trims
+            ? yield* input.options.omitIdleSubagents
+                ? input.listShellIndex.pipe(
+                    Effect.flatMap((rows) => retainPendingTaskShellReferences(input.sql, rows)),
+                  )
+                : input.listShellIndex
+            : null;
           return {
             index,
             decodeThreads: yield* input.readThreads(

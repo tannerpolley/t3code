@@ -1,3 +1,4 @@
+import * as IssueService from "../issues/IssueService.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -4986,6 +4987,102 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* releasedAfter("after-stop", "probe");
     }),
   );
+
+  it.effect("releases held agent messages with fresh admission data for a linked issue", () => {
+    const threadId = ThreadId.make("runtime-layer-held-linked-issue");
+    const rootId = ThreadId.make("runtime-layer-held-linked-root");
+    const issue = {
+      host: "github.com",
+      repository: "owner/repo",
+      repositoryId: "repo",
+      id: "issue",
+      nodeId: "issue-node",
+      number: 14,
+      url: "https://github.com/owner/repo/issues/14",
+      title: "Managed work",
+    };
+    return Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const { send, runFor, end, awaitHeld } = yield* queueTestThread(threadId);
+      yield* send("active", "agent", true);
+      yield* send("issue", "agent", false);
+      yield* end("active", "failed");
+      yield* awaitHeld("issue");
+      yield* send("tick", "agent", true);
+      const { thread } = yield* orchestrator.getThreadProjection(threadId);
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:linked`),
+            type: "thread.metadata-updated",
+            threadId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              ...thread,
+              linkedIssue: issue,
+              lineage: {
+                rootThreadId: rootId,
+                parentThreadId: rootId,
+                relationshipToParent: "subagent",
+              },
+            },
+          },
+        ],
+      });
+      yield* queueTestThread(rootId);
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO orchestration_v2_projection_repository_orchestration
+        (host, repository_id, repository, root_thread_id, project_id, workspace, launch_command_id,
+          revision, paused, worker_limit, publish_status_comments, publish_closeout_comments, created_at, updated_at)
+        VALUES (${issue.host}, ${issue.repositoryId}, ${issue.repository}, ${rootId}, ${thread.projectId},
+          'worktree', 'launch', 1, 0, 1, 0, 0, '2026-10-30', '2026-10-30')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_issue_work
+        (host, repository_id, issue_id, issue_number, repository, node_id, issue_url, issue_title,
+          owner_thread_id, status_marker, updated_at)
+        VALUES (${issue.host}, ${issue.repositoryId}, ${issue.id}, ${issue.number}, ${issue.repository},
+          ${issue.nodeId}, ${issue.url}, ${issue.title}, ${threadId}, 'status', '2026-10-30')`;
+      const queued = yield* runFor("issue");
+      yield* end("tick", "completed");
+      yield* eventSink.stream({ threadId, afterSequence: 0, eventType: "run.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" &&
+            stored.event.payload.id === queued.id &&
+            stored.event.payload.queueHeld === false,
+        ),
+        Stream.runHead,
+      );
+      yield* executor.withLock(rootId, Effect.void);
+      assert.equal((yield* runFor("issue")).status, "starting");
+    }).pipe(
+      Effect.provide(
+        layerTest.pipe(
+          Layer.provideMerge(SqlitePersistence.layerMemory),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(IssueService.IssueService)({
+                workRead: () =>
+                  Effect.succeed({
+                    issue,
+                    state: "open",
+                    milestoneNumber: null,
+                    parent: null,
+                    subIssues: [],
+                    blockedBy: [],
+                    parentComplete: true,
+                    subIssuesComplete: true,
+                    blockersComplete: true,
+                  }),
+              }),
+            ),
+          ),
+          Layer.fresh,
+        ),
+      ),
+    );
+  });
 
   it.effect("keeps held agent messages while the thread's worktree setup is unresolved", () =>
     Effect.gen(function* () {

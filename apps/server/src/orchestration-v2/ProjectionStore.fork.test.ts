@@ -1,3 +1,4 @@
+import { loadSubscriberShellSnapshot, omitIdleSubagentShells } from "./ShellStream.ts";
 import { CommandId } from "@t3tools/contracts";
 import { ProviderSessionId } from "@t3tools/contracts";
 import { ProviderTurnId } from "@t3tools/contracts";
@@ -369,6 +370,97 @@ it.effect.each([
 );
 
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
+  it.effect(
+    "subscriber snapshots retain idle children referenced by pending tasks after restart",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const root = yield* addRolledBackRecoveryCandidate("subscriber-references");
+        const { thread, runs } = yield* store.getThreadRecords(root, ["runs"]);
+        const now = yield* DateTime.now;
+        yield* store.apply({
+          id: EventId.make("subscriber-parent-completed"),
+          type: "run.updated",
+          threadId: root,
+          occurredAt: now,
+          payload: { ...runs[0]!, status: "completed", completedAt: now },
+        });
+        const delegated = ThreadId.make("subscriber-delegated");
+        const unrelated = ThreadId.make("subscriber-unrelated");
+        for (const id of [delegated, unrelated]) {
+          yield* store.apply({
+            id: EventId.make(`subscriber-child:${id}`),
+            type: "thread.created",
+            threadId: id,
+            occurredAt: now,
+            payload: {
+              ...thread,
+              id,
+              lineage: {
+                rootThreadId: root,
+                parentThreadId: root,
+                relationshipToParent: "subagent",
+              },
+            },
+          });
+        }
+        yield* store.apply({
+          id: EventId.make("subscriber-pending-task"),
+          type: "provider-thread.updated",
+          threadId: root,
+          occurredAt: now,
+          payload: {
+            id: ProviderThreadId.make("subscriber-provider"),
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: root,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            pendingBackgroundTasks: [
+              { taskId: "delegate", kind: "subagent", childThreadId: delegated },
+            ],
+          },
+        });
+        const full = yield* store.getShellSnapshot();
+        assert.deepEqual(
+          omitIdleSubagentShells(full.threads)
+            .map((shell) => shell.id)
+            .toSorted(),
+          [root, delegated].toSorted(),
+        );
+        let requested: ReadonlyArray<ThreadId> | undefined;
+        const { snapshot } = yield* loadSubscriberShellSnapshot({
+          sql,
+          listShellIndex: store.listActiveShellIndex(),
+          readThreads: (threadIds) => {
+            requested = threadIds;
+            return store.readShellSnapshot({
+              location: "active",
+              ...(threadIds === undefined ? {} : { threadIds }),
+            });
+          },
+          listProjects: Effect.succeed([]),
+          latestSequence: Effect.succeed(0),
+          options: { omitIdleSubagents: true, omitOlderSettled: false },
+        });
+        assert.deepEqual(requested?.toSorted(), [root, delegated].toSorted());
+        assert.deepEqual(
+          snapshot.threads.map((shell) => shell.id).toSorted(),
+          [root, delegated].toSorted(),
+        );
+      }),
+  );
+
   it.effect("finds only pending routed requests without loading historical children", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;

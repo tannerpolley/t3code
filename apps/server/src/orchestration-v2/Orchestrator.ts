@@ -13922,9 +13922,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             yield* finalizeDelegatedCompletionDelivery(threadId, run.id);
           }),
         );
-        const reads = (yield* projectionStore.canStartQueuedRun(threadId))
-          ? yield* readIssueSnapshots(threadId)
-          : [];
+        const reads =
+          run.status === "completed" || (yield* projectionStore.canStartQueuedRun(threadId))
+            ? yield* readIssueSnapshots(threadId)
+            : [];
         yield* threadDispatch
           .withLock(
             threadId,
