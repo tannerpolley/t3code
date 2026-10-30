@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -357,6 +358,7 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
     }).pipe(
       Effect.provide(
         DatabaseStorage.layer.pipe(
+          Layer.provide(ServerSettings.layerTest()),
           Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "compaction-" })),
           Layer.provide(NodeServices.layer),
         ),
@@ -392,6 +394,279 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
       { command_id: "after-start" },
     ]);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+const tablesMentioning = (text: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const tables = yield* sql<{ readonly name: string }>`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'orchestration_v2_message_search%' ORDER BY name
+    `;
+    const found: Array<string> = [];
+    for (const { name } of tables) {
+      if (JSON.stringify(yield* sql`SELECT * FROM ${sql(name)}`).includes(text)) found.push(name);
+    }
+    return found;
+  });
+
+it.effect("purges threads deleted over a week ago and keeps everything still reachable", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-10-22T00:00:00.000Z"));
+    const eventSink = yield* EventSink.EventSinkV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const nowIso = DateTime.formatIso(now);
+    const eightDaysAgo = DateTime.subtract(now, { days: 8 });
+    const childOf = (id: string, parent: OrchestrationV2AppThread) => ({
+      ...makeThread(ThreadId.make(id), now),
+      lineage: {
+        parentThreadId: parent.id,
+        relationshipToParent: "subagent" as const,
+        rootThreadId: parent.lineage.rootThreadId,
+      },
+    });
+    const expired = makeThread(ThreadId.make("thread:expired"), now);
+    const expiredChild = childOf("thread:expired-child", expired);
+    const recent = makeThread(ThreadId.make("thread:recent"), now);
+    const live = makeThread(ThreadId.make("thread:live"), now);
+    const liveSubagent = childOf("thread:live-subagent", live);
+    const heldParent = makeThread(ThreadId.make("thread:held-parent"), now);
+    const heldChild = childOf("thread:held-child", heldParent);
+    const subagentId = NodeId.make("subagent:purge:live");
+    const subagentProviderThreadId = ProviderThreadId.make("provider-thread:purge:live-subagent");
+    const deleted = (
+      thread: OrchestrationV2AppThread,
+      deletedAt: DateTime.Utc,
+    ): OrchestrationV2DomainEvent => ({
+      id: EventId.make(`event:${thread.id}:deleted`),
+      type: "thread.deleted",
+      threadId: thread.id,
+      providerInstanceId,
+      occurredAt: now,
+      payload: { ...thread, deletedAt, updatedAt: now },
+    });
+
+    yield* eventSink.write({
+      events: [
+        ...[expired, expiredChild, recent, live, liveSubagent, heldParent, heldChild].map(
+          (thread) => threadCreatedEvent({ id: `event:${thread.id}:created`, thread, now }),
+        ),
+        // More than one deletion batch of messages and events.
+        ...Array.from({ length: 120 }, (_, index): OrchestrationV2DomainEvent => ({
+          id: EventId.make(`event:${expired.id}:message:${index}`),
+          type: "message.updated",
+          threadId: expired.id,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: MessageId.make(`message:${expired.id}:${index}`),
+            threadId: expired.id,
+            runId: null,
+            nodeId: null,
+            role: "user",
+            text: `message ${index}`,
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        })),
+        // The live parent's own stream records its subagent's provider thread.
+        {
+          id: EventId.make("event:purge:live:subagent"),
+          type: "subagent.updated",
+          threadId: live.id,
+          nodeId: subagentId,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: subagentId,
+            threadId: live.id,
+            runId: null,
+            parentNodeId: NodeId.make("node:purge:live"),
+            origin: "provider_native",
+            createdBy: "agent",
+            driver: providerDriver,
+            providerInstanceId,
+            providerThreadId: subagentProviderThreadId,
+            childThreadId: liveSubagent.id,
+            nativeTaskRef: null,
+            prompt: "Inspect",
+            title: "Subagent",
+            model: modelSelection.model,
+            status: "completed",
+            result: "done",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          },
+        },
+        {
+          id: EventId.make("event:purge:live:provider-thread"),
+          type: "provider-thread.updated",
+          threadId: live.id,
+          driver: providerDriver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: subagentProviderThreadId,
+            driver: providerDriver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: liveSubagent.id,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        deleted(recent, DateTime.subtract(now, { days: 1 })),
+        deleted(heldParent, eightDaysAgo),
+        deleted(liveSubagent, eightDaysAgo),
+        deleted(expiredChild, eightDaysAgo),
+        // Newest event overall, so the purge has to move the projection cursor.
+        deleted(expired, eightDaysAgo),
+      ],
+    });
+    yield* sql`
+      INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+      VALUES (${expired.id}, 'project:v1', 'V1 copy', ${nowIso}, ${nowIso})
+    `;
+    yield* sql`
+      INSERT INTO orchestration_command_receipts (
+        command_id, aggregate_kind, aggregate_id, accepted_at, result_sequence, status, command_type
+      )
+      VALUES ('command:purge:expired', 'thread', ${expired.id}, ${nowIso}, 1, 'accepted', 'thread.create')
+    `;
+    for (const id of [expired.id, live.id]) {
+      yield* sql`INSERT INTO inline_shell_runs (thread_id, block_id, run_id, status, record_json)
+        VALUES (${id}, 'block', 'shell-run', 'completed', '{}')`;
+      yield* sql`INSERT INTO inline_shell_delivery_events
+        (delivery_id, thread_id, run_id, message_id, record_ids_json, created_at)
+        VALUES (${"delivery:" + id}, ${id}, 'shell-run', 'message', '["shell-run"]', ${nowIso})`;
+    }
+    const kept = [heldChild.id, heldParent.id, live.id, recent.id];
+    const projectionsBefore = yield* Effect.forEach(kept, (id) =>
+      projections.getThreadProjection(id),
+    );
+    assert.includeMembers(yield* tablesMentioning(expired.id), [
+      "orchestration_command_receipts",
+      "orchestration_events",
+      "orchestration_v2_projection_messages",
+      "projection_threads",
+      "inline_shell_runs",
+      "inline_shell_delivery_events",
+    ]);
+
+    const summary = yield* maintenance.compactEventStore();
+
+    assert.equal(summary.purgedThreadCount, 3);
+    assert.deepEqual(yield* sql`SELECT thread_id FROM inline_shell_delivery_events`, [
+      { thread_id: live.id },
+    ]);
+    // The prefix also covers the expired child.
+    assert.deepEqual(yield* tablesMentioning(expired.id), []);
+    assert.deepEqual(
+      (yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM orchestration_v2_projection_threads ORDER BY thread_id
+      `).map((row) => row.thread_id),
+      kept,
+    );
+    assert.isTrue((yield* maintenance.verify).valid);
+    assert.deepEqual(
+      yield* Effect.forEach(kept, (id) => projections.getThreadProjection(id)),
+      projectionsBefore,
+    );
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.deepEqual(
+      yield* Effect.forEach(kept, (id) => projections.getThreadProjection(id)),
+      projectionsBefore,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("bounds purge discovery and provider-thread deletions", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const sink = yield* EventSink.EventSinkV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const now = yield* DateTime.now;
+    const expired = makeThread(ThreadId.make("bounded-purge"), now);
+    yield* sink.write({
+      events: [
+        threadCreatedEvent({ id: "bounded-create", thread: expired, now }),
+        {
+          id: EventId.make("bounded-delete"),
+          type: "thread.deleted",
+          threadId: expired.id,
+          occurredAt: now,
+          payload: { ...expired, deletedAt: DateTime.subtract(now, { days: 8 }) },
+        },
+      ],
+    });
+    for (let index = 0; index < 120; index++) {
+      yield* sql`INSERT INTO orchestration_v2_projection_provider_threads
+        (provider_thread_id, thread_id, provider, provider_instance_id, status, updated_at, payload_json)
+        VALUES (${"bounded-provider:" + index}, ${expired.id}, 'codex', 'codex', 'idle', ${DateTime.formatIso(now)}, '{}')`;
+    }
+    const deleted: number[] = [];
+    const plans: string[] = [];
+    const run = NodeSqlite.StatementSync.prototype.run;
+    const all = NodeSqlite.StatementSync.prototype.all;
+    const prepare = NodeSqlite.DatabaseSync.prototype.prepare;
+    const databases = new WeakMap<NodeSqlite.StatementSync, NodeSqlite.DatabaseSync>();
+    using _reads = vi
+      .spyOn(NodeSqlite.DatabaseSync.prototype, "prepare")
+      .mockImplementation(function (this: NodeSqlite.DatabaseSync, query) {
+        const statement = prepare.call(this, query);
+        databases.set(statement, this);
+        return statement;
+      });
+    using _writes = vi
+      .spyOn(NodeSqlite.StatementSync.prototype, "run")
+      .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
+        const result = run.apply(this, params);
+        if (/DELETE FROM orchestration_v2_projection_provider_threads/.test(this.sourceSQL))
+          deleted.push(Number(result.changes));
+        return result;
+      });
+    using _returning = vi
+      .spyOn(NodeSqlite.StatementSync.prototype, "all")
+      .mockImplementation(function (this: NodeSqlite.StatementSync, ...params) {
+        if (
+          !this.sourceSQL.startsWith("EXPLAIN") &&
+          /WITH thread_payload|FROM orchestration_v2_projection_thread_references|FROM orchestration_v2_projection_threads\s+WHERE deleted_at|DELETE FROM orchestration_v2_projection_provider_threads/.test(
+            this.sourceSQL,
+          )
+        ) {
+          const plan = prepare.call(databases.get(this)!, "EXPLAIN QUERY PLAN " + this.sourceSQL);
+          plans.push(...all.apply(plan, params).map((row) => String(row.detail)));
+        }
+        const result = all.apply(this, params);
+        if (/DELETE FROM orchestration_v2_projection_provider_threads/.test(this.sourceSQL))
+          deleted.push(result.length);
+        return result;
+      });
+    assert.equal((yield* maintenance.compactEventStore()).purgedThreadCount, 1);
+    assert.equal(
+      deleted.reduce((sum, count) => sum + count, 0),
+      120,
+    );
+    assert.isAtMost(Math.max(...deleted), 50);
+    assert.isAbove(plans.length, 0);
+    assert.isFalse(
+      plans.some((line) => /\bSCAN\b/.test(line) && !line.includes("SCAN CONSTANT ROW")),
+    );
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
@@ -827,6 +1102,159 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       assert.isTrue((yield* maintenance.verify).valid);
       assert.isTrue((yield* maintenance.rebuild).valid);
     }),
+  );
+
+  it.effect(
+    "trims only aged completed turns, preserves metadata and messages, and replays idempotently",
+    () =>
+      Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const old = DateTime.subtract(now, { days: 15 });
+        const boundary = DateTime.subtract(now, { days: 14 });
+        const threadId = ThreadId.make("thread:retention");
+        const thread = makeThread(threadId, old);
+        const events: OrchestrationV2DomainEvent[] = [
+          threadCreatedEvent({ id: "retention:create", thread, now: old }),
+        ];
+        for (const [index, completedAt, status] of [
+          [0, old, "completed"],
+          [1, boundary, "completed"],
+          [2, old, "running"],
+          [3, null, "completed"],
+          [4, now, "completed"],
+          [5, old, "failed"],
+          [6, old, "cancelled"],
+          [7, old, "interrupted"],
+        ] as const) {
+          const turnId = ProviderTurnId.make("retention:turn:" + index);
+          events.push({
+            id: EventId.make("retention:turn:" + index),
+            type: "provider-turn.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: turnId,
+              providerThreadId: ProviderThreadId.make("retention:provider"),
+              nodeId: NodeId.make("retention:node"),
+              runAttemptId: null,
+              nativeTurnRef: null,
+              ordinal: index + 1,
+              status,
+              startedAt: old,
+              completedAt,
+            },
+          });
+          for (const type of ["command_execution", "dynamic_tool", "reasoning"] as const) {
+            const base = {
+              id: TurnItemId.make("retention:" + index + ":" + type),
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: turnId,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal:
+                index * 3 + (type === "command_execution" ? 1 : type === "dynamic_tool" ? 2 : 3),
+              status: "completed" as const,
+              title: null,
+              startedAt: old,
+              completedAt: old,
+              updatedAt: old,
+            };
+            const payload: OrchestrationV2TurnItem =
+              type === "command_execution"
+                ? { ...base, type, input: "echo keep", output: "large output", exitCode: 7 }
+                : type === "dynamic_tool"
+                  ? {
+                      ...base,
+                      type,
+                      toolName: "test_tool",
+                      input: { query: "keep" },
+                      output: { content: [{ type: "text", text: "large output" }] },
+                    }
+                  : { ...base, type, text: "keep reasoning", streaming: false };
+            events.push({
+              id: EventId.make("first:" + payload.id),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: old,
+              payload,
+            });
+            events.push({
+              id: EventId.make("event:" + payload.id),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: old,
+              payload:
+                index === 0 && payload.type === "dynamic_tool"
+                  ? (({ output: _output, ...rest }) => rest)(payload)
+                  : payload,
+            });
+          }
+        }
+        for (const role of ["user", "assistant"] as const) {
+          events.push({
+            id: EventId.make("retention:message:" + role),
+            type: "message.updated",
+            threadId,
+            occurredAt: old,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: MessageId.make("retention:" + role),
+              threadId,
+              runId: null,
+              nodeId: null,
+              role,
+              text: "keep " + role,
+              attachments: [],
+              streaming: false,
+              createdAt: old,
+              updatedAt: old,
+            },
+          });
+        }
+        yield* sink.write({ events });
+        const before = yield* projections.getThreadProjection(threadId);
+        yield* maintenance.compactEventStore(Effect.void, null);
+        assert.deepEqual(yield* projections.getThreadProjection(threadId), before);
+        let batches = 0;
+        const summary = yield* maintenance.compactEventStore(
+          Effect.gen(function* () {
+            assert.isTrue((yield* maintenance.verify.pipe(Effect.orDie)).valid);
+            batches++;
+          }),
+          14,
+        );
+        assert.isAbove(batches, 0);
+        const after = yield* projections.getThreadProjection(threadId);
+        assert.deepEqual(after.messages, before.messages);
+        for (const entry of after.turnItems) {
+          const original = before.turnItems.find((candidate) => candidate.id === entry.id)!;
+          if (
+            [0, 5, 6, 7].some(
+              (index) =>
+                entry.id === TurnItemId.make("retention:" + index + ":command_execution") ||
+                (index !== 0 &&
+                  entry.id === TurnItemId.make("retention:" + index + ":dynamic_tool")),
+            )
+          ) {
+            if (original.type !== "command_execution" && original.type !== "dynamic_tool") {
+              return assert.fail("expected tool item");
+            }
+            assert.deepEqual(entry, { ...original, output: "[Tool output removed for age]" });
+          } else assert.deepEqual(entry, original);
+        }
+        assert.equal(summary.trimmedEventCount, 15);
+        assert.isTrue((yield* maintenance.verify).valid);
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.deepEqual(yield* projections.getThreadProjection(threadId), after);
+        assert.equal((yield* maintenance.compactEventStore(Effect.void, 14)).trimmedEventCount, 0);
+      }),
   );
 
   it.effect("compacts superseded state events, imported v1 events, and legacy receipts", () =>

@@ -335,7 +335,12 @@ export const ForkClientSettingsFields = {
 
 const WorkerProvider = Schema.Literals(["mixed", "claude", "codex"]);
 
+const ToolOutputRetentionDays = Schema.NullOr(NonNegativeInt.check(Schema.isGreaterThan(0)));
+
 export const ForkServerSettingsFields = {
+  toolOutputRetentionDays: ToolOutputRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(14)),
+  ),
   workerProvider: WorkerProvider.pipe(Schema.withDecodingDefault(Effect.succeed("mixed"))),
   autoUseExpiringResetCredits: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -419,6 +424,7 @@ export const ForkClientSettingsPatchFields = {
 };
 
 export const ForkServerSettingsPatchFields = {
+  toolOutputRetentionDays: Schema.optionalKey(ToolOutputRetentionDays),
   workerProvider: Schema.optionalKey(WorkerProvider),
   autoUseExpiringResetCredits: Schema.optionalKey(Schema.Boolean),
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),

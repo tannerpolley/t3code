@@ -37,6 +37,34 @@ const tableNames = Effect.gen(function* () {
 });
 
 describe("fork migration ledger", () => {
+  it.effect(
+    "backfills purge references and keeps them current through payload changes and rebuild deletion",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toForkMigrationInclusive: 25 });
+        const payload = JSON.stringify({
+          lineage: { parentThreadId: "parent" },
+          forkedFrom: { threadId: "fork" },
+          repositoryOrchestration: { handoffHistory: [{ threadId: "root" }, { threadId: "root" }] },
+        });
+        yield* sql`INSERT INTO orchestration_v2_projection_threads
+        (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+        VALUES ('owner', 'project', 'owner', 'codex', 'full-access', 'default', '2026-10-29', '2026-10-29', ${payload})`;
+        yield* runMigrations();
+        const references = sql`SELECT referenced_thread_id FROM orchestration_v2_projection_thread_references ORDER BY referenced_thread_id`;
+        assert.deepEqual(yield* references, [
+          { referenced_thread_id: "fork" },
+          { referenced_thread_id: "parent" },
+          { referenced_thread_id: "root" },
+        ]);
+        yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{"lineage":{"parentThreadId":"replacement"}}' WHERE thread_id = 'owner'`;
+        assert.deepEqual(yield* references, [{ referenced_thread_id: "replacement" }]);
+        yield* sql`DELETE FROM orchestration_v2_projection_threads`;
+        assert.deepEqual(yield* references, []);
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("upgrades the marked inbox database through both owner decision migrations", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -52,6 +80,7 @@ describe("fork migration ledger", () => {
           { migration_id: 23, name: "ProjectArtifactSections" },
           { migration_id: 24, name: "RetireTurnItemCounts" },
           { migration_id: 25, name: "ProjectArtifactDescriptions" },
+          { migration_id: 26, name: "PurgeThreadReferences" },
         ],
       );
       const columns = yield* sql<{ name: string }>`PRAGMA table_info(owner_decisions)`;
@@ -260,6 +289,7 @@ describe("fork migration ledger", () => {
           { migration_id: 23, name: "ProjectArtifactSections" },
           { migration_id: 24, name: "RetireTurnItemCounts" },
           { migration_id: 25, name: "ProjectArtifactDescriptions" },
+          { migration_id: 26, name: "PurgeThreadReferences" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

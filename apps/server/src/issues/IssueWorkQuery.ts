@@ -43,7 +43,8 @@ export const issueWorkThreadIds = (
     }
     UNION
     SELECT child.thread_id FROM linked
-    JOIN orchestration_v2_projection_threads child
+    -- Without stats (Sqlite.ts deletes them) the planner prefers the deleted_at index and scans every thread per row.
+    CROSS JOIN orchestration_v2_projection_threads child
       -- Remove the seed's TEXT affinity so SQLite can search the JSON expression index.
       ON json_extract(child.payload_json, '$.lineage.parentThreadId') = +linked.thread_id
     WHERE child.deleted_at IS NULL AND (${includeArchived} OR child.archived_at IS NULL)

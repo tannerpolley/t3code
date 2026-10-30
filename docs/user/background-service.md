@@ -141,12 +141,17 @@ For failures after signing in to T3 Connect, see
 
 ## Reclaim database space
 
-T3 Code removes superseded internal history on its own while it runs; your
-conversations are kept. Databases created before this shrank automatically
-still hold the freed space on disk until a one-time offline repair returns it
-and turns on automatic shrinking. Settings > Maintenance (web and desktop) or
-Settings > Maintenance (mobile) suggests the repair when at least 1 GiB can be
-reclaimed.
+T3 Code removes superseded internal history while it runs and returns freed pages
+to disk each minute. Deleted threads are purged after seven days once nothing
+retained references them. Messages are kept; [old tool output](#stored-tool-output)
+has a retention window.
+
+On the first startup that needs it, T3 enables automatic database shrinking.
+This appears as a database migration and can take time on a large database.
+It requires free disk space at least twice the database size; otherwise T3 logs
+a skip and tries again at a later startup. Conversion failures are logged and do
+not prevent startup. Settings > Maintenance also offers an
+offline repair when at least 1 GiB can be reclaimed.
 
 Run `t3 doctor` on the machine that hosts the environment. It reports the
 database size and the space it can reclaim, then asks which repairs to run;
@@ -167,3 +172,16 @@ If you upgraded from a version before 0.1.0, its database (`state.sqlite`) is
 still kept next to the current one so you can roll back. `t3 doctor` offers to
 delete it, but never selects that repair for you and `--fix` skips it: once it
 is gone, a version before 0.1.0 starts with no threads or settings.
+
+## Stored tool output
+
+T3 Code removes shell-command and tool-result output from turns completed more than
+14 days ago. It keeps command lines, tool names and inputs, exit status and timing,
+and all messages, reasoning, plans and thread metadata. Old tool rows show an age
+removal marker. Removal is permanent, including when rebuilding history.
+
+To change the window, set `"toolOutputRetentionDays": 30` in the server's
+`userdata/settings.json` (under your T3 home) while T3 is stopped, then start it.
+Use a positive whole number of days, or `null` to keep output indefinitely.
+Increasing the window cannot restore output already removed. Maintenance runs
+every six hours; running turns and items without a completed turn are kept.

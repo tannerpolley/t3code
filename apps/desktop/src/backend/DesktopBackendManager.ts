@@ -386,7 +386,10 @@ function drainBackendOutput(
       if (line.includes("Running database migrations")) {
         return onMigrationStatus?.(true) ?? Effect.void;
       }
-      if (line.includes("Migrations ran successfully")) {
+      if (
+        line.includes("Migrations ran successfully") ||
+        line.includes("Database shrinking migration skipped")
+      ) {
         return onMigrationStatus?.(false) ?? Effect.void;
       }
       return Effect.void;

@@ -29,6 +29,16 @@ const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
+    expect(decodeServerSettings({}).toolOutputRetentionDays).toBe(14);
+    expect(
+      decodeServerSettings({ toolOutputRetentionDays: null }).toolOutputRetentionDays,
+    ).toBeNull();
+    expect(decodeServerSettingsPatch({ toolOutputRetentionDays: 30 })).toEqual({
+      toolOutputRetentionDays: 30,
+    });
+    for (const days of [0, -1, 1.5]) {
+      expect(() => decodeServerSettings({ toolOutputRetentionDays: days })).toThrow();
+    }
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
     expect(decodeServerSettings({}).storageCleanup).toEqual({
       worktreeAfterDays: null,

@@ -2,9 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { turnItemOutputImages, turnItemOutputText } from "./itemDetail.ts";
+import {
+  turnItemHasDetail,
+  turnItemNeedsDetailFetch,
+  turnItemOutputImages,
+  turnItemOutputText,
+} from "./itemDetail.ts";
 
-function toolItem(output: unknown): OrchestrationV2TurnItem {
+function toolItem(output: unknown): Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }> {
   return {
     id: TurnItemId.make("images"),
     threadId: ThreadId.make("thread"),
@@ -51,4 +56,23 @@ describe("tool image output parsing", () => {
       expect(turnItemOutputText(overflow)).toBe("Two additional screenshots:\n[image]\n[image]");
     },
   );
+});
+
+it("renders retained tool metadata and the age marker without fetching missing output", () => {
+  const marker = "[Tool output removed for age]";
+  for (const item of [
+    toolItem(marker),
+    {
+      ...toolItem(marker),
+      type: "command_execution" as const,
+      input: "git status",
+      output: marker,
+      exitCode: 1,
+    },
+  ]) {
+    expect(turnItemHasDetail(item)).toBe(true);
+    expect(turnItemNeedsDetailFetch(item)).toBe(false);
+    expect(turnItemOutputText(item)).toBe(marker);
+    expect(turnItemOutputImages(item)).toEqual([]);
+  }
 });
