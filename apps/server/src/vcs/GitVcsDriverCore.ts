@@ -41,7 +41,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
-import { prepareWorktreeLocation } from "../projectLocalWorktrees.ts";
+import { prepareWorktreeLocation, claimUniqueWorktree } from "../projectLocalWorktrees.ts";
 import { removeEmptyDirectory } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
@@ -64,7 +64,6 @@ const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge
 const gitProcesses = Semaphore.makeUnsafe(8);
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
 // ponytail: linear probe; past this many copies of one name, creation fails.
-const UNIQUE_WORKTREE_NAME_ATTEMPTS = 100;
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -3928,64 +3927,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const resolvedPath = resolve(directoryName)!;
       worktreePath = resolvedPath;
       if (options?.uniqueName && newRefName !== undefined) {
-        // Each attempt is the creation itself, so concurrent requests cannot
-        // both pass a check and then collide: the folder is claimed with an
-        // atomic mkdir (Git accepts an empty folder), and Git's own refusal of
-        // a taken branch or ref namespace moves on to the next suffix.
-        const baseDirectory = directoryName;
-        const baseRefName = newRefName;
-        const suffixBranch = options.directoryName === undefined;
-        const fileSystemError = (detail: string) => (cause: PlatformError.PlatformError) =>
-          new GitCommandError({
-            operation: "GitVcsDriver.createWorktree",
-            command: "git worktree add",
-            cwd: input.cwd,
-            detail,
-            cause,
-          });
-        yield* fileSystem
-          .makeDirectory(path.dirname(resolvedPath), { recursive: true })
-          .pipe(Effect.mapError(fileSystemError("Failed to create the worktrees folder.")));
-        for (let attempt = 1; !added; attempt += 1) {
-          if (attempt > UNIQUE_WORKTREE_NAME_ATTEMPTS)
-            return yield* new GitCommandError({
-              operation: "GitVcsDriver.createWorktree",
-              command: "git worktree add",
-              cwd: input.cwd,
-              detail: `Could not find a free worktree name for '${baseDirectory}'.`,
-            });
-          const suffix = attempt === 1 ? "" : `-${attempt}`;
-          const candidatePath = resolve(`${baseDirectory}${suffix}`)!;
-          const candidateRef = suffixBranch ? `${baseRefName}${suffix}` : baseRefName;
-          const claimed = yield* fileSystem.makeDirectory(candidatePath).pipe(
-            Effect.as(true),
-            Effect.catchIf(
-              (error) => error.reason._tag === "AlreadyExists",
-              () => Effect.succeed(false),
-            ),
-            Effect.mapError(fileSystemError("Failed to create the worktree folder.")),
-          );
-          if (!claimed) continue;
-          added = yield* addWorktree(candidatePath, candidateRef).pipe(
-            Effect.as(true),
-            // The folder is this attempt's own, so a failed add releases it.
-            Effect.onError(() =>
-              fileSystem
-                .remove(candidatePath, { recursive: true, force: true })
-                .pipe(Effect.ignore),
-            ),
-            Effect.catchIf(
-              (error) =>
-                suffixBranch &&
-                (error.reason === "branch_already_exists" || error.reason === "ref_name_conflict"),
-              () => Effect.succeed(false),
-            ),
-          );
-          if (added) {
-            worktreePath = candidatePath;
-            newRefName = candidateRef;
-          }
-        }
+        const claimed = yield* claimUniqueWorktree({
+          cwd: input.cwd,
+          directoryName,
+          newRefName,
+          resolvedPath,
+          resolve,
+          suffixBranch: options.directoryName === undefined,
+          addWorktree,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
+        worktreePath = claimed.worktreePath;
+        newRefName = claimed.newRefName;
+        added = true;
       }
     }
     if (!added) yield* addWorktree(worktreePath, newRefName);
