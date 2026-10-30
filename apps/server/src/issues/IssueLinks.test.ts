@@ -581,7 +581,6 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`ANALYZE orchestration_v2_projection_threads`;
       for (const includeArchived of [true, false]) {
         for (const hasPrRefs of [true, false]) {
           const linkedIds = hasPrRefs ? [threadId] : [];
@@ -914,7 +913,9 @@ it.effect(
           IssueLinks.layer.pipe(
             Layer.provide(ProjectionStore.layer),
             // Avoid a competing checkpoint while testing the reader's lifetime.
-            Layer.provideMerge(SqlitePersistence.layerFromPath(filename, { checkpointWorker: false })),
+            Layer.provideMerge(
+              SqlitePersistence.layerFromPath(filename, { checkpointWorker: false }),
+            ),
           ),
         ),
       );
