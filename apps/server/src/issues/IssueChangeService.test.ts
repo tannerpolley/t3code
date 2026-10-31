@@ -60,6 +60,7 @@ const setup = Effect.gen(function* () {
     [10, { issue: issue(10), body: "Original\n", state: "open", milestoneNumber: 1 }],
   ]);
   const parents = new Map<number, ThreadLinkedIssue>();
+  const blockers = new Map<number, ThreadLinkedIssue>();
   const calls = { create: 0, body: 0, milestone: 0, state: 0, link: 0 };
   let requireApproval = false;
   let holdFailure = false;
@@ -71,6 +72,8 @@ const setup = Effect.gen(function* () {
   let reportIdentity = false;
   let failLink = false;
   let loseBodyResponse = false;
+  let loseBlockerResponse = false;
+  let blockersComplete = true;
   let loseLinkResponse = false;
   const github = Layer.mock(IssueService.IssueService)({
     readChangeState: (input) => Effect.sync(() => snapshots.get(input.number)!),
@@ -140,11 +143,26 @@ const setup = Effect.gen(function* () {
         milestoneNumber: 1,
         parent: parents.get(input.number) ?? null,
         subIssues: [],
-        blockedBy: [],
+        blockedBy: blockers.has(input.number)
+          ? [{ issue: blockers.get(input.number)!, state: "open" as const }]
+          : [],
         parentComplete: true,
         subIssuesComplete: true,
-        blockersComplete: true,
+        blockersComplete,
       })),
+    setBlockedBy: (input) =>
+      Effect.gen(function* () {
+        if (input.action === "add") blockers.set(input.issue.number, input.blocker);
+        else blockers.delete(input.issue.number);
+        if (loseBlockerResponse) {
+          loseBlockerResponse = false;
+          return yield* new IssueReadError({
+            code: "upstream",
+            operation: "detail",
+            message: "Lost blocker response",
+          });
+        }
+      }),
     setParent: (input) =>
       Effect.gen(function* () {
         calls.link++;
@@ -215,7 +233,14 @@ const setup = Effect.gen(function* () {
     changes,
     calls,
     snapshots,
+    setBlockersComplete: (value: boolean) => {
+      blockersComplete = value;
+    },
+    loseNextBlockerResponse: () => {
+      loseBlockerResponse = true;
+    },
     parents,
+    blockers,
     comments,
     commentCompleted,
     failurePublished,
@@ -699,6 +724,7 @@ it.effect(
           create,
           { type: "split", number: 10, issues: [create] },
           { type: "milestone", number: 10, milestoneNumber: 2 },
+          { type: "blocked_by", number: 10, blockerNumber: 11, action: "add" },
           { type: "body", number: 10, body: "Edit" },
           { type: "state", number: 10, state: "closed" },
           { type: "state", number: 10, state: "open" },
@@ -750,6 +776,79 @@ it.effect("the daemon gives upkeep and comments separate worker slots", () =>
       yield* Deferred.await(h.commentCompleted);
       assert.deepEqual(h.comments, ["daemon-comment"]);
       yield* Deferred.succeed(h.allowFailureSettlement, undefined);
+    }).pipe(Effect.provide(h.runtime)),
+  ),
+);
+
+it.effect("creates a blocker and adds and removes its dependency through durable proposals", () =>
+  inDatabase((h) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE orchestration_v2_projection_threads SET runtime_mode = 'full-access' WHERE thread_id = ${threadId}`;
+      const created = yield* propose(
+        {
+          type: "create",
+          title: "Outside blocker",
+          body: "Required dependency",
+          milestoneNumber: null,
+        },
+        "blocker",
+      );
+      yield* drain;
+      const service = yield* IssueChangeService.IssueChangeService;
+      const blocker = (yield* service.list({ threadId })).find((c) => c.id === created.id)!
+        .completedSteps["create:0"]!.issue!;
+      for (const action of ["add", "remove"] as const) {
+        const operation = {
+          type: "blocked_by" as const,
+          number: 10,
+          blockerNumber: blocker.number,
+          action,
+        };
+        const change = yield* propose(operation, action);
+        assert.equal(change.decision, "auto_approved");
+        if (action === "add") {
+          h.loseNextBlockerResponse();
+          assert.isTrue(Result.isFailure(yield* Effect.result(service.execute(change.id))));
+        }
+        yield* service.execute(change.id);
+        assert.equal(h.blockers.has(10), action === "add");
+        assert.equal((yield* propose(operation, action)).status, "succeeded");
+      }
+    }).pipe(Effect.provide(h.runtime)),
+  ),
+);
+
+it.effect("rejects unverifiable blockers and detects changed relationships before writing", () =>
+  inDatabase((h) =>
+    Effect.gen(function* () {
+      const service = yield* IssueChangeService.IssueChangeService;
+      assert.isTrue(
+        Result.isFailure(
+          yield* Effect.result(
+            propose({ type: "blocked_by", number: 10, blockerNumber: 10, action: "add" }),
+          ),
+        ),
+      );
+      h.setBlockersComplete(false);
+      assert.isTrue(
+        Result.isFailure(
+          yield* Effect.result(
+            propose({ type: "blocked_by", number: 10, blockerNumber: 11, action: "add" }),
+          ),
+        ),
+      );
+      h.setBlockersComplete(true);
+      const change = yield* propose({
+        type: "blocked_by",
+        number: 10,
+        blockerNumber: 11,
+        action: "add",
+      });
+      yield* service.decide({ id: change.id, decision: "approved" }, user);
+      h.blockers.set(10, issue(11));
+      yield* drain;
+      assert.equal((yield* propose(change.operation)).status, "conflict");
     }).pipe(Effect.provide(h.runtime)),
   ),
 );

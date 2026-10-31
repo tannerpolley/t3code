@@ -33,6 +33,7 @@ import { Tool } from "effect/ai";
 import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
+import { t3OrchestrationBaseInstructions } from "../../packages/provider-core/src/server/orchestrationInstructions.ts";
 import { issueQueueMessage } from "../../apps/server/src/issues/IssueQueueMessage.ts";
 import { openBlockerSuspensionReason } from "../../apps/server/src/issues/IssueEligibility.ts";
 import { CommandId } from "@t3tools/contracts";
@@ -234,7 +235,9 @@ export const McpToolUseCase = Schema.Struct({
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
-    issueGuidance: Schema.optional(Schema.Literals(["queued-issue", "open-blocker"])),
+    issueGuidance: Schema.optional(
+      Schema.Literals(["queued-issue", "open-blocker", "managed-worker"]),
+    ),
     priorTurns: Schema.optional(
       Schema.Array(
         Schema.Struct({
@@ -840,6 +843,9 @@ export const buildMessages = (sample: Sample) => {
       ? "You are a subagent started by the parent agent's Agent tool. Your final message goes to the parent agent, not to the user."
       : undefined,
     context,
+    testCase.setup.issueGuidance === "managed-worker"
+      ? t3OrchestrationBaseInstructions("worker")
+      : undefined,
     testCase.setup.issueGuidance === "open-blocker"
       ? openBlockerSuspensionReason
       : testCase.setup.issueGuidance === "queued-issue"

@@ -696,3 +696,44 @@ it.effect("returns capped activity feeds and timelines as incomplete within the 
     ).toBe(true);
   }),
 );
+
+it.effect("adds and removes blockers using Forgejo dependencies", () =>
+  Effect.gen(function* () {
+    const writes: unknown[] = [];
+    const fixture = setup((path, method, body) => {
+      if (method !== "GET") {
+        writes.push({ path, method, body });
+        return {};
+      }
+      if (path === "repos/owner/repo") return repo;
+      return issue(7);
+    });
+    const transport = yield* fixture.make;
+    const target = yield* transport.resolveLinkedIssue({ ...scope, number: 7 });
+    const blocker = { ...target, number: 8, id: "108" };
+    for (const action of ["add", "remove"] as const)
+      yield* transport.setBlockedBy({ issue: target, blocker, action });
+    expect(writes).toEqual(
+      ["POST", "DELETE"].map((method) => ({
+        path: "repos/owner/repo/issues/7/dependencies",
+        method,
+        body: { owner: "owner", repo: "repo", index: 8 },
+      })),
+    );
+    expect(
+      yield* transport
+        .setBlockedBy({ issue: target, blocker: target, action: "add" })
+        .pipe(Effect.flip),
+    ).toMatchObject({ code: "unsupported" });
+    expect(
+      yield* transport
+        .setBlockedBy({
+          issue: target,
+          blocker: { ...blocker, host: "other.example" },
+          action: "add",
+        })
+        .pipe(Effect.flip),
+    ).toMatchObject({ code: "unsupported" });
+    expect(writes).toHaveLength(2);
+  }),
+);
