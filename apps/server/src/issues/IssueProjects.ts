@@ -349,5 +349,13 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
     );
   },
   // Optional metadata must never prevent the underlying issue list from loading.
-  Effect.orElseSucceed(() => new Map<number, ListMetadata>()),
+  (effect, _scope, numbers, roadmap) =>
+    effect.pipe(
+      Effect.orElseSucceed(
+        () =>
+          new Map<number, ListMetadata>(
+            roadmap ? numbers.map((number) => [number, { relationshipsComplete: false }]) : [],
+          ),
+      ),
+    ),
 );

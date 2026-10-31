@@ -351,16 +351,21 @@ it("names the first thread in the issue's status, its role and how many more are
 
 it("keeps unknown dependencies distinct from confirmed blockers and Ready", () => {
   const unknown = [
-    issue(948, { blockedBy: undefined }),
+    issue(948, { blockedBy: undefined, relationshipsComplete: false }),
     issue(868, { relationshipsComplete: false }),
   ];
   const sections = issueRoadmap(
     scope,
     [],
-    [...unknown, issue(860), issue(1, { blockedBy: [ref(2)] })],
+    [
+      ...unknown,
+      issue(860),
+      issue(859, { blockedBy: undefined }),
+      issue(1, { blockedBy: [ref(2)] }),
+    ],
   );
   expect(numbers(inSection(sections, "dependencies-unknown").rows)).toEqual([868, 948]);
-  expect(numbers(inSection(sections, "ready").rows)).toEqual([860]);
+  expect(numbers(inSection(sections, "ready").rows)).toEqual([859, 860]);
   expect(numbers(inSection(sections, "blocked").rows)).toEqual([1]);
   for (const row of unknown) expect(issueStatePresentation(row).label).toBe("Dependencies unknown");
 });

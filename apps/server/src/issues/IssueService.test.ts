@@ -1723,13 +1723,21 @@ it.effect("keeps the issue list usable without Project scope or access", () =>
       httpResponse({ message: "Forbidden" }, {}, 403),
       httpResponse({ data: { p0: null } }),
     ]) {
-      const harness = makeHarness({
-        responses: [httpResponse([rawIssue(7)]), httpResponse([]), response],
-      });
-      const result = yield* (yield* service(harness)).list(listInput);
-      assert.equal(result.issues[0]?.number, 7);
-      assert.deepEqual(result.issues[0]?.projects, []);
-      assert.isTrue(result.issuesComplete);
+      for (const roadmap of [false, true]) {
+        const harness = makeHarness({
+          responses: [
+            httpResponse([rawIssue(7)]),
+            httpResponse([]),
+            response,
+            httpResponse({ message: "Forbidden" }, {}, 403),
+          ],
+        });
+        const result = yield* (yield* service(harness)).list({ ...listInput, roadmap });
+        assert.equal(result.issues[0]?.number, 7);
+        assert.deepEqual(result.issues[0]?.projects, []);
+        assert.equal(result.issues[0]?.relationshipsComplete, roadmap ? false : undefined);
+        assert.isTrue(result.issuesComplete);
+      }
     }
   }),
 );

@@ -30,6 +30,7 @@ const project = (status: string | null) => ({
 });
 
 it("orders closed, then an open blocker, then an agent on it, then queued, then paused work, then open", () => {
+  expect(issueProgress({ state: "open" })).toBe("open");
   expect(issueProgress({ state: "closed", blockedBy: [blocker("open")] })).toBe("completed");
   expect(
     issueProgress({ state: "open", blockedBy: [blocker("open")], liveWork: [work("working")] }),
@@ -45,10 +46,8 @@ it("orders closed, then an open blocker, then an agent on it, then queued, then 
   expect(issueProgress({ state: "open", blockedBy: [blocker("open")], queued: true })).toBe(
     "blocked",
   );
-  expect(issueProgress({ state: "open", blockedBy: [], projects: [project("In Progress")] })).toBe(
-    "open",
-  );
-  expect(issueProgress({ state: "open", blockedBy: [], projects: [project("Todo")] })).toBe("open");
+  expect(issueProgress({ state: "open", projects: [project("In Progress")] })).toBe("open");
+  expect(issueProgress({ state: "open", projects: [project("Todo")] })).toBe("open");
 });
 
 it("splits closed issues the way GitHub closes them", () => {
@@ -59,7 +58,7 @@ it("splits closed issues the way GitHub closes them", () => {
     "Closed as duplicate",
   );
   // A reopened issue is open again whatever its old reason said.
-  expect(issueProgress({ state: "open", blockedBy: [], stateReason: "reopened" })).toBe("open");
+  expect(issueProgress({ state: "open", stateReason: "reopened" })).toBe("open");
 });
 
 it("pauses open and draft PRs without an agent on them, while blockers and closed issues win", () => {
@@ -74,12 +73,8 @@ it("pauses open and draft PRs without an agent on them, while blockers and close
   };
   expect(issueProgress({ state: "open", pullRequests: [pr] })).toBe("paused");
   expect(issueProgress({ state: "open", pullRequests: [{ ...pr, isDraft: true }] })).toBe("paused");
-  expect(
-    issueProgress({ state: "open", blockedBy: [], pullRequests: [{ ...pr, state: "merged" }] }),
-  ).toBe("open");
-  expect(
-    issueProgress({ state: "open", blockedBy: [], pullRequests: [{ ...pr, state: "closed" }] }),
-  ).toBe("open");
+  expect(issueProgress({ state: "open", pullRequests: [{ ...pr, state: "merged" }] })).toBe("open");
+  expect(issueProgress({ state: "open", pullRequests: [{ ...pr, state: "closed" }] })).toBe("open");
   expect(issueProgress({ state: "open", pullRequests: [pr], liveWork: [work("working")] })).toBe(
     "in_progress",
   );

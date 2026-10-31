@@ -41,6 +41,7 @@ export type IssueProgress =
   | "paused"
   | "open";
 
+/** Closed, suspended, blocked, active work, queued, paused work, unknown dependencies, then open. */
 export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgress {
   if (issue.state === "closed")
     return issue.stateReason === "not_planned" || issue.stateReason === "duplicate"
@@ -53,8 +54,7 @@ export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgres
     return "in_progress";
   if (issue.queued) return "queued";
   if (work.length > 0 || issue.pullRequests?.some((pr) => pr.state === "open")) return "paused";
-  if (issue.relationshipsComplete === false || issue.blockedBy === undefined)
-    return "dependencies_unknown";
+  if (issue.relationshipsComplete === false) return "dependencies_unknown";
   return "open";
 }
 
