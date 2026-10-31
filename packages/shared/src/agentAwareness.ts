@@ -1,8 +1,8 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2ThreadShell,
-  Project,
-  ThreadId,
+import {
+  type EnvironmentId,
+  type OrchestrationV2ThreadShell,
+  type Project,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -66,6 +66,7 @@ export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
+  if (thread.lineage.sideChat === true) return null;
   const ownerVisible = runtimeRequestIsOwnerVisible(thread.pendingRuntimeRequest, input.parent);
   if (
     thread.lineage.relationshipToParent === "subagent" &&

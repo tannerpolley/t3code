@@ -697,9 +697,12 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return result;
   });
 
-  const tabLimitsEnabled = Option.isNone(serverSettings) ? Effect.succeed(true) : serverSettings.value.getSettings.pipe(
-    Effect.map((settings) => settings.agentBrowserTabLimits), Effect.orElseSucceed(() => true),
-  );
+  const tabRecoveryEnabled = Option.isNone(serverSettings)
+    ? Effect.succeed(true)
+    : serverSettings.value.getSettings.pipe(
+        Effect.map((settings) => settings.agentBrowserTabLimits),
+        Effect.orElseSucceed(() => true),
+      );
 
   const invoke = <A = unknown>(request: PreviewAutomationInvokeInput) => {
     let targetTabId = request.tabId;
@@ -711,13 +714,14 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       },
     }).pipe(
       Effect.catchTags({
-        PreviewAutomationTimeoutError: Effect.fn("PreviewAutomationTimeoutError")(function*(error) {
+        PreviewAutomationTimeoutError: Effect.fn("PreviewAutomationTimeoutError")(
+          function* (error) {
             const stuckTabId = targetTabId;
             const reusesTab =
               request.operation === "navigate" ||
               (request.operation === "open" &&
                 (request.input as PreviewAutomationOpenInput).reuseExistingTab !== false);
-            if (!reusesTab || stuckTabId === undefined || !(yield* tabLimitsEnabled)) {
+            if (!reusesTab || stuckTabId === undefined || !(yield* tabRecoveryEnabled)) {
               return yield* error;
             }
             // A page that never finishes loading usually recovers from a hard
@@ -729,7 +733,8 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
               tabId: stuckTabId,
             }).pipe(Effect.mapError(() => error));
             return yield* invokeOnce<A>({ ...request, tabId: stuckTabId });
-          }),
+          },
+        ),
       }),
     );
   };

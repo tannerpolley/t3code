@@ -144,6 +144,8 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (legacyPr = true
               createdAt: detail.fetchedAt,
               updatedAt: detail.fetchedAt,
               deletedAt: null,
+              pinnedAt: null,
+              archivedAt: null,
             }),
         }),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({

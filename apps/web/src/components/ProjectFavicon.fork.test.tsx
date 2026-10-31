@@ -83,6 +83,14 @@ type FallbackElement = ReactElement<{
   readonly className?: string;
 }>;
 
+function renderFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
+  const element = ProjectFavicon(input);
+  // Upstream defers asset subscriptions to the automatic-icon child.
+  return typeof element.type === "function" && "project" in element.props
+    ? (element.type as (props: typeof input) => ReactElement)(input)
+    : element;
+}
+
 describe("ProjectFavicon", () => {
   beforeEach(() => {
     hooks.reset();
@@ -93,7 +101,7 @@ describe("ProjectFavicon", () => {
   it("shows the default folder with its section color when no favicon exists", () => {
     testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
 
-    const element = ProjectFavicon({
+    const element = renderFavicon({
       project: makeProject({ workspaceRoot: "/workspace/analytics-db", title: "analytics-db" }),
       folderColor: "blue",
     }) as FallbackElement;
@@ -107,7 +115,7 @@ describe("ProjectFavicon", () => {
     testState.iconFallback = "initials";
     testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
 
-    const element = ProjectFavicon({
+    const element = renderFavicon({
       project: makeProject({
         workspaceRoot: "/workspace/agent-runtime",
         title: "agent-runtime",
@@ -127,9 +135,9 @@ describe("ProjectFavicon", () => {
       title: "agent-runtime",
       projectIcon: { kind: "folder", color: "teal" },
     });
-    const closed = ProjectFavicon({ project }) as FallbackElement;
+    const closed = renderFavicon({ project }) as FallbackElement;
     const OpenIcon = () => null;
-    const open = ProjectFavicon({ project, fallbackIcon: OpenIcon }) as FallbackElement;
+    const open = renderFavicon({ project, fallbackIcon: OpenIcon }) as FallbackElement;
 
     expect(closed.props.icon).toBe(FolderIcon);
     expect(closed.props.className).toContain("text-teal-600");
@@ -140,7 +148,7 @@ describe("ProjectFavicon", () => {
     testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
     testState.iconFallback = "initials";
 
-    const element = ProjectFavicon({
+    const element = renderFavicon({
       project: makeProject({ workspaceRoot: "/workspace/analytics-db", title: "analytics-db" }),
     }) as FallbackElement;
 

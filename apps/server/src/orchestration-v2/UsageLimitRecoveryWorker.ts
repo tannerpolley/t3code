@@ -10,11 +10,17 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
+import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+
+const MAX_OVERDUE_ARM_MS = 24 * 60 * 60 * 1000;
 
 export function limitRecoveryCommand(
   thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
@@ -42,6 +48,7 @@ export function limitRecoveryCommand(
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
   const recovery = thread.limitRecovery;
   if (recovery?.runId !== thread.latestRunId || recovery.resetAt !== thread.usageLimitResetAt) {
+    if (nowMs - resetMs > MAX_OVERDUE_ARM_MS) return null;
     if (!autoResume && (!snooze || resetMs <= nowMs)) return null;
     return {
       type: "thread.metadata.update",
@@ -89,15 +96,34 @@ export class UsageLimitRecoveryWorker extends Context.Service<
   }
 >()("t3/orchestration-v2/UsageLimitRecoveryWorker") {}
 
+// Events that can make a thread a candidate or change its command; streaming items cannot.
+const affectsLimitRecovery = (event: OrchestrationV2DomainEvent) =>
+  event.type.startsWith("thread.") ||
+  event.type === "run.created" ||
+  event.type === "run.updated" ||
+  event.type === "runtime-request.updated" ||
+  event.type.startsWith("provider-session.") ||
+  (event.type === "turn-item.updated" && event.payload.type === "error");
+
 const makeSweep = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const settings = yield* ServerSettings.ServerSettingsService;
   const providers = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  const due = DueHint.make();
+  yield* forkParked(
+    Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
+      affectsLimitRecovery(event) ? due.invalidate : Effect.void,
+    ),
+  );
+  yield* forkParked(Stream.runForEach(settings.streamChanges, () => due.invalidate));
   const sweep = Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
-    const preferences = yield* settings.getSettings;
     const now = yield* DateTime.now;
+    const nowMs = DateTime.toEpochMillis(now);
+    if (yield* due.isIdle(nowMs)) return;
+    const readVersion = yield* due.version;
+    const preferences = yield* settings.getSettings;
     const waitForInstanceIds =
       preferences.usageLimitRecovery === "switch" && Option.isSome(providers)
         ? (yield* providers.value.getProviders)
@@ -110,7 +136,7 @@ const makeSweep = Effect.gen(function* () {
       autoResume: preferences.usageLimitRecovery === "wait" && preferences.autoResumeLimitedThreads,
       snooze: preferences.usageLimitRecovery === "wait" && preferences.snoozeLimitedThreads,
     });
-    const nowMs = DateTime.toEpochMillis(now);
+    let acted = false;
     for (const thread of candidates) {
       const fallbackWait =
         preferences.usageLimitRecovery === "switch" &&
@@ -126,6 +152,7 @@ const makeSweep = Effect.gen(function* () {
           (preferences.usageLimitRecovery === "wait" && preferences.snoozeLimitedThreads),
       );
       if (command === null) continue;
+      acted = true;
       yield* Effect.gen(function* () {
         if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
           yield* orchestrator.autoArmLimitRecovery({
@@ -145,6 +172,10 @@ const makeSweep = Effect.gen(function* () {
         ),
       );
     }
+    // A sweep that acted, or failed to, re-checks on the next tick.
+    if (acted) return;
+    const wakeAt = yield* projections.getLimitRecoveryWakeAt(now);
+    yield* due.record(readVersion, wakeAt ?? Infinity, nowMs);
   });
   return UsageLimitRecoveryWorker.of({ sweep: sweep() });
 });

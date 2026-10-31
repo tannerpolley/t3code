@@ -8,7 +8,6 @@ import * as PubSub from "effect/PubSub";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import * as PreviewManager from "./Manager.ts";
 
 const DRAIN_LIMIT = 100;
@@ -31,57 +30,14 @@ const collectEvents = Effect.gen(function* () {
   return collector;
 }).pipe(Effect.withSpan("preview.test.collectEvents"));
 
-const makeLayer = (settings: Parameters<typeof ServerSettings.layerTest>[0] = {}) =>
+const makeLayer = () =>
   PreviewManager.layer.pipe(
-    Layer.provide(ServerSettings.layerTest(settings)),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-manager-" })),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(NodeServices.layer),
   );
 
-const openAgentTab = (threadId: ThreadId) =>
-  Effect.flatMap(PreviewManager.PreviewManager, (manager) =>
-    manager.open({ threadId, runtime: "server", automationOwner: "agent-session-1" }),
-  );
-
-it.effect("keeps every agent tab while agent browser tab limits are off", () =>
-  Effect.gen(function* () {
-    const threadId = freshThreadId();
-    const manager = yield* PreviewManager.PreviewManager;
-    for (let index = 0; index <= PreviewManager.MAX_AGENT_TABS_PER_THREAD; index += 1) {
-      yield* openAgentTab(threadId);
-    }
-    const { sessions } = yield* manager.list({ threadId });
-    expect(sessions).toHaveLength(PreviewManager.MAX_AGENT_TABS_PER_THREAD + 1);
-  }).pipe(Effect.provide(makeLayer({ agentBrowserTabLimits: false }))),
-);
-
 it.layer(makeLayer())("PreviewManager", (it) => {
-  it.effect("closes the oldest agent tab past the cap and never a user tab", () =>
-    Effect.gen(function* () {
-      const threadId = freshThreadId();
-      const manager = yield* PreviewManager.PreviewManager;
-      const userTab = yield* manager.open({ threadId });
-      const agentTabs = [];
-      for (let index = 0; index < PreviewManager.MAX_AGENT_TABS_PER_THREAD; index += 1) {
-        agentTabs.push(yield* openAgentTab(threadId));
-      }
-      const collector = yield* collectEvents;
-
-      const newest = yield* openAgentTab(threadId);
-
-      const events = yield* collector.drain;
-      expect(events.map((event) => [event.type, event.tabId])).toEqual([
-        ["closed", agentTabs[0]?.tabId],
-        ["opened", newest.tabId],
-      ]);
-      const { sessions } = yield* manager.list({ threadId });
-      expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
-        [userTab.tabId, ...agentTabs.slice(1).map((tab) => tab.tabId), newest.tabId].toSorted(),
-      );
-    }),
-  );
-
   it.effect("opens a session and emits opened with normalized URL", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

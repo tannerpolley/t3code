@@ -35,6 +35,8 @@ const row = (id: string, workspaceRoot = "/work/Apps/" + id): Projects.ProjectRo
   createdAt: "2026-10-14T00:00:00.000Z",
   updatedAt: "2026-10-14T00:00:00.000Z",
   deletedAt: null,
+  pinnedAt: null,
+  archivedAt: null,
 });
 const layer = Layer.effect(Sidebar.SidebarLayoutService, Sidebar.make).pipe(
   Layer.provide(

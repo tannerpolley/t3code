@@ -63,7 +63,14 @@ export function deriveThreadRelationshipGraph(input: {
       threadsById.set(thread.id, thread);
     }
   }
-  const statusOf = (thread: OrchestrationV2ThreadShell | undefined) => {
+  const statusOf = (
+    thread:
+      | (Pick<
+          OrchestrationV2ThreadShell,
+          "id" | "lineage" | "activityRunStatus" | "pendingBackgroundTasks"
+        > & { readonly status: OrchestrationV2ThreadShell["status"] | null })
+      | undefined,
+  ) => {
     if (thread === undefined) return null;
     const status = thread.activityRunStatus ?? thread.status;
     const parentId = thread.lineage.parentThreadId;
@@ -72,7 +79,7 @@ export function deriveThreadRelationshipGraph(input: {
       thread.pendingBackgroundTasks,
       parentId === null ? [] : threadsById.get(parentId)?.pendingBackgroundTasks,
     );
-    return ["completed", "idle", "interrupted", "cancelled"].includes(status) &&
+    return ["completed", "idle", "interrupted", "cancelled"].includes(status ?? "") &&
       backgroundWorkHoldsCompletion(tasks)
       ? "waiting"
       : status;
@@ -98,7 +105,12 @@ export function deriveThreadRelationshipGraph(input: {
     );
   };
 
-  for (const thread of threads) {
+  const selectedThread = input.projection?.thread;
+  const lineageThreads =
+    selectedThread !== undefined && !threadsById.has(selectedThread.id)
+      ? [...threads, { ...selectedThread, activityRunStatus: null, status: null }]
+      : threads;
+  for (const thread of lineageThreads) {
     const parentThreadId =
       thread.forkedFrom?.type === "run"
         ? thread.forkedFrom.threadId

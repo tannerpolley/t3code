@@ -297,6 +297,8 @@ it("opens the correct chat for every workflow phase and unphased member", async 
   state.shells = memberShells.map((source) => ({ environmentId: "other", source }));
   const panel = (
     <ThreadRelationshipsPanel
+      showLineage
+      showSideChats
       environmentId={EnvironmentId.make("remote")}
       threadId={ThreadId.make("parent")}
     />
@@ -316,10 +318,11 @@ it("opens the correct chat for every workflow phase and unphased member", async 
   for (const phase of phaseButtons().slice(0, 2)) await click(phase);
   expect(memberButtons()).toHaveLength(7);
   for (const button of memberButtons()) {
-    expect(button.disabled).toBe(true);
+    expect(button.disabled).toBe(false);
     await click(button);
   }
-  expect(state.navigate).not.toHaveBeenCalled();
+  expect(state.navigate).toHaveBeenCalledTimes(7);
+  state.navigate.mockClear();
   state.shells = memberShells.map((source) => ({ environmentId: "remote", source }));
   await update();
   for (const button of memberButtons()) expect(button.disabled).toBe(false);
@@ -415,6 +418,8 @@ it.each([
     state.projection = projection;
     const panel = (
       <ThreadRelationshipsPanel
+        showLineage
+        showSideChats
         environmentId={EnvironmentId.make("test")}
         threadId={ThreadId.make("parent")}
       />
@@ -535,6 +540,8 @@ it("shows the matching child agent details and refreshes them when the agent set
   state.projection = projection;
   const panel = (
     <ThreadRelationshipsPanel
+      showLineage
+      showSideChats
       environmentId={EnvironmentId.make("test")}
       threadId={ThreadId.make("parent")}
     />
@@ -684,6 +691,8 @@ it("keeps active supervisor status, progress, and task timing after its child tu
     };
     await render(
       <ThreadRelationshipsPanel
+        showLineage
+        showSideChats
         environmentId={EnvironmentId.make("test")}
         threadId={ThreadId.make("parent")}
       />,
@@ -709,7 +718,7 @@ it("shows readable models and only differing workspace details in agent tooltips
     id: "parent",
     projectId: "main",
     worktreePath: null,
-    lineage: {},
+    lineage: { parentThreadId: null, relationshipToParent: null },
     activeProviderThreadId: null,
   };
   const child = {
@@ -773,6 +782,8 @@ it("shows readable models and only differing workspace details in agent tooltips
   state.projection = projection;
   const panel = (
     <ThreadRelationshipsPanel
+      showLineage
+      showSideChats
       environmentId={EnvironmentId.make("test")}
       threadId={ThreadId.make("parent")}
     />
@@ -1153,7 +1164,12 @@ it("shows the parent's own visible status as parent and child activity change", 
   ];
   state.shells = shells(parent, child);
   const panel = (
-    <ThreadRelationshipsPanel environmentId={environmentId} threadId={ThreadId.make("child")} />
+    <ThreadRelationshipsPanel
+      showLineage
+      showSideChats
+      environmentId={environmentId}
+      threadId={ThreadId.make("child")}
+    />
   );
   await render(panel);
   const visibleText = () => textNodes(" ", true);
@@ -1210,7 +1226,12 @@ it("shows the native coordinator status from its member and gives follow-up acti
   ]);
   state.shells = [coordinator, member].map((source) => ({ environmentId, source }));
   await render(
-    <ThreadRelationshipsPanel environmentId={environmentId} threadId={ThreadId.make("member")} />,
+    <ThreadRelationshipsPanel
+      showLineage
+      showSideChats
+      environmentId={environmentId}
+      threadId={ThreadId.make("member")}
+    />,
   );
   const coordinatorText = () =>
     buttons().find((button) => button.textContent?.includes("Workflow coordinator"))?.textContent;
@@ -1264,6 +1285,8 @@ it.each(["source", "target"])(
     };
     const panel = (
       <ThreadRelationshipsPanel
+        showLineage
+        showSideChats
         environmentId={environmentId}
         threadId={ThreadId.make(currentThreadId)}
       />
@@ -1370,7 +1393,12 @@ it("labels child shell model and effort as selected instead of reported", async 
     ],
   };
   const panel = (
-    <ThreadRelationshipsPanel environmentId={environmentId} threadId={ThreadId.make("parent")} />
+    <ThreadRelationshipsPanel
+      showLineage
+      showSideChats
+      environmentId={environmentId}
+      threadId={ThreadId.make("parent")}
+    />
   );
   await render(panel);
 
@@ -1421,7 +1449,12 @@ it("lists background task kinds without treating subagents as shell rows", async
     subagents: [],
   };
   const panel = (
-    <ThreadRelationshipsPanel environmentId={environmentId} threadId={ThreadId.make("parent")} />
+    <ThreadRelationshipsPanel
+      showLineage
+      showSideChats
+      environmentId={environmentId}
+      threadId={ThreadId.make("parent")}
+    />
   );
   await render(panel);
 

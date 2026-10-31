@@ -147,6 +147,7 @@ function makeLocalCommandHarness(input: {
   let projection: OrchestrationV2ThreadProjection = {
     thread: {
       id: threadId,
+      lineage: { parentThreadId: null, relationshipToParent: null },
       activeProviderThreadId: providerThreadId,
       projectId: ProjectId.make("project-native-account-command"),
       branch: input.worktreePath === undefined ? null : "feature/restore",

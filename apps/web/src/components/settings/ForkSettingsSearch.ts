@@ -298,10 +298,12 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "agent-browser-tab-limits",
-    title: "Agent browser tab limits",
+    title: "Recover stalled agent tabs",
     to: "/settings/browser",
     scope: "environment-defaults",
-    searchTerms: ["customization fork browser preview agent tabs cap three stuck reload retry"],
+    searchTerms: [
+      "customization fork browser preview agent tabs limits stuck loading hard reload retry recovery",
+    ],
   },
   {
     id: "local-server-hide-rules",

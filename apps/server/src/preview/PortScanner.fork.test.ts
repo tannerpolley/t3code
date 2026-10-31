@@ -115,9 +115,8 @@ effectIt.effect(
     return Effect.gen(function* () {
       const scanner = yield* ownedScanner([4242]);
       const first = yield* scanner.scan();
-      // Port 22 has no known owner, so it never receives probes; 3001 is a common dev port.
+      // Unowned listeners stay hidden even when their port is common for development.
       expect(first.map(({ port, pid, processName }) => ({ port, pid, processName }))).toEqual([
-        { port: 3001, pid: null, processName: null },
         { port: 8765, pid: 4242, processName: "python3" },
       ]);
       yield* scanner.scan();

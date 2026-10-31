@@ -1,4 +1,3 @@
-import * as Option from "effect/Option";
 import {
   type PreviewCloseInput,
   type PreviewEvent,
@@ -29,8 +28,6 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { PreviewControlRequiredError } from "@t3tools/contracts";
-
-import * as ServerSettings from "../serverSettings.ts";
 
 export class PreviewManager extends Context.Service<
   PreviewManager,
@@ -75,12 +72,6 @@ interface PreviewSessionState {
   readonly tabId: string;
   readonly snapshot: PreviewSessionSnapshot;
 }
-
-/**
- * Agent-opened tabs a thread may keep. Opening one more closes the thread's
- * oldest agent-opened tab; tabs the user opened are never closed for this.
- */
-export const MAX_AGENT_TABS_PER_THREAD = 3;
 
 interface ManagerState {
   readonly sessions: ReadonlyMap<string, PreviewSessionState>;
@@ -155,7 +146,6 @@ const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
 /** @public */
 export const make = Effect.gen(function* PreviewManagerMake() {
-  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const crypto = yield* Crypto.Crypto;
   const serverEpoch = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
@@ -232,34 +222,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
         ...(input.reveal === undefined ? {} : { reveal: input.reveal }),
         updatedAt,
       };
-      // The agent tab cap applies only while "Agent browser tab limits" is on.
-      const capAgentTabs =
-        snapshot.automationOwner !== undefined &&
-        (Option.isNone(serverSettings)
-          ? true
-          : yield* serverSettings.value.getSettings.pipe(
-              Effect.map((settings) => settings.agentBrowserTabLimits),
-              Effect.orElseSucceed(() => true),
-            ));
-      yield* SynchronizedRef.modifyEffect(stateRef, (current) =>
+      yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
         Effect.gen(function* () {
-          // Map order is open order, so the first agent tabs are the oldest.
-          const agentTabs = capAgentTabs
-            ? sessionsForThread(current, input.threadId).filter(
-                (entry) => entry.snapshot.automationOwner !== undefined,
-              )
-            : [];
-          const evicted = removeSessions(
-            current,
-            agentTabs.slice(0, Math.max(0, agentTabs.length - MAX_AGENT_TABS_PER_THREAD + 1)),
-            snapshot.updatedAt,
-          );
-          yield* Effect.forEach(
-            evicted.events,
-            (event) => PubSub.publish(eventsPubSub, { ...event, serverEpoch }),
-            { discard: true },
-          );
-          const state = evicted.state;
           const revision = state.revision + 1;
           const sessions = new Map(state.sessions);
           sessions.set(compositeKey(input.threadId, tabId), {

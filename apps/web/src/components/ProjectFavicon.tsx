@@ -42,24 +42,15 @@ export function ProjectFavicon(input: {
   forceFolder?: boolean | undefined;
 }) {
   const { project } = input;
-  const src = useAtomValue(
-    projectFaviconUrlAtom({
-      environmentId: project.environmentId,
-      cwd: project.workspaceRoot,
-      faviconPath: project.faviconPath,
-    }),
-  );
-  const initialsFallback =
-    useClientSettings((settings) => settings.projectIconFallback) === "initials";
-  const fallbackName = initialsFallback ? project.title : undefined;
-  const fallbackColorClassName =
-    input.folderColor === undefined || (fallbackName !== undefined && !input.forceFolder)
-      ? undefined
-      : projectIconColorClassName(input.folderColor);
   if (input.forceFolder) {
     return (
       <ProjectFaviconFallback
-        className={cn(input.className, fallbackColorClassName)}
+        className={cn(
+          input.className,
+          input.folderColor === undefined
+            ? undefined
+            : projectIconColorClassName(input.folderColor),
+        )}
         icon={input.fallbackIcon ?? FolderIcon}
       />
     );
@@ -108,6 +99,25 @@ export function ProjectFavicon(input: {
       </span>
     );
   }
+  return <AutomaticProjectFavicon {...input} />;
+}
+
+function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
+  const { project } = input;
+  const src = useAtomValue(
+    projectFaviconUrlAtom({
+      environmentId: project.environmentId,
+      cwd: project.workspaceRoot,
+      faviconPath: project.faviconPath,
+    }),
+  );
+  const initialsFallback =
+    useClientSettings((settings) => settings.projectIconFallback) === "initials";
+  const fallbackName = initialsFallback ? project.title : undefined;
+  const fallbackColorClassName =
+    input.folderColor === undefined || (fallbackName !== undefined && !input.forceFolder)
+      ? undefined
+      : projectIconColorClassName(input.folderColor);
   const FallbackIcon = input.fallbackIcon ?? FolderIcon;
 
   if (!src || isProjectFaviconFallbackUrl(src)) {

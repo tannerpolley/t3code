@@ -193,7 +193,7 @@ export function startThreadNotifications(
           entry.observer.observe(threads);
           return;
         }
-        entry.observer.clear();
+        entry.observer.disconnect();
       },
       { immediate: true },
     );

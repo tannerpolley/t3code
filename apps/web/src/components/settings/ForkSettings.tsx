@@ -730,7 +730,7 @@ export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) 
             <ServerSwitchRow
               settingKey="agentBrowserTabLimits"
               searchId="agent-browser-tab-limits"
-              description="A thread keeps at most 3 browser tabs an agent opened; opening another closes the oldest. A tab stuck loading gets one hard reload and a retry. Off leaves agent tabs unlimited and returns the timeout."
+              description="A tab stuck loading gets one hard reload and a retry. Off returns the timeout. Server browser tab limits always apply."
             />
             <LocalServerHideRulesRow />
           </CustomizationsGroup>

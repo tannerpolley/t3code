@@ -34,6 +34,7 @@ export function createForkThreadNotificationObserver(
 ) {
   let previous = new Map<ThreadId, ForkNotificationState>();
   let initialized = false;
+  let reconnecting = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const gate = createThreadNotificationGate<ThreadId>((threadId, kind) => {
     const state = previous.get(threadId);
@@ -44,6 +45,11 @@ export function createForkThreadNotificationObserver(
     gate.clear();
     previous.clear();
     initialized = false;
+  };
+  const disconnect = () => {
+    clearTimeout(timer);
+    gate.cancelPending();
+    reconnecting = true;
   };
   const observe = (threads: ReadonlyArray<OrchestrationV2ThreadShell>) => {
     clearTimeout(timer);
@@ -57,6 +63,7 @@ export function createForkThreadNotificationObserver(
     );
     const changed: Array<[ForkNotificationState | undefined, ForkNotificationState]> = [];
     for (const rawThread of threads) {
+      if (rawThread.lineage.sideChat === true) continue;
       const parent =
         rawThread.pendingRuntimeRequest?.routedTo === undefined
           ? undefined
@@ -94,6 +101,7 @@ export function createForkThreadNotificationObserver(
         );
       // Parent activity can change attention even when the child object is unchanged.
       if (
+        !reconnecting &&
         prior?.raw === rawThread &&
         prior.parent === parent &&
         prior.subagentRequest === subagentRequest &&
@@ -144,6 +152,7 @@ export function createForkThreadNotificationObserver(
       next.set(thread.id, state);
       changed.push([prior, state]);
     }
+    reconnecting = false;
     previous = next;
     gate.retain(new Set(next.keys()));
     for (const [prior, state] of changed) {
@@ -164,5 +173,5 @@ export function createForkThreadNotificationObserver(
       timer = setTimeout(() => observe(threads), nextAlertDelay);
     }
   };
-  return { observe, clear };
+  return { observe, clear, disconnect };
 }

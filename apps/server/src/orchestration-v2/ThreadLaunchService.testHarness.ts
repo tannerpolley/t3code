@@ -76,6 +76,8 @@ const project = {
   createdAt: "2026-06-20T00:00:00.000Z",
   updatedAt: "2026-06-20T00:00:00.000Z",
   deletedAt: null,
+  pinnedAt: null,
+  archivedAt: null,
 } as const;
 
 const otherProject = {
@@ -295,6 +297,8 @@ function makeHarness(options: HarnessOptions = {}) {
               createdAt: project.createdAt,
               updatedAt: project.updatedAt,
               deletedAt: project.deletedAt,
+              pinnedAt: null,
+              archivedAt: null,
             })
           : Option.none(),
       ),

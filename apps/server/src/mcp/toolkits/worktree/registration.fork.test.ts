@@ -1,3 +1,4 @@
+import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
@@ -117,6 +118,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
         Layer.provide(Layer.mock(ProjectArtifacts.ProjectArtifacts)({})),
         Layer.provide(layerRegistry),
+        Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
       );
       const context = yield* HttpRouter.serve(layerRoutes, {
         disableListenLog: true,

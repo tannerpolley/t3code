@@ -1,5 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import { pullRequestAutolinkPlugins } from "../pullRequest/pullRequestMarkdown.logic";
 import { OwnerDecisionCards } from "./OwnerDecisionCards";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
@@ -487,6 +487,7 @@ export function IssueDetailPanel({
       : null;
 
   const refreshQuery = query.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh the external issue query when its caller invalidates it.
   useEffect(() => {
     if (
       refreshToken !== undefined &&
@@ -504,6 +505,7 @@ export function IssueDetailPanel({
     query.data === null && result._tag === "Failure" && isPullRequestError(result.cause)
       ? `https://${reference.host}/${reference.repository}/pull/${reference.number}`
       : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Route an issue URL to the PR panel after the external query identifies it as a pull request.
   useEffect(() => {
     if (pullRequestUrl === null || redirectedToPullRequest.has(pullRequestUrl)) return;
     redirectedToPullRequest.add(pullRequestUrl);
@@ -700,11 +702,12 @@ export function IssueDetailPanel({
 
       <PullRequestMarkdownContext
         value={{
-          autolinks: changeRequestReferenceAutolinker({
+          remarkPlugins: pullRequestAutolinkPlugins({
             provider:
               project?.repositoryIdentity?.provider ?? SourceControlProviderKind.make("github"),
             url: `https://${repository.host}/${repository.repository}/issues/${issue.number}`,
           }),
+          lineBreaks: false,
           threadRef,
         }}
       >
