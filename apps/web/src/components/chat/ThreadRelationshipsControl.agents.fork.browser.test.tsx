@@ -524,7 +524,7 @@ it("shows the matching child agent details and refreshes them when the agent set
   const projection = {
     thread: {
       id: "parent",
-      lineage: { relationshipToParent: null },
+      lineage: { relationshipToParent: null, parentThreadId: null },
       activeProviderThreadId: null,
     },
     runs: [],

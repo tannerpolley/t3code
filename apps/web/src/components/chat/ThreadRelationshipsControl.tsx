@@ -650,6 +650,7 @@ export function ThreadRelationshipsPanel(props: {
     (related.length > 0 ||
       active.length > 0 ||
       previous.length > 0 ||
+      clearedCount > 0 ||
       runningCount > 0 ||
       remoteSubagents.length > 0 ||
       delegatedFrom !== undefined ||
