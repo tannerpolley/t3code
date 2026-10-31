@@ -112,7 +112,7 @@ export function IssueRoadmap({
                                 ) : null}
                                 {issue.relationshipsComplete === false ||
                                 issue.blockedBy === undefined ? (
-                                  <span>Dependencies unavailable</span>
+                                  <span>Dependencies unknown</span>
                                 ) : null}
                                 {openIssueBlockers(issue).length > 0 ? (
                                   <span>

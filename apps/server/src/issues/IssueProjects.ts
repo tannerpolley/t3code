@@ -130,8 +130,11 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
       pullRequestCursor: roadmap ? null : undefined,
     }));
     const [owner, name] = scope.repository.split("/");
+    let includeProjects = true;
     while (pending.length > 0) {
-      const batch = pending.splice(0, 100);
+      const batch = pending
+        .splice(0, 100)
+        .map((page) => (includeProjects ? page : { ...page, cursor: undefined }));
       const variables: Record<string, string | number | null> = { owner: owner!, name: name! };
       const declarations = ["$owner: String!", "$name: String!"];
       const selections = batch.map((page, index) => {
@@ -179,14 +182,32 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
         }
       }`;
       });
-      const body = yield* api.graphql({
-        host: scope.host,
-        operation: "issues.projects",
-        query: `query(${declarations.join(", ")}) { ${selections.join("\n")} }`,
-        variables,
-        maxResponseBytes: 4 * 1024 * 1024,
-        acceptPartialData: true,
-      });
+      const body = yield* api
+        .graphql({
+          host: scope.host,
+          operation: "issues.projects",
+          query: `query(${declarations.join(", ")}) { ${selections.join("\n")} }`,
+          variables,
+          maxResponseBytes: 4 * 1024 * 1024,
+          acceptPartialData: true,
+        })
+        .pipe(
+          Effect.catchTags({
+            GitHubApiResponseError: (error) => {
+              // Missing Project scope rejects the entire query before GitHub reads relationships.
+              if (
+                !roadmap ||
+                !includeProjects ||
+                !error.githubErrors?.some((message) => message.includes("read:project"))
+              )
+                return Effect.fail(error);
+              includeProjects = false;
+              pending.unshift(...batch);
+              return Effect.succeed(null);
+            },
+          }),
+        );
+      if (body === null) continue;
       const response = yield* decodeResponse(body);
       const failedFields = (alias: string, field: string) =>
         response.errors?.some(

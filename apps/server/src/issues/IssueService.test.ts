@@ -2379,6 +2379,67 @@ it.effect(
     }),
 );
 
+it.effect("loads roadmap relationships without Project scope across blocker pages", () =>
+  Effect.gen(function* () {
+    const related = (number: number) => ({
+      number,
+      state: "CLOSED",
+      repository: { nameWithOwner: REPOSITORY },
+    });
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(948), rawIssue(868), rawIssue(860)]),
+        httpResponse([]),
+        httpResponse({
+          errors: [
+            {
+              type: "INSUFFICIENT_SCOPES",
+              message: "The 'id' field requires one of the following scopes: ['read:project']",
+            },
+          ],
+        }),
+        httpResponse({
+          data: {
+            p0: { issue: { parent: null, blockedBy: projectConnection([]) } },
+            p1: { issue: { parent: null, blockedBy: projectConnection([related(855)]) } },
+            p2: { issue: { parent: null, blockedBy: projectConnection([related(869)], "next") } },
+          },
+        }),
+        httpResponse({
+          data: {
+            p0: {
+              issue: {
+                parent: null,
+                blockedBy: projectConnection([861, 862, 863, 864].map(related)),
+              },
+            },
+          },
+        }),
+      ],
+    });
+    const result = yield* (yield* service(harness)).list({ ...listInput, roadmap: true });
+    assert.deepEqual(
+      result.issues.map((issue) => issue.relationshipsComplete),
+      [true, true, true],
+    );
+    assert.deepEqual(
+      result.issues.map((issue) => issue.blockedBy?.map((ref) => [ref.number, ref.state])),
+      [
+        [],
+        [[855, "closed"]],
+        [869, 861, 862, 863, 864].map((number) => [number, "closed" as const]),
+      ],
+    );
+    for (const call of harness.calls.slice(3)) {
+      const request = yield* decodeProjectRequest(call.body!);
+      assert.notInclude(request.query, "projectItems(");
+      assert.notProperty(request.variables, "cursor0");
+      assert.include(request.query, "blockedBy(");
+    }
+    assert.equal(harness.calls.length, 5);
+  }),
+);
+
 it.effect(
   "preserves native relationships when Project access fails and marks partial blockers unavailable",
   () =>
