@@ -660,6 +660,9 @@ export const make = Effect.fn("IssueService.make")(function* () {
       };
     }),
     statusBatch,
+    setBlockedBy: Effect.fn("IssueService.setBlockedBy")((input) =>
+      afterWrite(input.issue, hostFor(input.issue.host).setBlockedBy(input)),
+    ),
     setParent: Effect.fn("IssueService.setParent")((input) =>
       afterWrite(input.parent, hostFor(input.parent.host).setParent(input)),
     ),

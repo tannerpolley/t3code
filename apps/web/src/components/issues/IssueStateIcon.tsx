@@ -1,6 +1,7 @@
 import type { IssueSummary } from "@t3tools/contracts";
 import {
   CircleAlertIcon,
+  CircleHelpIcon,
   CircleCheckIcon,
   CircleDotDashedIcon,
   CircleDotIcon,
@@ -13,7 +14,9 @@ import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type IssueStateInput = Pick<IssueSummary, "state"> &
-  Partial<Pick<IssueSummary, "stateReason" | "projects" | "suspensionReason">> & {
+  Partial<
+    Pick<IssueSummary, "stateReason" | "projects" | "suspensionReason" | "relationshipsComplete">
+  > & {
     readonly liveWork?:
       | readonly Pick<NonNullable<IssueSummary["liveWork"]>[number], "status">[]
       | undefined;
@@ -30,6 +33,7 @@ type IssueStateInput = Pick<IssueSummary, "state"> &
 export type IssueProgress =
   | "completed"
   | "not_planned"
+  | "dependencies_unknown"
   | "blocked"
   | "in_progress"
   | "queued"
@@ -37,14 +41,7 @@ export type IssueProgress =
   | "paused"
   | "open";
 
-/**
- * Closed wins, split the way GitHub closes an issue: not planned (or a duplicate) apart from
- * completed, which is also what an issue closed without a reason counts as. Then an open
- * blocker. In progress means an agent is on it now, working or waiting for the owner; then queued
- * for its orchestrator; work without either (an open or draft pull request, an idle linked
- * thread) is paused. Project fields
- * are metadata only.
- */
+/** Closed, suspended, blocked, active work, queued, paused work, unknown dependencies, then open. */
 export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgress {
   if (issue.state === "closed")
     return issue.stateReason === "not_planned" || issue.stateReason === "duplicate"
@@ -57,11 +54,18 @@ export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgres
     return "in_progress";
   if (issue.queued) return "queued";
   if (work.length > 0 || issue.pullRequests?.some((pr) => pr.state === "open")) return "paused";
+  if (issue.relationshipsComplete === false) return "dependencies_unknown";
   return "open";
 }
 
 /** Tones match the pull request glyphs: open green, done purple, shelved gray, failing red. */
 export const ISSUE_PROGRESS_PRESENTATION = {
+  dependencies_unknown: {
+    label: "Dependencies unknown",
+    toneClassName: "text-muted-foreground",
+    badgeVariant: "secondary",
+    Icon: CircleHelpIcon,
+  },
   open: {
     label: "Open",
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",

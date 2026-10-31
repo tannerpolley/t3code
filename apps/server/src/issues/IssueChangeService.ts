@@ -235,6 +235,21 @@ const make = Effect.gen(function* () {
           return yield* invalid("The current parent does not match this hierarchy proposal.");
         childBaseline = child.issue;
       }
+      if (op.type === "blocked_by") {
+        if (op.number === op.blockerNumber) return yield* invalid("An issue cannot block itself.");
+        const current = yield* issues
+          .workRead({ ...input, number: op.number })
+          .pipe(Effect.mapError(githubError));
+        const blocker = yield* issues
+          .workRead({ ...input, number: op.blockerNumber })
+          .pipe(Effect.mapError(githubError));
+        if (!current.blockersComplete)
+          return yield* invalid("The issue's blockers could not be verified.");
+        const linked = current.blockedBy.some((b) => b.issue.id === blocker.issue.id);
+        if (linked !== (op.action === "remove"))
+          return yield* invalid("The current blockers do not match this proposal.");
+        childBaseline = blocker.issue;
+      }
       const authored =
         baseline === null
           ? []
@@ -480,7 +495,29 @@ const make = Effect.gen(function* () {
           }
         } else if (steps.write === undefined) {
           const baseline = change.baseline!;
-          if (op.type === "sub_issue") {
+          if (op.type === "blocked_by") {
+            const current = yield* issues
+              .workRead(baseline.issue)
+              .pipe(Effect.mapError(githubError));
+            const blocker = yield* issues
+              .workRead(change.childBaseline!)
+              .pipe(Effect.mapError(githubError));
+            if (!current.blockersComplete || blocker.issue.id !== change.childBaseline!.id)
+              return yield* conflict(
+                "The issue's blockers could not be verified. Submit a new proposal.",
+              );
+            const applied =
+              current.blockedBy.some((b) => b.issue.id === blocker.issue.id) ===
+              (op.action === "add");
+            if (applied && row.in_flight_step !== "write")
+              return yield* conflict("The issue's blockers changed since this proposal.");
+            if (!applied) {
+              yield* startStep("write");
+              yield* issues
+                .setBlockedBy({ issue: baseline.issue, blocker: blocker.issue, action: op.action })
+                .pipe(Effect.mapError(githubError));
+            }
+          } else if (op.type === "sub_issue") {
             const current = yield* issues
               .workRead(change.childBaseline!)
               .pipe(Effect.mapError(githubError));

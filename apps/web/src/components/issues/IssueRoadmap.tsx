@@ -110,9 +110,8 @@ export function IssueRoadmap({
                                     dependency cycle
                                   </Badge>
                                 ) : null}
-                                {issue.relationshipsComplete === false ||
-                                issue.blockedBy === undefined ? (
-                                  <span>Dependencies unavailable</span>
+                                {issue.relationshipsComplete === false ? (
+                                  <span>Dependencies unknown</span>
                                 ) : null}
                                 {openIssueBlockers(issue).length > 0 ? (
                                   <span>

@@ -1,3 +1,4 @@
+import { issueStatePresentation } from "./IssueStateIcon";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ThreadId, type IssueMilestone, type IssueSummary } from "@t3tools/contracts";
 import {
@@ -204,7 +205,8 @@ describe("live roadmap", () => {
       [],
       [3, 6, 8],
       [9, 13, 14],
-      [1, 4, 5, 10],
+      [1, 5, 10],
+      [4],
       [],
     ]);
     expect(
@@ -311,9 +313,9 @@ it("holds unacknowledged openings out of every open section, then restores their
     issue(3, { liveWork: work("working") }),
     issue(4),
   ];
-  const before = issueRoadmap(scope, [], issues, [], Date.now(), [1, 2, 3]);
+  const before = issueRoadmap(scope, [], issues, [], Date.parse("2026-10-31T00:00:00Z"), [1, 2, 3]);
   expect(before.flatMap((section) => numbers(section.rows))).toEqual([4]);
-  const acknowledged = issueRoadmap(scope, [], issues, [], Date.now(), []);
+  const acknowledged = issueRoadmap(scope, [], issues, [], Date.parse("2026-10-31T00:00:00Z"), []);
   expect(numbers(inSection(acknowledged, "ready").rows)).toEqual([1, 4]);
   expect(numbers(inSection(acknowledged, "blocked").rows)).toEqual([2]);
   expect(numbers(inSection(acknowledged, "in-progress").rows)).toEqual([3]);
@@ -345,4 +347,25 @@ it("names the first thread in the issue's status, its role and how many more are
   const roleless = issueLiveWorkSummary(issue(2, { liveWork: [thread("Gamma", "idle")] }));
   expect(roleless).toMatchObject({ label: "Idle · Gamma", more: 0 });
   expect(issueLiveWorkSummary(issue(3))).toBeNull();
+});
+
+it("keeps unknown dependencies distinct from confirmed blockers and Ready", () => {
+  const unknown = [
+    issue(948, { blockedBy: undefined, relationshipsComplete: false }),
+    issue(868, { relationshipsComplete: false }),
+  ];
+  const sections = issueRoadmap(
+    scope,
+    [],
+    [
+      ...unknown,
+      issue(860),
+      issue(859, { blockedBy: undefined }),
+      issue(1, { blockedBy: [ref(2)] }),
+    ],
+  );
+  expect(numbers(inSection(sections, "dependencies-unknown").rows)).toEqual([868, 948]);
+  expect(numbers(inSection(sections, "ready").rows)).toEqual([859, 860]);
+  expect(numbers(inSection(sections, "blocked").rows)).toEqual([1]);
+  for (const row of unknown) expect(issueStatePresentation(row).label).toBe("Dependencies unknown");
 });

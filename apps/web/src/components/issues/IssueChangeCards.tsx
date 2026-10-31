@@ -24,6 +24,8 @@ function title(change: IssueChange) {
       return `Split #${op.number} into ${op.issues.length} sub-issues`;
     case "create":
       return `Create issue: ${op.title}`;
+    case "blocked_by":
+      return `${op.action === "add" ? "Add" : "Remove"} #${op.blockerNumber} as a blocker of #${op.number}`;
     case "sub_issue":
       return `${op.action === "add" ? "Add" : "Remove"} #${op.childNumber} ${op.action === "add" ? "under" : "from"} #${op.number}`;
   }

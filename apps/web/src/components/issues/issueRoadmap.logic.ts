@@ -149,6 +149,7 @@ export function issueRoadmap(
   const queueOrder = new Map(queuedNumbers.map((number, index) => [number, index]));
   const section = (id: string, title: string) => ({ id, title, rows: [] as typeof ordered });
   const closed = section("closed", "Closed");
+  const unknown = section("dependencies-unknown", "Dependencies unknown");
   const blocked = section("blocked", "Blocked");
   const readySection = section("ready", "Ready");
   const queued = section("queued", "Queued");
@@ -172,8 +173,8 @@ export function issueRoadmap(
               ? inProgress
               : progress === "paused"
                 ? paused
-                : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
-                  ? blocked
+                : progress === "dependencies_unknown"
+                  ? unknown
                   : readySection;
     target.rows.push(row);
   }
@@ -197,6 +198,7 @@ export function issueRoadmap(
     paused,
     readySection,
     blocked,
+    ...(unknown.rows.length === 0 ? [] : [unknown]),
     closed,
   ];
 }

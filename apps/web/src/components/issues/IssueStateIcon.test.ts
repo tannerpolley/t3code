@@ -30,11 +30,15 @@ const project = (status: string | null) => ({
 });
 
 it("orders closed, then an open blocker, then an agent on it, then queued, then paused work, then open", () => {
+  expect(issueProgress({ state: "open" })).toBe("open");
   expect(issueProgress({ state: "closed", blockedBy: [blocker("open")] })).toBe("completed");
   expect(
     issueProgress({ state: "open", blockedBy: [blocker("open")], liveWork: [work("working")] }),
   ).toBe("blocked");
   expect(issueProgress({ state: "open", blockedBy: [blocker("closed")] })).toBe("open");
+  expect(
+    issueProgress({ state: "open", blockedBy: [blocker("closed")], liveWork: [work("idle")] }),
+  ).toBe("paused");
   expect(issueProgress({ state: "open", liveWork: [work("waiting_on_you")] })).toBe("in_progress");
   expect(issueProgress({ state: "open", liveWork: [work("working")] })).toBe("in_progress");
   expect(issueProgress({ state: "open", liveWork: [work("idle")] })).toBe("paused");

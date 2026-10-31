@@ -831,7 +831,7 @@ it.effect(
   "writes body, milestone, state and native sub-issue relations through verified GitHub APIs",
   () =>
     Effect.gen(function* () {
-      const harness = makeHarness({ responses: Array.from({ length: 6 }, () => httpResponse({})) });
+      const harness = makeHarness({ responses: Array.from({ length: 8 }, () => httpResponse({})) });
       const issues = yield* service(harness);
       const ref = { ...listInput, number: 7 };
       const parent = {
@@ -842,14 +842,18 @@ it.effect(
         url: `https://${HOST}/${REPOSITORY}/issues/7`,
         title: "Parent",
       };
-      const child = { ...parent, number: 8, id: "789" };
+      const child = { ...parent, number: 8, id: "789", nodeId: "I_789" };
       yield* issues.updateBody({ ...ref, body: "Exact replacement\n" });
       yield* issues.setMilestone({ ...ref, milestoneNumber: null });
       yield* issues.setState({ ...ref, state: "closed" });
       yield* issues.setState({ ...ref, state: "open" });
       yield* issues.setParent({ parent, child, action: "add" });
       yield* issues.setParent({ parent, child, action: "remove" });
-      const payloads = yield* Effect.forEach(harness.calls, (call) => decodeJson(call.body!));
+      yield* issues.setBlockedBy({ issue: parent, blocker: child, action: "add" });
+      yield* issues.setBlockedBy({ issue: parent, blocker: child, action: "remove" });
+      const payloads = yield* Effect.forEach(harness.calls.slice(0, 6), (call) =>
+        decodeJson(call.body!),
+      );
       assert.deepEqual(payloads, [
         { body: "Exact replacement\n" },
         { milestone: null },
@@ -858,6 +862,15 @@ it.effect(
         { sub_issue_id: 789 },
         { sub_issue_id: 789 },
       ]);
+      for (const [index, mutation] of ["addBlockedBy", "removeBlockedBy"].entries()) {
+        const call = harness.calls[index + 6]!;
+        assert.isTrue(call.url.endsWith("/graphql"));
+        const payload = yield* decodeJson(call.body!);
+        assert.deepEqual(payload, {
+          query: `mutation($issueId: ID!, $blockingIssueId: ID!) { ${mutation}(input: { issueId: $issueId, blockingIssueId: $blockingIssueId }) { clientMutationId } }`,
+          variables: { issueId: "I_456", blockingIssueId: "I_789" },
+        });
+      }
       assert.equal(harness.calls[4]!.method, "POST");
       assert.isTrue(harness.calls[4]!.url.endsWith("/repos/acme/web/issues/7/sub_issues"));
       assert.equal(harness.calls[5]!.method, "DELETE");
@@ -1723,13 +1736,21 @@ it.effect("keeps the issue list usable without Project scope or access", () =>
       httpResponse({ message: "Forbidden" }, {}, 403),
       httpResponse({ data: { p0: null } }),
     ]) {
-      const harness = makeHarness({
-        responses: [httpResponse([rawIssue(7)]), httpResponse([]), response],
-      });
-      const result = yield* (yield* service(harness)).list(listInput);
-      assert.equal(result.issues[0]?.number, 7);
-      assert.deepEqual(result.issues[0]?.projects, []);
-      assert.isTrue(result.issuesComplete);
+      for (const roadmap of [false, true]) {
+        const harness = makeHarness({
+          responses: [
+            httpResponse([rawIssue(7)]),
+            httpResponse([]),
+            response,
+            httpResponse({ message: "Forbidden" }, {}, 403),
+          ],
+        });
+        const result = yield* (yield* service(harness)).list({ ...listInput, roadmap });
+        assert.equal(result.issues[0]?.number, 7);
+        assert.deepEqual(result.issues[0]?.projects, []);
+        assert.equal(result.issues[0]?.relationshipsComplete, roadmap ? false : undefined);
+        assert.isTrue(result.issuesComplete);
+      }
     }
   }),
 );
@@ -2377,6 +2398,67 @@ it.effect(
       assert.equal(second.variables.blocker0, "next-blocker");
       assert.equal(second.variables.number0, 7);
     }),
+);
+
+it.effect("loads roadmap relationships without Project scope across blocker pages", () =>
+  Effect.gen(function* () {
+    const related = (number: number) => ({
+      number,
+      state: "CLOSED",
+      repository: { nameWithOwner: REPOSITORY },
+    });
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(948), rawIssue(868), rawIssue(860)]),
+        httpResponse([]),
+        httpResponse({
+          errors: [
+            {
+              type: "INSUFFICIENT_SCOPES",
+              message: "The 'id' field requires one of the following scopes: ['read:project']",
+            },
+          ],
+        }),
+        httpResponse({
+          data: {
+            p0: { issue: { parent: null, blockedBy: projectConnection([]) } },
+            p1: { issue: { parent: null, blockedBy: projectConnection([related(855)]) } },
+            p2: { issue: { parent: null, blockedBy: projectConnection([related(869)], "next") } },
+          },
+        }),
+        httpResponse({
+          data: {
+            p0: {
+              issue: {
+                parent: null,
+                blockedBy: projectConnection([861, 862, 863, 864].map(related)),
+              },
+            },
+          },
+        }),
+      ],
+    });
+    const result = yield* (yield* service(harness)).list({ ...listInput, roadmap: true });
+    assert.deepEqual(
+      result.issues.map((issue) => issue.relationshipsComplete),
+      [true, true, true],
+    );
+    assert.deepEqual(
+      result.issues.map((issue) => issue.blockedBy?.map((ref) => [ref.number, ref.state])),
+      [
+        [],
+        [[855, "closed"]],
+        [869, 861, 862, 863, 864].map((number) => [number, "closed" as const]),
+      ],
+    );
+    for (const call of harness.calls.slice(3)) {
+      const request = yield* decodeProjectRequest(call.body!);
+      assert.notInclude(request.query, "projectItems(");
+      assert.notProperty(request.variables, "cursor0");
+      assert.include(request.query, "blockedBy(");
+    }
+    assert.equal(harness.calls.length, 5);
+  }),
 );
 
 it.effect(
