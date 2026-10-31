@@ -136,3 +136,12 @@ wording caused a model failure. Live host behavior is covered by the server test
 
 Run the same cases and model against the eval-harness commit (original product wording) and the
 implementation commit. Use three samples for the comparison, and keep errors separate from passes.
+
+## Outside blocker cases
+
+`cases/issue-blockers.ndjson` covers #267: managed implementors and issue owners create an
+outside-blocker issue, link it with `blocked_by`, and name it in their final result. Controls
+cover owner questions and failing tests inside the issue scope. `setup.issueGuidance` imports
+the managed instructions from source. Validate requests without paid calls with `--dry-run
+--cases mcp-tool-use/cases/issue-blockers.ndjson`; `--context` reports context size. Dry runs
+check request construction, not model behavior.

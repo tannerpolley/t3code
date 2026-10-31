@@ -824,6 +824,35 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
         { discard: true },
       );
     }),
+    setBlockedBy: Effect.fn("IssueForgejoHost.setBlockedBy")(function* ({
+      issue,
+      blocker,
+      action,
+    }) {
+      if (
+        issue.host !== blocker.host ||
+        issue.repository !== blocker.repository ||
+        issue.repositoryId !== blocker.repositoryId ||
+        issue.id === blocker.id
+      )
+        return yield* failure(
+          "detail",
+          "unsupported",
+          "Blockers must be different issues in this repository.",
+        );
+      const scope = yield* context.resolveScope("detail", issue);
+      const [owner, repo] = blocker.repository.split("/");
+      yield* request(
+        scope,
+        `${repositoryPath(scope.repository)}/issues/${issue.number}/dependencies`,
+        Schema.Unknown,
+        "detail",
+        {
+          method: action === "add" ? "POST" : "DELETE",
+          body: { owner, repo, index: blocker.number },
+        },
+      );
+    }),
     setParent: Effect.fn("IssueForgejoHost.setParent")(function* ({ parent, child, action }) {
       if (
         parent.host !== child.host ||

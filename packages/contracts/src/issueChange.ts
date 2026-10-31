@@ -40,6 +40,12 @@ export const IssueChangeOperation = Schema.Union([
     childNumber: Number,
     action: Schema.Literals(["add", "remove"]),
   }),
+  Schema.Struct({
+    type: Schema.Literal("blocked_by"),
+    number: Number,
+    blockerNumber: Number,
+    action: Schema.Literals(["add", "remove"]),
+  }),
 ]);
 export type IssueChangeOperation = typeof IssueChangeOperation.Type;
 export const IssueChangeProposeInput = Schema.Struct({

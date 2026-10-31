@@ -1718,6 +1718,35 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       }),
     );
   });
+  const setBlockedBy: IssueHost["setBlockedBy"] = Effect.fn("IssueService.setBlockedBy")(
+    function* ({ issue, blocker, action }) {
+      if (
+        issue.host !== blocker.host ||
+        issue.repositoryId !== blocker.repositoryId ||
+        issue.id === blocker.id
+      )
+        return yield* readError(
+          "detail",
+          "unsupported",
+          "Blockers must be different issues in this repository.",
+        );
+      const scope = yield* resolveScope("detail", issue);
+      const mutation = action === "add" ? "addBlockedBy" : "removeBlockedBy";
+      yield* verified(
+        scope,
+        executeApi({
+          operation: "detail",
+          scope,
+          endpoint: "graphql",
+          maxOutputBytes: 256 * 1024,
+          graphql: {
+            query: `mutation($issueId: ID!, $blockingIssueId: ID!) { ${mutation}(input: { issueId: $issueId, blockingIssueId: $blockingIssueId }) { clientMutationId } }`,
+            variables: { issueId: issue.nodeId, blockingIssueId: blocker.nodeId },
+          },
+        }),
+      );
+    },
+  );
   const inboxRequest = Effect.fn("IssueService.inboxRequest")(function* (input: RepositoryRequest) {
     const scope = yield* resolveScope("detail", input);
     const response = yield* verified(
@@ -1948,6 +1977,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       patchIssue(input, { state: input.state }),
     ),
     setParent,
+    setBlockedBy,
     repositories,
     listIssuePage,
     listMilestonePage,

@@ -831,7 +831,7 @@ it.effect(
   "writes body, milestone, state and native sub-issue relations through verified GitHub APIs",
   () =>
     Effect.gen(function* () {
-      const harness = makeHarness({ responses: Array.from({ length: 6 }, () => httpResponse({})) });
+      const harness = makeHarness({ responses: Array.from({ length: 8 }, () => httpResponse({})) });
       const issues = yield* service(harness);
       const ref = { ...listInput, number: 7 };
       const parent = {
@@ -842,14 +842,18 @@ it.effect(
         url: `https://${HOST}/${REPOSITORY}/issues/7`,
         title: "Parent",
       };
-      const child = { ...parent, number: 8, id: "789" };
+      const child = { ...parent, number: 8, id: "789", nodeId: "I_789" };
       yield* issues.updateBody({ ...ref, body: "Exact replacement\n" });
       yield* issues.setMilestone({ ...ref, milestoneNumber: null });
       yield* issues.setState({ ...ref, state: "closed" });
       yield* issues.setState({ ...ref, state: "open" });
       yield* issues.setParent({ parent, child, action: "add" });
       yield* issues.setParent({ parent, child, action: "remove" });
-      const payloads = yield* Effect.forEach(harness.calls, (call) => decodeJson(call.body!));
+      yield* issues.setBlockedBy({ issue: parent, blocker: child, action: "add" });
+      yield* issues.setBlockedBy({ issue: parent, blocker: child, action: "remove" });
+      const payloads = yield* Effect.forEach(harness.calls.slice(0, 6), (call) =>
+        decodeJson(call.body!),
+      );
       assert.deepEqual(payloads, [
         { body: "Exact replacement\n" },
         { milestone: null },
@@ -858,6 +862,15 @@ it.effect(
         { sub_issue_id: 789 },
         { sub_issue_id: 789 },
       ]);
+      for (const [index, mutation] of ["addBlockedBy", "removeBlockedBy"].entries()) {
+        const call = harness.calls[index + 6]!;
+        assert.isTrue(call.url.endsWith("/graphql"));
+        const payload = yield* decodeJson(call.body!);
+        assert.deepEqual(payload, {
+          query: `mutation($issueId: ID!, $blockingIssueId: ID!) { ${mutation}(input: { issueId: $issueId, blockingIssueId: $blockingIssueId }) { clientMutationId } }`,
+          variables: { issueId: "I_456", blockingIssueId: "I_789" },
+        });
+      }
       assert.equal(harness.calls[4]!.method, "POST");
       assert.isTrue(harness.calls[4]!.url.endsWith("/repos/acme/web/issues/7/sub_issues"));
       assert.equal(harness.calls[5]!.method, "DELETE");
