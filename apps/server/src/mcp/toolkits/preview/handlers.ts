@@ -196,21 +196,28 @@ const handlers = {
   preview_status: McpToolAccess.readsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
   ),
-  preview_open: McpToolAccess.actsAsCaller(({ path: filePath, ...input }) =>
+  // Models often pass a dev server as both `url` and `target`; the target knows the environment.
+  preview_open: McpToolAccess.actsAsCaller(({ target, url: inputUrl, path: filePath, ...input }) =>
     Effect.gen(function* () {
-      if (filePath === undefined) {
-        return yield* invokeTargeted<PreviewAutomationStatus>(
-          "open",
-          normalizePreviewOpenInput(input),
-        );
-      }
-      const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
-      const issueFileUrl = yield* PreviewFileUrls;
-      const url = yield* issueFileUrl(scope.thread.threadId, filePath);
-      return yield* invokeTargeted<PreviewAutomationStatus>(
+      const url =
+        filePath === undefined
+          ? inputUrl
+          : yield* Effect.gen(function* () {
+              const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
+              const issueFileUrl = yield* PreviewFileUrls;
+              return yield* issueFileUrl(scope.thread.threadId, filePath);
+            });
+      const opened = yield* invokeTargeted<PreviewAutomationStatus>(
         "open",
-        normalizePreviewOpenInput({ ...input, url }),
+        normalizePreviewOpenInput(
+          target === undefined && url !== undefined ? { ...input, url } : input,
+        ),
       );
+      if (target === undefined || opened.tabId === null) return opened;
+      return yield* invokeTargeted<PreviewAutomationStatus>("navigate", {
+        target,
+        tabId: opened.tabId,
+      });
     }),
   ),
   preview_navigate: McpToolAccess.actsAsCaller((input) =>

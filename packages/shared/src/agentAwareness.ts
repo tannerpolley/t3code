@@ -110,24 +110,16 @@ function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
   ownerVisible: boolean,
 ): AgentAwarenessPhase | null {
-  const runStatus = thread.activityRunStatus ?? thread.status;
-  if (
-    ownerVisible &&
-    thread.pendingRuntimeRequest?.kind === "user_input" &&
-    (thread.pendingRuntimeRequest.blocking !== false ||
-      !(runStatus === "preparing" || runStatus === "starting" || runStatus === "running"))
-  ) {
+  if (ownerVisible && thread.pendingRuntimeRequest?.kind === "user_input")
     return "waiting_for_input";
-  }
   if (
     thread.pendingRuntimeRequest !== null &&
     ownerVisible &&
-    thread.pendingRuntimeRequest.kind !== "user_input" &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";
   }
-  switch (runStatus) {
+  switch (thread.activityRunStatus ?? thread.status) {
     case "preparing":
     case "starting":
       return "starting";

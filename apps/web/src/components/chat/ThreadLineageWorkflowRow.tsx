@@ -25,6 +25,7 @@ import { AgentElapsed } from "./AgentElapsed";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 import { cn } from "../../lib/utils";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
@@ -68,6 +69,7 @@ function WorkflowMemberRow({
   providerInstanceId,
   provider,
   providers,
+  providerEntries,
   driver,
   onOpen,
 }: {
@@ -76,6 +78,7 @@ function WorkflowMemberRow({
   providerInstanceId: ProviderInstanceId;
   provider: ServerProvider | undefined;
   providers: ReadonlyArray<ServerProvider> | undefined;
+  providerEntries: ReadonlyArray<ProviderInstanceEntry>;
   driver: ProviderDriverKind | undefined;
   onOpen: (threadId: string) => void;
 }) {
@@ -109,7 +112,13 @@ function WorkflowMemberRow({
           <SidebarThreadColumns
             location={thread ? <ThreadLocationIcon thread={thread} /> : undefined}
             role={thread ? <ThreadRoleIcon thread={thread.source} /> : undefined}
-            provider={<ThreadRelationshipIcon driver={driver} provider={provider} />}
+            provider={
+              <ThreadRelationshipIcon
+                driver={driver}
+                provider={provider}
+                providerEntries={providerEntries}
+              />
+            }
             model={shortModelName(member.model ?? thread?.modelSelection.model ?? "")}
             effort={member.effort ?? null}
             name={
@@ -164,6 +173,7 @@ export function ThreadLineageWorkflowRow({
   providerInstanceId,
   provider,
   providers,
+  providerEntries,
   driver,
   onOpenThread,
   onStop,
@@ -176,6 +186,7 @@ export function ThreadLineageWorkflowRow({
   readonly providerInstanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
   readonly providers: ReadonlyArray<ServerProvider> | undefined;
+  readonly providerEntries: ReadonlyArray<ProviderInstanceEntry>;
   readonly driver: ProviderDriverKind | undefined;
   readonly onOpenThread: (threadId: string) => void;
   readonly onStop?: (() => void) | undefined;
@@ -277,6 +288,7 @@ export function ThreadLineageWorkflowRow({
                         providerInstanceId={providerInstanceId}
                         provider={provider}
                         providers={providers}
+                        providerEntries={providerEntries}
                         driver={driver}
                         onOpen={onOpenThread}
                       />
@@ -294,6 +306,7 @@ export function ThreadLineageWorkflowRow({
               providerInstanceId={providerInstanceId}
               provider={provider}
               providers={providers}
+              providerEntries={providerEntries}
               driver={driver}
               onOpen={onOpenThread}
             />

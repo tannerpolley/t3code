@@ -66,6 +66,7 @@ export function makeSubagentChildThread(input: {
     title: input.title,
     linkedIssue: undefined,
     repositoryOrchestration: undefined,
+    titleRegeneration: null,
     linkedPullRequest: null,
     pullRequests: [],
     historyOrigin: undefined,
@@ -269,7 +270,8 @@ export function delegatedTaskProgress(projection: {
     (projection.pendingBackgroundTasks?.some((task) => task.kind !== "monitor") ?? false) ||
     (projection.providerThreads?.some((thread) =>
       thread.pendingBackgroundTasks?.some((task) => task.kind !== "monitor"),
-    ) ?? false);
+    ) ??
+      false);
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];

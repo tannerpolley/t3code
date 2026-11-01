@@ -122,3 +122,7 @@ export function useConnectedEnvironmentIds() {
 export function useEnvironmentIds() {
   return useAtomValue(environmentSummaries.environmentIdsAtom);
 }
+
+export function useEnvironmentConnectionSummaries() {
+  return useAtomValue(environmentSummaries.environmentsAtom);
+}
