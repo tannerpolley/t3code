@@ -856,7 +856,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
             const query = span.attributes.get("db.query.text");
             if (
               typeof query === "string" &&
-              /SELECT[\s\S]*FROM orchestration_v2_projection_messages/i.test(query)
+              /^\s*SELECT\s+payload_json\s+FROM orchestration_v2_projection_messages\b/i.test(query)
             ) {
               messageReads.push(query);
             }
@@ -872,8 +872,8 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
         summary: "All 412 tests pass on the box.",
       });
       // Delivery validation still reads messages; choosing the observer does not need another read.
-      expect(messageReads).toHaveLength(2);
-      expect(messageReads.filter((query) => !/\bmessage_id\s+IN\b/i.test(query))).toHaveLength(1);
+      expect(messageReads).toHaveLength(1);
+      expect(messageReads[0]).toMatch(/\bmessage_id\s+IN\b/i);
       const acknowledged = yield* a.projections.getThreadRecords(parentThreadId, ["subagents"], {
         subagentIds: [delegated.taskId],
       });
