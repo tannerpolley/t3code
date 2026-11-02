@@ -462,25 +462,6 @@ export const make = Effect.gen(function* () {
             payload: { ...node, status: "cancelled", completedAt: now },
           });
         }
-        for (const providerTurn of projection.providerTurns.filter(
-          (candidate) =>
-            candidate.runAttemptId !== null &&
-            projection.attempts.some(
-              (attempt) => attempt.id === candidate.runAttemptId && attempt.runId === run.id,
-            ) &&
-            (candidate.status === "pending" || candidate.status === "running"),
-        )) {
-          events.push({
-            id: yield* allocateEventId(),
-            type: "provider-turn.updated",
-            threadId: projection.thread.id,
-            runId: run.id,
-            nodeId: providerTurn.nodeId,
-            providerInstanceId: run.providerInstanceId,
-            occurredAt: now,
-            payload: { ...providerTurn, status: "cancelled", completedAt: now },
-          });
-        }
         for (const message of projection.messages.filter(
           (candidate) => candidate.runId === run.id && candidate.streaming,
         )) {
@@ -621,6 +602,33 @@ export const make = Effect.gen(function* () {
           allocateEventId,
         })),
       );
+      // No provider turn survives the server, including one whose run or node already ended.
+      const endedProviderTurnIds = new Set(
+        events.flatMap((event) =>
+          event.type === "provider-turn.updated" ? [event.payload.id] : [],
+        ),
+      );
+      for (const providerTurn of projection.providerTurns ?? []) {
+        if (
+          endedProviderTurnIds.has(providerTurn.id) ||
+          (providerTurn.status !== "pending" && providerTurn.status !== "running")
+        )
+          continue;
+        const runId = projection.attempts.find(
+          (attempt) => attempt.id === providerTurn.runAttemptId,
+        )?.runId;
+        const run = projection.runs.find((candidate) => candidate.id === runId);
+        events.push({
+          id: yield* allocateEventId(),
+          type: "provider-turn.updated",
+          threadId: projection.thread.id,
+          ...(runId === undefined ? {} : { runId }),
+          nodeId: providerTurn.nodeId,
+          providerInstanceId: run?.providerInstanceId ?? projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...providerTurn, status: "cancelled", completedAt: now },
+        });
+      }
       for (const providerThread of projection.providerThreads ?? []) {
         const needsIdle = providerThread.status === "active";
         const needsRosterClear = providerThreadHasPendingBackgroundTasks(providerThread);

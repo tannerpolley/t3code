@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   EventId,
   MessageId,
+  NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
@@ -9,6 +10,9 @@ import {
   PlanId,
   ProjectId,
   ProviderInstanceId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -242,4 +246,76 @@ it.effect("startup recovery ends the turn-bound items an ended run left running,
     yield* recovery.reconcile("startup");
     assert.equal(yield* sink.latestSequence({ threadId }), sequence);
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "startup recovery cancels provider turns left running after their run or root ended",
+  () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:ended-run-provider-turns");
+      const runId = RunId.make(`run:${threadId}:1`);
+      const attemptId = RunAttemptId.make(`attempt:${runId}`);
+      const providerThreadId = ProviderThreadId.make(`provider-thread:${threadId}`);
+      const nodeId = NodeId.make(`node:${runId}`);
+      // One turn of a run that failed, one of a native subagent root that was cancelled.
+      const openTurn = (name: string, ordinal: number, runAttemptId: RunAttemptId | null) => ({
+        id: EventId.make(`event:${threadId}:${name}`),
+        type: "provider-turn.updated" as const,
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make(`provider-turn:${threadId}:${name}`),
+          providerThreadId,
+          nodeId: runAttemptId === null ? NodeId.make(`node:${threadId}:native-root`) : nodeId,
+          runAttemptId,
+          nativeTurnRef: null,
+          ordinal,
+          status: "running" as const,
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      yield* Effect.forEach(
+        [
+          threadCreated(threadId, now),
+          runEvent("run.created", threadId, 1, "failed", now),
+          {
+            id: EventId.make(`event:${attemptId}`),
+            type: "run-attempt.created",
+            threadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              id: attemptId,
+              runId,
+              attemptOrdinal: 1,
+              rootNodeId: nodeId,
+              providerInstanceId,
+              providerThreadId,
+              providerTurnId: null,
+              reason: "initial",
+              status: "failed",
+              startedAt: now,
+              completedAt: now,
+            },
+          } satisfies OrchestrationV2DomainEvent,
+          openTurn("run", 1, attemptId),
+          openTurn("native", 2, null),
+        ],
+        projections.apply,
+      );
+      assert.deepStrictEqual(yield* projections.getRecoveryThreadIds("runtime"), [threadId]);
+
+      yield* recovery.reconcile("startup");
+
+      const { providerTurns } = yield* projections.getThreadRecords(threadId, ["providerTurns"]);
+      assert.deepStrictEqual(
+        providerTurns.map((turn) => turn.status),
+        ["cancelled", "cancelled"],
+      );
+      assert.deepStrictEqual(yield* projections.getRecoveryThreadIds("runtime"), []);
+    }).pipe(Effect.provide(layer)),
 );
