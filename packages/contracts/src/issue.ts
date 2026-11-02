@@ -314,3 +314,30 @@ export class IssueReadError extends Schema.TaggedError<IssueReadError>()("IssueR
   message: Schema.String,
   retryAt: Schema.optional(Schema.Finite),
 }) {}
+
+export const IssueCapabilityFields = {
+  /** Server exposes the GitHub issue repository, list, and detail APIs. */
+  githubIssues: Schema.optionalKey(Schema.Boolean),
+  /** Server supports repository-owned issue work starts and status reads. */
+  issueWork: Schema.optionalKey(Schema.Boolean),
+  issueQueue: Schema.optionalKey(Schema.Boolean),
+  ownerDecisions: Schema.optionalKey(Schema.Boolean),
+  issueChanges: Schema.optionalKey(Schema.Boolean),
+  issueMilestones: Schema.optionalKey(Schema.Boolean),
+  /** Server records external issue activity for repository orchestrators. */
+  issueInbox: Schema.optionalKey(Schema.Boolean),
+  issueContexts: Schema.optionalKey(Schema.Boolean),
+  issueStatusBatch: Schema.optionalKey(Schema.Boolean),
+};
+
+export const ISSUE_CAPABILITIES = {
+  githubIssues: true,
+  issueWork: true,
+  issueQueue: true,
+  issueChanges: true,
+  ownerDecisions: true,
+  issueMilestones: true,
+  issueInbox: true,
+  issueContexts: true,
+  issueStatusBatch: true,
+} as const;

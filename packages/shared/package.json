@@ -539,6 +539,10 @@
       "types": "./src/forkUsageLimits.ts",
       "import": "./src/forkUsageLimits.ts"
     },
+    "./forkAgentWorktreeName": {
+      "types": "./src/forkAgentWorktreeName.ts",
+      "import": "./src/forkAgentWorktreeName.ts"
+    },
     "./inlineShell": {
       "types": "./src/inlineShell.ts",
       "import": "./src/inlineShell.ts"

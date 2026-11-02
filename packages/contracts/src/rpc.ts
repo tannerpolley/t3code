@@ -1,10 +1,5 @@
 import { NOTEBOOK_METHODS, notebookRpcs } from "./notebookRpc.ts";
-import {
-  OwnerDecision,
-  OwnerDecisionsListInput,
-  OwnerDecisionChooseInput,
-  OwnerDecisionError,
-} from "./ownerDecision.ts";
+import { ISSUE_WS_METHODS, issueRpcs } from "./issueRpc.ts";
 import { PROJECT_ARTIFACT_METHODS, projectArtifactRpcs } from "./projectArtifactRpc.ts";
 import { SidebarLayoutRecord, SidebarLayoutUpdate, SidebarLayoutError } from "./sidebarLayout.ts";
 import { ThreadProcesses, ThreadProcessesInput } from "./threadProcesses.ts";
@@ -50,18 +45,6 @@ import {
   InlineShellRunError,
   InlineShellRunLookupInput,
 } from "./inlineShell.ts";
-import {
-  IssueChange,
-  IssueChangeError,
-  IssueChangesListInput,
-  IssueChangeDecisionInput,
-} from "./issueChange.ts";
-import {
-  IssueInboxListResult,
-  IssueInboxMarkReadInput,
-  IssueInboxMarkReadResult,
-  IssueInboxUnread,
-} from "./issueInbox.ts";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
@@ -204,39 +187,6 @@ import {
   GuestShareCreateResult,
 } from "./guestShare.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
-import { IssueCleanupInput, IssueCleanupError, IssueCleanupResult } from "./issueCleanup.ts";
-import { IssueLinkInput, IssueLinkResult, IssueLinkError } from "./issueLinks.ts";
-import {
-  IssueRef,
-  IssueDetailInput,
-  IssueDetailResult,
-  IssueListInput,
-  IssueListResult,
-  IssueReadError,
-  IssueRepositoriesResult,
-  IssueStatusBatchInput,
-  IssueStatusBatchResult,
-} from "./issue.ts";
-import {
-  IssueWorkError,
-  IssueWorkStartInput,
-  IssueQueueInput,
-  IssueWorkStartResult,
-  IssueWorkStatusInput,
-  IssueWorkStatusResult,
-  RepositoryWorkInput,
-  RepositoryHandoffInput,
-  RepositoryOrchestratorInput,
-  RepositoryWorkControlInput,
-  RepositoryWorkerLimitInput,
-  RepositoryReadOnlyLimitInput,
-  RepositoryWorkRestoreInput,
-  IssueWorkCancelInput,
-  IssueWorkCloseOutInput,
-  IssueWorkRequested,
-  RepositoryWorkResult,
-} from "./issueWork.ts";
-import { IssueRepositoryRef } from "./issue.ts";
 import {
   PullRequestActionInput,
   PullRequestActivity,
@@ -627,38 +577,7 @@ export const WS_METHODS = {
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
 
-  // GitHub issue methods
-  issuesRepositories: "issues.repositories",
-  issuesList: "issues.list",
-  issuesDetail: "issues.detail",
-  issuesStatusBatch: "issues.statusBatch",
-  issuesSetState: "issues.setState",
-  issuesCleanup: "issues.cleanup",
-  issuesUnlink: "issues.unlink",
-  issuesSubscribeLinkRefreshes: "issues.subscribeLinkRefreshes",
-  issuesStart: "issues.start",
-  issuesQueue: "issues.queue",
-  issuesUnqueue: "issues.unqueue",
-  issuesWorkStatus: "issues.workStatus",
-  issuesWorkMilestone: "issues.workMilestone",
-  issuesRepositoryStatus: "issues.repositoryStatus",
-  issuesSetPaused: "issues.setPaused",
-  issuesCloseOut: "issues.closeOut",
-  issuesSetWorkerLimit: "issues.setWorkerLimit",
-  ownerDecisionsList: "issues.decisions.list",
-  ownerDecisionsChoose: "issues.decisions.choose",
-  ownerDecisionsSubscribe: "issues.decisions.subscribe",
-  issuesSetReadOnlyLimit: "issues.setReadOnlyLimit",
-  issueChangesList: "issues.changes.list",
-  issueChangesDecide: "issues.changes.decide",
-  issueChangesSubscribe: "issues.changes.subscribe",
-  issuesHandoff: "issues.handoff",
-  issuesAssignOrchestrator: "issues.assignOrchestrator",
-  issuesCancelRequest: "issues.cancelRequest",
-  issuesRestoreRoot: "issues.restoreRoot",
-  issuesInboxList: "issues.inbox.list",
-  issuesInboxMarkRead: "issues.inbox.markRead",
-  issuesInboxSubscribeUnread: "issues.inbox.subscribeUnread",
+  ...ISSUE_WS_METHODS,
 
   pullRequestsList: "pullRequests.list",
   pullRequestsListStats: "pullRequests.listStats",
@@ -1108,183 +1027,6 @@ const PullRequestRpcError = Schema.Union([
   PullRequestOperationError,
   EnvironmentAuthorizationError,
 ]);
-
-const IssueRpcError = Schema.Union([
-  IssueReadError,
-  IssueWorkError,
-  IssueChangeError,
-  EnvironmentAuthorizationError,
-]);
-
-const WsIssuesRepositoriesRpc = Rpc.make(WS_METHODS.issuesRepositories, {
-  payload: Schema.Struct({}),
-  success: IssueRepositoriesResult,
-  error: IssueRpcError,
-});
-
-const WsIssuesSubscribeLinkRefreshesRpc = Rpc.make(WS_METHODS.issuesSubscribeLinkRefreshes, {
-  payload: Schema.Struct({}),
-  success: Schema.Number,
-  stream: true,
-  error: IssueRpcError,
-});
-
-const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
-  payload: IssueListInput,
-  success: IssueListResult,
-  error: IssueRpcError,
-});
-
-const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
-  payload: IssueDetailInput,
-  success: IssueDetailResult,
-  error: IssueRpcError,
-});
-
-const WsIssuesStatusBatchRpc = Rpc.make(WS_METHODS.issuesStatusBatch, {
-  payload: IssueStatusBatchInput,
-  success: IssueStatusBatchResult,
-  error: IssueRpcError,
-});
-
-const WsIssuesSetStateRpc = Rpc.make(WS_METHODS.issuesSetState, {
-  payload: Schema.Struct({ ...IssueRef.fields, state: Schema.Literals(["open", "closed"]) }),
-  success: Schema.Void,
-  error: IssueRpcError,
-});
-const WsIssuesCleanupRpc = Rpc.make(WS_METHODS.issuesCleanup, {
-  payload: IssueCleanupInput,
-  success: IssueCleanupResult,
-  error: Schema.Union([IssueCleanupError, EnvironmentAuthorizationError]),
-});
-const WsIssuesUnlinkRpc = Rpc.make(WS_METHODS.issuesUnlink, {
-  payload: Schema.Struct({ ...IssueLinkInput.fields, threadId: ThreadId }),
-  success: IssueLinkResult,
-  error: Schema.Union([IssueLinkError, EnvironmentAuthorizationError]),
-});
-
-const WsIssuesQueueRpc = Rpc.make(WS_METHODS.issuesQueue, {
-  payload: IssueQueueInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-const WsIssuesUnqueueRpc = Rpc.make(WS_METHODS.issuesUnqueue, {
-  payload: IssueQueueInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-
-const WsIssuesStartRpc = Rpc.make(WS_METHODS.issuesStart, {
-  payload: IssueWorkStartInput,
-  success: IssueWorkStartResult,
-  error: IssueRpcError,
-});
-
-const WsIssuesWorkStatusRpc = Rpc.make(WS_METHODS.issuesWorkStatus, {
-  payload: IssueWorkStatusInput,
-  success: IssueWorkStatusResult,
-  error: IssueRpcError,
-});
-const WsIssuesWorkMilestoneRpc = Rpc.make(WS_METHODS.issuesWorkMilestone, {
-  payload: RepositoryWorkInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-const WsIssuesRepositoryStatusRpc = Rpc.make(WS_METHODS.issuesRepositoryStatus, {
-  payload: IssueRepositoryRef,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-const WsIssuesSetWorkerLimitRpc = Rpc.make(WS_METHODS.issuesSetWorkerLimit, {
-  payload: RepositoryWorkerLimitInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-const WsIssuesSetReadOnlyLimitRpc = Rpc.make(WS_METHODS.issuesSetReadOnlyLimit, {
-  payload: RepositoryReadOnlyLimitInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-const WsIssuesCloseOutRpc = Rpc.make(WS_METHODS.issuesCloseOut, {
-  payload: IssueWorkCloseOutInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-const WsIssuesSetPausedRpc = Rpc.make(WS_METHODS.issuesSetPaused, {
-  payload: RepositoryWorkControlInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-const WsOwnerDecisionsListRpc = Rpc.make(WS_METHODS.ownerDecisionsList, {
-  payload: OwnerDecisionsListInput,
-  success: Schema.Array(OwnerDecision),
-  error: Schema.Union([OwnerDecisionError, EnvironmentAuthorizationError]),
-});
-const WsOwnerDecisionsChooseRpc = Rpc.make(WS_METHODS.ownerDecisionsChoose, {
-  payload: OwnerDecisionChooseInput,
-  success: OwnerDecision,
-  error: Schema.Union([OwnerDecisionError, EnvironmentAuthorizationError]),
-});
-const WsOwnerDecisionsSubscribeRpc = Rpc.make(WS_METHODS.ownerDecisionsSubscribe, {
-  payload: Schema.Struct({}),
-  success: Schema.Number,
-  stream: true,
-  error: EnvironmentAuthorizationError,
-});
-const WsIssueChangesListRpc = Rpc.make(WS_METHODS.issueChangesList, {
-  payload: IssueChangesListInput,
-  success: Schema.Array(IssueChange),
-  error: IssueRpcError,
-});
-const WsIssueChangesDecideRpc = Rpc.make(WS_METHODS.issueChangesDecide, {
-  payload: IssueChangeDecisionInput,
-  success: IssueChange,
-  error: IssueRpcError,
-});
-const WsIssueChangesSubscribeRpc = Rpc.make(WS_METHODS.issueChangesSubscribe, {
-  payload: IssueChangesListInput,
-  success: Schema.Number,
-  stream: true,
-  error: IssueRpcError,
-});
-const WsIssuesCancelRequestRpc = Rpc.make(WS_METHODS.issuesCancelRequest, {
-  payload: IssueWorkCancelInput,
-  success: IssueWorkRequested,
-  error: IssueRpcError,
-});
-const WsIssuesRestoreRootRpc = Rpc.make(WS_METHODS.issuesRestoreRoot, {
-  payload: RepositoryWorkRestoreInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-
-const WsIssuesAssignOrchestratorRpc = Rpc.make(WS_METHODS.issuesAssignOrchestrator, {
-  payload: RepositoryOrchestratorInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-
-const WsIssuesHandoffRpc = Rpc.make(WS_METHODS.issuesHandoff, {
-  payload: RepositoryHandoffInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-const WsIssuesInboxListRpc = Rpc.make(WS_METHODS.issuesInboxList, {
-  payload: IssueRepositoryRef,
-  success: IssueInboxListResult,
-  error: IssueRpcError,
-});
-const WsIssuesInboxMarkReadRpc = Rpc.make(WS_METHODS.issuesInboxMarkRead, {
-  payload: IssueInboxMarkReadInput,
-  success: IssueInboxMarkReadResult,
-  error: IssueRpcError,
-});
-const WsIssuesInboxSubscribeUnreadRpc = Rpc.make(WS_METHODS.issuesInboxSubscribeUnread, {
-  payload: Schema.Struct({}),
-  success: Schema.Array(IssueInboxUnread),
-  stream: true,
-  error: IssueRpcError,
-});
 
 const WsPullRequestsListRpc = Rpc.make(WS_METHODS.pullRequestsList, {
   payload: PullRequestListInput,
@@ -2355,37 +2097,7 @@ const forkWsRpcs = [
   WsServerGetBackgroundTaskResourceUsageRpc,
   WsOrchestrationV2SubscribeBackgroundTaskOutputRpc,
   WsOrchestrationV2StopBackgroundTaskRpc,
-  WsIssuesRepositoriesRpc,
-  WsIssuesListRpc,
-  WsIssuesDetailRpc,
-  WsIssuesStatusBatchRpc,
-  WsIssuesSetStateRpc,
-  WsIssuesCleanupRpc,
-  WsIssuesUnlinkRpc,
-  WsIssuesSubscribeLinkRefreshesRpc,
-  WsIssuesStartRpc,
-  WsIssuesQueueRpc,
-  WsIssuesUnqueueRpc,
-  WsIssuesWorkStatusRpc,
-  WsIssuesWorkMilestoneRpc,
-  WsIssuesRepositoryStatusRpc,
-  WsIssuesSetPausedRpc,
-  WsIssuesCloseOutRpc,
-  WsIssuesSetWorkerLimitRpc,
-  WsIssuesSetReadOnlyLimitRpc,
-  WsIssuesHandoffRpc,
-  WsIssuesAssignOrchestratorRpc,
-  WsIssuesCancelRequestRpc,
-  WsIssuesRestoreRootRpc,
-  WsOwnerDecisionsListRpc,
-  WsOwnerDecisionsChooseRpc,
-  WsOwnerDecisionsSubscribeRpc,
-  WsIssueChangesListRpc,
-  WsIssueChangesDecideRpc,
-  WsIssueChangesSubscribeRpc,
-  WsIssuesInboxListRpc,
-  WsIssuesInboxMarkReadRpc,
-  WsIssuesInboxSubscribeUnreadRpc,
+  ...issueRpcs,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(
@@ -2614,35 +2326,5 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.serverGetBackgroundTaskResourceUsage,
   ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput,
   ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask,
-  WS_METHODS.issuesRepositories,
-  WS_METHODS.issuesList,
-  WS_METHODS.issuesDetail,
-  WS_METHODS.issuesStatusBatch,
-  WS_METHODS.issuesSetState,
-  WS_METHODS.issuesCleanup,
-  WS_METHODS.issuesUnlink,
-  WS_METHODS.issuesSubscribeLinkRefreshes,
-  WS_METHODS.issuesStart,
-  WS_METHODS.issuesQueue,
-  WS_METHODS.issuesUnqueue,
-  WS_METHODS.issuesWorkStatus,
-  WS_METHODS.issuesWorkMilestone,
-  WS_METHODS.issuesRepositoryStatus,
-  WS_METHODS.issuesSetPaused,
-  WS_METHODS.issuesCloseOut,
-  WS_METHODS.issuesSetWorkerLimit,
-  WS_METHODS.issuesSetReadOnlyLimit,
-  WS_METHODS.issuesHandoff,
-  WS_METHODS.issuesAssignOrchestrator,
-  WS_METHODS.issuesCancelRequest,
-  WS_METHODS.issuesRestoreRoot,
-  WS_METHODS.ownerDecisionsList,
-  WS_METHODS.ownerDecisionsChoose,
-  WS_METHODS.ownerDecisionsSubscribe,
-  WS_METHODS.issueChangesList,
-  WS_METHODS.issueChangesDecide,
-  WS_METHODS.issueChangesSubscribe,
-  WS_METHODS.issuesInboxList,
-  WS_METHODS.issuesInboxMarkRead,
-  WS_METHODS.issuesInboxSubscribeUnread,
+  ...Object.values(ISSUE_WS_METHODS),
 );

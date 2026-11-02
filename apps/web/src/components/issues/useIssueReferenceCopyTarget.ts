@@ -7,11 +7,8 @@ import { isTerminalFocused } from "~/lib/terminalFocus";
 import { toastManager } from "../ui/toast";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useMemo, useEffect, useEffectEvent } from "react";
-import {
-  ISSUES_PANEL_REF,
-  selectActiveRightPanelSurface,
-  useRightPanelStore,
-} from "~/rightPanelStore";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import { ISSUES_PANEL_REF } from "~/rightPanelIssueSurfaces";
 import { issueReferenceCopyTarget } from "./issueDetailActions.logic";
 
 /** The generic Copy reference command follows the issue currently open beside the thread. */

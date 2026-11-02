@@ -5,10 +5,8 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
 
+import { ISSUES_PANEL_REF, issueSurface, issueSurfaceId } from "./rightPanelIssueSurfaces";
 import {
-  ISSUES_PANEL_REF,
-  issueSurface,
-  issueSurfaceId,
   migratePersistedRightPanelState,
   pullRequestSurface,
   selectThreadRightPanelState,

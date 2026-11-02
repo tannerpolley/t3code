@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
-import { issueSurface } from "~/rightPanelStore";
+import { issueSurface } from "~/rightPanelIssueSurfaces";
 import { issueOriginFor, rememberIssueOrigin } from "./issuePullRequestOrigin";
 
 it("returns to the opening issue only for the same pull request on the same host and server", () => {

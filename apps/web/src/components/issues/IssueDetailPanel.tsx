@@ -64,13 +64,13 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { findIssueProject } from "./issueWorktree.logic";
-import { agentWorktreeName } from "@t3tools/shared/git";
+import { agentWorktreeName } from "@t3tools/shared/forkAgentWorktreeName";
 import {
   PullRequestActorLabel,
   PullRequestLabelChip,
   PullRequestStateGlyph,
 } from "../pullRequest/pullRequestPresentation";
-import { issueSurface } from "~/rightPanelStore";
+import { issueSurface } from "~/rightPanelIssueSurfaces";
 import { rememberIssueOrigin } from "./issuePullRequestOrigin";
 import { useOpenChangeRequestLink, useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
