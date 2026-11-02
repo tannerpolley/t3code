@@ -1,4 +1,3 @@
-import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
 import type { AnyRouter } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -227,22 +226,18 @@ it("uses bounded tags across threads and environments, replaces repeat alerts, a
   app.setEnvironmentIds(state.environmentIds);
   await app.render();
   using _timers = fakeTimers();
-  const renderAndFlush = async () => {
-    await app.render();
-    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
-  };
   state.shells.set(environmentId, shell(completed(threadId), { id: otherThreadId }));
-  await renderAndFlush();
+  await app.render();
   expect(state.badge).toHaveBeenLastCalledWith(1);
   state.shells.set(environmentId, shell(completed(threadId), completed(otherThreadId)));
   state.shells.set(otherEnvironmentId, shell(completed(threadId)));
-  await renderAndFlush();
+  await app.render();
   expect(state.badge).toHaveBeenLastCalledWith(3);
   state.shells.set(
     environmentId,
     shell(completed(threadId, "2026-09-13T08:01:00Z"), completed(otherThreadId)),
   );
-  await renderAndFlush();
+  await app.render();
   expect(state.badge).toHaveBeenLastCalledWith(3);
   expect(TestNotification.sent).toHaveLength(4);
   const [first, otherThread, otherEnvironment, replacement] = TestNotification.sent;
@@ -267,6 +262,6 @@ it("uses bounded tags across threads and environments, replaces repeat alerts, a
   ).toBe(true);
   focused = false;
   state.shells.set(otherEnvironmentId, shell(completed(threadId, "2026-09-13T08:02:00Z")));
-  await renderAndFlush();
+  await app.render();
   expect(state.badge).toHaveBeenLastCalledWith(1);
 });

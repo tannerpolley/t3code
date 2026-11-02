@@ -3,8 +3,9 @@ import type {
   StorageCleanupSettings,
   WorktreeCleanupRules,
 } from "@t3tools/contracts";
+import { resolvePastedPath } from "@t3tools/shared/path";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -18,6 +19,7 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useDebouncedValue } from "../../state/queries";
 import { AnimatedHeight } from "../AnimatedHeight";
+import { Input } from "../ui/input";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
@@ -30,7 +32,7 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { DatabaseStorageNotice } from "./DatabaseStorageNotice";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
@@ -42,9 +44,70 @@ import { searchableSetting } from "./settingsSearch";
 import {
   useClearScopedSettings,
   useScopedSettings,
+  useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
+
+export function WorktreesDirectoryRow() {
+  const { connectedEnvironments, targets } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["worktreesDirectory"]);
+  const edited = useRef(false);
+  const draft = useRef("");
+  if (
+    connectedEnvironments.some(
+      (environment) =>
+        environment.serverConfig?.environment.capabilities.worktreesDirectory !== true,
+    )
+  )
+    return null;
+  const scopeKey = targets.map((target) => target.environmentId).join(",");
+
+  return (
+    <SettingsRow
+      {...searchableSetting("storage-worktrees-location")}
+      description={
+        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
+      }
+      serverScoped
+      settingKeys={["worktreesDirectory"]}
+      resetAction={
+        mixed || settings.worktreesDirectory !== "" ? (
+          <SettingResetButton
+            label="worktree location"
+            onClick={() => updateSettings({ worktreesDirectory: "" })}
+          />
+        ) : null
+      }
+      control={
+        <Input
+          key={`${scopeKey}:${mixed}:${settings.worktreesDirectory}`}
+          aria-label="Worktree location"
+          autoCapitalize="none"
+          spellCheck={false}
+          placeholder={mixed ? "Mixed" : "Default"}
+          defaultValue={mixed ? "" : settings.worktreesDirectory}
+          onFocus={(event) => {
+            draft.current = event.target.value;
+          }}
+          onChange={(event) => {
+            edited.current = true;
+            draft.current = resolvePastedPath(draft.current, event.target.value);
+            event.target.value = draft.current;
+          }}
+          onBlur={(event) => {
+            const value = event.target.value.trim();
+            if (edited.current && (mixed || value !== settings.worktreesDirectory))
+              updateSettings({ worktreesDirectory: value });
+            edited.current = false;
+          }}
+        />
+      }
+    />
+  );
+}
 
 function RetentionControl({
   label,
@@ -420,6 +483,9 @@ export function WorktreeCleanupSection() {
     )
       ? "Mixed across selected machines"
       : undefined;
+  // A policy locks these through worktreeCleanup, which also reaches each project's own rules.
+  const lockablePath = (key: keyof WorktreeCleanupRules) =>
+    isProjectScope ? ["worktreeCleanup"] : ["worktreeCleanup", `storageCleanup.${key}`];
   const update = (patch: Partial<StorageCleanupSettings>) =>
     updateSettings({ storageCleanup: patch });
   const updateWorktree = (patch: Partial<WorktreeCleanupRules>) =>
@@ -501,6 +567,7 @@ export function WorktreeCleanupSection() {
             <SettingsRow
               title="Delete worktrees with deleted threads"
               status={ruleStatus("worktreeOnDelete")}
+              managedPaths={lockablePath("worktreeOnDelete")}
               description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
               serverScoped={!isProjectScope}
               control={
@@ -514,6 +581,7 @@ export function WorktreeCleanupSection() {
             <SettingsRow
               title="Delete merged worktrees"
               status={ruleStatus("worktreeOnMerge")}
+              managedPaths={lockablePath("worktreeOnMerge")}
               description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
               serverScoped={!isProjectScope}
               control={
@@ -527,6 +595,7 @@ export function WorktreeCleanupSection() {
             <SettingsRow
               title="Delete inactive worktrees"
               status={ruleStatus("worktreeAfterDays")}
+              managedPaths={lockablePath("worktreeAfterDays")}
               description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
               serverScoped={!isProjectScope}
               control={
@@ -549,6 +618,7 @@ export function WorktreeCleanupSection() {
                 ) && (
                   <SettingsRow
                     title="Delete settled worktrees"
+                    managedPaths={lockablePath("worktreeSettledAfterDays")}
                     status={[
                       ruleStatus("worktreeSettledAfterDays"),
                       environments.length > connectedEnvironments.length
@@ -574,6 +644,7 @@ export function WorktreeCleanupSection() {
               <SettingsRow
                 title="Delete unchanged worktrees"
                 status={ruleStatus("worktreeUnchanged")}
+                managedPaths={lockablePath("worktreeUnchanged")}
                 description="Remove worktrees with no commits beyond the default branch."
                 serverScoped={!isProjectScope}
                 control={
@@ -591,6 +662,7 @@ export function WorktreeCleanupSection() {
                 <SettingsRow
                   {...searchableSetting("storage-worktree-keep-when")}
                   status={ruleStatus("worktreeKeepWhen")}
+                  managedPaths={lockablePath("worktreeKeepWhen")}
                   description={
                     settings.worktreeKeepWhen === "any-local-files"
                       ? "Includes ignored files, except node_modules."
@@ -694,6 +766,7 @@ export function StorageCleanupSections() {
           <SettingsRow
             title="Delete old browser artifacts"
             status={artifactsStatus}
+            managedPaths={["storageCleanup.browserArtifactsAfterDays"]}
             description="Delete saved browser captures after this many days. Older capture links will no longer open."
             serverScoped
             control={
@@ -709,6 +782,7 @@ export function StorageCleanupSections() {
           <SettingsRow
             title="Delete old rotated logs"
             status={logsStatus}
+            managedPaths={["storageCleanup.logsAfterDays"]}
             description="Delete inactive rotated log files after this many days. Current logs are kept."
             serverScoped
             control={

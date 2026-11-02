@@ -1,3 +1,4 @@
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -51,6 +52,7 @@ const testLayer = Layer.mergeAll(
   ),
   // The real settings service: the worker reacts to its change stream.
   ServerSettings.layer.pipe(
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provide(

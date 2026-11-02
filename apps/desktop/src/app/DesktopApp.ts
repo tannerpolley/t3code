@@ -155,8 +155,7 @@ const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
     const instances = yield* pool.list;
     yield* Effect.forEach(
       instances,
-      (instance) =>
-        instance.stop({ timeout: DesktopBackendManager.QUIT_BACKEND_STOP_TIMEOUT }),
+      (instance) => instance.stop({ timeout: DesktopBackendManager.QUIT_BACKEND_STOP_TIMEOUT }),
       { concurrency: "unbounded" },
     );
   },
@@ -249,6 +248,16 @@ const bootstrap = Effect.gen(function* () {
     );
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
+    // WSL-only fallback can change the primary endpoint before readiness.
+    const config = yield* primaryBackend.currentConfig;
+    if (
+      !environment.isDevelopment &&
+      !settings.wslOnly &&
+      Option.isSome(config) &&
+      Option.isNone(config.value.preflightFailure)
+    ) {
+      yield* desktopWindow.ensureMain;
+    }
     yield* appActivation.start.pipe(
       Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
       Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),

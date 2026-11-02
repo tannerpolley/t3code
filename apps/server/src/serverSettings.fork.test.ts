@@ -1,3 +1,4 @@
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId, ServerSettings } from "@t3tools/contracts";
 
@@ -26,6 +27,7 @@ const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonStrin
 
 const layerServerSettings = () =>
   ServerSettingsModule.layer.pipe(
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provide(ServerSecretStore.layer),
     Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(

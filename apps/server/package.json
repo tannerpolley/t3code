@@ -60,6 +60,7 @@
     "character-entities": "2.0.2",
     "diff": "8.0.3",
     "effect": "catalog:",
+    "ffi-rs": "1.3.2",
     "jose": "catalog:",
     "katex": "^0.16.47",
     "node-pty": "^1.2.0-beta.15",

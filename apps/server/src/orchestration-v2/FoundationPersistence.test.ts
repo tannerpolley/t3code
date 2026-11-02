@@ -1270,7 +1270,11 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const messageId = MessageId.make("message:foundation-compact");
       const threadStateEvent = (
         suffix: string,
-        type: "thread.visited" | "thread.metadata-updated" | "thread.pull-request-synced",
+        type:
+          | "thread.visited"
+          | "thread.metadata-updated"
+          | "thread.pull-request-synced"
+          | "thread.tags-updated",
       ): OrchestrationV2DomainEvent => ({
         id: EventId.make(`event:foundation-compact:${suffix}`),
         type,
@@ -1280,7 +1284,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         payload: {
           ...thread,
           lastVisitedAt: now,
-          ...(type === "thread.pull-request-synced"
+          ...(type === "thread.pull-request-synced" ||
+          suffix.startsWith("tags-") ||
+          suffix === "visit-2"
             ? {
                 pullRequests: [
                   {
@@ -1292,7 +1298,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
                     linkedAt: nowIso,
                     snapshot: {
                       state: "open",
-                      title: `PR snapshot ${suffix}`,
+                      title: `PR snapshot ${type === "thread.pull-request-synced" ? suffix : "pr-sync-latest"}`,
                       headBranch: "feature",
                       baseBranch: "main",
                       isDraft: false,
@@ -1402,6 +1408,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           messageEvent("message-2", "final"),
           nodeEvent("node-2", "completed"),
           itemEvent("item-a-3", "A final", "a", 101),
+          threadStateEvent("tags-1", "thread.tags-updated"),
+          threadStateEvent("visit-2", "thread.visited"),
+          // Older clients skip tag events, so these must not remove the rename above.
+          threadStateEvent("tags-2", "thread.tags-updated"),
         ],
       });
       const beforeCompaction = yield* projections.getThreadProjection(threadId);
@@ -1480,6 +1490,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           "event:foundation-compact:message-2",
           "event:foundation-compact:node-2",
           "event:foundation-compact:item-a-3",
+          "event:foundation-compact:visit-2",
+          "event:foundation-compact:tags-2",
         ],
       );
 

@@ -77,7 +77,12 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
   const threadDispatch: ThreadCommandExecutor.ThreadCommandExecutor["Service"] = {
     activeKeys: threadExecutor.activeKeys,
     withLock: Effect.fn("withLock")(function* (threadId, effect) {
-      const shell = yield* projectionStore.getThreadShell(threadId).pipe(Effect.orDie);
+      const shell = yield* projectionStore
+        .getThread(threadId)
+        .pipe(
+          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+          Effect.orDie,
+        );
       // Run starts across every managed descendant share the root's planning lock.
       // Whole-thread provider writes use the same key; ordinary provider updates do not plan admissions.
       const key = threadDispatchLockKey(threadId, shell);

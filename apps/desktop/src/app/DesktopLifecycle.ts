@@ -11,10 +11,13 @@ import * as Scope from "effect/Scope";
 import type * as Electron from "electron";
 
 import { prepareForkShutdown, startForkShutdownDeadline } from "./ForkDesktopShutdown.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
@@ -222,7 +225,13 @@ export const make = DesktopLifecycle.of({
       yield* Effect.yieldNow;
       yield* Ref.set(state.quitting, true);
       if (!environment.isDevelopment) {
-        yield* electronApp.relaunch({ execPath: process.execPath, args: process.argv.slice(1) });
+        // Startup already acted on the app link that launched it; passing it on replays it.
+        const appLinkPrefix = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}:`;
+        const args = yield* HostProcess.Arguments;
+        yield* electronApp.relaunch({
+          execPath: yield* HostProcess.ExecutablePath,
+          args: args.slice(1).filter((arg) => !arg.toLowerCase().startsWith(appLinkPrefix)),
+        });
       }
       yield* requestDesktopShutdownAndWait(environment.isDevelopment ? 75 : 0);
       if (environment.isDevelopment) {

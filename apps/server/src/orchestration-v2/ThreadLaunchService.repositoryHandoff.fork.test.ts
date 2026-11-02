@@ -1,3 +1,4 @@
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Queue from "effect/Queue";
@@ -2756,6 +2757,7 @@ describe("fresh-thread repository handoff", () => {
       }).pipe(
         Effect.provide(
           ScheduledTasks.layer.pipe(
+            Layer.provide(ManagedPolicy.layerTest()),
             Layer.provide(
               Layer.mergeAll(
                 gatedThreads,

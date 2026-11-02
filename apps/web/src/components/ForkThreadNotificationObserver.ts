@@ -48,7 +48,6 @@ export function createForkThreadNotificationObserver(
   };
   const disconnect = () => {
     clearTimeout(timer);
-    gate.cancelPending();
     reconnecting = true;
   };
   const observe = (threads: ReadonlyArray<OrchestrationV2ThreadShell>) => {

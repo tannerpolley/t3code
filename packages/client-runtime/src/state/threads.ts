@@ -1115,3 +1115,4 @@ export * from "./threadShell.ts";
 export * from "./threadState.ts";
 
 export { pendingSubagentRequestsByThread } from "./threadShell.ts";
+export * from "./threadTagFilter.ts";
