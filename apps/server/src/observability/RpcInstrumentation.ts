@@ -1,5 +1,6 @@
 import { NOTEBOOK_METHODS } from "@t3tools/contracts";
 import { PROJECT_ARTIFACT_METHODS } from "@t3tools/contracts";
+import { ISSUE_RPC_AGGREGATES } from "../issues/IssueRpcTables.ts";
 import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -253,37 +254,7 @@ const RPC_AGGREGATES = {
   [ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask]: "orchestrationV2",
   [WS_METHODS.serverGetBackgroundTaskResourceUsage]: "orchestrationV2",
   [WS_METHODS.serverGetThreadProcesses]: "orchestrationV2",
-  [WS_METHODS.issuesRepositories]: "issues",
-  [WS_METHODS.issuesList]: "issues",
-  [WS_METHODS.issuesDetail]: "issues",
-  [WS_METHODS.issuesStatusBatch]: "issues",
-  [WS_METHODS.issuesSetState]: "issues",
-  [WS_METHODS.issuesCleanup]: "issues",
-  [WS_METHODS.issuesUnlink]: "issues",
-  [WS_METHODS.issuesSubscribeLinkRefreshes]: "issues",
-  [WS_METHODS.issuesStart]: "issues",
-  [WS_METHODS.issuesQueue]: "issues",
-  [WS_METHODS.issuesUnqueue]: "issues",
-  [WS_METHODS.issuesWorkStatus]: "issues",
-  [WS_METHODS.issuesWorkMilestone]: "issues",
-  [WS_METHODS.issuesRepositoryStatus]: "issues",
-  [WS_METHODS.issuesCloseOut]: "issues",
-  [WS_METHODS.issuesSetPaused]: "issues",
-  [WS_METHODS.issuesSetWorkerLimit]: "issues",
-  [WS_METHODS.issuesSetReadOnlyLimit]: "issues",
-  [WS_METHODS.issuesHandoff]: "issues",
-  [WS_METHODS.issuesCancelRequest]: "orchestration",
-  [WS_METHODS.issuesRestoreRoot]: "orchestration",
-  [WS_METHODS.ownerDecisionsList]: "issues",
-  [WS_METHODS.ownerDecisionsChoose]: "issues",
-  [WS_METHODS.ownerDecisionsSubscribe]: "issues",
-  [WS_METHODS.issuesAssignOrchestrator]: "orchestration",
-  [WS_METHODS.issueChangesList]: "issues",
-  [WS_METHODS.issueChangesDecide]: "issues",
-  [WS_METHODS.issueChangesSubscribe]: "issues",
-  [WS_METHODS.issuesInboxList]: "issues",
-  [WS_METHODS.issuesInboxMarkRead]: "issues",
-  [WS_METHODS.issuesInboxSubscribeUnread]: "issues",
+  ...ISSUE_RPC_AGGREGATES,
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

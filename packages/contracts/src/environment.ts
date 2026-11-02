@@ -9,6 +9,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
+import { IssueCapabilityFields } from "./issue.ts";
 
 export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 export const ORCHESTRATION_PROTOCOL_VERSION_TEXT = "2";
@@ -81,20 +82,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   ),
   pullRequests: Schema.optionalKey(Schema.Boolean),
   pullRequestChecks: Schema.optionalKey(Schema.Boolean),
-  /** Server exposes the GitHub issue repository, list, and detail APIs. */
-  githubIssues: Schema.optionalKey(Schema.Boolean),
-  /** Server supports repository-owned issue work starts and status reads. */
-  issueWork: Schema.optionalKey(Schema.Boolean),
-  issueQueue: Schema.optionalKey(Schema.Boolean),
-  ownerDecisions: Schema.optionalKey(Schema.Boolean),
-  issueChanges: Schema.optionalKey(Schema.Boolean),
-  issueMilestones: Schema.optionalKey(Schema.Boolean),
-  /** Server records external issue activity for repository orchestrators. */
-  issueInbox: Schema.optionalKey(Schema.Boolean),
-  issueContexts: Schema.optionalKey(Schema.Boolean),
-  issueStatusBatch: Schema.optionalKey(Schema.Boolean),
-
-  /** Absent on older servers; serialize context as legacy text for them. */
+  ...IssueCapabilityFields,
   /** Side chats: hidden `lineage.sideChat` forks. Older servers ignore the fork flag. */
   sideChats: Schema.optionalKey(Schema.Boolean),
   /** Every protocol-2 server sends this; older mobile builds still read it. */

@@ -15,15 +15,13 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import {
-  ISSUES_PANEL_REF,
   selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
   selectActiveRightPanelSurface,
-  issueSurface,
   useRightPanelStore,
-  type IssueSurface,
   type RightPanelSurface,
 } from "../rightPanelStore";
+import { ISSUES_PANEL_REF, issueSurface, type IssueSurface } from "../rightPanelIssueSurfaces";
 import { useThreadShell } from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
 

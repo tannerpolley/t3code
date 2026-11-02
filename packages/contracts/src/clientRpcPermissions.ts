@@ -1,5 +1,6 @@
 import { NOTEBOOK_METHODS } from "./notebookRpc.ts";
 import { PROJECT_ARTIFACT_METHODS } from "./projectArtifactRpc.ts";
+import { ISSUE_CLIENT_GUARDED_RPC_SCOPES } from "./issueRpc.ts";
 import { type ServerSettingsPatch, requiredScopesForServerSettingsPatch } from "./settings.ts";
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
@@ -86,19 +87,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
-  [WS_METHODS.issuesSetState]: AuthSourceControlWriteScope,
-  [WS_METHODS.issuesCleanup]: AuthSourceControlWriteScope,
-  [WS_METHODS.issuesUnlink]: AuthOrchestrationOperateScope,
-  [WS_METHODS.issuesCloseOut]: AuthOrchestrationOperateScope,
-  [WS_METHODS.issuesCancelRequest]: AuthOrchestrationOperateScope,
-  [WS_METHODS.issuesRestoreRoot]: AuthOrchestrationOperateScope,
-  [WS_METHODS.issuesAssignOrchestrator]: AuthOrchestrationOperateScope,
-  [WS_METHODS.issuesSetWorkerLimit]: AuthOrchestrationOperateScope,
-  [WS_METHODS.issuesSetReadOnlyLimit]: AuthOrchestrationOperateScope,
-  [WS_METHODS.issuesQueue]: AuthOrchestrationOperateScope,
-  [WS_METHODS.issuesUnqueue]: AuthOrchestrationOperateScope,
-  [WS_METHODS.ownerDecisionsChoose]: AuthOrchestrationOperateScope,
-  [WS_METHODS.issuesInboxMarkRead]: AuthOrchestrationOperateScope,
+  ...ISSUE_CLIENT_GUARDED_RPC_SCOPES,
   // Force stop kills agent processes, as Stop on a terminal does.
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,
   // A guest link hands thread access to someone outside, like a pairing link.

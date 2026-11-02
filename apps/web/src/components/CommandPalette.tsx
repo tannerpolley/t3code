@@ -11,7 +11,7 @@ import { sectionTarget } from "../projectSectionPlacement";
 import { setAddProjectSection } from "../projectSectionPlacement";
 import { folderSubsectionInput } from "../sectionProjectPath";
 import { sectionFolderPath } from "../sectionProjectPath";
-import { ISSUES_PANEL_REF } from "../rightPanelStore";
+import { ISSUES_PANEL_REF } from "../rightPanelIssueSurfaces";
 import { threadIssueRepository } from "./chat/ThreadDetailsIssueRows";
 import { useUiStateStore } from "../uiStateStore";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";

@@ -1,6 +1,6 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import type { IssueSurface } from "~/rightPanelStore";
+import type { IssueSurface } from "~/rightPanelIssueSurfaces";
 
 /** A pull request as both sides name it: the server it is read from, its host, repository and number. */
 interface PullRequestTarget {

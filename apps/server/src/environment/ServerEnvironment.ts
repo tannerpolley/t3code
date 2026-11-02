@@ -1,3 +1,4 @@
+import { ISSUE_CAPABILITIES } from "@t3tools/contracts";
 import {
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -224,15 +225,7 @@ export const make = Effect.gen(function* () {
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
       pullRequests: true,
       pullRequestChecks: true,
-      githubIssues: true,
-      issueWork: true,
-      issueQueue: true,
-      issueChanges: true,
-      ownerDecisions: true,
-      issueMilestones: true,
-      issueInbox: true,
-      issueContexts: true,
-      issueStatusBatch: true,
+      ...ISSUE_CAPABILITIES,
       sideChats: true,
       inlineMessageContext: true,
       requiredWorktreeBootstrap: true,

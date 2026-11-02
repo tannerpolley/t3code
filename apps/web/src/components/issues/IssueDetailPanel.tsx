@@ -70,7 +70,7 @@ import {
   PullRequestLabelChip,
   PullRequestStateGlyph,
 } from "../pullRequest/pullRequestPresentation";
-import { issueSurface } from "~/rightPanelStore";
+import { issueSurface } from "~/rightPanelIssueSurfaces";
 import { rememberIssueOrigin } from "./issuePullRequestOrigin";
 import { useOpenChangeRequestLink, useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";

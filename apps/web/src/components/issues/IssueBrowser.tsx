@@ -18,11 +18,8 @@ import { type ReactNode, type Ref, useEffect, useRef, useState } from "react";
 
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import { cn } from "~/lib/utils";
-import {
-  selectThreadRightPanelState,
-  useRightPanelStore,
-  type IssueSurface,
-} from "~/rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import type { IssueSurface } from "~/rightPanelIssueSurfaces";
 import { useAllEnvironmentShellsBootstrapped, useThreadShell, useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import {

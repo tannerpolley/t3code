@@ -1,7 +1,6 @@
 import * as NotebookConfiguration from "./notebook/NotebookConfiguration.ts";
 import * as NotebookJupyterTransport from "./notebook/JupyterTransport.ts";
 import * as NotebookService from "./notebook/NotebookService.ts";
-import { services as gitHubServices } from "@t3tools/source-control-github/server/driver";
 import * as ResetCreditExpiry from "./provider/ResetCreditExpiry.ts";
 import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -46,12 +45,7 @@ import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
-import * as IssueCleanup from "./issues/IssueCleanup.ts";
-import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
-import * as IssueLinks from "./issues/IssueLinks.ts";
-import * as IssueService from "./issues/IssueService.ts";
-import * as IssueMergeClosing from "./issues/IssueMergeClosing.ts";
-import * as IssueGitHubHost from "./issues/IssueGitHubHost.ts";
+import * as IssueServerLayers from "./issues/IssueServerLayers.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.ts";
@@ -391,13 +385,6 @@ const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(SourceControlRateLimit.layer),
 );
 
-// Issue reads verify the GitHub credential the same way pull request reads do, and share the
-// GitHub quota and rate-limit pause (the built-in drivers' layer, memoized by reference) with them.
-const layerIssueService = IssueService.layer.pipe(
-  Layer.provide(IssueGitHubHost.apiLayer),
-  Layer.provide(gitHubServices),
-);
-
 const layerGitManager = GitManager.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
   Layer.provideMerge(RuntimeLayer.layerProjectSetupScriptRunner),
@@ -545,7 +532,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 );
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
-  Layer.provide(layerIssueService),
+  Layer.provide(IssueServerLayers.layerIssueService),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(layerCheckpointStore),
@@ -623,7 +610,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   layerThreadPullRequestWorker,
   DelegatedTaskAnalytics.layer,
-  IssueMergeClosing.layer.pipe(Layer.provide(layerIssueService)),
+  IssueServerLayers.layerIssueMergeClosing,
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -759,10 +746,6 @@ const layerCommandReadiness = HttpRouter.middleware(
   { global: true },
 );
 
-const layerIssueRoadmap = IssueRoadmap.layer.pipe(
-  Layer.provideMerge(IssueLinks.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
-  Layer.provideMerge(layerIssueService),
-);
 const layerRouterServices = Layer.mergeAll(
   ProjectArtifacts.layer,
   NotebookService.layer.pipe(
@@ -772,14 +755,7 @@ const layerRouterServices = Layer.mergeAll(
     Layer.provide(ServerSecretStore.layer),
   ),
   ThreadWorkspaceService.layer,
-  layerIssueRoadmap,
-  IssueCleanup.layer.pipe(
-    Layer.provide(layerIssueRoadmap),
-    Layer.provide(ProjectionStoreV2.layer),
-    Layer.provide(ProjectStore.layer),
-    Layer.provide(GitVcsDriver.layer),
-    Layer.provide(gitHubServices),
-  ),
+  IssueServerLayers.layerIssueRouterServices,
 );
 const layerRouterRequestContext = Layer.effectContext(
   Effect.context<Layer.Success<typeof layerRouterServices>>(),

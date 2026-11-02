@@ -11,6 +11,13 @@ import { useClosedViewStore } from "./closedViewStore";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 import type { ChatFileAttachment } from "./types";
+import {
+  isIssuesPanelKey,
+  issueSurface,
+  migratePersistedIssueSurface,
+  type IssueListScope,
+  type IssueSurface,
+} from "./rightPanelIssueSurfaces";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -35,19 +42,6 @@ export interface DeviceTabTarget {
   platform: "ios" | "android";
   name: string;
 }
-
-export type IssueSurface = {
-  id: `issue:${string}`;
-  kind: "issue";
-  environmentId?: string;
-  host: string;
-  repository: string;
-  number: number;
-  url?: string;
-};
-
-/** The repository an issue-list surface is narrowed to. */
-export type IssueListScope = { host: string; repository: string };
 
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
@@ -111,13 +105,8 @@ export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
   ThreadId.make("pull-requests-panel"),
 );
-export const ISSUES_PANEL_REF = scopeThreadRef(
-  EnvironmentId.make("issues-panel"),
-  ThreadId.make("issues-panel"),
-);
 
 const isPullRequestsPanelKey = (threadKey: string) => threadKey.endsWith(":pull-requests-panel");
-const isIssuesPanelKey = (threadKey: string) => threadKey.endsWith(":issues-panel");
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
@@ -331,26 +320,6 @@ export function pullRequestSurface(target: {
     number: target.number,
     ...(typeof target.url === "string" ? { url: target.url } : {}),
     ...(target.detailTab === undefined ? {} : { detailTab: target.detailTab }),
-  };
-}
-
-export function issueSurfaceId(
-  target: Omit<IssueSurface, "id" | "kind" | "url">,
-): IssueSurface["id"] {
-  const scope =
-    target.environmentId === undefined ? "" : `${encodeURIComponent(target.environmentId)}:`;
-  return `issue:${scope}${encodeURIComponent(target.host.trim().toLowerCase())}:${encodeURIComponent(target.repository.trim().toLowerCase())}:${target.number}`;
-}
-
-export function issueSurface(target: Omit<IssueSurface, "id" | "kind">): IssueSurface {
-  return {
-    id: issueSurfaceId(target),
-    kind: "issue",
-    ...(target.environmentId === undefined ? {} : { environmentId: target.environmentId }),
-    host: target.host.trim().toLowerCase(),
-    repository: target.repository,
-    number: target.number,
-    ...(typeof target.url === "string" ? { url: target.url } : {}),
   };
 }
 
@@ -588,30 +557,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         }),
                       ];
                     }
-                    if (surface.kind === "issue") {
-                      if (
-                        typeof surface.host !== "string" ||
-                        surface.host.trim().length === 0 ||
-                        typeof surface.repository !== "string" ||
-                        surface.repository.trim().length === 0 ||
-                        typeof surface.number !== "number" ||
-                        !Number.isSafeInteger(surface.number) ||
-                        surface.number < 1
-                      ) {
-                        return [];
-                      }
-                      return [
-                        issueSurface({
-                          ...(typeof surface.environmentId === "string"
-                            ? { environmentId: surface.environmentId }
-                            : {}),
-                          host: surface.host,
-                          repository: surface.repository,
-                          number: surface.number,
-                          ...(typeof surface.url === "string" ? { url: surface.url } : {}),
-                        }),
-                      ];
-                    }
+                    if (surface.kind === "issue") return migratePersistedIssueSurface(surface);
                     if (surface.kind !== "terminal") return [surface];
                     if (
                       !("resourceId" in surface) ||
