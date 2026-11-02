@@ -6,7 +6,6 @@ import {
   type SidebarFamilySeparator,
 } from "./SidebarFamilySeparators.logic";
 import { useEnvironmentProviders } from "../../state/environments";
-import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isProviderNativeSubagentThread,
@@ -61,6 +60,7 @@ import {
   afterTasksIndex,
   childWorktreeLabel,
   resolveSidebarThreadModelLabel,
+  sidebarEffortGlyph,
   sidebarRoleLabel,
   type BackgroundWorkTaskRow,
 } from "./SidebarBackgroundWork.logic";
@@ -257,7 +257,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               }
               effort={
                 row.kind === "subagent" && row.child
-                  ? formatModelSelectionEffort(row.child.modelSelection, provider?.models)
+                  ? sidebarEffortGlyph(provider, row.child.modelSelection)
                   : undefined
               }
               name={

@@ -1,8 +1,7 @@
-import { effortBarHeights } from "../chat/EffortGlyph";
+import { EffortGlyph } from "../chat/EffortGlyph";
 import { ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { modelSelectionEffortLevel } from "@t3tools/client-runtime/state/thread-execution";
 import { sidebarModelParts } from "./SidebarBackgroundWork.logic";
 import { sidebarCaretCount } from "./SidebarColumns.logic";
 
@@ -150,8 +149,8 @@ export function SidebarThreadColumns(props: {
   readonly provider?: ReactNode;
   /** The short model label, split into its name and version. */
   readonly model?: string | undefined;
-  /** The effort label, shown as a five-bar meter. */
-  readonly effort?: string | null | undefined;
+  /** The effort as the composer's bars, named on hover. */
+  readonly effort?: { count: number; filled: number; label: string } | null | undefined;
   readonly name: ReactNode;
   readonly badgeKind?: "issue" | "pr" | undefined;
   readonly issue?: ReactNode;
@@ -255,37 +254,19 @@ function SidebarModelPiece(props: { readonly label: string; readonly children: s
   );
 }
 
-/** Rising bars, one per effort level, filled up to the current one; an effort off that scale shows none. */
-function SidebarEffortMeter(props: { readonly effort: string }) {
-  const { level, name } = modelSelectionEffortLevel(props.effort);
+function SidebarEffortMeter(props: {
+  readonly effort: { count: number; filled: number; label: string };
+}) {
   return (
     <Tooltip>
       <TooltipTrigger
-        render={<span className="sidebar-thread-effort" role="img" aria-label={name} />}
+        render={
+          <span className="sidebar-thread-effort" role="img" aria-label={props.effort.label} />
+        }
       >
-        {level === 0 ? null : <SidebarEffortBars filled={level} />}
+        <EffortGlyph count={props.effort.count} filled={props.effort.filled} size="xs" />
       </TooltipTrigger>
-      <TooltipPopup side="top">{name}</TooltipPopup>
+      <TooltipPopup side="top">{props.effort.label}</TooltipPopup>
     </Tooltip>
-  );
-}
-
-// Upstream's xs EffortGlyph is 18px wide; these 14px bars read as part of the 11px model label.
-function SidebarEffortBars(props: { readonly filled: number }) {
-  const maxBar = 8;
-  return (
-    <svg aria-hidden="true" width={14} height={maxBar} viewBox={`0 0 14 ${maxBar}`}>
-      {effortBarHeights(5, maxBar).map((barHeight, index) => (
-        <rect
-          key={`bar-${barHeight}`}
-          x={index * 3}
-          y={maxBar - barHeight}
-          width={2}
-          height={barHeight}
-          fill="currentColor"
-          opacity={index < props.filled ? 1 : 0.4}
-        />
-      ))}
-    </svg>
   );
 }

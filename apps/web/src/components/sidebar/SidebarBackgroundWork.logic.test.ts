@@ -20,6 +20,7 @@ import {
   describeSidebarBackgroundWork,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
+  sidebarEffortGlyph,
   msUntilPossiblyStuck,
 } from "./SidebarBackgroundWork.logic";
 
@@ -461,5 +462,44 @@ describe("sidebar subtree invalidation", () => {
     expect(sameSidebarSubagentTree("root", before, after)).toBe(true);
     after.set(childKey, [{ ...grandchild, title: "New work" }]);
     expect(sameSidebarSubagentTree("root", before, after)).toBe(false);
+  });
+});
+
+describe("sidebarEffortGlyph", () => {
+  it("draws the composer's bars for the model's own levels, filling all of them for Max", () => {
+    const provider = {
+      models: [
+        {
+          slug: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                type: "select",
+                id: "effort",
+                label: "Effort",
+                options: ["Low", "Medium", "High", "Extra High", "Max"].map((label) => ({
+                  id: label === "Extra High" ? "xhigh" : label.toLowerCase(),
+                  label,
+                })),
+              },
+            ],
+          },
+        },
+      ],
+    } satisfies Pick<ServerProvider, "models">;
+    const opus = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+    const glyph = (effort: string) =>
+      sidebarEffortGlyph(provider, { ...opus, options: [{ id: "effort", value: effort }] });
+    expect(glyph("high")).toEqual({ count: 4, filled: 3, label: "High" });
+    expect(glyph("max")).toEqual({ count: 4, filled: 4, label: "Max" });
+    // An agent's reported effort, by id or label, wins over the selection.
+    expect(sidebarEffortGlyph(provider, opus, "xhigh")).toEqual({
+      count: 4,
+      filled: 4,
+      label: "Extra High",
+    });
+    expect(sidebarEffortGlyph(provider, opus, "Low")?.filled).toBe(1);
   });
 });

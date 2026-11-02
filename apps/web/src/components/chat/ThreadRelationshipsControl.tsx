@@ -21,6 +21,7 @@ import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
 import {
   childWorktreeLabel,
   describeSidebarBackgroundWork,
+  sidebarEffortGlyph,
   sidebarRoleLabel,
 } from "../sidebar/SidebarBackgroundWork.logic";
 import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
@@ -849,20 +850,19 @@ export function ThreadRelationshipsPanel(props: {
     const shownModelLabel = shortModelNames
       ? shortModelName(metadata.modelLabel)
       : metadata.modelLabel;
+    const resolvedSelection = modelSelection
+      ? {
+          ...modelSelection,
+          model: provider
+            ? (resolveSelectableModel(provider.driver, modelSelection.model, provider.models) ??
+              modelSelection.model)
+            : modelSelection.model,
+        }
+      : null;
     const effortLabel =
       agent?.effort ??
-      (modelSelection
-        ? formatModelSelectionEffort(
-            {
-              ...modelSelection,
-              model: provider
-                ? (resolveSelectableModel(provider.driver, modelSelection.model, provider.models) ??
-                  modelSelection.model)
-                : modelSelection.model,
-            },
-            provider?.models,
-          )
-        : null);
+      (resolvedSelection ? formatModelSelectionEffort(resolvedSelection, provider?.models) : null);
+    const effortGlyph = sidebarEffortGlyph(provider, resolvedSelection, agent?.effort);
     const effortHeading = "Selected effort";
     const preview = agent
       ? subagentDetailPreview({
@@ -929,7 +929,7 @@ export function ThreadRelationshipsPanel(props: {
           />
         }
         model={model ? shortModelName(metadata.modelLabel) : undefined}
-        effort={effortLabel}
+        effort={effortGlyph}
         name={
           <span className="flex min-w-0 items-center gap-1">
             <span className="min-w-0 flex-1 truncate">

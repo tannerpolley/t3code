@@ -3,7 +3,7 @@ import { useThreadShell } from "../../state/entities";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { SidebarThreadColumns, SidebarThreadTitle } from "../sidebar/SidebarColumns";
-import { sidebarRoleLabel } from "../sidebar/SidebarBackgroundWork.logic";
+import { sidebarEffortGlyph, sidebarRoleLabel } from "../sidebar/SidebarBackgroundWork.logic";
 import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
 import { shortModelName } from "./ForkModelNames";
 import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
@@ -120,7 +120,15 @@ function WorkflowMemberRow({
               />
             }
             model={shortModelName(member.model ?? thread?.modelSelection.model ?? "")}
-            effort={member.effort ?? null}
+            effort={sidebarEffortGlyph(
+              provider,
+              thread
+                ? { ...thread.modelSelection, model: member.model ?? thread.modelSelection.model }
+                : member.model
+                  ? { instanceId: providerInstanceId, model: member.model }
+                  : null,
+              member.effort,
+            )}
             name={
               <span className="flex min-w-0 items-center gap-1.5">
                 <span className="min-w-0 flex-1 truncate">

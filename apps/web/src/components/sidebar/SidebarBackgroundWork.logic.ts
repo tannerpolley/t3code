@@ -1,11 +1,16 @@
 import { resolveForkSubagentMetadata } from "../chat/ForkModelNames";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  formatModelSelectionEffort,
+  modelSelectionEffortOption,
+  REASONING_EFFORT_OPTION_IDS,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { fileBasename } from "@t3tools/shared/path";
 
 import {
   effectiveThreadRole,
+  type ModelSelection,
   type OrchestrationV2PendingBackgroundTask,
   type ServerProvider,
   type ThreadId,
@@ -18,6 +23,7 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import { threadRoleDisplay, type RoleDisplayThread } from "../threadRoleDisplay";
+import { resolveEffortGlyph } from "../chat/EffortGlyph";
 
 import type { SidebarThreadSummary } from "../../types";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
@@ -96,6 +102,37 @@ export function resolveSidebarThreadModelLabel(
     provider?.models,
   );
   return !includeEffort || effort === null ? modelLabel : `${modelLabel} · ${effort}`;
+}
+
+const effortKey = (text: string) => text.toLowerCase().replace(/[ _-]/g, "");
+
+/**
+ * A row's effort as the composer draws it, from the selection or an effort the agent reported by
+ * name or id. Levels the composer names instead of drawing fill every bar.
+ */
+export function sidebarEffortGlyph(
+  provider: Pick<ServerProvider, "models"> | undefined,
+  selection: ModelSelection | null | undefined,
+  reportedEffort?: string | null,
+) {
+  if (!selection) return null;
+  let option = modelSelectionEffortOption(selection, provider?.models);
+  if (reportedEffort) {
+    const descriptor =
+      option?.descriptor ??
+      provider?.models
+        .find((model) => model.slug === selection.model)
+        ?.capabilities?.optionDescriptors?.find(
+          (candidate): candidate is Extract<typeof candidate, { type: "select" }> =>
+            candidate.type === "select" && REASONING_EFFORT_OPTION_IDS.includes(candidate.id),
+        );
+    const match = descriptor?.options.find((candidate) =>
+      [candidate.id, candidate.label].some((text) => effortKey(text) === effortKey(reportedEffort)),
+    );
+    option = descriptor && match ? { descriptor, value: match.id, label: match.label } : null;
+  }
+  const glyph = option && resolveEffortGlyph(option.descriptor, option.value);
+  return glyph ? { count: glyph.count, filled: glyph.filled, label: glyph.label } : null;
 }
 
 /** The role name a row shows beside its title, matching its role icon. */
