@@ -6,16 +6,31 @@ Only Codex and Claude matter here; mobile is out of scope.
 
 ## Where work is tracked
 
-Plans and bugs live in the fork's GitHub issues. Issue #1 is the roadmap and maintenance tracker.
-Every task starts from an issue: the orchestrator creates one before delegating, and links each worker thread to it (`link_issue`), so the Issues pane shows it In progress. Close an issue when its fix lands on `main`.
+Since 2026-11-02 the fork lives on Forgejo at
+`https://chromebox.taila72856.ts.net:3000/tannerpolley/t3code` (Forgejo 17 on the Chromebox,
+home-server `forgejo`): code, issues and pull requests. `origin` points there. Issue #1 is the
+roadmap and maintenance tracker. Every task starts from an issue: the orchestrator creates one
+before delegating, and links each worker thread to it (`link_issue`), so the Issues pane shows it
+In progress. Close an issue when its fix lands on `main`.
+
+GitHub `tannerpolley/t3code` (remote `github`) is a one-way copy. The desktop user timer
+`forgejo-github-sync` (`~/.local/bin/forgejo-github-sync`, every 5 minutes) pushes `main` and the
+`release/*` and `archive/*` tags without force, and copies issues (title, body, state, labels) and
+issue comments. Issues it creates on GitHub get their own numbers, because Forgejo pull requests
+are not copied; `~/.local/state/forgejo-github-sync/t3code.json` maps them. Edits made on GitHub
+are overwritten. Never open pull requests or write issues there. Its log is
+`journalctl --user -u forgejo-github-sync`.
+
+The upstream remote is named `pingdotgg`, not `upstream`: T3 keys a project on a remote named
+`upstream` before `origin`, which would make the fork a GitHub project again.
 
 ## Forgejo issue host
 
 The fork's issue features (Issues pane, inbox, roadmap, managed `delegate_task(issue=…)`,
-`t3_issue_post`, and `propose_issue_change`) support Forgejo. The pilot runs Forgejo 17 on the
-Chromebox at `https://chromebox.taila72856.ts.net:3000` (home-server `forgejo`). A host is
-Forgejo when an `fj` login key matches it, including the port; other hosts use GitHub. Logins
-are read at server start, so restart T3 after adding one.
+`t3_issue_post`, and `propose_issue_change`) support Forgejo. A host is Forgejo when an `fj`
+login key matches it, including the port; other hosts use GitHub. Logins are read at server
+start, so restart T3 after adding one. Store the Forgejo token with `git credential approve` in
+the git libsecret helper; `fj` does not install a git credential helper.
 
 Forgejo has no sub-issues: T3 writes `Part of #N <!-- t3:parent=N -->` in the child body,
 within the same repository. Blockers use Forgejo issue dependencies; Forgejo refuses to close
@@ -24,19 +39,15 @@ when manual merge detection is enabled, but Forgejo does not close the issues it
 T3 closes them, with a comment, once it sees a pull request linked to a thread merge; for an
 unlinked pull request, put `Closes #N` in a pushed commit message or close the issue explicitly.
 
-The pilot `tannerpolley/process-monitor` lives on Forgejo, with HTTPS `origin` at
-`https://chromebox.taila72856.ts.net:3000/tannerpolley/process-monitor.git` and a read-only
-`github` remote. Store the Forgejo token with `git credential approve` in the git libsecret
-helper; `fj` does not install a git credential helper. GitHub Issues are disabled on the copy.
-There is no push mirror: code and issues live only on the Chromebox (owner decision 2026-10-28).
-
-To move another repository, drain and pause its T3 orchestration. Call `POST /api/v1/repos/migrate`
-with `service: github`, `mirror: false`, and issues, labels, milestones, pull requests and releases
-enabled; read the GitHub credential inside the command with `gh auth token` and never print it.
-Compare counts, then `PATCH` the repository with `autodetect_manual_merge: true` and
-`internal_tracker.enable_issue_dependencies: true`. Re-create blockers with
-`POST issues/{n}/dependencies` and parent markers, set HTTPS `origin` and its libsecret
-credential, then run `gh repo edit --enable-issues=false` on the GitHub copy.
+`tannerpolley/process-monitor` also lives on Forgejo, with no GitHub copy (owner decision
+2026-10-28). To move another repository, drain and pause its T3 orchestration. Call
+`POST /api/v1/repos/migrate` with `service: github`, `mirror: false`, and issues, labels,
+milestones, pull requests and releases enabled; read the GitHub credential inside the command
+with `gh auth token` and never print it. Compare counts, then `PATCH` the repository with
+`autodetect_manual_merge: true` and `internal_tracker.enable_issue_dependencies: true`.
+Re-create blockers with `POST issues/{n}/dependencies` and parent markers, and set HTTPS `origin`.
+Then either turn GitHub Issues off (`gh repo edit --enable-issues=false`) or give the repository
+its own copy timer.
 
 Migrated issues and comments show `Ghost` and an empty `original_author`; the migrator retained
 no GitHub authorship. T3's Forgejo host reads no Projects, and Forgejo sends no ETags, so lists
@@ -44,16 +55,16 @@ are plain re-reads. The `state_reason` “not planned” is represented by a clo
 
 ## Branches and worktrees
 
-- `main` is the only long-lived branch, and GitHub `main` mirrors local `main`.
+- `main` is the only long-lived branch, and Forgejo `main` mirrors local `main`.
 - **Each task:**
-  - Has a GitHub issue, and gets a short-lived branch, cut from `main`, in a worktree under the project's `.worktrees/` folder.
-  - Lands through a pull request: push the branch, open a pull request whose body says `Closes #<issue>`, and link it to the worker's thread and the orchestrator's (`link_pull_request`). Review happens on that branch.
-  - After review, fast-forward `main` to the branch and push `main`. GitHub marks the pull request merged, which keeps `main`'s history linear. Close the issue if it is still open.
+  - Has a Forgejo issue, and gets a short-lived branch, cut from `main`, in a worktree under the project's `.worktrees/` folder.
+  - Lands through a Forgejo pull request: push the branch to `origin`, open a pull request (`fj pr create`) whose body says `Closes #<issue>`, and link it to the worker's thread and the orchestrator's (`link_pull_request`). Review happens on that branch.
+  - After review, fast-forward `main` to the branch and push `main`. Forgejo marks the pull request merged, which keeps `main`'s history linear. Close the issue if it is still open.
   - Then delete the branch (local and remote) and its worktree. A post-merge hook deletes merged local branches that aren't checked out.
 - **Upstream syncs** follow the same path: one issue per sync, and a pull request for the sync branch.
 - **Releases** are tags on `main`: `release/vX.Y.Z`.
 - **Superseded, unmerged work** becomes an `archive/<name>` tag, not a kept branch.
-- **Fixes meant for upstream** go on `upstream-fix/<name>` branches cut from `upstream/main`. Keep each one until its upstream pull request closes. Every public post needs the owner's approval.
+- **Fixes meant for upstream** go on `upstream-fix/<name>` branches cut from `pingdotgg/main` and pushed to `github`, where pull requests to upstream come from. Keep each one until its upstream pull request closes. Every public post needs the owner's approval.
 
 Set up a worktree you created by hand like this. `vp` is not on `PATH` outside the dev scripts:
 
@@ -68,7 +79,7 @@ PATH=$M/node_modules/.bin:$PATH CI=true T3CODE_PROJECT_ROOT=$M node scripts/setu
 - Tests: `vp test run <files>`.
   - Run Git tests with `GIT_CONFIG_GLOBAL=/dev/null`, because the owner's global hooks interfere. One failure about binary diff statistics on Git 2.43 comes from the environment, not the code.
   - A branch that adds an MCP tool must also pass `apps/server/src/mcp/toolkits/core.test.ts`, which checks tool labels.
-- GitHub Actions are off on the fork: every workflow is disabled. Upstream's build and test workflows need its paid Blacksmith runners and would wait in the queue forever, and the rest serve upstream's own repository. A workflow that a sync adds starts out enabled: turn it off with `gh workflow disable -R tannerpolley/t3code <name>`.
+- GitHub Actions are off on the GitHub copy: every workflow is disabled. Upstream's build and test workflows need its paid Blacksmith runners and would wait in the queue forever, and the rest serve upstream's own repository. A workflow that a sync adds starts out enabled: turn it off with `gh workflow disable -R tannerpolley/t3code <name>`.
 
 ## Dev preview
 
@@ -94,7 +105,7 @@ The owner reviews UI changes live before a build, on a dev instance with mock da
 
 The dock icon's **Build & install update** action runs `~/.local/bin/t3-update`. It:
 
-1. pushes `main` if GitHub is behind;
+1. pushes `main` if `origin` is behind;
 2. picks the next patch version after the newest `release/v*` tag (`v2.12.10` → `v2.12.11`) when `main` has moved since that tag; otherwise it offers the existing build;
 3. builds in `.worktrees/release-build`: setup, a migration check on a copy of the owner's database, then the AppImage (`T3CODE_DESKTOP_VERSION=<apps/desktop version>-vX.Y.Z`, such as `0.1.0-v2.12.19`);
 4. stages the AppImage in `~/.local/opt/t3-code/pending/`, replacing any older staged build;
@@ -117,12 +128,12 @@ It checks for staged builds shortly after startup and every four minutes while r
 
 ## Upstream syncs
 
-- A scheduled task merges `upstream/main` daily at 12:00. It uses a short-lived `sync/upstream-<date>` branch that is merged into `main` and deleted. `git rerere` replays repeated conflict resolutions.
+- A scheduled task merges the newest upstream nightly tag (on `pingdotgg/main`) daily at 12:00. It uses a short-lived `sync/upstream-<date>` branch that is merged into `main` and deleted. `git rerere` replays repeated conflict resolutions.
 - Upstream's version wins by default. Drop fork code once upstream covers the same thing.
 - Keep fork code modular so syncs conflict less (issue #24):
   - fork logic lives in fork-owned files, joined to upstream files by small hook points;
   - fork migrations use their own ledger (`ForkMigrations.ts`), and fork RPCs their own group (`ForkWsRpc.ts`).
-- Measure conflicts before a sync with `git merge-tree --write-tree --name-only --no-messages main upstream/main`.
+- Measure conflicts before a sync with `git merge-tree --write-tree --name-only --no-messages main pingdotgg/main`.
 - Conflict resolution can drop fork code without a conflict marker or a failing test: the 2026-10-20 sync lost 23 fork behaviors that its review missed. Before merging a sync into `main`, run `scripts/fork-sync/lost-fork-code.py main <upstream commit merged> <sync branch>`. It lists fork-added lines the merge no longer has and fork files nothing imports any more. Judge every flagged hunk: restyled (keep), replaced by upstream's own version (drop the fork code, citing upstream's), or dropped (restore it). The sync review checks those judgments.
 
 ## Slow request evidence
