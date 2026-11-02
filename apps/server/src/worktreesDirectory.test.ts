@@ -4,7 +4,8 @@ import { PROJECT_LOCAL_WORKTREES } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { managedWorktreesDirectories, resolveWorktreePath } from "./worktreesDirectory.ts";
+import { resolveWorktreePath } from "./forkWorktreePaths.ts";
+import { managedWorktreesDirectories } from "./worktreesDirectory.ts";
 
 it.layer(NodeServices.layer)("worktree locations", (it) => {
   it.effect("resolves default, custom, and project-local paths", () =>

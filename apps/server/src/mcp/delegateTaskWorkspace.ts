@@ -5,7 +5,7 @@ import {
   resolveThreadRole,
   type ThreadRole,
 } from "@t3tools/contracts";
-import { agentWorktreeName } from "@t3tools/shared/git";
+import { agentWorktreeName } from "@t3tools/shared/forkAgentWorktreeName";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
