@@ -239,7 +239,7 @@ export function delegatedTaskProgress(projection: {
     Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
   >;
   readonly pendingBackgroundTasks?: ReadonlyArray<
-    Pick<NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number], "kind">
+    Pick<NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number], "kind" | "awaited">
   >;
   readonly providerThreads?: ReadonlyArray<
     Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
@@ -268,7 +268,7 @@ export function delegatedTaskProgress(projection: {
           (task.completionDelivery?.state === "pending" ||
             task.completionDelivery?.state === "claimed")),
     ) ||
-    (projection.pendingBackgroundTasks?.some((task) => task.kind !== "monitor") ?? false) ||
+    backgroundWorkHoldsCompletion(projection.pendingBackgroundTasks ?? []) ||
     (projection.providerThreads?.some((thread) =>
       backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
     ) ??

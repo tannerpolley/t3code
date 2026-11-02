@@ -288,38 +288,19 @@ it("waits for nested work and retains the report across monitor acknowledgements
       "result_available",
     );
   }
-  assert.equal(
-    delegatedTaskProgress({
-      ...projection,
-      pendingBackgroundTasks: [{ kind: "command" }],
-    }).state,
-    "waiting_for_children",
-  );
-  assert.equal(
-    delegatedTaskProgress({
-      ...projection,
-      pendingBackgroundTasks: [{ kind: "monitor" }],
-    }).state,
-    "result_available",
-  );
-  for (const [awaited, state] of [
-    [true, "waiting_for_children"],
-    [false, "result_available"],
+  // Shell tasks and provider rosters follow one rule: only awaited work or agents hold completion.
+  for (const [tasks, state] of [
+    [[{ taskId: "dev-server", kind: "command" }], "result_available"],
+    [[{ taskId: "background-audit", kind: "command", awaited: true }], "waiting_for_children"],
+    [[{ taskId: "log-watcher", kind: "monitor" }], "result_available"],
+    [[{ taskId: "pr-watch", kind: "monitor", awaited: true }], "waiting_for_children"],
   ] as const) {
-    assert.equal(
-      delegatedTaskProgress({
-        ...projection,
-        providerThreads: [
-          {
-            pendingBackgroundTasks: [
-              { taskId: "background-audit", kind: "command", ...(awaited ? { awaited } : {}) },
-              { taskId: "log-watcher", kind: "monitor" },
-            ],
-          },
-        ],
-      }).state,
-      state,
-    );
+    for (const lists of [
+      { pendingBackgroundTasks: tasks },
+      { providerThreads: [{ pendingBackgroundTasks: tasks }] },
+    ]) {
+      assert.equal(delegatedTaskProgress({ ...projection, ...lists }).state, state);
+    }
   }
   const pending = {
     ...run,
