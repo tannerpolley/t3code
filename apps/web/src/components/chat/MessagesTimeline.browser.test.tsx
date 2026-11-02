@@ -229,6 +229,7 @@ describe("MessagesTimeline work rows", () => {
           ...Array.from({ length: 12 }, (_, index) =>
             message(`Earlier context ${index}`, {}, `context-${index}`),
           ),
+          // Provider commentary folds even when its text is substantial.
           {
             ...message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
             projectedItem: v2Item("assistant_message", { runId, phase: "commentary" }),
@@ -240,6 +241,8 @@ describe("MessagesTimeline work rows", () => {
     );
     const heading = screen.getByRole("button", { name: /^Worked for/ });
     await expect.element(heading).toBeVisible();
+    // Finish initial positioning before measuring a disclosure at the bottom.
+    await props.listRef.current!.scrollToEnd({ animated: false });
     const viewport = props.listRef.current!.getScrollableNode()!;
     await vi.waitFor(() =>
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
@@ -247,7 +250,9 @@ describe("MessagesTimeline work rows", () => {
     expect(viewport.scrollTop).toBeGreaterThan(0);
     const top = heading.element().getBoundingClientRect().top;
     const height = viewport.scrollHeight;
+    using _timers = fakeTimers();
     await heading.click();
+    await act(() => vi.advanceTimersByTime(1000));
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
       expect(heading.element().getBoundingClientRect().top).toBeCloseTo(top, 0);
