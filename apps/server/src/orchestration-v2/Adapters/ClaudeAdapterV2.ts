@@ -163,6 +163,7 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
+  mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
@@ -183,7 +184,6 @@ import {
   type ClaudeScopedLimitNames,
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { t3OrchestrationInstructions } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
@@ -11890,7 +11890,11 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-    const baseEnvironment = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
+    const baseEnvironment = yield* mergeClaudeProcessEnvironment(
+      config,
+      environment,
+      hostEnvironment,
+    );
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
