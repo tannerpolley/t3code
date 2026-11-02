@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as References from "effect/References";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import type * as Tracer from "effect/Tracer";
@@ -113,6 +114,45 @@ layer("NodeSqliteClient", (it) => {
       yield* sql`INSERT INTO created_after_prepare_failure VALUES ('recovered')`;
       assert.deepEqual(yield* select, [{ name: "recovered" }]);
       assert.deepEqual(yield* select.values, [["recovered"]]);
+    }),
+  );
+
+  it.effect("cached statements keep stack text without retaining the caller frame", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      let stack = "request before response";
+      let stackReads = 0;
+      let captured: References.StackFrame | undefined;
+      const original = NodeSqlite.DatabaseSync.prototype.prepare;
+      using _prepare = vi
+        .spyOn(NodeSqlite.DatabaseSync.prototype, "prepare")
+        .mockImplementation(function (this: NodeSqlite.DatabaseSync, query) {
+          captured = Fiber.getCurrent()?.getRef(References.CurrentStackFrame);
+          return original.call(this, query);
+        });
+      const caller = {
+        name: "request-frame",
+        stack: () => {
+          stackReads++;
+          return stack;
+        },
+        parent: undefined,
+      };
+      yield* sql`SELECT 186 AS value`.pipe(
+        Effect.provideService(References.CurrentStackFrame, caller),
+      );
+      stack = "response retained through caller closure";
+      while (captured !== undefined && captured.name !== caller.name) captured = captured.parent;
+      assert(captured !== undefined);
+      assert.equal(captured.stack(), "request before response");
+      assert.deepEqual(
+        yield* sql`SELECT 186 AS value`.pipe(
+          Effect.provideService(References.CurrentStackFrame, caller),
+        ),
+        [{ value: 186 }],
+      );
+      assert.equal(stackReads, 1);
+      assert.equal(_prepare.mock.calls.length, 1);
     }),
   );
 
