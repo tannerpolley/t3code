@@ -64,7 +64,7 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { findIssueProject } from "./issueWorktree.logic";
-import { agentWorktreeName } from "@t3tools/shared/git";
+import { agentWorktreeName } from "@t3tools/shared/forkAgentWorktreeName";
 import {
   PullRequestActorLabel,
   PullRequestLabelChip,

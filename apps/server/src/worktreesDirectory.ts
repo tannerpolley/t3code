@@ -1,4 +1,4 @@
-import { PROJECT_LOCAL_WORKTREES, PROJECT_WORKTREES_FOLDER } from "@t3tools/contracts";
+import { PROJECT_WORKTREES_FOLDER } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,40 +15,12 @@ export function resolveWorktreesDirectory(
   defaultDir: string,
   path: Path.Path,
   home: string,
-  repositoryRoot?: string,
 ): string | null {
-  if (setting === PROJECT_LOCAL_WORKTREES)
-    return repositoryRoot === undefined
-      ? null
-      : path.join(repositoryRoot, PROJECT_WORKTREES_FOLDER);
   if (setting === "") return defaultDir;
   const expanded = expandHomePath(setting, home);
   if (!path.isAbsolute(expanded)) return null;
   const resolved = path.resolve(expanded);
   return isFilesystemRoot(resolved, path) ? null : resolved;
-}
-
-/** One naming policy for ordinary and detached worktree creation. */
-export function resolveWorktreePath(
-  setting: string,
-  defaultDir: string,
-  path: Path.Path,
-  home: string,
-  cwd: string,
-  name: string,
-  repositoryRoot?: string,
-): string | null {
-  const directory = resolveWorktreesDirectory(setting, defaultDir, path, home, repositoryRoot);
-  if (directory === null) return null;
-  const folder = name.replaceAll("/", "-");
-  return setting === PROJECT_LOCAL_WORKTREES
-    ? path.join(directory, folder)
-    : path.join(directory, path.basename(path.resolve(cwd)), folder);
-}
-
-/** Exclude nested worktree trees from T3-controlled workspace scans. */
-export function isProjectLocalWorktreePath(value: string): boolean {
-  return value.replaceAll("\\", "/").split("/").includes(PROJECT_WORKTREES_FOLDER);
 }
 
 /** Callers re-check after resolving symlinks: a link can point at a root. */

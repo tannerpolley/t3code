@@ -34,8 +34,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { agentWorktreeName } from "@t3tools/shared/forkAgentWorktreeName";
 import {
-  agentWorktreeName,
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,

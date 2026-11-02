@@ -34,7 +34,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Context from "effect/Context";
-import { agentWorktreeName } from "@t3tools/shared/git";
+import { agentWorktreeName } from "@t3tools/shared/forkAgentWorktreeName";
 import {
   OrchestratorCommandRejectedError,
   OrchestratorCommandPreviouslyRejectedError,
