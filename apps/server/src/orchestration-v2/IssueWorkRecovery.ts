@@ -1,5 +1,6 @@
 import {
   DEFAULT_REPOSITORY_WORK_SETTINGS,
+  isMovableRepositoryRegistration,
   isRepositoryOrchestratorEligible,
   type IssueWorkRequested,
   type OrchestrationV2AppThread,
@@ -125,16 +126,28 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
   });
 
   /**
-   * Run `retiringRoot` through the root lifecycle guard before committing the events. The
-   * registration event carries the owner: compaction keeps only each thread's newest snapshot.
+   * Run `idleRoot` (a retiring root, or a root moving off its old record) through the root
+   * lifecycle guard before committing the events. The registration event carries the owner:
+   * compaction keeps only each thread's newest snapshot.
    */
   const restore = Effect.fn("restore")(function* (command: Command<"repository.work.restore">) {
     const store = yield* requireStore;
     const owner = yield* store.repositoryOwner(command);
     const target = yield* projectionStore.getThread(command.targetThreadId);
     const targetConfig = target.repositoryOrchestration;
+    const moving =
+      command.expectedRootThreadId === null &&
+      isMovableRepositoryRegistration(targetConfig, command)
+        ? targetConfig
+        : undefined;
     const adapter = yield* providerAdapters.get(target.modelSelection.instanceId);
-    if (!isRepositoryOrchestratorEligible(target, adapter.driver, command))
+    if (
+      !isRepositoryOrchestratorEligible(
+        moving === undefined ? target : { ...target, repositoryOrchestration: undefined },
+        adapter.driver,
+        command,
+      )
+    )
       return yield* Effect.fail(topLevelTargetError);
     const occurredAt = yield* DateTime.now;
     let retiringRoot: OrchestrationV2AppThread | null = null;
@@ -144,23 +157,39 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         owner !== null ||
         command.expectedRevision !== null ||
         command.threadId !== target.id ||
-        targetConfig !== undefined
+        (targetConfig !== undefined && moving === undefined)
       )
         return yield* Effect.fail(
           "A repository orchestrator is already registered. Refresh ownership before registering a lead.",
         );
-      config = {
-        host: command.host,
-        repository: command.repository,
-        repositoryId: command.repositoryId,
-        projectId: command.projectId,
-        launchCommandId: command.commandId,
-        revision: 1,
-        paused: false,
-        ...DEFAULT_REPOSITORY_WORK_SETTINGS,
-        milestones: [],
-        suspendedIssues: [],
-      };
+      if (moving !== undefined && (yield* store.queue(moving)).length > 0)
+        return yield* Effect.fail(
+          "The previous repository still has queued issues. Remove them before moving its root.",
+        );
+      config =
+        moving !== undefined
+          ? {
+              ...moving,
+              host: command.host,
+              repository: command.repository,
+              repositoryId: command.repositoryId,
+              launchCommandId: command.commandId,
+              revision: moving.revision + 1,
+              milestones: [],
+              suspendedIssues: [],
+            }
+          : {
+              host: command.host,
+              repository: command.repository,
+              repositoryId: command.repositoryId,
+              projectId: command.projectId,
+              launchCommandId: command.commandId,
+              revision: 1,
+              paused: false,
+              ...DEFAULT_REPOSITORY_WORK_SETTINGS,
+              milestones: [],
+              suspendedIssues: [],
+            };
     } else {
       const shell = yield* projectionStore.getThread(command.threadId);
       const prior = shell.repositoryOrchestration;
@@ -235,7 +264,7 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         updatedAt: occurredAt,
       },
     });
-    return { retiringRoot, events };
+    return { idleRoot: moving === undefined ? retiringRoot : target, events };
   });
 
   const closeOut = Effect.fn("IssueWorkRecovery.closeOut")(function* (

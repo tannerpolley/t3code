@@ -146,7 +146,7 @@ export function makeRepositoryWorkCommands({
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     const restored = yield* issueWorkRecovery.restore(command).pipe(mapDispatchError(command));
-    if (restored.retiringRoot !== null) yield* guardRootLifecycle(command, restored.retiringRoot);
+    if (restored.idleRoot !== null) yield* guardRootLifecycle(command, restored.idleRoot);
     for (const event of restored.events)
       yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
   });

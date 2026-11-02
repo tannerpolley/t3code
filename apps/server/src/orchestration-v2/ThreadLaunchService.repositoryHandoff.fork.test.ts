@@ -2011,6 +2011,75 @@ describe("fresh-thread repository handoff", () => {
     }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
+  it.effect("moves a paused root to its project's new repository record", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const movingRoot = ThreadId.make("moving-root");
+      const previous = {
+        ...config,
+        host: "git.example.com",
+        repositoryId: "repo:previous",
+        launchCommandId: CommandId.make("moving-root:create"),
+        revision: 4,
+        workerLimit: 3,
+        readOnlyLimit: 2,
+        publishStatusComments: false,
+        suspendedIssues: [{ id: "issue:7", reason: "Blocked" }],
+        handoffHistory: [
+          { threadId: ThreadId.make("earlier-root"), transferredAt: "2026-10-01T00:00:00.000Z" },
+        ],
+      };
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: previous.launchCommandId,
+        threadId: movingRoot,
+        projectId,
+        title: "Repository orchestrator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        repositoryOrchestration: previous,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const unpaused = yield* service
+        .restoreRoot(registerInput(movingRoot, "move:unpaused"))
+        .pipe(Effect.result);
+      assert.equal(unpaused._tag, "Failure");
+      yield* service.setPaused({
+        host: previous.host,
+        repository: previous.repository,
+        paused: true,
+        clientRequestId: CommandId.make("move:pause"),
+      });
+
+      yield* service.restoreRoot(registerInput(movingRoot, "move:register"));
+      assert.isNull(yield* store.repositoryOwner(previous));
+      const owner = yield* store.repositoryOwner(config);
+      assert.equal(owner?.rootThreadId, movingRoot);
+      assert.equal(owner?.revision, 6);
+      const moved = (yield* store.configuration(movingRoot))!;
+      assert.deepInclude(moved, {
+        host: config.host,
+        repository: config.repository,
+        repositoryId: config.repositoryId,
+        revision: 6,
+        paused: true,
+        workerLimit: 3,
+        readOnlyLimit: 2,
+        publishStatusComments: false,
+        milestones: [],
+        suspendedIssues: [],
+        handoffHistory: previous.handoffHistory,
+      });
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
   it.effect("rejects a child restore target without taking locks a child follow-up holds", () =>
     Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;

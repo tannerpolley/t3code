@@ -16,14 +16,15 @@ type Candidate = Pick<
   | "linkedIssue"
   | "repositoryOrchestration"
 >;
+type RepositoryRecord = Pick<RepositoryOrchestration, "projectId" | "host" | "repository"> & {
+  readonly repositoryId?: string;
+};
 
 /** Ownership decisions must apply this to the current projection while holding the target lock. */
 export function isRepositoryOrchestratorEligible(
   thread: Candidate | null,
   driver: ProviderDriverKind | undefined,
-  repository: Pick<RepositoryOrchestration, "projectId" | "host" | "repository"> & {
-    readonly repositoryId?: string;
-  },
+  repository: RepositoryRecord,
 ): boolean {
   if (thread === null) return false;
   const registered = thread.repositoryOrchestration;
@@ -38,11 +39,33 @@ export function isRepositoryOrchestratorEligible(
     thread.worktreePath === null &&
     effectiveThreadRole(thread) === "orchestrator" &&
     (driver === "codex" || driver === "claudeAgent") &&
-    (registered === undefined ||
-      (registered.projectId === repository.projectId &&
-        registered.host.toLowerCase() === repository.host.toLowerCase() &&
-        registered.repository.toLowerCase() === repository.repository.toLowerCase() &&
-        (repository.repositoryId === undefined ||
-          registered.repositoryId === repository.repositoryId)))
+    (registered === undefined || isRegisteredFor(registered, repository))
+  );
+}
+
+function isRegisteredFor(registered: RepositoryOrchestration, repository: RepositoryRecord) {
+  return (
+    registered.projectId === repository.projectId &&
+    registered.host.toLowerCase() === repository.host.toLowerCase() &&
+    registered.repository.toLowerCase() === repository.repository.toLowerCase() &&
+    (repository.repositoryId === undefined || registered.repositoryId === repository.repositoryId)
+  );
+}
+
+/**
+ * A root registered to its project's previous repository record (the project's remote moved
+ * hosts) may register for the project's current record once the old one is paused and settled.
+ */
+export function isMovableRepositoryRegistration(
+  registered: RepositoryOrchestration | undefined,
+  repository: RepositoryRecord & { readonly repositoryId: string },
+): registered is RepositoryOrchestration {
+  return (
+    registered !== undefined &&
+    registered.projectId === repository.projectId &&
+    !isRegisteredFor(registered, repository) &&
+    registered.paused &&
+    registered.retiredToThreadId === undefined &&
+    registered.handoff === undefined
   );
 }

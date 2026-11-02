@@ -43,6 +43,11 @@ export const makeIssueWorkProjection = (
       case "repository.work.restored":
         // Existing roots have no thread.created event to register their first owner.
         if (event.payload.previousRootThreadId === null) {
+          // A root moving to its project's new repository record leaves the old record unowned.
+          yield* sql`
+            DELETE FROM orchestration_v2_projection_repository_orchestration
+            WHERE root_thread_id = ${event.payload.targetThreadId}
+          `;
           yield* registerRepositoryOwner(
             event.payload.repositoryOrchestration,
             event.payload.targetThreadId,

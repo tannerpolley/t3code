@@ -22,6 +22,7 @@ import {
   type RepositoryHandoffInput,
   type RepositoryOrchestratorInput,
   type IssueRepositoryRef,
+  isMovableRepositoryRegistration,
   isRepositoryOrchestratorEligible,
   type RepositoryHandoffRequestInput,
   type RepositoryWorkResult,
@@ -1377,6 +1378,7 @@ export const layer = Layer.effect(
 
     const validateLead = Effect.fn("IssueWorkService.validateLead")(function* (
       input: RepositoryOrchestratorInput,
+      moveTo?: RepositoryWorkRestoreInput,
     ) {
       yield* assertProjectRepository(input.projectId, input);
       const target = yield* threads
@@ -1386,11 +1388,18 @@ export const layer = Layer.effect(
         target === null
           ? undefined
           : yield* adapters.get(target.modelSelection.instanceId).pipe(Effect.mapError(mapError));
-      const registered = target === null ? null : yield* store.configuration(target.id);
+      const registered =
+        target === null ? undefined : ((yield* store.configuration(target.id)) ?? undefined);
       if (
         target === null ||
         !isRepositoryOrchestratorEligible(
-          { ...target, repositoryOrchestration: registered ?? undefined },
+          {
+            ...target,
+            repositoryOrchestration:
+              moveTo !== undefined && isMovableRepositoryRegistration(registered, moveTo)
+                ? undefined
+                : registered,
+          },
           adapter?.driver,
           input,
         )
@@ -1591,7 +1600,7 @@ export const layer = Layer.effect(
     const restoreRoot = Effect.fn("IssueWorkService.restoreRoot")(function* (
       input: Parameters<IssueWorkService["Service"]["restoreRoot"]>[0],
     ) {
-      yield* validateLead(input);
+      yield* validateLead(input, input.expectedRootThreadId === null ? input : undefined);
       if (input.expectedRootThreadId === null) {
         const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
         if (
