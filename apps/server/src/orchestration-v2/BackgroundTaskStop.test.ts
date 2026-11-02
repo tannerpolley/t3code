@@ -1,7 +1,9 @@
 import { ProviderThreadId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { findBackgroundTaskProviderThread } from "./BackgroundTaskStop.ts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+
+import { findBackgroundTaskProviderThread, findWatchedPullRequest } from "./BackgroundTaskStop.ts";
 
 const parentThreadId = ThreadId.make("thread-parent");
 const childThreadId = ThreadId.make("thread-child");
@@ -74,5 +76,29 @@ describe("findBackgroundTaskProviderThread", () => {
     expect(find("call-running")).toBe(codexProviderThread);
     expect(find("call-done")).toBeNull();
     expect(find("call-unknown")).toBeNull();
+  });
+
+  it("maps a pull request watch row back to the watched link", () => {
+    const watch = { startedAt: "2026-10-30T04:13:41.608Z" };
+    const link = (number: number, watched: boolean) => ({
+      host: "github.com",
+      repository: "Acme/App",
+      number,
+      url: `https://github.com/Acme/App/pull/${number}`,
+      source: "agent" as const,
+      snapshot: null,
+      ...(watched ? { watch } : {}),
+    });
+    const links = [link(1, false), link(2, true)];
+    const [row] = derivePendingBackgroundWork({
+      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+      providerThreads: [],
+      turnItems: [],
+      pullRequests: links as never,
+    });
+    expect(findWatchedPullRequest(links as never, row!.taskId)).toBe(links[1]);
+    expect(
+      findWatchedPullRequest(links as never, "pull-request-watch:github.com/acme/app#1"),
+    ).toBeNull();
   });
 });

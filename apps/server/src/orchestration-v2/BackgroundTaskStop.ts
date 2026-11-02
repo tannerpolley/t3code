@@ -1,16 +1,22 @@
 import {
+  CommandId,
   isOrchestrationV2WorkActive,
   type OrchestrationV2ProviderThread,
   OrchestrationV2StopBackgroundTaskError,
   type OrchestrationV2StopBackgroundTaskInput,
   type OrchestrationV2TurnItem,
   type ThreadId,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  pendingBackgroundWorkOfThread,
+  pullRequestWatchTaskId,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -56,6 +62,18 @@ export function findBackgroundTaskProviderThread<
   );
 }
 
+/** The watched pull request a thread's background task id stands for, if it is one. */
+export function findWatchedPullRequest<
+  L extends Pick<ThreadPullRequestLink, "host" | "repository" | "number" | "watch">,
+>(links: ReadonlyArray<L>, taskId: string): (L & { watch: NonNullable<L["watch"]> }) | null {
+  return (
+    links.find(
+      (link): link is L & { watch: NonNullable<L["watch"]> } =>
+        link.watch !== undefined && pullRequestWatchTaskId(link) === taskId,
+    ) ?? null
+  );
+}
+
 /**
  * The provider thread holding one of `threadId`'s background tasks, and the live session running
  * it (null once that session has ended). Null when the task is not one of the thread's.
@@ -95,7 +113,25 @@ export const stopBackgroundTask = Effect.fn("orchestration.stopBackgroundTask")(
   function* (input: OrchestrationV2StopBackgroundTaskInput) {
     const found = yield* findBackgroundTaskSession(input);
     if (found === null) {
-      return yield* stopError(input.taskId, "This background task is no longer running.");
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const { thread } = yield* threads.getThreadRecords(input.threadId, []);
+      const watched = findWatchedPullRequest(threadPullRequestsOf(thread), input.taskId);
+      if (watched === null) {
+        return yield* stopError(input.taskId, "This background task is no longer running.");
+      }
+      // A watch row ends like unwatch_pull_request: the PR stays linked.
+      yield* threads.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make(
+          `server:pull-request-watch-stop:${input.threadId}:${input.taskId}:${watched.watch.startedAt}`,
+        ),
+        threadId: input.threadId,
+        host: watched.host,
+        repository: watched.repository,
+        number: watched.number,
+        watching: false,
+      });
+      return;
     }
     const { providerThread, runtime } = found;
     if (runtime?.stopBackgroundTask === undefined) {

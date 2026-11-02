@@ -329,6 +329,15 @@ export function pendingBackgroundWorkOfThread(
   return [...byId.values()];
 }
 
+/** The background task id of a thread's watch on this pull request; Stop maps it back to the link. */
+export function pullRequestWatchTaskId(
+  link: Pick<ThreadPullRequestLink, "host" | "repository" | "number">,
+): string {
+  // Links store their normalized identity, and this id only has to be unique within the thread,
+  // so it reads those fields instead of parsing the URL.
+  return `pull-request-watch:${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`;
+}
+
 function pullRequestWatchTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
@@ -340,9 +349,7 @@ function pullRequestWatchTasks(
       ? []
       : [
           {
-            // Links store their normalized identity, and this id only has to be unique within the
-            // thread, so it reads those fields instead of parsing the URL.
-            taskId: `pull-request-watch:${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`,
+            taskId: pullRequestWatchTaskId(link),
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
             awaited: true as const,
