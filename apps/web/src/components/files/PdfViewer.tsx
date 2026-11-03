@@ -470,7 +470,7 @@ export default function PdfViewer(props: {
         {bookmarksOpen && outline.length > 0 && (
           <nav
             aria-label="PDF bookmarks"
-            className="w-56 max-w-[40%] shrink-0 overflow-auto border-e border-border/60 py-1"
+            className="w-56 max-w-[40%] min-w-40 shrink-0 overflow-auto border-e border-border/60 py-1"
           >
             <ul>
               {visiblePdfOutline(outline, expanded, section).map(
