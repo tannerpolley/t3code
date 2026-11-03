@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { IssueReadError } from "@t3tools/contracts";
 import * as GitBug from "./IssueGitBugHost.ts";
 import { issueEligibility } from "./IssueEligibility.ts";
 
@@ -63,30 +64,32 @@ it.live.skipIf(!gitBugInstalled)(
       const viaWorktree = yield* GitBug.make(Effect.succeed([{ repository, cwd: worktree }]));
       const viaMain = yield* GitBug.make(Effect.succeed([{ repository, cwd: main }]));
       const scope = { cwd: main, host: GitBug.GIT_BUG_HOST, repository };
+      const headings = "## Reproduction\nKeep this text\n# Expected result\nDone";
 
       const created = yield* viaWorktree.createIssue({
         host: GitBug.GIT_BUG_HOST,
         repository,
         title: "Parser fails",
-        body: "On an empty file.",
+        body: headings,
         milestoneNumber: null,
         writeKey: "key-1",
         recover: false,
       });
+      expect(created.body.startsWith(`${headings}\n`)).toBe(true);
       const ref = { host: GitBug.GIT_BUG_HOST, repository, number: created.issue.number };
       // A retried create finds the first one by its write marker instead of creating another.
       const recovered = yield* viaMain.createIssue({
         ...ref,
         title: "Parser fails",
-        body: "On an empty file.",
+        body: headings,
         milestoneNumber: null,
         writeKey: "key-1",
       });
       expect(recovered.issue).toEqual(created.issue);
       expect(created.issue.title).toBe("Parser fails");
 
-      yield* viaMain.postComment(ref, "Reproduced.");
-      yield* viaMain.updateBody({ ...ref, body: "On an empty or missing file." });
+      yield* viaMain.postComment(ref, headings);
+      yield* viaMain.updateBody({ ...ref, body: headings });
       yield* viaMain.setLabels(ref, ["bug", "parser"], []);
       yield* viaMain.setLabels(ref, ["bug"], ["parser"]);
       yield* viaWorktree.setState({ ...ref, state: "closed" });
@@ -96,9 +99,9 @@ it.live.skipIf(!gitBugInstalled)(
         viewer: "git-bug",
         credentialFingerprint: "",
       });
-      expect(detail.body).toBe("On an empty or missing file.");
+      expect(detail.body).toBe(headings);
       expect(detail.issue).toMatchObject({ state: "closed", labels: [{ name: "bug" }] });
-      expect(detail.comments.map((comment) => comment.body)).toEqual(["Reproduced."]);
+      expect(detail.comments.map((comment) => comment.body)).toEqual([headings]);
       expect(detail.issue.relationshipsComplete).toBe(true);
       expect(issueEligibility(yield* viaMain.workRead(ref))).toBe("closed");
 
@@ -109,6 +112,45 @@ it.live.skipIf(!gitBugInstalled)(
       expect("items" in open && open.items.map((issue) => issue.number)).toEqual([ref.number]);
       // Hosts without blockers or sub-issues must still let managed work start.
       expect(issueEligibility(yield* viaWorktree.workRead(ref))).toBe("eligible");
+
+      // git-bug falls back to its selected bug for an unknown id; T3 must not close that one.
+      yield* run(main, "git-bug", ["bug", "select", created.issue.id]);
+      const missing = yield* viaMain
+        .setState({ ...ref, number: 1, state: "closed" })
+        .pipe(Effect.flip);
+      expect(missing.code).toBe("inaccessible");
+      expect((yield* viaMain.workRead(ref)).state).toBe("open");
+
+      // A failure after \`bug new\` ran leaves the create uncertain, so it is never retried blindly.
+      const late = yield* viaMain
+        .createIssue({
+          ...ref,
+          title: "Late failure",
+          body: "",
+          milestoneNumber: null,
+          writeKey: "key-2",
+          recover: false,
+          onCreated: () =>
+            Effect.fail(
+              new IssueReadError({ operation: "detail", code: "upstream", message: "x" }),
+            ),
+        })
+        .pipe(Effect.flip);
+      expect(late.createOutcome).toBe("uncertain");
+
+      // Linked worktrees share one repository; another repository with the same name is ambiguous.
+      const other = yield* fixture;
+      const both = [
+        { repository, cwd: main },
+        { repository, cwd: worktree },
+      ];
+      yield* (yield* GitBug.make(Effect.succeed(both))).setState({ ...ref, state: "closed" });
+      const ambiguous = yield* GitBug.make(
+        Effect.succeed([...both, { repository, cwd: other.main }]),
+      );
+      const refused = yield* ambiguous.setState({ ...ref, state: "open" }).pipe(Effect.flip);
+      expect(refused.code).toBe("scope-unavailable");
+      expect((yield* viaMain.workRead(ref)).state).toBe("closed");
     }).pipe(Effect.scoped, Effect.provide(services)),
 );
 

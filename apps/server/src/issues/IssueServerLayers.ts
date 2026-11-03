@@ -1,4 +1,5 @@
 import { services as gitHubServices } from "@t3tools/source-control-github/server/driver";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -19,8 +20,16 @@ export const layerIssueService = IssueService.layer.pipe(
   Layer.provide(IssueGitHubHost.apiLayer),
   Layer.provide(gitHubServices),
   // The git-bug host finds opted-in checkouts among the projects (IssueGitBugHost.discover).
+  // The resolver is the server's own (passed through, so it is required), not a second cache.
   Layer.provide(
-    Layer.mergeAll(ProjectStore.layer, RepositoryIdentityResolver.layer, ProcessRunner.layer),
+    Layer.mergeAll(
+      ProjectStore.layer,
+      ProcessRunner.layer,
+      Layer.effect(
+        RepositoryIdentityResolver.RepositoryIdentityResolver,
+        Effect.service(RepositoryIdentityResolver.RepositoryIdentityResolver),
+      ),
+    ),
   ),
 );
 

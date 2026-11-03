@@ -144,7 +144,7 @@ it("addresses Forgejo origins with their port", () => {
     repository: "owner/repo",
   });
   expect(
-    threadIssueRepository({ ...identity, provider: SourceControlProviderKind.make("gitlab") }),
+    threadIssueRepository({ ...identity, provider: SourceControlProviderKind.make("bitbucket") }),
   ).toBeNull();
   expect(
     threadIssueRepository({ ...identity, provider: SourceControlProviderKind.make("github") }),

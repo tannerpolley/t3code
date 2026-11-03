@@ -48,7 +48,7 @@ describe("threadIssueRepository", () => {
   it("skips repositories the issue browser cannot read", () => {
     expect(threadIssueRepository(null)).toBeNull();
     expect(
-      threadIssueRepository(identity({ provider: SourceControlProviderKind.make("gitlab") })),
+      threadIssueRepository(identity({ provider: SourceControlProviderKind.make("bitbucket") })),
     ).toBeNull();
     expect(
       threadIssueRepository(identity({ canonicalKey: "github.example.com/acme/frontend" })),

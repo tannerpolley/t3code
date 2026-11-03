@@ -26,10 +26,10 @@ it("addresses GitHub origins and rejects providers without an issue host", () =>
     }),
   ).toEqual({ host: "github.example", repository: "owner/repo" });
   expect(
-    issueRepositoryOf({ ...identity, provider: SourceControlProviderKind.make("gitlab") }),
+    issueRepositoryOf({ ...identity, provider: SourceControlProviderKind.make("bitbucket") }),
   ).toBeNull();
   // A git-bug opt-in routes to the "git-bug" host whatever the remote's provider.
-  for (const provider of ["forgejo", "gitlab"])
+  for (const provider of ["forgejo", "bitbucket"])
     expect(
       issueRepositoryOf({
         ...identity,
