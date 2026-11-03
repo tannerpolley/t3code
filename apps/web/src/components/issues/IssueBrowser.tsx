@@ -16,7 +16,10 @@ import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { LockIcon, PinIcon, PinOffIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { type ReactNode, type Ref, useEffect, useRef, useState } from "react";
 
-import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
+import {
+  repositoryIssueCapabilities,
+  threadIssueRepository,
+} from "@t3tools/client-runtime/state/issue-work";
 import { cn } from "~/lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import type { IssueSurface } from "~/rightPanelIssueSurfaces";
@@ -51,8 +54,10 @@ import {
   repositoryListed,
   repositoryShown,
   sameRepository,
+  supportedIssueFilters,
   type IssueRepositoryTarget,
 } from "./issueWorkspace.logic";
+import { findIssueProject } from "./issueWorktree.logic";
 
 type IssueError = {
   readonly title: string;
@@ -435,7 +440,23 @@ export function IssueBrowser({
     milestone: preferences.milestone,
     assignee: preferences.assignee,
   };
-  const narrowed = query.trim() !== "" || filters.milestone !== "all" || filters.assignee !== "all";
+  const projects = useProjects();
+  // A repository without a local project has no known host here; it keeps every filter.
+  const capabilitiesOf = (target: IssueRepositoryTarget) =>
+    repositoryIssueCapabilities(findIssueProject(projects, target, null)?.repositoryIdentity) ??
+    undefined;
+  const filtersFor = (target: IssueRepositoryTarget) => {
+    const capabilities = capabilitiesOf(target);
+    const supported = capabilities ? supportedIssueFilters(preferences, capabilities) : preferences;
+    const entryFilters = {
+      ...filters,
+      milestone: supported.milestone,
+      assignee: supported.assignee,
+    };
+    const narrowed =
+      query.trim() !== "" || entryFilters.milestone !== "all" || entryFilters.assignee !== "all";
+    return { filters: entryFilters, narrowed };
+  };
   const stateNoun = (count: number, state: "all" | "open" | "closed") =>
     state === "all" ? (count === 1 ? "issue" : "issues") : state;
   const viewerLogins = [
@@ -461,7 +482,8 @@ export function IssueBrowser({
     const snapshot =
       cachedSnapshot === null ? null : liveIssueWork(cachedSnapshot, target.environmentId);
     const error = scopeKey === null ? null : (issueErrors.get(scopeKey) ?? null);
-    const filteredIssues = snapshot ? filterAndSortIssues(snapshot.issues, filters) : [];
+    const { filters: entryFilters, narrowed } = filtersFor(target);
+    const filteredIssues = snapshot ? filterAndSortIssues(snapshot.issues, entryFilters) : [];
     const settled = scopeKey === null || (snapshot !== null && snapshot.issuesComplete && !error);
     const count = filteredIssues.length;
     const pinned = preferences.pinned.includes(key);
@@ -499,6 +521,8 @@ export function IssueBrowser({
         pinned,
         countLabel,
         selectedIssueNumber,
+        filters: entryFilters,
+        narrowed,
       },
     ];
   });
@@ -524,7 +548,7 @@ export function IssueBrowser({
     />
   );
   const renderRepositoryBody = (entry: RepositoryEntry) => {
-    const { scopeKey, state, snapshot, error, filteredIssues } = entry;
+    const { scopeKey, state, snapshot, error, filteredIssues, filters, narrowed } = entry;
     const message = (text: string) => (
       <p className="py-1.5 ps-6 pe-4 text-xs text-muted-foreground">{text}</p>
     );
@@ -882,6 +906,7 @@ export function IssueBrowser({
           />
           <IssueFilterMenu
             singleRepository={explicitScope}
+            capabilities={urlRepository === null ? undefined : capabilitiesOf(urlRepository)}
             host={explicitScope ? "" : (search.host ?? "")}
             hosts={explicitScope ? [] : hosts}
             onChange={setPreferences}

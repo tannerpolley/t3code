@@ -284,10 +284,12 @@ export const make = Effect.fn("IssueService.make")(function* () {
     pages: ReturnType<typeof makePageCaches>,
     state: IssueListState,
     page: number,
-  ) {
+  ): Effect.fn.Return<PageResult<IssueMilestone>, IssueReadError> {
+    const host = hostFor(scope.host);
+    if (!host.capabilities.milestones) return { items: [], nextPage: null };
     const cached = pages.milestones.get(milestoneListEndpoint(scope, state, page));
     return yield* pageResult(
-      yield* hostFor(scope.host).listMilestonePage(scope, state, page, cached?.etag),
+      yield* host.listMilestonePage(scope, state, page, cached?.etag),
       cached,
     );
   });
