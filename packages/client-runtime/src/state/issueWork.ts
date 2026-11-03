@@ -2,6 +2,7 @@ import {
   ISSUE_HOSTS,
   ISSUE_WORK_STATUS_LABELS,
   issueHostCapabilities,
+  repositoryIssueHostKind,
   type EnvironmentId,
   type IssueWorkStartResult,
   type IssueWorkStatusResult,
@@ -11,14 +12,14 @@ import {
 import { sourceControlClients } from "../sourceControlClients.ts";
 
 export function supportsIssueHost(identity: RepositoryIdentity | null | undefined) {
-  return issueHostCapabilities(identity?.provider) !== null;
+  return issueHostCapabilities(repositoryIssueHostKind(identity)) !== null;
 }
 
 /** What the repository's issue host supports; null where it has no Issues. */
 export function repositoryIssueCapabilities(identity: RepositoryIdentity | null | undefined) {
   return threadIssueRepository(identity) === null
     ? null
-    : issueHostCapabilities(identity?.provider);
+    : issueHostCapabilities(repositoryIssueHostKind(identity));
 }
 
 /** Issues belong to the checkout's origin, including when pull requests target upstream. */
@@ -26,8 +27,9 @@ export function threadIssueRepository(identity: RepositoryIdentity | null | unde
   if (!identity || !supportsIssueHost(identity)) return null;
   const repository =
     identity.origin?.displayName ?? sourceControlClients.repositorySelector(identity);
-  const host = sourceControlClients.changeRequestHost(identity, identity.provider);
-  const served = ISSUE_HOSTS[identity.provider ?? ""]?.hosts;
+  const host =
+    identity.issueHost ?? sourceControlClients.changeRequestHost(identity, identity.provider);
+  const served = ISSUE_HOSTS[repositoryIssueHostKind(identity) ?? ""]?.hosts;
   return host === undefined || repository === null || (served && !served.includes(host))
     ? null
     : { host, repository };

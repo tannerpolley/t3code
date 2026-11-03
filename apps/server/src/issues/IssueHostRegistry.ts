@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 
 import * as IssueForgejoHost from "./IssueForgejoHost.ts";
 import * as IssueGitLabHost from "./IssueGitLabHost.ts";
+import * as IssueGitBugHost from "./IssueGitBugHost.ts";
 import * as IssueGitHubHost from "./IssueGitHubHost.ts";
 import { routeIssueHosts, type IssueHost, type IssueHostContext } from "./IssueHost.ts";
 
@@ -20,5 +21,6 @@ export const make = Effect.fn("IssueHostRegistry.make")(function* (context: Issu
     claimed.set(host, adapter);
     nestedRepositoryHosts.add(host);
   }
+  for (const [host, adapter] of yield* IssueGitBugHost.discover()) claimed.set(host, adapter);
   return { ...routeIssueHosts(github, claimed), nestedRepositoryHosts };
 });

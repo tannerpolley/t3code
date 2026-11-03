@@ -130,7 +130,8 @@ This API replay measures routing and recovery decisions. Screenshots return prod
 `cases/issue-host.ndjson` guards #203's Forgejo guidance. `forgejo-issue-post` exercises the
 `t3_issue_post` description; `forgejo-owner-decision` exercises the owner-decision description;
 `forgejo-queued-issue-not-planned` loads the real queued-issue prompt and checks close plus comment;
-`forgejo-open-blocker` loads the real suspension reason. The latter two use `setup.issueGuidance`
+`forgejo-open-blocker` loads the real suspension reason. `git-bug-issue-post` (#306) checks that
+an agent files a git-bug issue through `t3_issue_post` rather than the `git-bug` CLI. The latter two use `setup.issueGuidance`
 instead of copying product text into fixtures. These are routing guards, not proof that the old
 wording caused a model failure. Live host behavior is covered by the server tests.
 

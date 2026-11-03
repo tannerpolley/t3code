@@ -250,6 +250,31 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     : null;
 });
 
+// The repository's own config (shared by its linked worktrees) owns the opt-in, so it is explicit.
+const withIssueHostOptIn = Effect.fn("RepositoryIdentityResolver.withIssueHostOptIn")(function* (
+  cacheKey: RepositoryIdentityCacheKey,
+  identity: RepositoryIdentity,
+) {
+  const result = yield* (yield* ProcessRunner.ProcessRunner)
+    .run({
+      command: "git",
+      args: [
+        "-C",
+        cacheKey.rootPath,
+        ...(cacheKey.isBare ? ["--git-dir=."] : []),
+        "config",
+        "--get",
+        "t3.issues",
+      ],
+      env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(Effect.option);
+  return result._tag === "Some" && result.value.stdout.trim() === "git-bug"
+    ? { ...identity, issueHost: "git-bug" as const }
+    : identity;
+});
+
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
@@ -284,7 +309,12 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
         Effect.filterOrElse(
           (identity): identity is null => identity === null,
-          (identity) => refine(identity).pipe(Effect.orElseSucceed(() => identity)),
+          (identity) =>
+            refine(identity).pipe(
+              Effect.orElseSucceed(() => identity),
+              Effect.flatMap((refined) => withIssueHostOptIn(cacheKey, refined)),
+              Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+            ),
         ),
       ),
     { capacity: cacheCapacity, timeToLive },

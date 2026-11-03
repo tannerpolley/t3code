@@ -208,6 +208,8 @@ export const RepositoryIdentity = Schema.Struct({
   owner: Schema.optionalKey(TrimmedNonEmptyString),
   name: Schema.optionalKey(TrimmedNonEmptyString),
   origin: Schema.optionalKey(RepositoryOrigin),
+  /** The repository's explicit issue host opt-in (`git config t3.issues git-bug`); see `ISSUE_HOSTS`. */
+  issueHost: Schema.optionalKey(Schema.Literal("git-bug")),
 });
 export type RepositoryIdentity = typeof RepositoryIdentity.Type;
 

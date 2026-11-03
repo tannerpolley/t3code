@@ -48,7 +48,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.owner).toBe("T3Tools");
       expect(identity?.name).toBe("t3code");
       expect(identity?.origin).toBeUndefined();
+      expect(identity?.issueHost).toBeUndefined();
       expect(yield* resolver.resolve(path.join(cwd, ".git"))).toBeNull();
+
+      yield* git(cwd, ["config", "t3.issues", "git-bug"]);
+      expect((yield* resolver.resolve(cwd, { refresh: true }))?.issueHost).toBe("git-bug");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 

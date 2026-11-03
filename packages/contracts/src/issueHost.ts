@@ -29,14 +29,32 @@ const everything: IssueHostCapabilities = {
   liveChanges: true,
 };
 
-/** Issue hosts by source-control provider kind; a provider absent here has no Issues support. */
-export const ISSUE_HOSTS: { readonly [provider: string]: IssueHostRegistration | undefined } = {
+/** Issue hosts by kind (a source-control provider, or an opt-in); a kind absent here has no Issues. */
+export const ISSUE_HOSTS: { readonly [kind: string]: IssueHostRegistration | undefined } = {
   github: { capabilities: everything, hosts: ["github.com"] },
   // Sub-issues are body markers and closing on merge is done by T3; see IssueForgejoHost.ts.
   forgejo: { capabilities: everything },
   // Blocking links depend on project tier; GitLab inbox polling is not implemented.
   gitlab: { capabilities: { ...everything, blockers: false, liveChanges: false } },
+  // Issues stored in the repository itself; served under the host name "git-bug". IssueGitBugHost.ts.
+  "git-bug": {
+    capabilities: {
+      subIssues: false,
+      blockers: false,
+      milestones: false,
+      labels: true,
+      assignees: false,
+      closesFromMergedChangeRequests: false,
+      liveChanges: false,
+    },
+    hosts: ["git-bug"],
+  },
 };
 
-export const issueHostCapabilities = (provider: string | null | undefined) =>
-  provider == null ? null : (ISSUE_HOSTS[provider]?.capabilities ?? null);
+/** The kind of issue host serving a repository: its explicit opt-in, else its provider's. */
+export const repositoryIssueHostKind = (
+  identity: { readonly issueHost?: string; readonly provider?: string } | null | undefined,
+) => identity?.issueHost ?? identity?.provider;
+
+export const issueHostCapabilities = (kind: string | null | undefined) =>
+  kind == null ? null : (ISSUE_HOSTS[kind]?.capabilities ?? null);

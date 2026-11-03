@@ -73,6 +73,27 @@ are unsupported; GitLab has no live issue inbox polling in T3. Labels and milest
 After a linked merge request merges, T3 uses GitLab's closing-reference resolution and closes
 any named issues still open, including cross-project references.
 
+## git-bug issue host (prototype)
+
+A repository opts in with `git config t3.issues git-bug` in any of its checkouts (the setting is
+shared by linked worktrees). Its projects then read and write issues stored in the repository by
+[git-bug](https://github.com/git-bug/git-bug) (v0.11.0 tested) under the issue host `git-bug`,
+while pull requests stay on the remote's host. Install `git-bug` on the server's PATH and create
+or adopt an identity in the repository (`git bug user new`) first. Restart T3 after opting in: as
+with Forgejo logins, the git-bug host is added at server start.
+
+T3 runs every git-bug command for a repository in one in-process queue, because git-bug fails
+rather than waits when another command holds its repository lock; the user's own `git bug`
+commands can still collide with T3's. Issue numbers are git-bug's 7-hex-digit id read as a
+number. Labels work; milestones, sub-issues, blockers, assignees, closing from merged pull
+requests and inbox notifications do not.
+
+Issues travel as `refs/bugs/*` and `refs/identities/*`. Forgejo accepts them; push with
+`git push origin 'refs/bugs/*:refs/bugs/*' 'refs/identities/*:refs/identities/*'`. `git bug
+push` and `git bug pull` do not use git's credential helper, so they fail against an HTTPS
+remote that needs the Forgejo token. A plain fetch of the same refspecs works when only one side
+changed an issue; git-bug then needs its cache rebuilt (`rm -r .git/git-bug/cache`).
+
 ## Branches and worktrees
 
 - `main` is the only long-lived branch, and Forgejo `main` mirrors local `main`.
