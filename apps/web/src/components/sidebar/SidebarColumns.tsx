@@ -172,7 +172,7 @@ export function SidebarThreadColumns(props: {
   }));
   const left = (["location", "role", "provider"] as const).filter((column) => columns[column]);
   const gridTemplateColumns = [
-    "var(--sidebar-caret-width, 1.5rem)",
+    "var(--sidebar-caret-width, 1.125rem)",
     ...left.map((column) => LEFT_TRACKS[column]),
     "minmax(0, 1fr) auto 0.875rem",
   ].join(" ");

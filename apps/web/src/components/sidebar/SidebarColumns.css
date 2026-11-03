@@ -1,5 +1,5 @@
 @utility sidebar-columns-container {
-  --sidebar-caret-width: 1.5rem;
+  --sidebar-caret-width: 1.125rem;
   container: sidebar-columns / inline-size;
   min-width: 0;
   font-size: 0.75rem;
@@ -104,7 +104,7 @@
 /* One caret width for the overlay toggle and the in-row slot, so both carets sit at the same x. */
 .sidebar-caret-toggle > span,
 .sidebar-thread-caret > span {
-  width: var(--sidebar-caret-width, 1.5rem);
+  width: var(--sidebar-caret-width, 1.125rem);
 }
 [data-sidebar-role-display="icon"] .sidebar-role-title {
   display: none;
