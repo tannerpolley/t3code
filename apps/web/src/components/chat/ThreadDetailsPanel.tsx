@@ -290,23 +290,27 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               </div>
             </div>
 
-            {!props.draftId ? (
+            {!props.draftId && visible.issues ? (
               <ThreadLinkedIssueRow environmentId={props.environmentId} threadId={props.threadId} />
             ) : null}
-            {density === "full" && !props.draftId ? (
+            {density === "full" && !props.draftId && (visible.artifacts || visible.issues) ? (
               <div data-thread-details-lists>
-                <ThreadDetailsArtifactRows
-                  key={`${props.environmentId}:${props.projectId}`}
-                  environmentId={props.environmentId}
-                  projectId={props.projectId}
-                  threadId={props.threadId}
-                  workspaceRoot={props.gitCwd}
-                />
-                <ThreadDetailsIssueRows
-                  environmentId={props.environmentId}
-                  threadId={props.threadId}
-                  repositoryIdentity={props.activeProjectRepositoryIdentity}
-                />
+                {visible.artifacts ? (
+                  <ThreadDetailsArtifactRows
+                    key={`${props.environmentId}:${props.projectId}`}
+                    environmentId={props.environmentId}
+                    projectId={props.projectId}
+                    threadId={props.threadId}
+                    workspaceRoot={props.gitCwd}
+                  />
+                ) : null}
+                {visible.issues ? (
+                  <ThreadDetailsIssueRows
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                    repositoryIdentity={props.activeProjectRepositoryIdentity}
+                  />
+                ) : null}
               </div>
             ) : null}
             <Menu
