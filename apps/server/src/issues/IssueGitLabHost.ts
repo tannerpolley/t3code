@@ -22,7 +22,7 @@ import type {
 } from "./IssueHost.ts";
 import { parseParentMarker, updateParentMarker } from "./IssueParentMarker.ts";
 
-const encodeJson = Schema.encodeSync(Schema.UnknownFromJsonString);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const Id = Schema.Int.check(Schema.isGreaterThan(0));
 const Actor = Schema.Struct({ username: Schema.String, avatar_url: Schema.NullOr(Schema.String) });
 const Milestone = Schema.Struct({
