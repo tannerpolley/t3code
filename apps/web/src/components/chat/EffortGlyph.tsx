@@ -10,16 +10,16 @@ const BASELINE_INSET = 2;
 
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 
-// Ultracode changes the workflow, not only intensity, so it keeps its name like Ultrathink.
-// Max is named too, so the full scale stops short of it.
-const NAMED_LEVELS = new Set(["ultracode", "max"]);
+// Max is the top bar. Levels past it keep their names: Ultra, and Ultracode, which changes the
+// workflow like the prompt-injected Ultrathink.
+const NAMED_LEVELS = new Set(["ultra", "ultracode"]);
 const OFF_LEVELS = new Set(["off", "none"]);
 // More bars than this no longer fit the glyph's height in whole pixels.
 const MAX_BARS = 7;
 
 /**
  * Maps a reasoning select to bars: one per ordinary level, filled up to the current one, with an
- * off level as none filled. Max, prompt-injected and workflow levels are named instead of drawn.
+ * off level as none filled. Levels past max and prompt-injected ones are named instead of drawn.
  */
 export function resolveEffortGlyph(descriptor: SelectDescriptor, current: string | null) {
   const special = new Set([...(descriptor.promptInjectedValues ?? []), ...NAMED_LEVELS]);
