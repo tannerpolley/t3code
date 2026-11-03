@@ -34,6 +34,8 @@ export const ISSUE_HOSTS: { readonly [provider: string]: IssueHostRegistration |
   github: { capabilities: everything, hosts: ["github.com"] },
   // Sub-issues are body markers and closing on merge is done by T3; see IssueForgejoHost.ts.
   forgejo: { capabilities: everything },
+  // Blocking links depend on project tier; GitLab inbox polling is not implemented.
+  gitlab: { capabilities: { ...everything, blockers: false, liveChanges: false } },
 };
 
 export const issueHostCapabilities = (provider: string | null | undefined) =>

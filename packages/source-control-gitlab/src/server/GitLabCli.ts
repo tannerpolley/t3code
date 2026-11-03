@@ -273,6 +273,7 @@ export class GitLabCli extends Context.Service<
       /** Keeps sensitive payloads out of argv. */
       readonly stdin?: string;
       readonly maxOutputBytes?: number;
+      readonly allowNonZeroExit?: boolean;
     }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, GitLabCliError>;
 
     readonly listMergeRequests: (input: {
@@ -442,6 +443,9 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         // glab may otherwise prefer a different checkout remote.
         ...(input.host === undefined ? {} : { env: { GITLAB_HOST: input.host } }),
+        ...(input.allowNonZeroExit === undefined
+          ? {}
+          : { allowNonZeroExit: input.allowNonZeroExit }),
         classifyFailure: classifyGlabFailure,
         notFoundDetail: "Merge request not found.",
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,

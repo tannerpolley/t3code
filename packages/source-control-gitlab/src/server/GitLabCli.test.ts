@@ -29,6 +29,26 @@ afterEach(() => {
 });
 
 layer("GitLabCli.layer", (it) => {
+  it.effect("retains mixed auth status output for host discovery", () =>
+    Effect.gen(function* () {
+      const output = {
+        ...processOutput("gitlab.example\n  Logged in to gitlab.example as alice"),
+        exitCode: ChildProcessSpawner.ExitCode(1),
+      };
+      mockedRun.mockReturnValueOnce(Effect.succeed(output));
+      const cli = yield* GitLabCli.GitLabCli;
+      assert.deepStrictEqual(
+        yield* cli.execute({
+          cwd: "/repo",
+          args: ["auth", "status", "--all"],
+          allowNonZeroExit: true,
+        }),
+        output,
+      );
+      expect(mockedRun).toHaveBeenCalledWith(expect.objectContaining({ allowNonZeroExit: true }));
+    }),
+  );
+
   it.effect("parses merge request view output", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(

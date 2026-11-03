@@ -14,7 +14,7 @@ const IssueNumber = Schema.Int.check(
 );
 const Host = TrimmedNonEmptyString.check(Schema.isMaxLength(253));
 const Repository = TrimmedNonEmptyString.check(Schema.isMaxLength(200)).check(
-  Schema.isPattern(/^[^/\s]+\/[^/\s]+$/),
+  Schema.isPattern(/^[^/\s]+(?:\/[^/\s]+)+$/),
 );
 const Cursor = TrimmedNonEmptyString.check(Schema.isMaxLength(4096));
 const IssueUrl = TrimmedNonEmptyString.check(Schema.isMaxLength(2048)).check(

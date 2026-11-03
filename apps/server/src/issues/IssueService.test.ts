@@ -1466,6 +1466,18 @@ it.effect("continues milestones after issues finish and does not request issues 
   }),
 );
 
+it.effect("addresses nested repository paths without truncating the namespace", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({ responses: [httpResponse([]), httpResponse([])] });
+    const issues = yield* service(harness);
+    const list = yield* issues.list({ host: HOST, repository: "group/subgroup/repo" });
+    assert.equal(list.repository.repository, "group/subgroup/repo");
+    assert.isTrue(
+      harness.calls.some((call) => call.url.includes("/repos/group/subgroup/repo/issues?")),
+    );
+  }),
+);
+
 it.effect("rejects a repository that cannot be addressed before calling GitHub", () =>
   Effect.gen(function* () {
     const harness = makeHarness({ responses: [] });

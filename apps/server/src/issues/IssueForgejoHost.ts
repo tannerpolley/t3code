@@ -20,6 +20,9 @@ import type {
   ListMetadata,
 } from "./IssueHost.ts";
 
+import { parseParentMarker, updateParentMarker } from "./IssueParentMarker.ts";
+export { parseParentMarker } from "./IssueParentMarker.ts";
+
 const Id = Schema.Int.check(Schema.isGreaterThan(0));
 const Actor = Schema.Struct({
   login: Schema.String,
@@ -125,11 +128,6 @@ const failure = (
   message: string,
 ) => new IssueReadError({ operation, code, message });
 
-export function parseParentMarker(body: string): number | null {
-  const markers = [...body.matchAll(/<!-- t3:parent=([1-9]\d*) -->/g)];
-  const number = Number(markers[0]?.[1]);
-  return markers.length === 1 && Number.isSafeInteger(number) ? number : null;
-}
 // GitHub's closing keywords, limited to same-repository `#N` references.
 const closingIssueNumbers = (body: string) => [
   ...new Set(
@@ -870,17 +868,7 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
         );
       const raw = yield* readIssue(child);
       const body = raw.body ?? "";
-      const current = parseParentMarker(body);
-      if (action === "remove" && current !== parent.number) return;
-      const marker = `Part of #${parent.number} <!-- t3:parent=${parent.number} -->`;
-      const pattern = /(?:Part of #[1-9]\d* )?<!-- t3:parent=[1-9]\d* -->/g;
-      let replaced = false;
-      const edited = body.replace(pattern, () => {
-        if (action === "remove" || replaced) return "";
-        replaced = true;
-        return marker;
-      });
-      const next = action === "add" && !replaced ? `${body}${body ? "\n\n" : ""}${marker}` : edited;
+      const next = updateParentMarker(body, parent.number, action);
       if (next !== body) yield* patchIssue(child, { body: next });
     }),
     writeManagedComment: Effect.fn("IssueForgejoHost.writeManagedComment")(function* (input) {

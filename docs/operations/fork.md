@@ -34,7 +34,8 @@ The upstream remote is named `pingdotgg`, not `upstream`: T3 keys a project on a
 
 The fork's issue features (Issues pane, inbox, roadmap, managed `delegate_task(issue=…)`,
 `t3_issue_post`, and `propose_issue_change`) support Forgejo. A host is Forgejo when an `fj`
-login key matches it, including the port; other hosts use GitHub. Logins are read at server
+login key matches it, including the port; GitLab hosts come from `glab auth status --all`,
+and unclaimed hosts use GitHub. Logins are read at server
 start, so restart T3 after adding one. Store the Forgejo token with `git credential approve` in
 the git libsecret helper; `fj` does not install a git credential helper.
 
@@ -61,6 +62,15 @@ With Forgejo stopped, set `poster_id` (`publisher_id` for releases, `reviewer_id
 to the local user's id where `original_author_id` is the owner's GitHub id (42780259), and clear
 both `original_author` columns. T3's Forgejo host reads no Projects, and Forgejo sends no ETags, so lists
 are plain re-reads. The `state_reason` “not planned” is represented by a close and a comment.
+
+## GitLab issue host
+
+Authenticate with `glab auth login`, then restart T3 to discover self-managed hosts (including
+ports). GitLab.com is recognized before login. Group and subgroup project paths are supported.
+Sub-issues use the same body markers as Forgejo. Blocking links depend on the project tier and
+are unsupported; GitLab has no live issue inbox polling in T3. Labels and milestones work.
+After a linked merge request merges, T3 uses GitLab's closing-reference resolution and closes
+any named issues still open, including cross-project references.
 
 ## Branches and worktrees
 

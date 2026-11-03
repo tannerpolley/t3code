@@ -26,6 +26,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { IssueListPageCache } from "./IssueListPageCache.ts";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as IssueHostRegistry from "./IssueHostRegistry.ts";
 import {
@@ -100,7 +101,7 @@ function safeHost(value: string): string | null {
 
 function safeRepository(host: string, value: string): string | null {
   const parts = value.trim().split("/");
-  if (parts.length !== 2 || parts.some((part) => part.length === 0 || /[\s\\?#]/u.test(part))) {
+  if (parts.length < 2 || parts.some((part) => part.length === 0 || /[\s\\?#]/u.test(part))) {
     return null;
   }
   const key = sourceControlDefinitions
@@ -108,7 +109,7 @@ function safeRepository(host: string, value: string): string | null {
     .toLowerCase();
   const prefix = `${host.toLowerCase()}/`;
   const repository = key.startsWith(prefix) ? key.slice(prefix.length) : null;
-  return repository !== null && repository.split("/").length === 2 ? repository : null;
+  return repository !== null && repository.split("/").length >= 2 ? repository : null;
 }
 
 const decodeIssueCursor = Schema.decodeUnknownOption(IssueCursorSchema);
@@ -669,4 +670,6 @@ export const make = Effect.fn("IssueService.make")(function* () {
     ),
   });
 });
-export const layer = Layer.effect(IssueService, make()).pipe(Layer.provide(ForgejoCli.layer));
+export const layer = Layer.effect(IssueService, make()).pipe(
+  Layer.provide([ForgejoCli.layer, GitLabCli.layer]),
+);

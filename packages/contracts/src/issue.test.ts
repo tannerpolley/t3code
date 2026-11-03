@@ -74,7 +74,12 @@ describe("GitHub issue contract boundaries", () => {
 
     expect(() => decodeRef({ ...ref, host: " " })).toThrow();
     expect(() => decodeRef({ ...ref, repository: "owner" })).toThrow();
-    expect(() => decodeRef({ ...ref, repository: "owner/repo/extra" })).toThrow();
+    expect(
+      decodeRef({ ...ref, host: "gitlab.com", repository: "group/subgroup/repo" }).repository,
+    ).toBe("group/subgroup/repo");
+    for (const repository of ["owner//repo", "/owner/repo", "owner/repo/", "owner/re po"]) {
+      expect(() => decodeRef({ ...ref, repository })).toThrow();
+    }
     expect(decodeListInput({ ...repository, cursor: "c".repeat(4096) }).cursor).toHaveLength(4096);
     expect(() => decodeListInput({ ...repository, cursor: "c".repeat(4097) })).toThrow();
     expect(() => decodeListInput({ ...repository, state: "closed" })).toThrow();

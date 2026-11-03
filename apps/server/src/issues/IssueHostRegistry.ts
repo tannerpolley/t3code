@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 
 import * as IssueForgejoHost from "./IssueForgejoHost.ts";
+import * as IssueGitLabHost from "./IssueGitLabHost.ts";
 import * as IssueGitHubHost from "./IssueGitHubHost.ts";
 import { routeIssueHosts, type IssueHost, type IssueHostContext } from "./IssueHost.ts";
 
@@ -13,5 +14,7 @@ export const make = Effect.fn("IssueHostRegistry.make")(function* (context: Issu
   const claimed = new Map<string, IssueHost>();
   for (const [host, adapter] of yield* IssueForgejoHost.discover(context))
     claimed.set(host, adapter);
+  for (const [host, adapter] of yield* IssueGitLabHost.discover(context))
+    if (!claimed.has(host)) claimed.set(host, adapter);
   return routeIssueHosts(github, claimed);
 });
