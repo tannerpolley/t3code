@@ -721,7 +721,16 @@ const ProjectSection = memo(function ProjectSection(props: {
   return (
     <li
       ref={setDropRef}
-      className={cn("group/section rounded-md", highlighted && "bg-sidebar-row-selected/60")}
+      className={cn(
+        "group/section rounded-md",
+        highlighted && "bg-sidebar-row-selected/60",
+        // Codex style keeps every icon in one column: sections get a divider instead of an indent,
+        // and a bracket in the gutter marks what a subsection holds.
+        props.codexStyle &&
+          (isSubsection
+            ? "relative"
+            : "not-first:mt-2 rounded-none not-first:border-sidebar-border/70 not-first:border-t not-first:pt-2"),
+      )}
     >
       <SortableSectionHeader
         codexStyle={props.codexStyle}
@@ -734,6 +743,12 @@ const ProjectSection = memo(function ProjectSection(props: {
         onSetExpanded={props.onSetExpanded}
         section={props.section}
       />
+      {props.codexStyle && isSubsection ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute start-0 top-3.5 bottom-1 w-1.5 rounded-ss-sm border-sidebar-foreground/30 border-s border-t"
+        />
+      ) : null}
       {expanded ? (
         <ul
           className={props.codexStyle ? undefined : "ms-3 border-sidebar-border/60 border-s ps-1"}
@@ -862,6 +877,9 @@ function SortableSectionHeader(props: {
           "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           // Codex style sets sections apart from the project rows under them: a small uppercase label.
           codexStyle ? "gap-2 text-2xs font-semibold uppercase tracking-wide" : "gap-1.5 text-xs",
+          codexStyle &&
+            section.parentId !== undefined &&
+            "font-normal normal-case tracking-normal text-sidebar-muted-foreground/60",
           // Its actions menu overlays the row end, so the count moves aside while the menu shows.
           codexStyle &&
             section.custom &&
