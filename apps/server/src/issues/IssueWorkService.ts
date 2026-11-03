@@ -1214,6 +1214,11 @@ export const layer = Layer.effect(
     const workMilestone = Effect.fn("IssueWorkService.workMilestone")(function* (
       input: Parameters<IssueWorkService["Service"]["workMilestone"]>[0],
     ) {
+      if (!(yield* issues.capabilities(input.host)).milestones)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: `The issue host for ${input.repository} does not support milestones.`,
+        });
       const listing = yield* issues.milestoneIssues(input).pipe(Effect.result);
       if (listing._tag === "Success" && listing.success.missing)
         return yield* new IssueWorkError({

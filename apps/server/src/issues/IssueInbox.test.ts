@@ -1085,14 +1085,10 @@ it.effect("includes Forgejo inbox discovery and registered polling", () =>
     const github = fakeGitHub();
     const sql = yield* SqlClient.SqlClient;
     yield* sql`UPDATE orchestration_v2_projection_repository_orchestration SET host = 'forge.example:3000'`;
-    const base = yield* IssueService.IssueService.pipe(Effect.provide(github.service));
     const inbox = yield* IssueInbox.make.pipe(
       Effect.provide(
         Layer.mergeAll(
-          Layer.succeed(IssueService.IssueService, {
-            ...base,
-            isForgejoHost: (host) => Effect.succeed(host === "forge.example:3000"),
-          }),
+          github.service,
           fakeThreads().service,
           Layer.mock(IssueWorkService.IssueWorkService)({
             repositoryStatus: () => Effect.succeed({ rootThreadId: null } as never),

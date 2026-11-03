@@ -6,8 +6,6 @@ import {
   type IssueDetailResult,
   ThreadId,
 } from "@t3tools/contracts";
-import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
-import type { GitHubPullRequestCore } from "@t3tools/source-control-github/server/gitHubPullRequestJson";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -124,7 +122,13 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (legacyPr = true
         }),
         Layer.mock(IssueRoadmap.IssueRoadmap)({ detail: () => Effect.succeed(detail) }),
         Layer.mock(IssueService.IssueService)({
-          isForgejoHost: (host) => Effect.succeed(host === "forge.example:3000"),
+          // Forgejo's adapter has no pull request reader.
+          pullRequest: (input) =>
+            Effect.succeed(
+              input.host === "forge.example:3000"
+                ? null
+                : { state: prState, baseBranch: prBase, headBranch: thread.branch!, headSha: base },
+            ),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadShell: () => Effect.succeed(thread),
@@ -147,15 +151,6 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (legacyPr = true
               pinnedAt: null,
               archivedAt: null,
             }),
-        }),
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          getPullRequestDetail: () =>
-            Effect.succeed({
-              state: prState,
-              baseBranch: prBase,
-              headBranch: thread.branch,
-              headSha: base,
-            } as GitHubPullRequestCore),
         }),
       ),
     ),

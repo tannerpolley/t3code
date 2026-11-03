@@ -1,9 +1,11 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import {
+  ISSUE_HOSTS,
   IssueReadError,
   IsoDateTime,
   type IssueSummary,
@@ -418,6 +420,7 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
     return result.items;
   });
   const transport: IssueHost = {
+    capabilities: ISSUE_HOSTS.forgejo!.capabilities,
     repositoryIdentity,
     resolveLinkedIssue,
     workRead,
@@ -1084,4 +1087,22 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
     }),
   };
   return transport;
+});
+
+/** One Forgejo host per `fj` login, keyed by the login's host name (including its port). */
+export const discover = Effect.fn("IssueForgejoHost.discover")(function* (
+  context: IssueHostContext,
+) {
+  const cli = Option.getOrUndefined(yield* Effect.serviceOption(ForgejoCli.ForgejoCli));
+  const cwd = yield* HostProcess.HomeDirectory;
+  const logins = yield* (cli?.listLogins?.({ cwd, command: "fj" }) ?? Effect.succeed([])).pipe(
+    Effect.catch(() => Effect.logWarning("Forgejo login discovery failed").pipe(Effect.as([]))),
+  );
+  const hosts = new Map<string, IssueHost>();
+  for (const login of logins)
+    hosts.set(
+      login.name,
+      yield* make(context, login.name).pipe(Effect.provideService(ForgejoCli.ForgejoCli, cli!)),
+    );
+  return hosts;
 });

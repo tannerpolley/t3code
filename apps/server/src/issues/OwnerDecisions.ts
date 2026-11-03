@@ -451,6 +451,10 @@ const make = Effect.gen(function* () {
   const syncLabel = Effect.fn("OwnerDecisions.syncLabel")(
     function* (decision: OwnerDecision) {
       if (decision.pendingPublish !== null || decision.state === "publication_mismatch") return;
+      if (!(yield* issues.capabilities(decision.host)).labels) {
+        yield* sql`UPDATE owner_decisions SET pending_label = 0 WHERE id = ${decision.id}`;
+        return;
+      }
       const [open] = yield* sql<{
         count: number;
       }>`SELECT COUNT(*) AS count FROM owner_decisions WHERE host = ${decision.host} AND repository = ${decision.repository} AND issue_number = ${decision.number} AND chosen_option_id IS NULL AND state != 'withdrawn'`;

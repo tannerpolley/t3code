@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { ISSUE_HOSTS, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -1256,6 +1256,7 @@ it.effect(
           repository: "tannerpolley/t3code",
           repositoryId: "repo:plans",
         }),
+      capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
       milestoneIssues: (input) =>
         Effect.succeed({
           issues: [1, 2, 3, 4, 5]

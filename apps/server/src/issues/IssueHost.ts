@@ -10,6 +10,7 @@ import {
   type IssueSummary as IssueSummaryType,
   type IssueWorkRead,
   type IssueChangeBaseline,
+  type IssueHostCapabilities,
   type IssueRepositoryRef,
   type IssueRef,
   type ThreadLinkedIssue as ThreadLinkedIssueType,
@@ -117,7 +118,15 @@ interface ActivityPage<A> {
   readonly complete: boolean;
 }
 
+export interface IssuePullRequestFacts {
+  readonly state: "open" | "closed" | "merged";
+  readonly baseBranch: string;
+  readonly headBranch: string;
+  readonly headSha?: string | null | undefined;
+}
+
 export interface IssueHost {
+  readonly capabilities: IssueHostCapabilities;
   readonly readChangeState: (
     input: import("@t3tools/contracts").IssueRef,
   ) => Effect.Effect<IssueChangeBaseline, IssueReadError>;
@@ -150,8 +159,12 @@ export interface IssueHost {
     readonly blocker: ThreadLinkedIssueType;
     readonly action: "add" | "remove";
   }) => Effect.Effect<void, IssueReadError>;
-  /** Forgejo only: GitHub itself closes the issues a merged pull request's body names. */
+  /** For hosts that do not themselves close the issues a merged pull request's body names. */
   readonly closeIssuesFixedBy?: (pullRequest: IssueRef) => Effect.Effect<void, IssueReadError>;
+  /** Reads a pull request's merge facts; absent where the host cannot verify a squash merge. */
+  readonly pullRequest?: (
+    input: IssueRef & { readonly cwd: string },
+  ) => Effect.Effect<IssuePullRequestFacts, IssueReadError>;
   readonly repositories: () => Effect.Effect<IssueRepositoriesResultType, IssueReadError>;
 
   readonly withIdentity: <A, R>(
@@ -259,8 +272,12 @@ export interface IssueHostContext {
   ) => Effect.Effect<IssueRepositoryScope, IssueReadError>;
 }
 
-export const issueHostFor = (
-  host: string,
-  github: IssueHost,
-  forgejo: ReadonlyMap<string, IssueHost> = new Map(),
-): IssueHost => forgejo.get(host) ?? github;
+/** Hosts claimed by an adapter use it; every other host uses the fallback (GitHub). */
+export const routeIssueHosts = (
+  fallback: IssueHost,
+  claimed: ReadonlyMap<string, IssueHost> = new Map(),
+) => ({
+  forHost: (host: string): IssueHost => claimed.get(host) ?? fallback,
+  all: [fallback, ...claimed.values()] as ReadonlyArray<IssueHost>,
+});
+export type IssueHostRegistry = ReturnType<typeof routeIssueHosts>;

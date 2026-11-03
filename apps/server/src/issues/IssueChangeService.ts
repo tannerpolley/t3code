@@ -8,6 +8,7 @@ import {
   IssueChangeOperation,
   type IssueChangeBaseline,
   type IssueChangeDecisionInput,
+  type IssueHostCapabilities,
   type IssueChangesListInput,
   type ThreadId,
   type ThreadLinkedIssue,
@@ -89,6 +90,36 @@ const githubError = (cause: {
     ...(cause.createOutcome === undefined ? {} : { createOutcome: cause.createOutcome }),
     ...(cause.retryAt === undefined ? {} : { retryAt: cause.retryAt }),
   });
+
+const capabilityNames = {
+  subIssues: "sub-issues",
+  blockers: "blockers",
+  milestones: "milestones",
+} satisfies Partial<Record<keyof IssueHostCapabilities, string>>;
+/** The relationship capabilities an operation needs that the host lacks, by readable name. */
+const unsupportedBy = (can: IssueHostCapabilities, op: IssueChangeOperation) => {
+  const needs: Array<keyof typeof capabilityNames> =
+    op.type === "create"
+      ? [
+          ...(op.parentNumber === undefined ? [] : (["subIssues"] as const)),
+          ...(op.milestoneNumber === null ? [] : (["milestones"] as const)),
+        ]
+      : op.type === "split"
+        ? [
+            "subIssues",
+            ...(op.issues.some((draft) => draft.milestoneNumber !== null)
+              ? (["milestones"] as const)
+              : []),
+          ]
+        : op.type === "milestone"
+          ? ["milestones"]
+          : op.type === "sub_issue"
+            ? ["subIssues"]
+            : op.type === "blocked_by"
+              ? ["blockers"]
+              : [];
+  return needs.filter((name) => !can[name]).map((name) => capabilityNames[name]);
+};
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -216,6 +247,11 @@ const make = Effect.gen(function* () {
         return existing;
       }
       const op = input.operation;
+      const missing = unsupportedBy(yield* issues.capabilities(input.host), op);
+      if (missing.length > 0)
+        return yield* invalid(
+          `This repository's issue host does not support ${missing.join(" or ")}, so it refuses this ${op.type} change.`,
+        );
       const number = op.type === "create" ? op.parentNumber : op.number;
       const baseline =
         number === undefined

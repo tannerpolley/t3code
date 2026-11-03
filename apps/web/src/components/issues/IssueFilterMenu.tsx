@@ -1,3 +1,4 @@
+import type { IssueHostCapabilities } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { ListFilterIcon } from "lucide-react";
 
@@ -92,11 +93,9 @@ function RadioSection<Value extends string>({
 }
 
 /**
- * Every list narrowing behind one control: positive "show" checkboxes for issue states and
- * repository kinds, then milestone, assignment, host and sort. The trigger counts choices that
- * differ from the defaults. A single repository's list drops the repository choices and uses an
- * icon trigger. A one-repository list can pass `view` for a roadmap switch at the top; the trigger
- * does not count it, because the roadmap layout is visible at a glance.
+ * Every list narrowing behind one control. The trigger counts choices that differ from the
+ * defaults; a single repository's list drops the repository choices, uses an icon trigger, and
+ * may pass `view` for an uncounted roadmap switch, since that layout is visible at a glance.
  */
 export function IssueFilterMenu({
   preferences,
@@ -106,6 +105,7 @@ export function IssueFilterMenu({
   onHostChange,
   singleRepository = false,
   view,
+  capabilities,
 }: {
   preferences: IssueFilterPreferences;
   onChange: (preferences: IssueFilterPreferences) => void;
@@ -115,10 +115,17 @@ export function IssueFilterMenu({
   onHostChange: (host: string) => void;
   singleRepository?: boolean;
   view?: { readonly value: IssueView; readonly onChange: (value: IssueView) => void } | undefined;
+  /** A single repository's host; filters it cannot answer are hidden. */
+  capabilities?: Pick<IssueHostCapabilities, "milestones" | "assignees"> | undefined;
 }) {
+  const milestones = capabilities?.milestones !== false;
+  const assignees = capabilities?.assignees !== false;
   const changed = singleRepository
     ? (["open", "closed", "milestone", "assignee"] as const).filter(
-        (key) => preferences[key] !== DEFAULT_ISSUE_FILTER_PREFERENCES[key],
+        (key) =>
+          (key !== "milestone" || milestones) &&
+          (key !== "assignee" || assignees) &&
+          preferences[key] !== DEFAULT_ISSUE_FILTER_PREFERENCES[key],
       ).length
     : changedIssueFilterCount(preferences) + (host === "" ? 0 : 1);
   const checkbox = ([key, label]: readonly [ShowKey, string]) => (
@@ -177,28 +184,36 @@ export function IssueFilterMenu({
             </MenuGroup>
           </>
         )}
-        <MenuSeparator />
-        <RadioSection
-          label="Milestone"
-          value={preferences.milestone}
-          options={[
-            ["all", "All milestones"],
-            ["with", "With milestone"],
-            ["without", "No milestone"],
-          ]}
-          onChange={(milestone) => onChange({ ...preferences, milestone })}
-        />
-        <MenuSeparator />
-        <RadioSection
-          label="Assignment"
-          value={preferences.assignee}
-          options={[
-            ["all", "Everyone"],
-            ["assigned", "Assigned"],
-            ["unassigned", "Unassigned"],
-          ]}
-          onChange={(assignee) => onChange({ ...preferences, assignee })}
-        />
+        {milestones ? (
+          <>
+            <MenuSeparator />
+            <RadioSection
+              label="Milestone"
+              value={preferences.milestone}
+              options={[
+                ["all", "All milestones"],
+                ["with", "With milestone"],
+                ["without", "No milestone"],
+              ]}
+              onChange={(milestone) => onChange({ ...preferences, milestone })}
+            />
+          </>
+        ) : null}
+        {assignees ? (
+          <>
+            <MenuSeparator />
+            <RadioSection
+              label="Assignment"
+              value={preferences.assignee}
+              options={[
+                ["all", "Everyone"],
+                ["assigned", "Assigned"],
+                ["unassigned", "Unassigned"],
+              ]}
+              onChange={(assignee) => onChange({ ...preferences, assignee })}
+            />
+          </>
+        ) : null}
         {hosts.length > 1 ? (
           <>
             <MenuSeparator />

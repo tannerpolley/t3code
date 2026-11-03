@@ -3,7 +3,6 @@ import {
   type IssueCleanupResult,
   type IssueCleanupInput,
 } from "@t3tools/contracts";
-import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -34,7 +33,6 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const storageCleanup = yield* StorageCleanup.StorageCleanup;
-  const github = yield* GitHubPullRequestApi.GitHubPullRequestApi;
   const issues = yield* IssueService.IssueService;
 
   const ensureBranchNotCheckedOut = Effect.fn("IssueCleanup.ensureBranchNotCheckedOut")(function* (
@@ -151,16 +149,11 @@ const make = Effect.gen(function* () {
       }
       for (const pr of detail.issue.pullRequests ?? []) {
         if (merged) break;
-        if (yield* issues.isForgejoHost(pr.host)) continue;
-        const fresh = yield* github
-          .getPullRequestDetail({
-            cwd,
-            host: pr.host,
-            repository: pr.repository,
-            number: pr.number,
-          })
+        const fresh = yield* issues
+          .pullRequest({ cwd, host: pr.host, repository: pr.repository, number: pr.number })
           .pipe(Effect.mapError(unavailable));
         if (
+          fresh === null ||
           fresh.state !== "merged" ||
           fresh.baseBranch !== defaultBranch ||
           fresh.headBranch !== branch ||

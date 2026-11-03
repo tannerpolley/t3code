@@ -3,6 +3,7 @@ import {
   CommandId,
   IssueReadError,
   DEFAULT_SERVER_SETTINGS,
+  ISSUE_HOSTS,
   ThreadId,
   type IssueChangeOperation,
   type IssueChangeBaseline,
@@ -75,7 +76,9 @@ const setup = Effect.gen(function* () {
   let loseBlockerResponse = false;
   let blockersComplete = true;
   let loseLinkResponse = false;
+  let capabilities = ISSUE_HOSTS.github!.capabilities;
   const github = Layer.mock(IssueService.IssueService)({
+    capabilities: () => Effect.sync(() => capabilities),
     readChangeState: (input) => Effect.sync(() => snapshots.get(input.number)!),
     createIssue: (input) =>
       Effect.gen(function* () {
@@ -233,6 +236,9 @@ const setup = Effect.gen(function* () {
     changes,
     calls,
     snapshots,
+    setCapabilities: (value: typeof capabilities) => {
+      capabilities = value;
+    },
     setBlockersComplete: (value: boolean) => {
       blockersComplete = value;
     },
@@ -830,6 +836,14 @@ it.effect("rejects unverifiable blockers and detects changed relationships befor
           ),
         ),
       );
+      h.setCapabilities({ ...ISSUE_HOSTS.github!.capabilities, blockers: false });
+      const refused = yield* Effect.flip(
+        propose({ type: "blocked_by", number: 10, blockerNumber: 11, action: "add" }, "no-host"),
+      );
+      assert.equal(refused.code, "invalid-request");
+      assert.include(refused.message, "does not support blockers");
+      assert.isEmpty(yield* service.list({ threadId }));
+      h.setCapabilities(ISSUE_HOSTS.github!.capabilities);
       h.setBlockersComplete(false);
       assert.isTrue(
         Result.isFailure(

@@ -1,4 +1,5 @@
 import type {
+  IssueHostCapabilities,
   EnvironmentId,
   IssueListState,
   IssueRepositorySummary,
@@ -55,6 +56,18 @@ export function changedIssueFilterCount(preferences: IssueFilterPreferences): nu
   return (Object.keys(DEFAULT_ISSUE_FILTER_PREFERENCES) as Array<keyof IssueFilterPreferences>)
     .filter((key) => key !== "sort" && key !== "pinned")
     .filter((key) => preferences[key] !== DEFAULT_ISSUE_FILTER_PREFERENCES[key]).length;
+}
+
+/** Filters the repository's issue host cannot answer stay at their defaults. */
+export function supportedIssueFilters(
+  preferences: IssueFilterPreferences,
+  capabilities: Pick<IssueHostCapabilities, "milestones" | "assignees">,
+): IssueFilterPreferences {
+  return {
+    ...preferences,
+    milestone: capabilities.milestones ? preferences.milestone : "all",
+    assignee: capabilities.assignees ? preferences.assignee : "all",
+  };
 }
 
 export function issueStateFilter(preferences: IssueFilterPreferences): IssueStateFilter | null {

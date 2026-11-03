@@ -19,6 +19,7 @@ import {
   type IssueListInput as IssueListInputType,
   type IssueListResult as IssueListResultType,
   type IssueListState,
+  type IssueHostCapabilities,
   type IssueRef,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -26,11 +27,10 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { IssueListPageCache } from "./IssueListPageCache.ts";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
-import * as IssueForgejoHost from "./IssueForgejoHost.ts";
-import * as IssueGitHubHost from "./IssueGitHubHost.ts";
+import * as IssueHostRegistry from "./IssueHostRegistry.ts";
 import {
-  issueHostFor,
   type IssueHost,
+  type IssuePullRequestFacts,
   type IssueRepositoryScope,
   type IssuePageResult,
   type PageResult,
@@ -137,10 +137,17 @@ export class IssueService extends Context.Service<
     | "detail"
     | "statuses"
     | "closeIssuesFixedBy"
+    | "capabilities"
+    | "pullRequest"
   > & {
     /** Closes the issues a merged pull request's body names where its host does not. */
     readonly closeIssuesFixedBy: (pullRequest: IssueRef) => Effect.Effect<void, IssueReadError>;
-    readonly isForgejoHost: (host: string) => Effect.Effect<boolean>;
+    /** What the issue host serving `host` supports. */
+    readonly capabilities: (host: string) => Effect.Effect<IssueHostCapabilities>;
+    /** Null where the host's adapter cannot read pull request merge facts. */
+    readonly pullRequest: (
+      input: IssueRef & { readonly cwd: string },
+    ) => Effect.Effect<IssuePullRequestFacts | null, IssueReadError>;
     readonly milestoneIssues: (input: {
       readonly host: string;
       readonly repository: string;
@@ -237,26 +244,8 @@ export const make = Effect.fn("IssueService.make")(function* () {
     return { cwd: homeDirectory, host, repository };
   });
 
-  const github = yield* IssueGitHubHost.make({
-    safeRepository,
-    resolveScope,
-  });
-  const cli = Option.getOrUndefined(yield* Effect.serviceOption(ForgejoCli.ForgejoCli));
-  const forgejo = new Map<string, IssueHost>();
-  const logins = yield* (
-    cli?.listLogins?.({ cwd: homeDirectory, command: "fj" }) ?? Effect.succeed([])
-  ).pipe(
-    Effect.catch(() => Effect.logWarning("Forgejo login discovery failed").pipe(Effect.as([]))),
-  );
-  for (const login of logins) {
-    forgejo.set(
-      login.name,
-      yield* IssueForgejoHost.make({ safeRepository, resolveScope }, login.name).pipe(
-        Effect.provideService(ForgejoCli.ForgejoCli, cli!),
-      ),
-    );
-  }
-  const hostFor = (host: string) => issueHostFor(host, github, forgejo);
+  const registry = yield* IssueHostRegistry.make({ safeRepository, resolveScope });
+  const hostFor = registry.forHost;
   const pageResult = <A>(
     response: PageResponse<A>,
     cached: { readonly page: PageResult<A>; readonly etag: string | undefined } | undefined,
@@ -587,9 +576,13 @@ export const make = Effect.fn("IssueService.make")(function* () {
     },
   );
   return IssueService.of({
-    isForgejoHost: Effect.fn("IssueService.isForgejoHost")((host) =>
-      Effect.succeed(forgejo.has(host.toLowerCase())),
+    capabilities: Effect.fn("IssueService.capabilities")((host) =>
+      Effect.succeed(hostFor(host).capabilities),
     ),
+    pullRequest: Effect.fn("IssueService.pullRequest")(function* (input) {
+      const read = hostFor(input.host).pullRequest;
+      return read === undefined ? null : yield* read(input);
+    }),
     refreshes: SubscriptionRef.changes(refreshes),
     list,
     readChangeState: Effect.fn("IssueService.readChangeState")((input) =>
@@ -608,7 +601,10 @@ export const make = Effect.fn("IssueService.make")(function* () {
       afterWrite(input, hostFor(input.host).setState(input)),
     ),
     closeIssuesFixedBy: Effect.fn("IssueService.closeIssuesFixedBy")((pullRequest) => {
-      const close = hostFor(pullRequest.host).closeIssuesFixedBy;
+      const host = hostFor(pullRequest.host);
+      const close = host.capabilities.closesFromMergedChangeRequests
+        ? host.closeIssuesFixedBy
+        : undefined;
       return close === undefined ? Effect.void : afterWrite(pullRequest, close(pullRequest));
     }),
     detail,
@@ -639,9 +635,9 @@ export const make = Effect.fn("IssueService.make")(function* () {
       afterWrite(input, hostFor(input.host).setLabels(input, ...args)),
     ),
     repositories: Effect.fn("IssueService.repositories")(function* () {
-      if (forgejo.size === 0) return yield* github.repositories();
+      if (registry.all.length === 1) return yield* registry.all[0]!.repositories();
       const results = yield* Effect.forEach(
-        [github, ...forgejo.values()],
+        registry.all,
         (transport) => transport.repositories().pipe(Effect.result),
         { concurrency: 8 },
       );

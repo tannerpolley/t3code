@@ -1,5 +1,5 @@
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { ISSUE_HOSTS, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Queue from "effect/Queue";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -176,6 +176,7 @@ describe("fresh-thread repository handoff", () => {
           subIssuesComplete: true,
           blockersComplete: true,
         }),
+      capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
       milestoneIssues: () =>
         Effect.succeed({
           issues: (options.inventoryIssues?.() ?? [1, 2, 9]).map(summary),

@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { ISSUE_HOSTS, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -484,6 +484,7 @@ function reviewHarness(
           commentCount: 0,
         },
       }),
+    capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
     milestoneIssues: () => Effect.succeed({ issues: [], complete: true }),
   });
   const harness = makeHarness({

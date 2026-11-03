@@ -1,13 +1,12 @@
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import { issueHostCapabilities, type RepositoryIdentity } from "@t3tools/contracts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 export function issueRepositoryOf(identity: RepositoryIdentity | null | undefined) {
-  if (identity?.provider !== "github" && identity?.provider !== "forgejo") return null;
+  if (identity == null || issueHostCapabilities(identity.provider) === null) return null;
   const repository =
     identity.origin?.displayName ?? sourceControlDefinitions.repositorySelector(identity);
-  if (repository === null) return null;
-  return {
-    host: sourceControlDefinitions.changeRequestHost(identity, identity.provider).toLowerCase(),
-    repository,
-  };
+  const host = sourceControlDefinitions.changeRequestHost(identity, identity.provider);
+  return repository === null || host === undefined
+    ? null
+    : { host: host.toLowerCase(), repository };
 }

@@ -51,6 +51,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { findIssueProject } from "./issueWorktree.logic";
+import { repositoryIssueCapabilities } from "@t3tools/client-runtime/state/issue-work";
 import { IssueWorkerLimitControl } from "./IssueWorkerLimitControl";
 import { useRepositoryLeads } from "./IssueStartAction";
 
@@ -479,7 +480,16 @@ export function IssueMilestoneControls(props: {
   reference: IssueRepositoryRef;
   milestone: IssueMilestone;
 }) {
-  return useIssueMilestonesCapability(props.environmentId) ? <Controls {...props} /> : null;
+  const capable = useIssueMilestonesCapability(props.environmentId);
+  const project = findIssueProject(
+    useProjects(),
+    { environmentId: props.environmentId, ...props.reference },
+    null,
+  );
+  // Without a local project the controls stay visible but disabled, as before.
+  const hostHasMilestones =
+    project === null || repositoryIssueCapabilities(project.repositoryIdentity)?.milestones;
+  return capable && hostHasMilestones ? <Controls {...props} /> : null;
 }
 
 function Controls({

@@ -6,7 +6,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import { IssueDetailResult, IssueWorkRead, IssueRepositoriesResult } from "@t3tools/contracts";
 import * as Forgejo from "./IssueForgejoHost.ts";
-import { issueHostFor } from "./IssueHost.ts";
+import { routeIssueHosts } from "./IssueHost.ts";
 import { issueEligibility } from "./IssueEligibility.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
@@ -127,9 +127,10 @@ it.effect("maps issue and milestone pages, preserves ports, and follows paginati
       nextPage: null,
     });
     const github = { ...transport };
-    expect(issueHostFor(host, github, new Map([[host, transport]]))).toBe(transport);
-    expect(issueHostFor("forge.example", github, new Map([[host, transport]]))).toBe(github);
-    expect(issueHostFor(host, github)).toBe(github);
+    const routes = routeIssueHosts(github, new Map([[host, transport]]));
+    expect(routes.forHost(host)).toBe(transport);
+    expect(routes.forHost("forge.example")).toBe(github);
+    expect(routeIssueHosts(github).forHost(host)).toBe(github);
   }),
 );
 

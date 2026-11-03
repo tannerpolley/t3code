@@ -33,6 +33,5 @@ export const layerIssueRouterServices = Layer.mergeAll(
     Layer.provide(ProjectionStoreV2.layer),
     Layer.provide(ProjectStore.layer),
     Layer.provide(GitVcsDriver.layer),
-    Layer.provide(gitHubServices),
   ),
 );

@@ -6,6 +6,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
+  ISSUE_HOSTS,
   IsoDateTime,
   IssueMilestone,
   IssueReadError,
@@ -1959,6 +1960,11 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     },
   );
   return {
+    capabilities: ISSUE_HOSTS.github!.capabilities,
+    pullRequest: (input) =>
+      githubPullRequests
+        .getPullRequestDetail(input)
+        .pipe(Effect.mapError((error) => mapGitHubError("detail", error))),
     activitySince,
     listComments,
     postComment,

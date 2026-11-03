@@ -348,8 +348,9 @@ export const make = Effect.gen(function* () {
         repo.rootThreadId === null ? DISCOVERY_POLL_INTERVAL_MS : REGISTERED_POLL_INTERVAL_MS;
       if (lastPoll !== undefined && now < lastPoll + interval) continue;
       lastPolledAt.set(key, now);
+      const can = yield* issues.capabilities(repo.host);
       yield* Effect.gen(function* () {
-        if ((yield* watcher.poll(repo)) > 0) yield* changed;
+        if (can.liveChanges && (yield* watcher.poll(repo)) > 0) yield* changed;
         if (repo.rootThreadId === null) {
           const [pending] = yield* sql`SELECT event_id FROM issue_inbox_events
             WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId} AND tagged = 1 AND read_at IS NULL LIMIT 1`;
@@ -359,7 +360,7 @@ export const make = Effect.gen(function* () {
             if (repo.rootThreadId !== null) yield* changed;
           }
         }
-        yield* watcher.enforceLabels(repo);
+        if (can.labels) yield* watcher.enforceLabels(repo);
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Issue inbox poll failed", { repository: repo.repository, cause }),
@@ -507,9 +508,10 @@ export const make = Effect.gen(function* () {
       const projectName = projectSlug(
         own[0]?.slice(own[0].indexOf("/") + 1) ?? project?.title ?? "project",
       );
-      const labels = crossProject
-        ? [EXTERNAL_LABEL, fromLabel(projectName), HIGH_PRIORITY_LABEL]
-        : [];
+      const labels =
+        crossProject && (yield* issues.capabilities(target.host)).labels
+          ? [EXTERNAL_LABEL, fromLabel(projectName), HIGH_PRIORITY_LABEL]
+          : [];
       const body = crossProject
         ? `${input.body}\n\n${sourceMarker({
             project: projectName,

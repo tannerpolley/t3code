@@ -1,12 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
+  IssueHostCapabilities,
   IssueListResult,
   RepositoryIdentity,
   ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
+import {
+  repositoryIssueCapabilities,
+  threadIssueRepository,
+} from "@t3tools/client-runtime/state/issue-work";
 import { ChevronDownIcon, FoldVerticalIcon, ListIcon, UnfoldVerticalIcon } from "lucide-react";
 import { IssueRow } from "../issues/IssueRow";
 import * as Option from "effect/Option";
@@ -30,6 +34,7 @@ import {
   filterAndSortIssues,
   issueListStateFor,
   issueStateFilter,
+  supportedIssueFilters,
   type IssueFilterPreferences,
 } from "../issues/issueWorkspace.logic";
 import { Button } from "../ui/button";
@@ -72,11 +77,9 @@ export function threadIssueGroups(
 }
 
 /**
- * The fork's own sibling section for the thread repository's issues, a fork feature kept out of
- * the vanilla Version Control section. Its heading collapses the whole section, expanded by default
- * and remembered per repository. The Filter menu shares the Issues page's saved choices. A row opens
- * the issue beside the thread, and "Browse all issues" opens the full list there; the list stays
- * live while agents work on it.
+ * The fork's own section for the thread repository's issues, kept out of the vanilla Version
+ * Control section. Its collapse state is remembered per repository, and its Filter menu shares
+ * the Issues page's saved choices.
  */
 export function ThreadDetailsIssueRows({
   environmentId,
@@ -90,9 +93,17 @@ export function ThreadDetailsIssueRows({
   const enabled = useClientSettings((settings) => settings.versionControlIssues);
   const environment = useEnvironment(environmentId);
   const target = threadIssueRepository(repositoryIdentity);
+  const capabilities = repositoryIssueCapabilities(repositoryIdentity);
   const capable = environment?.serverConfig?.environment.capabilities.githubIssues === true;
-  if (!enabled || target === null || !capable) return null;
-  return <IssueRows environmentId={environmentId} threadId={threadId} {...target} />;
+  if (!enabled || target === null || capabilities === null || !capable) return null;
+  return (
+    <IssueRows
+      environmentId={environmentId}
+      threadId={threadId}
+      capabilities={capabilities}
+      {...target}
+    />
+  );
 }
 
 function IssueRows({
@@ -100,13 +111,16 @@ function IssueRows({
   threadId,
   host,
   repository,
+  capabilities,
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
   host: string;
   repository: string;
+  capabilities: IssueHostCapabilities;
 }) {
-  const [preferences, setPreferences] = useIssueFilterPreferences();
+  const [savedPreferences, setPreferences] = useIssueFilterPreferences();
+  const preferences = supportedIssueFilters(savedPreferences, capabilities);
   const [issueView, setIssueView] = useIssueView(host, repository);
   const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
     { environmentId, host, repository },
@@ -196,9 +210,10 @@ function IssueRows({
             hosts={[]}
             onChange={setPreferences}
             onHostChange={() => {}}
-            preferences={preferences}
+            preferences={savedPreferences}
             singleRepository
             view={{ value: issueView, onChange: setIssueView }}
+            capabilities={capabilities}
           />
         </div>
       </div>
