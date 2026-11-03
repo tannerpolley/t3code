@@ -416,7 +416,6 @@ export function ThreadDetailsArtifactRows({
                             className={`size-3 shrink-0${sectionCollapsed ? " -rotate-90" : ""}`}
                           />
                           <span className="min-w-0 truncate">{group.name}</span>
-                          <span className="tabular-nums">{group.artifacts.length}</span>
                         </button>
                       </h4>
                       <div className={HOVER_REVEAL}>
