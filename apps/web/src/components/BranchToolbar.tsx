@@ -13,7 +13,7 @@ import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { fileBasename } from "@t3tools/shared/path";
-import { FolderGit2Icon, FolderGitIcon, FolderRootIcon, PlusIcon, ScaleIcon } from "lucide-react";
+import { FolderRootIcon, PlusIcon, ScaleIcon } from "lucide-react";
 import {
   type Ref,
   type MouseEvent as ReactMouseEvent,
@@ -73,6 +73,7 @@ import {
 import { Separator } from "./ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
+import { WorktreeIcon } from "./WorktreeIcon";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
@@ -200,13 +201,10 @@ const RunContextSelector = memo(function RunContextSelector({
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
-  // An existing worktree outranks the mode; FolderGit2 is only a worktree not made yet.
   const WorkspaceIcon =
-    forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
-      ? FolderGit2Icon
-      : activeWorktreePath
-        ? FolderGitIcon
-        : FolderRootIcon;
+    forceNewWorktree || effectiveEnvMode === "worktree" || activeWorktreePath
+      ? WorktreeIcon
+      : FolderRootIcon;
   const workspaceLabel = forceNewWorktree
     ? resolveEnvModeLabel("worktree")
     : envModeLocked
@@ -474,7 +472,7 @@ const RunContextSelector = memo(function RunContextSelector({
             <MenuRadioItem disabled={envModeLocked || forceNewWorktree} value="local" closeOnClick>
               <span className="flex min-w-0 items-center gap-1.5">
                 {activeWorktreePath ? (
-                  <FolderGitIcon className="size-3" />
+                  <WorktreeIcon className="size-3" />
                 ) : (
                   <FolderRootIcon className="size-3" />
                 )}
@@ -483,7 +481,7 @@ const RunContextSelector = memo(function RunContextSelector({
             </MenuRadioItem>
             <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
               <span className="flex min-w-0 items-center gap-1.5">
-                <FolderGit2Icon className="size-3" />
+                <WorktreeIcon className="size-3" />
                 <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
               </span>
             </MenuRadioItem>

@@ -16,7 +16,8 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { FolderGitIcon, TerminalIcon } from "lucide-react";
+import { TerminalIcon } from "lucide-react";
+import { WorktreeIcon } from "./WorktreeIcon";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
@@ -596,7 +597,7 @@ export function ThreadWorktreeIndicator({
           />
         }
       >
-        <FolderGitIcon className="size-3.5 shrink-0 text-icon-muted" />
+        <WorktreeIcon className="size-3.5 shrink-0 text-icon-muted" />
       </TooltipTrigger>
       <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>

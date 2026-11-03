@@ -1,5 +1,6 @@
 import type { ProviderDriverKind } from "@t3tools/contracts";
-import { FolderGitIcon, FolderRootIcon, GitBranchIcon } from "lucide-react";
+import { FolderRootIcon, GitBranchIcon } from "lucide-react";
+import { WorktreeIcon } from "./WorktreeIcon";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
@@ -8,9 +9,9 @@ import { MiddleTruncate } from "./ui/middle-truncate";
 
 /**
  * Flip this while reviewing command-palette thread subtitles.
- * - favicon-workspace-harness: favicon + FolderRoot/FolderGit + branch + harness (default)
+ * - favicon-workspace-harness: favicon + FolderRoot/worktree + branch + harness (default)
  * - favicon-workspace: same without harness
- * - favicon-branch-harness: GitBranch for local, FolderGit for worktrees, + harness
+ * - favicon-branch-harness: GitBranch for local, the worktree glyph for worktrees, + harness
  */
 export type ThreadCommandSubtitleVariant =
   | "favicon-workspace-harness"
@@ -27,7 +28,7 @@ export function CommandPaletteMetaDot() {
 
 function WorkspaceIcon(props: { variant: ThreadCommandSubtitleVariant; isWorktree: boolean }) {
   if (props.isWorktree) {
-    return <FolderGitIcon className={COMMAND_PALETTE_META_ICON_CLASS} aria-hidden />;
+    return <WorktreeIcon className={COMMAND_PALETTE_META_ICON_CLASS} aria-hidden />;
   }
   if (props.variant === "favicon-branch-harness") {
     return <GitBranchIcon className={COMMAND_PALETTE_META_ICON_CLASS} aria-hidden />;

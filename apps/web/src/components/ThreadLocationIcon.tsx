@@ -1,4 +1,4 @@
-import { GitBranchIcon, FolderGit2Icon, FolderGitIcon, FolderRootIcon } from "lucide-react";
+import { GitBranchIcon, FolderRootIcon } from "lucide-react";
 import {
   useEnvironmentIdentities,
   useEnvironmentMachines,
@@ -7,18 +7,19 @@ import {
 import type { SidebarThreadSummary } from "../types";
 import { isThreadPreparingWorktree, threadLocation } from "./ThreadLocationIcon.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { WorktreeIcon } from "./WorktreeIcon";
 
 type LocatedThread = Pick<SidebarThreadSummary, "environmentId" | "worktreePath"> & {
   readonly source?: SidebarThreadSummary["source"];
 };
 
-// Checkout icons, matching the composer's workspace control: an existing worktree is
-// FolderGit and a worktree still being made is FolderGit2. The main checkout takes FolderRoot,
-// because the plain folder means the project and the computer means the environment.
+// Checkout icons, matching the composer's workspace control. A worktree is the branch glyph, in
+// the foreground color like the pull request icons beside it, and muted while it is being made.
+// The main checkout takes FolderRoot: the plain folder means the project.
 const CHECKOUT_ICON = {
   local: FolderRootIcon,
-  worktree: FolderGitIcon,
-  preparing: FolderGit2Icon,
+  worktree: WorktreeIcon,
+  preparing: WorktreeIcon,
 };
 
 /** The location mark is independent of the row's caret, provider and role. */
@@ -41,7 +42,11 @@ export function ThreadLocationIcon({
     <span
       role="img"
       aria-label={location.label}
-      className="inline-flex shrink-0 text-muted-foreground"
+      className={`inline-flex shrink-0 ${
+        CheckoutIcon === WorktreeIcon && location.kind === "worktree"
+          ? "text-foreground"
+          : "text-muted-foreground"
+      }`}
     >
       <CheckoutIcon aria-hidden className="size-3 shrink-0" />
     </span>
