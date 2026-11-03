@@ -500,7 +500,7 @@ export default function PdfViewer(props: {
                       <span aria-hidden className="size-7 shrink-0 sm:size-6" />
                     )}
                     <Button
-                      className="min-w-0 flex-1 justify-start"
+                      className="min-w-0 flex-1 justify-start text-start wrap-anywhere"
                       variant={here ? "secondary" : "ghost"}
                       size="sm-multiline"
                       disabled={entry.page === null}
