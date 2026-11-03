@@ -15,7 +15,9 @@ export function issueContextMetadata(
   const url = new URL(issue.url);
   return {
     host: url.host,
-    repository: url.pathname.split("/").slice(1, 3).join("/"),
+    repository: url.pathname.includes("/-/issues/")
+      ? url.pathname.slice(1, url.pathname.indexOf("/-/issues/"))
+      : url.pathname.split("/").slice(1, 3).join("/"),
     number: issue.number,
     title: issue.title.slice(0, 2048),
     url: issue.url,

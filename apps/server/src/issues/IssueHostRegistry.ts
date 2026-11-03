@@ -14,7 +14,11 @@ export const make = Effect.fn("IssueHostRegistry.make")(function* (context: Issu
   const claimed = new Map<string, IssueHost>();
   for (const [host, adapter] of yield* IssueForgejoHost.discover(context))
     claimed.set(host, adapter);
-  for (const [host, adapter] of yield* IssueGitLabHost.discover(context))
-    if (!claimed.has(host)) claimed.set(host, adapter);
-  return routeIssueHosts(github, claimed);
+  const nestedRepositoryHosts = new Set<string>();
+  for (const [host, adapter] of yield* IssueGitLabHost.discover(context)) {
+    if (claimed.has(host)) continue;
+    claimed.set(host, adapter);
+    nestedRepositoryHosts.add(host);
+  }
+  return { ...routeIssueHosts(github, claimed), nestedRepositoryHosts };
 });

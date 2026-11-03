@@ -93,7 +93,7 @@ const milestone = (
   scope: { host: string; repository: string },
   raw: typeof Milestone.Type,
 ): IssueMilestone => ({
-  number: raw.id,
+  number: raw.iid,
   title: raw.title,
   state: raw.state === "active" ? "open" : "closed",
   dueAt: raw.due_date ? `${raw.due_date}T00:00:00Z` : null,
@@ -271,6 +271,20 @@ export const make = Effect.fn("IssueGitLabHost.make")(function* (
       { method: "PUT", body },
     );
   });
+  const resolveMilestone = Effect.fn("IssueGitLabHost.resolveMilestone")(function* (
+    scope: IssueRepositoryScope,
+    number: number,
+  ) {
+    const rows = yield* request(
+      scope,
+      `${projectPath(scope.repository)}/milestones?iids[]=${number}`,
+      Schema.Array(Milestone),
+    );
+    const found = rows.find((row) => row.iid === number);
+    if (!found)
+      return yield* failure("detail", "inaccessible", "The GitLab milestone was not found.");
+    return found;
+  });
   const baseline = Effect.fn("IssueGitLabHost.baseline")(function* (
     scope: { host: string; repository: string },
     raw: RawIssue,
@@ -280,7 +294,7 @@ export const make = Effect.fn("IssueGitLabHost.make")(function* (
       issue: linked(scope, raw.project_id, raw),
       body: raw.description ?? "",
       state: state(raw),
-      milestoneNumber: raw.milestone?.id ?? null,
+      milestoneNumber: raw.milestone?.iid ?? null,
       parent: parent === null ? null : yield* resolveLinkedIssue({ ...scope, number: parent }),
     };
   });
@@ -333,7 +347,7 @@ export const make = Effect.fn("IssueGitLabHost.make")(function* (
         const filter =
           milestoneNumber === undefined
             ? ""
-            : `&milestone=${encodeURIComponent((yield* request(scope, `${base}/milestones/${milestoneNumber}`, Milestone, "list")).title)}`;
+            : `&milestone=${encodeURIComponent((yield* resolveMilestone(scope, milestoneNumber)).title)}`;
         const result = yield* page(
           scope,
           `${base}/issues?scope=all&state=${requestedState === "open" ? "opened" : "all"}&order_by=updated_at&sort=desc${filter}`,
@@ -441,7 +455,7 @@ export const make = Effect.fn("IssueGitLabHost.make")(function* (
         blockedBy: [],
         parentComplete: true,
         subIssuesComplete: sub.complete,
-        blockersComplete: false,
+        blockersComplete: true,
       };
     }),
     detail: Effect.fn("IssueGitLabHost.detail")(function* (ref, identity) {
@@ -465,7 +479,7 @@ export const make = Effect.fn("IssueGitLabHost.make")(function* (
         issue: {
           ...summary(ref, raw),
           blockedBy: [],
-          relationshipsComplete: false,
+          relationshipsComplete: sub.complete,
           ...(sub.complete
             ? {
                 subIssues: {
@@ -514,6 +528,10 @@ export const make = Effect.fn("IssueGitLabHost.make")(function* (
             });
           raw = existing;
         } else {
+          const milestoneId =
+            input.milestoneNumber === null
+              ? undefined
+              : (yield* resolveMilestone(scope, input.milestoneNumber)).id;
           attempted = true;
           const response = yield* request(
             scope,
@@ -525,7 +543,7 @@ export const make = Effect.fn("IssueGitLabHost.make")(function* (
               body: {
                 title: input.title,
                 description: `${input.body}\n\n${marker}`,
-                milestone_id: input.milestoneNumber ?? 0,
+                ...(milestoneId === undefined ? {} : { milestone_id: milestoneId }),
               },
             },
           );
@@ -567,9 +585,14 @@ export const make = Effect.fn("IssueGitLabHost.make")(function* (
     updateBody: Effect.fn("IssueGitLabHost.updateBody")((input) =>
       patchIssue(input, { description: input.body }),
     ),
-    setMilestone: Effect.fn("IssueGitLabHost.setMilestone")((input) =>
-      patchIssue(input, { milestone_id: input.milestoneNumber ?? 0 }),
-    ),
+    setMilestone: Effect.fn("IssueGitLabHost.setMilestone")(function* (input) {
+      const scope = yield* context.resolveScope("detail", input);
+      const id =
+        input.milestoneNumber === null
+          ? 0
+          : (yield* resolveMilestone(scope, input.milestoneNumber)).id;
+      yield* patchIssue(input, { milestone_id: id });
+    }),
     setState: Effect.fn("IssueGitLabHost.setState")((input) =>
       patchIssue(input, { state_event: input.state === "open" ? "reopen" : "close" }),
     ),
@@ -623,16 +646,30 @@ export const make = Effect.fn("IssueGitLabHost.make")(function* (
           "invalid-response",
           "GitLab closing issue pagination is incomplete.",
         );
-      for (const row of rows.items) {
-        const project = yield* request(scope, `projects/${row.project_id}`, Project);
-        const target = { host, repository: project.path_with_namespace, number: row.iid };
-        if ((yield* readIssue(target)).state === "closed") continue;
-        yield* patchIssue(target, { state_event: "close" });
-        yield* transport.postComment(
-          target,
-          `Closed by ${`https://${host}/${scope.repository}/-/merge_requests/${ref.number}`}, which merged.`,
-        );
-      }
+      yield* Effect.forEach(
+        rows.items,
+        (row) =>
+          Effect.gen(function* () {
+            const project = yield* request(scope, `projects/${row.project_id}`, Project);
+            const target = { host, repository: project.path_with_namespace, number: row.iid };
+            if ((yield* readIssue(target)).state === "closed") return;
+            yield* patchIssue(target, { state_event: "close" });
+            yield* transport.postComment(
+              target,
+              `Closed by ${`https://${host}/${scope.repository}/-/merge_requests/${ref.number}`}, which merged.`,
+            );
+          }).pipe(
+            Effect.catchTags({
+              IssueReadError: (error) =>
+                Effect.logWarning("closing an issue a merged merge request names failed", {
+                  issue: row.iid,
+                  mergeRequest: ref.number,
+                  reason: error.message,
+                }),
+            }),
+          ),
+        { discard: true },
+      );
     }),
     listComments: Effect.fn("IssueGitLabHost.listComments")(function* (ref, options) {
       const scope = yield* context.resolveScope("detail", ref);

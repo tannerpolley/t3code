@@ -36,6 +36,13 @@ describe("composer issue matches", () => {
       state: "closed",
       stateReason: "duplicate",
     });
+    expect(
+      issueContextMetadata({
+        number: 8,
+        title: "Nested",
+        url: "https://gitlab.example:8443/group/subgroup/repo/-/issues/8",
+      }),
+    ).toMatchObject({ host: "gitlab.example:8443", repository: "group/subgroup/repo", number: 8 });
     const record = buildIssueReferenceContext(metadata);
     expect(record.kind).toBe("issue");
     expect(record.contextId).not.toBe(

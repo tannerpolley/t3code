@@ -2,7 +2,7 @@ import { supportsIssueHost } from "@t3tools/client-runtime/state/issue-work";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { type MouseEvent, useCallback, useMemo } from "react";
+import { type MouseEvent } from "react";
 
 import { useRightPanelStore } from "../rightPanelStore";
 import { useProjects, useServerConfigs } from "../state/entities";
@@ -26,11 +26,13 @@ export function parseIssueUrl(
   const host = url.host.toLowerCase();
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   if (!issueHosts.has(host)) return null;
-  const match = /^\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/u.exec(url.pathname);
+  const match =
+    /^\/([^/]+(?:\/[^/]+)+)\/-\/issues\/(\d+)\/?$/u.exec(url.pathname) ??
+    /^\/([^/]+\/[^/]+)\/issues\/(\d+)\/?$/u.exec(url.pathname);
   if (match === null) return null;
-  const number = Number(match[3]);
+  const number = Number(match[2]);
   if (!Number.isSafeInteger(number) || number < 1) return null;
-  return { host, repository: `${match[1]}/${match[2]}`, number };
+  return { host, repository: match[1]!, number };
 }
 
 /** github.com plus the host of every issue-capable project, Enterprise included. */
@@ -57,47 +59,42 @@ export function useOpenIssueLink(threadRef?: ScopedThreadRef) {
   const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projects = useProjects();
-  const issueHosts = useMemo(() => knownIssueHosts(projects), [projects]);
-  return useCallback(
-    (
-      event: Pick<
-        MouseEvent<HTMLElement>,
-        "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey"
-      >,
-      url: string,
-      environmentId?: EnvironmentId,
-    ): boolean => {
-      if (event.metaKey || event.ctrlKey) return false;
-      const issue = parseIssueUrl(url, issueHosts);
-      if (issue === null) return false;
-      const readsIssues = (id: EnvironmentId | null | undefined): id is EnvironmentId =>
-        id != null && serverConfigs.get(id)?.environment.capabilities.githubIssues === true;
-      if (threadRef) {
-        if (!readsIssues(threadRef.environmentId)) return false;
-        event.preventDefault();
-        event.stopPropagation();
-        useRightPanelStore
-          .getState()
-          .openIssue(threadRef, { environmentId: threadRef.environmentId, ...issue, url });
-        return true;
-      }
-      const target = [environmentId, primaryEnvironmentId, ...serverConfigs.keys()].find(
-        readsIssues,
-      );
-      if (target === undefined) return false;
+  const issueHosts = knownIssueHosts(projects);
+  return (
+    event: Pick<
+      MouseEvent<HTMLElement>,
+      "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey"
+    >,
+    url: string,
+    environmentId?: EnvironmentId,
+  ): boolean => {
+    if (event.metaKey || event.ctrlKey) return false;
+    const issue = parseIssueUrl(url, issueHosts);
+    if (issue === null) return false;
+    const readsIssues = (id: EnvironmentId | null | undefined): id is EnvironmentId =>
+      id != null && serverConfigs.get(id)?.environment.capabilities.githubIssues === true;
+    if (threadRef) {
+      if (!readsIssues(threadRef.environmentId)) return false;
       event.preventDefault();
       event.stopPropagation();
-      void navigate({
-        to: "/issues",
-        search: {
-          selectedEnvironmentId: target,
-          selectedHost: issue.host,
-          selectedRepository: issue.repository,
-          selectedNumber: issue.number,
-        },
-      });
+      useRightPanelStore
+        .getState()
+        .openIssue(threadRef, { environmentId: threadRef.environmentId, ...issue, url });
       return true;
-    },
-    [issueHosts, navigate, primaryEnvironmentId, serverConfigs, threadRef],
-  );
+    }
+    const target = [environmentId, primaryEnvironmentId, ...serverConfigs.keys()].find(readsIssues);
+    if (target === undefined) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    void navigate({
+      to: "/issues",
+      search: {
+        selectedEnvironmentId: target,
+        selectedHost: issue.host,
+        selectedRepository: issue.repository,
+        selectedNumber: issue.number,
+      },
+    });
+    return true;
+  };
 }

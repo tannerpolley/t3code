@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import { IssueDetailResult, IssueWorkRead, IssueRepositoriesResult } from "@t3tools/contracts";
+import { parseParentMarker } from "./IssueParentMarker.ts";
 import * as Forgejo from "./IssueForgejoHost.ts";
 import { routeIssueHosts } from "./IssueHost.ts";
 import { issueEligibility } from "./IssueEligibility.ts";
@@ -93,7 +94,7 @@ it.each([
   ["<!-- t3:parent=9007199254740992 -->", null],
   ["<!-- t3:parent=7 --> <!-- t3:parent=8 -->", null],
 ])("reads a single valid parent marker: %s", (body, expected) => {
-  expect(Forgejo.parseParentMarker(body)).toBe(expected);
+  expect(parseParentMarker(body)).toBe(expected);
 });
 
 it.effect("maps issue and milestone pages, preserves ports, and follows pagination", () =>
@@ -377,7 +378,7 @@ it.effect("edits only the child's parent marker and refuses cross-repository lin
     yield* transport.setParent({ child, parent, action: "add" });
     expect(body).toBe("Keep this text.\n\nPart of #7 <!-- t3:parent=7 -->\n\nKeep this too.");
     yield* transport.setParent({ child, parent: { ...parent, number: 3 }, action: "remove" });
-    expect(Forgejo.parseParentMarker(body)).toBe(7);
+    expect(parseParentMarker(body)).toBe(7);
     yield* transport.setParent({ child, parent, action: "remove" });
     expect(body).toContain("Keep this text.");
     expect(body).toContain("Keep this too.");

@@ -21,7 +21,6 @@ import type {
 } from "./IssueHost.ts";
 
 import { parseParentMarker, updateParentMarker } from "./IssueParentMarker.ts";
-export { parseParentMarker } from "./IssueParentMarker.ts";
 
 const Id = Schema.Int.check(Schema.isGreaterThan(0));
 const Actor = Schema.Struct({

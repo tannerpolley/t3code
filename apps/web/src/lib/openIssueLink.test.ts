@@ -4,7 +4,12 @@ import { SourceControlProviderKind, type RepositoryIdentity } from "@t3tools/con
 
 import { knownIssueHosts, parseIssueUrl } from "./openIssueLink";
 
-const hosts = new Set(["github.com", "github.example.com", "forge.example:3000"]);
+const hosts = new Set([
+  "github.com",
+  "github.example.com",
+  "forge.example:3000",
+  "gitlab.example:8443",
+]);
 
 it("reads GitHub issue pages and leaves every other link alone", () => {
   expect(parseIssueUrl("https://github.com/Acme/web/issues/12", hosts)).toEqual({
@@ -24,6 +29,12 @@ it("reads GitHub issue pages and leaves every other link alone", () => {
     repository: "acme/web",
     number: 7,
   });
+  expect(
+    parseIssueUrl("https://gitlab.example:8443/group/subgroup/repo/-/issues/8", hosts),
+  ).toEqual({ host: "gitlab.example:8443", repository: "group/subgroup/repo", number: 8 });
+  expect(
+    parseIssueUrl("https://gitlab.example:8443/group/subgroup/repo/-/issues/8/notes", hosts),
+  ).toBeNull();
   expect(parseIssueUrl("https://forge.example:3001/acme/web/issues/7", hosts)).toBeNull();
   // Pull requests, issue sub-pages, other forges and non-web schemes stay ordinary links.
   expect(parseIssueUrl("https://github.com/acme/web/pull/12", hosts)).toBeNull();

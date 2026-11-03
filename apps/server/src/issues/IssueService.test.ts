@@ -18,6 +18,8 @@ import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/Git
 import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
 
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as IssueService from "./IssueService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -1466,17 +1468,60 @@ it.effect("continues milestones after issues finish and does not request issues 
   }),
 );
 
-it.effect("addresses nested repository paths without truncating the namespace", () =>
-  Effect.gen(function* () {
-    const harness = makeHarness({ responses: [httpResponse([]), httpResponse([])] });
+it.effect("addresses nested paths only on GitLab-routed hosts", () => {
+  const paths: string[] = [];
+  return Effect.gen(function* () {
+    const harness = makeHarness({ responses: [] });
     const issues = yield* service(harness);
-    const list = yield* issues.list({ host: HOST, repository: "group/subgroup/repo" });
+    const list = yield* issues.list({
+      host: "gitlab.example:8443",
+      repository: "group/subgroup/repo",
+    });
     assert.equal(list.repository.repository, "group/subgroup/repo");
     assert.isTrue(
-      harness.calls.some((call) => call.url.includes("/repos/group/subgroup/repo/issues?")),
+      paths.some((path) => path.startsWith("projects/group%2Fsubgroup%2Frepo/issues?")),
     );
-  }),
-);
+    for (const host of [HOST, "forge.example:3000"]) {
+      const error = yield* issues
+        .list({ host, repository: "group/subgroup/repo" })
+        .pipe(Effect.flip);
+      assert.equal(error.code, "scope-unavailable");
+    }
+    assert.deepEqual(harness.calls, []);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(GitLabCli.GitLabCli)({
+          execute: (input) => {
+            const auth = input.args[0] === "auth";
+            const path = input.args[3] ?? "";
+            paths.push(path);
+            return Effect.succeed({
+              stdout: auth
+                ? "gitlab.example:8443\n  Logged in to gitlab.example:8443 as alice"
+                : JSON.stringify(path === "user" ? { id: 1, username: "alice" } : []),
+              stderr: "",
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          },
+        }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          listLogins: () =>
+            Effect.succeed([
+              {
+                name: "forge.example:3000",
+                url: "https://forge.example:3000",
+                user: "",
+                default: "false",
+              },
+            ]),
+        }),
+      ),
+    ),
+  );
+});
 
 it.effect("rejects a repository that cannot be addressed before calling GitHub", () =>
   Effect.gen(function* () {

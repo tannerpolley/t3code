@@ -10,6 +10,7 @@ import {
   IssueRepositoriesResult,
   IssueRepositoryRef,
 } from "@t3tools/contracts";
+import { issueEligibility } from "./IssueEligibility.ts";
 import * as GitLab from "./IssueGitLabHost.ts";
 
 const decodeIssueDetailResult = Schema.decodeEffect(IssueDetailResult);
@@ -60,20 +61,23 @@ const note = {
   created_at: date,
   updated_at: date,
 };
+const isCliError = Schema.is(GitLabCli.GitLabCliError);
 const mr = { state: "merged", target_branch: "main", source_branch: "fix", sha: "abc" };
 function setup(respond: (path: string, method: string, body: unknown) => unknown) {
   const calls: Array<{ path: string; method: string; body: unknown }> = [];
   const layer = Layer.mock(GitLabCli.GitLabCli)({
     execute: (input) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const path = input.args[3]!;
         const methodIndex = input.args.indexOf("--method");
         const method = methodIndex < 0 ? "GET" : input.args[methodIndex + 1]!;
         const body: unknown = input.stdin ? JSON.parse(input.stdin) : undefined;
         expect(input.host).toBe(host);
         calls.push({ path, method, body });
+        const response = respond(path, method, body);
+        if (isCliError(response)) return yield* response;
         return {
-          stdout: JSON.stringify(respond(path, method, body)),
+          stdout: JSON.stringify(response),
           stderr: "",
           exitCode: ChildProcessSpawner.ExitCode(0),
           stdoutTruncated: false,
@@ -97,14 +101,14 @@ it.effect("maps nested project paths, iid identities, pagination and milestone I
           ? [project]
           : path.includes("/milestones/39/issues")
             ? [issue(7), issue(8, { state: "closed" })]
-            : path.includes("/milestones/39")
-              ? milestone
+            : path.includes("/milestones?iids[]=3")
+              ? [milestone]
               : path.includes("/milestones?")
                 ? [milestone]
                 : Array.from({ length: 50 }, (_, i) => issue(i + 1)),
     );
     const transport = yield* fixture.make;
-    const page = yield* transport.listIssuePage(scope, "open", 1, 39);
+    const page = yield* transport.listIssuePage(scope, "open", 1, 3);
     if ("notModified" in page) throw new Error("Unexpected cached response");
     expect({ ...page, items: page.items.slice(0, 1) }).toMatchObject({
       items: [
@@ -113,7 +117,7 @@ it.effect("maps nested project paths, iid identities, pagination and milestone I
           state: "open",
           author: { login: "alice" },
           labels: [{ name: "bug" }],
-          milestone: { number: 39 },
+          milestone: { number: 3 },
         },
       ],
       nextPage: 2,
@@ -125,7 +129,7 @@ it.effect("maps nested project paths, iid identities, pagination and milestone I
     expect(milestones).toMatchObject({
       items: [
         {
-          number: 39,
+          number: 3,
           openCount: 1,
           closedCount: 1,
           dueAt: "2026-11-30T00:00:00Z",
@@ -160,8 +164,9 @@ it.effect("reads marker hierarchy and comments, and replaces and removes parents
     expect(work).toMatchObject({
       issue: { number: 8, id: "108", nodeId: "12/8" },
       parent: { number: 7 },
-      blockersComplete: false,
+      blockersComplete: true,
     });
+    expect(issueEligibility(work)).toBe("eligible");
     const detail = yield* transport.detail(ref, {
       accountId: "1",
       viewer: "alice",
@@ -169,6 +174,7 @@ it.effect("reads marker hierarchy and comments, and replaces and removes parents
     });
     yield* decodeIssueDetailResult(detail);
     expect(detail.comments).toHaveLength(1);
+    expect(detail.issue.relationshipsComplete).toBe(true);
     const child = work.issue;
     yield* transport.setParent({
       child,
@@ -198,22 +204,24 @@ it.effect(
       const fixture = setup((path, method) =>
         path === base
           ? project
-          : path.endsWith("/labels?per_page=50&page=1")
-            ? [{ name: "bug" }]
-            : path.includes("/notes")
-              ? note
-              : method === "POST"
-                ? issue(8, { description: "body\n\n<!-- t3-issue-change:key -->" })
-                : path.includes("/issues?")
-                  ? [issue(8, { description: "body\n\n<!-- t3-issue-change:key -->" })]
-                  : issue(8),
+          : path.includes("/milestones?iids[]=3")
+            ? [milestone]
+            : path.endsWith("/labels?per_page=50&page=1")
+              ? [{ name: "bug" }]
+              : path.includes("/notes")
+                ? note
+                : method === "POST"
+                  ? issue(8, { description: "body\n\n<!-- t3-issue-change:key -->" })
+                  : path.includes("/issues?")
+                    ? [issue(8, { description: "body\n\n<!-- t3-issue-change:key -->" })]
+                    : issue(8),
       );
       const transport = yield* fixture.make;
       const input = {
         ...scope,
         title: "new",
         body: "body",
-        milestoneNumber: 39,
+        milestoneNumber: 3,
         writeKey: "key",
         recover: false,
       };
@@ -251,6 +259,9 @@ it.effect(
         ["PUT", { milestone_id: 0 }],
         ["PUT", { add_labels: "bug", remove_labels: "old" }],
       ]);
+      yield* transport.setMilestone({ ...ref, milestoneNumber: 3 });
+      expect(fixture.calls.at(-1)?.body).toEqual({ milestone_id: 39 });
+      expect(created.milestoneNumber).toBe(3);
       yield* transport.ensureLabels(scope, [{ name: "external", color: "ff0000" }]);
       expect(fixture.calls.at(-1)?.body).toEqual({ name: "external", color: "#ff0000" });
       expect(
@@ -267,18 +278,27 @@ it.effect(
   () =>
     Effect.gen(function* () {
       let merged = false;
-      const fixture = setup((path) =>
-        path.endsWith("/merge_requests/3")
-          ? { ...mr, state: merged ? "merged" : "opened" }
-          : path.includes("/closes_issues?")
-            ? [issue(7), issue(8, { state: "closed" })]
-            : path === "projects/12"
-              ? project
-              : path.endsWith("/issues/8")
-                ? issue(8, { state: "closed" })
-                : path.endsWith("/notes")
-                  ? note
-                  : issue(7),
+      const fixture = setup((path, method) =>
+        method === "PUT" && path.endsWith("/issues/6")
+          ? new GitLabCli.GitLabCliCommandError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/tmp",
+              cause: "refused",
+            })
+          : path.endsWith("/merge_requests/3")
+            ? { ...mr, state: merged ? "merged" : "opened" }
+            : path.includes("/closes_issues?")
+              ? [issue(6), issue(7), issue(8, { state: "closed" })]
+              : path === "projects/12"
+                ? project
+                : path.endsWith("/issues/8")
+                  ? issue(8, { state: "closed" })
+                  : path.endsWith("/issues/6")
+                    ? issue(6)
+                    : path.endsWith("/notes")
+                      ? note
+                      : issue(7),
       );
       const transport = yield* fixture.make;
       const ref = { ...scope, number: 3 };
@@ -287,6 +307,7 @@ it.effect(
       merged = true;
       yield* transport.closeIssuesFixedBy!(ref);
       expect(fixture.calls.filter((call) => call.method === "PUT")).toEqual([
+        { path: `${base}/issues/6`, method: "PUT", body: { state_event: "close" } },
         { path: `${base}/issues/7`, method: "PUT", body: { state_event: "close" } },
       ]);
       expect(yield* transport.pullRequest!(ref)).toMatchObject({
@@ -353,5 +374,8 @@ it.effect("retains a create receipt before rejecting a malformed response, witho
     expect(receipts).toEqual([8]);
     expect(error).toMatchObject({ code: "invalid-response", createOutcome: "uncertain" });
     expect(fixture.calls.filter((call) => call.method === "POST")).toHaveLength(1);
+    expect(fixture.calls.find((call) => call.method === "POST")?.body).not.toHaveProperty(
+      "milestone_id",
+    );
   }),
 );
