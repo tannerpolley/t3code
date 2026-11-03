@@ -159,8 +159,6 @@ export function useLiveIssueSummary(
 export interface IssueListTarget {
   readonly environmentId: EnvironmentId;
   readonly input: IssueListInput;
-  /** The repository shows the Roadmap view, whose first page stays live. */
-  readonly roadmapView?: boolean;
   /** A pane scoped to this one repository, whose first page stays live like a thread's list. */
   readonly live?: boolean;
 }
@@ -182,16 +180,11 @@ interface IssueListsView {
   readonly isPending: boolean;
 }
 
-// Only first pages are polled: the Roadmap's and a one-repository pane's.
-// All pages also re-read when issue links change.
+// Only a one-repository pane's first page is polled; all pages also re-read when issue links change.
 const issueListAtom = (target: IssueListTarget) =>
-  (target.input.cursor !== undefined
-    ? issueEnvironment.list
-    : target.roadmapView
-      ? issueEnvironment.roadmapList
-      : target.live
-        ? issueEnvironment.liveList
-        : issueEnvironment.list)(target);
+  (target.input.cursor === undefined && target.live
+    ? issueEnvironment.liveList
+    : issueEnvironment.list)(target);
 
 const issueLists = Atom.family((key: string) =>
   Atom.make((get): IssueListsView => {

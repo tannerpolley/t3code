@@ -2,12 +2,7 @@ import { Fragment, useSyncExternalStore, type ReactNode } from "react";
 import { IssueInboxSection, useIssueInbox } from "./IssueInbox";
 import { IssueDoneDetails } from "./IssueDoneDetails";
 import { useIssueQueue } from "./IssueQueueAction";
-import type {
-  EnvironmentId,
-  IssueMilestone,
-  IssueRepositoryRef,
-  IssueSummary,
-} from "@t3tools/contracts";
+import type { EnvironmentId, IssueRepositoryRef, IssueSummary } from "@t3tools/contracts";
 import { CollapsibleSectionHeader } from "~/components/ui/collapsible-section-header";
 import { IssueSection } from "./IssueSection";
 import { IssueRow } from "./IssueRow";
@@ -18,7 +13,6 @@ import { issueRoadmap, openIssueBlockers, createIssueRoadmapClock } from "./issu
 export function IssueRoadmap({
   scope,
   environmentId,
-  milestones,
   issues,
   visibleNumbers,
   onSelect,
@@ -28,7 +22,6 @@ export function IssueRoadmap({
 }: {
   scope: IssueRepositoryRef;
   environmentId: EnvironmentId;
-  milestones: readonly IssueMilestone[];
   issues: readonly IssueSummary[];
   visibleNumbers?: ReadonlySet<number>;
   onSelect: (issue: IssueSummary) => void;
@@ -43,7 +36,6 @@ export function IssueRoadmap({
   const pendingInbox = useIssueInbox(environmentId, scope);
   const sections = issueRoadmap(
     { host: scope.host, repository: scope.repository },
-    milestones,
     issues,
     queue.data?.queue?.map((entry) => entry.issue.number),
     now,

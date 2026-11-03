@@ -1,10 +1,4 @@
-import {
-  THREAD_ROLE_LABELS,
-  type IssueMilestone,
-  type IssueRepositoryRef,
-  type IssueSummary,
-} from "@t3tools/contracts";
-import { groupIssuesByMilestone } from "./issueTree.logic";
+import { THREAD_ROLE_LABELS, type IssueRepositoryRef, type IssueSummary } from "@t3tools/contracts";
 import { issuePriorityRank } from "./issueProjects.logic";
 import { issueProgress } from "./IssueStateIcon";
 
@@ -48,12 +42,11 @@ export function openIssueBlockers(issue: IssueSummary) {
   return (issue.blockedBy ?? []).filter((blocker) => blocker.state === "open");
 }
 
-/** Native blocker and child edges are ordered before milestone, Project Priority and oldest number.
+/** Native blocker and child edges are ordered before Project Priority and oldest number.
  * Strongly connected components retain ordering of downstream issues without calling them cycles.
  */
 export function issueRoadmap(
   scope: IssueRepositoryRef,
-  milestones: readonly IssueMilestone[],
   issues: readonly IssueSummary[],
   queuedNumbers: readonly number[] = [],
   now = Date.now(),
@@ -73,13 +66,8 @@ export function issueRoadmap(
       edges.get(issue.number)!.add(issue.parent.number);
     }
   }
-  const milestoneRank = new Map<number, number>();
-  groupIssuesByMilestone(milestones, open).forEach((group, rank) => {
-    for (const issue of group.issues) milestoneRank.set(issue.number, rank);
-  });
   const priorities = new Map(open.map((issue) => [issue.number, issuePriorityRank(issue)]));
   const compare = (left: number, right: number) =>
-    milestoneRank.get(left)! - milestoneRank.get(right)! ||
     priorities.get(left)! - priorities.get(right)! ||
     left - right;
   const index = new Map<number, number>();

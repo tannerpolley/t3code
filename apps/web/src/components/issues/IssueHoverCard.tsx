@@ -62,7 +62,6 @@ export function IssueHoverCardContent({ target, issue: fallback, title }: IssueH
             <IssueStateIcon issue={{ ...issue, queued }} />
             <span>{issueStatePresentation({ ...issue, queued }).label}</span>
           </div>
-          {issue.milestone ? <div>Milestone: {issue.milestone.title}</div> : null}
           {issue.labels.length > 0 ? (
             <div className="flex flex-wrap gap-1" aria-label="Labels">
               {issue.labels.map((label) => (

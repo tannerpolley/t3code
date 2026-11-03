@@ -1,6 +1,6 @@
 import { OwnerDecisionsToggle, OwnerDecisionsView } from "./OwnerDecisionCards";
 import { useOwnerDecisions } from "~/state/ownerDecisions";
-import { IssueMilestoneControls, IssueRepositoryControls } from "./IssueMilestoneControls";
+import { IssueRepositoryControls } from "./IssueRepositoryControls";
 import { IssueInboxSection } from "./IssueInbox";
 import { IssueStateIcon } from "./IssueStateIcon";
 import * as Cause from "effect/Cause";
@@ -36,17 +36,14 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Spinner } from "../ui/spinner";
-import { Switch } from "../ui/switch";
-import { IssueFilterMenu, useIssueFilterPreferences, useIssueViews } from "./IssueFilterMenu";
+import { IssueFilterMenu, useIssueFilterPreferences } from "./IssueFilterMenu";
 import { acceptIssueListPage, type IssueListSnapshot } from "./issuePaging.logic";
-import { IssueTree, IssueTreeRow, IssueTreeTag } from "./IssueTree";
+import { IssueTreeRow, IssueTreeTag } from "./IssueTree";
 import { IssueSection } from "./IssueSection";
 import { IssueRoadmap } from "./IssueRoadmap";
-import { groupIssuesByMilestone } from "./issueTree.logic";
 import {
   filterAndSortIssues,
   viewerRepositoriesFirst,
-  issueListStateFor,
   issueStateFilter,
   mergeIssueRepositoryTargets,
   repositoryKey,
@@ -135,7 +132,6 @@ function issueListScopeKey(target: IssueListTarget): string {
     target.environmentId,
     repositoryKey(target.input.host, target.input.repository),
     target.input.state ?? "open",
-    target.roadmapView === true,
   ]);
 }
 
@@ -204,7 +200,7 @@ export interface IssueBrowserSearch {
 }
 
 /**
- * The GitHub issue list: repositories and milestone groups under the Filter menu. The
+ * The issue roadmap for each repository under the Filter menu. The
  * Issues page and the right panel's Issues surface both render it and decide where a selected
  * issue opens.
  */
@@ -242,7 +238,6 @@ export function IssueBrowser({
   const decisions = useOwnerDecisions();
   const [showDecisions, setShowDecisions] = useState(false);
   const [preferences, setPreferences] = useIssueFilterPreferences();
-  const [views, setViews] = useIssueViews();
   const stateFilter = issueStateFilter(preferences);
   const explicitScope = search.repository !== undefined;
   const urlRepository = (() =>
@@ -254,60 +249,40 @@ export function IssueBrowser({
             repository: search.repository!,
           }),
         ) ?? null))();
-  const scopedKey =
-    urlRepository === null ? null : repositoryKey(urlRepository.host, urlRepository.repository);
   const explicitScopeMissing =
     explicitScope && urlRepository === null && !issueRepositories.isPending;
   // A repository link shows that repository whatever the Filter menu says.
   const shownRepositories = (() => {
-    if (explicitScope)
-      return urlRepository === null ||
-        (stateFilter === null &&
-          views[repositoryKey(urlRepository.host, urlRepository.repository)] !== "roadmap")
-        ? []
-        : [urlRepository];
+    if (stateFilter === null) return [];
+    if (explicitScope) return urlRepository === null ? [] : [urlRepository];
     const host = search.host?.toLowerCase();
     return repositoryTargets.filter(
       (target) =>
-        (stateFilter !== null ||
-          views[repositoryKey(target.host, target.repository)] === "roadmap") &&
         (host === undefined || target.host === host) &&
         repositoryShown(target, preferences),
     );
   })();
   const baseListTargets = (() =>
     shownRepositories
-      .filter(
-        (target) =>
-          !repositoryKnownEmpty(
-            target,
-            views[repositoryKey(target.host, target.repository)] === "roadmap"
-              ? "all"
-              : (stateFilter ?? "open"),
-          ),
-      )
-      .map((target) => {
-        const roadmapView = views[repositoryKey(target.host, target.repository)] === "roadmap";
-        // Every view reads blockers and live work so issue circles show blocked and in progress.
-        return {
-          environmentId: target.environmentId,
-          roadmapView,
-          live: explicitScope,
-          input: {
-            host: target.host,
-            repository: target.repository,
-            state: issueListStateFor(stateFilter ?? "open", roadmapView),
-            roadmap: true,
-          },
-        };
-      }))();
+      .filter((target) => !repositoryKnownEmpty(target, "all"))
+      // The roadmap reads every issue with blockers and live work.
+      .map((target) => ({
+        environmentId: target.environmentId,
+        live: explicitScope,
+        input: {
+          host: target.host,
+          repository: target.repository,
+          state: "all" as const,
+          roadmap: true,
+        },
+      })))();
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
   const generationRef = useRef(0);
   const listTargets = (() =>
     baseListTargets.flatMap((target) => {
       const state = pagingByKey[issueListScopeKey(target)];
       const cursors = new Set<string | null>([state?.cursor ?? null]);
-      if ((target.roadmapView || target.live) && !state?.refreshing) cursors.add(null);
+      if (target.live && !state?.refreshing) cursors.add(null);
       return [...cursors].map((cursor) => ({
         ...target,
         input: { ...target.input, ...(cursor === null ? {} : { cursor }) },
@@ -437,7 +412,6 @@ export function IssueBrowser({
     query,
     state: stateFilter ?? "open",
     sort: preferences.sort,
-    milestone: preferences.milestone,
     assignee: preferences.assignee,
   };
   const projects = useProjects();
@@ -448,13 +422,8 @@ export function IssueBrowser({
   const filtersFor = (target: IssueRepositoryTarget) => {
     const capabilities = capabilitiesOf(target);
     const supported = capabilities ? supportedIssueFilters(preferences, capabilities) : preferences;
-    const entryFilters = {
-      ...filters,
-      milestone: supported.milestone,
-      assignee: supported.assignee,
-    };
-    const narrowed =
-      query.trim() !== "" || entryFilters.milestone !== "all" || entryFilters.assignee !== "all";
+    const entryFilters = { ...filters, assignee: supported.assignee };
+    const narrowed = query.trim() !== "" || entryFilters.assignee !== "all";
     return { filters: entryFilters, narrowed };
   };
   const stateNoun = (count: number, state: "all" | "open" | "closed") =>
@@ -538,17 +507,8 @@ export function IssueBrowser({
       pinned: pinned ? current.pinned.filter((entry) => entry !== key) : [...current.pinned, key],
     }));
 
-  const showsRoadmap = (entry: RepositoryEntry) =>
-    entry.scopeKey !== null && entry.snapshot !== null && views[entry.key] === "roadmap";
-  const inboxFor = (entry: RepositoryEntry) => (
-    <IssueInboxSection
-      issues={entry.snapshot?.issues}
-      environmentId={entry.environmentId}
-      reference={{ host: entry.host, repository: entry.repository }}
-    />
-  );
   const renderRepositoryBody = (entry: RepositoryEntry) => {
-    const { scopeKey, state, snapshot, error, filteredIssues, filters, narrowed } = entry;
+    const { scopeKey, state, snapshot, error, filteredIssues, filters } = entry;
     const message = (text: string) => (
       <p className="py-1.5 ps-6 pe-4 text-xs text-muted-foreground">{text}</p>
     );
@@ -580,73 +540,29 @@ export function IssueBrowser({
       );
     }
     if (snapshot === null) return null;
-    // Empty milestones are context in the full list and noise in narrowed results.
-    const groups = groupIssuesByMilestone(snapshot.milestones, filteredIssues)
-      .map((group) => ({
-        ...group,
-        issues: filterAndSortIssues(group.issues, filters),
-      }))
-      .filter((group) => !narrowed || group.issues.length > 0);
     const pending =
       issueLists.answers.some(
         (answer) => issueListScopeKey(answer.target) === scopeKey && answer.waiting,
       ) || state?.refreshing === true;
     return (
       <>
-        {variant === "panel" && !explicitScope ? (
-          <label className="mx-6 mb-2 flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-            <Switch
-              size="sm"
-              checked={views[entry.key] === "roadmap"}
-              onCheckedChange={(checked) =>
-                setViews((current) => ({
-                  ...current,
-                  [entry.key]: checked ? "roadmap" : "milestones",
-                }))
-              }
+        <IssueRoadmap
+          scope={entry}
+          environmentId={entry.environmentId}
+          inbox={
+            <IssueInboxSection
+              issues={snapshot.issues}
+              environmentId={entry.environmentId}
+              reference={{ host: entry.host, repository: entry.repository }}
             />
-            Roadmap view
-          </label>
-        ) : null}
-        {showsRoadmap(entry) ? (
-          <IssueRoadmap
-            scope={entry}
-            environmentId={entry.environmentId}
-            inbox={inboxFor(entry)}
-            milestones={snapshot.milestones}
-            issues={snapshot.issues}
-            visibleNumbers={new Set(filteredIssues.map((issue) => issue.number))}
-            onSelect={(issue) => selectIssue(issue, entry, snapshot)}
-            {...(entry.selectedIssueNumber === undefined
-              ? {}
-              : { selectedIssueNumber: entry.selectedIssueNumber })}
-          />
-        ) : filteredIssues.length > 0 ? (
-          <IssueTree
-            key={scopeKey}
-            scope={entry}
-            environmentId={entry.environmentId}
-            renderMilestoneActions={(milestone) => (
-              <IssueMilestoneControls
-                environmentId={entry.environmentId}
-                reference={{ host: entry.host, repository: entry.repository }}
-                milestone={milestone}
-              />
-            )}
-            groups={groups}
-            issuesComplete={snapshot.issuesComplete}
-            onSelect={(issue) => selectIssue(issue, entry, snapshot)}
-            {...(entry.selectedIssueNumber === undefined
-              ? {}
-              : { selectedIssueNumber: entry.selectedIssueNumber })}
-          />
-        ) : snapshot.issues.length > 0 && narrowed ? (
-          message("No issues match these filters")
-        ) : snapshot.issuesComplete ? (
-          message(`No ${filters.state === "all" ? "" : `${filters.state} `}issues`)
-        ) : (
-          message("No matching issues loaded yet")
-        )}
+          }
+          issues={snapshot.issues}
+          visibleNumbers={new Set(filteredIssues.map((issue) => issue.number))}
+          onSelect={(issue) => selectIssue(issue, entry, snapshot)}
+          {...(entry.selectedIssueNumber === undefined
+            ? {}
+            : { selectedIssueNumber: entry.selectedIssueNumber })}
+        />
         {error !== null ? (
           <div className="my-1 ms-10 me-3 flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
             <span>{error.title}. Showing the last issues loaded.</span>
@@ -682,7 +598,6 @@ export function IssueBrowser({
             environmentId={entry.environmentId}
             reference={{ host: entry.host, repository: entry.repository }}
           />
-          {showsRoadmap(entry) ? null : inboxFor(entry)}
           {renderRepositoryBody(entry)}
         </section>
       );
@@ -752,8 +667,7 @@ export function IssueBrowser({
                   environmentId={entry.environmentId}
                   reference={{ host: entry.host, repository: entry.repository }}
                 />
-                {showsRoadmap(entry) ? null : inboxFor(entry)}
-                {renderRepositoryBody(entry)}
+                      {renderRepositoryBody(entry)}
               </div>
             ) : null}
           </section>
@@ -912,26 +826,12 @@ export function IssueBrowser({
             onChange={setPreferences}
             onHostChange={(host) => onSearchChange({ host: host || undefined })}
             preferences={preferences}
-            view={
-              scopedKey !== null
-                ? {
-                    value: views[scopedKey] ?? "milestones",
-                    onChange: (value) =>
-                      setViews((current) => ({ ...current, [scopedKey]: value })),
-                  }
-                : undefined
-            }
           />
           {stateFilter !== null && repositoryEntries.length > 0 ? (
             <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground @lg/issues-header:inline">
               {totalCount}
               {totalIncomplete ? "+" : ""}{" "}
-              {stateNoun(
-                totalCount,
-                repositoryEntries.some((entry) => views[entry.key] === "roadmap")
-                  ? "all"
-                  : filters.state,
-              )}
+              {stateNoun(totalCount, filters.state)}
             </span>
           ) : null}
         </div>

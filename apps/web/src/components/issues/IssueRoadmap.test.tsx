@@ -44,7 +44,6 @@ it("remembers each roadmap section across refreshes, repository changes and remo
     <IssueRoadmap
       scope={{ host: "github.com", repository }}
       environmentId={EnvironmentId.make("local")}
-      milestones={[]}
       issues={issues}
       onSelect={() => {}}
     />

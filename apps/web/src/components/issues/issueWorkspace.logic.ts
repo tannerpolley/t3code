@@ -1,7 +1,6 @@
 import type {
   IssueHostCapabilities,
   EnvironmentId,
-  IssueListState,
   IssueRepositorySummary,
   IssueSummary,
 } from "@t3tools/contracts";
@@ -24,14 +23,12 @@ export const IssueFilterPreferences = Schema.Struct({
   private: Schema.Boolean,
   personal: Schema.Boolean,
   organizations: Schema.Boolean,
-  milestone: Schema.Literals(["all", "with", "without"]),
   assignee: Schema.Literals(["all", "assigned", "unassigned"]),
   sort: Schema.Literals(["updated", "oldest", "number", "title"]),
   pinned: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type IssueFilterPreferences = typeof IssueFilterPreferences.Type;
 export type IssueSort = IssueFilterPreferences["sort"];
-export type IssueMilestoneFilter = IssueFilterPreferences["milestone"];
 export type IssueAssigneeFilter = IssueFilterPreferences["assignee"];
 export type IssueStateFilter = "open" | "closed" | "all";
 
@@ -45,7 +42,6 @@ export const DEFAULT_ISSUE_FILTER_PREFERENCES: IssueFilterPreferences = {
   private: true,
   personal: true,
   organizations: true,
-  milestone: "all",
   assignee: "all",
   sort: "updated",
   pinned: [],
@@ -61,11 +57,10 @@ export function changedIssueFilterCount(preferences: IssueFilterPreferences): nu
 /** Filters the repository's issue host cannot answer stay at their defaults. */
 export function supportedIssueFilters(
   preferences: IssueFilterPreferences,
-  capabilities: Pick<IssueHostCapabilities, "milestones" | "assignees">,
+  capabilities: Pick<IssueHostCapabilities, "assignees">,
 ): IssueFilterPreferences {
   return {
     ...preferences,
-    milestone: capabilities.milestones ? preferences.milestone : "all",
     assignee: capabilities.assignees ? preferences.assignee : "all",
   };
 }
@@ -76,15 +71,9 @@ export function issueStateFilter(preferences: IssueFilterPreferences): IssueStat
   return preferences.closed ? "closed" : null;
 }
 
-/** GitHub lists open or all issues, so closed-only reads all and keeps the closed ones. */
-export function issueListStateFor(state: IssueStateFilter, roadmap = false): IssueListState {
-  return !roadmap && state === "open" ? "open" : "all";
-}
-
 export interface IssueWorkspaceFilters {
   readonly query: string;
   readonly state: IssueStateFilter;
-  readonly milestone: IssueMilestoneFilter;
   readonly assignee: IssueAssigneeFilter;
   readonly sort: IssueSort;
 }
@@ -93,7 +82,6 @@ function searchableText(issue: IssueSummary): string {
   return [
     issue.number,
     issue.title,
-    issue.milestone?.title,
     issue.author?.login,
     ...issue.assignees.map((actor) => actor.login),
     ...issue.labels.map((label) => label.name),
@@ -134,8 +122,6 @@ export function filterAndSortIssues(
       const text = searchableText(issue);
       if (!terms.every((term) => text.includes(term))) return false;
     }
-    if (filters.milestone === "with" && issue.milestone === null) return false;
-    if (filters.milestone === "without" && issue.milestone !== null) return false;
     if (filters.assignee === "assigned" && issue.assignees.length === 0) return false;
     if (filters.assignee === "unassigned" && issue.assignees.length > 0) return false;
     return true;

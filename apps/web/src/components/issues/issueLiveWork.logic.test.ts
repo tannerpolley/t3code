@@ -88,7 +88,7 @@ const pr: ThreadPullRequestLink = {
 };
 
 const section = (value: IssueListResult) =>
-  issueRoadmap(scope, [], value.issues).find((section) => section.rows.length > 0)?.id;
+  issueRoadmap(scope, value.issues).find((section) => section.rows.length > 0)?.id;
 
 it("follows a linked parent's sidebar status, including questions and approvals", () => {
   const workingRoot = { ...root, runtime: running.runtime };

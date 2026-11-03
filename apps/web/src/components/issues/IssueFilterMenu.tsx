@@ -1,5 +1,4 @@
 import type { IssueHostCapabilities } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import { ListFilterIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -20,7 +19,6 @@ import {
   changedIssueFilterCount,
   DEFAULT_ISSUE_FILTER_PREFERENCES,
   IssueFilterPreferences,
-  repositoryKey,
 } from "./issueWorkspace.logic";
 
 /** The Filter menu's saved choices, shared by the Issues page and the thread's issue list. */
@@ -30,22 +28,6 @@ export function useIssueFilterPreferences() {
     DEFAULT_ISSUE_FILTER_PREFERENCES,
     IssueFilterPreferences,
   );
-}
-
-type IssueView = "milestones" | "roadmap";
-const IssueViews = Schema.Record(Schema.String, Schema.Literals(["milestones", "roadmap"]));
-
-/** Each repository's remembered view, keyed by `repositoryKey`. */
-export function useIssueViews() {
-  return useLocalStorage("t3code:issue-views", {}, IssueViews);
-}
-export function useIssueView(host: string, repository: string) {
-  const [views, setViews] = useIssueViews();
-  const key = repositoryKey(host, repository);
-  return [
-    views[key] ?? "milestones",
-    (value: IssueView) => setViews((current) => ({ ...current, [key]: value })),
-  ] as const;
 }
 
 type ShowKey = {
@@ -94,8 +76,7 @@ function RadioSection<Value extends string>({
 
 /**
  * Every list narrowing behind one control. The trigger counts choices that differ from the
- * defaults; a single repository's list drops the repository choices, uses an icon trigger, and
- * may pass `view` for an uncounted roadmap switch, since that layout is visible at a glance.
+ * defaults; a single repository's list drops the repository choices and uses an icon trigger.
  */
 export function IssueFilterMenu({
   preferences,
@@ -104,7 +85,6 @@ export function IssueFilterMenu({
   host,
   onHostChange,
   singleRepository = false,
-  view,
   capabilities,
 }: {
   preferences: IssueFilterPreferences;
@@ -114,16 +94,13 @@ export function IssueFilterMenu({
   host: string;
   onHostChange: (host: string) => void;
   singleRepository?: boolean;
-  view?: { readonly value: IssueView; readonly onChange: (value: IssueView) => void } | undefined;
   /** A single repository's host; filters it cannot answer are hidden. */
-  capabilities?: Pick<IssueHostCapabilities, "milestones" | "assignees"> | undefined;
+  capabilities?: Pick<IssueHostCapabilities, "assignees"> | undefined;
 }) {
-  const milestones = capabilities?.milestones !== false;
   const assignees = capabilities?.assignees !== false;
   const changed = singleRepository
-    ? (["open", "closed", "milestone", "assignee"] as const).filter(
+    ? (["open", "closed", "assignee"] as const).filter(
         (key) =>
-          (key !== "milestone" || milestones) &&
           (key !== "assignee" || assignees) &&
           preferences[key] !== DEFAULT_ISSUE_FILTER_PREFERENCES[key],
       ).length
@@ -158,19 +135,6 @@ export function IssueFilterMenu({
         </MenuTrigger>
       )}
       <MenuPopup align="end" side="bottom" className="max-h-[70vh] w-52 overflow-y-auto">
-        {view ? (
-          <>
-            {/* A menu item, not a bare Switch, so arrow keys reach it; it leaves the menu open. */}
-            <MenuCheckboxItem
-              variant="switch"
-              checked={view.value === "roadmap"}
-              onCheckedChange={(checked) => view.onChange(checked ? "roadmap" : "milestones")}
-            >
-              Roadmap view
-            </MenuCheckboxItem>
-            <MenuSeparator />
-          </>
-        ) : null}
         <MenuGroup>
           <MenuGroupLabel>Show issues</MenuGroupLabel>
           {ISSUE_OPTIONS.map(checkbox)}
@@ -184,21 +148,6 @@ export function IssueFilterMenu({
             </MenuGroup>
           </>
         )}
-        {milestones ? (
-          <>
-            <MenuSeparator />
-            <RadioSection
-              label="Milestone"
-              value={preferences.milestone}
-              options={[
-                ["all", "All milestones"],
-                ["with", "With milestone"],
-                ["without", "No milestone"],
-              ]}
-              onChange={(milestone) => onChange({ ...preferences, milestone })}
-            />
-          </>
-        ) : null}
         {assignees ? (
           <>
             <MenuSeparator />

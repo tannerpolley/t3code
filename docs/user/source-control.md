@@ -271,22 +271,20 @@ issues; open one, or the full list, beside the thread. To browse issues across r
 thread, it opens that project’s repository. Without a current repository, it lists issues from every
 repository your GitHub account owns and every organization repository you administer, whether or
 not the repository is a T3 Code project. Repositories you only collaborate on, including the upstream
-of a fork, are left out. The Milestones view groups issues by owner,
-then repository and milestone; your own account comes first.
+of a fork, are left out. Repositories are grouped by owner, with your own account first.
 
 Use **Filter** to choose what is shown: open and closed issues; archived, forked, empty, public,
-private, personal, and organization repositories; milestone and assignment; and how issues are
+private, personal, and organization repositories; assignment; and how issues are
 sorted. Open issues are shown by default, with archived, forked, and empty repositories hidden.
 Filter choices are remembered in that browser. The compact search box matches issue numbers, titles
 and other issue details. Search, Filter and Refresh share the header row. An Issues tab opened from a thread stays scoped to that project’s
 repository.
 
-In the Issues pane, turn on **Roadmap view** for a repository (at the top of **Filter** when the
-pane shows one repository) for dependency order, with **Closed**, **Blocked**, **Inbox**,
-**Ready**, **Queued**, **Paused**, **In progress** and **Done** sections. Blocked shows red
-warnings for open dependencies. Within a section, open blockers and sub-issues come before the
-issues that depend on them; closed blockers no longer hold work back. The view choice is remembered
-per repository. **In progress** means a linked agent is working on the issue or waiting for your
+Each repository's issues show as a roadmap in dependency order, with **Closed**, **Blocked**,
+**Inbox**, **Ready**, **Queued**, **Paused**, **In progress** and **Done** sections. Blocked shows
+red warnings for open dependencies. Within a section, open blockers and sub-issues come before the
+issues that depend on them, then higher Project priority and older issues; closed blockers no
+longer hold work back. **In progress** means a linked agent is working on the issue or waiting for your
 answer. **Paused** means the issue has work, such as an open or draft PR or an idle linked thread,
 but no agent on it right now. GitHub Project status does not change these sections or the issue
 icon. A thread’s own linked pull request also associates it with the issues that GitHub identifies
@@ -401,8 +399,8 @@ top-level thread in the same project.
 Only you can approve this restore. Existing issue workers keep their threads, and the repository
 remains paused after the change. Resume it from **Status** when you are ready to continue.
 
-A thread's details also list its repository's open issues in an **Issues** section, grouped by
-collapsible milestones, and open them beside the thread. For a fork checkout, these are the fork's
+A thread's details also show its repository's roadmap in an **Issues** section, and open issues
+beside the thread. For a fork checkout, these are the fork's
 issues. Turn either view off in **Settings → Source Control**.
 
 To browse all of the repository's issues without leaving a thread, choose **Browse all issues** in

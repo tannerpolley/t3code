@@ -8,7 +8,6 @@ import {
   changedIssueFilterCount,
   filterAndSortIssues,
   viewerRepositoriesFirst,
-  issueListStateFor,
   issueStateFilter,
   mergeIssueRepositoryTargets,
   repositoryKey,
@@ -56,12 +55,11 @@ describe("issue workspace filtering", () => {
     }),
   ];
 
-  it("searches metadata and combines milestone and assignment filters", () => {
+  it("searches metadata and combines assignment filters", () => {
     expect(
       filterAndSortIssues(rows, {
-        query: "octocat v1",
+        query: "octocat blocker",
         state: "all",
-        milestone: "with",
         assignee: "assigned",
         sort: "updated",
       }).map((row) => row.number),
@@ -70,7 +68,6 @@ describe("issue workspace filtering", () => {
       filterAndSortIssues(rows, {
         query: "docs",
         state: "all",
-        milestone: "without",
         assignee: "unassigned",
         sort: "updated",
       }).map((row) => row.number),
@@ -81,7 +78,6 @@ describe("issue workspace filtering", () => {
     const filters = {
       query: "",
       state: "all" as const,
-      milestone: "all" as const,
       assignee: "all" as const,
     };
     expect(
@@ -101,14 +97,11 @@ describe("issue workspace filtering", () => {
   it("keeps only closed issues when Closed is shown without Open", () => {
     const preferences = { ...DEFAULT_ISSUE_FILTER_PREFERENCES, open: false, closed: true };
     const state = issueStateFilter(preferences)!;
-    expect(issueListStateFor(state)).toBe("all");
-    expect(issueListStateFor(state, true)).toBe("all");
     const closed = issue(3, "Shipped", { state: "closed" });
     expect(
       filterAndSortIssues([...rows, closed], {
         query: "",
         state,
-        milestone: "all",
         assignee: "all",
         sort: "updated",
       }).map((row) => row.number),
@@ -130,7 +123,6 @@ describe("issue workspace filtering", () => {
     const filters = {
       query: "",
       state: "all" as const,
-      milestone: "all" as const,
       assignee: "all" as const,
     };
     for (const [sort, expected] of [
@@ -149,7 +141,6 @@ describe("issue workspace filtering", () => {
     const filters = {
       query: "acme/app",
       state: "all" as const,
-      milestone: "all" as const,
       assignee: "all" as const,
       sort: "number" as const,
     };

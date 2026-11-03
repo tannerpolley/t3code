@@ -20,7 +20,6 @@ import {
   ExternalLinkIcon,
   GitBranchPlusIcon,
   UsersIcon,
-  MilestoneIcon,
   TagIcon,
   FolderKanbanIcon,
   ArrowDownUpIcon,
@@ -750,9 +749,6 @@ export function IssueDetailPanel({
                           ))
                         : "Unassigned"}
                     </span>
-                  </MetaRow>
-                  <MetaRow icon={<MilestoneIcon className="size-3.5" />} label="Milestone">
-                    {issue.milestone?.title ?? "No Milestone"}
                   </MetaRow>
                   <MetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
                     <span className="flex min-w-0 flex-wrap gap-1">

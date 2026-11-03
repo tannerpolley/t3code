@@ -2,9 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
   CLOSED_ISSUE_SUSPENSION_REASON,
-  DEFAULT_REPOSITORY_WORK_SETTINGS,
   type EnvironmentId,
-  type IssueMilestone,
   type IssueRepositoryRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -13,7 +11,6 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import {
   ActivityIcon,
   ArrowRightLeftIcon,
-  ListStartIcon,
   MoreHorizontalIcon,
   NetworkIcon,
   PauseIcon,
@@ -22,9 +19,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { useState } from "react";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
 import {
-  useProjects,
   useServerConfigs,
   useThreadShell,
   useThreadShellsForProjectRefs,
@@ -50,13 +45,11 @@ import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { findIssueProject } from "./issueWorktree.logic";
-import { repositoryIssueCapabilities } from "@t3tools/client-runtime/state/issue-work";
 import { IssueWorkerLimitControl } from "./IssueWorkerLimitControl";
 import { useRepositoryLeads } from "./IssueStartAction";
 
 /** Shown only by servers that support repository orchestration. */
-function useIssueMilestonesCapability(environmentId: EnvironmentId) {
+function useRepositoryOrchestrationCapability(environmentId: EnvironmentId) {
   const configs = useServerConfigs();
   return configs.get(environmentId)?.environment.capabilities.issueMilestones === true;
 }
@@ -67,12 +60,12 @@ function useRepositoryWork(environmentId: EnvironmentId, reference: IssueReposit
   return { statusAtom, data, config: data?.orchestration };
 }
 
-/** Repository-wide orchestrator ownership, pause and handoff; independent of milestone rows. */
+/** Repository-wide orchestrator ownership, pause and handoff. */
 export function IssueRepositoryControls(props: {
   environmentId: EnvironmentId;
   reference: IssueRepositoryRef;
 }) {
-  return useIssueMilestonesCapability(props.environmentId) ? (
+  return useRepositoryOrchestrationCapability(props.environmentId) ? (
     <RepositoryControls {...props} />
   ) : null;
 }
@@ -472,127 +465,5 @@ function PreviousRootItem({
         <RelativeTime timestamp={transferredAt} />
       </span>
     </MenuItem>
-  );
-}
-
-export function IssueMilestoneControls(props: {
-  environmentId: EnvironmentId;
-  reference: IssueRepositoryRef;
-  milestone: IssueMilestone;
-}) {
-  const capable = useIssueMilestonesCapability(props.environmentId);
-  const project = findIssueProject(
-    useProjects(),
-    { environmentId: props.environmentId, ...props.reference },
-    null,
-  );
-  // Without a local project the controls stay visible but disabled, as before.
-  const hostHasMilestones =
-    project === null || repositoryIssueCapabilities(project.repositoryIdentity)?.milestones;
-  return capable && hostHasMilestones ? <Controls {...props} /> : null;
-}
-
-function Controls({
-  environmentId,
-  reference,
-  milestone,
-}: {
-  environmentId: EnvironmentId;
-  reference: IssueRepositoryRef;
-  milestone: IssueMilestone;
-}) {
-  const projects = useProjects();
-  const roles = useEnvironmentSettings(environmentId, (settings) => settings.modelRoles);
-  const { statusAtom, config } = useRepositoryWork(environmentId, reference);
-  const project = findIssueProject(
-    projects.filter((entry) => config == null || entry.id === config.projectId),
-    { environmentId, ...reference },
-    null,
-  );
-  const [expanded, setExpanded] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [roleId, setRoleId] = useState<string | null>(null);
-  const role =
-    roles.find((entry) => entry.id === roleId) ??
-    roles.find((entry) => entry.id !== "orchestrator") ??
-    roles[0];
-  const plan = config?.milestones.find((entry) => entry.number === milestone.number);
-  const work = useAtomCommand(issueEnvironment.workMilestone, { reportFailure: false });
-  const start = async () => {
-    if (busy || project === null || role === undefined) return;
-    setBusy(true);
-    const result = await work({
-      environmentId,
-      input: {
-        ...reference,
-        milestoneNumber: milestone.number,
-        projectId: project.id,
-        modelRoleId: role.id,
-        clientRequestId: CommandId.make(randomUUID()),
-      },
-    });
-    setBusy(false);
-    if (result._tag === "Failure")
-      toastManager.add({
-        type: "error",
-        title: "Could not update repository work",
-        description: formatEnvironmentQueryError(result.cause),
-      });
-    else {
-      setExpanded(false);
-      appAtomRegistry.refresh(statusAtom);
-    }
-  };
-  return (
-    <div className="flex max-w-full shrink-0 flex-col items-end gap-1">
-      <div className="flex min-h-8 items-center gap-1 pe-2">
-        {plan ? (
-          <span className="text-2xs text-muted-foreground">
-            {config?.paused ? "Paused" : plan.status.replaceAll("_", " ")}
-          </span>
-        ) : null}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Work through milestone"
-                aria-expanded={expanded}
-                disabled={busy || project === null || milestone.state === "closed"}
-                onClick={() => setExpanded(!expanded)}
-              />
-            }
-          >
-            <ListStartIcon />
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">Work through milestone</TooltipPopup>
-        </Tooltip>
-      </div>
-      {expanded ? (
-        <div className="flex flex-col gap-2 p-2">
-          <Select value={role?.id ?? ""} onValueChange={setRoleId}>
-            <SelectTrigger size="sm">
-              <SelectValue placeholder="Worker model role" />
-            </SelectTrigger>
-            <SelectContent>
-              {roles.map((entry) => (
-                <SelectItem key={entry.id} value={entry.id}>
-                  {entry.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <span className="text-xs text-muted-foreground">
-            Up to {config?.workerLimit ?? DEFAULT_REPOSITORY_WORK_SETTINGS.workerLimit} workers
-            across the repository, each in a new issue-named worktree from the default branch. T3
-            publishes status and closeout comments.
-          </span>
-          <Button size="xs" disabled={busy || role === undefined} onClick={() => void start()}>
-            Start milestone work
-          </Button>
-        </div>
-      ) : null}
-    </div>
   );
 }

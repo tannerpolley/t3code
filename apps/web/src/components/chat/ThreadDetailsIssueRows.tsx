@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   IssueHostCapabilities,
-  IssueListResult,
   RepositoryIdentity,
   ThreadId,
 } from "@t3tools/contracts";
@@ -12,7 +11,6 @@ import {
   threadIssueRepository,
 } from "@t3tools/client-runtime/state/issue-work";
 import { ChevronDownIcon, FoldVerticalIcon, ListIcon, UnfoldVerticalIcon } from "lucide-react";
-import { IssueRow } from "../issues/IssueRow";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactNode, useState } from "react";
@@ -24,21 +22,13 @@ import { issueEnvironment, useLiveIssueWork } from "~/state/issues";
 import { useIssueSectionCollapsed } from "../issues/useIssueSectionCollapsed";
 
 import { IssueRoadmap } from "../issues/IssueRoadmap";
-import {
-  IssueFilterMenu,
-  useIssueFilterPreferences,
-  useIssueView,
-} from "../issues/IssueFilterMenu";
-import { groupIssuesByMilestone, type IssueGroup } from "../issues/issueTree.logic";
+import { IssueFilterMenu, useIssueFilterPreferences } from "../issues/IssueFilterMenu";
 import {
   filterAndSortIssues,
-  issueListStateFor,
   issueStateFilter,
   supportedIssueFilters,
-  type IssueFilterPreferences,
 } from "../issues/issueWorkspace.logic";
 import { Button } from "../ui/button";
-import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
@@ -46,35 +36,6 @@ import { ThreadDetailsSection } from "./ThreadDetailsSection";
 const VISIBLE_ISSUE_COUNT = 5;
 
 export { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
-
-/**
- * The block's issues under the Filter menu's choices, grouped by milestone with "No Milestone" last,
- * then cut to `limit` rows across the groups in order. `hidden` counts the rows cut.
- */
-export function threadIssueGroups(
-  issues: IssueListResult["issues"],
-  preferences: IssueFilterPreferences,
-  limit: number,
-): { readonly groups: IssueGroup[]; readonly total: number; readonly hidden: number } {
-  const state = issueStateFilter(preferences);
-  if (state === null) return { groups: [], total: 0, hidden: 0 };
-  const filters = {
-    query: "",
-    state,
-    milestone: preferences.milestone,
-    assignee: preferences.assignee,
-    sort: preferences.sort,
-  };
-  const shown = filterAndSortIssues(issues, filters);
-  let remaining = limit;
-  const groups = groupIssuesByMilestone([], shown).flatMap((group) => {
-    if (remaining <= 0) return [];
-    const kept = filterAndSortIssues(group.issues, filters).slice(0, remaining);
-    remaining -= kept.length;
-    return [{ ...group, issues: kept }];
-  });
-  return { groups, total: shown.length, hidden: Math.max(0, shown.length - limit) };
-}
 
 /**
  * The fork's own section for the thread repository's issues, kept out of the vanilla Version
@@ -121,35 +82,33 @@ function IssueRows({
 }) {
   const [savedPreferences, setPreferences] = useIssueFilterPreferences();
   const preferences = supportedIssueFilters(savedPreferences, capabilities);
-  const [issueView, setIssueView] = useIssueView(host, repository);
   const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
     { environmentId, host, repository },
     "section",
   );
   const open = !collapsed;
-  const listState = issueListStateFor(
-    issueStateFilter(preferences) ?? "open",
-    issueView === "roadmap",
-  );
   const result = useAtomValue(
-    // Both views read blockers and live work so issue circles show blocked and in progress.
-    (issueView === "roadmap" ? issueEnvironment.roadmapList : issueEnvironment.liveList)({
+    issueEnvironment.liveList({
       environmentId,
-      input: { host, repository, state: listState, roadmap: true },
+      input: { host, repository, state: "all", roadmap: true },
     }),
   );
   const cachedList = Option.getOrNull(AsyncResult.value(result));
   const liveIssueWork = useLiveIssueWork();
   const list = cachedList === null ? null : liveIssueWork(cachedList, environmentId);
   const [showAll, setShowAll] = useState(false);
-  const view =
-    list === null
-      ? null
-      : threadIssueGroups(
-          list.issues,
-          preferences,
-          showAll ? Number.POSITIVE_INFINITY : VISIBLE_ISSUE_COUNT,
-        );
+  const state = issueStateFilter(preferences);
+  const shown =
+    list === null || state === null
+      ? []
+      : filterAndSortIssues(list.issues, {
+          query: "",
+          state,
+          assignee: preferences.assignee,
+          sort: preferences.sort,
+        });
+  const total = list === null ? null : shown.length;
+  const hidden = Math.max(0, shown.length - VISIBLE_ISSUE_COUNT);
   const more = list?.nextCursor == null ? "" : "+";
 
   const browseAll = () =>
@@ -158,7 +117,7 @@ function IssueRows({
       .openIssueList(scopeThreadRef(environmentId, threadId), { host, repository });
   const showAllLabel = showAll
     ? "Show fewer issues"
-    : `Show all issues (${view === null ? 0 : view.hidden}${more} more)`;
+    : `Show all issues (${hidden}${more} more)`;
 
   return (
     <ThreadDetailsSection
@@ -176,9 +135,9 @@ function IssueRows({
             onClick={toggleCollapsed}
           >
             <span className="truncate">Issues</span>
-            {view === null ? null : (
+            {total === null ? null : (
               <span className="tabular-nums text-muted-foreground/70">
-                {view.total}
+                {total}
                 {more}
               </span>
             )}
@@ -192,7 +151,7 @@ function IssueRows({
           <IssueHeaderButton label="Browse all issues" onClick={browseAll}>
             <ListIcon aria-hidden className="size-3.5" />
           </IssueHeaderButton>
-          {open && view !== null && view.total > VISIBLE_ISSUE_COUNT ? (
+          {open && total !== null && total > VISIBLE_ISSUE_COUNT ? (
             <IssueHeaderButton
               label={showAllLabel}
               pressed={showAll}
@@ -212,30 +171,24 @@ function IssueRows({
             onHostChange={() => {}}
             preferences={savedPreferences}
             singleRepository
-            view={{ value: issueView, onChange: setIssueView }}
             capabilities={capabilities}
           />
         </div>
       </div>
       {open ? (
         <div className="flex flex-col" aria-label={`Issues in ${repository}`} role="group">
-          {issueView === "roadmap" && list !== null ? (
+          {list === null ? (
+            result._tag === "Failure" ? (
+              <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">Issues unavailable</p>
+            ) : null
+          ) : total === 0 ? (
+            <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">No matching issues</p>
+          ) : (
             <IssueRoadmap
               scope={{ host, repository }}
               environmentId={environmentId}
-              milestones={list.milestones}
               issues={list.issues}
-              visibleNumbers={
-                new Set(
-                  filterAndSortIssues(list.issues, {
-                    query: "",
-                    state: issueStateFilter(preferences) ?? "open",
-                    milestone: preferences.milestone,
-                    assignee: preferences.assignee,
-                    sort: preferences.sort,
-                  }).map((issue) => issue.number),
-                )
-              }
+              visibleNumbers={new Set(shown.map((issue) => issue.number))}
               limit={showAll ? Infinity : VISIBLE_ISSUE_COUNT}
               onSelect={(issue) =>
                 useRightPanelStore.getState().openIssue(scopeThreadRef(environmentId, threadId), {
@@ -246,15 +199,6 @@ function IssueRows({
                   url: issue.url,
                 })
               }
-            />
-          ) : (
-            <IssueRowsBody
-              environmentId={environmentId}
-              threadId={threadId}
-              host={host}
-              repository={repository}
-              view={view}
-              failed={result._tag === "Failure"}
             />
           )}
         </div>
@@ -291,97 +235,5 @@ function IssueHeaderButton({
       </TooltipTrigger>
       <TooltipPopup side="bottom">{label}</TooltipPopup>
     </Tooltip>
-  );
-}
-
-function IssueRowsBody({
-  environmentId,
-  threadId,
-  host,
-  repository,
-  view,
-  failed,
-}: {
-  environmentId: EnvironmentId;
-  threadId: ThreadId;
-  host: string;
-  repository: string;
-  view: ReturnType<typeof threadIssueGroups> | null;
-  failed: boolean;
-}) {
-  if (view === null) {
-    return failed ? (
-      <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">Issues unavailable</p>
-    ) : null;
-  }
-  const { groups, total } = view;
-
-  return (
-    <>
-      {groups.map((group) => (
-        <IssueMilestoneGroup
-          key={group.id}
-          group={group}
-          environmentId={environmentId}
-          threadId={threadId}
-          host={host}
-          repository={repository}
-        />
-      ))}
-      {total === 0 ? (
-        <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">No matching issues</p>
-      ) : null}
-    </>
-  );
-}
-
-/**
- * One milestone's issues, collapsed by hand and remembered per repository and milestone (default
- * expanded), matching how Lineage's groups collapse.
- */
-function IssueMilestoneGroup({
-  group,
-  environmentId,
-  threadId,
-  host,
-  repository,
-}: {
-  group: IssueGroup;
-  environmentId: EnvironmentId;
-  threadId: ThreadId;
-  host: string;
-  repository: string;
-}) {
-  const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
-    { environmentId, host, repository },
-    group.id,
-  );
-  return (
-    <div className="flex flex-col">
-      <CollapsibleSectionHeader expanded={!collapsed} onClick={toggleCollapsed}>
-        {group.title}
-        {collapsed && ` (${group.issues.length})`}
-      </CollapsibleSectionHeader>
-      {!collapsed
-        ? group.issues.map((issue) => (
-            <IssueRow
-              key={issue.number}
-              issue={issue}
-              environmentId={environmentId}
-              selected={false}
-              className="px-2.5"
-              onSelect={() =>
-                useRightPanelStore.getState().openIssue(scopeThreadRef(environmentId, threadId), {
-                  environmentId,
-                  host,
-                  repository,
-                  number: issue.number,
-                  url: issue.url,
-                })
-              }
-            />
-          ))
-        : null}
-    </div>
   );
 }
