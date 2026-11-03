@@ -1,6 +1,6 @@
 # Feature examples for the fork's dev preview
 
-The seed rebuilds the mock projects in `~/Workspaces-Dev` and the `fork-sandbox` dev database.
+The seed rebuilds the mock projects in `~/Workspaces/Sandbox/Workspaces-Dev` and the `fork-sandbox` dev database.
 There are eight labeled projects, 56 threads and 88 synthetic processes. Hover a sidebar role
 title to read that thread's **Check:** name; every orchestrator's name summarizes its project's
 checklist. Expand a thread to see its commands, process groups and nested agents.
@@ -72,12 +72,12 @@ A full rebuild removes only the seed's known old/new mock directories, replaces 
 `statev2.sqlite` and environment ID, and starts `t3-dev`. It preserves the GitHub sandbox clone.
 `github.py` still runs first to maintain the real sandbox issues/PRs. Reseed every few days:
 timestamps are relative to seed time and the server auto-settles inactive threads after three days.
-Generated files live in `~/Workspaces-Dev/.t3-dev-fixture/`, outside the repository.
+Generated files live in `~/Workspaces/Sandbox/Workspaces-Dev/.t3-dev-fixture/`, outside the repository.
 
 ## Process fixture
 
 Only `seed.sh`'s `start_dev` opts the **t3-dev unit** into
-`T3CODE_DEV_PROCESS_FIXTURE=~/Workspaces-Dev/.t3-dev-fixture/processes.json` (an absolute path).
+`T3CODE_DEV_PROCESS_FIXTURE=~/Workspaces/Sandbox/Workspaces-Dev/.t3-dev-fixture/processes.json` (an absolute path).
 Full rebuild and `start` use that launcher; `preview.sh open` calls `start`. `live` rewrites the
 fixture with fresh process times alongside the running command rows and output files.
 

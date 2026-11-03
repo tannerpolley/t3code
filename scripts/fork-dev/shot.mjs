@@ -1,5 +1,5 @@
 // Screenshot the dev sidebar (Projects view, Codex-style rows, 32rem wide), opened threads and
-// the GitHub sandbox's Issues views into ~/Workspaces-Dev/.t3-dev-fixture/shots/. `node shot.mjs issues` takes only the Issues ones.
+// the GitHub sandbox's Issues views into ~/Workspaces/Sandbox/Workspaces-Dev/.t3-dev-fixture/shots/. `node shot.mjs issues` takes only the Issues ones.
 // Pairs with the newest pairing URL in the t3-dev journal; the token is never printed.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -22,7 +22,7 @@ const journal = NodeChildProcess.execFileSync(
 );
 const pairUrl = [...journal.matchAll(/pairingUrl: (\S+\/pair#token=\S+)/g)].at(-1)?.[1];
 if (!pairUrl) throw new Error("No pairing URL in the t3-dev journal");
-const out = NodePath.join(NodeOS.homedir(), "Workspaces-Dev/.t3-dev-fixture/shots");
+const out = NodePath.join(NodeOS.homedir(), "Workspaces/Sandbox/Workspaces-Dev/.t3-dev-fixture/shots");
 // Finished children remain reachable by route even when Projects hides their inactive rows.
 const userdata = NodePath.join(
   NodeOS.homedir(),

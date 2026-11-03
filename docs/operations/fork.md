@@ -94,7 +94,7 @@ The owner reviews UI changes live before a build, on a dev instance with mock da
   - Web prefers `http://localhost:6593` and the server 14633 (`T3CODE_PORT_OFFSET=860`). If a port is taken, the dev runner moves both; the `[dev-runner]` line in `journalctl --user -u t3-dev` shows the real ones.
   - It uses 4–5 GB of memory, most of it the web dev server, and grows with each branch switch.
 - **Mock data:** [scripts/fork-dev](../../scripts/fork-dev/README.md) builds it.
-  - It creates `~/Workspaces-Dev`: made-up repositories, every thread state and role, and sections.
+  - It creates `~/Workspaces/Sandbox/Workspaces-Dev`: made-up repositories, every thread state and role, and sections.
   - It also maintains real showcase issues in the private `tannerpolley/t3code-sandbox`.
   - Never seed the owner's real projects.
 - **Starting and stopping:**

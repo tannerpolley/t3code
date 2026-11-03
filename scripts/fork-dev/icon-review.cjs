@@ -221,7 +221,7 @@ h2{font-size:13px;margin:0 0 2px}section>p{color:var(--muted-foreground);margin:
 .custom{font-size:9px;border:1px solid var(--border);border-radius:4px;padding:1px 3px;color:var(--muted-foreground);white-space:nowrap}
 </style></head><body><main><p class="lead">${total} icon uses across the sidebar, thread details, Issues and Pull requests panes, as they render in the current preview (dev instance). <span style="color:var(--warning)">⚠</span> marks ${flagged} where one glyph means two things or one thing has two glyphs.</p>
 <div class="grid">${sections.map(([title, note, items]) => `<section><h2>${esc(title)}</h2>${note ? `<p>${esc(note)}</p>` : ""}${items.map(([icon, name, meaning, flag]) => `<div class="row"><div class="ic">${icon}</div><div class="nm">${esc(name)}</div><div>${esc(meaning)}${flag ? `<span class="flag">${esc(flag)}</span>` : ""}</div></div>`).join("")}</section>`).join("")}</div></main></body></html>`;
-const out = path.join(process.env.HOME, "Workspaces-Dev/.t3-dev-fixture/shots");
+const out = path.join(process.env.HOME, "Workspaces/Sandbox/Workspaces-Dev/.t3-dev-fixture/shots");
 require("fs").mkdirSync(out, { recursive: true });
 require("fs").writeFileSync(path.join(out, "icon-review.html"), html);
 console.log("written", total, "uses,", flagged, "flagged");

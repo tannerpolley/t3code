@@ -6,7 +6,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-ROOT=$HOME/Workspaces-Dev
+ROOT=$HOME/Workspaces/Sandbox/Workspaces-Dev
 SANDBOX=$HOME/Workspaces/Applications/t3code/.worktrees/fork-sandbox
 USERDATA=$SANDBOX/.t3/userdata
 

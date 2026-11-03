@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HOME = Path.home()
-ROOT = HOME / "Workspaces-Dev"
+ROOT = HOME / "Workspaces/Sandbox/Workspaces-Dev"
 FIXTURE = ROOT / ".t3-dev-fixture"  # generated output only (Claude task files, screenshots)
 USERDATA = HOME / "Workspaces/Applications/t3code/.worktrees/fork-sandbox/.t3/userdata"
 DB = USERDATA / "statev2.sqlite"
