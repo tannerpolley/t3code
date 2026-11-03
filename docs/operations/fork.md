@@ -41,8 +41,9 @@ the git libsecret helper; `fj` does not install a git credential helper.
 
 Forgejo has no sub-issues: T3 writes `Part of #N <!-- t3:parent=N -->` in the child body,
 within the same repository. Blockers use Forgejo issue dependencies; Forgejo refuses to close
-an issue with open dependencies (HTTP 412). A fast-forward push marks a pull request merged
-when manual merge detection is enabled, but Forgejo does not close the issues its body names.
+an issue with open dependencies (HTTP 412). A fast-forward push of `main` marks a pull request
+merged only if its branch still exists when Forgejo checks, so land through Forgejo's merge
+instead (below); on manual detection Forgejo also does not close the issues its body names.
 T3 closes them, with a comment, once it sees a pull request linked to a thread merge; for an
 unlinked pull request, put `Closes #N` in a pushed commit message or close the issue explicitly.
 
@@ -78,8 +79,9 @@ any named issues still open, including cross-project references.
 - **Each task:**
   - Has a Forgejo issue, and gets a short-lived branch, cut from `main`, in a worktree under the project's `.worktrees/` folder.
   - Lands through a Forgejo pull request: push the branch to `origin`, open a pull request (`fj pr create`) whose body says `Closes #<issue>`, and link it to the worker's thread and the orchestrator's (`link_pull_request`). Review happens on that branch.
-  - After review, fast-forward `main` to the branch and push `main`. Forgejo marks the pull request merged, which keeps `main`'s history linear. Close the issue if it is still open.
-  - Then delete the branch (local and remote) and its worktree. A post-merge hook deletes merged local branches that aren't checked out.
+  - After review, merge on Forgejo with `fj pr merge <n> -M fast-forward-only -d`, or `-M rebase -d` if `main` moved, so `main` stays linear and Forgejo deletes the branch. Then `git fetch` and `git merge --ff-only origin/main` locally. Close the issue if it is still open.
+  - Pushing `main` and deleting the branch yourself closes the pull request as unmerged: Forgejo's merge check runs after the push and finds the branch gone.
+  - Then delete the local branch and its worktree. A post-merge hook deletes merged local branches that aren't checked out.
 - **Upstream syncs** follow the same path: one issue per sync, and a pull request for the sync branch.
 - **Releases** are tags on `main`: `release/vX.Y.Z`.
 - **Superseded, unmerged work** becomes an `archive/<name>` tag, not a kept branch.
