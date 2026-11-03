@@ -7,17 +7,21 @@ Only Codex and Claude matter here; mobile is out of scope.
 ## Where work is tracked
 
 Since 2026-11-02 the fork lives on Forgejo at
-`https://chromebox.taila72856.ts.net:3000/tannerpolley/t3code` (Forgejo 17 on the Chromebox,
-home-server `forgejo`): code, issues and pull requests. `origin` points there. Issue #1 is the
+`https://tnnrpolley21-ms-7c95.taila72856.ts.net:3000/tannerpolley/t3code` (Forgejo 17 on this
+desktop: system service `forgejo`, data in `/srv/forgejo`, published by `tailscale serve`): code,
+issues and pull requests. `origin` points there. All of the owner's repositories live there too,
+except the 9 GB `Unite` fork. Issue #1 is the
 roadmap and maintenance tracker. Every task starts from an issue: the orchestrator creates one
 before delegating, and links each worker thread to it (`link_issue`), so the Issues pane shows it
 In progress. Close an issue when its fix lands on `main`.
 
-GitHub `tannerpolley/t3code` (remote `github`) is a one-way copy. The desktop user timer
-`forgejo-github-sync` (`~/.local/bin/forgejo-github-sync`, every 5 minutes) pushes `main` and the
-`release/*` and `archive/*` tags without force, and copies issues (title, body, state, labels) and
-issue comments. Issues it creates on GitHub get their own numbers, because Forgejo pull requests
-are not copied; `~/.local/state/forgejo-github-sync/t3code.json` maps them. Edits made on GitHub
+GitHub `tannerpolley/t3code` (remote `github`) is a one-way copy. The user timer
+`forgejo-github-sync` (`~/.local/bin/forgejo-github-sync`, every 5 minutes) pushes every Forgejo
+repository to its GitHub namesake without force, straight from Forgejo's repository folders: for
+t3code only `main` and the `release/*` and `archive/*` tags, elsewhere every branch and tag. It
+copies issues (title, body, state, labels) and issue comments. Issues it creates on GitHub get
+their own numbers, because Forgejo pull requests are not copied;
+`~/.local/state/forgejo-github-sync/<repo>.json` maps them. Edits made on GitHub
 are overwritten. Never open pull requests or write issues there. Its log is
 `journalctl --user -u forgejo-github-sync`.
 
@@ -39,15 +43,15 @@ when manual merge detection is enabled, but Forgejo does not close the issues it
 T3 closes them, with a comment, once it sees a pull request linked to a thread merge; for an
 unlinked pull request, put `Closes #N` in a pushed commit message or close the issue explicitly.
 
-`tannerpolley/process-monitor` also lives on Forgejo, with no GitHub copy (owner decision
-2026-10-28). To move another repository, drain and pause its T3 orchestration. Call
+`tannerpolley/process-monitor` has no GitHub copy (owner decision 2026-10-28), so the sync skips
+it, and `t3code-sandbox` is a different dev-preview repository on each host. To move a new
+repository, drain and pause its T3 orchestration. Call
 `POST /api/v1/repos/migrate` with `service: github`, `mirror: false`, and issues, labels,
 milestones, pull requests and releases enabled; read the GitHub credential inside the command
 with `gh auth token` and never print it. Compare counts, then `PATCH` the repository with
 `autodetect_manual_merge: true` and `internal_tracker.enable_issue_dependencies: true`.
 Re-create blockers with `POST issues/{n}/dependencies` and parent markers, and set HTTPS `origin`.
-Then either turn GitHub Issues off (`gh repo edit --enable-issues=false`) or give the repository
-its own copy timer.
+The sync timer picks it up on its next run.
 
 Migrated issues and comments show `Ghost` and an empty `original_author`; the migrator retained
 no GitHub authorship. T3's Forgejo host reads no Projects, and Forgejo sends no ETags, so lists
