@@ -167,6 +167,12 @@ import {
 const UNGROUPED_SECTION_ID = "__ungrouped__";
 const NO_THREADS: readonly SidebarThreadSummary[] = [];
 
+// DEMO #291: temporary switch between the three candidate sub-section treatments.
+const SUBSECTION_STYLE: "folder" | "indent" | "divider" = (() => {
+  const value = globalThis.localStorage?.getItem("t3code:demo-subsection-style");
+  return value === "indent" || value === "divider" ? value : "folder";
+})();
+
 type SidebarProjectSectionRender = {
   readonly id: string;
   readonly name: string;
@@ -721,7 +727,19 @@ const ProjectSection = memo(function ProjectSection(props: {
   return (
     <li
       ref={setDropRef}
-      className={cn("group/section rounded-md", highlighted && "bg-sidebar-row-selected/60")}
+      className={cn(
+        "group/section rounded-md",
+        highlighted && "bg-sidebar-row-selected/60",
+        props.codexStyle && isSubsection && SUBSECTION_STYLE === "folder" && "ms-2",
+        props.codexStyle &&
+          isSubsection &&
+          SUBSECTION_STYLE === "indent" &&
+          "ms-2 rounded-none border-sidebar-border border-s ps-1",
+        props.codexStyle &&
+          !isSubsection &&
+          SUBSECTION_STYLE === "divider" &&
+          "not-first:mt-2 rounded-none not-first:border-sidebar-border/70 not-first:border-t not-first:pt-2",
+      )}
     >
       <SortableSectionHeader
         codexStyle={props.codexStyle}
@@ -736,7 +754,13 @@ const ProjectSection = memo(function ProjectSection(props: {
       />
       {expanded ? (
         <ul
-          className={props.codexStyle ? undefined : "ms-3 border-sidebar-border/60 border-s ps-1"}
+          className={
+            props.codexStyle
+              ? isSubsection && SUBSECTION_STYLE === "folder"
+                ? "ms-4"
+                : undefined
+              : "ms-3 border-sidebar-border/60 border-s ps-1"
+          }
         >
           <SortableContext
             items={childOrder.map((key) =>
@@ -836,6 +860,8 @@ function SortableSectionHeader(props: {
   const { codexStyle } = props;
   const draggable = canWrite && section.custom;
   const expanded = !section.collapsed;
+  const subsection = codexStyle && section.parentId !== undefined ? SUBSECTION_STYLE : null;
+  const FolderGlyph = expanded ? FolderOpenIcon : FolderIcon;
 
   return (
     <div
@@ -862,6 +888,10 @@ function SortableSectionHeader(props: {
           "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           // Codex style sets sections apart from the project rows under them: a small uppercase label.
           codexStyle ? "gap-2 text-2xs font-semibold uppercase tracking-wide" : "gap-1.5 text-xs",
+          subsection === "folder" &&
+            "gap-1.5 text-xs font-medium normal-case tracking-normal text-sidebar-foreground/90",
+          subsection === "divider" &&
+            "font-normal normal-case tracking-normal text-sidebar-muted-foreground/60",
           // Its actions menu overlays the row end, so the count moves aside while the menu shows.
           codexStyle &&
             section.custom &&
@@ -878,6 +908,16 @@ function SortableSectionHeader(props: {
             className={cn("size-3 shrink-0 transition-transform", !expanded && "-rotate-90")}
           />
         )}
+        {subsection === "folder" ? (
+          <FolderGlyph
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0",
+              PROJECT_ICON_COLORS.find((c) => c.value === section.color)?.className ??
+                "text-icon-muted",
+            )}
+          />
+        ) : null}
         <span className="fork-sidebar-title min-w-0 truncate">{projectSectionName(section)}</span>
         {/* Codex style: the caret follows the name, so flat rows keep the left edge for names. */}
         {codexStyle ? (
