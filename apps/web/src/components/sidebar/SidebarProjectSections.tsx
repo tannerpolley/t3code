@@ -168,10 +168,17 @@ const UNGROUPED_SECTION_ID = "__ungrouped__";
 const NO_THREADS: readonly SidebarThreadSummary[] = [];
 
 // DEMO #291: temporary switch between the three candidate sub-section treatments.
-const SUBSECTION_STYLE: "folder" | "indent" | "divider" = (() => {
+const SUBSECTION_STYLE: "folder" | "indent" | "divider" | "rail" | "rail-color" | "bracket" = (() => {
   const value = globalThis.localStorage?.getItem("t3code:demo-subsection-style");
-  return value === "indent" || value === "divider" ? value : "folder";
+  return value === "folder" ||
+    value === "indent" ||
+    value === "rail" ||
+    value === "rail-color" ||
+    value === "bracket"
+    ? value
+    : "divider";
 })();
+const DIVIDED = SUBSECTION_STYLE !== "folder" && SUBSECTION_STYLE !== "indent";
 
 type SidebarProjectSectionRender = {
   readonly id: string;
@@ -735,9 +742,10 @@ const ProjectSection = memo(function ProjectSection(props: {
           isSubsection &&
           SUBSECTION_STYLE === "indent" &&
           "ms-2 rounded-none border-sidebar-border border-s ps-1",
+        props.codexStyle && isSubsection && DIVIDED && "relative",
         props.codexStyle &&
           !isSubsection &&
-          SUBSECTION_STYLE === "divider" &&
+          DIVIDED &&
           "not-first:mt-2 rounded-none not-first:border-sidebar-border/70 not-first:border-t not-first:pt-2",
       )}
     >
@@ -752,6 +760,28 @@ const ProjectSection = memo(function ProjectSection(props: {
         onSetExpanded={props.onSetExpanded}
         section={props.section}
       />
+      {props.codexStyle && isSubsection && SUBSECTION_STYLE === "rail" ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-1 -start-0.5 w-px bg-sidebar-foreground/25"
+        />
+      ) : null}
+      {props.codexStyle && isSubsection && SUBSECTION_STYLE === "rail-color" ? (
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-y-1 -start-0.5 w-0.5 rounded-full bg-current opacity-70",
+            PROJECT_ICON_COLORS.find((c) => c.value === props.section.color)?.className ??
+              "text-sidebar-foreground/40",
+          )}
+        />
+      ) : null}
+      {props.codexStyle && isSubsection && SUBSECTION_STYLE === "bracket" ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute start-0 top-3.5 bottom-1 w-1.5 rounded-ss-sm border-sidebar-foreground/30 border-s border-t"
+        />
+      ) : null}
       {expanded ? (
         <ul
           className={
@@ -890,7 +920,10 @@ function SortableSectionHeader(props: {
           codexStyle ? "gap-2 text-2xs font-semibold uppercase tracking-wide" : "gap-1.5 text-xs",
           subsection === "folder" &&
             "gap-1.5 text-xs font-medium normal-case tracking-normal text-sidebar-foreground/90",
-          subsection === "divider" &&
+          (subsection === "divider" ||
+            subsection === "rail" ||
+            subsection === "rail-color" ||
+            subsection === "bracket") &&
             "font-normal normal-case tracking-normal text-sidebar-muted-foreground/60",
           // Its actions menu overlays the row end, so the count moves aside while the menu shows.
           codexStyle &&
