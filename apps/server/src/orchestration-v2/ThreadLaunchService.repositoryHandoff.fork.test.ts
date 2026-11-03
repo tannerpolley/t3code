@@ -2056,6 +2056,19 @@ describe("fresh-thread repository handoff", () => {
         paused: true,
         clientRequestId: CommandId.make("move:pause"),
       });
+      // The root calls the move from its own turn.
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        threadId: movingRoot,
+        commandId: CommandId.make("move:busy"),
+        messageId: MessageId.make("move:busy"),
+        text: "Move to the new host",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
 
       yield* service.restoreRoot(registerInput(movingRoot, "move:register"));
       assert.isNull(yield* store.repositoryOwner(previous));

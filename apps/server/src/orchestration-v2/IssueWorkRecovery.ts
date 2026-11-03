@@ -264,7 +264,11 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         updatedAt: occurredAt,
       },
     });
-    return { idleRoot: moving === undefined ? retiringRoot : target, events };
+    return {
+      idleRoot: moving === undefined ? retiringRoot : target,
+      moving: moving !== undefined,
+      events,
+    };
   });
 
   const closeOut = Effect.fn("IssueWorkRecovery.closeOut")(function* (

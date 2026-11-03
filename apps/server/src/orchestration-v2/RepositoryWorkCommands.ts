@@ -68,6 +68,8 @@ export function makeRepositoryWorkCommands({
       { readonly type: "thread.archive" | "repository.work.restore" }
     >,
     thread: OrchestrationV2AppThread,
+    // A root moving to its project's new record stays the same thread, so its own turns may run.
+    moving = false,
   ) {
     if (
       thread.repositoryOrchestration === undefined ||
@@ -78,16 +80,17 @@ export function makeRepositoryWorkCommands({
       .getThreadRecords(thread.id, ["runs", "subagents"])
       .pipe(mapDispatchError(command));
     const unfinished =
-      projection.runs.some(
+      !moving &&
+      (projection.runs.some(
         (run) =>
           !["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(run.status),
       ) ||
-      projection.subagents.some(
-        (task) =>
-          !["completed", "failed", "cancelled", "interrupted"].includes(task.status) ||
-          task.completionDelivery?.state === "pending" ||
-          task.completionDelivery?.state === "claimed",
-      );
+        projection.subagents.some(
+          (task) =>
+            !["completed", "failed", "cancelled", "interrupted"].includes(task.status) ||
+            task.completionDelivery?.state === "pending" ||
+            task.completionDelivery?.state === "claimed",
+        ));
     const unclaimed = Option.isSome(issueWorkStore)
       ? yield* issueWorkStore.value.hasUnclaimedRequests(thread.id).pipe(mapDispatchError(command))
       : true;
@@ -96,7 +99,9 @@ export function makeRepositoryWorkCommands({
       thread.repositoryOrchestration.milestones.some((plan) => plan.status !== "complete");
     const subtreeActive =
       Option.isNone(issueWorkStore) ||
-      !(yield* issueWorkStore.value.subtreeDrained(thread.id).pipe(mapDispatchError(command)));
+      (moving
+        ? (yield* issueWorkStore.value.slotsInUse(thread.id).pipe(mapDispatchError(command))) > 0
+        : !(yield* issueWorkStore.value.subtreeDrained(thread.id).pipe(mapDispatchError(command))));
     const blockers = [
       unfinished && "unfinished runs, subagents or final deliveries",
       unclaimed &&
@@ -146,7 +151,8 @@ export function makeRepositoryWorkCommands({
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     const restored = yield* issueWorkRecovery.restore(command).pipe(mapDispatchError(command));
-    if (restored.idleRoot !== null) yield* guardRootLifecycle(command, restored.idleRoot);
+    if (restored.idleRoot !== null)
+      yield* guardRootLifecycle(command, restored.idleRoot, restored.moving);
     for (const event of restored.events)
       yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
   });
