@@ -10,7 +10,9 @@ Since 2026-11-02 the fork lives on Forgejo at
 `https://tnnrpolley21-ms-7c95.taila72856.ts.net:3000/tannerpolley/t3code` (Forgejo 17 on this
 desktop: system service `forgejo`, data in `/srv/forgejo`, published by `tailscale serve`): code,
 issues and pull requests. `origin` points there. All of the owner's repositories live there too,
-except the 9 GB `Unite` fork. Issue #1 is the
+except the 9 GB `Unite` fork. The user timer `forgejo-backup` (`~/.local/bin/forgejo-backup`,
+03:30 nightly) copies Forgejo's database, issue attachments and Forgejo-only repositories to
+`chromebox:backups/forgejo`, keeping only the latest copy. Issue #1 is the
 roadmap and maintenance tracker. Every task starts from an issue: the orchestrator creates one
 before delegating, and links each worker thread to it (`link_issue`), so the Issues pane shows it
 In progress. Close an issue when its fix lands on `main`.
@@ -53,8 +55,11 @@ with `gh auth token` and never print it. Compare counts, then `PATCH` the reposi
 Re-create blockers with `POST issues/{n}/dependencies` and parent markers, and set HTTPS `origin`.
 The sync timer picks it up on its next run.
 
-Migrated issues and comments show `Ghost` and an empty `original_author`; the migrator retained
-no GitHub authorship. T3's Forgejo host reads no Projects, and Forgejo sends no ETags, so lists
+Migrated issues, comments, releases and reviews keep their GitHub author only as
+`original_author_id`, so Forgejo shows `Ghost` until they are credited to the local account.
+With Forgejo stopped, set `poster_id` (`publisher_id` for releases, `reviewer_id` for reviews)
+to the local user's id where `original_author_id` is the owner's GitHub id (42780259), and clear
+both `original_author` columns. T3's Forgejo host reads no Projects, and Forgejo sends no ETags, so lists
 are plain re-reads. The `state_reason` “not planned” is represented by a close and a comment.
 
 ## Branches and worktrees
