@@ -158,3 +158,27 @@ export function currentPdfSection(entries: readonly PdfOutlineEntry[], page: num
   }
   return current;
 }
+
+/**
+ * Outline rows shown in the bookmarks tree: an entry is hidden under a collapsed ancestor. The
+ * current section highlights itself, or the collapsed ancestor that hides it.
+ */
+export function visiblePdfOutline(
+  entries: readonly PdfOutlineEntry[],
+  expanded: ReadonlySet<number>,
+  section: number,
+) {
+  const rows: { entry: PdfOutlineEntry; parent: boolean; open: boolean; current: boolean }[] = [];
+  let hiddenBelow = Infinity;
+  for (const [index, entry] of entries.entries()) {
+    if (entry.depth > hiddenBelow) {
+      if (index === section) rows.at(-1)!.current = true;
+      continue;
+    }
+    const parent = (entries[index + 1]?.depth ?? -1) > entry.depth;
+    const open = parent && expanded.has(entry.id);
+    hiddenBelow = parent && !open ? entry.depth : Infinity;
+    rows.push({ entry, parent, open, current: index === section });
+  }
+  return rows;
+}

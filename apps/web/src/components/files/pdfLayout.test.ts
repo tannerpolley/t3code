@@ -13,6 +13,7 @@ import {
   pdfPageText,
   pdfPageWidth,
   stepPdfZoom,
+  visiblePdfOutline,
   visiblePdfPages,
 } from "./pdfLayout";
 
@@ -165,5 +166,26 @@ describe("PDF outline", () => {
     } finally {
       await task.destroy();
     }
+  });
+});
+
+describe("visiblePdfOutline", () => {
+  const entries = [
+    { id: 0, title: "Methods", page: 0, depth: 0 },
+    { id: 1, title: "Model", page: 1, depth: 1 },
+    { id: 2, title: "Solver", page: 2, depth: 2 },
+    { id: 3, title: "Results", page: 3, depth: 0 },
+  ];
+  const shown = (expanded: number[], section: number) =>
+    visiblePdfOutline(entries, new Set(expanded), section).map(
+      (row) =>
+        `${row.entry.title}${row.parent ? (row.open ? "-" : "+") : ""}${row.current ? "*" : ""}`,
+    );
+
+  it("hides entries under a collapsed parent and highlights that parent for its current section", () => {
+    expect(shown([], 2)).toEqual(["Methods+*", "Results"]);
+    expect(shown([0], 2)).toEqual(["Methods-", "Model+*", "Results"]);
+    expect(shown([0, 1], 2)).toEqual(["Methods-", "Model-", "Solver*", "Results"]);
+    expect(shown([1], 3)).toEqual(["Methods+", "Results*"]);
   });
 });

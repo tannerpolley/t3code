@@ -7,9 +7,16 @@ import {
   type CSSProperties,
 } from "react";
 import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
-import { ChevronDownIcon, ChevronUpIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+  MinusIcon,
+  PanelLeftIcon,
+  PlusIcon,
+  ScanIcon,
+} from "lucide-react";
 import { Button } from "~/components/ui/button";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { Input } from "~/components/ui/input";
 import { observeResize } from "~/lib/observeResize";
 import { FileSurfaceAction, FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
@@ -19,6 +26,7 @@ import {
   currentPdfPage,
   currentPdfSection,
   resolvePdfOutline,
+  visiblePdfOutline,
   type PdfOutlineEntry,
   pdfFindIncludes,
   pdfFindMatchRuns,
@@ -148,6 +156,8 @@ export default function PdfViewer(props: {
   );
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [outline, setOutline] = useState<PdfOutlineEntry[]>([]);
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set());
+  const [bookmarksOpen, setBookmarksOpen] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [ratios, setRatios] = useState<readonly number[]>([]);
@@ -208,7 +218,9 @@ export default function PdfViewer(props: {
         setPdf(document);
         void resolvePdfOutline(document)
           .then((entries) => {
-            if (!controller.signal.aborted) setOutline(entries);
+            if (controller.signal.aborted) return;
+            setExpanded(new Set());
+            setOutline(entries);
           })
           .catch(() => {
             if (!controller.signal.aborted) setOutline([]);
@@ -366,6 +378,15 @@ export default function PdfViewer(props: {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-2 py-1 text-xs">
+        {outline.length > 0 && (
+          <FileSurfaceAction
+            label="Bookmarks"
+            pressed={bookmarksOpen}
+            onPress={() => setBookmarksOpen((open) => !open)}
+          >
+            <PanelLeftIcon className="size-3.5" />
+          </FileSurfaceAction>
+        )}
         <span className="mr-auto px-1 tabular-nums" aria-live="polite">
           {pdf ? `${current + 1} / ${pdf.numPages} pages` : "PDF"}
         </span>
@@ -445,21 +466,45 @@ export default function PdfViewer(props: {
           </>
         ) : null}
       </div>
-      {outline.length > 0 && (
-        <Collapsible>
-          <CollapsibleTrigger render={<Button variant="ghost" size="compact" />}>
-            Contents
-          </CollapsibleTrigger>
-          <CollapsiblePanel animate={false}>
-            <nav aria-label="PDF contents" className="max-h-48 overflow-auto border-b">
-              <ul>
-                {outline.map((entry, index) => (
-                  <li key={entry.id} style={{ paddingLeft: `${entry.depth * 16}px` }}>
+      <div className="flex min-h-0 min-w-0 flex-1">
+        {bookmarksOpen && outline.length > 0 && (
+          <nav
+            aria-label="PDF bookmarks"
+            className="w-56 max-w-[40%] shrink-0 overflow-auto border-e border-border/60 py-1"
+          >
+            <ul>
+              {visiblePdfOutline(outline, expanded, section).map(
+                ({ entry, parent, open, current: here }) => (
+                  <li
+                    key={entry.id}
+                    className="flex items-start gap-0.5 pe-1"
+                    style={{ paddingInlineStart: `${4 + entry.depth * 12}px` }}
+                  >
+                    {parent ? (
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`${open ? "Collapse" : "Expand"} ${entry.title}`}
+                        aria-expanded={open}
+                        onClick={() =>
+                          setExpanded((ids) => {
+                            const next = new Set(ids);
+                            if (!next.delete(entry.id)) next.add(entry.id);
+                            return next;
+                          })
+                        }
+                      >
+                        {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
+                      </Button>
+                    ) : (
+                      <span aria-hidden className="size-7 shrink-0 sm:size-6" />
+                    )}
                     <Button
-                      variant={index === section ? "secondary" : "ghost"}
+                      className="min-w-0 flex-1 justify-start"
+                      variant={here ? "secondary" : "ghost"}
                       size="sm-multiline"
                       disabled={entry.page === null}
-                      aria-current={index === section ? "location" : undefined}
+                      aria-current={here ? "location" : undefined}
                       onClick={() => {
                         if (entry.page !== null) showPage(entry.page);
                       }}
@@ -467,76 +512,76 @@ export default function PdfViewer(props: {
                       {entry.title}
                     </Button>
                   </li>
-                ))}
-              </ul>
-            </nav>
-          </CollapsiblePanel>
-        </Collapsible>
-      )}
-      <div
-        ref={scroll}
-        role="region"
-        aria-label={props.title}
-        tabIndex={0}
-        className="relative min-h-0 min-w-0 w-full flex-1 overflow-auto scrollbar-gutter-stable bg-muted/40"
-        onScroll={(event) => {
-          const top = event.currentTarget.scrollTop;
-          setScrollTop(top);
-          saveView(event.currentTarget);
-        }}
-        onKeyDown={(event) => {
-          if ((event.ctrlKey || event.metaKey) && event.key === "f") {
-            event.preventDefault();
-            event.stopPropagation();
-            find.current?.focus();
-          }
-        }}
-      >
-        {error ? (
-          <FileSurfaceFailure
-            message={error}
-            onRetry={() => {
-              setError(null);
-              setPdf(null);
-              setRevision((value) => value + 1);
-            }}
-          />
-        ) : !pdf ? (
-          <FileSurfaceLoading />
-        ) : (
-          <div
-            className="relative"
-            style={{
-              height: `max(${offsets.at(-1) ?? 0}px, calc(100% + ${(offsets.at(-2) ?? 16) - 16}px))`,
-              minWidth: width + 32,
-            }}
-          >
-            {visible.map(({ index, ratio }) => (
-              <div
-                key={index}
-                className="absolute bg-white shadow-sm"
-                style={
-                  {
-                    top: offsets[index],
-                    left: Math.max(16, (viewport.width - width) / 2),
-                    width,
-                    height: width * ratio,
-                    "--total-scale-factor": 1,
-                  } as CSSProperties
-                }
-              >
-                <PdfPage
-                  document={pdf}
-                  index={index}
-                  width={width}
-                  query={query}
-                  onSize={onSize}
-                  onError={setError}
-                />
-              </div>
-            ))}
-          </div>
+                ),
+              )}
+            </ul>
+          </nav>
         )}
+        <div
+          ref={scroll}
+          role="region"
+          aria-label={props.title}
+          tabIndex={0}
+          className="relative min-h-0 min-w-0 w-full flex-1 overflow-auto scrollbar-gutter-stable bg-muted/40"
+          onScroll={(event) => {
+            const top = event.currentTarget.scrollTop;
+            setScrollTop(top);
+            saveView(event.currentTarget);
+          }}
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === "f") {
+              event.preventDefault();
+              event.stopPropagation();
+              find.current?.focus();
+            }
+          }}
+        >
+          {error ? (
+            <FileSurfaceFailure
+              message={error}
+              onRetry={() => {
+                setError(null);
+                setPdf(null);
+                setRevision((value) => value + 1);
+              }}
+            />
+          ) : !pdf ? (
+            <FileSurfaceLoading />
+          ) : (
+            <div
+              className="relative"
+              style={{
+                height: `max(${offsets.at(-1) ?? 0}px, calc(100% + ${(offsets.at(-2) ?? 16) - 16}px))`,
+                minWidth: width + 32,
+              }}
+            >
+              {visible.map(({ index, ratio }) => (
+                <div
+                  key={index}
+                  className="absolute bg-white shadow-sm"
+                  style={
+                    {
+                      top: offsets[index],
+                      left: Math.max(16, (viewport.width - width) / 2),
+                      width,
+                      height: width * ratio,
+                      "--total-scale-factor": 1,
+                    } as CSSProperties
+                  }
+                >
+                  <PdfPage
+                    document={pdf}
+                    index={index}
+                    width={width}
+                    query={query}
+                    onSize={onSize}
+                    onError={setError}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
