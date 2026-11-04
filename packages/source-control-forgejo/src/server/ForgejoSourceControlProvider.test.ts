@@ -35,6 +35,8 @@ const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknow
 
 it.effect("reads clone URLs on the given host rather than the checkout's", () => {
   const urls: string[] = [];
+  let remoteReads = 0;
+  let keyReads = 0;
   const client = HttpClient.make((request) => {
     urls.push(request.url);
     return Effect.succeed(
@@ -60,23 +62,41 @@ it.effect("reads clone URLs on the given host rather than the checkout's", () =>
       repository: "maria/project",
       host: "forgejo.test",
     });
+    yield* provider.getRepositoryCloneUrls({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+    });
+    assert.strictEqual(remoteReads, 1);
+    assert.strictEqual(keyReads, 1);
     assert.strictEqual(cloneUrls.url, "https://forgejo.test/maria/project.git");
-    assert.deepStrictEqual(urls, ["https://forgejo.test/api/v1/repos/maria/project"]);
+    assert.deepStrictEqual(urls, [
+      "https://forgejo.test/api/v1/repos/maria/project",
+      "https://forgejo.test/api/v1/repos/maria/project",
+    ]);
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, client),
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
         exists: () => Effect.succeed(true),
-        readFileString: () =>
-          Effect.succeed(
+        stat: () =>
+          Effect.succeed({
+            mtime: Option.none(),
+            ino: Option.some(1n),
+            size: 1n,
+          } as FileSystem.File.Info),
+        readFileString: () => {
+          keyReads++;
+          return Effect.succeed(
             encodeJson({
               hosts: {
                 "forgejo.test": { type: "Application", token: "test-token" },
                 "code.example": { type: "Application", token: "other-token" },
               },
             }),
-          ),
+          );
+        },
       }),
     ),
     Effect.provide(
@@ -84,6 +104,7 @@ it.effect("reads clone URLs on the given host rather than the checkout's", () =>
         process: {
           run: (input) => {
             if (input.command === "git") {
+              remoteReads++;
               assert.deepStrictEqual(input.args, ["remote", "-v"]);
               // The checkout is on another Forgejo server with a same-named repository.
               return Effect.succeed(

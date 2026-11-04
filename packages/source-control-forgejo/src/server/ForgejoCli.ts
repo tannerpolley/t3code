@@ -6,6 +6,7 @@ import * as Result from "effect/Result";
 import * as Clock from "effect/Clock";
 import * as FileSystem from "effect/FileSystem";
 import * as Semaphore from "effect/Semaphore";
+import * as Option from "effect/Option";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - fj storage paths use explicit Windows and POSIX layouts, independently of this process's platform.
 import * as NodePath from "node:path";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
@@ -16,6 +17,7 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
 
+const encodeCacheKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodeApiBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export class ForgejoCliError extends Schema.TaggedError<ForgejoCliError>()("ForgejoCliError", {
@@ -245,7 +247,36 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  const readKeys = Effect.fn("ForgejoCli.readKeys")(function* (cwd: string) {
+  let cachedKeys: { signature: string; keys: typeof ForgejoKeysSchema.Type } | undefined;
+  const targets = new Map<string, ForgejoRepository>();
+  const invalidate = () => {
+    cachedKeys = undefined;
+    targets.clear();
+    authenticated.clear();
+  };
+  const readKeysFile = Effect.fn("ForgejoCli.readKeys")(function* (cwd: string, path: string) {
+    const raw = yield* fileSystem.readFileString(path).pipe(
+      Effect.mapError(
+        () =>
+          new ForgejoCliError({
+            command: "fj",
+            cwd,
+            reason: "authentication",
+            detail: "Could not read fj authentication storage.",
+          }),
+      ),
+    );
+    const decoded = parseForgejoKeys(raw);
+    if (Result.isFailure(decoded))
+      return yield* new ForgejoCliError({
+        command: "fj",
+        cwd,
+        reason: "authentication",
+        detail: "fj authentication storage is invalid. Authenticate again with fj.",
+      });
+    return decoded.success;
+  });
+  const readKeys = Effect.fnUntraced(function* (cwd: string) {
     for (const path of forgejoKeysPaths({
       platform: yield* HostProcess.Platform,
       home: yield* HostProcess.HomeDirectory,
@@ -266,27 +297,23 @@ export const make = Effect.gen(function* () {
         ),
       );
       if (!exists) continue;
-      const raw = yield* fileSystem.readFileString(path).pipe(
-        Effect.mapError(
-          () =>
-            new ForgejoCliError({
-              command: "fj",
-              cwd,
-              reason: "authentication",
-              detail: "Could not read fj authentication storage.",
-            }),
-        ),
-      );
-      const decoded = parseForgejoKeys(raw);
-      if (Result.isFailure(decoded))
-        return yield* new ForgejoCliError({
-          command: "fj",
-          cwd,
-          reason: "authentication",
-          detail: "fj authentication storage is invalid. Authenticate again with fj.",
-        });
-      return decoded.success;
+      const info = yield* fileSystem.stat(path).pipe(Effect.orElseSucceed(() => null));
+      const signature = info
+        ? encodeCacheKey([
+            path,
+            Option.getOrNull(info.mtime)?.getTime(),
+            info.size.toString(),
+            Option.getOrNull(info.ino)?.toString(),
+          ])
+        : undefined;
+      if (signature && cachedKeys?.signature === signature) return cachedKeys.keys;
+      if (cachedKeys) invalidate();
+      else if (!signature) targets.clear();
+      const keys = yield* readKeysFile(cwd, path);
+      if (signature) cachedKeys = { signature, keys };
+      return keys;
     }
+    if (cachedKeys) invalidate();
     const empty: typeof ForgejoKeysSchema.Type = { hosts: {}, aliases: {} };
     return empty;
   });
@@ -636,9 +663,28 @@ export const make = Effect.gen(function* () {
       });
     return { command, login: login.name, repository, baseUrl: login.url.replace(/\/+$/, "") };
   });
-  const resolveRepository = (input: ForgejoRepositoryInput) => resolveTarget(input);
+  const cachedTarget = Effect.fnUntraced(function* (
+    input: ForgejoRepositoryInput,
+    hostOnly = false,
+  ) {
+    yield* readKeys(input.cwd);
+    const key = encodeCacheKey([
+      input.cwd,
+      input.context,
+      input.repository,
+      input.reference,
+      input.host,
+      hostOnly,
+    ]);
+    const cached = targets.get(key);
+    if (cached) return cached;
+    const target = yield* resolveTarget(input, hostOnly);
+    targets.set(key, target);
+    return target;
+  });
+  const resolveRepository = (input: ForgejoRepositoryInput) => cachedTarget(input);
   const api = Effect.fn("ForgejoCli.api")(function* (input: ForgejoApiInput) {
-    const repository = yield* resolveTarget(
+    const repository = yield* cachedTarget(
       input,
       input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET"),
     );
@@ -665,7 +711,18 @@ export const make = Effect.gen(function* () {
       }
     }
     if (repository.command === "fj") {
-      const token = (yield* readKeys(input.cwd)).hosts[repository.login]?.token;
+      const token = yield* authenticateFj(input.cwd, {
+        name: repository.login,
+        url: repository.baseUrl,
+        user: "",
+        default: "false",
+      }).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            if (error.reason === "authentication") invalidate();
+          }),
+        ),
+      );
       if (!token)
         return yield* new ForgejoCliError({
           command: "fj",
@@ -680,7 +737,13 @@ export const make = Effect.gen(function* () {
         path,
         ...(input.method === undefined ? {} : { method: input.method }),
         ...(stdin === undefined ? {} : { body: stdin }),
-      });
+      }).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            if (error.reason === "authentication") invalidate();
+          }),
+        ),
+      );
     }
     const result = yield* execute({
       cwd: input.cwd,
