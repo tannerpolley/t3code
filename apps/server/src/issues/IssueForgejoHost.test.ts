@@ -269,44 +269,48 @@ it.effect("reads headerless full dependency pages before proving completeness", 
   }),
 );
 
-it.effect("keeps detail readable and work conservative when dependencies are disabled", () =>
-  Effect.gen(function* () {
-    const fixture = setup((path) => {
-      if (path === "repositories/12" || path === "repos/owner/repo") return repo;
-      if (path.includes("/dependencies"))
-        return new ForgejoCli.ForgejoCliError({
-          command: "fj",
-          cwd: scope.cwd,
-          detail: "Not Found",
-          reason: "not-found",
-          httpStatus: 404,
-        });
-      if (path.includes("/comments"))
-        return [
-          {
-            body: "hello",
-            created_at: date,
-            html_url: `https://${host}/owner/repo/issues/7#comment-1`,
-          },
-        ];
-      if (path.includes("/timeline") || path.includes("?type=issues")) return [];
-      return issue(7, { body: "issue body" });
-    });
-    const transport = yield* fixture.make;
-    const detail = yield* transport.detail(
-      { ...scope, number: 7 },
-      { accountId: "1", viewer: "owner", credentialFingerprint: "test" },
-    );
-    expect(detail.body).toBe("issue body");
-    expect(detail.comments[0]?.body).toBe("hello");
-    expect(detail.issue.relationshipsComplete).toBe(false);
-    const work = yield* transport.workRead({ ...scope, number: 7 });
-    expect(work.blockersComplete).toBe(false);
-    expect(issueEligibility(work)).toBe("unknown");
-    expect(yield* transport.statuses(host, ["12/7"]).pipe(Effect.flip)).toMatchObject({
-      code: "invalid-response",
-    });
-  }),
+it.effect(
+  "keeps detail readable and work conservative when dependencies are disabled and the timeline is empty",
+  () =>
+    Effect.gen(function* () {
+      const fixture = setup((path) => {
+        if (path === "repositories/12" || path === "repos/owner/repo") return repo;
+        if (path.includes("/dependencies"))
+          return new ForgejoCli.ForgejoCliError({
+            command: "fj",
+            cwd: scope.cwd,
+            detail: "Not Found",
+            reason: "not-found",
+            httpStatus: 404,
+          });
+        if (path.includes("/comments"))
+          return [
+            {
+              body: "hello",
+              created_at: date,
+              html_url: `https://${host}/owner/repo/issues/7#comment-1`,
+            },
+          ];
+        // Forgejo answers `null`, not `[]`, for a new issue's empty timeline.
+        if (path.includes("/timeline")) return null;
+        if (path.includes("?type=issues")) return [];
+        return issue(7, { body: "issue body" });
+      });
+      const transport = yield* fixture.make;
+      const detail = yield* transport.detail(
+        { ...scope, number: 7 },
+        { accountId: "1", viewer: "owner", credentialFingerprint: "test" },
+      );
+      expect(detail.body).toBe("issue body");
+      expect(detail.comments[0]?.body).toBe("hello");
+      expect(detail.issue.relationshipsComplete).toBe(false);
+      const work = yield* transport.workRead({ ...scope, number: 7 });
+      expect(work.blockersComplete).toBe(false);
+      expect(issueEligibility(work)).toBe("unknown");
+      expect(yield* transport.statuses(host, ["12/7"]).pipe(Effect.flip)).toMatchObject({
+        code: "invalid-response",
+      });
+    }),
 );
 
 it.effect("maps body, milestone clearing, state, labels and posted issue writes", () =>

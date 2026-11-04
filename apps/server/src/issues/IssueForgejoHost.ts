@@ -250,12 +250,14 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
     current: number,
     operation: IssueReadError["operation"] = "detail",
   ) {
-    const result = yield* request(
+    // Forgejo answers some empty lists, such as a new issue's timeline, with `null`.
+    const response = yield* request(
       scope,
       `${path}${path.includes("?") ? "&" : "?"}limit=50&page=${current}`,
-      Schema.Array(schema),
+      Schema.NullOr(Schema.Array(schema)),
       operation,
     );
+    const result = { ...response, value: response.value ?? [] };
     const next = /<([^>]+)>;\s*rel="next"/.exec(result.headers)?.[1];
     const nextPage = next
       ? yield* Effect.try({
