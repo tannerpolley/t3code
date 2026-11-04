@@ -1,4 +1,4 @@
-import { supportsIssueHost } from "@t3tools/client-runtime/state/issue-work";
+import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -41,10 +41,8 @@ export function knownIssueHosts(
 ): Set<string> {
   const hosts = new Set(["github.com"]);
   for (const project of projects) {
-    const identity = project.repositoryIdentity;
-    // The canonical key starts with the remote's host, as the change request matcher reads it.
-    if (identity && supportsIssueHost(identity))
-      hosts.add(identity.canonicalKey.split("/")[0]!.toLowerCase());
+    const host = threadIssueRepository(project.repositoryIdentity)?.host;
+    if (host) hosts.add(host.toLowerCase());
   }
   return hosts;
 }

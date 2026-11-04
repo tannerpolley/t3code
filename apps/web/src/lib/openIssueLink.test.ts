@@ -51,7 +51,8 @@ it("reads GitHub issue pages and leaves every other link alone", () => {
 it("opens Forgejo issue links in T3, matching the host with its port", () => {
   const identity: RepositoryIdentity = {
     provider: SourceControlProviderKind.make("forgejo"),
-    canonicalKey: "forge.example:3000/owner/repo",
+    // The server keys a repository without its port; the remote URL keeps it.
+    canonicalKey: "forge.example/owner/repo",
     displayName: "owner/repo",
     locator: {
       source: "git-remote",
@@ -69,7 +70,8 @@ it("opens Forgejo issue links in T3, matching the host with its port", () => {
       },
     },
   ]);
-  expect([...issueHosts]).toEqual(["github.com", "forge.example:3000", "github.example"]);
+  // GitHub issues are served on github.com only, so an Enterprise project adds no host.
+  expect([...issueHosts]).toEqual(["github.com", "forge.example:3000"]);
   expect(parseIssueUrl("https://forge.example:3000/owner/repo/issues/1", issueHosts)).toEqual({
     host: "forge.example:3000",
     repository: "owner/repo",

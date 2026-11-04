@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { sourceControlClients } from "../sourceControlClients.ts";
 
-export function supportsIssueHost(identity: RepositoryIdentity | null | undefined) {
+function supportsIssueHost(identity: RepositoryIdentity | null | undefined) {
   return issueHostCapabilities(repositoryIssueHostKind(identity)) !== null;
 }
 
