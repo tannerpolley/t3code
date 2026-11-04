@@ -633,7 +633,10 @@ export const make = Effect.gen(function* () {
           }),
         );
         const baseline = { ...inherited };
-        const cachedPath = cached.PATH;
+        // AppImage mounts ($TMPDIR/.mount_*) vanish with their process; spawning from a dead one throws ENOTCONN.
+        const cachedPath = cached.PATH?.split(pathDelimiter(environment.platform))
+          .filter((entry) => !/\/\.mount_[^/]+(?:\/|$)/u.test(entry))
+          .join(pathDelimiter(environment.platform));
         if (cachedPath) {
           cached.PATH = Option.getOrElse(
             mergePaths(environment.platform, [Option.some(cachedPath), readEnvPath(inherited)]),

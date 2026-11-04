@@ -343,8 +343,13 @@ describe("DesktopLinuxUrlHandler", () => {
     const desktopDatabaseFailed = emptyRecording();
     const xdgMimeFailed = emptyRecording();
     const writeFailed = emptyRecording();
+    const spawnThrew = emptyRecording();
 
     return Effect.gen(function* () {
+      // Node throws synchronously (not ENOENT) when PATH holds a dead FUSE mount.
+      yield* runRegister(spawnThrew, {
+        processSpawner: ChildProcessSpawner.make(() => Effect.die(new Error("spawn ENOTCONN"))),
+      });
       yield* runRegister(desktopDatabaseFailed, { updateDesktopDatabaseExitCode: 1 });
       yield* runRegister(xdgMimeFailed, { xdgMimeExitCode: 1 });
       yield* runRegister(writeFailed, {

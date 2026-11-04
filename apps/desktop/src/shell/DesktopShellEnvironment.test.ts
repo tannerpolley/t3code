@@ -310,7 +310,7 @@ describe("DesktopShellEnvironment", () => {
           version: 1,
           key: '["darwin","/test-home","/bin/zsh",""]',
           environment: {
-            PATH: "/cached/bin",
+            PATH: "/tmp/.mount_T3-Old:/cached/bin:/tmp/.mount_T3-Old/usr/sbin",
             __MISE_DIFF: "cached-mise",
             JAVA_HOME: "/cached/java",
             NODE_EXTRA_CA_CERTS: "/cached/ca.pem",

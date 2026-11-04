@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -331,6 +332,10 @@ export const make = Effect.gen(function* () {
           : { desktopEntryPath: error.desktopEntryPath }),
         ...(error.exitCode === undefined ? {} : { exitCode: error.exitCode }),
       }),
+    ),
+    // Node throws some spawn errors synchronously; the handler is optional, so they must not end startup.
+    Effect.catchCause((cause) =>
+      logWarning("URL scheme handler registration failed", { scheme, cause: Cause.pretty(cause) }),
     ),
     Effect.withSpan("desktop.linuxUrlHandler.register"),
   );
