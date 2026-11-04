@@ -12,7 +12,10 @@ desktop: system service `forgejo`, data in `/srv/forgejo`, published by `tailsca
 issues and pull requests. `origin` points there. All of the owner's repositories live there too,
 except the 9 GB `Unite` fork. The user timer `forgejo-backup` (`~/.local/bin/forgejo-backup`,
 03:30 nightly) copies Forgejo's database, issue attachments and Forgejo-only repositories to
-`chromebox:backups/forgejo`, keeping only the latest copy. Issue #1 is the
+`chromebox:backups/forgejo`, keeping only the latest copy. The user timer
+`forgejo-merge-repair` (`~/.local/bin/forgejo-merge-repair`, every 5 minutes) keeps manual-merge
+detection on in every repository and marks a closed, unmerged pull request merged once its head
+commit is in its base branch; archived repositories are skipped. Issue #1 is the
 roadmap and maintenance tracker. Every task starts from an issue: the orchestrator creates one
 before delegating, and links each worker thread to it (`link_issue`), so the Issues pane shows it
 In progress. Close an issue when its fix lands on `main`.
@@ -101,7 +104,7 @@ changed an issue; git-bug then needs its cache rebuilt (`rm -r .git/git-bug/cach
   - Has a Forgejo issue, and gets a short-lived branch, cut from `main`, in a worktree under the project's `.worktrees/` folder.
   - Lands through a Forgejo pull request: push the branch to `origin`, open a pull request (`fj pr create`) whose body says `Closes #<issue>`, and link it to the worker's thread and the orchestrator's (`link_pull_request`). Review happens on that branch.
   - After review, merge on Forgejo with `fj pr merge <n> -M fast-forward-only -d`, or `-M rebase -d` if `main` moved, so `main` stays linear and Forgejo deletes the branch. Then `git fetch` and `git merge --ff-only origin/main` locally. Close the issue if it is still open.
-  - Pushing `main` and deleting the branch yourself closes the pull request as unmerged: Forgejo's merge check runs after the push and finds the branch gone.
+  - Pushing `main` and deleting the branch yourself closes the pull request as unmerged, because Forgejo's merge check runs after the push and finds the branch gone; `forgejo-merge-repair` marks it merged within 5 minutes.
   - Then delete the local branch and its worktree. A post-merge hook deletes merged local branches that aren't checked out.
 - **Upstream syncs** follow the same path: one issue per sync, and a pull request for the sync branch.
 - **Releases** are tags on `main`: `release/vX.Y.Z`.
