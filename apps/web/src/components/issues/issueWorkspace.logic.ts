@@ -146,7 +146,8 @@ export function sameRepository(
 
 /**
  * Merges each environment's repositories in environment order; a repository reachable from two
- * environments is read through the first. Most recently pushed repositories come first.
+ * environments is read through the first, and a GitHub copy another repository names is left out.
+ * Most recently pushed repositories come first.
  */
 export function mergeIssueRepositoryTargets(
   answers: ReadonlyArray<{
@@ -154,7 +155,13 @@ export function mergeIssueRepositoryTargets(
     readonly repositories: ReadonlyArray<IssueRepositorySummary>;
   }>,
 ): IssueRepositoryTarget[] {
-  const seen = new Set<string>();
+  const seen = new Set(
+    answers.flatMap((answer) =>
+      answer.repositories.flatMap(({ githubCopy }) =>
+        githubCopy === undefined ? [] : [repositoryKey(githubCopy.host, githubCopy.repository)],
+      ),
+    ),
+  );
   const targets: IssueRepositoryTarget[] = [];
   for (const answer of answers) {
     for (const repository of answer.repositories) {

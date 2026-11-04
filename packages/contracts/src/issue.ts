@@ -226,6 +226,8 @@ export const IssueRepositorySummary = Schema.Struct({
   /** GitHub's open_issues_count, which also counts open pull requests. */
   openIssuesAndPullRequests: NonNegativeInt,
   pushedAt: Schema.NullOr(IsoDateTime),
+  /** The GitHub namesake hidden in favour of this repository; links to it open this one. */
+  githubCopy: Schema.optionalKey(IssueRepositoryRef),
 });
 export type IssueRepositorySummary = typeof IssueRepositorySummary.Type;
 

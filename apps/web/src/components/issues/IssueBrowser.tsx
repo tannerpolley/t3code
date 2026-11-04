@@ -240,15 +240,19 @@ export function IssueBrowser({
   const [preferences, setPreferences] = useIssueFilterPreferences();
   const stateFilter = issueStateFilter(preferences);
   const explicitScope = search.repository !== undefined;
-  const urlRepository = (() =>
-    search.repository === undefined
-      ? null
-      : (repositoryTargets.find((target) =>
-          sameRepository(target, {
-            host: search.host ?? target.host,
-            repository: search.repository!,
-          }),
-        ) ?? null))();
+  // A saved scope naming a hidden GitHub copy opens the repository that hides it.
+  const urlRepository = (() => {
+    if (search.repository === undefined) return null;
+    const named = (ref: { readonly host: string; readonly repository: string }) =>
+      sameRepository(ref, { host: search.host ?? ref.host, repository: search.repository! });
+    return (
+      repositoryTargets.find(named) ??
+      repositoryTargets.find(
+        (target) => target.githubCopy !== undefined && named(target.githubCopy),
+      ) ??
+      null
+    );
+  })();
   const explicitScopeMissing =
     explicitScope && urlRepository === null && !issueRepositories.isPending;
   // A repository link shows that repository whatever the Filter menu says.
@@ -258,8 +262,7 @@ export function IssueBrowser({
     const host = search.host?.toLowerCase();
     return repositoryTargets.filter(
       (target) =>
-        (host === undefined || target.host === host) &&
-        repositoryShown(target, preferences),
+        (host === undefined || target.host === host) && repositoryShown(target, preferences),
     );
   })();
   const baseListTargets = (() =>
@@ -667,7 +670,7 @@ export function IssueBrowser({
                   environmentId={entry.environmentId}
                   reference={{ host: entry.host, repository: entry.repository }}
                 />
-                      {renderRepositoryBody(entry)}
+                {renderRepositoryBody(entry)}
               </div>
             ) : null}
           </section>
@@ -812,8 +815,8 @@ export function IssueBrowser({
           </div>
           <OwnerDecisionsToggle
             view={decisions}
-            host={search.host}
-            repository={search.repository}
+            host={urlRepository?.host ?? search.host}
+            repository={urlRepository?.repository ?? search.repository}
             pressed={showDecisions}
             onPressedChange={setShowDecisions}
             size="xs"
@@ -830,8 +833,7 @@ export function IssueBrowser({
           {stateFilter !== null && repositoryEntries.length > 0 ? (
             <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground @lg/issues-header:inline">
               {totalCount}
-              {totalIncomplete ? "+" : ""}{" "}
-              {stateNoun(totalCount, filters.state)}
+              {totalIncomplete ? "+" : ""} {stateNoun(totalCount, filters.state)}
             </span>
           ) : null}
         </div>
@@ -840,8 +842,8 @@ export function IssueBrowser({
         {showDecisions ? (
           <OwnerDecisionsView
             view={decisions}
-            host={search.host}
-            repository={search.repository}
+            host={urlRepository?.host ?? search.host}
+            repository={urlRepository?.repository ?? search.repository}
             query={query}
           />
         ) : (

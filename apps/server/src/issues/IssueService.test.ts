@@ -1879,6 +1879,69 @@ it.effect("lists only repositories the viewer owns or administers, across pages"
   }),
 );
 
+it.effect(
+  "hides GitHub copies of the viewer's Forgejo repositories and names them on the Forgejo one",
+  () => {
+    const forgejoRepository = (fullName: string) => ({
+      id: fullName.length,
+      full_name: fullName,
+      owner: { login: fullName.split("/")[0] },
+      private: false,
+      archived: false,
+      fork: false,
+      has_issues: true,
+      open_issues_count: 1,
+    });
+    return Effect.gen(function* () {
+      const harness = makeHarness({
+        responses: [httpResponse([rawRepository("octocat/app"), rawRepository("octocat/digest")])],
+      });
+      const issues = yield* service(harness);
+      const result = yield* issues.repositories();
+
+      assert.deepEqual(
+        result.repositories.map((repository) => [
+          repository.host,
+          repository.repository,
+          repository.githubCopy,
+        ]),
+        [
+          ["github.com", "octocat/digest", undefined],
+          ["forge.example:3000", "OctoCat/App", { host: "github.com", repository: "octocat/app" }],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          listLogins: () =>
+            Effect.succeed([
+              {
+                name: "forge.example:3000",
+                url: "https://forge.example:3000",
+                user: "",
+                default: "false",
+              },
+            ]),
+          api: (input) =>
+            Effect.succeed({
+              stdout: JSON.stringify(
+                input.path === "user"
+                  ? { id: 1, login: "octocat" }
+                  : input.path.startsWith("user/repos")
+                    ? [forgejoRepository("OctoCat/App")]
+                    : [],
+              ),
+              stderr: "",
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+        }),
+      ),
+    );
+  },
+);
+
 it.effect("maps credential failures without exposing credential details", () =>
   Effect.gen(function* () {
     const harness = makeHarness({

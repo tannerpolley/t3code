@@ -13,8 +13,11 @@ import { routeIssueHosts, type IssueHost, type IssueHostContext } from "./IssueH
 export const make = Effect.fn("IssueHostRegistry.make")(function* (context: IssueHostContext) {
   const github = yield* IssueGitHubHost.make(context);
   const claimed = new Map<string, IssueHost>();
-  for (const [host, adapter] of yield* IssueForgejoHost.discover(context))
+  const forgejoHosts = new Set<string>();
+  for (const [host, adapter] of yield* IssueForgejoHost.discover(context)) {
     claimed.set(host, adapter);
+    forgejoHosts.add(host);
+  }
   const nestedRepositoryHosts = new Set<string>();
   for (const [host, adapter] of yield* IssueGitLabHost.discover(context)) {
     if (claimed.has(host)) continue;
@@ -22,5 +25,5 @@ export const make = Effect.fn("IssueHostRegistry.make")(function* (context: Issu
     nestedRepositoryHosts.add(host);
   }
   for (const [host, adapter] of yield* IssueGitBugHost.discover()) claimed.set(host, adapter);
-  return { ...routeIssueHosts(github, claimed), nestedRepositoryHosts };
+  return { ...routeIssueHosts(github, claimed), nestedRepositoryHosts, forgejoHosts };
 });

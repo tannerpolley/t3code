@@ -21,6 +21,7 @@ import {
   type IssueListState,
   type IssueHostCapabilities,
   type IssueRef,
+  type IssueRepositorySummary,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -179,6 +180,35 @@ export class IssueService extends Context.Service<
     ) => Effect.Effect<IssueListResultType, IssueReadError>;
   }
 >()("t3/issues/IssueService") {}
+/**
+ * Leaves out each GitHub repository whose owner/name a Forgejo host also lists: forgejo-github-sync
+ * keeps those as one-way copies. The Forgejo repository names its hidden copy so old links reach it.
+ */
+function hideGitHubCopies(
+  github: ReadonlyArray<IssueRepositorySummary>,
+  others: ReadonlyArray<IssueRepositorySummary>,
+  forgejoHosts: ReadonlySet<string>,
+): IssueRepositorySummary[] {
+  const name = (repository: IssueRepositorySummary) => repository.repository.toLowerCase();
+  const forgejoNames = new Set(
+    others.filter((repository) => forgejoHosts.has(repository.host)).map(name),
+  );
+  const copies = new Map(
+    github
+      .filter((repository) => forgejoNames.has(name(repository)))
+      .map((copy) => [name(copy), { host: copy.host, repository: copy.repository }] as const),
+  );
+  return [
+    ...github.filter((repository) => !copies.has(name(repository))),
+    ...others.map((repository) => {
+      const githubCopy = forgejoHosts.has(repository.host)
+        ? copies.get(name(repository))
+        : undefined;
+      return githubCopy === undefined ? repository : { ...repository, githubCopy };
+    }),
+  ];
+}
+
 export const make = Effect.fn("IssueService.make")(function* () {
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const serviceScope = yield* Effect.scope;
@@ -661,9 +691,13 @@ export const make = Effect.fn("IssueService.make")(function* () {
         const first = results[0]!;
         if (first._tag === "Failure") return yield* first.failure;
       }
+      const listed = results.map((result) =>
+        result._tag === "Success" ? result.success.repositories : [],
+      );
       return {
         ...successful[0]!,
-        repositories: successful.flatMap((result) => result.repositories),
+        // registry.all puts the GitHub fallback first.
+        repositories: hideGitHubCopies(listed[0]!, listed.slice(1).flat(), registry.forgejoHosts),
         complete:
           successful.length === results.length && successful.every((result) => result.complete),
       };
