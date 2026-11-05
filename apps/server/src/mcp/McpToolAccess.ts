@@ -20,6 +20,7 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as IssueService from "../issues/IssueService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -369,6 +370,22 @@ const linksUnavailable = new OrchestratorMcpFailure({
   message: "This environment cannot reach linked environments.",
 });
 
+/** Agents type a Forgejo host without its port, so `host` and `issue.host` name the claimed host. */
+const withCanonicalHosts = Effect.fn("McpToolAccess.withCanonicalHosts")(function* (
+  params: unknown,
+  canonicalHost: (host: string) => Effect.Effect<string>,
+) {
+  if (!Predicate.isObject(params)) return params;
+  const { host, issue } = params as { readonly host?: unknown; readonly issue?: unknown };
+  return {
+    ...params,
+    ...(typeof host === "string" ? { host: yield* canonicalHost(host) } : {}),
+    ...(Predicate.hasProperty(issue, "host") && typeof issue.host === "string"
+      ? { issue: { ...issue, host: yield* canonicalHost(issue.host) } }
+      : {}),
+  };
+});
+
 /**
  * Every tool that takes a linked environment runs there the same way: its
  * declaration checks the caller here, and the same call goes to the other
@@ -382,7 +399,18 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
 ) {
   // Optional so toolkits that never leave this environment build without it.
   const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
+  // Optional for the same reason; a forwarded call is canonicalized by the environment it reaches.
+  const issues = yield* Effect.serviceOption(IssueService.IssueService);
   const handlers: Record<string, unknown> = { ...checked };
+  if (Option.isSome(issues)) {
+    for (const [name, handler] of Object.entries(handlers)) {
+      const handle = handler as (
+        params: unknown,
+      ) => Effect.Effect<unknown, Tool.Failure<Tools[keyof Tools]>>;
+      handlers[name] = (params: unknown) =>
+        Effect.flatMap(withCanonicalHosts(params, issues.value.canonicalHost), handle);
+    }
+  }
   for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
     const tool = toolkit.tools[name];
     if (tool === undefined || !takesLinkedEnvironment(tool)) continue;

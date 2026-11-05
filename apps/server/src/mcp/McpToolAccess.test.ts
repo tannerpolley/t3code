@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
+import * as IssueService from "../issues/IssueService.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -129,6 +130,13 @@ const ProbeToolkit = Toolkit.make(
     }),
   }),
   Tool.make("writes_environment", probe),
+  Tool.make("reads_hosts", {
+    ...probe,
+    parameters: Schema.Struct({
+      host: Schema.String,
+      issue: Schema.Struct({ host: Schema.String, number: Schema.Number }),
+    }),
+  }),
 );
 const ran = Effect.succeed({ ran: "ran" });
 const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
@@ -147,6 +155,9 @@ const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
     "stamped",
   ),
   writes_environment: McpToolAccess.writesEnvironment(() => ran),
+  reads_hosts: McpToolAccess.reads(({ host, issue }) =>
+    Effect.succeed({ ran: `${host} ${issue.host}#${issue.number}` }),
+  ),
 };
 const layerProbeHandlers = McpToolAccess.toLayer(ProbeToolkit, probeHandlers);
 
@@ -186,6 +197,7 @@ export const refusedAtCompileTime = () => {
       writes_threads: unchecked,
       starts_threads: unchecked,
       writes_environment: unchecked,
+      reads_hosts: unchecked,
     }),
   );
 };
@@ -194,6 +206,12 @@ const probeServer = (threads: Layer.Layer<ThreadManagement.ThreadManagementServi
   McpHttpServer.toolkitRegistration(ProbeToolkit, layerProbeHandlers).pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provideMerge(threads),
+    Layer.provide(
+      Layer.mock(IssueService.IssueService)({
+        canonicalHost: (host) =>
+          Effect.succeed(host === "forge.example" ? "forge.example:3000" : host),
+      }),
+    ),
   );
 
 const decodeOutcome = Schema.decodeUnknownEffect(
@@ -315,6 +333,13 @@ it.effect.each([
   ["writes_environment", plan, {}, "capability_denied"],
   ["writes_environment", fullAccessClient, {}, "ran"],
   ["writes_environment", supervisedClient, {}, "capability_denied"],
+
+  [
+    "reads_hosts",
+    supervised,
+    { host: "forge.example", issue: { host: "forge.example", number: 7 } },
+    "forge.example:3000 forge.example:3000#7",
+  ],
 ] as const)("%s from %o with %o: %s", ([tool, scope, args, expected]) =>
   call(tool, scope, args).pipe(
     Effect.map((outcome) => expect(outcome).toBe(expected)),

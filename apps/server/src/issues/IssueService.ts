@@ -150,6 +150,8 @@ export class IssueService extends Context.Service<
   > & {
     /** Closes the issues a merged pull request's body names where its host does not. */
     readonly closeIssuesFixedBy: (pullRequest: IssueRef) => Effect.Effect<void, IssueReadError>;
+    /** The claimed issue host `host` means, such as a Forgejo host typed without its port. */
+    readonly canonicalHost: (host: string) => Effect.Effect<string>;
     /** What the issue host serving `host` supports. */
     readonly capabilities: (host: string) => Effect.Effect<IssueHostCapabilities>;
     /** Null where the host's adapter cannot read pull request merge facts. */
@@ -619,6 +621,9 @@ export const make = Effect.fn("IssueService.make")(function* () {
     },
   );
   return IssueService.of({
+    canonicalHost: Effect.fn("IssueService.canonicalHost")((host) =>
+      Effect.succeed(registry.canonicalHost(host)),
+    ),
     capabilities: Effect.fn("IssueService.capabilities")((host) =>
       Effect.succeed(hostFor(host).capabilities),
     ),

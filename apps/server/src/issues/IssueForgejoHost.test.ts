@@ -132,6 +132,14 @@ it.effect("maps issue and milestone pages, preserves ports, and follows paginati
     expect(routes.forHost(host)).toBe(transport);
     expect(routes.forHost("forge.example")).toBe(github);
     expect(routeIssueHosts(github).forHost(host)).toBe(github);
+    expect(routes.canonicalHost("forge.example")).toBe(host);
+    expect(routes.canonicalHost("forge.example:4000")).toBe("forge.example:4000");
+    expect(routes.canonicalHost("github.com")).toBe("github.com");
+    const twoPorts = new Map([
+      [host, transport],
+      ["forge.example:4000", transport],
+    ]);
+    expect(routeIssueHosts(github, twoPorts).canonicalHost("forge.example")).toBe("forge.example");
   }),
 );
 
