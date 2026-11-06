@@ -2518,6 +2518,166 @@ describe("fresh-thread repository handoff", () => {
     },
   );
 
+  it.effect("cancels a queued run the draining root can never start, then transfers", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* createRoot;
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("stranded:root-start"),
+        threadId: rootId,
+        messageId: MessageId.make("stranded:root-start"),
+        text: "Work through milestone 1",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const rootRun = (yield* threads.getThreadRecords(rootId, ["runs"])).runs.at(-1)!;
+      const delegated = yield* threads.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("stranded:delegate"),
+        parentThreadId: rootId,
+        parentRunId: rootRun.id,
+        parentNodeId: rootRun.rootNodeId!,
+        issue: linked(1),
+        task: "Finish issue 1",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const worker = delegated.storedEvents.find(
+        (stored) => stored.event.type === "thread.created",
+      )!.event.threadId;
+      yield* finish(rootId, "stranded:root-idle");
+      const beforeWorker = yield* sink.latestSequence();
+      yield* finish(worker, "stranded:worker");
+      yield* awaitFollowup(rootId, beforeWorker);
+      // The repository moved hosts: the worker's issue is the old copy, which this root does not own.
+      const shell = (yield* threads.getThreadRecords(worker, [])).thread;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("stranded:moved-issue"),
+            type: "thread.metadata-updated",
+            threadId: worker,
+            occurredAt: now,
+            payload: {
+              ...shell,
+              linkedIssue: { ...linked(1), host: "git.example.com", repositoryId: "repo:old" },
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("stranded:followup"),
+        threadId: worker,
+        messageId: MessageId.make("stranded:followup"),
+        text: "Continue issue 1",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const queued = (yield* threads.getThreadRecords(worker, ["runs"])).runs.at(-1)!;
+      assert.equal(queued.status, "queued");
+      const pending = yield* service.handoff({
+        ...reference,
+        action: "approve",
+        expectedRevision: (yield* service.repositoryStatus(reference)).orchestration!.revision,
+        summary: "Continue after the stranded run.",
+        clientRequestId: CommandId.make("stranded:handoff"),
+      });
+      const nextId = pending.orchestration!.handoff!.nextThreadId;
+      const stranded = (yield* threads.getThreadRecords(worker, ["runs"])).runs.find(
+        (run) => run.id === queued.id,
+      )!;
+      assert.equal(stranded.status, "cancelled");
+      // The cancelled task's final delivery queues behind the root's current turn.
+      const beforeDelivery = yield* sink.latestSequence();
+      yield* finish(rootId, "stranded:root-delivery");
+      yield* awaitFollowup(rootId, beforeDelivery);
+      const beforeLast = yield* sink.latestSequence();
+      yield* finish(rootId, "stranded:root-cancelled-delivery");
+      yield* sink.stream({ afterSequence: beforeLast, eventType: "thread.created" }).pipe(
+        Stream.filter((stored) => stored.event.threadId === nextId),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
+    }).pipe(Effect.provide(fixture({ continuation: true }))),
+  );
+
+  it.effect(
+    "cancelling a draining handoff says why it refuses, then restores the pause state",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* createRoot;
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("cancel-draining:root-start"),
+          threadId: rootId,
+          messageId: MessageId.make("cancel-draining:root-start"),
+          text: "Keep the drain open",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const draining = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: 1,
+          summary: "Hand off later.",
+          clientRequestId: CommandId.make("cancel-draining:approve"),
+        });
+        assert.equal(draining.orchestration!.handoff?.status, "draining");
+        const revision = draining.orchestration!.revision;
+        const refusal = (input: { host: string; expectedRevision: number }, key: string) =>
+          service
+            .handoff({
+              ...reference,
+              ...input,
+              action: "cancel",
+              clientRequestId: CommandId.make(`cancel-draining:${key}`),
+            })
+            .pipe(
+              Effect.flip,
+              Effect.map((error) => error.message),
+            );
+        assert.include(
+          yield* refusal({ host: "git.example.com", expectedRevision: revision }, "other-host"),
+          "No repository orchestrator is registered for git.example.com/tannerpolley/t3code",
+        );
+        assert.include(
+          yield* refusal({ host: reference.host, expectedRevision: revision - 1 }, "stale"),
+          `revision ${revision}, expected ${revision - 1}`,
+        );
+        const cancelled = yield* service.handoff({
+          ...reference,
+          action: "cancel",
+          expectedRevision: revision,
+          clientRequestId: CommandId.make("cancel-draining:cancel"),
+        });
+        assert.isUndefined(cancelled.orchestration!.handoff);
+        assert.isFalse(cancelled.orchestration!.paused);
+        assert.include(
+          yield* refusal({ host: reference.host, expectedRevision: revision + 1 }, "none"),
+          "has no pending handoff",
+        );
+      }).pipe(Effect.provide(fixture())),
+  );
+
   it.effect(
     "MCP requests require exact user approval and can be cancelled without moving ownership",
     () =>

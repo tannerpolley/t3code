@@ -3,6 +3,7 @@ import {
   IssueWorkError,
   IssueWorkRequested,
   ProjectId,
+  RunId,
   ThreadId,
   type CommandId,
   type IssueRef,
@@ -83,6 +84,10 @@ export class IssueWorkStore extends Context.Service<
     ) => Effect.Effect<boolean, IssueWorkError>;
     readonly activeRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly subtreeDrained: (rootThreadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
+    /** Queued issue-worker runs this root can never admit: their issue's attempt is not theirs under this root. */
+    readonly strandedQueuedRuns: (
+      rootThreadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<{ threadId: ThreadId; runId: RunId }>, IssueWorkError>;
     readonly hasUnsettledRestartContinuation: (
       threadId: ThreadId,
     ) => Effect.Effect<boolean, IssueWorkError>;
@@ -331,6 +336,32 @@ export const layer = Layer.effect(
           LIMIT 1
         `.pipe(
           Effect.map((rows) => rows.length === 0),
+          Effect.mapError(mapError),
+        ),
+      ),
+      // Mirrors canStartIssueRun: a worker starts only while it owns its issue in a repository this root owns.
+      strandedQueuedRuns: Effect.fn("IssueWorkStore.strandedQueuedRuns")((rootThreadId) =>
+        sql<{ thread_id: string; run_id: string }>`
+          SELECT run.thread_id, run.run_id FROM orchestration_v2_projection_runs run
+          JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
+          WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+            AND thread.thread_id <> ${rootThreadId} AND run.status = 'queued'
+            AND json_type(thread.payload_json, '$.linkedIssue') = 'object' AND NOT (${isReadOnly})
+            AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work work
+              JOIN orchestration_v2_projection_repository_orchestration owner
+                ON owner.host = work.host AND owner.repository_id = work.repository_id
+              WHERE work.owner_thread_id = thread.thread_id AND owner.root_thread_id = ${rootThreadId}
+                AND work.host = json_extract(thread.payload_json, '$.linkedIssue.host')
+                AND work.repository_id = json_extract(thread.payload_json, '$.linkedIssue.repositoryId')
+                AND work.issue_id = json_extract(thread.payload_json, '$.linkedIssue.id'))
+          ORDER BY run.rowid
+        `.pipe(
+          Effect.map((rows) =>
+            rows.map((row) => ({
+              threadId: ThreadId.make(row.thread_id),
+              runId: RunId.make(row.run_id),
+            })),
+          ),
           Effect.mapError(mapError),
         ),
       ),

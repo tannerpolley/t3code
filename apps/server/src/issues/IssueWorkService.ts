@@ -887,6 +887,22 @@ export const layer = Layer.effect(
             commandId: CommandId.make(`handoff-drain:${handoff.requestId}:${config.revision}`),
           })
           .pipe(Effect.mapError(mapError));
+        // These would hold the drain forever; cancelling settles their tasks through the parent.
+        for (const run of yield* store.strandedQueuedRuns(rootThreadId))
+          yield* threads
+            .dispatch({
+              type: "queued-run.cancel",
+              commandId: CommandId.make(`handoff-drain-cancel:${handoff.requestId}:${run.runId}`),
+              threadId: run.threadId,
+              runId: run.runId,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not cancel a queued run the draining root cannot start", {
+                  cause,
+                }),
+              ),
+            );
         if (!(yield* store.subtreeDrained(rootThreadId))) return;
         yield* threads
           .dispatch({
@@ -1538,15 +1554,18 @@ export const layer = Layer.effect(
         : Effect.gen(function* () {
             const owner = yield* store.repositoryOwnerByRef(input);
             const config = owner === null ? null : yield* store.configuration(owner.rootThreadId);
-            if (
-              owner === null ||
-              config?.handoff === undefined ||
-              config.revision !== input.expectedRevision
-            )
-              return yield* new IssueWorkError({
-                code: "repository-owner-conflict",
-                message: "Repository ownership or the handoff changed. Refresh before cancelling.",
-              });
+            const refuse = (message: string) =>
+              new IssueWorkError({ code: "repository-owner-conflict", message });
+            if (owner === null || config === null)
+              return yield* refuse(
+                `No repository orchestrator is registered for ${input.host}/${input.repository}.`,
+              );
+            if (config.handoff === undefined)
+              return yield* refuse(`${input.repository} has no pending handoff to cancel.`);
+            if (config.revision !== input.expectedRevision)
+              return yield* refuse(
+                `Repository work changed (revision ${config.revision}, expected ${input.expectedRevision}). Refresh before cancelling.`,
+              );
             yield* update(
               owner.rootThreadId,
               {
