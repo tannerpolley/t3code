@@ -641,6 +641,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "repository.work.update":
     case "repository.work.continue":
     case "repository.work.handoff":
+    case "repository.usage-sprint.end":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.remote.request":
@@ -13825,6 +13826,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "repository.work.continue":
         yield* repositoryWork.continueWork(command);
+        break;
+      case "repository.usage-sprint.end":
+        yield* repositoryWork.endUsageSprint(command, events, effects);
         break;
       case "repository.work.handoff":
         yield* repositoryWork.handoff(command, events, effects);

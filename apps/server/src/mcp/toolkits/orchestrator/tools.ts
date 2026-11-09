@@ -450,7 +450,7 @@ export const OrchestratorToolkit = Toolkit.make(
   }).annotate(Tool.Destructive, true),
   Tool.make("set_repository_usage_sprint", {
     description:
-      "Start a one-time usage sprint on a Codex or Claude providerInstanceId that has a weekly usage window with a known reset, or pass null to stop it. Until that window resets, every child in this repository's tree must use that provider: delegate_task refuses other providers, and queue and milestone admissions pick its model-role choices. Your own model does not change. At the reset, scheduled or early, T3 interrupts running children (keeping their worktrees and commits), ends the sprint and messages you to return to your normal model roles. get_repository_orchestration and orchestrator_capabilities show the active sprint.",
+      "Start a one-time usage sprint on a Codex or Claude providerInstanceId that has a weekly usage window with a known reset, or pass null to stop it. Until that window resets, every child in this repository's tree must use that provider: delegate_task refuses other providers and linked environments, and queue and milestone admissions pick its model-role choices. Your own model does not change. At the reset, scheduled or early, T3 stops running children (keeping their worktrees and commits), ends the sprint and messages you to return to your normal model roles. get_repository_orchestration and orchestrator_capabilities show the active sprint.",
     parameters: RepositoryUsageSprintInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,

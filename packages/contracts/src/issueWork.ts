@@ -1,14 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
-import {
-  CommandId,
-  NodeId,
-  ProjectId,
-  RunId,
-  ThreadId,
-  TrimmedNonEmptyString,
-} from "./baseSchemas.ts";
+import { CommandId, ProjectId, RunId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelRoleId } from "./threadRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
@@ -32,7 +25,8 @@ export const RepositoryMilestonePlan = Schema.Struct({
   fingerprint: Schema.String,
 });
 
-const RepositoryUsageSprintEndReason = Schema.Literals(["reset", "early_reset", "stopped"]);
+export const RepositoryUsageSprintEndReason = Schema.Literals(["reset", "early_reset", "stopped"]);
+export type RepositoryUsageSprintEndReason = typeof RepositoryUsageSprintEndReason.Type;
 
 /** A one-time run limited to one provider's models until its weekly usage window resets. */
 export const RepositoryUsageSprint = Schema.Struct({
@@ -42,24 +36,6 @@ export const RepositoryUsageSprint = Schema.Struct({
   usedPercent: Schema.Number,
   resetsAt: Schema.String,
   startedAt: Schema.String,
-  /** Recorded before the end interrupts children and tells the root; history follows both. */
-  ending: Schema.optional(
-    Schema.Struct({
-      reason: RepositoryUsageSprintEndReason,
-      endedAt: Schema.String,
-      /** Running children at the end: a local thread, or a linked-environment task of `threadId`. */
-      children: Schema.Array(
-        Schema.Struct({
-          threadId: ThreadId,
-          taskId: Schema.optional(NodeId),
-          issue: Schema.optional(ThreadLinkedIssue),
-          outcome: Schema.Literals(["running", "interrupted", "ended"]),
-        }),
-      ),
-      /** Bumped after a failed step so its retry gets fresh command ids. */
-      attempt: Schema.Int,
-    }),
-  ),
 });
 export type RepositoryUsageSprint = typeof RepositoryUsageSprint.Type;
 
@@ -110,6 +86,10 @@ export const RepositoryOrchestration = Schema.Struct({
         startedAt: Schema.String,
         endedAt: Schema.String,
         reason: RepositoryUsageSprintEndReason,
+        /** Children with a turn in progress when the sprint ended; a reset stopped them. */
+        children: Schema.Array(
+          Schema.Struct({ threadId: ThreadId, issue: Schema.optional(ThreadLinkedIssue) }),
+        ),
       }),
     ),
   ),

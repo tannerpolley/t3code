@@ -1,9 +1,9 @@
 import {
   CommandId,
   CLOSED_ISSUE_SUSPENSION_REASON,
-  MessageId,
   OrchestratorMcpFailure,
   type RepositoryUsageSprint,
+  type RepositoryUsageSprintEndReason,
   type RepositoryUsageSprintInput,
   ThreadId,
   type IssueQueueInput,
@@ -66,13 +66,7 @@ import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentPro
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { checkDelegateTarget, workerProviderTargets } from "../mcp/delegateTaskTarget.ts";
-import {
-  type UsageSprintEndReason,
-  usageSprintCheck,
-  usageSprintEndMessage,
-  usageSprintRefusal,
-  usageSprintWindow,
-} from "./usageSprint.ts";
+import { usageSprintCheck, usageSprintRefusal, usageSprintWindow } from "./usageSprint.ts";
 import {
   issueEligibility,
   isReadOnlyIssueRole,
@@ -156,7 +150,7 @@ export class IssueWorkService extends Context.Service<
     readonly setUsageSprint: (
       input: RepositoryUsageSprintInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
-    /** Ends sprints whose usage window reset, interrupting their running children. */
+    /** Ends sprints whose usage window reset, stopping their running children. */
     readonly sweepUsageSprints: Effect.Effect<void, IssueWorkError>;
     readonly assertCurrentCaller: (threadId: ThreadId) => Effect.Effect<void, IssueWorkError>;
     readonly requestHandoff: (
@@ -1424,172 +1418,40 @@ export const layer = Layer.effect(
       return yield* repositoryStatus(input);
     });
 
-    // One pass under the sprint lock: record an end before its side effects, then retry what it owes.
-    // Every write goes through `save`, whose expected revision refuses a sprint replaced meanwhile.
+    // The sprint lock and the end command's start check keep a stale decision from ending a successor.
     const advanceUsageSprint = Effect.fn("IssueWorkService.advanceUsageSprint")(
       function* (
         rootThreadId: ThreadId,
         decide: (
           sprint: RepositoryUsageSprint,
-        ) => Effect.Effect<{ readonly end: UsageSprintEndReason } | { readonly peak: number }>,
+        ) => Effect.Effect<
+          { readonly end: RepositoryUsageSprintEndReason } | { readonly peak: number }
+        >,
       ) {
-        let config = yield* store.configuration(rootThreadId);
-        if (config == null || config.usageSprint === undefined) return;
-        const save = (next: RepositoryOrchestration) =>
-          update(
-            rootThreadId,
-            next,
-            CommandId.make(`usage-sprint:${rootThreadId}:${next.revision}`),
-          ).pipe(Effect.as({ ...next, revision: next.revision + 1 }));
-        let sprint: RepositoryUsageSprint = config.usageSprint;
-        let ending: NonNullable<RepositoryUsageSprint["ending"]>;
-        if (sprint.ending !== undefined) ending = sprint.ending;
-        else {
-          const decision = yield* decide(sprint);
-          if (!("end" in decision)) {
-            // Usage only climbs within a window, so idle ticks write nothing.
-            if (decision.peak > sprint.usedPercent)
-              yield* save({ ...config, usageSprint: { ...sprint, usedPercent: decision.peak } });
-            return;
-          }
-          const children = [];
-          if (decision.end !== "stopped")
-            for (const child of yield* store.runningLineageChildren(rootThreadId)) {
-              const issue =
-                child.taskId === undefined
-                  ? (yield* threads.getThreadShell(child.threadId).pipe(Effect.mapError(mapError)))
-                      ?.linkedIssue
-                  : undefined;
-              children.push({
-                ...child,
-                ...(issue === undefined ? {} : { issue }),
-                outcome: "running" as const,
-              });
-            }
-          ending = {
-            reason: decision.end,
-            endedAt: DateTime.formatIso(yield* DateTime.now),
-            children,
-            attempt: 0,
-          };
-          sprint = { ...sprint, ending };
-          config = yield* save({ ...config, usageSprint: sprint });
-        }
-        // Stable while this sprint ends and distinct for every sprint on the root.
-        const sprintKey = `${rootThreadId}:${config.usageSprintHistory?.length ?? 0}`;
-        const key = `${sprintKey}:${ending.attempt}`;
-        let failed = false;
-        if (ending.children.some((child) => child.outcome === "running")) {
-          const running = yield* store.runningLineageChildren(rootThreadId);
-          const children = [];
-          for (const child of ending.children) {
-            if (child.outcome !== "running") {
-              children.push(child);
-              continue;
-            }
-            // A child that ended on its own counts as stopped, but not as interrupted.
-            if (
-              !running.some(
-                (entry) => entry.threadId === child.threadId && entry.taskId === child.taskId,
-              )
-            ) {
-              children.push({ ...child, outcome: "ended" as const });
-              continue;
-            }
-            const commandId = CommandId.make(
-              `usage-sprint-interrupt:${key}:${child.taskId ?? child.threadId}`,
-            );
-            const interrupted = yield* (
-              child.taskId === undefined
-                ? Effect.gen(function* () {
-                    const shell = yield* threads.getThreadShell(child.threadId);
-                    if (shell === null) return;
-                    yield* threads.interruptThread({
-                      projectId: shell.projectId,
-                      commandId,
-                      threadId: child.threadId,
-                      reason: "The one-time usage sprint ended.",
-                    });
-                  })
-                : threads.dispatch({
-                    type: "delegated_task.remote.complete",
-                    commandId,
-                    parentThreadId: child.threadId,
-                    taskId: child.taskId,
-                    status: "interrupted",
-                    result: "Stopped: the one-time usage sprint ended.",
-                  })
-            ).pipe(
-              Effect.as(true),
-              Effect.catchCause((cause) =>
-                Effect.logWarning("Usage sprint interrupt failed", { child, cause }).pipe(
-                  Effect.as(false),
-                ),
+        const config = yield* store.configuration(rootThreadId);
+        const sprint = config?.usageSprint;
+        if (config == null || sprint === undefined) return;
+        const decision = yield* decide(sprint);
+        if ("end" in decision)
+          // One id per sprint: a repeated or racing end replays the first one's receipt.
+          return yield* threads
+            .dispatch({
+              type: "repository.usage-sprint.end",
+              commandId: CommandId.make(
+                `usage-sprint-end:${rootThreadId}:${config.usageSprintHistory?.length ?? 0}:${sprint.startedAt}`,
               ),
-            );
-            failed ||= !interrupted;
-            children.push(interrupted ? { ...child, outcome: "interrupted" as const } : child);
-          }
-          ending = { ...ending, children, attempt: ending.attempt + (failed ? 1 : 0) };
-          sprint = { ...sprint, ending };
-          config = yield* save({ ...config, usageSprint: sprint });
-          if (failed) return;
-        }
-        const text = usageSprintEndMessage({
-          sprint,
-          reason: ending.reason,
-          endedAt: ending.endedAt,
-          interrupted: ending.children.flatMap((child) =>
-            child.outcome === "interrupted" && child.issue !== undefined ? [child.issue] : [],
-          ),
-        });
-        const sent = yield* threads
-          .dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make(`usage-sprint-end:${key}`),
-            messageId: MessageId.make(`usage-sprint-end:${sprintKey}`),
-            threadId: rootThreadId,
-            text,
-            notification: {
-              source: { kind: "system" },
-              outcome: "updated",
-              summary: "Usage sprint ended",
-              detail: text,
-            },
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
-            createdBy: "agent",
-            creationSource: "server",
-          })
-          .pipe(
-            Effect.as(true),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Usage sprint end message failed", { rootThreadId, cause }).pipe(
-                Effect.as(false),
-              ),
-            ),
-          );
-        if (!sent) {
-          yield* save({
-            ...config,
-            usageSprint: { ...sprint, ending: { ...ending, attempt: ending.attempt + 1 } },
-          });
-          return;
-        }
-        // Clearing the sprint lifts its restriction; the update's admission pass starts held runs.
-        const { usageSprint: _ended, ...rest } = config;
-        yield* save({
-          ...rest,
-          usageSprintHistory: [
-            ...(config.usageSprintHistory ?? []),
-            {
-              providerInstanceId: sprint.providerInstanceId,
+              threadId: rootThreadId,
               startedAt: sprint.startedAt,
-              endedAt: ending.endedAt,
-              reason: ending.reason,
-            },
-          ],
-        });
+              reason: decision.end,
+            })
+            .pipe(Effect.mapError(mapError), Effect.asVoid);
+        // Usage only climbs within a window, so idle ticks write nothing.
+        if (decision.peak > sprint.usedPercent)
+          yield* update(
+            rootThreadId,
+            { ...config, usageSprint: { ...sprint, usedPercent: decision.peak } },
+            CommandId.make(`usage-sprint:${rootThreadId}:${config.revision}`),
+          );
       },
       (effect, rootThreadId) => assignments.withLock(`usage-sprint:${rootThreadId}`, effect),
     );
@@ -2220,6 +2082,7 @@ export const layer = Layer.effect(
                   "repository.work.update",
                   "repository.work.handoff",
                   "repository.work.restore",
+                  "repository.usage-sprint.end",
                 ].includes(receipt.value.commandType)
               )
                 return;

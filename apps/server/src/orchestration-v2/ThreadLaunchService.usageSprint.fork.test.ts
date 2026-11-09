@@ -288,7 +288,7 @@ it.effect(
 );
 
 it.effect("ends a sprint whose reset passed while the server was down on startup", () => {
-  const { dependencies, rootId, createRoot, sprintMessages } = setup();
+  const { dependencies, rootId, createRoot } = setup();
   return Effect.gen(function* () {
     yield* TestClock.adjust("8 days");
     yield* createRoot({
@@ -315,80 +315,72 @@ it.effect("ends a sprint whose reset passed while the server was down on startup
         Effect.provide(IssueWorkService.layer.pipe(Layer.provide(Scheduler.layer))),
       );
     assert.isTrue(Option.isSome(cleared));
-    assert.equal((yield* sprintMessages).length, 1);
+    const history = (yield* (yield* IssueWorkStore.IssueWorkStore).configuration(rootId))
+      ?.usageSprintHistory;
+    assert.deepEqual(
+      history?.map((entry) => entry.reason),
+      ["reset"],
+    );
   }).pipe(Effect.provide(dependencies));
 });
 
-const outcomes = Effect.gen(function* () {
-  const service = yield* IssueWorkService.IssueWorkService;
-  const ending = (yield* service.repositoryStatus(reference)).orchestration!.usageSprint?.ending;
-  return ending?.children
-    .map((child) => [child.issue?.number, child.outcome] as const)
-    .toSorted(([left], [right]) => left! - right!);
+it.effect("commits an end once and runs its stops and message once after a restart", () => {
+  const {
+    dependencies,
+    rootId,
+    createRoot,
+    sprintMessages,
+    startRoot,
+    delegate,
+    latestRun,
+    sprint,
+    layer,
+  } = setup();
+  return Effect.gen(function* () {
+    const service = yield* IssueWorkService.IssueWorkService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* createRoot();
+    yield* startRoot;
+    yield* sprint(modelSelection.instanceId, "sprint");
+    const children = [yield* delegate(1), yield* delegate(2)];
+    const { startedAt } = (yield* service.repositoryStatus(reference)).orchestration!.usageSprint!;
+    yield* TestClock.adjust("7 days");
+    yield* service.sweepUsageSprints;
+
+    // A late Stop finds no sprint, and the same end command replays its receipt.
+    yield* sprint(null, "sprint-late-stop");
+    const replay = yield* threads.dispatch({
+      type: "repository.usage-sprint.end",
+      commandId: CommandId.make(`usage-sprint-end:${rootId}:0:${startedAt}`),
+      threadId: rootId,
+      startedAt,
+      reason: "stopped",
+    });
+    assert.isTrue(replay.replayed);
+    const ended = (yield* service.repositoryStatus(reference)).orchestration!;
+    assert.isUndefined(ended.usageSprint);
+    assert.deepEqual(
+      ended.usageSprintHistory?.map((entry) => [
+        entry.reason,
+        entry.children.map((child) => child.issue?.number),
+      ]),
+      [["reset", [1, 2]]],
+    );
+
+    // The process stopped after the commit, before the outbox ran; a restarted worker runs it.
+    assert.lengthOf(yield* sprintMessages, 0);
+    for (const child of children) assert.equal((yield* latestRun(child)).status, "starting");
+    yield* Effect.gen(function* () {
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    }).pipe(Effect.provide(suspensionWorkerLayer(dependencies)));
+    yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    const messages = yield* sprintMessages;
+    assert.lengthOf(messages, 1);
+    assert.include(messages[0]!.text, "stopped the running work of these issues");
+    assert.include(messages[0]!.text, "#1 Issue 1; #2 Issue 2");
+    for (const child of children) assert.notEqual((yield* latestRun(child)).status, "starting");
+  }).pipe(Effect.provide(layer()));
 });
-
-it.effect(
-  "retries a failed interrupt and end message, keeping the interrupted issues across a restart",
-  () => {
-    const { dependencies, createRoot, sprintMessages, startRoot, delegate, sprint, layer } =
-      setup();
-    const failures = new Set<string>();
-    const flaky = Layer.effect(
-      ThreadManagement.ThreadManagementService,
-      Effect.gen(function* () {
-        const real = yield* ThreadManagement.ThreadManagementService;
-        return ThreadManagement.ThreadManagementService.of({
-          ...real,
-          interruptThread: (input) =>
-            failures.delete(input.threadId)
-              ? Effect.die("Injected interrupt failure")
-              : real.interruptThread(input),
-          dispatch: (command) =>
-            String(command.commandId).startsWith("usage-sprint-end:") && failures.delete("message")
-              ? Effect.die("Injected message failure")
-              : real.dispatch(command),
-        });
-      }),
-    ).pipe(Layer.provide(dependencies));
-    return Effect.gen(function* () {
-      const service = yield* IssueWorkService.IssueWorkService;
-      yield* createRoot();
-      yield* startRoot;
-      yield* sprint(modelSelection.instanceId, "sprint");
-      const first = yield* delegate(1);
-      yield* delegate(2);
-      failures.add(first).add("message");
-      yield* TestClock.adjust("7 days");
-
-      yield* service.sweepUsageSprints;
-      assert.deepEqual(yield* outcomes, [
-        [1, "running"],
-        [2, "interrupted"],
-      ]);
-      yield* service.sweepUsageSprints;
-      assert.deepEqual(yield* outcomes, [
-        [1, "interrupted"],
-        [2, "interrupted"],
-      ]);
-      assert.lengthOf(yield* sprintMessages, 0);
-
-      // A restarted service finishes from the recorded ending.
-      yield* Effect.gen(function* () {
-        yield* (yield* IssueWorkService.IssueWorkService).sweepUsageSprints;
-      }).pipe(Effect.provide(IssueWorkService.layer));
-      const messages = yield* sprintMessages;
-      assert.lengthOf(messages, 1);
-      assert.include(messages[0]!.text, "#1 Issue 1");
-      assert.include(messages[0]!.text, "#2 Issue 2");
-      const ended = (yield* service.repositoryStatus(reference)).orchestration!;
-      assert.isUndefined(ended.usageSprint);
-      assert.deepEqual(
-        ended.usageSprintHistory?.map((entry) => entry.reason),
-        ["reset"],
-      );
-    }).pipe(Effect.provide(layer(flaky)));
-  },
-);
 
 it.effect("ends a sprint early when usage drops from its highest reading", () =>
   Effect.gen(function* () {
@@ -484,20 +476,43 @@ it.effect(
       yield* createRoot();
       yield* startRoot;
       const child = yield* delegate(1);
-      const run = yield* latestRun(child);
-      const now = yield* DateTime.now;
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make(`finish:${run.id}`),
-            type: "run.updated",
-            threadId: child,
-            runId: run.id,
-            occurredAt: now,
-            payload: { ...run, status: "completed", completedAt: now },
-          },
-        ],
+      const parent = (yield* threads.getThreadRecords(rootId, ["runs"])).runs[0]!;
+      const delegated = yield* threads.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("sprint-read-only"),
+        parentThreadId: rootId,
+        parentRunId: parent.id,
+        parentNodeId: parent.rootNodeId!,
+        task: "Investigate",
+        role: "investigator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+        createdBy: "agent",
+        creationSource: "mcp",
       });
+      const reader = delegated.storedEvents.flatMap(({ event }) =>
+        event.type === "subagent.updated" && event.payload.childThreadId != null
+          ? [event.payload.childThreadId]
+          : [],
+      )[0]!;
+      const now = yield* DateTime.now;
+      for (const threadId of [child, reader]) {
+        const run = yield* latestRun(threadId);
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`finish:${run.id}`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+        });
+      }
       // A sprint on another provider than the child's, as if started before it was delegated.
       const config = (yield* service.repositoryStatus(reference)).orchestration!;
       yield* threads.dispatch({
@@ -532,25 +547,39 @@ it.effect(
         })
         .pipe(Effect.flip);
       assert.include(String(refused), "usage sprint limits this repository's work");
-      yield* threads.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make("sprint-continuation"),
-        threadId: child,
-        messageId: MessageId.make("sprint-continuation"),
-        text: "Continue where you left off.",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        createdBy: "agent",
-        creationSource: "server",
-      });
-      assert.equal((yield* latestRun(child)).status, "queued");
+      for (const threadId of [child, reader]) {
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`sprint-continuation:${threadId}`),
+          threadId,
+          messageId: MessageId.make(`sprint-continuation:${threadId}`),
+          text: "Continue where you left off.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "server",
+        });
+        assert.equal((yield* latestRun(threadId)).status, "queued");
+      }
 
+      // Ending the sprint starts the read-only turn it held, and the issue worker's after its
+      // issue read, with no separate continue.
+      const held = yield* latestRun(child);
+      const workerStarted = yield* sink
+        .stream({ threadId: child, afterSequence: yield* sink.latestSequence() })
+        .pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "run.updated" &&
+              event.payload.id === held.id &&
+              event.payload.status !== "queued",
+          ),
+          Stream.runHead,
+          Effect.forkChild,
+        );
       yield* sprint(null, "sprint-stop");
-      yield* threads.dispatch({
-        type: "repository.work.continue",
-        threadId: rootId,
-        commandId: CommandId.make("sprint-continue"),
-      });
+      assert.equal((yield* latestRun(reader)).status, "starting");
+      assert.isTrue(Option.isSome(yield* Fiber.join(workerStarted)));
       assert.equal((yield* latestRun(child)).status, "starting");
     }).pipe(Effect.provide(layer()));
   },

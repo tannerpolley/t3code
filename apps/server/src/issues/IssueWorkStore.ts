@@ -2,7 +2,6 @@ import {
   DEFAULT_REPOSITORY_WORK_SETTINGS,
   IssueWorkError,
   IssueWorkRequested,
-  NodeId,
   ProjectId,
   RunId,
   ThreadId,
@@ -85,11 +84,11 @@ export class IssueWorkStore extends Context.Service<
     ) => Effect.Effect<boolean, IssueWorkError>;
     readonly activeRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly usageSprintRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
-    /** Threads below this root with a turn in progress, and its open linked-environment tasks. */
+    /** Threads below this root with a turn in progress. */
     readonly runningLineageChildren: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<
-      ReadonlyArray<{ readonly threadId: ThreadId; readonly taskId?: NodeId }>,
+      ReadonlyArray<{ readonly threadId: ThreadId; readonly runId: RunId }>,
       IssueWorkError
     >;
     readonly subtreeDrained: (rootThreadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
@@ -515,25 +514,18 @@ export const layer = Layer.effect(
         ),
       ),
       runningLineageChildren: Effect.fn("IssueWorkStore.runningLineageChildren")((rootThreadId) =>
-        sql<{ thread_id: string; task_id: string | null }>`
-        SELECT DISTINCT thread.thread_id, NULL AS task_id FROM orchestration_v2_projection_threads thread
-        JOIN orchestration_v2_projection_runs run ON run.thread_id = thread.thread_id
+        sql<{ thread_id: string; run_id: string }>`
+        SELECT run.thread_id, run.run_id FROM orchestration_v2_projection_runs run
+        JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
         WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
           AND thread.thread_id <> ${rootThreadId} AND thread.deleted_at IS NULL
           AND run.status IN ('preparing', 'starting', 'running', 'waiting')
-        UNION ALL
-        SELECT task.thread_id, task.subagent_id FROM orchestration_v2_projection_subagents task
-        JOIN orchestration_v2_projection_threads thread ON thread.thread_id = task.thread_id
-        WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
-          AND thread.deleted_at IS NULL AND task.origin = 'app_owned'
-          AND task.child_thread_id IS NULL
-          AND json_type(task.payload_json, '$.remoteChild') = 'object'
-          AND json_type(task.payload_json, '$.result') = 'null'
+        ORDER BY run.rowid
       `.pipe(
           Effect.map((rows) =>
             rows.map((row) => ({
               threadId: ThreadId.make(row.thread_id),
-              ...(row.task_id === null ? {} : { taskId: NodeId.make(row.task_id) }),
+              runId: RunId.make(row.run_id),
             })),
           ),
           Effect.mapError(mapError),

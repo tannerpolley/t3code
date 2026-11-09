@@ -1500,15 +1500,17 @@ describe("OrchestratorMcpService provider resolution", () => {
           .delegateTask(scope, {
             task: "Review the change.",
             role: "reviewer",
+            // Even the sprint's own provider: the sprint cannot hold or stop a child elsewhere.
             target: yield* decodeTarget({
-              providerInstanceId: peerId,
+              providerInstanceId: codexInstanceId,
               environmentId: "environment:mcp-providers-linked",
             }),
             mode: "async",
-            clientRequestId: "off-sprint-remote",
+            clientRequestId: "sprint-remote",
           })
           .pipe(Effect.flip);
         assert.equal(remote.code, "provider_unavailable");
+        assert.include(remote.message, "Linked-environment delegation is unavailable");
         assert.equal(commands.length, 0);
         yield* service.delegateTask(scope, {
           task: "Review the change.",

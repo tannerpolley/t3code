@@ -2,13 +2,12 @@ import type {
   ProviderInstanceId,
   RepositoryOrchestration,
   RepositoryUsageSprint,
+  RepositoryUsageSprintEndReason,
   ServerProvider,
   ThreadId,
   ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-
-export type UsageSprintEndReason = "reset" | "early_reset" | "stopped";
 
 // Probes repeat a reset time with small jitter; a real reset moves it by hours or days.
 const RESET_MOVE_TOLERANCE_MS = 60_000;
@@ -30,7 +29,9 @@ export function usageSprintCheck(
   sprint: RepositoryUsageSprint,
   provider: ServerProvider | undefined,
   nowMs: number,
-): { readonly end: Exclude<UsageSprintEndReason, "stopped"> } | { readonly peak: number } {
+):
+  | { readonly end: Exclude<RepositoryUsageSprintEndReason, "stopped"> }
+  | { readonly peak: number } {
   if (nowMs >= Date.parse(sprint.resetsAt)) return { end: "reset" };
   const window = provider?.usageLimits?.windows.find((entry) => entry.id === sprint.windowId);
   if (window?.resetsAt === undefined) return { peak: sprint.usedPercent };
@@ -70,7 +71,7 @@ export const lineageUsageSprint = <E, R>(
     ),
   );
 
-const REASON_TEXT: Record<UsageSprintEndReason, string> = {
+const REASON_TEXT: Record<RepositoryUsageSprintEndReason, string> = {
   reset: "its weekly usage window reset on schedule",
   early_reset: "its weekly usage reset early",
   stopped: "the user stopped it",
@@ -78,15 +79,17 @@ const REASON_TEXT: Record<UsageSprintEndReason, string> = {
 
 export function usageSprintEndMessage(input: {
   readonly sprint: RepositoryUsageSprint;
-  readonly reason: UsageSprintEndReason;
+  readonly reason: RepositoryUsageSprintEndReason;
   readonly endedAt: string;
-  readonly interrupted: ReadonlyArray<ThreadLinkedIssue>;
+  readonly stopped: ReadonlyArray<ThreadLinkedIssue>;
 }): string {
-  const interrupted =
-    input.interrupted.length === 0
-      ? "No running work was interrupted."
-      : `Interrupted issues (their worktrees, branches and commits are kept): ${input.interrupted
-          .map((issue) => `#${issue.number} ${issue.title}`)
-          .join("; ")}.`;
-  return `The one-time usage sprint on ${input.sprint.providerInstanceId} ended at ${input.endedAt} because ${REASON_TEXT[input.reason]}. ${interrupted}\n\nFollow your normal instructions and model roles again; the sprint's provider restriction no longer applies. Resume any interrupted work the normal way.`;
+  const stopped =
+    input.reason === "stopped"
+      ? "Running work was left running."
+      : input.stopped.length === 0
+        ? "No issue work was running."
+        : `T3 stopped the running work of these issues; their worktrees, branches and commits are kept: ${input.stopped
+            .map((issue) => `#${issue.number} ${issue.title}`)
+            .join("; ")}.`;
+  return `The one-time usage sprint on ${input.sprint.providerInstanceId} ended at ${input.endedAt} because ${REASON_TEXT[input.reason]}. ${stopped}\n\nFollow your normal instructions and model roles again; the sprint's provider restriction no longer applies. Resume any stopped work the normal way.`;
 }

@@ -140,6 +140,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     projectId: ProjectId,
     resumed: Schema.optional(Schema.Boolean),
   }),
+  Schema.Struct({ type: Schema.Literal("usage-sprint.notify"), text: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("issue.github.comment"),
     operation: Schema.Literals(["status_sync", "closeout_create"]),
@@ -172,6 +173,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "issue.change.execute",
   "issue.suspension.interrupt",
   "issue.suspension.notify",
+  "usage-sprint.notify",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [

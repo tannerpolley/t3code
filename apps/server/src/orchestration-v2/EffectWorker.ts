@@ -210,6 +210,42 @@ export const layerExecutor: Layer.Layer<
               ),
             );
           }
+          case "usage-sprint.notify": {
+            const text = effect.request.text;
+            return Effect.gen(function* () {
+              const messageId = MessageId.make(effect.id);
+              const prior = yield* threads.getThreadRecords(effect.threadId, ["messages"], {
+                messageIds: [messageId],
+              });
+              if (prior.messages.some((message) => message.id === messageId)) return;
+              yield* threads.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`${effect.id}:attempt:${effect.attemptCount}`),
+                messageId,
+                threadId: effect.threadId,
+                text,
+                notification: {
+                  source: { kind: "system" },
+                  outcome: "updated",
+                  summary: "Usage sprint ended",
+                  detail: text,
+                },
+                attachments: [],
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "agent",
+                creationSource: "server",
+              });
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: "usage-sprint.notify",
+                    cause,
+                  }),
+              ),
+            );
+          }
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
             return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(

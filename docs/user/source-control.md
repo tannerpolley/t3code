@@ -373,12 +373,12 @@ link gives visibility without claiming its work.
 To spend a provider's weekly usage before it resets, pick the Codex or Claude provider under
 **Usage sprint** and choose **Start**. Until that provider's weekly window resets, every child in
 the repository's tree runs on that provider's models; the orchestrator keeps its own model.
-Messages sent to an existing child on another provider are refused, and its automatic turns wait
-until the sprint ends. The
-sprint ends at the scheduled reset or as soon as the usage resets early, for example after a reset
-credit. Then T3 interrupts running children, keeping their worktrees, branches and commits, and
-tells the orchestrator to resume the interrupted work under its normal model roles. **Stop** ends
-the sprint early without interrupting anything. Orchestrators can start or stop a sprint with
+Messages sent to an existing child on another provider are refused, its automatic turns wait
+until the sprint ends, and delegation to a linked environment is refused. The sprint ends at the
+scheduled reset or as soon as the usage resets early, for example after a reset credit. Then T3
+stops running children, keeping their worktrees, branches and commits, and tells the orchestrator
+to resume the stopped work under its normal model roles. **Stop** ends the sprint early without
+stopping anything. Orchestrators can start or stop a sprint with
 `set_repository_usage_sprint`.
 An issue worker paused by an open GitHub blocker resumes by itself within about a minute after
 all its blockers close. Other pauses wait until you resume repository work from **Status**.

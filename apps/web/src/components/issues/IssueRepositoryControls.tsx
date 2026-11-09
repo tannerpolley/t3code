@@ -501,20 +501,16 @@ function UsageSprintControl({
     return (
       <span className="flex min-w-0 items-center gap-1">
         <span className="truncate" role="status">
-          {sprint.ending === undefined
-            ? `${label(sprint.providerInstanceId)} until ${formatDateTimeShort(sprint.resetsAt)}`
-            : `${label(sprint.providerInstanceId)} sprint ending`}
+          {`${label(sprint.providerInstanceId)} until ${formatDateTimeShort(sprint.resetsAt)}`}
         </span>
-        {sprint.ending === undefined && (
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={busy || !canSet}
-            onClick={() => void submit(null)}
-          >
-            Stop
-          </Button>
-        )}
+        <Button
+          variant="outline"
+          size="xs"
+          disabled={busy || !canSet}
+          onClick={() => void submit(null)}
+        >
+          Stop
+        </Button>
       </span>
     );
   return (

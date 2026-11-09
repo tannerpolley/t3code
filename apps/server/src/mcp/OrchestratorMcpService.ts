@@ -2401,12 +2401,13 @@ const make = Effect.gen(function* () {
           Effect.map((records) => records.thread),
           Effect.mapError(threadManagementFailure),
         );
-        // Provider and model default to the caller's there too.
-        const sprintRefusal = usageSprintRefusal(
-          yield* loadUsageSprint(caller),
-          input.target.providerInstanceId ?? scope.thread.providerInstanceId,
-        );
-        if (sprintRefusal !== null) return yield* failure("provider_unavailable", sprintRefusal);
+        // The sprint can neither hold nor stop a child that runs on another environment.
+        const sprint = yield* loadUsageSprint(caller);
+        if (sprint !== undefined)
+          return yield* failure(
+            "provider_unavailable",
+            `A one-time usage sprint runs this repository's work locally on provider ${sprint.providerInstanceId} until ${sprint.resetsAt}. Linked-environment delegation is unavailable until it ends; delegate without an environmentId.`,
+          );
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         if (Option.isNone(remoteDelegation))
           return yield* failure("invalid_request", "Linked-environment delegation is unavailable.");
