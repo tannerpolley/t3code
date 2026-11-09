@@ -291,7 +291,7 @@ it("waits for nested work and retains the report across monitor acknowledgements
   // Shell tasks and provider rosters follow one rule: only awaited work or agents hold completion.
   for (const [tasks, state] of [
     [[{ taskId: "dev-server", kind: "command" }], "result_available"],
-    [[{ taskId: "background-audit", kind: "command", awaited: true }], "waiting_for_children"],
+    [[{ taskId: "background-audit", kind: "command", awaited: true }], "working"],
     [[{ taskId: "log-watcher", kind: "monitor" }], "result_available"],
     [[{ taskId: "pr-watch", kind: "monitor", awaited: true }], "waiting_for_children"],
   ] as const) {
@@ -310,6 +310,14 @@ it("waits for nested work and retains the report across monitor acknowledgements
     startedAt: null,
   };
   assert.equal(delegatedTaskProgress({ ...projection, runs: [run, pending] }).state, "working");
+  const taskId = NodeId.make("task:cancelled-before-start");
+  const cancelledTask = { ...pending, delegatedTaskId: taskId, status: "cancelled" as const };
+  const cancelledProgress = delegatedTaskProgress(
+    { ...projection, runs: [run, cancelledTask] },
+    { id: taskId },
+  );
+  assert.equal(cancelledProgress.state, "result_available");
+  assert.equal(cancelledProgress.resultRun?.id, cancelledTask.id);
   const cancelled = { ...run, status: "cancelled" as const };
   const held = delegatedTaskProgress({
     ...projection,

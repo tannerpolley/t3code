@@ -2932,6 +2932,10 @@ function claudePendingBackgroundTask(input: {
       : ((input.taskType === null
           ? undefined
           : CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.get(input.taskType)) ?? "background_task"),
+    // Background Bash completion re-enters the query stream, so its result is still owed.
+    ...(input.taskType === "local_bash" && !input.startedByMonitor
+      ? { awaited: true as const }
+      : {}),
     ...(input.description !== undefined && input.description.trim().length > 0
       ? { description: input.description }
       : {}),
@@ -5387,12 +5391,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* Ref.get(awaitedBackgroundTasksByNativeThread),
             input.nativeThreadId,
           );
+          const pending = new Map(roster);
+          // A buffered command wake still owes a turn, even after the CLI removes its task.
+          if ((yield* Ref.get(activeTurn))?.nativeThreadId !== input.nativeThreadId) {
+            const buffered = (yield* Ref.get(wakeBuffers)).get(input.nativeThreadId);
+            const reports = (yield* Ref.get(wakeReportsByNativeThread)).reports.get(
+              input.nativeThreadId,
+            );
+            for (const message of buffered?.messages ?? []) {
+              if (message.type !== "system" || message.subtype !== "task_notification") continue;
+              if (
+                message.status !== "stopped" &&
+                reports?.get(message.task_id)?.report.kind === "command"
+              ) {
+                pending.set(message.task_id, {
+                  taskId: message.task_id,
+                  kind: "command",
+                  awaited: true,
+                });
+              }
+            }
+          }
           const now = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
             ...input.providerThread,
             providerSessionId: session.id,
             ...(input.status === undefined ? {} : { status: input.status }),
-            pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster, awaitedTaskIds),
+            pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(pending, awaitedTaskIds),
             ...(goalsByNativeThread.has(input.nativeThreadId)
               ? { goal: goalsByNativeThread.get(input.nativeThreadId) ?? null }
               : {}),

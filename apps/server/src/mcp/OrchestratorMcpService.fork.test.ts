@@ -95,6 +95,7 @@ describe("OrchestratorMcpService", () => {
         runs: [
           {
             id: childRunId,
+            delegatedTaskId: taskId,
             ordinal: 1,
             status: "completed",
             startedAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
@@ -124,10 +125,22 @@ describe("OrchestratorMcpService", () => {
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
+      let hasBackgroundCommand = false;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(null),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          getThreadShell: () =>
+            Effect.succeed(
+              hasBackgroundCommand
+                ? {
+                    ...liveThreadShell(childThreadId),
+                    pendingBackgroundTasks: [
+                      { taskId: "tests", kind: "command" as const, awaited: true },
+                    ],
+                  }
+                : null,
+            ),
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
@@ -146,7 +159,7 @@ describe("OrchestratorMcpService", () => {
                       ...childProjection,
                       runs: childProjection.runs.map((run) => ({
                         ...run,
-                        delegatedTaskId: undefined,
+                        delegatedTaskId: taskId,
                       })),
                       subagents: [
                         { ...parentProjection.subagents[0]!, status: "running" as const },
@@ -196,6 +209,12 @@ describe("OrchestratorMcpService", () => {
         assert.equal(pending.workState, "waiting_for_children");
         assert.isNull(pending.summary);
         assert.equal(yield* Ref.get(acknowledgementAttempts), 0);
+        hasBackgroundCommand = true;
+        const background = yield* service.taskStatus(scope, taskId);
+        assert.equal(background.status, "running");
+        assert.equal(background.workState, "working");
+        assert.isNull(background.summary);
+        hasBackgroundCommand = false;
         hasNestedWork = false;
         const error = yield* service.taskStatus(scope, taskId).pipe(Effect.flip);
         assert.equal(error.code, "orchestration_error");

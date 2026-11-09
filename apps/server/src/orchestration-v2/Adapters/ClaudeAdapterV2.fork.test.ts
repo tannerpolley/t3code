@@ -1,9 +1,14 @@
 import {
   WAKE_NATIVE_SESSION,
+  WAKE_TASK_ID,
+  wakeTaskStarted,
+  turnOneResult,
+  wakeNotification,
   claudeSdkFrame,
   makeResultFrame,
   awaitUntil,
   makeWakeHarness,
+  makeWakeHarnessWithOptions,
   providerThreadRosterEvents,
 } from "./ClaudeAdapterV2.testHarness.ts";
 import {
@@ -58,6 +63,47 @@ beforeEach(() => {
 });
 
 describe("ClaudeAdapterV2 background wake turns", () => {
+  it.effect("holds a completed command notification until its resumed run starts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ close: Queue.shutdown });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt:handoff"),
+            text: "Run background tests.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* Queue.take(harness.rosterReceipts);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* Queue.takeAll(harness.providerThreadReceipts);
+        yield* harness.offerAndWait(wakeNotification);
+        const { providerThread: pending } = yield* Queue.take(harness.providerThreadReceipts);
+        assert.equal(pending.pendingBackgroundTasks?.[0]?.taskId, WAKE_TASK_ID);
+        assert.isTrue(pending.pendingBackgroundTasks?.[0]?.awaited);
+        yield* harness.runtime.interruptTurn({
+          providerThread: pending,
+          providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
+          requestRuntimeRestart: true,
+        });
+        for (;;) {
+          const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
+          if ((providerThread.pendingBackgroundTasks?.length ?? 0) === 0) break;
+        }
+        assert.lengthOf(harness.continuationRequests, 0);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -357,7 +403,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.providerThread.id === providerThreadA.id,
           )?.providerThread.pendingBackgroundTasks;
           assert.deepEqual(rosterAAfterSettle ?? [], [
-            { taskId: taskA, description: "work on A", kind: "command", startedAt: now },
+            {
+              taskId: taskA,
+              description: "work on A",
+              kind: "command",
+              awaited: true,
+              startedAt: now,
+            },
           ]);
           assert.isTrue(yield* hasPendingBackgroundWork);
           assert.isTrue(yield* hasPendingBackgroundWorkForThread(providerThreadA));

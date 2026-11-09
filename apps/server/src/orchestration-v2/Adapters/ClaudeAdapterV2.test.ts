@@ -8587,7 +8587,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("holds only the background tasks the agent marks awaited, until they end", () =>
+  it.effect("keeps resumable commands awaited even when explicit marks are removed", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -8646,7 +8646,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           marks(yield* nextRoster((tasks) => tasks.some((task) => task.awaited === true))),
           [
             [WAKE_TASK_ID, true],
-            ["dev-server", false],
+            ["dev-server", true],
           ],
         );
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
@@ -8660,12 +8660,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepStrictEqual(
           marks(yield* nextRoster((tasks) => tasks[0]?.taskId === "dev-server")),
           [
-            ["dev-server", false],
+            ["dev-server", true],
             [WAKE_TASK_ID, true],
           ],
         );
 
-        // Once the task leaves the roster, a reused id starts unmarked.
+        // A reused command id still resumes the worker on exit.
         yield* Queue.offer(
           harness.sdkMessages,
           roster(["dev-server"], "00000000-0000-4000-8000-000000000303"),
@@ -8676,8 +8676,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           roster(["dev-server", WAKE_TASK_ID], "00000000-0000-4000-8000-000000000304"),
         );
         assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 2)), [
-          ["dev-server", false],
-          [WAKE_TASK_ID, false],
+          ["dev-server", true],
+          [WAKE_TASK_ID, true],
         ]);
 
         yield* awaitBackgroundTasks({
@@ -8689,7 +8689,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           marks(yield* nextRoster((tasks) => tasks.some((task) => task.awaited === true))),
           [
             ["dev-server", true],
-            [WAKE_TASK_ID, false],
+            [WAKE_TASK_ID, true],
           ],
         );
         const released = yield* awaitBackgroundTasks({
@@ -8698,13 +8698,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           awaited: false,
         });
         assert.deepStrictEqual(released.matched, ["dev-server"]);
-        assert.deepStrictEqual(
-          marks(yield* nextRoster((tasks) => !tasks.some((task) => task.awaited === true))),
-          [
-            ["dev-server", false],
-            [WAKE_TASK_ID, false],
-          ],
-        );
+        assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 2)), [
+          ["dev-server", true],
+          [WAKE_TASK_ID, true],
+        ]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -9496,7 +9493,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.providerThread.id === providerThreadA.id,
           )?.providerThread.pendingBackgroundTasks;
           assert.deepEqual(rosterAAfterSettle ?? [], [
-            { taskId: taskA, description: "work on A", kind: "command", startedAt: now },
+            {
+              taskId: taskA,
+              description: "work on A",
+              kind: "command",
+              awaited: true,
+              startedAt: now,
+            },
           ]);
           assert.isTrue(yield* hasPendingBackgroundWork);
           assert.isTrue(yield* hasPendingBackgroundWorkForThread(providerThreadA));

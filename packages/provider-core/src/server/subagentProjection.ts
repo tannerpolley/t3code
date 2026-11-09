@@ -230,21 +230,27 @@ export function subagentResultForRun(
   };
 }
 
-export function delegatedTaskProgress(projection: {
-  readonly runs: OrchestrationV2ThreadProjection["runs"];
-  readonly messages: ReadonlyArray<
-    Pick<OrchestrationV2ConversationMessage, "runId" | "notification">
-  >;
-  readonly subagents: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
-  >;
-  readonly pendingBackgroundTasks?: ReadonlyArray<
-    Pick<NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number], "kind" | "awaited">
-  >;
-  readonly providerThreads?: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
-  >;
-}) {
+export function delegatedTaskProgress(
+  projection: {
+    readonly runs: OrchestrationV2ThreadProjection["runs"];
+    readonly messages: ReadonlyArray<
+      Pick<OrchestrationV2ConversationMessage, "runId" | "notification">
+    >;
+    readonly subagents: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
+    >;
+    readonly pendingBackgroundTasks?: ReadonlyArray<
+      Pick<
+        NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number],
+        "kind" | "awaited"
+      >
+    >;
+    readonly providerThreads?: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
+    >;
+  },
+  task?: { readonly id: NodeId },
+) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
   const monitorRuns = new Set(
@@ -253,8 +259,22 @@ export function delegatedTaskProgress(projection: {
       .map((message) => message.runId),
   );
   const workRuns = projection.runs.filter(
-    (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
+    (run) =>
+      !monitorRuns.has(run.id) &&
+      run.status !== "rolled_back" &&
+      (task === undefined ||
+        run.delegatedTaskId === undefined ||
+        run.delegatedTaskId === task.id ||
+        projection.messages.some(
+          (message) =>
+            message.runId === run.id &&
+            (message.notification?.source.kind === "command" ||
+              message.notification?.source.kind === "background_task"),
+        )),
   );
+  const taskQueued =
+    task !== undefined &&
+    workRuns.some((run) => run.delegatedTaskId === task.id && run.status === "queued");
   const active = workRuns.some(
     (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
   );
@@ -273,12 +293,22 @@ export function delegatedTaskProgress(projection: {
       backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
     ) ??
       false);
+  const awaitingCommand = [
+    ...(projection.pendingBackgroundTasks ?? []),
+    ...(projection.providerThreads?.flatMap((thread) => thread.pendingBackgroundTasks ?? []) ?? []),
+  ].some((task) => task.kind === "command" && task.awaited === true);
   const resultRun = workRuns
-    .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
+    .filter(
+      (run) =>
+        terminal(run.status) &&
+        (run.startedAt !== null ||
+          run.ordinal === 1 ||
+          (task !== undefined && run.delegatedTaskId === task.id)),
+    )
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
   return {
     state:
-      active || resultRun === undefined
+      active || taskQueued || awaitingCommand || resultRun === undefined
         ? ("working" as const)
         : children
           ? ("waiting_for_children" as const)
