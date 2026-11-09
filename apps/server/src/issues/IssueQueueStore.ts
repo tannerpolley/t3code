@@ -45,12 +45,13 @@ export const applyIssueQueueEvent = Effect.fnUntraced(function* (
   yield* sql`
     INSERT INTO orchestration_v2_projection_issue_work_requests
       (request_id, host, repository_id, repository, issue_id, issue_number, attempt_key,
-       root_thread_id, payload_json, created_at, queue_state)
+       root_thread_id, payload_json, created_at, queue_state, notice_run_id)
     VALUES (${entry.requestId}, ${entry.issue.host}, ${entry.issue.repositoryId},
       ${entry.issue.repository}, ${entry.issue.id}, ${entry.issue.number}, ${entry.requestId},
-      ${event.threadId}, ${payload}, ${DateTime.formatIso(event.occurredAt)}, ${entry.state})
+      ${event.threadId}, ${payload}, ${DateTime.formatIso(event.occurredAt)}, ${entry.state}, ${entry.noticeRunId ?? null})
     ON CONFLICT(request_id) DO UPDATE SET payload_json = excluded.payload_json,
-      queue_state = excluded.queue_state, root_thread_id = excluded.root_thread_id
+      queue_state = excluded.queue_state, root_thread_id = excluded.root_thread_id,
+      notice_run_id = excluded.notice_run_id
   `;
 });
 
@@ -87,14 +88,10 @@ export const readIssueQueueNotice = Effect.fn("IssueQueueStore.readIssueQueueNot
 ) {
   const sql = yield* SqlClient.SqlClient;
   const [row] = yield* sql<{ payload_json: string }>`
-    SELECT request.payload_json FROM orchestration_events event
-    JOIN orchestration_v2_projection_issue_work_requests request
-      ON request.request_id = json_extract(event.payload_json, '$.requestId')
-    WHERE event.aggregate_kind = 'thread' AND event.stream_id = ${threadId}
-      AND event.application_event_version = 2 AND event.event_type = 'issue.queue.updated'
-      AND json_extract(event.payload_json, '$.noticeRunId') = ${runId}
-      AND request.queue_state = 'needs_attention'
-    ORDER BY event.sequence DESC LIMIT 1
+    SELECT payload_json FROM orchestration_v2_projection_issue_work_requests
+    WHERE root_thread_id = ${threadId} AND notice_run_id = ${runId}
+      AND queue_state = 'needs_attention'
+    LIMIT 1
   `;
   return row === undefined ? null : yield* decode(row.payload_json);
 });
@@ -104,10 +101,12 @@ export const finishIssueQueueNotice = Effect.fnUntraced(function* (run: Orchestr
   if (!["completed", "failed", "cancelled", "interrupted"].includes(run.status)) return;
   const sql = yield* SqlClient.SqlClient;
   const state = run.status === "completed" ? "needs_attention" : "queued";
+  // Keep the projected run id after clearing the public payload so completion can find the notice.
   yield* sql`
       UPDATE orchestration_v2_projection_issue_work_requests
       SET queue_state = ${state}, payload_json = json_remove(json_set(payload_json, '$.state', ${state}), '$.noticeRunId')
       WHERE root_thread_id = ${run.threadId} AND queue_state = 'queued'
+        AND notice_run_id = ${run.id}
         AND json_extract(payload_json, '$.noticeRunId') = ${run.id}
     `;
 });

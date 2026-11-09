@@ -249,6 +249,8 @@ export const layer = Layer.effect(
           LEFT JOIN (${readOnlyQueue(rootThreadId)}) queued ON queued.thread_id = thread.thread_id
           WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
             AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
+            AND EXISTS (SELECT 1 FROM orchestration_v2_projection_runs pending
+              WHERE pending.thread_id = thread.thread_id AND pending.status IN ('queued', 'preparing'))
             AND (${isReadOnly} OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work work
               JOIN orchestration_v2_projection_repository_orchestration owner
                 ON owner.host = work.host AND owner.repository_id = work.repository_id

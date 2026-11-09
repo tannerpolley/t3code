@@ -1128,6 +1128,8 @@ it.effect("completed notice needs attention, advances, and Retry reminds it agai
     let queue = yield* store.queue(reference);
     assert.equal(queue[0]!.state, "needs_attention");
     assert.isUndefined(queue[0]!.noticeRunId);
+    assert.equal((yield* store.queueNotice(rootId, run.id))?.issue.number, 1);
+    assert.isNull(yield* store.queueNotice(ThreadId.make("other-root"), run.id));
     assert.isDefined(queue[1]!.noticeRunId);
     assert.equal((yield* service.repositoryStatus(reference)).queue?.[0]!.state, "needs_attention");
     const second = (yield* threads.getThreadRecords(rootId, ["runs"])).runs.at(-1)!;
@@ -1138,6 +1140,7 @@ it.effect("completed notice needs attention, advances, and Retry reminds it agai
     queue = yield* store.queue(reference);
     assert.equal(queue[0]!.state, "queued");
     assert.isDefined(queue[0]!.noticeRunId);
+    assert.isNull(yield* store.queueNotice(rootId, run.id));
     const records = yield* threads.getThreadRecords(rootId, ["messages", "runs"]);
     assert.lengthOf(records.messages, 3);
     const retriedRun = records.runs.find((run) => run.id === queue[0]!.noticeRunId)!;

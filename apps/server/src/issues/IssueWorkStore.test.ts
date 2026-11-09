@@ -138,3 +138,25 @@ it.effect("keeps roots with persisted blocker suspensions eligible for automatic
     }
   }).pipe(Effect.provide(dependencies)),
 );
+
+it.effect("admission visits only read-only threads with queued or preparing work", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    for (const status of ["completed", "running", "waiting", "queued", "preparing", "idle"]) {
+      yield* sql`INSERT INTO orchestration_v2_projection_threads
+        (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+        VALUES (${status}, 'project', 'Child', 'codex', 'full-access', 'default', '2026-11-09', '2026-11-09',
+          '{"role":"checker","lineage":{"rootThreadId":"root","relationshipToParent":"subagent"}}')`;
+      if (status !== "idle")
+        yield* sql`INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES (${status}, ${status}, 1, 'codex', ${status}, '2026-11-09', '{}')`;
+    }
+    assert.deepEqual(yield* store.admissionThreads(ThreadId.make("root")), [
+      ThreadId.make("preparing"),
+      ThreadId.make("queued"),
+    ]);
+    assert.equal(yield* store.readOnlySlotsInUse(ThreadId.make("root")), 3);
+  }).pipe(Effect.provide(dependencies)),
+);
