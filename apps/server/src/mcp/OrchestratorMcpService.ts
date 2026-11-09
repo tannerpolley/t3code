@@ -97,6 +97,7 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import { delegatedRequestWaitingOnUser } from "../orchestration-v2/DelegatedRequestRouting.ts";
 import { checkDelegateTarget, modelRoleStatuses } from "./delegateTaskTarget.ts";
+import { lineageUsageSprint, usageSprintRefusal } from "../issues/usageSprint.ts";
 import {
   DispatchModeLimit,
   type DispatchModeRefusal,
@@ -1303,6 +1304,13 @@ const make = Effect.gen(function* () {
   });
 
   const loadProviders = providerRegistry.getProviders;
+  const loadUsageSprint = (thread: OrchestrationV2ThreadProjection["thread"]) =>
+    lineageUsageSprint(thread, (threadId) =>
+      threadManagement.getThreadRecords(threadId, []).pipe(
+        Effect.map((records) => records.thread),
+        Effect.mapError(threadManagementFailure),
+      ),
+    );
 
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
@@ -2299,12 +2307,14 @@ const make = Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
+      const usageSprint = parent === undefined ? undefined : yield* loadUsageSprint(parent.thread);
       const modelRoles = modelRoleStatuses(
         settings.modelRoles,
         providers,
         orchestrationCapableInstanceIds,
         yield* Clock.currentTimeMillis,
         settings.workerProvider,
+        usageSprint,
       );
       const inherited = parent?.thread.modelSelection;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
@@ -2323,6 +2333,7 @@ const make = Effect.gen(function* () {
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         modelRoles,
+        ...(usageSprint === undefined ? {} : { usageSprint }),
         providers: providers.map((provider) => {
           const constraints = providerConstraints(
             provider,
@@ -2447,6 +2458,11 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
+      const sprintRefusal = usageSprintRefusal(
+        yield* loadUsageSprint(parent.thread),
+        target.modelSelection.instanceId,
+      );
+      if (sprintRefusal !== null) return yield* failure("provider_unavailable", sprintRefusal);
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
         input.runtimeMode,

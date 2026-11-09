@@ -4,13 +4,17 @@ import {
   CLOSED_ISSUE_SUSPENSION_REASON,
   type EnvironmentId,
   type IssueRepositoryRef,
+  type ProviderInstanceId,
+  type RepositoryOrchestration,
   type ThreadId,
 } from "@t3tools/contracts";
+import { formatDateTimeShort } from "@t3tools/shared/usageFormat";
 import { useNavigate } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ActivityIcon,
   ArrowRightLeftIcon,
+  GaugeIcon,
   MoreHorizontalIcon,
   NetworkIcon,
   PauseIcon,
@@ -19,11 +23,8 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { useState } from "react";
-import {
-  useServerConfigs,
-  useThreadShell,
-  useThreadShellsForProjectRefs,
-} from "~/state/entities";
+import { useServerConfigs, useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
+import { useEnvironmentProviders } from "~/state/environments";
 import { issueEnvironment } from "~/state/issues";
 import { useEnvironmentQuery, formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -297,6 +298,15 @@ function RepositoryControls({
           onSettled={() => appAtomRegistry.refresh(statusAtom)}
         />
       </MetaRow>
+      <MetaRow icon={<GaugeIcon className="size-3.5" />} label="Usage sprint">
+        <UsageSprintControl
+          key={`sprint:${data.rootThreadId}:${config.revision}`}
+          environmentId={environmentId}
+          reference={reference}
+          config={config}
+          onSettled={() => appAtomRegistry.refresh(statusAtom)}
+        />
+      </MetaRow>
       <MetaRow icon={<ActivityIcon className="size-3.5" />} label="Status">
         <span className="flex min-w-0 items-center gap-1">
           <span className="truncate" role="status">
@@ -442,6 +452,99 @@ function RepositoryControls({
         </div>
       ) : null}
     </section>
+  );
+}
+
+/** Starts a one-time sprint on one Codex or Claude provider, or shows and stops the active one. */
+function UsageSprintControl({
+  environmentId,
+  reference,
+  config,
+  onSettled,
+}: {
+  environmentId: EnvironmentId;
+  reference: IssueRepositoryRef;
+  config: RepositoryOrchestration;
+  onSettled: () => void;
+}) {
+  const providers = (useEnvironmentProviders().get(environmentId) ?? []).filter(
+    (provider) =>
+      provider.enabled && (provider.driver === "codex" || provider.driver === "claudeAgent"),
+  );
+  const setSprint = useAtomCommand(issueEnvironment.setUsageSprint, { reportFailure: false });
+  const canSet = useAtomValue(issueEnvironment.setUsageSprint.permissionAtom(environmentId));
+  const [choice, setChoice] = useState<ProviderInstanceId | null>(null);
+  const [busy, setBusy] = useState(false);
+  const label = (instanceId: ProviderInstanceId) =>
+    providers.find((provider) => provider.instanceId === instanceId)?.displayName ?? instanceId;
+  const submit = async (providerInstanceId: ProviderInstanceId | null) => {
+    if (busy) return;
+    setBusy(true);
+    const result = await setSprint({
+      environmentId,
+      input: { ...reference, providerInstanceId, clientRequestId: CommandId.make(randomUUID()) },
+    });
+    setBusy(false);
+    if (result._tag === "Failure")
+      toastManager.add({
+        type: "error",
+        title:
+          providerInstanceId === null
+            ? "Could not stop the usage sprint"
+            : "Could not start the usage sprint",
+        description: formatEnvironmentQueryError(result.cause),
+      });
+    onSettled();
+  };
+  const sprint = config.usageSprint;
+  if (sprint !== undefined)
+    return (
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="truncate" role="status">
+          {label(sprint.providerInstanceId)} until {formatDateTimeShort(sprint.resetsAt)}
+        </span>
+        <Button
+          variant="outline"
+          size="xs"
+          disabled={busy || !canSet}
+          onClick={() => void submit(null)}
+        >
+          Stop
+        </Button>
+      </span>
+    );
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <Select
+        items={providers.map((provider) => ({
+          value: provider.instanceId,
+          label: label(provider.instanceId),
+        }))}
+        value={choice}
+        onValueChange={(value) =>
+          setChoice(providers.find((provider) => provider.instanceId === value)?.instanceId ?? null)
+        }
+      >
+        <SelectTrigger size="compact" aria-label="Usage sprint provider">
+          <SelectValue placeholder="Off" />
+        </SelectTrigger>
+        <SelectContent>
+          {providers.map((provider) => (
+            <SelectItem key={provider.instanceId} value={provider.instanceId}>
+              {label(provider.instanceId)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Button
+        variant="outline"
+        size="xs"
+        disabled={busy || !canSet || choice === null}
+        onClick={() => void submit(choice)}
+      >
+        Start
+      </Button>
+    </span>
   );
 }
 

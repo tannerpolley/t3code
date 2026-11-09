@@ -49,6 +49,7 @@ import {
   RepositoryHandoffInput,
   RepositoryOrchestratorInput,
   RepositoryWorkControlInput,
+  RepositoryUsageSprintInput,
   RepositoryWorkerLimitInput,
   RepositoryReadOnlyLimitInput,
   RepositoryWorkRestoreInput,
@@ -74,6 +75,7 @@ export const ISSUE_WS_METHODS = {
   issuesWorkMilestone: "issues.workMilestone",
   issuesRepositoryStatus: "issues.repositoryStatus",
   issuesSetPaused: "issues.setPaused",
+  issuesSetUsageSprint: "issues.setUsageSprint",
   issuesCloseOut: "issues.closeOut",
   issuesSetWorkerLimit: "issues.setWorkerLimit",
   ownerDecisionsList: "issues.decisions.list",
@@ -198,6 +200,11 @@ const WsIssuesSetPausedRpc = Rpc.make(ISSUE_WS_METHODS.issuesSetPaused, {
   success: RepositoryWorkResult,
   error: IssueRpcError,
 });
+const WsIssuesSetUsageSprintRpc = Rpc.make(ISSUE_WS_METHODS.issuesSetUsageSprint, {
+  payload: RepositoryUsageSprintInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
 const WsOwnerDecisionsListRpc = Rpc.make(ISSUE_WS_METHODS.ownerDecisionsList, {
   payload: OwnerDecisionsListInput,
   success: Schema.Array(OwnerDecision),
@@ -285,6 +292,7 @@ export const issueRpcs = [
   WsIssuesWorkMilestoneRpc,
   WsIssuesRepositoryStatusRpc,
   WsIssuesSetPausedRpc,
+  WsIssuesSetUsageSprintRpc,
   WsIssuesCloseOutRpc,
   WsIssuesSetWorkerLimitRpc,
   WsIssuesSetReadOnlyLimitRpc,
@@ -308,6 +316,7 @@ export const ISSUE_CLIENT_GUARDED_RPC_SCOPES = {
   [ISSUE_WS_METHODS.issuesCleanup]: AuthSourceControlWriteScope,
   [ISSUE_WS_METHODS.issuesUnlink]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issuesCloseOut]: AuthOrchestrationOperateScope,
+  [ISSUE_WS_METHODS.issuesSetUsageSprint]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issuesCancelRequest]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issuesRestoreRoot]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issuesAssignOrchestrator]: AuthOrchestrationOperateScope,

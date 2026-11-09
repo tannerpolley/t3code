@@ -369,6 +369,15 @@ queued children; lowering it lets current children finish. Agents can set either
 `set_repository_worker_limit`, using `workerLimit` or `readOnlyLimit` and the current revision.
 Read-only children share their parent's checkout unless another isolation is requested; an issue
 link gives visibility without claiming its work.
+
+To spend a provider's weekly usage before it resets, pick the Codex or Claude provider under
+**Usage sprint** and choose **Start**. Until that provider's weekly window resets, every child in
+the repository's tree runs on that provider's models; the orchestrator keeps its own model. The
+sprint ends at the scheduled reset or as soon as the usage resets early, for example after a reset
+credit. Then T3 interrupts running children, keeping their worktrees, branches and commits, and
+tells the orchestrator to resume the interrupted work under its normal model roles. **Stop** ends
+the sprint early without interrupting anything. Orchestrators can start or stop a sprint with
+`set_repository_usage_sprint`.
 An issue worker paused by an open GitHub blocker resumes by itself within about a minute after
 all its blockers close. Other pauses wait until you resume repository work from **Status**.
 If an issue closes during work, cancel or finish its remaining work, then use **Close out attempt**

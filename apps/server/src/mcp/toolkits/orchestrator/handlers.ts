@@ -75,6 +75,13 @@ const handlers = {
       return yield* service.setRepositoryPaused(scope, input);
     }),
   ),
+  set_repository_usage_sprint: McpToolAccess.writes((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.setRepositoryUsageSprint(scope, input);
+    }),
+  ),
   close_out_issue_attempt: McpToolAccess.writes((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

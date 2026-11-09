@@ -47,6 +47,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { modelRoleStatuses } from "../mcp/delegateTaskTarget.ts";
+import { lineageUsageSprint } from "../issues/usageSprint.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
@@ -478,6 +479,7 @@ export const layerWithOptions = (
             capableInstanceIds,
             now,
             settings.workerProvider,
+            yield* lineageUsageSprint(thread, projectionStore.getThreadShell),
           );
           const withRoles = yield* mcpSessions.read(threadId);
           if (withRoles !== undefined) yield* mcpSessions.set({ ...withRoles, modelRoles });

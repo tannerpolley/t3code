@@ -6,6 +6,7 @@ import { ModelRoleId } from "./threadRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import { IssueRef, IssueRepositoryRef } from "./issue.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const CLOSED_ISSUE_SUSPENSION_REASON =
   "Issue closed during work. Decide whether to resume or close out the retained result.";
@@ -23,6 +24,17 @@ export const RepositoryMilestonePlan = Schema.Struct({
   status: Schema.Literals(["running", "complete", "blocked", "awaiting_approval", "unreadable"]),
   fingerprint: Schema.String,
 });
+
+/** A one-time run limited to one provider's models until its weekly usage window resets. */
+export const RepositoryUsageSprint = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  windowId: TrimmedNonEmptyString,
+  /** Usage and reset time at the start; a drop or a moved reset means an early reset. */
+  usedPercent: Schema.Number,
+  resetsAt: Schema.String,
+  startedAt: Schema.String,
+});
+export type RepositoryUsageSprint = typeof RepositoryUsageSprint.Type;
 
 export const RepositoryOrchestration = Schema.Struct({
   host: TrimmedNonEmptyString,
@@ -63,6 +75,17 @@ export const RepositoryOrchestration = Schema.Struct({
     ),
   ),
   retiredToThreadId: Schema.optional(ThreadId),
+  usageSprint: Schema.optional(RepositoryUsageSprint),
+  usageSprintHistory: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        providerInstanceId: ProviderInstanceId,
+        startedAt: Schema.String,
+        endedAt: Schema.String,
+        reason: Schema.Literals(["reset", "early_reset", "stopped"]),
+      }),
+    ),
+  ),
 });
 export type RepositoryOrchestration = typeof RepositoryOrchestration.Type;
 
@@ -115,6 +138,13 @@ export const RepositoryWorkControlInput = Schema.Struct({
   clientRequestId: CommandId,
 });
 export type RepositoryWorkControlInput = typeof RepositoryWorkControlInput.Type;
+/** Starts a usage sprint on a provider instance, or ends the active one with null. */
+export const RepositoryUsageSprintInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  providerInstanceId: Schema.NullOr(ProviderInstanceId),
+  clientRequestId: CommandId,
+});
+export type RepositoryUsageSprintInput = typeof RepositoryUsageSprintInput.Type;
 export const RepositoryHandoffRequestInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),

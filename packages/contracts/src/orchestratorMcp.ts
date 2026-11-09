@@ -1,5 +1,5 @@
 import { ThreadRoleInput } from "./threadRole.ts";
-import { RepositoryWorkTarget } from "./issueWork.ts";
+import { RepositoryUsageSprint, RepositoryWorkTarget } from "./issueWork.ts";
 import { IssueRef } from "./issue.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -703,6 +703,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
    * and unavailable choices last. Task fit and explicit user instructions take priority.
    */
   modelRoles: Schema.Array(OrchestratorMcpModelRole),
+  /** The caller's repository usage sprint: only this provider's targets are allowed until it ends. */
+  usageSprint: Schema.optional(RepositoryUsageSprint),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

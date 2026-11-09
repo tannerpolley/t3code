@@ -178,6 +178,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Update", "Updating", "Updated", "repository pause state"],
     "issue-work",
   ),
+  set_repository_usage_sprint: tool(
+    ["Update", "Updating", "Updated", "the repository usage sprint"],
+    "issue-work",
+  ),
   request_repository_handoff: tool(
     ["Request", "Requesting", "Requested", "an orchestrator handoff"],
     "issue-work",

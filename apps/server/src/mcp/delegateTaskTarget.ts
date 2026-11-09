@@ -9,6 +9,7 @@ import {
   type ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
+  type RepositoryUsageSprint,
   type ServerProvider,
   type ServerSettings,
   type ServerProviderUsageWindow,
@@ -17,6 +18,7 @@ import { elapsedShare, paceOf, remainingPercent } from "@t3tools/shared/usageLim
 import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+import { usageSprintRefusal } from "../issues/usageSprint.ts";
 
 export function providerConstraints(
   provider: ServerProvider | undefined,
@@ -42,12 +44,8 @@ export function providerConstraints(
 }
 
 /**
- * Checks requested option selections for duplicates and, when the model
- * advertises option descriptors, against those descriptors. Models without
- * descriptors skip the descriptor checks (mirroring how model slugs are only
- * validated when the provider advertises models), but duplicate ids always
- * fail: downstream consumers disagree on whether the first or last value of
- * a duplicated id wins.
+ * Checks option selections against the model's advertised descriptors, if any.
+ * Duplicate ids always fail: consumers disagree on whether the first or last wins.
  */
 function invalidOptionSelections(
   selections: ReadonlyArray<ProviderOptionSelection>,
@@ -180,18 +178,23 @@ export function modelRoleStatuses(
   orchestrationCapableInstanceIds: ReadonlySet<ProviderInstanceId>,
   now: number,
   workerProvider: ServerSettings["workerProvider"] = "mixed",
+  usageSprint?: RepositoryUsageSprint,
 ): ReadonlyArray<OrchestratorMcpModelRole> {
   const providerById = new Map(providers.map((provider) => [provider.instanceId, provider]));
   return roles.map((role) => {
     const choices = Arr.map(role.targets, (target, configuredOrder) => {
-      const checked = checkDelegateTarget({
-        providers,
-        orchestrationCapableInstanceIds,
-        instanceId: target.providerInstanceId,
-        requestedModel: target.model,
-        inheritedModel: undefined,
-        options: target.options,
-      });
+      const sprintRefusal = usageSprintRefusal(usageSprint, target.providerInstanceId);
+      const checked =
+        sprintRefusal === null
+          ? checkDelegateTarget({
+              providers,
+              orchestrationCapableInstanceIds,
+              instanceId: target.providerInstanceId,
+              requestedModel: target.model,
+              inheritedModel: undefined,
+              options: target.options,
+            })
+          : new OrchestratorMcpFailure({ code: "provider_unavailable", message: sprintRefusal });
       const provider = providerById.get(target.providerInstanceId);
       const windows =
         provider === undefined ? [] : weeklyWindowsForModel(provider, target.model, now);
@@ -225,7 +228,8 @@ export function modelRoleStatuses(
         const rank = (choice: (typeof choices)[number]) =>
           choice.unavailable
             ? 2
-            : choice.headroom !== undefined && choice.headroom + Number.EPSILON < MIN_WEEKLY_HEADROOM
+            : choice.headroom !== undefined &&
+                choice.headroom + Number.EPSILON < MIN_WEEKLY_HEADROOM
               ? 1
               : 0;
         const byAvailability = rank(left) - rank(right);

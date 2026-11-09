@@ -213,6 +213,7 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
+  // oxlint-disable-next-line no-unused-vars -- orphaned on main; kept for its owner to wire back or delete
   const cancelOverRaisedGrandchild = (child: {
     readonly deleted: boolean;
     readonly raisedDuringStop?: boolean;
@@ -357,7 +358,6 @@ describe("OrchestratorMcpService provider resolution", () => {
   const taskId = NodeId.make("node:mcp-providers-task");
   const projectId = ProjectId.make("project:mcp-providers");
   const codexInstanceId = ProviderInstanceId.make("codex");
-  const antigravityInstanceId = ProviderInstanceId.make("antigravity");
   const modelRoleStatusNow = DateTime.toEpochMillis(
     DateTime.makeUnsafe("2026-10-12T12:00:00.000Z"),
   );
@@ -589,6 +589,20 @@ describe("OrchestratorMcpService provider resolution", () => {
       [codexInstanceId, claude, blockedClaude],
     );
     assert.deepEqual(modelRoleStatuses(roles, providers, capable, modelRoleStatusNow), mixed);
+    // A usage sprint makes every other provider's choice unavailable, including the orchestrator's.
+    const sprint = modelRoleStatuses(roles, providers, capable, modelRoleStatusNow, "claude", {
+      providerInstanceId: codexInstanceId,
+      windowId: "weekly",
+      usedPercent: 0,
+      resetsAt: "2026-11-13T23:31:57.000Z",
+      startedAt: "2026-11-09T00:00:00.000Z",
+    });
+    for (const role of sprint)
+      assert.deepEqual(
+        role.targets.map((target) => target.unavailableReason === null),
+        role.targets.map((target) => target.providerInstanceId === codexInstanceId),
+      );
+    assert.equal(sprint[0]!.targets[0]!.providerInstanceId, codexInstanceId);
   });
 
   it("keeps configured order unless headroom is below the threshold", () => {
@@ -1390,6 +1404,108 @@ describe("OrchestratorMcpService provider resolution", () => {
           }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
         }
       }),
+  );
+
+  it.effect("limits a usage sprint lineage's children to the sprint provider", () =>
+    Effect.gen(function* () {
+      const rootThreadId = ThreadId.make("thread:mcp-providers-sprint-root");
+      const peerId = ProviderInstanceId.make("codex-subscription-2");
+      const driver = ProviderDriverKind.make("codex");
+      const usageSprint = {
+        providerInstanceId: codexInstanceId,
+        windowId: "weekly",
+        usedPercent: 40,
+        resetsAt: "2026-11-13T23:31:57.000Z",
+        startedAt: "2026-11-09T00:00:00.000Z",
+      };
+      const commands: Array<unknown> = [];
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        origin: "app_owned",
+        childThreadId,
+        providerInstanceId: codexInstanceId,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+      };
+      // The caller is an issue owner below the root that holds the sprint.
+      const caller = (subagents: ReadonlyArray<unknown>) => {
+        const projection = parentProjection(subagents);
+        return {
+          ...projection,
+          thread: {
+            ...projection.thread,
+            lineage: { rootThreadId, parentThreadId: rootThreadId },
+          },
+        } as OrchestrationV2ThreadProjection;
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          getThreadShell: () => Effect.succeed(null),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? caller(commands.length > 0 ? [task] : [])
+                : threadId === rootThreadId
+                  ? ({
+                      thread: {
+                        id: rootThreadId,
+                        lineage: { rootThreadId, parentThreadId: null },
+                        repositoryOrchestration: { usageSprint },
+                      },
+                    } as unknown as OrchestrationV2ThreadProjection)
+                  : childProjection,
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              commands.push(command);
+              return {
+                sequence: 1,
+                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+              } as never;
+            }),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
+          providerSnapshot({ instanceId: peerId, driver, model: "gpt-5.4" }),
+        ]),
+        adapterRegistryLayer([codexInstanceId, peerId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        assert.deepEqual((yield* service.capabilities(scope)).usageSprint, usageSprint);
+        const refused = yield* service
+          .delegateTask(scope, {
+            task: "Review the change.",
+            role: "reviewer",
+            target: yield* decodeTarget({ providerInstanceId: peerId }),
+            mode: "async",
+            clientRequestId: "off-sprint",
+          })
+          .pipe(Effect.flip);
+        assert.include(
+          refused.message,
+          "usage sprint limits this repository's work to provider codex",
+        );
+        assert.equal(refused.code, "provider_unavailable");
+        assert.equal(commands.length, 0);
+        yield* service.delegateTask(scope, {
+          task: "Review the change.",
+          role: "reviewer",
+          mode: "async",
+          clientRequestId: "on-sprint",
+        });
+        assert.equal(commands.length, 1);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
   );
 
   it.effect("refuses stuck-root recovery to a Supervised caller", () =>

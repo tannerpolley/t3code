@@ -320,6 +320,10 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:pause",
       tag: WS_METHODS.issuesSetPaused,
     }),
+    setUsageSprint: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:usage-sprint",
+      tag: WS_METHODS.issuesSetUsageSprint,
+    }),
     assignOrchestrator: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:assign-orchestrator",
       tag: WS_METHODS.issuesAssignOrchestrator,

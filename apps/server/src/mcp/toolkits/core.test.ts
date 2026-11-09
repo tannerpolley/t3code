@@ -1045,6 +1045,7 @@ it("keeps fork tools in their toolkits with presentation labels", () => {
     "request_owner_decision",
     "request_repository_handoff",
     "restore_repository_root",
+    "set_repository_usage_sprint",
     "set_repository_work_paused",
     "set_repository_worker_limit",
     "t3_issue_inbox",
