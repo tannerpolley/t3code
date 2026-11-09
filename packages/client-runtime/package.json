@@ -199,6 +199,10 @@
       "types": "./src/state/itemSupport.ts",
       "default": "./src/state/itemSupport.ts"
     },
+    "./state/thread-activity": {
+      "types": "./src/state/forkThreadActivity.ts",
+      "default": "./src/state/forkThreadActivity.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"

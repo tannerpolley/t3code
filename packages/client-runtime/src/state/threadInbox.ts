@@ -1,34 +1,35 @@
+import {
+  resolveThreadActivity,
+  threadActivityIsSettledRun,
+  type ThreadActivityInput,
+} from "./forkThreadActivity.ts";
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
-import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
+import type { EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
 import { effectiveSnoozed } from "./threadSettled.ts";
 
-type WorkingThreadInput = Pick<
-  EnvironmentThreadShell,
-  | "hasActionableProposedPlan"
-  | "hasPendingApprovals"
-  | "hasPendingUserInput"
-  | "pendingSubagentRequest"
-  | "interactionMode"
-  | "latestRun"
-  | "runtime"
->;
+type WorkingThreadInput = ThreadActivityInput &
+  Pick<
+    EnvironmentThreadShell,
+    | "hasActionableProposedPlan"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingSubagentRequest"
+    | "interactionMode"
+    | "latestRun"
+    | "runtime"
+  >;
 
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
-  if (thread.runtime?.status === "idle" && thread.latestRun?.status === "failed") return false;
-  if (thread.pendingSubagentRequest != null) return false;
-  if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
-  const run = thread.latestRun;
-  const runSettled =
-    run !== null &&
-    run.status !== "preparing" &&
-    run.status !== "queued" &&
-    run.status !== "starting" &&
-    run.status !== "running" &&
-    run.status !== "waiting" &&
-    thread.runtime?.activeRunId !== run.runId;
-  return !(thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled);
+  const activity = resolveThreadActivity(thread);
+  return (
+    ["connecting", "working", "waiting"].includes(activity) &&
+    !(
+      thread.interactionMode === "plan" &&
+      thread.hasActionableProposedPlan &&
+      threadActivityIsSettledRun(thread.latestRun, thread.runtime)
+    )
+  );
 }
 
 type InboxThreadInput = Pick<

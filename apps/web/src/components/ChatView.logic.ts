@@ -1104,7 +1104,11 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   }
   const latestUserMessageChanged =
     input.localDispatch.latestUserMessageId !== (input.latestUserMessageId ?? null);
-  if (input.phase === "connecting" || derivePhase(input.runtime ?? null) === "connecting") {
+  if (
+    input.phase === "connecting" ||
+    derivePhase(input.runtime ?? null) === "connecting" ||
+    input.runtime?.status === "queued"
+  ) {
     // A message queued behind other work, such as an idle compaction the shell hides, has landed.
     return input.runtime?.status === "queued" && latestUserMessageChanged;
   }

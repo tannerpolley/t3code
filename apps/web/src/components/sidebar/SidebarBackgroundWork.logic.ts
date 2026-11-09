@@ -17,10 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
-import {
-  backgroundWorkHoldsCompletion,
-  pendingBackgroundWorkOfThread,
-} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import { threadRoleDisplay, type RoleDisplayThread } from "../threadRoleDisplay";
 import { resolveEffortGlyph } from "../chat/EffortGlyph";
@@ -196,12 +193,13 @@ export function describeSidebarBackgroundWork(
       a.id.localeCompare(b.id),
   );
   const childRows: BackgroundWorkTaskRow[] = orderedChildren.map((child) => {
-    const currentStatus = resolveSidebarThreadStatus(child);
-    const hasPendingWork =
-      backgroundWorkHoldsCompletion(
-        pendingBackgroundWorkOfThread(child.id, child.pendingBackgroundTasks, tasks),
-      ) || backgroundWorkHoldsCompletion(linked.filter((task) => task.childThreadId === child.id));
-    const status = currentStatus === "ready" && hasPendingWork ? "waiting" : currentStatus;
+    const status = resolveSidebarThreadStatus({
+      ...child,
+      pendingBackgroundTasks: [
+        ...pendingBackgroundWorkOfThread(child.id, child.pendingBackgroundTasks, tasks),
+        ...linked.filter((task) => task.childThreadId === child.id),
+      ],
+    });
 
     return {
       taskId: child.id,

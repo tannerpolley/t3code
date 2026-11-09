@@ -2,7 +2,10 @@ import {
   runtimeRequestIsOwnerVisible,
   type RoutedRequestParent,
 } from "@t3tools/shared/delegatedRequestVisibility";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  threadActivityShellRuntime,
+  threadActivityWorkingStartedAt,
+} from "./forkThreadActivity.ts";
 import { threadPullRequestsOf } from "../threadPullRequests.ts";
 import type {
   ThreadLinkedPullRequest,
@@ -224,40 +227,8 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
   );
 }
 
-// Only work the agent waits on holds it: commands and monitors it left running
-// unmarked, such as a dev server, present the run's own status. The
-// server suppresses the roster while an interruptible activity run exists, so a
-// remaining roster is stronger than checkpoint-oriented waiting.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
-  const parkAtIdle =
-    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
-    thread.status !== "failed";
-  // A pull request watch can hold a thread that never ran, and a provider-native
-  // child without an app run still reports its own status.
-  if (
-    thread.latestRunId === null &&
-    thread.activeProviderThreadId === null &&
-    thread.status === "idle" &&
-    !parkAtIdle
-  ) {
-    return null;
-  }
-  const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
-  return {
-    status,
-    activeRunId: thread.activeRunId,
-    activityStartedAt:
-      thread.activityRunStartedAt === undefined
-        ? undefined
-        : nullableIso(thread.activityRunStartedAt),
-    providerInstanceId: thread.providerInstanceId,
-    providerName: null,
-    lastError: thread.lastError ?? null,
-    lastErrorClass: thread.lastErrorClass ?? null,
-    lastErrorCode: thread.lastErrorCode ?? null,
-    usageLimitResetAt: thread.usageLimitResetAt ?? null,
-    updatedAt: iso(thread.updatedAt),
-  };
+  return threadActivityShellRuntime(thread);
 }
 
 export function scopeProject(
@@ -399,17 +370,7 @@ export function resolveThreadWorkingStartedAt(input: {
   /** Waiting on its own background work: keep counting from the run that started it. */
   readonly waiting?: boolean;
 }): string | null {
-  const valid = (value: string | null | undefined) =>
-    value != null && Number.isFinite(Date.parse(value)) ? value : null;
-  const run = input.latestRun;
-  const runStartedAt = valid(run?.startedAt) ?? valid(run?.requestedAt);
-  const working =
-    input.runtime?.activityStartedAt !== undefined
-      ? valid(input.runtime.activityStartedAt)
-      : run?.completedAt === null && run.runId === input.runtime?.activeRunId
-        ? runStartedAt
-        : null;
-  return working ?? (input.waiting ? runStartedAt : null);
+  return threadActivityWorkingStartedAt(input);
 }
 
 export function formatWorkingDurationLabel(elapsedMs: number): string {

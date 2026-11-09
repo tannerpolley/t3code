@@ -1,3 +1,4 @@
+import { resolveThreadActivity } from "@t3tools/client-runtime/state/thread-activity";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
 import { formatElapsedSeconds } from "../timestampFormat";
@@ -687,6 +688,7 @@ export interface ThreadStatusPill {
     | "Working"
     | "Connecting"
     | "Completed"
+    | "Limited"
     | "Failed"
     | "Pending Approval"
     | "Awaiting Input"
@@ -954,40 +956,11 @@ type SidebarThreadStatusInput = Pick<
   | "runtime"
   | "blockedOnThreadWait"
 > &
-  Partial<Pick<SidebarThreadSummary, "latestRun">>;
+  Partial<Pick<SidebarThreadSummary, "latestRun" | "pendingBackgroundTasks">>;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
-  if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
-    return "approval";
-  }
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
-    return "input";
-  }
-  // A guest is waiting on the owner; the agent's own requests come first.
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
-    return "request";
-  }
-  if (
-    thread.runtime?.status === "queued" ||
-    (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true)
-  ) {
-    return "waiting";
-  }
-  if (
-    thread.runtime !== null &&
-    ["preparing", "starting", "running", "waiting"].includes(thread.runtime.status)
-  ) {
-    return "working";
-  }
-  // A completed turn may park at idle while background work continues. Keep its failure visible.
-  if (
-    thread.runtime?.status === "failed" ||
-    (thread.runtime?.status === "idle" && thread.latestRun?.status === "failed")
-  ) {
-    return thread.runtime?.lastErrorClass === "usage_limit" ? "limited" : "failed";
-  }
-  if (thread.runtime?.status === "idle") return "waiting";
-  return "ready";
+  const activity = resolveThreadActivity(thread);
+  return activity === "connecting" ? "working" : activity;
 }
 
 /**
@@ -1376,8 +1349,9 @@ export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
   const { thread } = input;
+  const activity = resolveThreadActivity(thread);
 
-  if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
+  if (activity === "approval") {
     return {
       label: "Pending Approval",
       colorClass: "text-amber-600 dark:text-amber-300/90",
@@ -1386,7 +1360,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
+  if (activity === "input") {
     return {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
@@ -1395,7 +1369,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
+  if (activity === "request") {
     return {
       label: "Guest Request",
       colorClass: "text-guest-foreground",
@@ -1404,10 +1378,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (
-    (thread.runtime?.status === "running" && thread.blockedOnThreadWait !== true) ||
-    thread.runtime?.status === "waiting"
-  ) {
+  if (activity === "working") {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -1416,7 +1387,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.runtime?.status === "preparing" || thread.runtime?.status === "starting") {
+  if (activity === "connecting") {
     return {
       label: "Connecting",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -1426,9 +1397,9 @@ export function resolveThreadStatusPill(input: {
   }
 
   if (
-    thread.runtime?.status === "queued" ||
-    (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) ||
-    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+    activity === "waiting" &&
+    (thread.runtime?.status !== "idle" ||
+      backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []))
   ) {
     return {
       label: "Waiting",
@@ -1438,9 +1409,14 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (hasUnseenFailure(thread)) {
+  if (
+    activity === "limited" ||
+    (activity === "failed" &&
+      (hasUnseenFailure(thread) ||
+        backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])))
+  ) {
     return {
-      label: "Failed",
+      label: activity === "limited" ? "Limited" : "Failed",
       colorClass: "text-red-600 dark:text-red-300/90",
       dotClass: "bg-red-500 dark:bg-red-300/90",
       pulse: false,
