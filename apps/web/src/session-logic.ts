@@ -1118,6 +1118,8 @@ export function findRevertCheckpoint(
 
 export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhase {
   if (runtime === null) return "disconnected";
+  // A queued turn holds the composer in its connecting state, as it did before the shared resolver.
+  if (runtime.status === "queued") return "connecting";
   const activity = resolveThreadActivity({ runtime });
   return activity === "connecting" ? "connecting" : activity === "working" ? "running" : "ready";
 }

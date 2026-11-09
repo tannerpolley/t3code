@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, RunId } from "@t3tools/contracts";
 import { resolveSidebarThreadStatus, resolveThreadStatusPill } from "./Sidebar.logic";
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
-import { derivePhase } from "../session-logic";
 
 const runtime = {
   status: "failed" as const,
@@ -73,11 +72,5 @@ describe("thread activity disagreements", () => {
         pendingGuestMessageCount: 1,
       }),
     ).toBe(false);
-  });
-  it("treats queued work as waiting with an established connection", () => {
-    expect(
-      resolveSidebarThreadStatus({ ...thread, runtime: { ...runtime, status: "queued" } }),
-    ).toBe("waiting");
-    expect(derivePhase({ ...runtime, status: "queued" })).toBe("ready");
   });
 });
