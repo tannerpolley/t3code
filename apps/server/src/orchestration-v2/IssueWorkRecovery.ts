@@ -252,6 +252,7 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
           ...retiringRoot,
           repositoryOrchestration: {
             ...retiringRoot.repositoryOrchestration,
+            handoff: undefined,
             retiredToThreadId: target.id,
           },
           updatedAt: occurredAt,
