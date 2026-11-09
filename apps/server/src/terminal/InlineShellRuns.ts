@@ -100,10 +100,15 @@ export const layer = Layer.effect(
         durationMs: Math.max(0, DateTime.toEpochMillis(now) - Date.parse(entry.record.startedAt)),
       };
       entry.completion = record;
-      const saved = yield* store.update(record);
-      active.delete(key);
-      if (saved) yield* PubSub.publish(changes, record);
-      yield* releases.enqueue(key, record);
+      // A cancelled request must not stop between the save and the terminal release.
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const saved = yield* store.update(record);
+          active.delete(key);
+          if (saved) yield* PubSub.publish(changes, record);
+          yield* releases.enqueue(key, record);
+        }),
+      );
     });
     const unsubscribe = yield* terminal.subscribe((event) =>
       Effect.gen(function* () {
