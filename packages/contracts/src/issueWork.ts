@@ -1,7 +1,14 @@
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
-import { CommandId, ProjectId, RunId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  CommandId,
+  NodeId,
+  ProjectId,
+  RunId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ModelRoleId } from "./threadRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
@@ -25,14 +32,34 @@ export const RepositoryMilestonePlan = Schema.Struct({
   fingerprint: Schema.String,
 });
 
+const RepositoryUsageSprintEndReason = Schema.Literals(["reset", "early_reset", "stopped"]);
+
 /** A one-time run limited to one provider's models until its weekly usage window resets. */
 export const RepositoryUsageSprint = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   windowId: TrimmedNonEmptyString,
-  /** Usage and reset time at the start; a drop or a moved reset means an early reset. */
+  /** Highest usage seen during the sprint; a drop from it or a moved reset means an early reset. */
   usedPercent: Schema.Number,
   resetsAt: Schema.String,
   startedAt: Schema.String,
+  /** Recorded before the end interrupts children and tells the root; history follows both. */
+  ending: Schema.optional(
+    Schema.Struct({
+      reason: RepositoryUsageSprintEndReason,
+      endedAt: Schema.String,
+      /** Running children at the end: a local thread, or a linked-environment task of `threadId`. */
+      children: Schema.Array(
+        Schema.Struct({
+          threadId: ThreadId,
+          taskId: Schema.optional(NodeId),
+          issue: Schema.optional(ThreadLinkedIssue),
+          outcome: Schema.Literals(["running", "interrupted", "ended"]),
+        }),
+      ),
+      /** Bumped after a failed step so its retry gets fresh command ids. */
+      attempt: Schema.Int,
+    }),
+  ),
 });
 export type RepositoryUsageSprint = typeof RepositoryUsageSprint.Type;
 
@@ -82,7 +109,7 @@ export const RepositoryOrchestration = Schema.Struct({
         providerInstanceId: ProviderInstanceId,
         startedAt: Schema.String,
         endedAt: Schema.String,
-        reason: Schema.Literals(["reset", "early_reset", "stopped"]),
+        reason: RepositoryUsageSprintEndReason,
       }),
     ),
   ),

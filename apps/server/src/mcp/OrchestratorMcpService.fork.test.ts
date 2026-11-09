@@ -1496,6 +1496,19 @@ describe("OrchestratorMcpService provider resolution", () => {
           "usage sprint limits this repository's work to provider codex",
         );
         assert.equal(refused.code, "provider_unavailable");
+        const remote = yield* service
+          .delegateTask(scope, {
+            task: "Review the change.",
+            role: "reviewer",
+            target: yield* decodeTarget({
+              providerInstanceId: peerId,
+              environmentId: "environment:mcp-providers-linked",
+            }),
+            mode: "async",
+            clientRequestId: "off-sprint-remote",
+          })
+          .pipe(Effect.flip);
+        assert.equal(remote.code, "provider_unavailable");
         assert.equal(commands.length, 0);
         yield* service.delegateTask(scope, {
           task: "Review the change.",

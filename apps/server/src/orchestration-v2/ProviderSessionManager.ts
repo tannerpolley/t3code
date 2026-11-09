@@ -479,7 +479,7 @@ export const layerWithOptions = (
             capableInstanceIds,
             now,
             settings.workerProvider,
-            yield* lineageUsageSprint(thread, projectionStore.getThreadShell),
+            yield* lineageUsageSprint(thread, projectionStore.getThread),
           );
           const withRoles = yield* mcpSessions.read(threadId);
           if (withRoles !== undefined) yield* mcpSessions.set({ ...withRoles, modelRoles });

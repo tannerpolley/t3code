@@ -6,7 +6,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
-import { usageSprintEndReason } from "./usageSprint.ts";
+import { usageSprintCheck } from "./usageSprint.ts";
 
 const resetsAt = "2026-11-13T23:31:57.000Z";
 const sprint: RepositoryUsageSprint = {
@@ -43,31 +43,36 @@ it.each([
     name: "usage grows, same reset",
     window: { usedPercent: 70, resetsAt },
     now: before,
-    end: null,
+    result: { peak: 70 },
   },
   {
     name: "probe jitter on the reset time",
     window: { usedPercent: 41, resetsAt: "2026-11-13T23:31:57.456Z" },
     now: before,
-    end: null,
+    result: { peak: 41 },
   },
-  { name: "no usage data", window: undefined, now: before, end: null },
-  { name: "scheduled reset passes", window: undefined, now: Date.parse(resetsAt), end: "reset" },
+  { name: "no usage data", window: undefined, now: before, result: { peak: 40 } },
+  {
+    name: "scheduled reset passes",
+    window: undefined,
+    now: Date.parse(resetsAt),
+    result: { end: "reset" },
+  },
   {
     name: "reset credit moves the reset",
     window: { usedPercent: 0, resetsAt: "2026-11-17T00:00:00.000Z" },
     now: before,
-    end: "early_reset",
+    result: { end: "early_reset" },
   },
   {
     name: "usage drops back before the reset moves",
     window: { usedPercent: 2, resetsAt },
     now: before,
-    end: "early_reset",
+    result: { end: "early_reset" },
   },
-] as const)("ends a sprint when $name: $end", ({ window, now, end }) => {
-  assert.equal(
-    usageSprintEndReason(sprint, window === undefined ? undefined : provider(window), now),
-    end,
+] as const)("checks a sprint when $name", ({ window, now, result }) => {
+  assert.deepEqual(
+    usageSprintCheck(sprint, window === undefined ? undefined : provider(window), now),
+    result,
   );
 });

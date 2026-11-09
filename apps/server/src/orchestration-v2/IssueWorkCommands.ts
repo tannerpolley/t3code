@@ -4,6 +4,7 @@ import type {
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2ServerCommand,
+  ProviderInstanceId,
   RunId,
   ThreadId,
   ThreadLinkedIssue,
@@ -25,6 +26,7 @@ import {
   managedIssueProviderError,
 } from "../issues/IssueEligibility.ts";
 import type { IssueWorkStore } from "../issues/IssueWorkStore.ts";
+import { lineageUsageSprint, usageSprintRefusal } from "../issues/usageSprint.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IssueReadSnapshots } from "./IssueWorkDispatch.ts";
 import type { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
@@ -80,8 +82,21 @@ export function makeIssueWorkCommands({
     Effect.map(IssueReadSnapshots, (reads) =>
       reads.find((read) => sameIssueRepository(read.issue, issue) && read.issue.id === issue.id),
     );
+  // Only issue workers and read-only children live below a repository root, so others skip the read.
+  const usageSprintRefusalFor = (
+    thread: OrchestrationV2AppThread,
+    instanceId: ProviderInstanceId,
+  ) =>
+    thread.lineage.rootThreadId === thread.id ||
+    (thread.linkedIssue === undefined && !isReadOnlyIssueRole(thread.role))
+      ? Effect.succeed(null)
+      : lineageUsageSprint(thread, projectionStore.getThread).pipe(
+          Effect.map((sprint) => usageSprintRefusal(sprint, instanceId)),
+        );
+  // Admission for every turn: new runs, follow-ups, continuations, queued runs and retries.
   const canStartIssueRun = Effect.fn("canStartIssueRun")(
-    function* (thread: OrchestrationV2AppThread) {
+    function* (thread: OrchestrationV2AppThread, instanceId: ProviderInstanceId) {
+      if ((yield* usageSprintRefusalFor(thread, instanceId)) !== null) return false;
       if (isReadOnlyIssueRole(thread.role) && thread.lineage.relationshipToParent === "subagent") {
         if (Option.isNone(issueWorkStore)) return true;
         const store = issueWorkStore.value;
@@ -112,6 +127,29 @@ export function makeIssueWorkCommands({
     },
     Effect.orElseSucceed(() => false),
   );
+  // Messages someone chose to send are refused outright; automatic ones wait in the queue instead.
+  const guardUsageSprintMessage = Effect.fn("guardUsageSprintMessage")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
+    thread: OrchestrationV2AppThread,
+  ) {
+    if (
+      command.delegatedCompletion !== undefined ||
+      command.usageLimitContinuationOfRunId !== undefined ||
+      command.automaticProviderContinuationOfRunId !== undefined ||
+      (command.createdBy !== "user" && command.creationSource !== "mcp")
+    )
+      return;
+    const refusal = yield* usageSprintRefusalFor(
+      thread,
+      (command.modelSelection ?? thread.modelSelection).instanceId,
+    ).pipe(mapDispatchError(command));
+    if (refusal !== null)
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        detail: refusal,
+      });
+  });
   // Former workers cannot accept new work; usage-limit retries remain quiet until admission.
   const guardFormerWorkerMessage = Effect.fn("guardFormerWorkerMessage")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
@@ -471,6 +509,7 @@ export function makeIssueWorkCommands({
     guardThreadCreate,
     canStartRun: canStartIssueRun,
     guardFormerWorkerMessage,
+    guardUsageSprintMessage,
     start,
     reuseManagedChild,
     childIssueFields,

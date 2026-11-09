@@ -1720,7 +1720,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (usageLimitHoldsQueue(projection, queuedRun.providerInstanceId)) {
         return;
       }
-      if (!(yield* issueWork.canStartRun(projection.thread))) return;
+      if (!(yield* issueWork.canStartRun(projection.thread, queuedRun.providerInstanceId))) return;
       if (queuedRun.workspacePreparation !== undefined && projection.thread.worktreePath === null) {
         const now = yield* DateTime.now;
         const preparation = (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
@@ -5643,6 +5643,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     yield* repositoryWork.guardScheduledMessage(command, projection.thread);
     yield* issueWork.guardFormerWorkerMessage(command, projection.thread, events);
+    yield* issueWork.guardUsageSprintMessage(command, projection.thread);
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -6166,7 +6167,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       activeRun === undefined &&
       ((projection.thread.linkedIssue !== undefined &&
         projection.runs.some((run) => run.status === "queued")) ||
-        !(yield* issueWork.canStartRun(projection.thread)));
+        !(yield* issueWork.canStartRun(projection.thread, modelSelection.instanceId)));
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
@@ -10564,7 +10565,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "Another run is active on this thread.",
       });
     }
-    const admitted = yield* issueWork.canStartRun(projection.thread);
+    const admitted = yield* issueWork.canStartRun(projection.thread, state.run.providerInstanceId);
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const scope = {

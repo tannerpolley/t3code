@@ -25,20 +25,20 @@ export function usageSprintWindow(provider: ServerProvider, nowMs: number) {
   return weekly.find((window) => window.id === "seven_day") ?? weekly[0];
 }
 
-/** Why a sprint ends now: its scheduled reset passed, or the window already reset early. */
-export function usageSprintEndReason(
+/** Why a sprint ends now (its scheduled reset passed, or the window reset early), or its usage peak so far. */
+export function usageSprintCheck(
   sprint: RepositoryUsageSprint,
   provider: ServerProvider | undefined,
   nowMs: number,
-): Exclude<UsageSprintEndReason, "stopped"> | null {
-  if (nowMs >= Date.parse(sprint.resetsAt)) return "reset";
+): { readonly end: Exclude<UsageSprintEndReason, "stopped"> } | { readonly peak: number } {
+  if (nowMs >= Date.parse(sprint.resetsAt)) return { end: "reset" };
   const window = provider?.usageLimits?.windows.find((entry) => entry.id === sprint.windowId);
-  if (window?.resetsAt === undefined) return null;
+  if (window?.resetsAt === undefined) return { peak: sprint.usedPercent };
   return Math.abs(Date.parse(window.resetsAt) - Date.parse(sprint.resetsAt)) >
     RESET_MOVE_TOLERANCE_MS ||
     window.usedPercent + USAGE_DROP_TOLERANCE_PERCENT < sprint.usedPercent
-    ? "early_reset"
-    : null;
+    ? { end: "early_reset" }
+    : { peak: Math.max(sprint.usedPercent, window.usedPercent) };
 }
 
 /** Why a sprint refuses a target on `instanceId`, or null when the target is allowed. */

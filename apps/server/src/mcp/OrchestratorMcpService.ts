@@ -2397,6 +2397,16 @@ const make = Effect.gen(function* () {
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
+        const caller = yield* threadManagement.getThreadRecords(scope.thread.threadId, []).pipe(
+          Effect.map((records) => records.thread),
+          Effect.mapError(threadManagementFailure),
+        );
+        // Provider and model default to the caller's there too.
+        const sprintRefusal = usageSprintRefusal(
+          yield* loadUsageSprint(caller),
+          input.target.providerInstanceId ?? scope.thread.providerInstanceId,
+        );
+        if (sprintRefusal !== null) return yield* failure("provider_unavailable", sprintRefusal);
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         if (Option.isNone(remoteDelegation))
           return yield* failure("invalid_request", "Linked-environment delegation is unavailable.");

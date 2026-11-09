@@ -3,6 +3,7 @@ import {
   CLOSED_ISSUE_SUSPENSION_REASON,
   MessageId,
   OrchestratorMcpFailure,
+  type RepositoryUsageSprint,
   type RepositoryUsageSprintInput,
   ThreadId,
   type IssueQueueInput,
@@ -67,8 +68,8 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { checkDelegateTarget, workerProviderTargets } from "../mcp/delegateTaskTarget.ts";
 import {
   type UsageSprintEndReason,
+  usageSprintCheck,
   usageSprintEndMessage,
-  usageSprintEndReason,
   usageSprintRefusal,
   usageSprintWindow,
 } from "./usageSprint.ts";
@@ -1423,46 +1424,130 @@ export const layer = Layer.effect(
       return yield* repositoryStatus(input);
     });
 
-    const endUsageSprint = Effect.fn("IssueWorkService.endUsageSprint")(
-      function* (rootThreadId: ThreadId, reason: UsageSprintEndReason) {
-        const config = yield* store.configuration(rootThreadId);
-        const sprint = config?.usageSprint;
-        if (config == null || sprint === undefined) return;
-        // Stable while this sprint is active and distinct for every sprint on the root.
-        const key = `${rootThreadId}:${config.usageSprintHistory?.length ?? 0}`;
-        const interrupted = new Map<string, ThreadLinkedIssue>();
-        if (reason !== "stopped")
-          for (const threadId of yield* store.runningLineageThreads(rootThreadId)) {
-            const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
-            if (shell === null) continue;
-            yield* threads
-              .interruptThread({
-                projectId: shell.projectId,
-                commandId: CommandId.make(`usage-sprint-interrupt:${key}:${threadId}`),
-                threadId,
-                reason: "The one-time usage sprint ended.",
-              })
-              .pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("Usage sprint interrupt failed", { threadId, cause }),
-                ),
-              );
-            if (shell.linkedIssue !== undefined)
-              interrupted.set(shell.linkedIssue.id, shell.linkedIssue);
+    // One pass under the sprint lock: record an end before its side effects, then retry what it owes.
+    // Every write goes through `save`, whose expected revision refuses a sprint replaced meanwhile.
+    const advanceUsageSprint = Effect.fn("IssueWorkService.advanceUsageSprint")(
+      function* (
+        rootThreadId: ThreadId,
+        decide: (
+          sprint: RepositoryUsageSprint,
+        ) => Effect.Effect<{ readonly end: UsageSprintEndReason } | { readonly peak: number }>,
+      ) {
+        let config = yield* store.configuration(rootThreadId);
+        if (config == null || config.usageSprint === undefined) return;
+        const save = (next: RepositoryOrchestration) =>
+          update(
+            rootThreadId,
+            next,
+            CommandId.make(`usage-sprint:${rootThreadId}:${next.revision}`),
+          ).pipe(Effect.as({ ...next, revision: next.revision + 1 }));
+        let sprint: RepositoryUsageSprint = config.usageSprint;
+        let ending: NonNullable<RepositoryUsageSprint["ending"]>;
+        if (sprint.ending !== undefined) ending = sprint.ending;
+        else {
+          const decision = yield* decide(sprint);
+          if (!("end" in decision)) {
+            // Usage only climbs within a window, so idle ticks write nothing.
+            if (decision.peak > sprint.usedPercent)
+              yield* save({ ...config, usageSprint: { ...sprint, usedPercent: decision.peak } });
+            return;
           }
-        const endedAt = DateTime.formatIso(yield* DateTime.now);
+          const children = [];
+          if (decision.end !== "stopped")
+            for (const child of yield* store.runningLineageChildren(rootThreadId)) {
+              const issue =
+                child.taskId === undefined
+                  ? (yield* threads.getThreadShell(child.threadId).pipe(Effect.mapError(mapError)))
+                      ?.linkedIssue
+                  : undefined;
+              children.push({
+                ...child,
+                ...(issue === undefined ? {} : { issue }),
+                outcome: "running" as const,
+              });
+            }
+          ending = {
+            reason: decision.end,
+            endedAt: DateTime.formatIso(yield* DateTime.now),
+            children,
+            attempt: 0,
+          };
+          sprint = { ...sprint, ending };
+          config = yield* save({ ...config, usageSprint: sprint });
+        }
+        // Stable while this sprint ends and distinct for every sprint on the root.
+        const sprintKey = `${rootThreadId}:${config.usageSprintHistory?.length ?? 0}`;
+        const key = `${sprintKey}:${ending.attempt}`;
+        let failed = false;
+        if (ending.children.some((child) => child.outcome === "running")) {
+          const running = yield* store.runningLineageChildren(rootThreadId);
+          const children = [];
+          for (const child of ending.children) {
+            if (child.outcome !== "running") {
+              children.push(child);
+              continue;
+            }
+            // A child that ended on its own counts as stopped, but not as interrupted.
+            if (
+              !running.some(
+                (entry) => entry.threadId === child.threadId && entry.taskId === child.taskId,
+              )
+            ) {
+              children.push({ ...child, outcome: "ended" as const });
+              continue;
+            }
+            const commandId = CommandId.make(
+              `usage-sprint-interrupt:${key}:${child.taskId ?? child.threadId}`,
+            );
+            const interrupted = yield* (
+              child.taskId === undefined
+                ? Effect.gen(function* () {
+                    const shell = yield* threads.getThreadShell(child.threadId);
+                    if (shell === null) return;
+                    yield* threads.interruptThread({
+                      projectId: shell.projectId,
+                      commandId,
+                      threadId: child.threadId,
+                      reason: "The one-time usage sprint ended.",
+                    });
+                  })
+                : threads.dispatch({
+                    type: "delegated_task.remote.complete",
+                    commandId,
+                    parentThreadId: child.threadId,
+                    taskId: child.taskId,
+                    status: "interrupted",
+                    result: "Stopped: the one-time usage sprint ended.",
+                  })
+            ).pipe(
+              Effect.as(true),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Usage sprint interrupt failed", { child, cause }).pipe(
+                  Effect.as(false),
+                ),
+              ),
+            );
+            failed ||= !interrupted;
+            children.push(interrupted ? { ...child, outcome: "interrupted" as const } : child);
+          }
+          ending = { ...ending, children, attempt: ending.attempt + (failed ? 1 : 0) };
+          sprint = { ...sprint, ending };
+          config = yield* save({ ...config, usageSprint: sprint });
+          if (failed) return;
+        }
         const text = usageSprintEndMessage({
           sprint,
-          reason,
-          endedAt,
-          interrupted: [...interrupted.values()],
+          reason: ending.reason,
+          endedAt: ending.endedAt,
+          interrupted: ending.children.flatMap((child) =>
+            child.outcome === "interrupted" && child.issue !== undefined ? [child.issue] : [],
+          ),
         });
-        // A root that cannot take the message must not keep the sprint alive.
-        yield* threads
+        const sent = yield* threads
           .dispatch({
             type: "message.dispatch",
             commandId: CommandId.make(`usage-sprint-end:${key}`),
-            messageId: MessageId.make(`usage-sprint-end:${key}`),
+            messageId: MessageId.make(`usage-sprint-end:${sprintKey}`),
             threadId: rootThreadId,
             text,
             notification: {
@@ -1477,27 +1562,34 @@ export const layer = Layer.effect(
             creationSource: "server",
           })
           .pipe(
+            Effect.as(true),
             Effect.catchCause((cause) =>
-              Effect.logWarning("Usage sprint end message failed", { rootThreadId, cause }),
+              Effect.logWarning("Usage sprint end message failed", { rootThreadId, cause }).pipe(
+                Effect.as(false),
+              ),
             ),
           );
+        if (!sent) {
+          yield* save({
+            ...config,
+            usageSprint: { ...sprint, ending: { ...ending, attempt: ending.attempt + 1 } },
+          });
+          return;
+        }
+        // Clearing the sprint lifts its restriction; the update's admission pass starts held runs.
         const { usageSprint: _ended, ...rest } = config;
-        yield* update(
-          rootThreadId,
-          {
-            ...rest,
-            usageSprintHistory: [
-              ...(config.usageSprintHistory ?? []),
-              {
-                providerInstanceId: sprint.providerInstanceId,
-                startedAt: sprint.startedAt,
-                endedAt,
-                reason,
-              },
-            ],
-          },
-          CommandId.make(`usage-sprint-clear:${rootThreadId}:${config.revision}`),
-        );
+        yield* save({
+          ...rest,
+          usageSprintHistory: [
+            ...(config.usageSprintHistory ?? []),
+            {
+              providerInstanceId: sprint.providerInstanceId,
+              startedAt: sprint.startedAt,
+              endedAt: ending.endedAt,
+              reason: ending.reason,
+            },
+          ],
+        });
       },
       (effect, rootThreadId) => assignments.withLock(`usage-sprint:${rootThreadId}`, effect),
     );
@@ -1513,7 +1605,9 @@ export const layer = Layer.effect(
         });
       const instanceId = input.providerInstanceId;
       if (instanceId === null) {
-        yield* endUsageSprint(owner.rootThreadId, "stopped");
+        yield* advanceUsageSprint(owner.rootThreadId, () =>
+          Effect.succeed({ end: "stopped" as const }),
+        );
         return yield* repositoryStatus(input);
       }
       yield* assignments.withLock(
@@ -1561,20 +1655,19 @@ export const layer = Layer.effect(
     });
 
     const sweepUsageSprints = Effect.gen(function* () {
-      const roots = yield* store.usageSprintRoots();
-      if (roots.length === 0) return;
-      const snapshots = yield* providers.getProviders;
-      const nowMs = yield* Clock.currentTimeMillis;
-      for (const rootThreadId of roots) {
-        const sprint = (yield* store.configuration(rootThreadId))?.usageSprint;
-        if (sprint === undefined) continue;
-        const reason = usageSprintEndReason(
-          sprint,
-          snapshots.find((provider) => provider.instanceId === sprint.providerInstanceId),
-          nowMs,
+      for (const rootThreadId of yield* store.usageSprintRoots())
+        yield* advanceUsageSprint(rootThreadId, (sprint) =>
+          Effect.gen(function* () {
+            const provider = (yield* providers.getProviders).find(
+              (candidate) => candidate.instanceId === sprint.providerInstanceId,
+            );
+            return usageSprintCheck(sprint, provider, yield* Clock.currentTimeMillis);
+          }),
+        ).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Usage sprint sweep failed", { rootThreadId, cause }),
+          ),
         );
-        if (reason !== null) yield* endUsageSprint(rootThreadId, reason);
-      }
     }).pipe(Effect.withSpan("IssueWorkService.sweepUsageSprints"));
 
     const validateLead = Effect.fn("IssueWorkService.validateLead")(function* (

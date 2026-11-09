@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -8,7 +9,10 @@ import {
   type RepositoryOrchestration,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -17,6 +21,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
@@ -54,14 +59,14 @@ const providerBase = {
   slashCommands: [],
   skills: [],
 } as const;
-const providers: ServerProvider[] = [
+const reporting = (usedPercent: number): ServerProvider[] => [
   {
     ...providerBase,
     instanceId: modelSelection.instanceId,
     driver: ProviderDriverKind.make("codex"),
     usageLimits: {
       checkedAt: "1970-01-01T00:00:00.000Z",
-      windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 40, resetsAt }],
+      windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent, resetsAt }],
     },
   },
   {
@@ -70,6 +75,7 @@ const providers: ServerProvider[] = [
     driver: ProviderDriverKind.make("claudeAgent"),
   },
 ];
+const providers = reporting(40);
 
 function setup() {
   const reads = Layer.mock(IssueService.IssueService)({
@@ -134,56 +140,101 @@ function setup() {
       message.text.startsWith("The one-time usage sprint"),
     );
   });
-  return { dependencies, rootId, createRoot, sprintMessages };
+  const startRoot = Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("sprint-root-start"),
+      threadId: rootId,
+      messageId: MessageId.make("sprint-root-start"),
+      text: "Work on issues",
+      attachments: [],
+      modelSelection,
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+  });
+  const delegate = (number: number) =>
+    Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const parent = (yield* threads.getThreadRecords(rootId, ["runs"])).runs[0]!;
+      yield* threads.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make(`sprint-delegate:${number}`),
+        parentThreadId: rootId,
+        parentRunId: parent.id,
+        parentNodeId: parent.rootNodeId!,
+        issue: issue(number),
+        task: `Finish ${number}`,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+      return (yield* (yield* IssueWorkStore.IssueWorkStore).issueOwner(issue(number)))!;
+    });
+  const latestRun = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      return (yield* threads.getThreadRecords(threadId, ["runs"])).runs.at(-1)!;
+    });
+  const sprint = (providerInstanceId: ProviderInstanceId | null, request: string) =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      return yield* service.setUsageSprint({
+        ...reference,
+        providerInstanceId,
+        clientRequestId: CommandId.make(request),
+      });
+    });
+  // The service under test sees `override` in place of the harness's services.
+  const layer = <A = never, E = never>(override?: Layer.Layer<A, E>) =>
+    Layer.mergeAll(
+      dependencies,
+      IssueWorkService.layer.pipe(
+        Layer.provide(
+          override === undefined ? dependencies : Layer.mergeAll(dependencies, override),
+        ),
+      ),
+      suspensionWorkerLayer(dependencies),
+    );
+  const registry =
+    <E>(dependencies: Layer.Layer<ProviderRegistry.ProviderRegistry, E>) =>
+    (getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>) =>
+      Layer.effect(
+        ProviderRegistry.ProviderRegistry,
+        Effect.gen(function* () {
+          const real = yield* ProviderRegistry.ProviderRegistry;
+          return ProviderRegistry.ProviderRegistry.of({ ...real, getProviders });
+        }),
+      ).pipe(Layer.provide(dependencies));
+  return {
+    dependencies,
+    rootId,
+    createRoot,
+    sprintMessages,
+    startRoot,
+    delegate,
+    latestRun,
+    sprint,
+    layer,
+    reportedBy: registry(dependencies),
+  };
 }
 
 it.effect(
   "starts one sprint, stops it without interrupting, and ends the next at its reset with one message",
   () => {
-    const { dependencies, rootId, createRoot, sprintMessages } = setup();
+    const { createRoot, sprintMessages, startRoot, delegate, latestRun, sprint, layer } = setup();
     return Effect.gen(function* () {
-      const threads = yield* ThreadManagement.ThreadManagementService;
       const service = yield* IssueWorkService.IssueWorkService;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const store = yield* IssueWorkStore.IssueWorkStore;
       yield* createRoot();
-      yield* threads.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make("sprint-root-start"),
-        threadId: rootId,
-        messageId: MessageId.make("sprint-root-start"),
-        text: "Work on issues",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const parent = (yield* threads.getThreadRecords(rootId, ["runs"])).runs[0]!;
-      const delegate = (number: number) =>
-        threads.dispatch({
-          type: "delegated_task.request",
-          commandId: CommandId.make(`sprint-delegate:${number}`),
-          parentThreadId: rootId,
-          parentRunId: parent.id,
-          parentNodeId: parent.rootNodeId!,
-          issue: issue(number),
-          task: `Finish ${number}`,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          completionWake: "always",
-          createdBy: "agent",
-          creationSource: "mcp",
-        });
-      const latestRun = (threadId: ThreadId) =>
-        threads.getThreadRecords(threadId, ["runs"]).pipe(Effect.map(({ runs }) => runs.at(-1)!));
-      const sprint = (providerInstanceId: ProviderInstanceId | null, request: string) =>
-        service.setUsageSprint({
-          ...reference,
-          providerInstanceId,
-          clientRequestId: CommandId.make(request),
-        });
+      yield* startRoot;
 
       const noWindow = yield* sprint(providers[1]!.instanceId, "sprint-claude").pipe(Effect.flip);
       assert.include(noWindow.message, "no weekly usage window");
@@ -197,9 +248,7 @@ it.effect(
       const second = yield* sprint(providers[1]!.instanceId, "sprint-second").pipe(Effect.flip);
       assert.include(second.message, "already running");
 
-      yield* delegate(1);
-      yield* worker.drain();
-      const first = (yield* store.issueOwner(issue(1)))!;
+      const first = yield* delegate(1);
       assert.equal((yield* latestRun(first)).status, "starting");
       const stopped = yield* sprint(null, "sprint-stop");
       yield* worker.drain();
@@ -210,9 +259,7 @@ it.effect(
       assert.isFalse(stopped.orchestration!.paused);
 
       yield* sprint(modelSelection.instanceId, "sprint-again");
-      yield* delegate(2);
-      yield* worker.drain();
-      const second2 = (yield* store.issueOwner(issue(2)))!;
+      const second2 = yield* delegate(2);
       yield* service.sweepUsageSprints;
       assert.isDefined((yield* service.repositoryStatus(reference)).orchestration!.usageSprint);
 
@@ -236,15 +283,7 @@ it.effect(
 
       yield* service.sweepUsageSprints;
       assert.equal(yield* sprintMessages.pipe(Effect.map((all) => all.length)), 2);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          dependencies,
-          IssueWorkService.layer.pipe(Layer.provide(dependencies)),
-          suspensionWorkerLayer(dependencies),
-        ),
-      ),
-    );
+    }).pipe(Effect.provide(layer()));
   },
 );
 
@@ -279,3 +318,240 @@ it.effect("ends a sprint whose reset passed while the server was down on startup
     assert.equal((yield* sprintMessages).length, 1);
   }).pipe(Effect.provide(dependencies));
 });
+
+const outcomes = Effect.gen(function* () {
+  const service = yield* IssueWorkService.IssueWorkService;
+  const ending = (yield* service.repositoryStatus(reference)).orchestration!.usageSprint?.ending;
+  return ending?.children
+    .map((child) => [child.issue?.number, child.outcome] as const)
+    .toSorted(([left], [right]) => left! - right!);
+});
+
+it.effect(
+  "retries a failed interrupt and end message, keeping the interrupted issues across a restart",
+  () => {
+    const { dependencies, createRoot, sprintMessages, startRoot, delegate, sprint, layer } =
+      setup();
+    const failures = new Set<string>();
+    const flaky = Layer.effect(
+      ThreadManagement.ThreadManagementService,
+      Effect.gen(function* () {
+        const real = yield* ThreadManagement.ThreadManagementService;
+        return ThreadManagement.ThreadManagementService.of({
+          ...real,
+          interruptThread: (input) =>
+            failures.delete(input.threadId)
+              ? Effect.die("Injected interrupt failure")
+              : real.interruptThread(input),
+          dispatch: (command) =>
+            String(command.commandId).startsWith("usage-sprint-end:") && failures.delete("message")
+              ? Effect.die("Injected message failure")
+              : real.dispatch(command),
+        });
+      }),
+    ).pipe(Layer.provide(dependencies));
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      yield* createRoot();
+      yield* startRoot;
+      yield* sprint(modelSelection.instanceId, "sprint");
+      const first = yield* delegate(1);
+      yield* delegate(2);
+      failures.add(first).add("message");
+      yield* TestClock.adjust("7 days");
+
+      yield* service.sweepUsageSprints;
+      assert.deepEqual(yield* outcomes, [
+        [1, "running"],
+        [2, "interrupted"],
+      ]);
+      yield* service.sweepUsageSprints;
+      assert.deepEqual(yield* outcomes, [
+        [1, "interrupted"],
+        [2, "interrupted"],
+      ]);
+      assert.lengthOf(yield* sprintMessages, 0);
+
+      // A restarted service finishes from the recorded ending.
+      yield* Effect.gen(function* () {
+        yield* (yield* IssueWorkService.IssueWorkService).sweepUsageSprints;
+      }).pipe(Effect.provide(IssueWorkService.layer));
+      const messages = yield* sprintMessages;
+      assert.lengthOf(messages, 1);
+      assert.include(messages[0]!.text, "#1 Issue 1");
+      assert.include(messages[0]!.text, "#2 Issue 2");
+      const ended = (yield* service.repositoryStatus(reference)).orchestration!;
+      assert.isUndefined(ended.usageSprint);
+      assert.deepEqual(
+        ended.usageSprintHistory?.map((entry) => entry.reason),
+        ["reset"],
+      );
+    }).pipe(Effect.provide(layer(flaky)));
+  },
+);
+
+it.effect("ends a sprint early when usage drops from its highest reading", () =>
+  Effect.gen(function* () {
+    const { createRoot, sprint, layer, reportedBy } = setup();
+    let reported = providers;
+    let loads = 0;
+    const registry = reportedBy(Effect.sync(() => (loads++, reported)));
+    yield* Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const status = service
+        .repositoryStatus(reference)
+        .pipe(Effect.map((result) => result.orchestration!));
+      yield* createRoot();
+      yield* sprint(modelSelection.instanceId, "sprint");
+      reported = reporting(70);
+      yield* service.sweepUsageSprints;
+      const peaked = yield* status;
+      assert.equal(peaked.usageSprint?.usedPercent, 70);
+      yield* service.sweepUsageSprints;
+      assert.equal((yield* status).revision, peaked.revision);
+
+      reported = reporting(50);
+      yield* service.sweepUsageSprints;
+      const ended = yield* status;
+      assert.isUndefined(ended.usageSprint);
+      assert.equal(ended.usageSprintHistory?.at(-1)?.reason, "early_reset");
+      const before = loads;
+      yield* service.sweepUsageSprints;
+      assert.equal(loads, before);
+    }).pipe(Effect.provide(layer(registry)));
+  }),
+);
+
+it.effect("a sweep that read an old sprint leaves its replacement running", () =>
+  Effect.gen(function* () {
+    const { rootId, createRoot, sprint, layer, reportedBy } = setup();
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let gated = false;
+    // The gated read returns what the provider reported before its window reset early.
+    const registry = reportedBy(
+      Effect.suspend(() => {
+        if (!gated) return Effect.succeed(providers);
+        gated = false;
+        return Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(providers),
+        );
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      yield* createRoot();
+      yield* sprint(modelSelection.instanceId, "sprint");
+      gated = true;
+      const sweep = yield* service.sweepUsageSprints.pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      const config = (yield* service.repositoryStatus(reference)).orchestration!;
+      const replacementResetsAt = "1970-01-15T00:00:00.000Z";
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        threadId: rootId,
+        commandId: CommandId.make("sprint-replace"),
+        expectedRevision: config.revision,
+        orchestration: {
+          ...config,
+          usageSprint: {
+            ...config.usageSprint!,
+            usedPercent: 0,
+            resetsAt: replacementResetsAt,
+            startedAt: "1970-01-01T00:00:01.000Z",
+          },
+        },
+      });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(sweep);
+      const after = (yield* service.repositoryStatus(reference)).orchestration!;
+      assert.equal(after.usageSprint?.resetsAt, replacementResetsAt);
+      assert.isUndefined(after.usageSprintHistory);
+    }).pipe(Effect.provide(layer(registry)));
+  }),
+);
+
+it.effect(
+  "holds a lineage's turns on other providers: refuses sent follow-ups, queues automatic runs",
+  () => {
+    const { rootId, createRoot, startRoot, delegate, latestRun, sprint, layer } = setup();
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* createRoot();
+      yield* startRoot;
+      const child = yield* delegate(1);
+      const run = yield* latestRun(child);
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`finish:${run.id}`),
+            type: "run.updated",
+            threadId: child,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      // A sprint on another provider than the child's, as if started before it was delegated.
+      const config = (yield* service.repositoryStatus(reference)).orchestration!;
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        threadId: rootId,
+        commandId: CommandId.make("sprint-claude"),
+        expectedRevision: config.revision,
+        orchestration: {
+          ...config,
+          usageSprint: {
+            providerInstanceId: providers[1]!.instanceId,
+            windowId: "weekly",
+            usedPercent: 0,
+            resetsAt,
+            startedAt: "1970-01-01T00:00:00.000Z",
+          },
+        },
+      });
+
+      const refused = yield* threads
+        .sendToThread({
+          projectId,
+          threadId: child,
+          senderThreadId: rootId,
+          commandId: CommandId.make("sprint-follow-up"),
+          messageId: MessageId.make("sprint-follow-up"),
+          text: "One more thing",
+          attachments: [],
+          mode: "auto",
+          createdBy: "agent",
+          creationSource: "mcp",
+        })
+        .pipe(Effect.flip);
+      assert.include(String(refused), "usage sprint limits this repository's work");
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("sprint-continuation"),
+        threadId: child,
+        messageId: MessageId.make("sprint-continuation"),
+        text: "Continue where you left off.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+      assert.equal((yield* latestRun(child)).status, "queued");
+
+      yield* sprint(null, "sprint-stop");
+      yield* threads.dispatch({
+        type: "repository.work.continue",
+        threadId: rootId,
+        commandId: CommandId.make("sprint-continue"),
+      });
+      assert.equal((yield* latestRun(child)).status, "starting");
+    }).pipe(Effect.provide(layer()));
+  },
+);
