@@ -1,5 +1,8 @@
 import { RuntimeRequestId } from "@t3tools/contracts";
-import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  presentThreadShell,
+  resolveThreadWorkingStartedAt,
+} from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 
 import { describe, expect, it } from "vite-plus/test";
@@ -14,6 +17,7 @@ import {
   resolveThreadStatusMark,
   isSidebarThreadWorking,
   resolveSidebarThreadStatus,
+  resolveThreadStatusPill,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 
@@ -51,6 +55,63 @@ describe("resolveSidebarThreadStatus", () => {
   };
 
   const idle = { hasPendingApprovals: false, hasPendingUserInput: false, runtime: null };
+
+  it("shows a queued orchestrator as waiting with time, then working only when admitted", () => {
+    const runId = RunId.make("orchestrator-313");
+    const source = makeThreadFixture().source;
+    const queued = presentThreadShell(localEnvironmentId, {
+      ...source,
+      latestRunId: runId,
+      latestRunRequestedAt: DateTime.makeUnsafe("2026-11-09T19:44:06.215Z"),
+      latestRunStartedAt: null,
+      latestRunCompletedAt: null,
+      activeRunId: null,
+      activityRunStatus: null,
+      activityRunStartedAt: null,
+      status: "queued",
+    });
+    expect(resolveSidebarThreadStatus(queued)).toBe("waiting");
+    expect(resolveThreadStatusPill({ thread: queued })).toMatchObject({
+      label: "Waiting",
+      pulse: false,
+    });
+    expect(resolveThreadWorkingStartedAt({ ...queued, waiting: true })).toBe(
+      "2026-11-09T19:44:06.215Z",
+    );
+    const startedAt = DateTime.makeUnsafe("2026-11-09T19:45:45.805Z");
+    const running = presentThreadShell(localEnvironmentId, {
+      ...queued.source,
+      status: "running",
+      activeRunId: runId,
+      activityRunStatus: "running",
+      activityRunStartedAt: startedAt,
+      latestRunStartedAt: startedAt,
+    });
+    expect(resolveSidebarThreadStatus(running)).toBe("working");
+    const queuedBehindRunning = presentThreadShell(localEnvironmentId, {
+      ...running.source,
+      latestRunId: RunId.make("queued-follow-up"),
+      status: "queued",
+      latestRunStartedAt: null,
+    });
+    expect(resolveSidebarThreadStatus(queuedBehindRunning)).toBe("working");
+    expect(resolveThreadWorkingStartedAt(queuedBehindRunning)).toBe(DateTime.formatIso(startedAt));
+    expect(resolveThreadWorkingStartedAt(running)).toBe(DateTime.formatIso(startedAt));
+    for (const pendingBackgroundTasks of [[], [{ taskId: "child", kind: "subagent" as const }]]) {
+      const finished = presentThreadShell(localEnvironmentId, {
+        ...running.source,
+        status: "completed",
+        activeRunId: null,
+        activityRunStatus: null,
+        activityRunStartedAt: null,
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-11-09T19:47:08.378Z"),
+        pendingBackgroundTasks,
+      });
+      expect(resolveSidebarThreadStatus(finished)).toBe(
+        pendingBackgroundTasks.length ? "waiting" : "ready",
+      );
+    }
+  });
 
   it("reports waiting on background work below approval, input, and a failed turn", () => {
     const backgroundWait = { ...runtime, status: "idle" as const };

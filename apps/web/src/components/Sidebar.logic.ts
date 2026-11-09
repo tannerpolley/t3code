@@ -967,12 +967,15 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {
     return "request";
   }
-  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
+  if (
+    thread.runtime?.status === "queued" ||
+    (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true)
+  ) {
     return "waiting";
   }
   if (
     thread.runtime !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
+    ["preparing", "starting", "running", "waiting"].includes(thread.runtime.status)
   ) {
     return "working";
   }
@@ -1413,11 +1416,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (
-    thread.runtime?.status === "preparing" ||
-    thread.runtime?.status === "starting" ||
-    thread.runtime?.status === "queued"
-  ) {
+  if (thread.runtime?.status === "preparing" || thread.runtime?.status === "starting") {
     return {
       label: "Connecting",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -1427,6 +1426,7 @@ export function resolveThreadStatusPill(input: {
   }
 
   if (
+    thread.runtime?.status === "queued" ||
     (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) ||
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
   ) {
