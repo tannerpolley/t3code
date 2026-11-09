@@ -177,6 +177,8 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
               revision: moving.revision + 1,
               milestones: [],
               suspendedIssues: [],
+              // The sprint limited the old repository's work; its history stays.
+              usageSprint: undefined,
             }
           : {
               host: command.host,

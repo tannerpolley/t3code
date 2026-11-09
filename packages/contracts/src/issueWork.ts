@@ -145,10 +145,12 @@ export const RepositoryWorkControlInput = Schema.Struct({
   clientRequestId: CommandId,
 });
 export type RepositoryWorkControlInput = typeof RepositoryWorkControlInput.Type;
-/** Starts a usage sprint on a provider instance, or ends the active one with null. */
+/** Starts a usage sprint on a provider instance, or with null stops the sprint `startedAt` names. */
 export const RepositoryUsageSprintInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   providerInstanceId: Schema.NullOr(ProviderInstanceId),
+  /** Required to stop: the sprint's startedAt, so a late or retried Stop never ends a later sprint. */
+  startedAt: Schema.optional(Schema.String),
   clientRequestId: CommandId,
 });
 export type RepositoryUsageSprintInput = typeof RepositoryUsageSprintInput.Type;

@@ -477,12 +477,17 @@ function UsageSprintControl({
   const [busy, setBusy] = useState(false);
   const label = (instanceId: ProviderInstanceId) =>
     providers.find((provider) => provider.instanceId === instanceId)?.displayName ?? instanceId;
-  const submit = async (providerInstanceId: ProviderInstanceId | null) => {
+  const submit = async (providerInstanceId: ProviderInstanceId | null, startedAt?: string) => {
     if (busy) return;
     setBusy(true);
     const result = await setSprint({
       environmentId,
-      input: { ...reference, providerInstanceId, clientRequestId: CommandId.make(randomUUID()) },
+      input: {
+        ...reference,
+        providerInstanceId,
+        ...(startedAt === undefined ? {} : { startedAt }),
+        clientRequestId: CommandId.make(randomUUID()),
+      },
     });
     setBusy(false);
     if (result._tag === "Failure")
@@ -507,7 +512,7 @@ function UsageSprintControl({
           variant="outline"
           size="xs"
           disabled={busy || !canSet}
-          onClick={() => void submit(null)}
+          onClick={() => void submit(null, sprint.startedAt)}
         >
           Stop
         </Button>

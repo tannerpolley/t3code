@@ -2031,6 +2031,22 @@ describe("fresh-thread repository handoff", () => {
         handoffHistory: [
           { threadId: ThreadId.make("earlier-root"), transferredAt: "2026-10-01T00:00:00.000Z" },
         ],
+        usageSprint: {
+          providerInstanceId: modelSelection.instanceId,
+          windowId: "weekly",
+          usedPercent: 40,
+          resetsAt: "2026-12-01T00:00:00.000Z",
+          startedAt: "2026-10-02T00:00:00.000Z",
+        },
+        usageSprintHistory: [
+          {
+            providerInstanceId: modelSelection.instanceId,
+            startedAt: "2026-09-01T00:00:00.000Z",
+            endedAt: "2026-09-08T00:00:00.000Z",
+            reason: "reset" as const,
+            children: [],
+          },
+        ],
       };
       yield* threads.dispatch({
         type: "thread.create",
@@ -2089,7 +2105,9 @@ describe("fresh-thread repository handoff", () => {
         milestones: [],
         suspendedIssues: [],
         handoffHistory: previous.handoffHistory,
+        usageSprintHistory: previous.usageSprintHistory,
       });
+      assert.isUndefined(moved.usageSprint);
       yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
     }).pipe(Effect.provide(fixture({ recovery: true }))),
   );

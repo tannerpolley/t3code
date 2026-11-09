@@ -184,12 +184,22 @@ function setup() {
       const threads = yield* ThreadManagement.ThreadManagementService;
       return (yield* threads.getThreadRecords(threadId, ["runs"])).runs.at(-1)!;
     });
-  const sprint = (providerInstanceId: ProviderInstanceId | null, request: string) =>
+  const sprint = (providerInstanceId: ProviderInstanceId, request: string) =>
     Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
       return yield* service.setUsageSprint({
         ...reference,
         providerInstanceId,
+        clientRequestId: CommandId.make(request),
+      });
+    });
+  const stop = (startedAt: string, request: string) =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      return yield* service.setUsageSprint({
+        ...reference,
+        providerInstanceId: null,
+        startedAt,
         clientRequestId: CommandId.make(request),
       });
     });
@@ -223,6 +233,7 @@ function setup() {
     delegate,
     latestRun,
     sprint,
+    stop,
     layer,
     reportedBy: registry(dependencies),
   };
@@ -231,7 +242,8 @@ function setup() {
 it.effect(
   "starts one sprint, stops it without interrupting, and a Stop after the next one's reset ends it as a reset",
   () => {
-    const { createRoot, sprintMessages, startRoot, delegate, latestRun, sprint, layer } = setup();
+    const { createRoot, sprintMessages, startRoot, delegate, latestRun, sprint, stop, layer } =
+      setup();
     return Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -252,7 +264,7 @@ it.effect(
 
       const first = yield* delegate(1);
       assert.equal((yield* latestRun(first)).status, "starting");
-      const stopped = yield* sprint(null, "sprint-stop");
+      const stopped = yield* stop(started.orchestration!.usageSprint!.startedAt, "sprint-stop");
       yield* worker.drain();
       assert.isUndefined(stopped.orchestration!.usageSprint);
       assert.equal(stopped.orchestration!.usageSprintHistory?.at(-1)?.reason, "stopped");
@@ -260,15 +272,13 @@ it.effect(
       assert.equal(yield* sprintMessages.pipe(Effect.map((messages) => messages.length)), 1);
       assert.isFalse(stopped.orchestration!.paused);
 
-      yield* sprint(modelSelection.instanceId, "sprint-again");
+      const again = (yield* sprint(modelSelection.instanceId, "sprint-again")).orchestration!
+        .usageSprint!;
       const second2 = yield* delegate(2);
       yield* service.sweepUsageSprints;
-      // A retried Stop replays its own end and leaves the later sprint running.
-      yield* sprint(null, "sprint-stop");
-      assert.isDefined((yield* service.repositoryStatus(reference)).orchestration!.usageSprint);
 
       yield* TestClock.adjust("7 days");
-      yield* sprint(null, "sprint-stop-after-reset");
+      yield* stop(again.startedAt, "sprint-stop-after-reset");
       yield* worker.drain();
       const ended = (yield* service.repositoryStatus(reference)).orchestration!;
       assert.isUndefined(ended.usageSprint);
@@ -331,8 +341,17 @@ it.effect("ends a sprint whose reset passed while the server was down on startup
 it.effect(
   "retries a failed end, commits it once, and replays its message after process loss",
   () => {
-    const { rootId, createRoot, sprintMessages, startRoot, delegate, latestRun, sprint, layer } =
-      setup();
+    const {
+      rootId,
+      createRoot,
+      sprintMessages,
+      startRoot,
+      delegate,
+      latestRun,
+      sprint,
+      stop,
+      layer,
+    } = setup();
     return Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
       const threads = yield* ThreadManagement.ThreadManagementService;
@@ -358,7 +377,7 @@ it.effect(
       yield* service.sweepUsageSprints;
 
       // A late Stop finds no sprint, and the same end command replays its receipt.
-      yield* sprint(null, "sprint-late-stop");
+      yield* stop(startedAt, "sprint-late-stop");
       const replay = yield* threads.dispatch(endCommand);
       assert.isTrue(replay.replayed);
       const ended = (yield* service.repositoryStatus(reference)).orchestration!;
@@ -386,6 +405,24 @@ it.effect(
     }).pipe(Effect.provide(layer()));
   },
 );
+
+it.effect("a Stop retried after its sprint ended leaves the next sprint running", () => {
+  const { createRoot, startRoot, sprint, stop, layer } = setup();
+  return Effect.gen(function* () {
+    const service = yield* IssueWorkService.IssueWorkService;
+    yield* createRoot();
+    yield* startRoot;
+    const first = (yield* sprint(modelSelection.instanceId, "sprint-a")).orchestration!
+      .usageSprint!;
+    yield* stop(first.startedAt, "stop-a");
+    // A second Stop for the same sprint arrives after it ended, then is retried once B runs.
+    yield* stop(first.startedAt, "stop-a-late");
+    yield* TestClock.adjust("1 minute");
+    yield* sprint(modelSelection.instanceId, "sprint-b");
+    yield* stop(first.startedAt, "stop-a-late");
+    assert.isDefined((yield* service.repositoryStatus(reference)).orchestration!.usageSprint);
+  }).pipe(Effect.provide(layer()));
+});
 
 it.effect("ends a sprint early when usage drops from its highest reading", () =>
   Effect.gen(function* () {

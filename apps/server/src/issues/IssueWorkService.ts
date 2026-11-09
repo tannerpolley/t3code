@@ -1417,24 +1417,28 @@ export const layer = Layer.effect(
     });
 
     // The sprint lock and the end command's start check keep a stale decision from ending a successor.
-    // A Stop passes its request id: a retried Stop replays its own end instead of ending a later sprint.
+    // A Stop names its sprint's start, so a late or retried Stop never ends a later sprint.
     const advanceUsageSprint = Effect.fn("IssueWorkService.advanceUsageSprint")(
-      function* (rootThreadId: ThreadId, stopRequestId: CommandId | undefined) {
+      function* (
+        rootThreadId: ThreadId,
+        stop: { readonly requestId: CommandId; readonly startedAt: string } | undefined,
+      ) {
         const config = yield* store.configuration(rootThreadId);
         const sprint = config?.usageSprint;
         if (config == null || sprint === undefined) return;
+        if (stop !== undefined && stop.startedAt !== sprint.startedAt) return;
         const provider = (yield* providers.getProviders).find(
           (candidate) => candidate.instanceId === sprint.providerInstanceId,
         );
         const check = usageSprintCheck(sprint, provider, yield* Clock.currentTimeMillis);
         // A Stop after the window already reset ends the sprint as that reset.
-        const reason = "end" in check ? check.end : stopRequestId === undefined ? null : "stopped";
+        const reason = "end" in check ? check.end : stop === undefined ? null : "stopped";
         if (reason !== null)
           return yield* threads
             .dispatch({
               type: "repository.usage-sprint.end",
               commandId:
-                stopRequestId ??
+                stop?.requestId ??
                 CommandId.make(
                   `usage-sprint-end:${rootThreadId}:${config.usageSprintHistory?.length ?? 0}:${sprint.startedAt}`,
                 ),
@@ -1465,7 +1469,15 @@ export const layer = Layer.effect(
         });
       const instanceId = input.providerInstanceId;
       if (instanceId === null) {
-        yield* advanceUsageSprint(owner.rootThreadId, input.clientRequestId);
+        if (input.startedAt === undefined)
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: "Stopping a usage sprint needs the startedAt of the sprint to stop.",
+          });
+        yield* advanceUsageSprint(owner.rootThreadId, {
+          requestId: input.clientRequestId,
+          startedAt: input.startedAt,
+        });
         return yield* repositoryStatus(input);
       }
       yield* assignments.withLock(
