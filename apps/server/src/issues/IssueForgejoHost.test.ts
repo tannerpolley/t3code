@@ -194,6 +194,21 @@ it.effect(
     }),
 );
 
+it.effect("resolves each repository once per status batch", () =>
+  Effect.gen(function* () {
+    const fixture = setup((path) => {
+      if (path === "repositories/12") return repo;
+      if (path.includes("/dependencies")) return [];
+      return issue(Number(path.split("/").at(-1)));
+    });
+    const transport = yield* fixture.make;
+    const statuses = yield* transport.statuses(host, ["12/7", "12/8", "12/9"]);
+    expect(statuses.map((status) => status.number)).toEqual([7, 8, 9]);
+    expect(fixture.calls.filter((path) => path === "repositories/12")).toHaveLength(1);
+    expect(fixture.calls).toHaveLength(7);
+  }),
+);
+
 it.effect("maps migrated comments and deduplicated timeline PR references", () =>
   Effect.gen(function* () {
     const fixture = setup((path) => {

@@ -250,7 +250,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
       read: Effect.Effect<A, IssueReadError>,
       refresh: boolean | undefined,
     ) {
-      let cached = refresh === false ? reads.get(key) : undefined;
+      let cached = refresh !== true ? reads.get(key) : undefined;
       if (cached === undefined) {
         cached = yield* Effect.cachedWithTTL(read, (exit) =>
           Exit.isSuccess(exit) ? LIVE_ISSUE_REFRESH_MS : 0,

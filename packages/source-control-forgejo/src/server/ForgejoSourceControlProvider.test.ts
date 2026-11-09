@@ -1,6 +1,8 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -120,6 +122,70 @@ it.effect("reads clone URLs on the given host rather than the checkout's", () =>
     ),
   );
 });
+
+it.effect("cached authentication does not wait for another host renewal", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const cli = yield* ForgejoCli.make;
+      const request = (host: string) =>
+        cli.api({ cwd: "/repo", host, repository: "maria/project", path: "user" });
+      yield* request("forgejo.test");
+      const renewal = yield* request("other.test").pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* request("forgejo.test");
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(renewal);
+    }).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("{}"))),
+        ),
+      ),
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          exists: () => Effect.succeed(true),
+          stat: () =>
+            Effect.succeed({
+              mtime: Option.none(),
+              ino: Option.some(1n),
+              size: 1n,
+            } as FileSystem.File.Info),
+          readFileString: () =>
+            Effect.succeed(
+              encodeJson({
+                hosts: {
+                  "forgejo.test": { type: "Application", token: "first" },
+                  "other.test": { type: "Application", token: "second" },
+                },
+              }),
+            ),
+        }),
+      ),
+      Effect.provide(
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) => {
+              if (input.command === "git")
+                return Effect.succeed(
+                  processOutput("origin\thttps://forgejo.test/maria/project.git (fetch)"),
+                );
+              if (input.args.includes("https://other.test"))
+                return Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.as(processOutput("")),
+                );
+              return Effect.succeed(processOutput(""));
+            },
+          },
+        }),
+      ),
+    );
+  }),
+);
 
 const requiredChecksPullRequest = {
   number: 7,

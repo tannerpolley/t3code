@@ -276,7 +276,7 @@ it.effect(
         ),
       );
       const roadmap = yield* IssueRoadmap.IssueRoadmap.pipe(Effect.provideContext(roadmapContext));
-      const input = { issues: [{ host: HOST, nodeId: "I_7" }], refresh: false };
+      const input = { issues: [{ host: HOST, nodeId: "I_7" }] };
       const first = yield* roadmap.statusBatch(input);
       assert.equal(first[0]?.liveWork?.[0]?.status, "idle");
       for (let index = 0; index < 10; index++) {

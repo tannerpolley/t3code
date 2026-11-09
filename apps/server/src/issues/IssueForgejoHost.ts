@@ -567,23 +567,28 @@ export const make = Effect.fn("IssueForgejoHost.make")(function* (
       return result;
     }),
     statuses: Effect.fn("IssueForgejoHost.statuses")(function* (_, nodeIds) {
+      const parsed = yield* Effect.forEach(nodeIds, (nodeId) => {
+        const match = /^([1-9]\d*)\/([1-9]\d*)$/.exec(nodeId);
+        return match
+          ? Effect.succeed({ nodeId, repositoryId: match[1]!, number: Number(match[2]) })
+          : failure("detail", "invalid-response", "Invalid Forgejo issue identity.");
+      });
+      const repositories = new Map(
+        yield* Effect.forEach(
+          [...new Set(parsed.map((item) => item.repositoryId))],
+          (id) =>
+            request({ cwd, host, repository: "" }, `repositories/${id}`, Repository).pipe(
+              Effect.map((result) => [id, result.value] as const),
+            ),
+          { concurrency: 8 },
+        ),
+      );
       return yield* Effect.forEach(
-        nodeIds,
-        (nodeId) =>
+        parsed,
+        ({ nodeId, repositoryId, number }) =>
           Effect.gen(function* () {
-            const match = /^([1-9]\d*)\/([1-9]\d*)$/.exec(nodeId);
-            if (!match)
-              return yield* failure(
-                "detail",
-                "invalid-response",
-                "Invalid Forgejo issue identity.",
-              );
-            const repository = (yield* request(
-              { cwd, host, repository: "" },
-              `repositories/${match[1]}`,
-              Repository,
-            )).value;
-            const ref = { host, repository: repository.full_name, number: Number(match[2]) };
+            const repository = repositories.get(repositoryId)!;
+            const ref = { host, repository: repository.full_name, number };
             const raw = yield* readIssue(ref);
             const dependencies = yield* blockers(ref);
             if (!dependencies.complete)

@@ -455,29 +455,40 @@ export const make = Effect.gen(function* () {
     cwd: string,
     login: typeof ForgejoLoginSchema.Type,
   ) {
-    const keys = yield* readKeys(cwd);
-    const token = keys.hosts[login.name]?.token;
+    const initialKeys = yield* readKeys(cwd);
     const now = yield* Clock.currentTimeMillis;
     const cached = authenticated.get(login.url);
-    if (token && cached?.token === token && now - cached.time < 30_000) return token;
-    // fj reads the cwd repository even with --host and fails on an unborn branch.
-    yield* execute({
-      command: "fj",
-      cwd: yield* HostProcess.HomeDirectory,
-      args: ["--host", login.url, "whoami"],
-    });
-    // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
-    const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
-    if (!refreshed)
-      return yield* new ForgejoCliError({
+    if (
+      cached &&
+      initialKeys.hosts[login.name]?.token === cached.token &&
+      now - cached.time < 30_000
+    )
+      return cached.token;
+    return yield* Effect.gen(function* () {
+      const keys = yield* readKeys(cwd);
+      const token = keys.hosts[login.name]?.token;
+      const now = yield* Clock.currentTimeMillis;
+      const cached = authenticated.get(login.url);
+      if (token && cached?.token === token && now - cached.time < 30_000) return token;
+      // fj reads the cwd repository even with --host and fails on an unborn branch.
+      yield* execute({
         command: "fj",
-        cwd,
-        reason: "authentication",
-        detail: "fj has no credentials for this server. Authenticate again with fj.",
+        cwd: yield* HostProcess.HomeDirectory,
+        args: ["--host", login.url, "whoami"],
       });
-    authenticated.set(login.url, { token: refreshed, time: now });
-    return refreshed;
-  }, authLock.withPermits(1));
+      // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
+      const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
+      if (!refreshed)
+        return yield* new ForgejoCliError({
+          command: "fj",
+          cwd,
+          reason: "authentication",
+          detail: "fj has no credentials for this server. Authenticate again with fj.",
+        });
+      authenticated.set(login.url, { token: refreshed, time: now });
+      return refreshed;
+    }).pipe(authLock.withPermits(1));
+  });
 
   const getAccount: NonNullable<ForgejoCli["Service"]["getAccount"]> = Effect.fn(
     "ForgejoCli.getAccount",
