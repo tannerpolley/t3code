@@ -1,3 +1,4 @@
+import { repositoryPhase } from "@t3tools/contracts";
 import { isReadOnlyIssueRole } from "../issues/IssueEligibility.ts";
 import type {
   GuestShareId,
@@ -5720,7 +5721,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        projection.thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
+        (projection.thread.repositoryOrchestration !== undefined &&
+          repositoryPhase(projection.thread.repositoryOrchestration) === "retired") ||
         projection.thread.providerInstanceId !== source.providerInstanceId ||
         projection.runs.some(
           (run) =>

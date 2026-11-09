@@ -1,6 +1,6 @@
 import type { OrchestrationV2AppThread } from "./orchestrationV2.ts";
 import type { ProviderDriverKind } from "./providerInstance.ts";
-import type { RepositoryOrchestration } from "./issueWork.ts";
+import { repositoryPhase, type RepositoryOrchestration } from "./issueWork.ts";
 import { effectiveThreadRole } from "./threadRole.ts";
 
 type Candidate = Pick<
@@ -65,7 +65,7 @@ export function isMovableRepositoryRegistration(
     registered.projectId === repository.projectId &&
     !isRegisteredFor(registered, repository) &&
     registered.paused &&
-    registered.retiredToThreadId === undefined &&
+    repositoryPhase(registered) !== "retired" &&
     registered.handoff === undefined
   );
 }

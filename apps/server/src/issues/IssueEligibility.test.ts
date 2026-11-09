@@ -1,3 +1,5 @@
+import { IssueSuspension } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { assert, it } from "@effect/vitest";
 
 import { ClaudeDriver } from "../provider/Drivers/ClaudeDriver.ts";
@@ -9,6 +11,8 @@ import {
   openBlockerSuspensionReason,
 } from "./IssueEligibility.ts";
 
+const decodeSuspension = Schema.decodeSync(IssueSuspension);
+
 it("managed issue work accepts the real Codex and Claude driver kinds", () => {
   assert.isTrue(supportsManagedIssueWork(CodexDriver.driverKind));
   assert.isTrue(supportsManagedIssueWork(ClaudeDriver.driverKind));
@@ -19,8 +23,22 @@ it("recovers both current and persisted GitHub blocker suspensions", () => {
     openBlockerSuspensionReason,
     "A GitHub blocker is open. Resolve it before resuming.",
   ]) {
-    assert.isTrue(isOpenBlockerSuspension(reason));
-    assert.isTrue(isAutomaticIssueSuspension(reason));
+    const entry = decodeSuspension({ id: "issue", reason });
+    assert.isTrue(isOpenBlockerSuspension(entry));
+    assert.isTrue(isAutomaticIssueSuspension(entry));
   }
-  assert.isFalse(isAutomaticIssueSuspension("Paused by owner"));
+  assert.isFalse(isAutomaticIssueSuspension({ kind: "closed" }));
+});
+
+it("suspension kind owns recovery even when the display reason changes", () => {
+  assert.isTrue(
+    isAutomaticIssueSuspension(
+      decodeSuspension({ id: "issue", kind: "blocked", reason: "Waiting for dependencies" }),
+    ),
+  );
+  assert.isFalse(
+    isAutomaticIssueSuspension(
+      decodeSuspension({ id: "issue", kind: "closed", reason: openBlockerSuspensionReason }),
+    ),
+  );
 });

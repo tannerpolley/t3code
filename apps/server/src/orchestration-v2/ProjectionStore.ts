@@ -1,3 +1,4 @@
+import { repositoryPhaseSql } from "../issues/RepositoryPhaseSql.ts";
 import {
   makeIssueWorkCommentReads,
   readIssueWorkThreads,
@@ -4118,7 +4119,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             )
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
-            AND json_extract(t.payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
+            AND ${sql.unsafe(repositoryPhaseSql("t.payload_json"))} <> 'retired'
             AND CASE WHEN json_valid(item.payload_json) THEN json_extract(item.payload_json, '$.failure.class') END = 'usage_limit'
             AND ((
               ${booleanInt(options.switchProvider ?? false)}

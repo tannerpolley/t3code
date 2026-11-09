@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
+import { CommandId, ThreadId } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  repositoryPhase,
+  repositoryAdmitsWork,
+  isValidRepositoryPhase,
   RepositoryOrchestration,
   IssueWorkRequested,
   IssueWorkStartInput,
@@ -67,4 +72,51 @@ describe("managed issue workspace compatibility", () => {
       expect(decodeMilestone(input)).not.toHaveProperty("workspace");
     }
   });
+});
+
+describe("repository phase", () => {
+  const cases = [];
+  for (const paused of [false, true]) {
+    for (const status of [undefined, "awaiting_approval", "draining"] as const) {
+      for (const retired of [false, true]) {
+        cases.push({ paused, status, retired });
+      }
+    }
+  }
+  it.each(cases)(
+    "classifies paused=$paused, handoff=$status, retired=$retired",
+    ({ paused, status, retired }) => {
+      const config = {
+        paused,
+        ...(retired ? { retiredToThreadId: ThreadId.make("next") } : {}),
+        ...(status
+          ? {
+              handoff: {
+                status,
+                requestId: CommandId.make("request"),
+                nextThreadId: ThreadId.make("next"),
+                summary: "Continue",
+                modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+                wasPaused: paused,
+              },
+            }
+          : {}),
+      } satisfies Pick<RepositoryOrchestration, "paused" | "handoff" | "retiredToThreadId">;
+      expect(repositoryPhase(config)).toBe(
+        retired
+          ? "retired"
+          : status === "draining"
+            ? "draining"
+            : status
+              ? "handoff_awaiting_approval"
+              : paused
+                ? "paused"
+                : "active",
+      );
+      expect(isValidRepositoryPhase(config)).toBe(
+        !(retired && status !== undefined) && !(status === "draining" && !paused),
+      );
+      expect(repositoryAdmitsWork(config)).toBe(!retired && (!paused || status === "draining"));
+    },
+  );
 });

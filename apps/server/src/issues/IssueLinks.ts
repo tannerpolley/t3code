@@ -1,3 +1,4 @@
+import { repositoryPhaseSql } from "./RepositoryPhaseSql.ts";
 import {
   IssueLinkError,
   RepositoryOrchestration,
@@ -272,7 +273,7 @@ const make = Effect.gen(function* () {
         WHERE thread_id IN ${sql.in(roots)}
           AND lower(json_extract(payload_json, '$.repositoryOrchestration.host')) = ${host}
           AND lower(json_extract(payload_json, '$.repositoryOrchestration.repository')) = ${repository}
-          AND json_extract(payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
+          AND ${sql.unsafe(repositoryPhaseSql("payload_json"))} <> 'retired'
       `.pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError));
       for (const row of rows) {
         const config = yield* decodeOrchestration(row.config_json).pipe(

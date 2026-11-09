@@ -1,3 +1,4 @@
+import { repositoryPhase } from "@t3tools/contracts";
 import type {
   ProviderInstanceId,
   RepositoryOrchestration,
@@ -67,7 +68,9 @@ export const lineageUsageSprint = <E, R>(
     : Effect.succeed(thread.repositoryOrchestration)
   ).pipe(
     Effect.map((config) =>
-      config?.retiredToThreadId === undefined ? config?.usageSprint : undefined,
+      config !== undefined && repositoryPhase(config) !== "retired"
+        ? config.usageSprint
+        : undefined,
     ),
   );
 

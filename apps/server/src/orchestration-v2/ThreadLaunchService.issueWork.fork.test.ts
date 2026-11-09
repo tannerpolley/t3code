@@ -19,6 +19,7 @@ import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { assert, describe, it, vi } from "@effect/vitest";
 import {
   CommandId,
+  CLOSED_ISSUE_SUSPENSION_REASON,
   IssueReadError,
   MessageId,
   ProviderDriverKind,
@@ -1938,6 +1939,19 @@ it.effect(
       const child = (yield* store.issueOwner(reviewIssue(1)))!;
       const other = (yield* store.issueOwner(reviewIssue(2)))!;
       const before = (yield* threads.getThreadRecords(child, ["runs"])).thread;
+      const config = (yield* store.configuration(root))!;
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        commandId: CommandId.make("reworded-blocker"),
+        threadId: root,
+        expectedRevision: config.revision,
+        orchestration: {
+          ...config,
+          suspendedIssues: [
+            { id: reviewIssue(2).id, kind: "blocked", reason: CLOSED_ISSUE_SUSPENSION_REASON },
+          ],
+        },
+      });
       blocked = true;
       closed = true;
       yield* service.reconcile(root);

@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Effect from "effect/Effect";
 
 import { CommandId, ProjectId, RunId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -39,6 +40,82 @@ export const RepositoryUsageSprint = Schema.Struct({
 });
 export type RepositoryUsageSprint = typeof RepositoryUsageSprint.Type;
 
+export const IssueSuspensionKind = Schema.Literals([
+  "closed",
+  "reparented",
+  "blocked",
+  "unreadable",
+]);
+export type IssueSuspensionKind = typeof IssueSuspensionKind.Type;
+
+export const LEGACY_AUTOMATIC_SUSPENSIONS = {
+  blocked: [
+    "An issue host blocker is open. Resolve it before resuming.",
+    "A GitHub blocker is open. Resolve it before resuming.",
+  ],
+  unreadable: ["Issue relationships are unreadable. Restore access before resuming."],
+};
+export const legacyIssueSuspensionKind = (reason: string): IssueSuspensionKind => {
+  if (LEGACY_AUTOMATIC_SUSPENSIONS.blocked.includes(reason)) return "blocked";
+  if (LEGACY_AUTOMATIC_SUSPENSIONS.unreadable.includes(reason)) return "unreadable";
+  return reason === CLOSED_ISSUE_SUSPENSION_REASON ? "closed" : "reparented";
+};
+const StoredIssueSuspension = Schema.Struct({
+  id: Schema.String,
+  reason: Schema.String,
+  kind: Schema.optional(IssueSuspensionKind),
+});
+export const IssueSuspension = StoredIssueSuspension.pipe(
+  Schema.decodeTo(
+    StoredIssueSuspension,
+    SchemaTransformation.transform<
+      typeof StoredIssueSuspension.Type,
+      typeof StoredIssueSuspension.Type
+    >({
+      decode: (entry) => ({
+        ...entry,
+        kind: entry.kind ?? legacyIssueSuspensionKind(entry.reason),
+      }),
+      encode: (entry) => entry,
+    }),
+  ),
+);
+export type IssueSuspension = typeof IssueSuspension.Type;
+
+export const RepositoryPhase = Schema.Literals([
+  "active",
+  "paused",
+  "handoff_awaiting_approval",
+  "draining",
+  "retired",
+]);
+export type RepositoryPhase = typeof RepositoryPhase.Type;
+type RepositoryPhaseFields = {
+  readonly paused: boolean;
+  readonly handoff?: { readonly status: "awaiting_approval" | "draining" } | undefined;
+  readonly retiredToThreadId?: string | undefined;
+};
+
+export const repositoryPhase = (config: RepositoryPhaseFields): RepositoryPhase => {
+  if (config.retiredToThreadId !== undefined) return "retired";
+  if (config.handoff?.status === "draining") return "draining";
+  if (config.handoff !== undefined) return "handoff_awaiting_approval";
+  return config.paused ? "paused" : "active";
+};
+export const isValidRepositoryPhase = (config: RepositoryPhaseFields) =>
+  !(config.retiredToThreadId !== undefined && config.handoff !== undefined) &&
+  !(config.handoff?.status === "draining" && !config.paused);
+
+// Awaiting approval preserves the existing pause state; draining admits already queued work.
+export const repositoryAdmitsWork = (config: RepositoryPhaseFields) => {
+  const phase = repositoryPhase(config);
+  return (
+    phase === "active" ||
+    phase === "draining" ||
+    (phase === "handoff_awaiting_approval" && !config.paused)
+  );
+};
+
 export const RepositoryOrchestration = Schema.Struct({
   host: TrimmedNonEmptyString,
   repository: TrimmedNonEmptyString,
@@ -56,7 +133,7 @@ export const RepositoryOrchestration = Schema.Struct({
   milestones: Schema.Array(RepositoryMilestonePlan).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
-  suspendedIssues: Schema.Array(Schema.Struct({ id: Schema.String, reason: Schema.String })).pipe(
+  suspendedIssues: Schema.Array(IssueSuspension).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
   handoff: Schema.optional(
@@ -239,6 +316,7 @@ export const IssueQueueEntry = Schema.Struct({
 export type IssueQueueEntry = typeof IssueQueueEntry.Type;
 
 export const RepositoryWorkResult = Schema.Struct({
+  phase: Schema.optional(Schema.NullOr(RepositoryPhase)),
   rootThreadId: Schema.NullOr(ThreadId),
   orchestration: Schema.NullOr(RepositoryOrchestration),
   slotsInUse: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

@@ -1,4 +1,9 @@
-import { CommandId, IssueChangeError, MessageId } from "@t3tools/contracts";
+import {
+  legacyIssueSuspensionKind,
+  CommandId,
+  IssueChangeError,
+  MessageId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -181,7 +186,12 @@ export const layerExecutor: Layer.Layer<
           case "issue.suspension.notify": {
             const request = effect.request;
             // Older outbox entries may predate quiet, event-sourced suspension notices.
-            if (isAutomaticIssueSuspension(request.reason)) return Effect.void;
+            if (
+              isAutomaticIssueSuspension({
+                kind: request.kind ?? legacyIssueSuspensionKind(request.reason),
+              })
+            )
+              return Effect.void;
             return Effect.gen(function* () {
               const messageId = MessageId.make(effect.id);
               const prior = yield* threads.getThreadRecords(effect.threadId, ["messages"], {

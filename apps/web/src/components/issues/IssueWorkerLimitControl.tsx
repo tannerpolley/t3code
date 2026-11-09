@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  repositoryPhase,
   CommandId,
   type EnvironmentId,
   type IssueRepositoryRef,
@@ -46,7 +47,7 @@ export function IssueWorkerLimitControl({
   });
   const limit = Number(draft);
   const valid = Number.isInteger(limit) && limit >= 1 && limit <= 32;
-  const disabled = busy || !canSetLimit || config.handoff?.status === "draining";
+  const disabled = busy || !canSetLimit || repositoryPhase(config) === "draining";
   return (
     <span className="flex min-w-0 items-center gap-1">
       <span className="truncate" role="status">
