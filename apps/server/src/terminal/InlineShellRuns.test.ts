@@ -78,13 +78,21 @@ it.effect.each([false, true])(
             Array.from({ length: 400 }, (_, n) => `line-${n}: ${"😀".repeat(60)}`).join("\n") +
             "\n";
           yield* emit({ threadId, terminalId: running.terminalId, type: "output", data: output });
-          yield* emit({
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TRIGGER fail_inline_finish BEFORE UPDATE ON inline_shell_runs BEGIN SELECT RAISE(FAIL, 'write failed'); END`;
+          const exited = {
             threadId,
             terminalId: running.terminalId,
-            type: "exited",
+            type: "exited" as const,
             exitCode: 7,
             exitSignal: 0,
-          });
+          };
+          yield* emit(exited);
+          yield* sql`DROP TRIGGER fail_inline_finish`;
+          yield* emit(exited);
+          expect((yield* service.latest({ threadId, blockId: input.blockId }))?.status).toBe(
+            "completed",
+          );
         }
         yield* Deferred.await(closed);
         const lifecycle = yield* Fiber.join(events);

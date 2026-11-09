@@ -49,9 +49,15 @@ export const layer = Layer.effect(
     const store = yield* InlineShellStore;
     const launches = yield* KeyedLock.make<string>();
     const changes = yield* PubSub.unbounded<InlineShellRunRecord>();
+    const completions = yield* KeyedLock.make<string>();
     const active = new Map<
       string,
-      { record: InlineShellRunRecord; history: BoundedTerminalHistory; dirty: boolean }
+      {
+        record: InlineShellRunRecord;
+        history: BoundedTerminalHistory;
+        dirty: boolean;
+        completion?: InlineShellRunRecord;
+      }
     >();
     const recovered = yield* Deferred.make<void>();
     // Recover in bounded indexed batches outside the layer's startup critical path.
@@ -85,21 +91,19 @@ export const layer = Layer.effect(
     ) {
       const entry = active.get(key);
       if (!entry) return;
-      // One owner removes the active run before any I/O. Synchronous launch errors
-      // and openCommand's fallback cannot both persist the same completion.
-      active.delete(key);
       const now = yield* DateTime.now;
-      const record: InlineShellRunRecord = {
+      const record: InlineShellRunRecord = entry.completion ?? {
         ...entry.record,
         ...result,
         output: tail(entry),
         completedAt: DateTime.formatIso(now),
         durationMs: Math.max(0, DateTime.toEpochMillis(now) - Date.parse(entry.record.startedAt)),
       };
-      yield* store.update(record).pipe(
-        Effect.tap((saved) => (saved ? PubSub.publish(changes, record) : Effect.void)),
-        Effect.ensuring(releases.enqueue(key, record)),
-      );
+      entry.completion = record;
+      const saved = yield* store.update(record);
+      active.delete(key);
+      if (saved) yield* PubSub.publish(changes, record);
+      yield* releases.enqueue(key, record);
     });
     const unsubscribe = yield* terminal.subscribe((event) =>
       Effect.gen(function* () {
@@ -112,19 +116,22 @@ export const layer = Layer.effect(
           return;
         }
         if (event.type === "exited" || event.type === "closed" || event.type === "error") {
-          yield* finish(key, {
-            status:
-              event.type === "error"
-                ? "error"
-                : event.type === "closed" ||
-                    (event.type === "exited" &&
-                      ((event.exitSignal !== null && event.exitSignal !== 0) ||
-                        event.exitCode === 130))
-                  ? "interrupted"
-                  : "completed",
-            exitCode: event.type === "exited" ? event.exitCode : null,
-            error: event.type === "error" ? event.message.slice(0, 1024) : null,
-          });
+          yield* completions.withLock(
+            key,
+            finish(key, {
+              status:
+                event.type === "error"
+                  ? "error"
+                  : event.type === "closed" ||
+                      (event.type === "exited" &&
+                        ((event.exitSignal !== null && event.exitSignal !== 0) ||
+                          event.exitCode === 130))
+                    ? "interrupted"
+                    : "completed",
+              exitCode: event.type === "exited" ? event.exitCode : null,
+              error: event.type === "error" ? event.message.slice(0, 1024) : null,
+            }),
+          );
         }
       }).pipe(
         Effect.catchCause((cause) =>
@@ -137,7 +144,17 @@ export const layer = Layer.effect(
     // records. The existing PTY stream owns live output.
     yield* Effect.gen(function* () {
       yield* Effect.sleep("1 second");
-      for (const entry of active.values()) {
+      for (const [key, entry] of active) {
+        if (entry.completion) {
+          yield* completions
+            .withLock(key, finish(key, entry.completion))
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Could not save inline shell completion", cause),
+              ),
+            );
+          continue;
+        }
         if (!entry.dirty) continue;
         entry.dirty = false;
         yield* store
@@ -201,14 +218,17 @@ export const layer = Layer.effect(
         }),
       );
       if (opened._tag === "Failure" || opened.success.status === "error") {
-        yield* finish(key, {
-          status: "error",
-          exitCode: null,
-          error:
-            opened._tag === "Failure"
-              ? String(opened.failure).slice(0, 1024)
-              : "The shell could not start.",
-        });
+        yield* completions.withLock(
+          key,
+          finish(key, {
+            status: "error",
+            exitCode: null,
+            error:
+              opened._tag === "Failure"
+                ? String(opened.failure).slice(0, 1024)
+                : "The shell could not start.",
+          }),
+        );
       }
       return (yield* store.get(input.threadId, input.runId)) ?? record;
     });
