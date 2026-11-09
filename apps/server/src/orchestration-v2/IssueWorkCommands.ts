@@ -4,7 +4,6 @@ import type {
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2ServerCommand,
-  ProviderInstanceId,
   RunId,
   ThreadId,
   ThreadLinkedIssue,
@@ -82,21 +81,8 @@ export function makeIssueWorkCommands({
     Effect.map(IssueReadSnapshots, (reads) =>
       reads.find((read) => sameIssueRepository(read.issue, issue) && read.issue.id === issue.id),
     );
-  // Only issue workers and read-only children live below a repository root, so others skip the read.
-  const usageSprintRefusalFor = (
-    thread: OrchestrationV2AppThread,
-    instanceId: ProviderInstanceId,
-  ) =>
-    thread.lineage.rootThreadId === thread.id ||
-    (thread.linkedIssue === undefined && !isReadOnlyIssueRole(thread.role))
-      ? Effect.succeed(null)
-      : lineageUsageSprint(thread, projectionStore.getThread).pipe(
-          Effect.map((sprint) => usageSprintRefusal(sprint, instanceId)),
-        );
-  // Admission for every turn: new runs, follow-ups, continuations, queued runs and retries.
   const canStartIssueRun = Effect.fn("canStartIssueRun")(
-    function* (thread: OrchestrationV2AppThread, instanceId: ProviderInstanceId) {
-      if ((yield* usageSprintRefusalFor(thread, instanceId)) !== null) return false;
+    function* (thread: OrchestrationV2AppThread) {
       if (isReadOnlyIssueRole(thread.role) && thread.lineage.relationshipToParent === "subagent") {
         if (Option.isNone(issueWorkStore)) return true;
         const store = issueWorkStore.value;
@@ -127,7 +113,8 @@ export function makeIssueWorkCommands({
     },
     Effect.orElseSucceed(() => false),
   );
-  // Messages someone chose to send are refused outright; automatic ones wait in the queue instead.
+  // Only messages someone chose to send are refused; automatic follow-ups run normally.
+  // Only issue workers and read-only children live below a repository root, so others skip the read.
   const guardUsageSprintMessage = Effect.fn("guardUsageSprintMessage")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
     thread: OrchestrationV2AppThread,
@@ -136,13 +123,15 @@ export function makeIssueWorkCommands({
       command.delegatedCompletion !== undefined ||
       command.usageLimitContinuationOfRunId !== undefined ||
       command.automaticProviderContinuationOfRunId !== undefined ||
-      (command.createdBy !== "user" && command.creationSource !== "mcp")
+      (command.createdBy !== "user" && command.creationSource !== "mcp") ||
+      thread.lineage.rootThreadId === thread.id ||
+      (thread.linkedIssue === undefined && !isReadOnlyIssueRole(thread.role))
     )
       return;
-    const refusal = yield* usageSprintRefusalFor(
-      thread,
+    const refusal = usageSprintRefusal(
+      yield* lineageUsageSprint(thread, projectionStore.getThread).pipe(mapDispatchError(command)),
       (command.modelSelection ?? thread.modelSelection).instanceId,
-    ).pipe(mapDispatchError(command));
+    );
     if (refusal !== null)
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,

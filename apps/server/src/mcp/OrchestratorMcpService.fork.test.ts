@@ -1500,7 +1500,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           .delegateTask(scope, {
             task: "Review the change.",
             role: "reviewer",
-            // Even the sprint's own provider: the sprint cannot hold or stop a child elsewhere.
+            // Even the sprint's own provider: the sprint cannot stop a child elsewhere.
             target: yield* decodeTarget({
               providerInstanceId: codexInstanceId,
               environmentId: "environment:mcp-providers-linked",

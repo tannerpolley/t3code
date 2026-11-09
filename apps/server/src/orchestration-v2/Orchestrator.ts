@@ -1721,7 +1721,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (usageLimitHoldsQueue(projection, queuedRun.providerInstanceId)) {
         return;
       }
-      if (!(yield* issueWork.canStartRun(projection.thread, queuedRun.providerInstanceId))) return;
+      if (!(yield* issueWork.canStartRun(projection.thread))) return;
       if (queuedRun.workspacePreparation !== undefined && projection.thread.worktreePath === null) {
         const now = yield* DateTime.now;
         const preparation = (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
@@ -6168,7 +6168,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       activeRun === undefined &&
       ((projection.thread.linkedIssue !== undefined &&
         projection.runs.some((run) => run.status === "queued")) ||
-        !(yield* issueWork.canStartRun(projection.thread, modelSelection.instanceId)));
+        !(yield* issueWork.canStartRun(projection.thread)));
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
@@ -10566,7 +10566,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "Another run is active on this thread.",
       });
     }
-    const admitted = yield* issueWork.canStartRun(projection.thread, state.run.providerInstanceId);
+    const admitted = yield* issueWork.canStartRun(projection.thread);
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const scope = {
@@ -14027,6 +14027,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             if (
               cause._tag === "OrchestratorThreadAboveModeLimitError" ||
               cause._tag === "OrchestratorRuntimeModeAboveCeilingError" ||
+              // A sprint's end id is fixed per sprint; a failed attempt must stay retriable.
+              command.type === "repository.usage-sprint.end" ||
               (cause._tag === "OrchestratorDispatchError" &&
                 isIssueQueueRefreshRequired(cause.cause))
             )

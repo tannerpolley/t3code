@@ -1068,6 +1068,7 @@ export const layerWithOptions = (
 
           const retryUntilDone =
             effect.request.type.startsWith("issue.suspension.") ||
+            effect.request.type === "usage-sprint.notify" ||
             (effect.request.type === "provider-turn.interrupt" &&
               effect.request.retryUntilDone === true);
           const execution = executor

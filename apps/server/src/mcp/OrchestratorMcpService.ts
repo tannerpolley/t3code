@@ -2401,7 +2401,7 @@ const make = Effect.gen(function* () {
           Effect.map((records) => records.thread),
           Effect.mapError(threadManagementFailure),
         );
-        // The sprint can neither hold nor stop a child that runs on another environment.
+        // The sprint cannot stop a child that runs on another environment.
         const sprint = yield* loadUsageSprint(caller);
         if (sprint !== undefined)
           return yield* failure(

@@ -2,8 +2,6 @@ import {
   CommandId,
   CLOSED_ISSUE_SUSPENSION_REASON,
   OrchestratorMcpFailure,
-  type RepositoryUsageSprint,
-  type RepositoryUsageSprintEndReason,
   type RepositoryUsageSprintInput,
   ThreadId,
   type IssueQueueInput,
@@ -1419,37 +1417,37 @@ export const layer = Layer.effect(
     });
 
     // The sprint lock and the end command's start check keep a stale decision from ending a successor.
+    // A Stop passes its request id: a retried Stop replays its own end instead of ending a later sprint.
     const advanceUsageSprint = Effect.fn("IssueWorkService.advanceUsageSprint")(
-      function* (
-        rootThreadId: ThreadId,
-        decide: (
-          sprint: RepositoryUsageSprint,
-        ) => Effect.Effect<
-          { readonly end: RepositoryUsageSprintEndReason } | { readonly peak: number }
-        >,
-      ) {
+      function* (rootThreadId: ThreadId, stopRequestId: CommandId | undefined) {
         const config = yield* store.configuration(rootThreadId);
         const sprint = config?.usageSprint;
         if (config == null || sprint === undefined) return;
-        const decision = yield* decide(sprint);
-        if ("end" in decision)
-          // One id per sprint: a repeated or racing end replays the first one's receipt.
+        const provider = (yield* providers.getProviders).find(
+          (candidate) => candidate.instanceId === sprint.providerInstanceId,
+        );
+        const check = usageSprintCheck(sprint, provider, yield* Clock.currentTimeMillis);
+        // A Stop after the window already reset ends the sprint as that reset.
+        const reason = "end" in check ? check.end : stopRequestId === undefined ? null : "stopped";
+        if (reason !== null)
           return yield* threads
             .dispatch({
               type: "repository.usage-sprint.end",
-              commandId: CommandId.make(
-                `usage-sprint-end:${rootThreadId}:${config.usageSprintHistory?.length ?? 0}:${sprint.startedAt}`,
-              ),
+              commandId:
+                stopRequestId ??
+                CommandId.make(
+                  `usage-sprint-end:${rootThreadId}:${config.usageSprintHistory?.length ?? 0}:${sprint.startedAt}`,
+                ),
               threadId: rootThreadId,
               startedAt: sprint.startedAt,
-              reason: decision.end,
+              reason,
             })
             .pipe(Effect.mapError(mapError), Effect.asVoid);
         // Usage only climbs within a window, so idle ticks write nothing.
-        if (decision.peak > sprint.usedPercent)
+        if ("peak" in check && check.peak > sprint.usedPercent)
           yield* update(
             rootThreadId,
-            { ...config, usageSprint: { ...sprint, usedPercent: decision.peak } },
+            { ...config, usageSprint: { ...sprint, usedPercent: check.peak } },
             CommandId.make(`usage-sprint:${rootThreadId}:${config.revision}`),
           );
       },
@@ -1467,9 +1465,7 @@ export const layer = Layer.effect(
         });
       const instanceId = input.providerInstanceId;
       if (instanceId === null) {
-        yield* advanceUsageSprint(owner.rootThreadId, () =>
-          Effect.succeed({ end: "stopped" as const }),
-        );
+        yield* advanceUsageSprint(owner.rootThreadId, input.clientRequestId);
         return yield* repositoryStatus(input);
       }
       yield* assignments.withLock(
@@ -1518,14 +1514,7 @@ export const layer = Layer.effect(
 
     const sweepUsageSprints = Effect.gen(function* () {
       for (const rootThreadId of yield* store.usageSprintRoots())
-        yield* advanceUsageSprint(rootThreadId, (sprint) =>
-          Effect.gen(function* () {
-            const provider = (yield* providers.getProviders).find(
-              (candidate) => candidate.instanceId === sprint.providerInstanceId,
-            );
-            return usageSprintCheck(sprint, provider, yield* Clock.currentTimeMillis);
-          }),
-        ).pipe(
+        yield* advanceUsageSprint(rootThreadId, undefined).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Usage sprint sweep failed", { rootThreadId, cause }),
           ),
@@ -2082,7 +2071,6 @@ export const layer = Layer.effect(
                   "repository.work.update",
                   "repository.work.handoff",
                   "repository.work.restore",
-                  "repository.usage-sprint.end",
                 ].includes(receipt.value.commandType)
               )
                 return;

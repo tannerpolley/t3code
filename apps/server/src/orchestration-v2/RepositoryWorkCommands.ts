@@ -626,13 +626,7 @@ export function makeRepositoryWorkCommands({
     command: OrchestrationV2ServerCommand,
     startNextQueuedRun: (id: ThreadId) => Effect.Effect<void, E, R>,
   ) {
-    // Ending a sprint starts the read-only turns it held; issue workers need the issue reads
-    // of the `repository.work.continue` that the sprint end's config change triggers.
-    if (
-      (command.type === "repository.work.continue" ||
-        command.type === "repository.usage-sprint.end") &&
-      Option.isSome(issueWorkStore)
-    ) {
+    if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
       for (const threadId of yield* issueWorkStore.value
         .admissionThreads(command.threadId)
         .pipe(mapDispatchError(command)))

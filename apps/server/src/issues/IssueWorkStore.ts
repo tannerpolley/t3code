@@ -501,10 +501,11 @@ export const layer = Layer.effect(
           Effect.mapError(mapError),
         ),
       ),
+      // CROSS JOIN pins the few owner rows as the outer loop; otherwise SQLite scans every thread.
       usageSprintRoots: Effect.fn("IssueWorkStore.usageSprintRoots")(() =>
         sql<{ root_thread_id: string }>`
         SELECT owner.root_thread_id FROM orchestration_v2_projection_repository_orchestration owner
-        JOIN orchestration_v2_projection_threads thread ON thread.thread_id = owner.root_thread_id
+        CROSS JOIN orchestration_v2_projection_threads thread ON thread.thread_id = owner.root_thread_id
         WHERE thread.deleted_at IS NULL
           AND json_type(thread.payload_json, '$.repositoryOrchestration.usageSprint') = 'object'
           AND json_type(thread.payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
