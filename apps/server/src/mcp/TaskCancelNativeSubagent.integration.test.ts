@@ -51,7 +51,7 @@ const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
 
-it.effect("task_cancel ends native subagents and a never-ending command", () =>
+it.effect("task_cancel ends a delegated child's background native subagent", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("task-cancel-native-subagent");
@@ -258,14 +258,6 @@ it.effect("task_cancel ends native subagents and a never-ending command", () =>
         );
         for (const event of [
           {
-            type: "provider_thread.updated",
-            driver,
-            providerThread: {
-              ...child.turn.providerThread,
-              pendingBackgroundTasks: [{ taskId: "never-exits", kind: "command", awaited: true }],
-            },
-          },
-          {
             type: "node.updated",
             driver,
             node: {
@@ -348,7 +340,7 @@ it.effect("task_cancel ends native subagents and a never-ending command", () =>
         };
         const before = yield* service.taskStatus(scope, task.id);
         assert.equal(before.status, "running");
-        assert.equal(before.workState, "working");
+        assert.equal(before.workState, "waiting_for_children");
 
         const cancelled = yield* service.cancelTask(scope, {
           taskId: task.id,
@@ -374,18 +366,6 @@ it.effect("task_cancel ends native subagents and a never-ending command", () =>
         const after = yield* service.taskStatus(scope, task.id);
         assert.equal(after.status, "completed");
         assert.notEqual(after.workState, "waiting_for_children");
-        yield* orchestrator.recoverDelegatedTask(task.childThreadId!, child.turn.runId);
-        const delivered = (yield* orchestrator.getThreadProjection(
-          parentThreadId,
-        )).contextTransfers.filter((row) => row.type === "subagent_result");
-        assert.equal(delivered.length, 1);
-        yield* orchestrator.recoverDelegatedTask(task.childThreadId!, child.turn.runId);
-        assert.equal(
-          (yield* orchestrator.getThreadProjection(parentThreadId)).contextTransfers.filter(
-            (row) => row.type === "subagent_result",
-          ).length,
-          1,
-        );
       }).pipe(Effect.provide(layerTest));
     }),
   ),

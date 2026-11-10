@@ -1,4 +1,3 @@
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeManagedIssueDelegation } from "./ManagedIssueDelegation.ts";
 import {
   makeRepositoryMcpMethods,
@@ -1508,22 +1507,20 @@ const make = Effect.gen(function* () {
     });
     const childRun = delegatedTaskRun(childControls, task);
     const terminalRun = latestTerminalResultRun(childControls, childRun);
-    const progress = delegatedTaskProgress(
-      {
-        ...childControls,
-        pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
-      },
-      task,
-    );
+    const progress = delegatedTaskProgress({
+      ...childControls,
+      pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
+    });
     const taskResultRun =
-      progress.state === "result_available"
-        ? progress.resultRun
-        : childRun?.delegatedTaskId === task.id
-          ? childControls.runs
-              .filter((run) => run.delegatedTaskId === task.id)
-              .toSorted((a, b) => b.ordinal - a.ordinal)[0]
-          : progress.resultRun;
-    const taskWorkState = progress.state;
+      childRun?.delegatedTaskId === task.id
+        ? childControls.runs
+            .filter((run) => run.delegatedTaskId === task.id)
+            .toSorted((a, b) => b.ordinal - a.ordinal)[0]
+        : progress.resultRun;
+    const taskWorkState = delegatedTaskProgress(
+      { ...childControls, pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [] },
+      task,
+    ).state;
     const resultRunIds = [
       ...new Set(
         [taskResultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
@@ -2831,15 +2828,8 @@ const make = Effect.gen(function* () {
         } satisfies OrchestratorMcpTaskCancelResult;
       }
       const child = yield* loadProjection(childThreadId);
-      const childShell = yield* threadManagement
-        .getThreadShell(childThreadId)
-        .pipe(Effect.mapError(threadManagementFailure));
       if (
         current.workState !== "waiting_for_children" &&
-        !backgroundWorkHoldsCompletion([
-          ...(childShell?.pendingBackgroundTasks ?? []),
-          ...child.providerThreads.flatMap((thread) => thread.pendingBackgroundTasks ?? []),
-        ]) &&
         ThreadManagementService.latestActiveRun(child) === undefined &&
         !child.runs.some(
           (run) =>

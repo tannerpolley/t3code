@@ -300,10 +300,6 @@ export function delegatedTaskProgress(
       backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
     ) ??
       false);
-  const awaitingCommand = [
-    ...(projection.pendingBackgroundTasks ?? []),
-    ...(projection.providerThreads?.flatMap((thread) => thread.pendingBackgroundTasks ?? []) ?? []),
-  ].some((task) => task.kind === "command" && task.awaited === true);
   const resultRun = workRuns
     .filter(
       (run) =>
@@ -319,7 +315,7 @@ export function delegatedTaskProgress(
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
   return {
     state:
-      active || taskQueued || awaitingCommand || resultRun === undefined
+      active || taskQueued || resultRun === undefined
         ? ("working" as const)
         : children
           ? ("waiting_for_children" as const)

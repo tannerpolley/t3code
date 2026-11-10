@@ -236,35 +236,35 @@ describe("OrchestratorMcpService", () => {
           },
         ],
       } as unknown as OrchestrationV2ThreadProjection;
-      const childProjection = () =>
-        ({
-          thread: { id: childThreadId, title: "Child" },
-          runs: [
-            {
-              id: RunId.make("run:mcp-restart-child"),
-              ordinal: 1,
-              status: "cancelled",
-              delegatedTaskId: taskId,
-            },
-            {
-              id: RunId.make("run:mcp-restart-later"),
-              ordinal: 2,
-              status: readFails || !awaitsRestart ? "cancelled" : "running",
-            },
-          ],
-          contextTransfers: [],
-          messages: [],
-          subagents: [],
-          providerThreads: [],
-          runtimeRequests: [],
-          turnItems: [],
-        }) as unknown as OrchestrationV2ThreadProjection;
+      const childProjection = {
+        thread: { id: childThreadId, title: "Child" },
+        runs: [
+          {
+            id: RunId.make("run:mcp-restart-child"),
+            ordinal: 1,
+            status: "cancelled",
+            delegatedTaskId: taskId,
+          },
+          {
+            id: RunId.make("run:mcp-restart-later"),
+            ordinal: 2,
+            status: "running",
+            delegatedTaskId: NodeId.make("other-task"),
+          },
+        ],
+        contextTransfers: [],
+        messages: [],
+        subagents: [],
+        providerThreads: [],
+        runtimeRequests: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadShell: () => Effect.succeed(null),
           getThreadRecords: (threadId) =>
-            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection()),
+            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           delegatedTaskResultPending: () =>
             readFails
               ? Effect.fail(new OrchestratorProjectionError({ threadId: childThreadId }))

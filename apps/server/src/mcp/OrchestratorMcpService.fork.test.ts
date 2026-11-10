@@ -212,7 +212,7 @@ describe("OrchestratorMcpService", () => {
         hasBackgroundCommand = true;
         const background = yield* service.taskStatus(scope, taskId);
         assert.equal(background.status, "running");
-        assert.equal(background.workState, "working");
+        assert.equal(background.workState, "waiting_for_children");
         assert.isNull(background.summary);
         hasBackgroundCommand = false;
         hasNestedWork = false;

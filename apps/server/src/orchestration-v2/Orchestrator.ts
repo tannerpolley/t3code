@@ -8281,7 +8281,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     if (run === undefined || run.delegatedTaskId !== undefined) return;
     const parent = yield* projectionStore
-      .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"])
+      .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
+        subagentIds: child.forkedFrom?.type === "node" ? [child.forkedFrom.nodeId] : [],
+      })
       .pipe(mapDispatchError(command));
     const original = parent.subagents.find(
       (task) =>
@@ -8289,36 +8291,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.childThreadId === child.id &&
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
-    if (
-      command.notification?.source.kind === "command" ||
-      command.notification?.source.kind === "background_task"
-    ) {
-      const records = yield* projectionStore.getThreadRecords(child.id, ["runs"]);
-      const previous = records.runs
-        .filter(
-          (row) => row.delegatedTaskId !== undefined && row.startedAt !== null && row.id !== run.id,
-        )
-        .toSorted((a, b) => b.ordinal - a.ordinal)[0];
-      const held = parent.subagents.find(
-        (task) =>
-          task.childThreadId === child.id &&
-          task.id === previous?.delegatedTaskId &&
-          !forkDelegatedCompletion.hasPublishedResult(task),
-      );
-      if (held !== undefined) {
-        yield* emit(
-          events,
-          command,
-        )({
-          type: "run.updated",
-          threadId: child.id,
-          runId: run.id,
-          occurredAt: message.createdAt,
-          payload: { ...run, delegatedTaskId: held.id },
-        });
-        return;
-      }
-    }
     if (original === undefined || original.result === null) return;
     const owner =
       parent.runs.filter(isActiveRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??
@@ -13079,10 +13051,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         forkDelegatedCompletion.hasPublishedResult(task)
       )
         continue;
-      const progress = delegatedTaskProgress(
-        { ...childControls, pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [] },
-        task,
-      );
       let resultRun = delegatedTaskResultRun(childControls, task.id);
       if (resultRun === undefined && task.id !== childControls.thread.forkedFrom.nodeId) {
         const latest = closed
@@ -13106,21 +13074,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         progress.resultRun ??
         (closed ? (latestExecutedRun(childControls.runs) ?? undefined) : undefined);
       if (resultRun === undefined) continue;
+      const taskProgress = delegatedTaskProgress(
+        { ...childControls, pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [] },
+        task,
+      );
       if (
         !closed &&
         delegatedTaskTerminalStatus(runOutcome(resultRun)) !== null &&
-        progress.state !== "result_available"
+        taskProgress.state !== "result_available" &&
+        usageLimitSwitchResultRun(childControls.thread, childControls.runs, task.id) === undefined
       )
         continue;
       yield* finalizeAppOwnedSubagentTask(childControls, {
         ...options,
         task,
-        resultRun:
-          !closed &&
-          progress.state === "result_available" &&
-          delegatedTaskTerminalStatus(runOutcome(resultRun)) !== null
-            ? (progress.resultRun ?? resultRun)
-            : resultRun,
+        resultRun,
       });
     }
 
@@ -14639,17 +14607,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         { messageRoles: ["user"] },
       );
       const childShell = yield* projectionStore.getThreadShell(childThreadId);
-      const progress = delegatedTaskProgress(
-        {
-          ...child,
-          pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
-        },
+      const taskProgress = delegatedTaskProgress(
+        { ...child, pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [] },
         taskId === undefined ? undefined : { id: taskId },
       );
       if (
         child.thread.archivedAt === null &&
         child.thread.deletedAt === null &&
-        progress.state !== "result_available"
+        taskProgress.state !== "result_available"
       )
         return true;
       const pending = yield* forkDelegatedCompletion.taskResultPending(
@@ -14658,6 +14623,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         child,
       );
       if (pending !== undefined) return pending;
+      const progress = delegatedTaskProgress({
+        ...child,
+        pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
+      });
+
       if (progress.state !== "result_available") return true;
       if (progress.resultRun === undefined) return false;
       return yield* childAwaitsRecoveryContinuation(child.thread, child.runs, progress.resultRun);
