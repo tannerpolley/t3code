@@ -270,7 +270,8 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
     });
     return {
       idleRoot: moving === undefined ? retiringRoot : target,
-      moving: moving !== undefined,
+      // Only a deliberately paused root may move during its own turn; an unpaused one must be idle.
+      ownTurnsMayRun: moving?.paused === true,
       events,
     };
   });

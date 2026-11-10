@@ -73,7 +73,7 @@ export function makeRepositoryWorkCommands({
       { readonly type: "thread.archive" | "repository.work.restore" }
     >,
     thread: OrchestrationV2AppThread,
-    // A root moving to its project's new record stays the same thread, so its own turns may run.
+    // A paused root moving to its project's new record stays the same thread, so its own turns may run.
     moving = false,
   ) {
     if (
@@ -161,7 +161,7 @@ export function makeRepositoryWorkCommands({
   ) {
     const restored = yield* issueWorkRecovery.restore(command).pipe(mapDispatchError(command));
     if (restored.idleRoot !== null)
-      yield* guardRootLifecycle(command, restored.idleRoot, restored.moving);
+      yield* guardRootLifecycle(command, restored.idleRoot, restored.ownTurnsMayRun);
     for (const event of restored.events)
       yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
   });

@@ -2112,45 +2112,99 @@ describe("fresh-thread repository handoff", () => {
     }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
-  it.effect("a user assignment moves an unpaused root off its project's previous record", () =>
-    Effect.gen(function* () {
-      const service = yield* IssueWorkService.IssueWorkService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const store = yield* IssueWorkStore.IssueWorkStore;
-      const root = ThreadId.make("unpaused-moving-root");
-      const previous = {
-        ...config,
-        host: "git.example.com",
-        repositoryId: "repo:previous",
-        launchCommandId: CommandId.make("unpaused-moving-root:create"),
-        milestones: [],
-      };
-      yield* threads.dispatch({
-        type: "thread.create",
-        commandId: previous.launchCommandId,
-        threadId: root,
-        projectId,
-        title: "Repository orchestrator",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        repositoryOrchestration: previous,
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const assigned = yield* service.assignOrchestrator({
-        ...reference,
-        projectId,
-        targetThreadId: root,
-        clientRequestId: CommandId.make("assign:from-previous"),
-      });
-      assert.equal(assigned.rootThreadId, root);
-      assert.deepInclude(assigned.orchestration!, { paused: false, revision: 2 });
-      assert.isNull(yield* store.repositoryOwner(previous));
-      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-    }).pipe(Effect.provide(fixture({ recovery: true }))),
+  it.effect(
+    "a user assignment moves an unpaused root only when its old record is idle and empty",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const createRoot = (
+          threadId: ThreadId,
+          previous: Omit<typeof config, "milestones" | "suspendedIssues"> & {
+            readonly suspendedIssues: ReadonlyArray<{
+              readonly id: string;
+              readonly reason: string;
+            }>;
+          },
+        ) =>
+          threads.dispatch({
+            type: "thread.create",
+            commandId: previous.launchCommandId,
+            threadId,
+            projectId,
+            title: "Repository orchestrator",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            repositoryOrchestration: { ...previous, milestones: [] },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        const assign = (targetThreadId: ThreadId, key: string) =>
+          service.assignOrchestrator({
+            ...reference,
+            projectId,
+            targetThreadId,
+            clientRequestId: CommandId.make(key),
+          });
+        const suspended = ThreadId.make("unpaused-suspended-root");
+        const withSuspension = {
+          ...config,
+          host: "old.example.com",
+          repositoryId: "repo:previous-suspended",
+          launchCommandId: CommandId.make("unpaused-suspended-root:create"),
+          suspendedIssues: [{ id: "issue:7", reason: "Blocked" }],
+        };
+        yield* createRoot(suspended, withSuspension);
+        assert.equal(
+          (yield* assign(suspended, "assign:suspended").pipe(Effect.result))._tag,
+          "Failure",
+        );
+        assert.deepInclude((yield* store.configuration(suspended))!, {
+          host: withSuspension.host,
+          revision: 1,
+          paused: false,
+        });
+
+        const root = ThreadId.make("unpaused-moving-root");
+        const previous = {
+          ...config,
+          host: "git.example.com",
+          repositoryId: "repo:previous",
+          launchCommandId: CommandId.make("unpaused-moving-root:create"),
+        };
+        yield* createRoot(root, previous);
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          threadId: root,
+          commandId: CommandId.make("unpaused-moving-root:busy"),
+          messageId: MessageId.make("unpaused-moving-root:busy"),
+          text: "Work in progress",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        assert.equal((yield* assign(root, "assign:busy").pipe(Effect.result))._tag, "Failure");
+        assert.deepInclude((yield* store.configuration(root))!, {
+          host: previous.host,
+          revision: 1,
+          paused: false,
+        });
+        yield* finish(root, "unpaused-moving-root:finished");
+        yield* worker.drain();
+
+        const assigned = yield* assign(root, "assign:idle");
+        assert.equal(assigned.rootThreadId, root);
+        assert.deepInclude(assigned.orchestration!, { paused: false, revision: 2 });
+        assert.isNull(yield* store.repositoryOwner(previous));
+        yield* worker.drain();
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
   it.effect("rejects a child restore target without taking locks a child follow-up holds", () =>
