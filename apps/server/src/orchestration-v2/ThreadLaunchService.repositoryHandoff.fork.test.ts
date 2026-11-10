@@ -2120,29 +2120,50 @@ describe("fresh-thread repository handoff", () => {
         const threads = yield* ThreadManagement.ThreadManagementService;
         const store = yield* IssueWorkStore.IssueWorkStore;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const usageSprint = {
+          providerInstanceId: modelSelection.instanceId,
+          windowId: "weekly",
+          usedPercent: 40,
+          resetsAt: "2026-12-01T00:00:00.000Z",
+          startedAt: "2026-10-02T00:00:00.000Z",
+        };
         const createRoot = (
-          threadId: ThreadId,
-          previous: Omit<typeof config, "milestones" | "suspendedIssues"> & {
-            readonly suspendedIssues: ReadonlyArray<{
+          name: string,
+          work: {
+            readonly milestones?: ReadonlyArray<typeof plan>;
+            readonly suspendedIssues?: ReadonlyArray<{
               readonly id: string;
               readonly reason: string;
             }>;
+            readonly usageSprint?: typeof usageSprint;
           },
         ) =>
-          threads.dispatch({
-            type: "thread.create",
-            commandId: previous.launchCommandId,
-            threadId,
-            projectId,
-            title: "Repository orchestrator",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-            repositoryOrchestration: { ...previous, milestones: [] },
-            createdBy: "user",
-            creationSource: "web",
+          Effect.gen(function* () {
+            const threadId = ThreadId.make(`unpaused-${name}-root`);
+            const previous = {
+              ...config,
+              host: `${name}.example.com`,
+              repositoryId: `repo:previous-${name}`,
+              launchCommandId: CommandId.make(`unpaused-${name}-root:create`),
+              milestones: [],
+              ...work,
+            };
+            yield* threads.dispatch({
+              type: "thread.create",
+              commandId: previous.launchCommandId,
+              threadId,
+              projectId,
+              title: "Repository orchestrator",
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              repositoryOrchestration: previous,
+              createdBy: "user",
+              creationSource: "web",
+            });
+            return { threadId, previous };
           });
         const assign = (targetThreadId: ThreadId, key: string) =>
           service.assignOrchestrator({
@@ -2151,33 +2172,26 @@ describe("fresh-thread repository handoff", () => {
             targetThreadId,
             clientRequestId: CommandId.make(key),
           });
-        const suspended = ThreadId.make("unpaused-suspended-root");
-        const withSuspension = {
-          ...config,
-          host: "old.example.com",
-          repositoryId: "repo:previous-suspended",
-          launchCommandId: CommandId.make("unpaused-suspended-root:create"),
-          suspendedIssues: [{ id: "issue:7", reason: "Blocked" }],
+        const refused = (threadId: ThreadId, key: string, host: string) =>
+          Effect.gen(function* () {
+            assert.equal((yield* assign(threadId, key).pipe(Effect.result))._tag, "Failure", key);
+            assert.deepInclude((yield* store.configuration(threadId))!, {
+              host,
+              revision: 1,
+              paused: false,
+            });
+          });
+        const recordedWork = {
+          suspension: { suspendedIssues: [{ id: "issue:7", reason: "Blocked" }] },
+          plan: { milestones: [plan] },
+          sprint: { usageSprint },
         };
-        yield* createRoot(suspended, withSuspension);
-        assert.equal(
-          (yield* assign(suspended, "assign:suspended").pipe(Effect.result))._tag,
-          "Failure",
-        );
-        assert.deepInclude((yield* store.configuration(suspended))!, {
-          host: withSuspension.host,
-          revision: 1,
-          paused: false,
-        });
+        for (const [name, work] of Object.entries(recordedWork)) {
+          const { threadId, previous } = yield* createRoot(name, work);
+          yield* refused(threadId, `assign:${name}`, previous.host);
+        }
 
-        const root = ThreadId.make("unpaused-moving-root");
-        const previous = {
-          ...config,
-          host: "git.example.com",
-          repositoryId: "repo:previous",
-          launchCommandId: CommandId.make("unpaused-moving-root:create"),
-        };
-        yield* createRoot(root, previous);
+        const { threadId: root, previous } = yield* createRoot("moving", {});
         yield* threads.dispatch({
           type: "message.dispatch",
           threadId: root,
@@ -2190,12 +2204,7 @@ describe("fresh-thread repository handoff", () => {
           creationSource: "web",
         });
         yield* worker.drain();
-        assert.equal((yield* assign(root, "assign:busy").pipe(Effect.result))._tag, "Failure");
-        assert.deepInclude((yield* store.configuration(root))!, {
-          host: previous.host,
-          revision: 1,
-          paused: false,
-        });
+        yield* refused(root, "assign:busy", previous.host);
         yield* finish(root, "unpaused-moving-root:finished");
         yield* worker.drain();
 

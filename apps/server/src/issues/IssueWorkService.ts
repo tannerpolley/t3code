@@ -1559,17 +1559,15 @@ export const layer = Layer.effect(
           : yield* adapters.get(target.modelSelection.instanceId).pipe(Effect.mapError(mapError));
       const registered =
         target === null ? undefined : ((yield* store.configuration(target.id)) ?? undefined);
+      const movable =
+        moveTo !== undefined &&
+        isMovableRepositoryRegistration(registered, moveTo, moveUnpaused) &&
+        // An unpaused record with queued issues is refused before any command is stored.
+        (registered.paused || (yield* store.queue(registered)).length === 0);
       if (
         target === null ||
         !isRepositoryOrchestratorEligible(
-          {
-            ...target,
-            repositoryOrchestration:
-              moveTo !== undefined &&
-              isMovableRepositoryRegistration(registered, moveTo, moveUnpaused)
-                ? undefined
-                : registered,
-          },
+          { ...target, repositoryOrchestration: movable ? undefined : registered },
           adapter?.driver,
           input,
         )
