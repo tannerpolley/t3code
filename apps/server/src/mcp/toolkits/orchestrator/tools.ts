@@ -119,7 +119,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Implementors default to worktree; read-only roles share. Managed implementors require `issue` and async mode. Read-only roles only link the issue. Options inherit for the same provider and model; explicit options override. Questions and approvals route to the parent. Keep `taskId` for `task_status` and `task_cancel`.",
+    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Implementors default to worktree; read-only roles share. Designer researches and plans issues through issue tools, without code edits. Managed implementors require `issue` and async mode. Read-only roles only link the issue. Options inherit for the same provider and model; explicit options override. Questions and approvals route to the parent. Keep `taskId` for `task_status` and `task_cancel`.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -433,7 +433,7 @@ export const OrchestratorToolkit = Toolkit.make(
   }).annotate(Tool.Readonly, true),
   Tool.make("set_repository_worker_limit", {
     description:
-      "Set either independent repository limit (1–32): workerLimit for implementors, or readOnlyLimit for reviewer/checker/investigator children (default 4). Read get_repository_orchestration for the current revision. Raising admits queued work promptly; lowering holds new starts without stopping running children.",
+      "Set either independent repository limit (1–32): workerLimit for implementors, or readOnlyLimit for designer/reviewer/checker/investigator children (default 4). Read get_repository_orchestration for the current revision. Raising admits queued work promptly; lowering holds new starts without stopping running children.",
     parameters: RepositoryConcurrencyLimitInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,

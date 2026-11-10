@@ -230,7 +230,7 @@ type DelegateTaskInput = {
     model?: string;
   };
   title?: string;
-  role?: "orchestrator" | "implementor" | "reviewer" | "investigator" | "checker";
+  role?: "orchestrator" | "designer" | "implementor" | "reviewer" | "investigator" | "checker";
   mode?: "async" | "wait";
   timeoutMs?: number;
   clientRequestId?: string;
@@ -269,12 +269,12 @@ own worktree, for children that edit code in parallel: its first run starts in
 from the commit the parent's checkout is on (local commits only; uncommitted
 edits are not copied), binds the child, runs the project's setup script, and
 releases the run. Only `implementor` defaults to `worktree`; Orchestrator,
-Reviewer, Investigator and Checker share the caller's checkout. Checker reviews
+Designer, Reviewer, Investigator and Checker share the caller's checkout. Checker reviews
 the builder's existing checkout. Explicit `isolation` overrides the role
 default. Legacy role names remain accepted: `implementation` maps to
-Implementor, `research`/`design` to Investigator, `review` to Reviewer, and
+Implementor, `sprinter` to Implementor, `design` to Designer, `research` to Investigator, `review` to Reviewer, and
 `test` to Checker. A child without a role, or with legacy `general`, is an
-Implementor when it gets its own worktree and an Investigator otherwise. Implementor has Fast and Thorough model profiles; pass a profile's
+Implementor when it gets its own worktree and an Investigator otherwise. Implementor has Sprinter and Implementor model profiles; pass a profile's
 Target JSON as `target` and `implementor` as `role`. When the checkout has no
 commit to branch from, a defaulted worktree falls back to `shared` with a
 `workspaceNote`, and an explicit one fails. The branch name derives from the
@@ -282,6 +282,8 @@ title and the delegate command id, so a retry with the same `clientRequestId`
 keeps the accepted decision. A preparation failure fails the child's run,
 which the user can retry. Nothing merges the branch back or removes the
 worktree automatically.
+
+Use Designer before implementation when a request needs research or a plan. It edits no code; it writes the problem, research findings, plan, strategy decisions and done criteria through the issue tools, then returns a short final result. Like other read-only roles, it shares the checkout, uses a read-only slot and only links an optional issue without claiming it.
 
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the V2 command

@@ -117,7 +117,7 @@ describe("stored fork settings compatibility", () => {
       id: "builder",
       targets: stored.server.modelRoles.map((role: { target: unknown }) => role.target),
     });
-    expect(server.modelRoles).toHaveLength(7);
+    expect(server.modelRoles).toHaveLength(8);
     expect(encodeServerSettings(server)).toMatchObject({
       ...serverFields,
       projectFolderRoot: "/work/projects",

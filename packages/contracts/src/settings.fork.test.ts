@@ -31,14 +31,24 @@ describe("model roles", () => {
     const roles = decodeServerSettings({ enableAgentBrowserAccess: false }).modelRoles;
     expect(roles.map((entry) => entry.name)).toEqual([
       "Orchestrator",
-      "Implementor · Fast",
-      "Implementor · Thorough",
-      "Reviewer",
-      "Investigator",
+      "Designer",
+      "Sprinter",
       "Checker",
+      "Implementor",
+      "Investigator",
+      "Reviewer",
     ]);
+    expect(roles[0]!.targets[0]).toMatchObject({
+      model: "claude-opus-5-5",
+      options: [{ id: "effort", value: "medium" }],
+    });
+    expect(roles[1]!.targets[0]).toEqual({
+      providerInstanceId: "claudeAgent",
+      model: "claude-fable-5-2",
+      options: [{ id: "effort", value: "medium" }],
+    });
     expect(new Set(roles.map((entry) => entry.role))).toEqual(
-      new Set(["orchestrator", "implementor", "reviewer", "investigator", "checker"]),
+      new Set(["designer", "orchestrator", "implementor", "reviewer", "investigator", "checker"]),
     );
   });
 
@@ -56,7 +66,7 @@ describe("model roles", () => {
   });
 
   it("seeds the Fast Implementor profile with Claude medium and Codex Sol medium, in default order", () => {
-    expect(decodeServerSettings({}).modelRoles[1]!.targets).toEqual([
+    expect(decodeServerSettings({}).modelRoles[2]!.targets).toEqual([
       {
         providerInstanceId: "claudeAgent",
         model: "claude-opus-5-5",
@@ -115,6 +125,18 @@ describe("model roles", () => {
       ],
     }));
     const roles = decodeServerSettings({ modelRoles: saved }).modelRoles;
+    expect(roles.map((entry) => entry.id)).toEqual([
+      "orchestrator",
+      "implementor-fast",
+      "checker",
+      "implementor-thorough",
+      "investigator",
+      "reviewer",
+      "designer",
+    ]);
+    expect(roles.find((entry) => entry.id === "implementor-fast")?.name).toBe("Sprinter");
+    expect(roles.find((entry) => entry.id === "implementor-thorough")?.name).toBe("Implementor");
+    expect(roles[0]!.targets).toEqual(saved[0]!.targets);
     expect(roles.find((entry) => entry.id === "implementor-fast")?.targets).toEqual([
       saved[1]!.targets[0],
       saved[4]!.targets[0],
@@ -128,6 +150,7 @@ describe("model roles", () => {
     expect(roles.find((entry) => entry.id === "checker")?.targets).toEqual(saved[2]!.targets);
     expect(
       roles
+        .filter((entry) => entry.id !== "designer")
         .flatMap((entry) => entry.targets)
         .map((target) => target.model)
         .sort(),

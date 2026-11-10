@@ -19,7 +19,7 @@ export const SidebarTogglePosition = Schema.Literals(["left", "right"]);
 export type SidebarTogglePosition = typeof SidebarTogglePosition.Type;
 
 const MAX_LEGACY_CUSTOM_MODEL_ROLES = 26;
-export const MAX_MODEL_ROLES = MAX_LEGACY_CUSTOM_MODEL_ROLES + 6;
+export const MAX_MODEL_ROLES = MAX_LEGACY_CUSTOM_MODEL_ROLES + 7;
 // Legacy lists can converge on one profile without discarding any saved choices.
 export const MAX_MODEL_ROLE_TARGETS = 12;
 export const MAX_MODEL_ROLE_NAME_LENGTH = 60;
@@ -127,12 +127,20 @@ export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
     "Plans, delegates, integrates",
     "claudeAgent",
     "claude-opus-5-5",
-    "high",
+    "medium",
+  ),
+  modelRole(
+    "designer",
+    "Designer",
+    "Research requests and design issues with a plan and strategy decisions",
+    "claudeAgent",
+    "claude-fable-5-2",
+    "medium",
   ),
   {
     ...modelRole(
       "implementor-fast",
-      "Implementor · Fast",
+      "Sprinter",
       "Bounded changes where speed matters; a Checker reviews afterwards",
       "claudeAgent",
       "claude-opus-5-5",
@@ -148,10 +156,18 @@ export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
     role: "implementor",
     profile: "fast" as const,
   },
+  modelRole(
+    "checker",
+    "Checker",
+    "Check a build for missed places, weak tests and edge cases",
+    "codex",
+    "gpt-6.1-sol",
+    "high",
+  ),
   {
     ...modelRole(
       "implementor-thorough",
-      "Implementor · Thorough",
+      "Implementor",
       "Broad, cross-cutting or correctness-critical implementation",
       "codex",
       "gpt-6.1-sol",
@@ -161,14 +177,6 @@ export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
     profile: "thorough" as const,
   },
   modelRole(
-    "reviewer",
-    "Reviewer",
-    "Strong read-only review and design guidance",
-    "codex",
-    "gpt-6-astra",
-    "xhigh",
-  ),
-  modelRole(
     "investigator",
     "Investigator",
     "Gather evidence and investigate questions",
@@ -177,12 +185,12 @@ export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
     "max",
   ),
   modelRole(
-    "checker",
-    "Checker",
-    "Check a build for missed places, weak tests and edge cases",
+    "reviewer",
+    "Reviewer",
+    "Strong read-only review and design guidance",
     "codex",
-    "gpt-6.1-sol",
-    "high",
+    "gpt-6-astra",
+    "xhigh",
   ),
 ].map((entry) => ({ ...entry, role: resolveThreadRole(entry.id)! }));
 
@@ -203,7 +211,7 @@ function migrateModelRoles(saved: ReadonlyArray<ModelRole>): ReadonlyArray<Model
         ? {}
         : {
             role,
-            name: `${THREAD_ROLE_LABELS[role]}${profile ? ` · ${profile === "fast" ? "Fast" : "Thorough"}` : ""}`,
+            name: profile === "fast" ? "Sprinter" : THREAD_ROLE_LABELS[role],
           }),
       ...(profile === undefined ? {} : { profile }),
     };

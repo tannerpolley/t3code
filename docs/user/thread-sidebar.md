@@ -428,8 +428,9 @@ To tell agents which model and effort suit each kind of delegated work, edit
 **Model roles** in **Settings → Providers** on web and desktop. **Settings → Customizations**
 also gathers every fork setting, grouped by its normal tab. Agents use these
 roles at their own discretion; your explicit instructions in a thread win. The
-standard roles are Orchestrator, Implementor, Reviewer, Investigator and Checker.
-Implementor has separate Fast and Thorough profiles, each with its own model and
+standard roles are Orchestrator, Designer, Implementor, Reviewer, Investigator and Checker.
+Designer researches requests and writes issue plans before implementation.
+Implementor has separate Sprinter and Implementor profiles, each with its own model and
 effort choices. Choices are ranked by available weekly usage; unavailable choices
 are marked. Codex agents see changes on their next turn and
 Claude agents in their next session; the current choices are always available through

@@ -4,6 +4,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 
 export const THREAD_ROLES = [
   "orchestrator",
+  "designer",
   "implementor",
   "reviewer",
   "investigator",
@@ -13,6 +14,7 @@ export const ThreadRole = Schema.Literals(THREAD_ROLES);
 export type ThreadRole = typeof ThreadRole.Type;
 export const THREAD_ROLE_LABELS: Record<ThreadRole, string> = {
   orchestrator: "Orchestrator",
+  designer: "Designer",
   implementor: "Implementor",
   reviewer: "Reviewer",
   investigator: "Investigator",
@@ -24,7 +26,8 @@ export const LEGACY_THREAD_ROLES = {
   implementation: "implementor",
   research: "investigator",
   review: "reviewer",
-  design: "investigator",
+  design: "designer",
+  sprinter: "implementor",
   test: "checker",
   general: "implementor",
   "fast-builder": "implementor",
@@ -89,13 +92,8 @@ const inWorktree = (thread: ThreadRoleDefaultInput) =>
   Boolean(thread.branch && thread.worktreePath);
 
 /**
- * The role every thread works as. A stored role wins. Without one, a thread
- * working in a worktree or a child agent is an Implementor, and any other
- * thread, one the user starts outside a worktree, is an Orchestrator.
- *
- * Top-level threads keep this default unstored: a thread created in the main
- * checkout may move into a worktree before or after it starts, and becomes an
- * Implementor there (see `worktreeRole`).
+ * Top-level threads keep their default unstored so moving into a worktree can
+ * make them Implementors (see `worktreeRole`).
  */
 export function effectiveThreadRole(
   thread: ThreadRoleDefaultInput & {

@@ -67,7 +67,7 @@ describe("T3 orchestration provider instructions", () => {
     );
     const fastBuilder = text
       .split("\n")
-      .find((line) => line.startsWith("- Implementor · Fast (role: implementor):"))!;
+      .find((line) => line.startsWith("- Sprinter (role: implementor):"))!;
     assert.include(
       fastBuilder,
       "claude-opus-5-5 medium (claudeAgent). Weekly usage: 42% left; resets 2026-07-24T08:59:00.000Z; pace under. Target JSON:",
@@ -82,14 +82,17 @@ describe("T3 orchestration provider instructions", () => {
       `- Reviewer (role: reviewer): Strong read-only review and design guidance. gpt-6-astra xhigh (codex). Unavailable: ${unavailable}`,
     );
     assert.notInclude(text, '"model":"gpt-6-astra"');
-    assert.equal(text.split("\n").filter((line) => line.startsWith("- ")).length, 6);
+    assert.equal(
+      text.split("\n").filter((line) => line.startsWith("- ")).length,
+      DEFAULT_MODEL_ROLES.length,
+    );
     assert.isAtMost(text.length, MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH);
     assert.equal(t3OrchestrationInstructions(roles), T3_CODE_ORCHESTRATION_INSTRUCTIONS + text);
     assert.equal(t3OrchestrationInstructions([]), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
   });
 
   it("keeps an available alternative when an earlier choice is unavailable", () => {
-    const role = DEFAULT_MODEL_ROLES[1]!;
+    const role = DEFAULT_MODEL_ROLES.find((role) => role.id === "implementor-fast")!;
     const text = t3ModelRolesInstructions([
       {
         ...role,
@@ -131,7 +134,7 @@ describe("T3 orchestration provider instructions", () => {
   });
 
   it("shortens an oversized role without cutting its exact target JSON", () => {
-    const role = DEFAULT_MODEL_ROLES[1]!;
+    const role = DEFAULT_MODEL_ROLES.find((role) => role.id === "implementor-fast")!;
     const first = {
       ...role.targets[0],
       options: Array.from({ length: MAX_MODEL_ROLE_OPTIONS }, (_, index) => ({
@@ -169,7 +172,7 @@ describe("T3 orchestration provider instructions", () => {
   ])("stays within its cap at the largest %s roles settings accept", (_, char) => {
     const text = (length: number) => char.repeat(length);
     const largest = decodeModelRoles(
-      Array.from({ length: MAX_MODEL_ROLES - 6 }, (__, index) => ({
+      Array.from({ length: MAX_MODEL_ROLES - DEFAULT_MODEL_ROLES.length }, (__, index) => ({
         id: `role-${index}`,
         name: text(MAX_MODEL_ROLE_NAME_LENGTH),
         description: text(MAX_MODEL_ROLE_DESCRIPTION_LENGTH),
