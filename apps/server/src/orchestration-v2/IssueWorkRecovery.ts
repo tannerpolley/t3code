@@ -138,7 +138,7 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
     const targetConfig = target.repositoryOrchestration;
     const moving =
       command.expectedRootThreadId === null &&
-      isMovableRepositoryRegistration(targetConfig, command)
+      isMovableRepositoryRegistration(targetConfig, command, command.moveUnpaused)
         ? targetConfig
         : undefined;
     const adapter = yield* providerAdapters.get(target.modelSelection.instanceId);

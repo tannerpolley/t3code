@@ -1547,6 +1547,7 @@ export const layer = Layer.effect(
     const validateLead = Effect.fn("IssueWorkService.validateLead")(function* (
       input: RepositoryOrchestratorInput,
       moveTo?: RepositoryWorkRestoreInput,
+      moveUnpaused = false,
     ) {
       yield* assertProjectRepository(input.projectId, input);
       const target = yield* threads
@@ -1564,7 +1565,8 @@ export const layer = Layer.effect(
           {
             ...target,
             repositoryOrchestration:
-              moveTo !== undefined && isMovableRepositoryRegistration(registered, moveTo)
+              moveTo !== undefined &&
+              isMovableRepositoryRegistration(registered, moveTo, moveUnpaused)
                 ? undefined
                 : registered,
           },
@@ -1770,8 +1772,14 @@ export const layer = Layer.effect(
 
     const restoreRoot = Effect.fn("IssueWorkService.restoreRoot")(function* (
       input: Parameters<IssueWorkService["Service"]["restoreRoot"]>[0],
+      // No screen shows a project's previous repository, so a user assignment cannot pause it first.
+      moveUnpaused = false,
     ) {
-      yield* validateLead(input, input.expectedRootThreadId === null ? input : undefined);
+      yield* validateLead(
+        input,
+        input.expectedRootThreadId === null ? input : undefined,
+        moveUnpaused,
+      );
       if (input.expectedRootThreadId === null) {
         const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
         if (
@@ -1797,6 +1805,7 @@ export const layer = Layer.effect(
           expectedRevision: input.expectedRevision,
           targetThreadId: input.targetThreadId,
           reason: input.reason,
+          ...(moveUnpaused ? { moveUnpaused } : {}),
         })
         .pipe(Effect.mapError(mapError));
       if (
@@ -1836,39 +1845,16 @@ export const layer = Layer.effect(
           });
         }
         const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
-        const moveTo = { ...input, repositoryId: identity.repositoryId };
-        const previous = (yield* store.configuration(input.targetThreadId)) ?? undefined;
-        // No screen shows the project's previous repository, so the user cannot pause it first.
-        const pausePrevious =
-          previous !== undefined &&
-          !previous.paused &&
-          isMovableRepositoryRegistration({ ...previous, paused: true }, moveTo);
-        if (pausePrevious)
-          yield* update(
-            input.targetThreadId,
-            { ...previous, paused: true },
-            CommandId.make(`${input.clientRequestId}:pause-previous`),
-          );
-        const moved = yield* restoreRoot({
-          ...moveTo,
-          expectedRootThreadId: null,
-          expectedRevision: null,
-          reason: "User selected this existing lead for repository orchestration",
-        });
-        if (!pausePrevious) return moved;
-        // A failed resume leaves the moved root paused, which the Issues page shows.
-        yield* resumeWork(
-          input.targetThreadId,
-          CommandId.make(`${input.clientRequestId}:resume`),
-        ).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Could not resume a moved repository root", {
-              rootThreadId: input.targetThreadId,
-              error: error.message,
-            }),
-          ),
+        return yield* restoreRoot(
+          {
+            ...input,
+            repositoryId: identity.repositoryId,
+            expectedRootThreadId: null,
+            expectedRevision: null,
+            reason: "User selected this existing lead for repository orchestration",
+          },
+          true,
         );
-        return yield* repositoryStatus(input);
       },
       (effect, input) =>
         assignments.withLock(

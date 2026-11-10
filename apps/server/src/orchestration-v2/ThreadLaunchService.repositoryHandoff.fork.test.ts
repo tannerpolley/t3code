@@ -2147,7 +2147,7 @@ describe("fresh-thread repository handoff", () => {
         clientRequestId: CommandId.make("assign:from-previous"),
       });
       assert.equal(assigned.rootThreadId, root);
-      assert.isFalse(assigned.orchestration!.paused);
+      assert.deepInclude(assigned.orchestration!, { paused: false, revision: 2 });
       assert.isNull(yield* store.repositoryOwner(previous));
       yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
     }).pipe(Effect.provide(fixture({ recovery: true }))),

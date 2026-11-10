@@ -3643,6 +3643,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     expectedRootThreadId: Schema.NullOr(ThreadId),
     expectedRevision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
     reason: TrimmedNonEmptyString,
+    moveUnpaused: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("repository.work.handoff"),

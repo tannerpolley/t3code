@@ -55,16 +55,18 @@ function isRegisteredFor(registered: RepositoryOrchestration, repository: Reposi
 /**
  * A root registered to its project's previous repository record (the project's remote moved
  * hosts) may register for the project's current record once the old one is paused and settled.
+ * A user assignment may move an unpaused one; the root lifecycle guard still requires it settled.
  */
 export function isMovableRepositoryRegistration(
   registered: RepositoryOrchestration | undefined,
   repository: RepositoryRecord & { readonly repositoryId: string },
+  allowUnpaused = false,
 ): registered is RepositoryOrchestration {
   return (
     registered !== undefined &&
     registered.projectId === repository.projectId &&
     !isRegisteredFor(registered, repository) &&
-    registered.paused &&
+    (allowUnpaused || registered.paused) &&
     repositoryPhase(registered) !== "retired" &&
     registered.handoff === undefined
   );
