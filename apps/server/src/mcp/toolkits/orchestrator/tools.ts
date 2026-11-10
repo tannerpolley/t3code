@@ -424,7 +424,7 @@ export const OrchestratorToolkit = Toolkit.make(
   }).annotate(Tool.Destructive, true),
   Tool.make("get_repository_orchestration", {
     description:
-      "Read repository ownership, worker and read-only limits, slots in use for each pool, pause state, milestone progress and the ordered issue queue, including noticeRunId, notifiedAt and needs_attention entries where the orchestrator completed without claiming a worker.",
+      "The phase, rather than paused alone, identifies repository admission state; draining admits already queued work, and handoff_awaiting_approval keeps the existing pause state. Read repository ownership, worker and read-only limits, slots in use for each pool, pause state, milestone progress and the ordered issue queue, including noticeRunId, notifiedAt and needs_attention entries where the orchestrator completed without claiming a worker.",
     parameters: IssueRepositoryRef,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,

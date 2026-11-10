@@ -1,10 +1,17 @@
 import { assert, it } from "@effect/vitest";
-import { CommandId, ThreadId } from "@t3tools/contracts";
+import {
+  repositoryPhase,
+  repositoryAdmitsWork,
+  ProviderInstanceId,
+  CommandId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import { repositoryPhaseSql, repositoryAdmissionSql } from "./RepositoryPhaseSql.ts";
 import * as IssueWorkStore from "./IssueWorkStore.ts";
 
 const dependencies = Layer.mergeAll(IssueWorkStore.layer, EffectOutbox.layer).pipe(
@@ -126,9 +133,14 @@ it.effect("keeps roots with persisted blocker suspensions eligible for automatic
       "A GitHub blocker is open. Resolve it before resuming.",
       "An issue host blocker is open. Resolve it before resuming.",
       "Paused by owner",
+      "Reworded blocker",
     ]) {
       const payload = JSON.stringify({
-        repositoryOrchestration: { suspendedIssues: [{ id: "issue", reason }] },
+        repositoryOrchestration: {
+          suspendedIssues: [
+            { id: "issue", reason, ...(reason === "Reworded blocker" ? { kind: "blocked" } : {}) },
+          ],
+        },
       });
       yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${payload} WHERE thread_id = 'root'`;
       assert.deepEqual(
@@ -158,5 +170,40 @@ it.effect("admission visits only read-only threads with queued or preparing work
       ThreadId.make("queued"),
     ]);
     assert.equal(yield* store.readOnlySlotsInUse(ThreadId.make("root")), 3);
+  }).pipe(Effect.provide(dependencies)),
+);
+
+it.effect("SQL phase and admission agree with contracts for every stored field combination", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    for (const paused of [false, true]) {
+      for (const status of [undefined, "awaiting_approval", "draining"] as const) {
+        for (const retired of [false, true]) {
+          const config = {
+            paused,
+            ...(status
+              ? {
+                  handoff: {
+                    status,
+                    requestId: CommandId.make("request"),
+                    nextThreadId: ThreadId.make("next"),
+                    summary: "Continue",
+                    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+                    wasPaused: paused,
+                  },
+                }
+              : {}),
+            ...(retired ? { retiredToThreadId: ThreadId.make("next") } : {}),
+          };
+          const payload = JSON.stringify({ repositoryOrchestration: config });
+          const rows = yield* sql<{ phase: string; allowed: number }>`SELECT
+            ${sql.unsafe(repositoryPhaseSql("payload"))} AS phase,
+            ${sql.unsafe(repositoryAdmissionSql("payload"))} AS allowed
+            FROM (SELECT ${payload} AS payload)`;
+          assert.equal(rows[0]!.phase, repositoryPhase(config));
+          assert.equal(rows[0]!.allowed === 1, repositoryAdmitsWork(config));
+        }
+      }
+    }
   }).pipe(Effect.provide(dependencies)),
 );

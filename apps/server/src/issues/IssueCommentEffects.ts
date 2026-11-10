@@ -1,4 +1,5 @@
 import {
+  repositoryPhase,
   CommandId,
   ISSUE_WORK_STATUS_LABELS,
   IssueWorkRequested,
@@ -155,7 +156,7 @@ export const enqueueIssueStatusEffects = Effect.fn("enqueueIssueStatusEffects")(
     if (thread.linkedIssue !== undefined) add(thread.linkedIssue);
     if (
       thread.repositoryOrchestration === undefined ||
-      thread.repositoryOrchestration.retiredToThreadId !== undefined
+      repositoryPhase(thread.repositoryOrchestration) === "retired"
     )
       continue;
     const queued = yield* sql<{ payload_json: string }>`

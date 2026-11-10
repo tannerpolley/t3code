@@ -1,4 +1,5 @@
 import {
+  repositoryPhase,
   ThreadId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -22,7 +23,7 @@ export const isRegisteredRepositoryRoot = (
   thread: Pick<OrchestrationV2AppThread, "repositoryOrchestration">,
 ) =>
   thread.repositoryOrchestration !== undefined &&
-  thread.repositoryOrchestration.retiredToThreadId === undefined;
+  repositoryPhase(thread.repositoryOrchestration) !== "retired";
 
 export class RegisteredRepositoryRootDeletionError extends Schema.TaggedError<RegisteredRepositoryRootDeletionError>()(
   "RegisteredRepositoryRootDeletionError",

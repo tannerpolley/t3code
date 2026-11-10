@@ -1,4 +1,5 @@
 import {
+  type IssueSuspension,
   resolveThreadRole,
   THREAD_ROLES,
   LEGACY_THREAD_ROLES,
@@ -46,19 +47,13 @@ export const issueScopeExpansionError =
 export const openBlockerSuspensionReason =
   "An issue host blocker is open. Resolve it before resuming.";
 
-// Older persisted suspensions still need automatic recovery after the wording changes.
-export const openBlockerSuspensionReasons = [
-  openBlockerSuspensionReason,
-  "A GitHub blocker is open. Resolve it before resuming.",
-];
-export const isOpenBlockerSuspension = (reason: string | undefined) =>
-  reason !== undefined && openBlockerSuspensionReasons.includes(reason);
-
 export const unreadableRelationshipsSuspensionReason =
   "Issue relationships are unreadable. Restore access before resuming.";
 
-export const isAutomaticIssueSuspension = (reason: string | undefined) =>
-  isOpenBlockerSuspension(reason) || reason === unreadableRelationshipsSuspensionReason;
+export const isOpenBlockerSuspension = (entry: Pick<IssueSuspension, "kind"> | undefined) =>
+  entry?.kind === "blocked";
+export const isAutomaticIssueSuspension = (entry: Pick<IssueSuspension, "kind"> | undefined) =>
+  isOpenBlockerSuspension(entry) || entry?.kind === "unreadable";
 
 /** Failed or partial relationship reads never authorize a worker. */
 export function issueEligibility(

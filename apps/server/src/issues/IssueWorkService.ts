@@ -7,6 +7,9 @@ import {
   type IssueQueueInput,
   type OrchestrationV2ServerCommand,
   DEFAULT_REPOSITORY_WORK_SETTINGS,
+  repositoryPhase,
+  repositoryAdmitsWork,
+  type IssueSuspensionKind,
   IssueWorkError,
   type IssueRef,
   type IssueWorkStartInput,
@@ -690,9 +693,12 @@ export const layer = Layer.effect(
     )(
       function* (input) {
         const owner = yield* store.repositoryOwnerByRef(input);
+        const orchestration =
+          owner === null ? null : yield* store.configuration(owner.rootThreadId);
         return {
+          phase: orchestration === null ? null : repositoryPhase(orchestration),
           rootThreadId: owner?.rootThreadId ?? null,
-          orchestration: owner === null ? null : yield* store.configuration(owner.rootThreadId),
+          orchestration,
           slotsInUse: owner === null ? 0 : yield* store.slotsInUse(owner.rootThreadId),
           readOnlySlotsInUse:
             owner === null ? 0 : yield* store.readOnlySlotsInUse(owner.rootThreadId),
@@ -898,7 +904,8 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const config = yield* store.configuration(rootThreadId);
         const handoff = config?.handoff;
-        if (config === null || handoff?.status !== "draining") return;
+        if (config === null || handoff === undefined || repositoryPhase(config) !== "draining")
+          return;
         yield* threads
           .dispatch({
             type: "repository.work.continue",
@@ -944,9 +951,8 @@ export const layer = Layer.effect(
       eventSequence?: number,
     ) {
       const config = yield* store.configuration(rootThreadId);
-      if (config === null || config.retiredToThreadId !== undefined) return;
-      const draining = config.handoff?.status === "draining";
-      if (config.paused && !draining) return;
+      if (config === null || !repositoryAdmitsWork(config)) return;
+      const draining = repositoryPhase(config) === "draining";
       const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry.reason]));
       for (const threadId of yield* store.admissionThreads(rootThreadId)) {
         const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
@@ -1036,13 +1042,8 @@ export const layer = Layer.effect(
       rootThreadId: ThreadId,
     ) {
       let config = yield* store.configuration(rootThreadId);
-      if (
-        config === null ||
-        config.retiredToThreadId !== undefined ||
-        (config.paused && config.handoff?.status !== "draining")
-      )
-        return;
-      const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry.reason]));
+      if (config === null || !repositoryAdmitsWork(config)) return;
+      const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry]));
       for (const threadId of yield* store.workerThreads(rootThreadId)) {
         const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
         if (
@@ -1060,14 +1061,20 @@ export const layer = Layer.effect(
         if (priorReason !== undefined && !isAutomaticIssueSuspension(priorReason)) continue;
         const read = yield* issues.workRead(shell.linkedIssue).pipe(Effect.result);
         let reason: string | null = null;
+        let kind: IssueSuspensionKind = "reparented";
         if (read._tag === "Failure") {
           if (read.failure.code !== "inaccessible" && read.failure.code !== "unauthenticated")
             continue;
+          kind = "unreadable";
           reason = unreadableRelationshipsSuspensionReason;
         } else if (issueEligibility(read.success) === "unknown") continue;
-        else if (read.success.state === "closed") reason = CLOSED_ISSUE_SUSPENSION_REASON;
-        else if (issueEligibility(read.success) === "blocked") reason = openBlockerSuspensionReason;
-        else {
+        else if (read.success.state === "closed") {
+          kind = "closed";
+          reason = CLOSED_ISSUE_SUSPENSION_REASON;
+        } else if (issueEligibility(read.success) === "blocked") {
+          kind = "blocked";
+          reason = openBlockerSuspensionReason;
+        } else {
           const parent =
             read.success.parent === null
               ? rootThreadId
@@ -1080,7 +1087,7 @@ export const layer = Layer.effect(
           if (
             !isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) ||
             config.paused ||
-            config.handoff?.status === "draining"
+            repositoryPhase(config) === "draining"
           )
             continue;
           const resumedIssueId = shell.linkedIssue.id;
@@ -1099,11 +1106,15 @@ export const layer = Layer.effect(
           config = (yield* store.configuration(rootThreadId))!;
           continue;
         }
-        if (suspended.get(shell.linkedIssue.id) === reason) continue;
-        suspended.set(shell.linkedIssue.id, reason);
+        if (
+          suspended.get(shell.linkedIssue.id)?.reason === reason &&
+          suspended.get(shell.linkedIssue.id)?.kind === kind
+        )
+          continue;
+        suspended.set(shell.linkedIssue.id, { id: shell.linkedIssue.id, reason, kind });
         config = {
           ...config,
-          suspendedIssues: [...suspended].map(([id, reason]) => ({ id, reason })),
+          suspendedIssues: [...suspended.values()],
         };
         yield* update(
           rootThreadId,
@@ -1115,7 +1126,7 @@ export const layer = Layer.effect(
         config = (yield* store.configuration(rootThreadId))!;
       }
       yield* continueLocal(rootThreadId, true);
-      if (config.handoff?.status === "draining" || config.milestones.length === 0) return;
+      if (repositoryPhase(config) === "draining" || config.milestones.length === 0) return;
       const plans: RepositoryOrchestration["milestones"][number][] = [];
       for (const plan of config.milestones) {
         const listing = yield* issues
@@ -1315,7 +1326,7 @@ export const layer = Layer.effect(
           code: "invalid-request",
           message: "Repository ownership changed. Refresh before updating work.",
         });
-      if (config.handoff?.status === "draining")
+      if (repositoryPhase(config) === "draining")
         return yield* new IssueWorkError({
           code: "invalid-request",
           message: "A handoff is draining. Cancel the handoff before changing the limit.",
@@ -1375,7 +1386,7 @@ export const layer = Layer.effect(
     const resumeWork = Effect.fn("IssueWorkService.resumeWork")(
       function* (rootThreadId: ThreadId, commandId: CommandId, issueId?: string) {
         const config = (yield* store.configuration(rootThreadId))!;
-        if (config.handoff?.status === "draining")
+        if (repositoryPhase(config) === "draining")
           return yield* new IssueWorkError({
             code: "invalid-request",
             message: "A handoff is draining. Cancel the handoff before resuming work.",
@@ -1402,7 +1413,7 @@ export const layer = Layer.effect(
           message: "This repository has no registered orchestrator.",
         });
       const config = (yield* store.configuration(owner.rootThreadId))!;
-      if (config.handoff?.status === "draining")
+      if (repositoryPhase(config) === "draining")
         return yield* new IssueWorkError({
           code: "invalid-request",
           message: "A handoff is draining. Cancel the handoff before changing the pause state.",
@@ -1707,12 +1718,12 @@ export const layer = Layer.effect(
               {
                 ...config,
                 paused:
-                  config.handoff.status === "draining" ? config.handoff.wasPaused : config.paused,
+                  repositoryPhase(config) === "draining" ? config.handoff.wasPaused : config.paused,
                 handoff: undefined,
               },
               input.clientRequestId,
             );
-            if (config.handoff.status === "draining" && !config.handoff.wasPaused)
+            if (repositoryPhase(config) === "draining" && !config.handoff.wasPaused)
               yield* reconcile(owner.rootThreadId);
             return yield* repositoryStatus(input);
           });
@@ -2158,7 +2169,9 @@ export const layer = Layer.effect(
                 stored.event.type === "subagent.updated" ||
                 stored.event.type === "runtime-request.updated" ||
                 stored.event.type === "provider-thread.updated") &&
-              (yield* store.configuration(owner.rootThreadId))?.handoff?.status !== "draining" &&
+              ((config) => config === null || repositoryPhase(config) !== "draining")(
+                yield* store.configuration(owner.rootThreadId),
+              ) &&
               (yield* store.queue(repository)).length === 0
             )
               return;

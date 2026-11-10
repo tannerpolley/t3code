@@ -1,4 +1,4 @@
-import { IssueWorkStatus } from "@t3tools/contracts";
+import { IssueSuspensionKind, IssueWorkStatus } from "@t3tools/contracts";
 import {
   CheckpointId,
   CheckpointScopeId,
@@ -135,6 +135,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("issue.suspension.notify"),
+    kind: Schema.optional(IssueSuspensionKind),
     issue: ThreadLinkedIssue,
     reason: Schema.String,
     projectId: ProjectId,

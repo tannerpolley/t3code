@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  repositoryPhase,
   CommandId,
-  CLOSED_ISSUE_SUSPENSION_REASON,
   type EnvironmentId,
   type IssueRepositoryRef,
   type ProviderInstanceId,
@@ -88,7 +88,12 @@ function RepositoryControls({
   );
   const openRoot = (threadId: ThreadId) =>
     void navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } });
-  const canResume = config?.paused === true || (config?.suspendedIssues.length ?? 0) > 0;
+  const canResume =
+    (config != null &&
+      (repositoryPhase(config) === "paused" ||
+        (repositoryPhase(config) === "handoff_awaiting_approval" && config.paused) ||
+        repositoryPhase(config) === "draining")) ||
+    (config?.suspendedIssues.length ?? 0) > 0;
   const [busy, setBusy] = useState(false);
   const [handoffExpanded, setHandoffExpanded] = useState(false);
   const [summary, setSummary] = useState("");
@@ -215,7 +220,7 @@ function RepositoryControls({
   };
   const suspended = config.suspendedIssues.length;
   const status =
-    config.handoff?.status === "draining"
+    repositoryPhase(config) === "draining"
       ? "Handing off"
       : config.paused
         ? "Paused"
@@ -319,7 +324,7 @@ function RepositoryControls({
                   variant="ghost"
                   size="icon-xs"
                   aria-label={pauseLabel}
-                  disabled={busy || config.handoff?.status === "draining"}
+                  disabled={busy || repositoryPhase(config) === "draining"}
                   onClick={() => void togglePause()}
                 />
               }
@@ -331,7 +336,7 @@ function RepositoryControls({
         </span>
       </MetaRow>
       {config.suspendedIssues
-        .filter((entry) => entry.reason === CLOSED_ISSUE_SUSPENSION_REASON)
+        .filter((entry) => entry.kind === "closed")
         .map((entry) => (
           <div key={entry.id} className="flex items-center justify-between gap-2 text-xs">
             <span className="text-muted-foreground">
@@ -342,7 +347,7 @@ function RepositoryControls({
             <Button
               variant="outline"
               size="xs"
-              disabled={busy || !canCloseOut || config.handoff?.status === "draining"}
+              disabled={busy || !canCloseOut || repositoryPhase(config) === "draining"}
               onClick={() => void finishAttempt(entry.id)}
             >
               Close out attempt
@@ -400,7 +405,7 @@ function RepositoryControls({
       {config.handoff || handoffExpanded ? (
         <div className="flex w-full max-w-md flex-col gap-2 pt-1">
           <span className="text-xs text-muted-foreground" role="status">
-            {config.handoff?.status === "draining"
+            {repositoryPhase(config) === "draining"
               ? "Handoff is pending while existing work finishes and the recovery inventory is prepared. The current root keeps ownership until then."
               : "Approve a fresh thread after existing work finishes. Routine model changes can keep the current thread."}
           </span>
@@ -439,7 +444,7 @@ function RepositoryControls({
                 Cancel
               </Button>
             )}
-            {config.handoff?.status !== "draining" ? (
+            {repositoryPhase(config) !== "draining" ? (
               <Button
                 size="xs"
                 disabled={busy || (config.handoff === undefined && summary.trim().length === 0)}

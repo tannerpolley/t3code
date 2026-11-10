@@ -1,4 +1,5 @@
 import {
+  repositoryPhase,
   CommandId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -115,7 +116,8 @@ export function makeAutomaticProviderSwitchPolicy<RestartError>({
         thread.archivedAt !== null ||
         thread.deletedAt !== null ||
         thread.settledOverride === "settled" ||
-        thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
+        (thread.repositoryOrchestration !== undefined &&
+          repositoryPhase(thread.repositoryOrchestration) === "retired") ||
         projection.runs.some(isBlockingRun) ||
         projection.runtimeRequests.some((request) => request.status === "pending")
       ) {
@@ -199,7 +201,8 @@ export function makeAutomaticProviderSwitchPolicy<RestartError>({
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled" ||
         isSnoozed(shell, nowMs) ||
-        projection.thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
+        (projection.thread.repositoryOrchestration !== undefined &&
+          repositoryPhase(projection.thread.repositoryOrchestration) === "retired") ||
         projection.runs.some(isBlockingRun) ||
         projection.runtimeRequests.some((request) => request.status === "pending")
       ) {

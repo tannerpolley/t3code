@@ -1,4 +1,5 @@
 import {
+  repositoryPhase,
   DEFAULT_REPOSITORY_WORK_SETTINGS,
   isMovableRepositoryRegistration,
   isRepositoryOrchestratorEligible,
@@ -197,7 +198,7 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
       const prior = shell.repositoryOrchestration;
       if (
         prior === undefined ||
-        prior.retiredToThreadId !== undefined ||
+        repositoryPhase(prior) === "retired" ||
         command.expectedRootThreadId !== shell.id ||
         shell.id === target.id ||
         owner?.rootThreadId !== shell.id ||
@@ -251,6 +252,7 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
           ...retiringRoot,
           repositoryOrchestration: {
             ...retiringRoot.repositoryOrchestration,
+            handoff: undefined,
             retiredToThreadId: target.id,
           },
           updatedAt: occurredAt,
@@ -283,7 +285,7 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
     if (
       config === undefined ||
       config.revision !== command.expectedRevision ||
-      config.handoff?.status === "draining" ||
+      repositoryPhase(config) === "draining" ||
       repository?.rootThreadId !== command.threadId ||
       (yield* store.issueOwner(command.issue)) !== command.issueThreadId
     )

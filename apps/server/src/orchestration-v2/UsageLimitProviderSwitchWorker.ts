@@ -1,4 +1,9 @@
-import { CommandId, type ProviderInstanceId, type ThreadId } from "@t3tools/contracts";
+import {
+  repositoryPhase,
+  CommandId,
+  type ProviderInstanceId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -71,7 +76,8 @@ const make = Effect.gen(function* () {
         });
         const failedRun = runs[0];
         if (
-          thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
+          (thread.repositoryOrchestration !== undefined &&
+            repositoryPhase(thread.repositoryOrchestration) === "retired") ||
           !failedRun ||
           !modelSelectionsEqual(failedRun.modelSelection, shell.modelSelection)
         )

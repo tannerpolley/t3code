@@ -1,4 +1,4 @@
-import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { repositoryPhase, isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type {
   IssueWorkRead,
   ThreadId,
@@ -180,9 +180,7 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     const config = yield* store.configuration(threadId);
     if (
       config === null ||
-      config.paused ||
-      config.handoff !== undefined ||
-      config.retiredToThreadId !== undefined ||
+      repositoryPhase(config) !== "active" ||
       (yield* store.slotsInUse(threadId)) >= config.workerLimit ||
       !(yield* store.queueRootIdle(threadId))
     )

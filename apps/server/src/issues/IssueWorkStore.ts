@@ -8,18 +8,19 @@ import {
   type CommandId,
   type IssueRef,
   type ThreadLinkedIssue,
+  LEGACY_AUTOMATIC_SUSPENSIONS,
   RepositoryOrchestration,
+  isValidRepositoryPhase,
+  repositoryPhase,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { readIssueQueue, readIssueQueueNotice, isIssueQueueNoticeRun } from "./IssueQueueStore.ts";
-import {
-  openBlockerSuspensionReasons,
-  unreadableRelationshipsSuspensionReason,
-  readOnlyIssueRoles,
-} from "./IssueEligibility.ts";
+import { readOnlyIssueRoles } from "./IssueEligibility.ts";
+
+import { repositoryPhaseSql, repositoryAdmissionSql } from "./RepositoryPhaseSql.ts";
 
 const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(RepositoryOrchestration));
 import * as SqlClient from "effect/sql/SqlClient";
@@ -239,8 +240,7 @@ export const layer = Layer.effect(
               WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
                 AND thread.thread_id <> ${threadId} AND ${isReadOnly} AND ${usesWorkerSlot})
               < coalesce(json_extract(root.payload_json, '$.repositoryOrchestration.readOnlyLimit'), ${DEFAULT_REPOSITORY_WORK_SETTINGS.readOnlyLimit})
-            AND (coalesce(json_extract(root.payload_json, '$.repositoryOrchestration.paused'), 0) = 0
-              OR json_extract(root.payload_json, '$.repositoryOrchestration.handoff.status') = 'draining')
+            AND ${sql.unsafe(repositoryAdmissionSql("root.payload_json"))}
             AND NOT EXISTS (SELECT 1 FROM (${readOnlyQueue(rootThreadId)}) queued
               WHERE queued.thread_id <> ${threadId} AND queued.position < coalesce(
                 (SELECT min(rowid) FROM orchestration_v2_projection_runs
@@ -454,11 +454,23 @@ export const layer = Layer.effect(
         FROM orchestration_v2_projection_threads WHERE thread_id = ${rootThreadId}
           AND json_type(payload_json, '$.repositoryOrchestration') = 'object'
       `.pipe(
-          Effect.flatMap((rows) =>
-            rows[0] === undefined
-              ? Effect.succeed(null)
-              : decodeConfiguration(rows[0].configuration),
-          ),
+          Effect.flatMap((rows) => {
+            if (rows[0] === undefined) return Effect.succeed(null);
+            const configuration = JSON.parse(
+              rows[0].configuration,
+            ) as typeof RepositoryOrchestration.Encoded;
+            const decoded = decodeConfiguration(rows[0].configuration);
+            return isValidRepositoryPhase(configuration)
+              ? decoded
+              : decoded.pipe(
+                  Effect.tap((config) =>
+                    Effect.logWarning("Stored repository orchestration has an invalid phase", {
+                      rootThreadId,
+                      phase: repositoryPhase(config),
+                    }),
+                  ),
+                );
+          }),
           Effect.mapError(mapError),
         ),
       ),
@@ -469,7 +481,7 @@ export const layer = Layer.effect(
             SELECT 1 FROM orchestration_v2_projection_repository_orchestration owner
             JOIN orchestration_v2_projection_threads root ON root.thread_id = owner.root_thread_id
             WHERE owner.root_thread_id = ${rootThreadId}
-              AND json_type(root.payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
+              AND ${sql.unsafe(repositoryPhaseSql("root.payload_json"))} <> 'retired'
           ) AS registered
         `.pipe(
             Effect.map((rows) => rows[0]!.registered === 1),
@@ -481,10 +493,10 @@ export const layer = Layer.effect(
         SELECT root_thread_id FROM orchestration_v2_projection_repository_orchestration owner
         JOIN orchestration_v2_projection_threads thread ON thread.thread_id = owner.root_thread_id
         WHERE thread.deleted_at IS NULL AND thread.archived_at IS NULL
-          AND (json_extract(thread.payload_json, '$.repositoryOrchestration.handoff.status') = 'draining'
+          AND (${sql.unsafe(repositoryPhaseSql("thread.payload_json"))} = 'draining'
             OR (owner.paused = 0 AND EXISTS (
               SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.suspendedIssues') suspension
-              WHERE json_extract(suspension.value, '$.reason') IN ${sql.in([...openBlockerSuspensionReasons, unreadableRelationshipsSuspensionReason])}))
+              WHERE coalesce(json_extract(suspension.value, '$.kind'), CASE WHEN json_extract(suspension.value, '$.reason') IN ${sql.in(LEGACY_AUTOMATIC_SUSPENSIONS.blocked)} THEN 'blocked' WHEN json_extract(suspension.value, '$.reason') IN ${sql.in(LEGACY_AUTOMATIC_SUSPENSIONS.unreadable)} THEN 'unreadable' END) IN ('blocked', 'unreadable')))
             OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.milestones') plan
             WHERE json_extract(plan.value, '$.status') <> 'complete')
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request
@@ -508,7 +520,7 @@ export const layer = Layer.effect(
         CROSS JOIN orchestration_v2_projection_threads thread ON thread.thread_id = owner.root_thread_id
         WHERE thread.deleted_at IS NULL
           AND json_type(thread.payload_json, '$.repositoryOrchestration.usageSprint') = 'object'
-          AND json_type(thread.payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
+          AND ${sql.unsafe(repositoryPhaseSql("thread.payload_json"))} <> 'retired'
       `.pipe(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.root_thread_id))),
           Effect.mapError(mapError),
@@ -549,15 +561,13 @@ export const layer = Layer.effect(
       ),
       canAdmit: Effect.fn("IssueWorkStore.canAdmit")(function* (issue, threadId) {
         const rows = yield* sql<{
-          paused: number;
+          allowed: number;
           worker_limit: number;
           active: number;
           suspended: number;
-          draining: number;
           lineage_valid: number;
         }>`
-          SELECT owner.paused, owner.worker_limit,
-            COALESCE(json_extract(root.payload_json, '$.repositoryOrchestration.handoff.status') = 'draining', 0) AS draining,
+          SELECT owner.worker_limit, ${sql.unsafe(repositoryAdmissionSql("root.payload_json", "owner.paused"))} AS allowed,
             EXISTS (SELECT 1 FROM orchestration_v2_projection_threads candidate
               WHERE candidate.thread_id = ${threadId}
                 AND json_extract(candidate.payload_json, '$.lineage.rootThreadId') = owner.root_thread_id) AS lineage_valid,
@@ -584,7 +594,7 @@ export const layer = Layer.effect(
         return (
           row !== undefined &&
           row.lineage_valid === 1 &&
-          (row.paused === 0 || row.draining === 1) &&
+          row.allowed === 1 &&
           row.suspended === 0 &&
           row.active < row.worker_limit
         );

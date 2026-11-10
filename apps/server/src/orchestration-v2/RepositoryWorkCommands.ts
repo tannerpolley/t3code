@@ -1,4 +1,8 @@
 import {
+  repositoryAdmitsWork,
+  repositoryPhase,
+  isValidRepositoryPhase,
+  type IssueSuspension,
   CommandId,
   isRepositoryOrchestratorEligible,
   MessageId,
@@ -74,7 +78,7 @@ export function makeRepositoryWorkCommands({
   ) {
     if (
       thread.repositoryOrchestration === undefined ||
-      thread.repositoryOrchestration.retiredToThreadId !== undefined
+      repositoryPhase(thread.repositoryOrchestration) === "retired"
     )
       return;
     const projection = yield* projectionStore
@@ -123,7 +127,10 @@ export function makeRepositoryWorkCommands({
     request: DelegatedTaskRequest,
     thread: OrchestrationV2AppThread,
   ) {
-    if (thread.repositoryOrchestration?.retiredToThreadId !== undefined)
+    if (
+      thread.repositoryOrchestration !== undefined &&
+      repositoryPhase(thread.repositoryOrchestration) === "retired"
+    )
       return yield* new OrchestratorDispatchError({
         commandId: request.commandId,
         commandType: request.type,
@@ -138,7 +145,8 @@ export function makeRepositoryWorkCommands({
     // Schedules resolve the repository owner before sending; a handoff can commit in between.
     if (
       command.scheduledTaskId !== undefined &&
-      thread.repositoryOrchestration?.retiredToThreadId !== undefined
+      thread.repositoryOrchestration !== undefined &&
+      repositoryPhase(thread.repositoryOrchestration) === "retired"
     )
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -163,6 +171,12 @@ export function makeRepositoryWorkCommands({
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
+    if (!isValidRepositoryPhase(command.orchestration))
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Invalid repository orchestration phase.",
+      });
     const projection = yield* projectionStore
       .getThreadRecords(command.threadId, [])
       .pipe(mapDispatchError(command));
@@ -170,7 +184,7 @@ export function makeRepositoryWorkCommands({
     const prior = shell.repositoryOrchestration;
     if (
       prior === undefined ||
-      prior.retiredToThreadId !== undefined ||
+      repositoryPhase(prior) === "retired" ||
       prior.revision !== command.expectedRevision ||
       prior.repositoryId !== command.orchestration.repositoryId ||
       prior.host !== command.orchestration.host ||
@@ -184,15 +198,15 @@ export function makeRepositoryWorkCommands({
       });
     const now = yield* DateTime.now;
     const resumedIssueId = command.resumeBlockedIssueId;
-    const resumeReason = prior.suspendedIssues.find((entry) => entry.id === resumedIssueId)?.reason;
+    const resumeReason = prior.suspendedIssues.find((entry) => entry.id === resumedIssueId);
     if (
       resumedIssueId !== undefined &&
-      (prior.paused ||
-        prior.handoff?.status === "draining" ||
-        command.orchestration.paused ||
-        command.orchestration.handoff?.status === "draining" ||
+      (!repositoryAdmitsWork(prior) ||
+        repositoryPhase(prior) === "draining" ||
+        !repositoryAdmitsWork(command.orchestration) ||
+        repositoryPhase(command.orchestration) === "draining" ||
         !prior.suspendedIssues.some(
-          (entry) => entry.id === resumedIssueId && isAutomaticIssueSuspension(entry.reason),
+          (entry) => entry.id === resumedIssueId && isAutomaticIssueSuspension(entry),
         ) ||
         command.orchestration.suspendedIssues.some((entry) => entry.id === resumedIssueId))
     )
@@ -217,10 +231,11 @@ export function makeRepositoryWorkCommands({
     // Notice emission is part of the repository update's command plan and span.
     const notify = Effect.fnUntraced(function* (
       issue: ThreadLinkedIssue,
-      reason: string,
+      suspension: IssueSuspension,
       resumed = false,
     ) {
-      if (!isAutomaticIssueSuspension(reason)) {
+      const { reason } = suspension;
+      if (!isAutomaticIssueSuspension(suspension)) {
         yield* Ref.update(effects, (pending) => [
           ...pending,
           {
@@ -232,6 +247,7 @@ export function makeRepositoryWorkCommands({
               projectId: prior.projectId,
               issue,
               reason,
+              kind: suspension.kind,
             },
           } satisfies PendingOrchestrationEffectV2,
         ]);
@@ -269,10 +285,10 @@ export function makeRepositoryWorkCommands({
           status: "completed",
           title: `Issue #${issue.number} ${resumed ? "resumed" : "paused"}`,
           message: resumed
-            ? isOpenBlockerSuspension(reason)
+            ? isOpenBlockerSuspension(suspension)
               ? `Issue #${issue.number} resumed: its issue host blockers are closed.`
               : `Issue #${issue.number} resumed: its issue host relationships are readable again.`
-            : `Issue #${issue.number} paused: ${reason} Its workspace, link and results are retained. ${isOpenBlockerSuspension(reason) ? "It resumes automatically when its issue host blockers close; no user decision is needed." : "It resumes automatically once issue host relationships are readable and the issue is eligible; no user decision is needed."}`,
+            : `Issue #${issue.number} paused: ${reason} Its workspace, link and results are retained. ${isOpenBlockerSuspension(suspension) ? "It resumes automatically when its issue host blockers close; no user decision is needed." : "It resumes automatically once issue host relationships are readable and the issue is eligible; no user decision is needed."}`,
           startedAt: existing?.startedAt ?? now,
           completedAt: now,
           updatedAt: now,
@@ -281,7 +297,9 @@ export function makeRepositoryWorkCommands({
     });
     const changedSuspensions = command.orchestration.suspendedIssues.filter(
       (entry) =>
-        !prior.suspendedIssues.some((old) => old.id === entry.id && old.reason === entry.reason),
+        !prior.suspendedIssues.some(
+          (old) => old.id === entry.id && old.reason === entry.reason && old.kind === entry.kind,
+        ),
     );
     if (
       (changedSuspensions.length > 0 || resumedIssueId !== undefined) &&
@@ -313,7 +331,7 @@ export function makeRepositoryWorkCommands({
             } satisfies PendingOrchestrationEffectV2,
           ]);
         }
-        yield* notify(owner.linkedIssue, suspension.reason);
+        yield* notify(owner.linkedIssue, suspension);
       }
       const owner = workers.find((worker) => worker?.linkedIssue?.id === resumedIssueId);
       if (resumedIssueId !== undefined && owner?.linkedIssue !== undefined) {
@@ -367,7 +385,7 @@ export function makeRepositoryWorkCommands({
     if (
       config === undefined ||
       sprint === undefined ||
-      config.retiredToThreadId !== undefined ||
+      repositoryPhase(config) === "retired" ||
       sprint.startedAt !== command.startedAt
     )
       return yield* new OrchestratorDispatchError({
@@ -453,7 +471,7 @@ export function makeRepositoryWorkCommands({
       .pipe(mapDispatchError(command));
     if (
       projection.thread.repositoryOrchestration === undefined ||
-      projection.thread.repositoryOrchestration.retiredToThreadId !== undefined
+      repositoryPhase(projection.thread.repositoryOrchestration) === "retired"
     )
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -472,9 +490,11 @@ export function makeRepositoryWorkCommands({
       .pipe(mapDispatchError(command));
     const config = shell.repositoryOrchestration;
     if (
-      config?.handoff?.status !== "draining" ||
+      config === undefined ||
+      config.handoff === undefined ||
+      repositoryPhase(config) !== "draining" ||
       config.revision !== command.expectedRevision ||
-      config.retiredToThreadId !== undefined
+      repositoryPhase(config) === "retired"
     )
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -640,6 +660,12 @@ export function makeRepositoryWorkCommands({
     thread: OrchestrationV2AppThread,
   ) {
     if (thread.repositoryOrchestration !== undefined) {
+      if (!isValidRepositoryPhase(thread.repositoryOrchestration))
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Invalid repository orchestration phase.",
+        });
       const adapter = yield* providerAdapters
         .get(thread.modelSelection.instanceId)
         .pipe(mapDispatchError(command));

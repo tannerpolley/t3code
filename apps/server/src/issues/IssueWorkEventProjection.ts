@@ -1,4 +1,5 @@
 import {
+  repositoryPhase,
   IssueWorkCancelled,
   IssueWorkRequested,
   type OrchestrationV2DomainEvent,
@@ -174,7 +175,7 @@ export const makeIssueWorkProjection = (
     }
     if (
       event.payload.repositoryOrchestration !== undefined &&
-      event.payload.repositoryOrchestration.retiredToThreadId === undefined
+      repositoryPhase(event.payload.repositoryOrchestration) !== "retired"
     ) {
       const owner = event.payload.repositoryOrchestration;
       const updated = yield* sql<{ readonly root_thread_id: string }>`

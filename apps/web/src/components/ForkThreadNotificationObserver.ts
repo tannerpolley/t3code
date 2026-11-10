@@ -114,8 +114,7 @@ export function createForkThreadNotificationObserver(
         continue;
       }
       const thread = presentThreadShell(environmentId, rawThread, subagentRequest, parent);
-      let status = resolveSidebarThreadStatus(thread);
-      if (!child && status === "ready" && thread.latestRun?.status === "failed") status = "failed";
+      const status = resolveSidebarThreadStatus(thread);
       const attention =
         !unsettled &&
         (!child || ownerVisible) &&

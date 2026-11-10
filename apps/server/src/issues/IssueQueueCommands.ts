@@ -1,5 +1,6 @@
 import { issueQueueMessage } from "./IssueQueueMessage.ts";
 import {
+  repositoryPhase,
   type IssueQueueEntry,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ServerCommand,
@@ -83,7 +84,7 @@ export function makeIssueQueueCommands(
     if (Option.isNone(issueWorkStore)) return;
     const store = issueWorkStore.value;
     const config = yield* store.configuration(command.threadId).pipe(mapDispatchError(command));
-    if (config === null || config.retiredToThreadId !== undefined) return;
+    if (config === null || repositoryPhase(config) === "retired") return;
     const owner = yield* store.repositoryOwner(config).pipe(mapDispatchError(command));
     if (owner?.rootThreadId !== command.threadId) return;
     const reads = yield* IssueQueueReads;
@@ -111,7 +112,7 @@ export function makeIssueQueueCommands(
         });
       } else queue.push(candidate);
     }
-    if (config.paused || config.handoff !== undefined) return;
+    if (repositoryPhase(config) !== "active") return;
     if (
       (yield* store.slotsInUse(command.threadId).pipe(mapDispatchError(command))) >=
       config.workerLimit

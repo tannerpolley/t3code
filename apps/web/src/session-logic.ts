@@ -1,3 +1,7 @@
+import {
+  resolveThreadActivity,
+  threadActivityIsSettledRun,
+} from "@t3tools/client-runtime/state/thread-activity";
 import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
@@ -203,16 +207,7 @@ export function isLatestRunSettled(
   latestRun: Pick<ThreadRunSummary, "runId" | "startedAt" | "completedAt" | "status"> | null,
   runtime: Pick<ThreadRuntimeSummary, "status" | "activeRunId"> | null,
 ): boolean {
-  if (latestRun === null) return false;
-  if (
-    latestRun.status === "preparing" ||
-    latestRun.status === "queued" ||
-    latestRun.status === "starting" ||
-    latestRun.status === "running" ||
-    latestRun.status === "waiting"
-  )
-    return false;
-  return runtime?.activeRunId !== latestRun.runId;
+  return threadActivityIsSettledRun(latestRun, runtime);
 }
 
 export function deriveActiveWorkStartedAt(
@@ -1123,14 +1118,10 @@ export function findRevertCheckpoint(
 
 export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhase {
   if (runtime === null) return "disconnected";
-  if (
-    runtime.status === "preparing" ||
-    runtime.status === "starting" ||
-    runtime.status === "queued"
-  )
-    return "connecting";
-  if (runtime.status === "running" || runtime.status === "waiting") return "running";
-  return "ready";
+  // A queued turn holds the composer in its connecting state, as it did before the shared resolver.
+  if (runtime.status === "queued") return "connecting";
+  const activity = resolveThreadActivity({ runtime });
+  return activity === "connecting" ? "connecting" : activity === "working" ? "running" : "ready";
 }
 
 /** Preparing and starting runs can be interrupted; Stop need not wait for running. */
