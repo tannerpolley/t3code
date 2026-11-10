@@ -323,10 +323,6 @@ const makeWakeHarnessWithOptions = Effect.fn("makeWakeHarnessWithOptions")(funct
     yield* Queue.unbounded<
       Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
     >();
-  const providerThreadReceipts =
-    yield* Queue.unbounded<
-      Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
-    >();
   const processQueues: Array<Queue.Queue<SDKMessage>> = [];
   const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
   const offerAndWait = Effect.fnUntraced(function* (
@@ -470,8 +466,6 @@ const makeWakeHarnessWithOptions = Effect.fn("makeWakeHarnessWithOptions")(funct
           (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0
         )
           yield* Queue.offer(rosterReceipts, event);
-        if (event.type === "provider_thread.updated")
-          yield* Queue.offer(providerThreadReceipts, event);
         if (event.type === "runtime_request.updated") yield* Queue.offer(requestReceipts, event);
         if (event.type === "subagent.updated") {
           yield* Queue.offer(subagentReceipts, event);
@@ -505,7 +499,6 @@ const makeWakeHarnessWithOptions = Effect.fn("makeWakeHarnessWithOptions")(funct
     processQueues,
     offerAndWait,
     rosterReceipts,
-    providerThreadReceipts,
     offeredMessages,
     // The uuid Claude echoes on the turn answering the nth offered prompt.
     promptUuid: (index: number) => {

@@ -8281,9 +8281,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     if (run === undefined || run.delegatedTaskId !== undefined) return;
     const parent = yield* projectionStore
-      .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
-        subagentIds: child.forkedFrom?.type === "node" ? [child.forkedFrom.nodeId] : [],
-      })
+      .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"])
       .pipe(mapDispatchError(command));
     const original = parent.subagents.find(
       (task) =>
@@ -8291,6 +8289,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.childThreadId === child.id &&
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
+    if (
+      command.notification?.source.kind === "command" ||
+      command.notification?.source.kind === "background_task"
+    ) {
+      const records = yield* projectionStore.getThreadRecords(child.id, ["runs"]);
+      const previous = records.runs
+        .filter(
+          (row) => row.delegatedTaskId !== undefined && row.startedAt !== null && row.id !== run.id,
+        )
+        .toSorted((a, b) => b.ordinal - a.ordinal)[0];
+      const held = parent.subagents.find(
+        (task) =>
+          task.childThreadId === child.id &&
+          task.id === previous?.delegatedTaskId &&
+          !forkDelegatedCompletion.hasPublishedResult(task),
+      );
+      if (held !== undefined) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: child.id,
+          runId: run.id,
+          occurredAt: message.createdAt,
+          payload: { ...run, delegatedTaskId: held.id },
+        });
+        return;
+      }
+    }
     if (original === undefined || original.result === null) return;
     const owner =
       parent.runs.filter(isActiveRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??

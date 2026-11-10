@@ -2932,10 +2932,6 @@ function claudePendingBackgroundTask(input: {
       : ((input.taskType === null
           ? undefined
           : CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.get(input.taskType)) ?? "background_task"),
-    // Background Bash completion re-enters the query stream, so its result is still owed.
-    ...(input.taskType === "local_bash" && !input.startedByMonitor
-      ? { awaited: true as const }
-      : {}),
     ...(input.description !== undefined && input.description.trim().length > 0
       ? { description: input.description }
       : {}),
@@ -5382,7 +5378,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly nativeThreadId: string;
           readonly providerThread: OrchestrationV2ProviderThread;
           readonly status?: OrchestrationV2ProviderThread["status"];
-          readonly stoppedTaskId?: string;
         }) {
           const roster = rosterForNativeThread(
             yield* Ref.get(pendingBackgroundTasksByNativeThread),
@@ -5392,25 +5387,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* Ref.get(awaitedBackgroundTasksByNativeThread),
             input.nativeThreadId,
           );
-          const pending = new Map(roster);
-          // Roster disappearance does not register the command's owed wake turn.
-          if ((yield* Ref.get(activeTurn))?.nativeThreadId !== input.nativeThreadId) {
-            for (const task of input.providerThread.pendingBackgroundTasks ?? []) {
-              if (
-                task.kind === "command" &&
-                task.awaited === true &&
-                task.taskId !== input.stoppedTaskId
-              ) {
-                pending.set(task.taskId, task);
-              }
-            }
-          }
           const now = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
             ...input.providerThread,
             providerSessionId: session.id,
             ...(input.status === undefined ? {} : { status: input.status }),
-            pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(pending, awaitedTaskIds),
+            pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster, awaitedTaskIds),
             ...(goalsByNativeThread.has(input.nativeThreadId)
               ? { goal: goalsByNativeThread.get(input.nativeThreadId) ?? null }
               : {}),
@@ -5668,7 +5650,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : remembered.status);
           yield* emitProviderThreadRoster({
             nativeThreadId,
-            providerThread: { ...remembered, pendingBackgroundTasks: [] },
+            providerThread: remembered,
             status,
           });
         });
@@ -8247,7 +8229,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const emitRosterUpdate = Effect.fnUntraced(function* (
           nativeThreadId: string,
           activeContext: ActiveClaudeTurnContext | null,
-          stoppedTaskId?: string,
         ) {
           const baseThread =
             activeContext?.input.providerThread ??
@@ -8261,12 +8242,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : baseThread.status === "idle"
                 ? ("active" as const)
                 : baseThread.status;
-          yield* emitProviderThreadRoster({
-            nativeThreadId,
-            providerThread: baseThread,
-            status,
-            ...(stoppedTaskId === undefined ? {} : { stoppedTaskId }),
-          });
+          yield* emitProviderThreadRoster({ nativeThreadId, providerThread: baseThread, status });
         });
 
         const applyBackgroundTaskRosterMessage = Effect.fnUntraced(function* (input: {
@@ -8353,22 +8329,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               input.nativeThreadId,
               message.task_id,
             );
-            rosterChanged = removed || message.status === "stopped";
+            rosterChanged = removed;
           }
 
           if (!rosterChanged) {
             return false;
           }
 
-          yield* emitRosterUpdate(
-            input.nativeThreadId,
-            input.activeContext,
-            message.type === "system" &&
-              message.subtype === "task_notification" &&
-              message.status === "stopped"
-              ? message.task_id
-              : undefined,
-          );
+          yield* emitRosterUpdate(input.nativeThreadId, input.activeContext);
           return true;
         });
 

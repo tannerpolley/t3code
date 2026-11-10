@@ -234,7 +234,8 @@ export function delegatedTaskProgress(
   projection: {
     readonly runs: OrchestrationV2ThreadProjection["runs"];
     readonly messages: ReadonlyArray<
-      Pick<OrchestrationV2ConversationMessage, "runId" | "notification">
+      Pick<OrchestrationV2ConversationMessage, "runId" | "notification"> &
+        Partial<Pick<OrchestrationV2ConversationMessage, "id">>
     >;
     readonly subagents: ReadonlyArray<
       Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
@@ -258,6 +259,17 @@ export function delegatedTaskProgress(
       .filter((message) => message.notification?.source.kind === "monitor")
       .map((message) => message.runId),
   );
+  const promotedRunIds = new Set(
+    task === undefined
+      ? []
+      : projection.runs
+          .filter((run) => run.delegatedTaskId === task.id)
+          .flatMap((run) =>
+            projection.messages
+              .filter((message) => message.id === run.userMessageId)
+              .map((message) => message.runId),
+          ),
+  );
   const workRuns = projection.runs.filter(
     (run) =>
       !monitorRuns.has(run.id) &&
@@ -265,12 +277,7 @@ export function delegatedTaskProgress(
       (task === undefined ||
         run.delegatedTaskId === undefined ||
         run.delegatedTaskId === task.id ||
-        projection.messages.some(
-          (message) =>
-            message.runId === run.id &&
-            (message.notification?.source.kind === "command" ||
-              message.notification?.source.kind === "background_task"),
-        )),
+        promotedRunIds.has(run.id)),
   );
   const taskQueued =
     task !== undefined &&
@@ -303,7 +310,11 @@ export function delegatedTaskProgress(
         terminal(run.status) &&
         (run.startedAt !== null ||
           run.ordinal === 1 ||
-          (task !== undefined && run.delegatedTaskId === task.id)),
+          (task !== undefined &&
+            run.delegatedTaskId === task.id &&
+            !projection.messages.some(
+              (message) => message.id === run.userMessageId && message.runId !== run.id,
+            ))),
     )
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
   return {

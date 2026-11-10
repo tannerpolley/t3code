@@ -212,6 +212,20 @@ it.layer(layerTest)("delegated background completion", (it) => {
               },
             },
             {
+              id: EventId.make("background-original-task"),
+              type: "subagent.updated",
+              threadId: child.parentThreadId,
+              occurredAt: now,
+              payload: {
+                ...task,
+                id: NodeId.make("original-task"),
+                status: "completed",
+                result: "Original result",
+                completedAt: now,
+                completionDelivery: { state: "delivered", observedByRunId: null },
+              },
+            },
+            {
               id: EventId.make("background-child-run"),
               type: "run.updated",
               threadId: child.childThreadId,
@@ -235,14 +249,28 @@ it.layer(layerTest)("delegated background completion", (it) => {
           current.contextTransfers.filter((row) => row.type === "subagent_result").length,
           0,
         );
-        const resumed = {
-          ...run,
-          id: RunId.make("run:background-resumed"),
-          delegatedTaskId: undefined,
-          ordinal: 2,
-          status: "running" as const,
-          completedAt: null,
-        };
+        const wakeMessageId = MessageId.make("background-wake-input");
+        yield* engine.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("background-wake-intake"),
+          threadId: child.childThreadId,
+          messageId: wakeMessageId,
+          text: "Background tests finished.",
+          attachments: [],
+          notification: {
+            source: { kind: "command" },
+            outcome: "completed",
+            summary: "Tests ended",
+          },
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "provider",
+        });
+        const resumed = (yield* engine.getThreadProjection(child.childThreadId)).runs.find(
+          (row) => row.userMessageId === wakeMessageId,
+        )!;
+        assert.equal(resumed.delegatedTaskId, task.id);
+        assert.lengthOf((yield* engine.getThreadProjection(child.parentThreadId)).subagents, 2);
         yield* sink.write({
           commandId: reconcileCommandId("background-resuming"),
           events: [
@@ -252,14 +280,6 @@ it.layer(layerTest)("delegated background completion", (it) => {
               threadId: child.childThreadId,
               occurredAt: now,
               payload: { ...providerThread, pendingBackgroundTasks: [] },
-            },
-            {
-              id: EventId.make("background-resuming"),
-              type: "run.updated",
-              threadId: child.childThreadId,
-              runId: resumed.id,
-              occurredAt: now,
-              payload: resumed,
             },
           ],
         });
@@ -297,7 +317,7 @@ it.layer(layerTest)("delegated background completion", (it) => {
               threadId: child.childThreadId,
               runId: resumed.id,
               occurredAt: now,
-              payload: { ...resumed, status: "completed", completedAt: now },
+              payload: { ...resumed, status: "completed", startedAt: now, completedAt: now },
             },
           ],
         });

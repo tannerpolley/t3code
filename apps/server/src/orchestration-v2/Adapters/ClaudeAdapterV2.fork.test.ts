@@ -1,17 +1,9 @@
 import {
   WAKE_NATIVE_SESSION,
-  WAKE_TASK_ID,
-  wakeTaskStarted,
-  turnOneResult,
-  wakeNotification,
-  wakeTurnInit,
-  wakeAssistant,
-  wakeResult,
   claudeSdkFrame,
   makeResultFrame,
   awaitUntil,
   makeWakeHarness,
-  makeWakeHarnessWithOptions,
   providerThreadRosterEvents,
 } from "./ClaudeAdapterV2.testHarness.ts";
 import {
@@ -66,93 +58,6 @@ beforeEach(() => {
 });
 
 describe("ClaudeAdapterV2 background wake turns", () => {
-  it.effect.each([true, false])(
-    "holds command completion across roster and continuation handoff (early snapshot=%s)",
-    (earlySnapshot) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const harness = yield* makeWakeHarnessWithOptions({ close: Queue.shutdown });
-          const now = yield* DateTime.now;
-          yield* harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt:handoff"),
-              text: "Run background tests.",
-              attachments: [],
-            }),
-          );
-          yield* harness.offerAndWait(wakeTaskStarted);
-          yield* Queue.take(harness.rosterReceipts);
-          yield* harness.offerAndWait(turnOneResult);
-          yield* Queue.take(harness.terminalReceipts);
-          yield* Queue.clear(harness.providerThreadReceipts);
-          const emptyRoster = (suffix: string) =>
-            claudeSdkFrame({
-              type: "system",
-              subtype: "background_tasks_changed",
-              tasks: [],
-              uuid: `handoff-${suffix}`,
-              session_id: WAKE_NATIVE_SESSION,
-            });
-          if (earlySnapshot) {
-            yield* harness.offerAndWait(emptyRoster("before-notification"));
-            const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
-            assert.equal(providerThread.pendingBackgroundTasks?.[0]?.taskId, WAKE_TASK_ID);
-          }
-          yield* harness.offerAndWait(wakeNotification);
-          const pending = providerThreadRosterEvents(harness.events).at(-1)!.providerThread;
-          assert.equal(pending.pendingBackgroundTasks?.[0]?.taskId, WAKE_TASK_ID);
-          assert.isTrue(pending.pendingBackgroundTasks?.[0]?.awaited);
-          yield* harness.offerAndWait(wakeTurnInit);
-          yield* Queue.take(harness.continuationReceipts);
-          yield* Queue.clear(harness.providerThreadReceipts);
-          yield* harness.offerAndWait(emptyRoster("after-offer"));
-          const { providerThread: offered } = yield* Queue.take(harness.providerThreadReceipts);
-          assert.equal(offered.pendingBackgroundTasks?.[0]?.taskId, WAKE_TASK_ID);
-          assert.isTrue(offered.pendingBackgroundTasks?.[0]?.awaited);
-          if (!earlySnapshot) {
-            yield* harness.runtime.startTurn(
-              makeClaudeTestTurnInput({
-                threadId: harness.threadId,
-                providerThread: offered,
-                now,
-                attemptId: RunAttemptId.make("attempt:handoff-resumed"),
-                text: "Background tests finished.",
-                attachments: [],
-                providerTurnOrdinal: 2,
-                messageCreatedBy: "agent",
-                messageCreationSource: "provider",
-              }),
-            );
-            yield* harness.offerAndWait(wakeAssistant);
-            yield* harness.offerAndWait(wakeResult);
-            yield* Queue.take(harness.terminalReceipts);
-            assert.lengthOf(harness.terminalEvents(), 2);
-            assert.isEmpty(
-              providerThreadRosterEvents(harness.events).at(-1)!.providerThread
-                .pendingBackgroundTasks ?? [],
-            );
-            return;
-          }
-          yield* harness.runtime.interruptTurn({
-            providerThread: pending,
-            providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
-            requestRuntimeRestart: true,
-          });
-          for (;;) {
-            const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
-            if ((providerThread.pendingBackgroundTasks?.length ?? 0) === 0) break;
-          }
-          assert.lengthOf(harness.continuationRequests, 1);
-        }),
-      ).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-  );
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -456,7 +361,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               taskId: taskA,
               description: "work on A",
               kind: "command",
-              awaited: true,
               startedAt: now,
             },
           ]);
