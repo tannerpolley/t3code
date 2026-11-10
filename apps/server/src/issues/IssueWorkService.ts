@@ -1836,13 +1836,39 @@ export const layer = Layer.effect(
           });
         }
         const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
-        return yield* restoreRoot({
-          ...input,
-          repositoryId: identity.repositoryId,
+        const moveTo = { ...input, repositoryId: identity.repositoryId };
+        const previous = (yield* store.configuration(input.targetThreadId)) ?? undefined;
+        // No screen shows the project's previous repository, so the user cannot pause it first.
+        const pausePrevious =
+          previous !== undefined &&
+          !previous.paused &&
+          isMovableRepositoryRegistration({ ...previous, paused: true }, moveTo);
+        if (pausePrevious)
+          yield* update(
+            input.targetThreadId,
+            { ...previous, paused: true },
+            CommandId.make(`${input.clientRequestId}:pause-previous`),
+          );
+        const moved = yield* restoreRoot({
+          ...moveTo,
           expectedRootThreadId: null,
           expectedRevision: null,
           reason: "User selected this existing lead for repository orchestration",
         });
+        if (!pausePrevious) return moved;
+        // A failed resume leaves the moved root paused, which the Issues page shows.
+        yield* resumeWork(
+          input.targetThreadId,
+          CommandId.make(`${input.clientRequestId}:resume`),
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not resume a moved repository root", {
+              rootThreadId: input.targetThreadId,
+              error: error.message,
+            }),
+          ),
+        );
+        return yield* repositoryStatus(input);
       },
       (effect, input) =>
         assignments.withLock(

@@ -2112,6 +2112,47 @@ describe("fresh-thread repository handoff", () => {
     }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
+  it.effect("a user assignment moves an unpaused root off its project's previous record", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const root = ThreadId.make("unpaused-moving-root");
+      const previous = {
+        ...config,
+        host: "git.example.com",
+        repositoryId: "repo:previous",
+        launchCommandId: CommandId.make("unpaused-moving-root:create"),
+        milestones: [],
+      };
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: previous.launchCommandId,
+        threadId: root,
+        projectId,
+        title: "Repository orchestrator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        repositoryOrchestration: previous,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const assigned = yield* service.assignOrchestrator({
+        ...reference,
+        projectId,
+        targetThreadId: root,
+        clientRequestId: CommandId.make("assign:from-previous"),
+      });
+      assert.equal(assigned.rootThreadId, root);
+      assert.isFalse(assigned.orchestration!.paused);
+      assert.isNull(yield* store.repositoryOwner(previous));
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
   it.effect("rejects a child restore target without taking locks a child follow-up holds", () =>
     Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
