@@ -92,7 +92,7 @@ const threadMetadataDependencies = [
 ];
 const ProposeIssueChangeTool = Tool.make("propose_issue_change", {
   description:
-    "Propose an exact GitHub issue change from a repository-managed thread. Use a stable clientRequestId on retries. Create/split and milestone moves execute automatically. Body edits, close/reopen, standalone parent changes, and blocked_by add/remove also execute automatically, unless the requesting thread is in approval-required mode; then they wait for the user's approval on the Issues page. The returned change includes the exact preview, decision and result. Agents cannot approve changes. A conflict needs a new proposal and preview. Labels and assignees are outside this tool's scope.",
+    "Propose an exact issue change from a repository-managed thread. Use a stable clientRequestId on retries. Create/split and milestone moves execute automatically. Body edits, close/reopen, standalone parent changes, and blocked_by add/remove also execute automatically, unless the requesting thread is in approval-required mode; then they wait for the user's approval on the Issues page. The returned change includes the exact preview, decision and result. Agents cannot approve changes. A conflict needs a new proposal and preview. Labels and assignees are outside this tool's scope.",
   parameters: IssueChangeProposeInput,
   success: IssueChange,
   failure: OrchestratorMcpFailure,
@@ -206,7 +206,7 @@ const ScheduleTaskTool = Tool.make("schedule_task", {
 const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
   parameters: OrchestratorMcpListScheduledTasksInput,
   description:
-    "List scheduled tasks. Omit `projectId` for this thread's project. Pass a `scheduledTaskId` to `schedule_task` or `delete_scheduled_task`. In a scheduled run, do not call this to find your task. Do the prompt.",
+    "List scheduled tasks. Omit `projectId` for this thread's project. Pass a `scheduledTaskId` to `schedule_task` or `delete_scheduled_task`. `lastRunStatus` `succeeded`: the run was started, not that its work passed. In a scheduled run, do not call this to find your task. Do the prompt.",
   success: OrchestratorMcpListScheduledTasksResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -219,7 +219,7 @@ const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
 
 const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   description:
-    "Delete one scheduled task by `scheduledTaskId`. It stops at once. To pause instead, use `schedule_task` with `enabled=false`.",
+    "Delete one scheduled task by `scheduledTaskId`. No further runs start; a run already started keeps going. To pause instead, use `schedule_task` with `enabled=false`.",
   parameters: OrchestratorMcpDeleteScheduledTaskInput,
   success: OrchestratorMcpDeleteScheduledTaskResult,
   failure: OrchestratorMcpFailure,
