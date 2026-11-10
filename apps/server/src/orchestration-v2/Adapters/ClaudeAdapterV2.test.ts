@@ -8509,7 +8509,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
 
   it.effect(
-    "uses task_started as an incremental roster fallback and clears on empty snapshot",
+    "keeps task_started background commands owed across empty roster snapshots until their explicit stop",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -8570,14 +8570,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           );
 
-          yield* Queue.offer(harness.sdkMessages, emptyRoster);
-          yield* harness.until(() =>
-            providerThreadRosterEvents(harness.events).some(
-              (event) =>
-                event.providerThread.status === "idle" &&
-                (event.providerThread.pendingBackgroundTasks?.length ?? 0) === 0,
-            ),
+          yield* Queue.clear(harness.providerThreadReceipts);
+          yield* harness.offerAndWait(emptyRoster);
+          const { providerThread: held } = yield* Queue.take(harness.providerThreadReceipts);
+          assert.deepEqual(
+            held.pendingBackgroundTasks?.map((task) => task.taskId).toSorted(),
+            [WAKE_TASK_ID, "subagent-shell"].toSorted(),
           );
+          for (const taskId of [WAKE_TASK_ID, "subagent-shell"]) {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({ ...wakeNotification, task_id: taskId, status: "stopped" }),
+            );
+            const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
+            assert.isFalse(
+              providerThread.pendingBackgroundTasks?.some((task) => task.taskId === taskId),
+            );
+          }
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
         }).pipe(
           Effect.provide(
@@ -8669,6 +8677,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.offer(
           harness.sdkMessages,
           roster(["dev-server"], "00000000-0000-4000-8000-000000000303"),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({ ...wakeNotification, status: "stopped" }),
         );
         yield* nextRoster((tasks) => tasks.length === 1);
         yield* Queue.offer(

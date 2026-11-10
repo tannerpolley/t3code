@@ -5382,6 +5382,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly nativeThreadId: string;
           readonly providerThread: OrchestrationV2ProviderThread;
           readonly status?: OrchestrationV2ProviderThread["status"];
+          readonly stoppedTaskId?: string;
         }) {
           const roster = rosterForNativeThread(
             yield* Ref.get(pendingBackgroundTasksByNativeThread),
@@ -5392,23 +5393,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.nativeThreadId,
           );
           const pending = new Map(roster);
-          // A buffered command wake still owes a turn, even after the CLI removes its task.
+          // Roster disappearance does not register the command's owed wake turn.
           if ((yield* Ref.get(activeTurn))?.nativeThreadId !== input.nativeThreadId) {
-            const buffered = (yield* Ref.get(wakeBuffers)).get(input.nativeThreadId);
-            const reports = (yield* Ref.get(wakeReportsByNativeThread)).reports.get(
-              input.nativeThreadId,
-            );
-            for (const message of buffered?.messages ?? []) {
-              if (message.type !== "system" || message.subtype !== "task_notification") continue;
+            for (const task of input.providerThread.pendingBackgroundTasks ?? []) {
               if (
-                message.status !== "stopped" &&
-                reports?.get(message.task_id)?.report.kind === "command"
+                task.kind === "command" &&
+                task.awaited === true &&
+                task.taskId !== input.stoppedTaskId
               ) {
-                pending.set(message.task_id, {
-                  taskId: message.task_id,
-                  kind: "command",
-                  awaited: true,
-                });
+                pending.set(task.taskId, task);
               }
             }
           }
@@ -5675,7 +5668,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : remembered.status);
           yield* emitProviderThreadRoster({
             nativeThreadId,
-            providerThread: remembered,
+            providerThread: { ...remembered, pendingBackgroundTasks: [] },
             status,
           });
         });
@@ -8254,6 +8247,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const emitRosterUpdate = Effect.fnUntraced(function* (
           nativeThreadId: string,
           activeContext: ActiveClaudeTurnContext | null,
+          stoppedTaskId?: string,
         ) {
           const baseThread =
             activeContext?.input.providerThread ??
@@ -8267,7 +8261,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : baseThread.status === "idle"
                 ? ("active" as const)
                 : baseThread.status;
-          yield* emitProviderThreadRoster({ nativeThreadId, providerThread: baseThread, status });
+          yield* emitProviderThreadRoster({
+            nativeThreadId,
+            providerThread: baseThread,
+            status,
+            ...(stoppedTaskId === undefined ? {} : { stoppedTaskId }),
+          });
         });
 
         const applyBackgroundTaskRosterMessage = Effect.fnUntraced(function* (input: {
@@ -8354,14 +8353,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               input.nativeThreadId,
               message.task_id,
             );
-            rosterChanged = removed;
+            rosterChanged = removed || message.status === "stopped";
           }
 
           if (!rosterChanged) {
             return false;
           }
 
-          yield* emitRosterUpdate(input.nativeThreadId, input.activeContext);
+          yield* emitRosterUpdate(
+            input.nativeThreadId,
+            input.activeContext,
+            message.type === "system" &&
+              message.subtype === "task_notification" &&
+              message.status === "stopped"
+              ? message.task_id
+              : undefined,
+          );
           return true;
         });
 
