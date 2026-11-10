@@ -120,7 +120,7 @@ it.effect(
       const originalOwner = yield* store.issueOwner(reviewIssue(1));
       const scope = scopeFor(root);
       let readOnlyRequests = 0;
-      for (const role of ["checker", "reviewer", "investigator"] as const) {
+      for (const role of ["checker", "reviewer", "investigator", "designer"] as const) {
         for (const issue of [undefined, reviewIssue(1)]) {
           const result = yield* mcp.delegateTask(scope, {
             role,
@@ -480,7 +480,7 @@ it.effect("read-only descendants cannot bypass managed admission for implementor
     });
     yield* delegateReviewIssue(root, reviewIssue(1), "descendant-occupied-slot");
     let parent = root;
-    for (const role of ["checker", "reviewer", "investigator"] as const) {
+    for (const role of ["checker", "reviewer", "investigator", "designer"] as const) {
       const child = yield* mcp.delegateTask(scopeFor(parent), {
         role,
         task: "Read only",

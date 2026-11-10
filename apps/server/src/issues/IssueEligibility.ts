@@ -11,7 +11,12 @@ import {
 
 export const isReadOnlyIssueRole = (role: string | undefined) => {
   const resolved = role === undefined ? undefined : resolveThreadRole(role);
-  return resolved === "checker" || resolved === "reviewer" || resolved === "investigator";
+  return (
+    resolved === "designer" ||
+    resolved === "checker" ||
+    resolved === "reviewer" ||
+    resolved === "investigator"
+  );
 };
 
 export const readOnlyIssueRoles = [...THREAD_ROLES, ...Object.keys(LEGACY_THREAD_ROLES)].filter(

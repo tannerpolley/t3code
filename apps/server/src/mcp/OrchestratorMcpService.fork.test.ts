@@ -910,7 +910,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
-  it.effect.each(["general", "checker", "test", "reviewer", "investigator"] as const)(
+  it.effect.each(["general", "checker", "test", "reviewer", "investigator", "designer"] as const)(
     "driver-only delegation inherits the checkout for %s and skips disabled instances",
     (role) =>
       Effect.gen(function* () {

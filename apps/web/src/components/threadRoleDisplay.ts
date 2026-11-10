@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import {
   BriefcaseIcon,
+  PencilRulerIcon,
   HardHatIcon,
   ListChecksIcon,
   NetworkIcon,
@@ -23,12 +24,14 @@ export type RoleDisplayThread = Pick<
 
 const ROLE_ICONS = {
   orchestrator: NetworkIcon,
+  designer: PencilRulerIcon,
   implementor: WrenchIcon,
   reviewer: ShieldCheckIcon,
   investigator: SearchIcon,
   checker: ListChecksIcon,
 };
 const ROLE_DESCRIPTIONS = {
+  designer: "Researches requests and plans issues",
   orchestrator: "Coordinates the repository's work and starts workers",
   implementor: "Makes the changes in its own worktree",
   reviewer: "Reviews work read-only",

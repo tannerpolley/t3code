@@ -167,14 +167,14 @@ export type OrchestratorMcpTerminalDelegatedTaskStatus =
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   issue: Schema.optional(IssueRef).annotate({
     description:
-      "Required for managed implementors. Starts or claims an eligible GitHub issue; an existing worker is reused. For checker, reviewer and investigator, this is only a visibility link: no claim, slot or issue worktree.",
+      "Required for managed implementors. Starts or claims an eligible GitHub issue; an existing worker is reused. For designer, checker, reviewer and investigator, this is only a visibility link: no claim, slot or issue worktree.",
   }),
   task: OrchestratorMcpPrompt,
   target: Schema.optional(OrchestratorMcpTarget),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole).annotate({
     description:
-      "Thread role: orchestrator, implementor, reviewer, investigator or checker. Legacy role names remain accepted. Fast and Thorough Implementor profiles select model targets, not separate thread roles.",
+      "Thread role: orchestrator, designer, implementor, reviewer, investigator or checker. Legacy role names remain accepted; sprinter maps to implementor and design to designer. Sprinter and Implementor profiles select model targets, not separate thread roles.",
   }),
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({

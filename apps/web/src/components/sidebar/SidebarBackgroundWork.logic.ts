@@ -182,7 +182,14 @@ export function describeSidebarBackgroundWork(
     (child) => !linked.some((task) => task.childThreadId === child.id),
   ).length;
 
-  const roleOrder = { implementor: 0, reviewer: 1, investigator: 2, checker: 3, orchestrator: 4 };
+  const roleOrder = {
+    implementor: 0,
+    reviewer: 1,
+    investigator: 2,
+    checker: 3,
+    designer: 4,
+    orchestrator: 5,
+  };
   const elsewhere = (child: ChildThread) =>
     ownerWorktreePath !== undefined && child.worktreePath !== ownerWorktreePath ? 1 : 0;
   const orderedChildren = runningChildren.toSorted(

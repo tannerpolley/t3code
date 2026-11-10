@@ -5,7 +5,17 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as IssueLinks from "../issues/IssueLinks.ts";
 import { assert, it, vi } from "@effect/vitest";
-import { CommandId, DEFAULT_REPOSITORY_WORK_SETTINGS, EnvironmentId, EventId, MessageId, NodeId, ProviderDriverKind, ThreadId, type ThreadRole } from "@t3tools/contracts";
+import {
+  CommandId,
+  DEFAULT_REPOSITORY_WORK_SETTINGS,
+  EnvironmentId,
+  EventId,
+  MessageId,
+  NodeId,
+  ProviderDriverKind,
+  ThreadId,
+  type ThreadRole,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -21,7 +31,12 @@ import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { adapter, makeHarness, modelSelection, projectId } from "./ThreadLaunchService.testHarness.ts";
+import {
+  adapter,
+  makeHarness,
+  modelSelection,
+  projectId,
+} from "./ThreadLaunchService.testHarness.ts";
 
 const reference = { host: "github.com", repository: "owner/repo" };
 const rootId = ThreadId.make("read-only-root");
@@ -200,7 +215,7 @@ it.effect(
       const implementor = yield* delegate(100, rootId, "implementor");
       const first = yield* delegate(1, implementor, "reviewer");
       yield* delegate(2, first, "checker");
-      yield* delegate(3);
+      const designer = yield* delegate(3, rootId, "designer");
       yield* delegate(4);
       const fifth = yield* delegate(5, first);
       const sixth = yield* delegate(6);
@@ -214,6 +229,8 @@ it.effect(
       assert.equal((yield* store.workerThreads(rootId)).length, 1);
       const threads = yield* ThreadManagement.ThreadManagementService;
       assert.isUndefined((yield* threads.getThreadShell(first))!.linkedIssue);
+      assert.equal((yield* threads.getThreadShell(designer))!.role, "designer");
+      assert.isUndefined((yield* threads.getThreadShell(designer))!.linkedIssue);
       const after = yield* sink.latestSequence();
       const promoted = yield* sink.stream({ afterSequence: after }).pipe(
         Stream.filter(
