@@ -13312,11 +13312,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItemStatuses: ["pending", "running", "waiting"],
       })
       .pipe(mapDispatchError(command));
+    const interrupts = yield* projectionStore
+      .getThreadRecords(command.threadId, ["turnItems"], {
+        turnItemTypes: ["run_interrupt_request"],
+      })
+      .pipe(mapDispatchError(command));
     const shell = yield* projectionStore
       .getThreadShell(command.threadId)
       .pipe(mapDispatchError(command));
     const now = yield* DateTime.now;
     if (
+      interrupts.turnItems.some(
+        (item) =>
+          item.runId === run.id ||
+          (run.completedAt !== null &&
+            item.startedAt !== null &&
+            DateTime.toEpochMillis(item.startedAt) >= DateTime.toEpochMillis(run.completedAt)),
+      ) ||
       isDelegatedThread(projection.thread) ||
       projection.thread.archivedAt !== null ||
       projection.thread.deletedAt !== null ||
@@ -13340,28 +13352,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const action = silentWakeAction(
       completed.messages.find((message) => message.id === run.userMessageId),
     );
-    if (action === "attention") {
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.metadata-updated",
-        threadId: command.threadId,
-        occurredAt: now,
-        payload: {
-          ...projection.thread,
-          silentWakeAttention: {
-            runId: run.id,
-            reason: SILENT_WAKE_ATTENTION,
-            createdAt: DateTime.formatIso(now),
-          },
-          settledAt: null,
-          settledOverride: null,
-          updatedAt: now,
-        },
-      });
-    } else if (action === "nudge") {
-      yield* dispatchMessage(
+    let reason = action === "attention" ? SILENT_WAKE_ATTENTION : undefined;
+    if (action === "nudge") {
+      const priorEvents = yield* Ref.get(events);
+      const priorEffects = yield* Ref.get(effects);
+      const sent = yield* dispatchMessage(
         {
           type: "message.dispatch",
           commandId: command.commandId,
@@ -13376,7 +13371,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
         events,
         effects,
+      ).pipe(
+        Effect.as(true),
+        Effect.catch(() =>
+          Effect.gen(function* () {
+            yield* Ref.set(events, priorEvents);
+            yield* Ref.set(effects, priorEffects);
+            return false;
+          }),
+        ),
       );
+      if (sent) return;
+      reason = "The automatic follow-up could not be sent";
+    }
+    if (reason !== undefined) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: {
+          ...projection.thread,
+          silentWakeAttention: {
+            runId: run.id,
+            reason,
+            createdAt: DateTime.formatIso(now),
+          },
+          settledAt: null,
+          settledOverride: null,
+          updatedAt: now,
+        },
+      });
     }
   });
 
