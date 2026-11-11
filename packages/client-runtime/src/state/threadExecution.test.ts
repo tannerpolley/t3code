@@ -102,6 +102,23 @@ describe("thread execution presentation", () => {
     expect(
       deriveThreadRuntime({ ...projection, runs: [failed, run("new", 2, "running")] }),
     ).toMatchObject({ status: "running", lastError: null, lastErrorClass: null });
+    const silentFollowup = {
+      ...projection,
+      thread: {
+        ...projection.thread,
+        silentWakeAttention: {
+          runId: RunId.make("silent"),
+          reason: "The agent ended two turns in a row without a reply",
+          createdAt: DateTime.formatIso(now),
+        },
+      },
+      runs: [run("silent", 2, "completed")],
+    };
+    expect(deriveThreadRuntime(silentFollowup)).toMatchObject({
+      status: "failed",
+      lastError: "The agent ended two turns in a row without a reply",
+    });
+    expect(deriveLatestThreadRun(silentFollowup)?.status).toBe("completed");
   });
 
   // regression: #15029 working timers no longer reset on every background wake

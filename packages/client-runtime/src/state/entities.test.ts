@@ -142,6 +142,15 @@ describe("V2 client presentation", () => {
 
     expect(shell.runtime).toMatchObject({ status: "failed", lastError: "Provider turn failed" });
     expect(shell.pendingBackgroundTasks).toHaveLength(1);
+    const attention = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("silent"),
+      latestRunStatus: "completed",
+      status: "failed",
+      lastError: "The agent ended two turns in a row without a reply",
+    });
+    expect(attention.runtime?.status).toBe("failed");
+    expect(attention.latestRun?.status).toBe("completed");
   });
 
   it("keeps an older active run visible over a newer cancelled run", () => {

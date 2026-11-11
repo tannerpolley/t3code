@@ -1,3 +1,4 @@
+import { silentWakeAction, SILENT_WAKE_FOLLOWUP, SILENT_WAKE_ATTENTION } from "./SilentWake.ts";
 import { repositoryPhase } from "@t3tools/contracts";
 import { isReadOnlyIssueRole } from "../issues/IssueEligibility.ts";
 import type {
@@ -609,6 +610,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.model-selection.set":
     case "provider-session.detach":
     case "message.dispatch":
+    case "run.silence.check":
     case "notification.delivery.accept":
     case "prepared-run.release":
     case "prepared-run.progress":
@@ -6398,6 +6400,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedAt: now,
         ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
         ...(command.notification === undefined ? {} : { notification: command.notification }),
+        ...(command.silentWakeFollowupOfRunId === undefined
+          ? {}
+          : { silentWakeFollowupOfRunId: command.silentWakeFollowupOfRunId }),
       };
       const emitEvent = emit(events, command);
       if (targetProviderThread === undefined) {
@@ -6755,6 +6760,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedAt: now,
         ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
         ...(command.notification === undefined ? {} : { notification: command.notification }),
+        ...(command.silentWakeFollowupOfRunId === undefined
+          ? {}
+          : { silentWakeFollowupOfRunId: command.silentWakeFollowupOfRunId }),
       };
       const turnItem: OrchestrationV2TurnItem = {
         createdBy: command.createdBy,
@@ -7507,6 +7515,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       updatedAt: now,
       ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
       ...(command.notification === undefined ? {} : { notification: command.notification }),
+      ...(command.silentWakeFollowupOfRunId === undefined
+        ? {}
+        : { silentWakeFollowupOfRunId: command.silentWakeFollowupOfRunId }),
     };
     const turnItem: OrchestrationV2TurnItem = {
       createdBy: command.createdBy,
@@ -13274,6 +13285,135 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
   });
 
+  const dispatchSilenceCheck = Effect.fn("Orchestrator.dispatchSilenceCheck")(function* (
+    command: Extract<OrchestrationV2InternalCommand, { type: "run.silence.check" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const completed = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runs", "messages"], {
+        runIds: [command.runId],
+        messageRunIds: [command.runId],
+      })
+      .pipe(mapDispatchError(command));
+    const run = completed.runs[0];
+    if (
+      run === undefined ||
+      run.status !== "completed" ||
+      completed.messages.some((message) => message.role === "assistant")
+    )
+      return;
+    const pending = yield* projectionStore
+      .getThreadRecords(
+        command.threadId,
+        ["runs", "runtimeRequests", "subagents", "providerThreads", "turnItems"],
+        {
+          turnItemStatuses: ["pending", "running", "waiting"],
+          omitSettledSubagents: true,
+        },
+      )
+      .pipe(mapDispatchError(command));
+    const projection = { ...pending, messages: completed.messages };
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      runId: run.id,
+      ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "silent-completion" }),
+        threadId: command.threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId: run.providerThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal(projection),
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "system_notice",
+        message: "The turn ended without a reply",
+      },
+    });
+    if (
+      projection.thread.archivedAt !== null ||
+      projection.thread.deletedAt !== null ||
+      projection.runs.some(
+        (candidate) =>
+          candidate.id !== run.id &&
+          (candidate.status === "queued" ||
+            isBlockingRun(candidate) ||
+            (candidate.startedAt !== null && candidate.ordinal > run.ordinal)),
+      ) ||
+      projection.runtimeRequests.some((request) => request.status === "pending") ||
+      projection.subagents.some(
+        (task) =>
+          ["idle", "pending", "running", "waiting"].includes(task.status) ||
+          task.completionDelivery?.state === "pending",
+      ) ||
+      (yield* projectionStore.getThreadShell(command.threadId).pipe(mapDispatchError(command)))
+        ?.pendingRuntimeRequest != null ||
+      derivePendingBackgroundWork({
+        latestRun: run,
+        providerThreads: projection.providerThreads,
+        turnItems: projection.turnItems,
+        activeProviderThreadId: projection.thread.activeProviderThreadId,
+        runs: projection.runs,
+      }).length > 0
+    )
+      return;
+    const action = silentWakeAction(
+      projection.messages.find((message) => message.id === run.userMessageId),
+    );
+    if (action === "attention") {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: {
+          ...projection.thread,
+          silentWakeAttention: {
+            runId: run.id,
+            reason: SILENT_WAKE_ATTENTION,
+            createdAt: DateTime.formatIso(now),
+          },
+          settledAt: null,
+          settledOverride: null,
+          updatedAt: now,
+        },
+      });
+    } else if (action === "nudge") {
+      yield* dispatchMessage(
+        {
+          type: "message.dispatch",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          messageId: MessageId.make(`silent-wake-followup:${run.id}`),
+          text: SILENT_WAKE_FOLLOWUP,
+          silentWakeFollowupOfRunId: run.id,
+          attachments: [],
+          createdBy: "system",
+          creationSource: "server",
+          dispatchMode: { type: "queue_after_active" },
+        },
+        events,
+        effects,
+      );
+    }
+  });
+
   const dispatchNotificationAccepted = Effect.fn("orchestrationV2.notificationAccepted")(function* (
     command: Extract<OrchestrationV2Command, { type: "notification.delivery.accept" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -13633,6 +13773,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
         break;
       }
+      case "run.silence.check":
+        yield* dispatchSilenceCheck(command, events, effects);
+        break;
       case "notification.delivery.accept":
         updateDelegatedCompletionOnlyRunId = yield* dispatchNotificationAccepted(command, events);
         break;
@@ -14008,6 +14151,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.filterOrFail(
           (planned) =>
             planned.events.length > 0 ||
+            command.type === "run.silence.check" ||
             command.type === "issue.queue.change" ||
             command.type === "issue.queue.deliver" ||
             command.type === "repository.work.continue" ||
@@ -14320,6 +14464,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (stored.event.type !== "run.updated") return;
       const threadId = stored.event.threadId;
       const run = stored.event.payload;
+      if (run.status === "completed")
+        yield* dispatchWithReceipt({
+          type: "run.silence.check",
+          commandId: CommandId.make(`silent-wake-check:${run.id}`),
+          threadId,
+          runId: run.id,
+        });
       // Take parent and child locks sequentially, never nested: delegation holds the parent
       // while writing child events, so nesting parent inside child would invert the order.
       // The keyed semaphores are neither reentrant nor deadlock-aware.

@@ -23,6 +23,8 @@ import type {
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import {
+  clearSilentWakeAttention,
+  silentWakeAttentionPresentation,
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
@@ -920,6 +922,7 @@ export function applyToProjection(
     case "run.updated":
       return withLocalVisibleTurnItems({
         ...base,
+        thread: clearSilentWakeAttention(base.thread, event.payload, event.occurredAt),
         runs: upsertById(
           base.runs,
           preserveRunRecordedFields(
@@ -1643,6 +1646,9 @@ export function threadShellFromProjection(
       ? {}
       : { delegatedFrom: projection.thread.delegatedFrom }),
     latestRunId: latestRun?.id ?? null,
+    ...(projection.thread.silentWakeAttention === undefined
+      ? {}
+      : { latestRunStatus: latestRun?.status ?? null }),
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
     latestRunCompletedAt: latestRun?.completedAt ?? null,
@@ -1662,6 +1668,7 @@ export function threadShellFromProjection(
       latestRootProviderFailure(latestRun, projection.turnItems),
       providerSession?.lastError ?? null,
     ),
+    ...silentWakeAttentionPresentation(projection.thread),
     pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(projection.thread.guestShare),
     // Thread detail owns message bodies. Keeping them out of shell rows makes
@@ -1967,6 +1974,12 @@ function shellFromState(input: {
       ? {}
       : { delegatedFrom: input.state.thread.delegatedFrom }),
     latestRunId: input.state.latestRunId,
+    ...(input.state.thread.silentWakeAttention === undefined
+      ? {}
+      : {
+          latestRunStatus:
+            input.state.latestRunStatus === "idle" ? null : input.state.latestRunStatus,
+        }),
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
     latestRunCompletedAt: input.state.latestRunCompletedAt,
@@ -1985,6 +1998,7 @@ function shellFromState(input: {
     lastErrorClass: input.state.lastErrorClass,
     lastErrorCode: input.state.lastErrorCode,
     usageLimitResetAt: input.state.usageLimitResetAt,
+    ...silentWakeAttentionPresentation(input.state.thread),
     pendingRuntimeRequest: input.state.pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(input.state.thread.guestShare),
     latestVisibleMessage: null,
@@ -2143,6 +2157,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             case "run.created":
             case "run.updated": {
+              if (["starting", "running", "waiting"].includes(event.payload.status)) {
+                yield* sql`UPDATE orchestration_v2_projection_threads
+                  SET payload_json = json_remove(payload_json, '$.silentWakeAttention')
+                  WHERE thread_id = ${event.threadId}
+                    AND json_extract(payload_json, '$.silentWakeAttention.runId') <> ${event.payload.id}
+                    AND json_extract(payload_json, '$.silentWakeAttention.createdAt') <= ${DateTime.formatIso(event.occurredAt)}`;
+              }
               yield* finishIssueQueueNotice(event.payload).pipe(
                 Effect.provideService(SqlClient.SqlClient, sql),
               );
