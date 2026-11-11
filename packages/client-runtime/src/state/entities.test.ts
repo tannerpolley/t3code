@@ -145,9 +145,12 @@ describe("V2 client presentation", () => {
     const attention = presentThreadShell(environmentId, {
       ...v2ThreadShell,
       latestRunId: RunId.make("silent"),
-      latestRunStatus: "completed",
-      status: "failed",
-      lastError: "The agent ended two turns in a row without a reply",
+      status: "completed",
+      silentWakeAttention: {
+        runId: RunId.make("silent"),
+        reason: "The agent ended two turns in a row without a reply",
+        createdAt: "2026-11-10T00:00:00Z",
+      },
     });
     expect(attention.runtime?.status).toBe("failed");
     expect(attention.latestRun?.status).toBe("completed");

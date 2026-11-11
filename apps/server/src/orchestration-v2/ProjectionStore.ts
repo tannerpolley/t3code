@@ -24,7 +24,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   clearSilentWakeAttention,
-  silentWakeAttentionPresentation,
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
@@ -1648,7 +1647,7 @@ export function threadShellFromProjection(
     latestRunId: latestRun?.id ?? null,
     ...(projection.thread.silentWakeAttention === undefined
       ? {}
-      : { latestRunStatus: latestRun?.status ?? null }),
+      : { silentWakeAttention: projection.thread.silentWakeAttention }),
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
     latestRunCompletedAt: latestRun?.completedAt ?? null,
@@ -1668,7 +1667,6 @@ export function threadShellFromProjection(
       latestRootProviderFailure(latestRun, projection.turnItems),
       providerSession?.lastError ?? null,
     ),
-    ...silentWakeAttentionPresentation(projection.thread),
     pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(projection.thread.guestShare),
     // Thread detail owns message bodies. Keeping them out of shell rows makes
@@ -1976,10 +1974,7 @@ function shellFromState(input: {
     latestRunId: input.state.latestRunId,
     ...(input.state.thread.silentWakeAttention === undefined
       ? {}
-      : {
-          latestRunStatus:
-            input.state.latestRunStatus === "idle" ? null : input.state.latestRunStatus,
-        }),
+      : { silentWakeAttention: input.state.thread.silentWakeAttention }),
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
     latestRunCompletedAt: input.state.latestRunCompletedAt,
@@ -1998,7 +1993,6 @@ function shellFromState(input: {
     lastErrorClass: input.state.lastErrorClass,
     lastErrorCode: input.state.lastErrorCode,
     usageLimitResetAt: input.state.usageLimitResetAt,
-    ...silentWakeAttentionPresentation(input.state.thread),
     pendingRuntimeRequest: input.state.pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(input.state.thread.guestShare),
     latestVisibleMessage: null,

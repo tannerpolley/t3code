@@ -69,7 +69,16 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
+type RunCompletionPlanner = (run: OrchestrationV2Run) => Effect.Effect<
+  {
+    events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
+  },
+  unknown
+>;
+
 export interface EventSinkV2Shape {
+  readonly setRunCompletionPlanner: (planner: RunCompletionPlanner) => Effect.Effect<void>;
   /** Refresh a coalesced issue marker outside the event commit transaction. */
   readonly refreshIssueStatus: (
     input: Extract<EffectOutbox.OrchestrationEffectRequestV2, { type: "issue.status.refresh" }> & {
@@ -246,6 +255,9 @@ const layerBase: Layer.Layer<
           );
         }
       });
+    let runCompletionPlanner: RunCompletionPlanner | undefined;
+    const appendEvents = (input: Parameters<typeof eventStore.append>[0]) =>
+      eventStore.append(input).pipe(Effect.map((events) => [...events]));
     const runOutcomes = makeRunOutcomeRecorder((threadId) =>
       // One payload row; unlike the shell, it still resolves a deleted child thread.
       projectionStore
@@ -379,10 +391,31 @@ const layerBase: Layer.Layer<
 
     const applyStoredEvents =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
-      Effect.fnUntraced(function* (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) {
+      Effect.fnUntraced(function* (storedEvents: Array<OrchestrationV2StoredEvent>) {
+        const completed = [];
+        for (const stored of storedEvents) {
+          const event = stored.event;
+          if (event.type !== "run.updated" || event.payload.status !== "completed") continue;
+          const previous = yield* projectionStore.getThreadRecords(event.threadId, ["runs"], {
+            runIds: [event.payload.id],
+          });
+          if (previous.runs[0]?.status !== "completed") completed.push(event.payload);
+        }
         yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {
           concurrency: 1,
         });
+        let completionEffects = 0;
+        for (const run of completed) {
+          if (runCompletionPlanner === undefined) continue;
+          const plan = yield* runCompletionPlanner(run);
+          const extra = yield* appendEvents({ events: yield* normalizeEvents(plan.events) });
+          yield* Effect.forEach(extra, (stored) => projectionStore.apply(stored.event), {
+            concurrency: 1,
+          });
+          storedEvents.push(...extra);
+          yield* effectOutbox.enqueue(plan.effects);
+          completionEffects += plan.effects.length;
+        }
         const sequence = storedEvents.at(-1)?.sequence;
         if (sequence !== undefined) {
           const now = DateTime.formatIso(yield* DateTime.now);
@@ -414,7 +447,7 @@ const layerBase: Layer.Layer<
           outbox: effectOutbox,
           events: storedEvents,
         });
-        return { outcomes, statusEffectCount };
+        return { outcomes, statusEffectCount: statusEffectCount + completionEffects };
       });
 
     // The enclosing write or commit span already traces this per-event projection merge.
@@ -475,7 +508,7 @@ const layerBase: Layer.Layer<
               ? yield* guardUserInputCancellations(events)
               : events,
           );
-          const committed = yield* eventStore.append({
+          const committed = yield* appendEvents({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
             events: normalized,
           });
@@ -535,7 +568,7 @@ const layerBase: Layer.Layer<
                 ? yield* guardUserInputCancellations(input.events)
                 : input.events,
             );
-            const storedEvents = yield* eventStore.append({
+            const storedEvents = yield* appendEvents({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
               events: normalized,
             });
@@ -602,7 +635,7 @@ const layerBase: Layer.Layer<
               ? yield* guardUserInputCancellations(input.events)
               : input.events,
           );
-          const storedEvents = yield* eventStore.append({
+          const storedEvents = yield* appendEvents({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
             events: normalized,
           });
@@ -642,7 +675,7 @@ const layerBase: Layer.Layer<
           }
 
           const normalized = yield* normalizeEvents(input.events);
-          const storedEvents = yield* eventStore.append({ events: normalized });
+          const storedEvents = yield* appendEvents({ events: normalized });
           const outcomes = yield* applyStoredEvents(storedEvents);
           return { committed: true as const, storedEvents, outcomes };
         }),
@@ -699,10 +732,11 @@ const layerBase: Layer.Layer<
               ? input.events
               : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId),
           );
-          const storedEvents = yield* eventStore.append({
+          const storedEvents = yield* appendEvents({
             commandId: input.commandId,
             events: normalized,
           });
+          const outcomes = yield* applyStoredEvents(storedEvents);
           // A Stop that changes nothing can still queue the stop of its delegated tasks.
           const sequence =
             storedEvents.at(-1)?.sequence ??
@@ -714,7 +748,6 @@ const layerBase: Layer.Layer<
               new Error(`Command ${input.commandId} produced no orchestration events.`),
             );
           }
-          const outcomes = yield* applyStoredEvents(storedEvents);
           yield* effectOutbox.enqueue(input.effects);
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,
@@ -978,6 +1011,10 @@ const layerBase: Layer.Layer<
             (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
           ),
         ),
+      setRunCompletionPlanner: (planner) =>
+        Effect.sync(() => {
+          runCompletionPlanner = planner;
+        }),
       commitCommand: (input) =>
         commitCommandEffect(input).pipe(
           Effect.mapError(

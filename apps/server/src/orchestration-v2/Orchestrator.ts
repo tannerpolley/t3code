@@ -5800,7 +5800,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Background wakes and delegated completions continue work the user already snoozed, so
     // only a message someone actually sent ends the snooze.
     const automaticWake =
-      command.notification !== undefined || command.delegatedCompletion !== undefined;
+      command.notification !== undefined ||
+      command.delegatedCompletion !== undefined ||
+      command.silentWakeFollowupOfRunId !== undefined;
     if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
@@ -13303,17 +13305,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completed.messages.some((message) => message.role === "assistant")
     )
       return;
-    const pending = yield* projectionStore
-      .getThreadRecords(
-        command.threadId,
-        ["runs", "runtimeRequests", "subagents", "providerThreads", "turnItems"],
-        {
-          turnItemStatuses: ["pending", "running", "waiting"],
-          omitSettledSubagents: true,
-        },
-      )
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runs", "subagents", "turnItems"], {
+        omitSettledSubagents: true,
+        turnItemStatuses: ["pending", "running", "waiting"],
+      })
       .pipe(mapDispatchError(command));
-    const projection = { ...pending, messages: completed.messages };
+    const shell = yield* projectionStore
+      .getThreadShell(command.threadId)
+      .pipe(mapDispatchError(command));
     const now = yield* DateTime.now;
     yield* emit(
       events,
@@ -13345,6 +13345,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     });
     if (
+      projection.thread.lineage.relationshipToParent === "subagent" ||
+      run.delegatedTaskId !== undefined ||
       projection.thread.archivedAt !== null ||
       projection.thread.deletedAt !== null ||
       projection.runs.some(
@@ -13354,25 +13356,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             isBlockingRun(candidate) ||
             (candidate.startedAt !== null && candidate.ordinal > run.ordinal)),
       ) ||
-      projection.runtimeRequests.some((request) => request.status === "pending") ||
       projection.subagents.some(
         (task) =>
           ["idle", "pending", "running", "waiting"].includes(task.status) ||
-          task.completionDelivery?.state === "pending",
+          task.completionDelivery?.state === "pending" ||
+          task.completionDelivery?.state === "claimed",
       ) ||
-      (yield* projectionStore.getThreadShell(command.threadId).pipe(mapDispatchError(command)))
-        ?.pendingRuntimeRequest != null ||
-      derivePendingBackgroundWork({
-        latestRun: run,
-        providerThreads: projection.providerThreads,
-        turnItems: projection.turnItems,
-        activeProviderThreadId: projection.thread.activeProviderThreadId,
-        runs: projection.runs,
-      }).length > 0
+      shell?.pendingRuntimeRequest != null ||
+      (shell?.pendingBackgroundTasks?.length ?? 0) > 0
     )
       return;
     const action = silentWakeAction(
-      projection.messages.find((message) => message.id === run.userMessageId),
+      completed.messages.find((message) => message.id === run.userMessageId),
     );
     if (action === "attention") {
       yield* emit(
@@ -14464,13 +14459,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (stored.event.type !== "run.updated") return;
       const threadId = stored.event.threadId;
       const run = stored.event.payload;
-      if (run.status === "completed")
-        yield* dispatchWithReceipt({
-          type: "run.silence.check",
-          commandId: CommandId.make(`silent-wake-check:${run.id}`),
-          threadId,
-          runId: run.id,
-        });
       // Take parent and child locks sequentially, never nested: delegation holds the parent
       // while writing child events, so nesting parent inside child would invert the order.
       // The keyed semaphores are neither reentrant nor deadlock-aware.
@@ -14540,6 +14528,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
         ),
       ),
+  );
+
+  yield* eventSink.setRunCompletionPlanner(
+    Effect.fn("Orchestrator.planSilentCompletion")(function* (run) {
+      const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
+      const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
+      yield* dispatchSilenceCheck(
+        {
+          type: "run.silence.check",
+          commandId: CommandId.make(`silent-wake-check:${run.id}`),
+          threadId: run.threadId,
+          runId: run.id,
+        },
+        events,
+        effects,
+      );
+      return { events: yield* Ref.get(events), effects: yield* Ref.get(effects) };
+    }),
   );
 
   // Projections already contain historical terminals; replaying them delays startup queue promotion with database size.
