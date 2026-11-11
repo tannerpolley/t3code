@@ -1,3 +1,4 @@
+import { resolveThreadActivity } from "./forkThreadActivity.ts";
 import {
   TurnItemId,
   NodeId,
@@ -115,9 +116,9 @@ describe("thread execution presentation", () => {
       runs: [run("silent", 2, "completed")],
     };
     expect(deriveThreadRuntime(silentFollowup)).toMatchObject({
-      status: "failed",
-      lastError: "The agent ended two turns in a row without a reply",
+      status: "completed",
     });
+    expect(resolveThreadActivity({ runtime: deriveThreadRuntime(silentFollowup) })).toBe("failed");
     expect(deriveLatestThreadRun(silentFollowup)?.status).toBe("completed");
   });
 
@@ -555,4 +556,21 @@ describe("presentPendingBackgroundWork", () => {
     ]);
     expect(presentation?.items[0]?.label).toBe("mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF");
   });
+});
+
+it("preparing next run takes precedence over prior attention", () => {
+  const runtime = deriveThreadRuntime({
+    ...v2Projection,
+    thread: {
+      ...v2Projection.thread,
+      silentWakeAttention: {
+        runId: RunId.make("silent"),
+        reason: "The agent ended two turns in a row without a reply",
+        createdAt: DateTime.formatIso(now),
+      },
+    },
+    runs: [run("silent", 1, "completed"), run("next", 2, "preparing")],
+  });
+  expect(runtime?.status).toBe("preparing");
+  expect(resolveThreadActivity({ runtime })).toBe("connecting");
 });

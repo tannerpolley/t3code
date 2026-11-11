@@ -25,7 +25,10 @@ export type ThreadActivityInput = {
       | "pendingBackgroundTasks"
   ]?: EnvironmentThreadShell[K] | undefined;
 } & {
-  readonly runtime?: Pick<ThreadRuntimeSummary, "status" | "lastErrorClass"> | null;
+  readonly runtime?: Pick<
+    ThreadRuntimeSummary,
+    "status" | "lastErrorClass" | "silentWakeAttention"
+  > | null;
   readonly latestRun?: Pick<ThreadRunSummary, "status"> | null;
 };
 
@@ -39,6 +42,7 @@ export function resolveThreadActivity(thread: ThreadActivityInput): ThreadActivi
   if (status === "queued" || (status === "running" && thread.blockedOnThreadWait)) return "waiting";
   if (status === "preparing" || status === "starting") return "connecting";
   if (status === "running" || status === "waiting") return "working";
+  if (thread.runtime?.silentWakeAttention !== undefined) return "failed";
   if (status === "failed" || thread.latestRun?.status === "failed") {
     return thread.runtime?.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
@@ -80,6 +84,7 @@ export function threadActivityShellRuntime(
   }
   const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
   return {
+    silentWakeAttention: thread.silentWakeAttention,
     status,
     activeRunId: thread.activeRunId,
     activityStartedAt:

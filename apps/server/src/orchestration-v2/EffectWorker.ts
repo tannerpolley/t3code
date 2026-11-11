@@ -256,6 +256,25 @@ export const layerExecutor: Layer.Layer<
               ),
             );
           }
+          case "run.silence.check":
+            return threads
+              .dispatch({
+                type: "run.silence.check",
+                commandId: CommandId.make(`silent-wake-check:${effect.request.runId}`),
+                threadId: effect.threadId,
+                runId: effect.request.runId,
+              })
+              .pipe(
+                Effect.asVoid,
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
             return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(

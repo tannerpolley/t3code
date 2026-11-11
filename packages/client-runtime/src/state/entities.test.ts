@@ -1,3 +1,4 @@
+import { resolveThreadActivity } from "./forkThreadActivity.ts";
 import {
   EnvironmentId,
   MessageId,
@@ -152,7 +153,8 @@ describe("V2 client presentation", () => {
         createdAt: "2026-11-10T00:00:00Z",
       },
     });
-    expect(attention.runtime?.status).toBe("failed");
+    expect(attention.runtime?.status).toBe("completed");
+    expect(resolveThreadActivity(attention)).toBe("failed");
     expect(attention.latestRun?.status).toBe("completed");
   });
 

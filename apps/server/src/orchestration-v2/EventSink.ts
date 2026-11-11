@@ -1,5 +1,7 @@
 import {
   CommandId,
+  EventId,
+  TurnItemId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
@@ -69,16 +71,7 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
-type RunCompletionPlanner = (run: OrchestrationV2Run) => Effect.Effect<
-  {
-    events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
-  },
-  unknown
->;
-
 export interface EventSinkV2Shape {
-  readonly setRunCompletionPlanner: (planner: RunCompletionPlanner) => Effect.Effect<void>;
   /** Refresh a coalesced issue marker outside the event commit transaction. */
   readonly refreshIssueStatus: (
     input: Extract<EffectOutbox.OrchestrationEffectRequestV2, { type: "issue.status.refresh" }> & {
@@ -255,7 +248,6 @@ const layerBase: Layer.Layer<
           );
         }
       });
-    let runCompletionPlanner: RunCompletionPlanner | undefined;
     const appendEvents = (input: Parameters<typeof eventStore.append>[0]) =>
       eventStore.append(input).pipe(Effect.map((events) => [...events]));
     const runOutcomes = makeRunOutcomeRecorder((threadId) =>
@@ -399,22 +391,58 @@ const layerBase: Layer.Layer<
           const previous = yield* projectionStore.getThreadRecords(event.threadId, ["runs"], {
             runIds: [event.payload.id],
           });
-          if (previous.runs[0]?.status !== "completed") completed.push(event.payload);
+          if (previous.runs[0]?.status !== "completed") completed.push(event);
         }
         yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {
           concurrency: 1,
         });
         let completionEffects = 0;
-        for (const run of completed) {
-          if (runCompletionPlanner === undefined) continue;
-          const plan = yield* runCompletionPlanner(run);
-          const extra = yield* appendEvents({ events: yield* normalizeEvents(plan.events) });
+        for (const completion of completed) {
+          const run = completion.payload;
+          const projection = yield* projectionStore.getThreadRecords(run.threadId, ["messages"], {
+            messageRunIds: [run.id],
+          });
+          if (projection.messages.some((message) => message.role === "assistant")) continue;
+          const now = yield* DateTime.now;
+          const notice: OrchestrationV2DomainEvent = {
+            id: EventId.make(`silent-completion:${completion.id}`),
+            type: "turn-item.updated",
+            threadId: run.threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`silent-completion:${run.id}`),
+              threadId: run.threadId,
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              providerThreadId: run.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: yield* projectionStore.getNextTurnItemOrdinal(run.threadId),
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "system_notice",
+              message: "The turn ended without a reply",
+            },
+          };
+          const extra = yield* appendEvents({ events: yield* normalizeEvents([notice]) });
           yield* Effect.forEach(extra, (stored) => projectionStore.apply(stored.event), {
             concurrency: 1,
           });
           storedEvents.push(...extra);
-          yield* effectOutbox.enqueue(plan.effects);
-          completionEffects += plan.effects.length;
+          yield* effectOutbox.enqueue([
+            {
+              id: `silent-wake:${run.id}`,
+              commandId: CommandId.make(`silent-wake-check:${run.id}`),
+              threadId: run.threadId,
+              request: { type: "run.silence.check", runId: run.id },
+            },
+          ]);
+          completionEffects += 1;
         }
         const sequence = storedEvents.at(-1)?.sequence;
         if (sequence !== undefined) {
@@ -1011,10 +1039,6 @@ const layerBase: Layer.Layer<
             (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
           ),
         ),
-      setRunCompletionPlanner: (planner) =>
-        Effect.sync(() => {
-          runCompletionPlanner = planner;
-        }),
       commitCommand: (input) =>
         commitCommandEffect(input).pipe(
           Effect.mapError(

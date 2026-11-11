@@ -1,5 +1,4 @@
 import {
-  silentWakeAttentionPresentation,
   latestExecutedRun,
   latestRootProviderFailure,
   latestUnheldRun,
@@ -299,7 +298,7 @@ export function deriveThreadStructureRuntime(
       latestRootProviderFailure(latestRunProjection, projection.turnItems),
       providerSession?.lastError ?? null,
     ),
-    ...silentWakeAttentionPresentation(projection.thread),
+    silentWakeAttention: projection.thread.silentWakeAttention,
   };
 }
 
