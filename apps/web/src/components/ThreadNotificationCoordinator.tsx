@@ -140,6 +140,10 @@ export function startThreadNotifications(
               : status === "request"
                 ? "Guest request"
                 : "Input needed";
+    const description =
+      status === "failed" && thread.runtime?.lastError
+        ? `${thread.title}: ${thread.runtime.lastError}`
+        : thread.title;
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind, () =>
         hasNotificationSound(getClientSettings().notificationMode),
@@ -156,7 +160,7 @@ export function startThreadNotifications(
         onRemove: (): void => forgetToast(toastKey, toastId),
         type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
         title,
-        description: thread.title,
+        description,
         data: {
           hideCopyButton: true,
           leadingIcon:
@@ -195,7 +199,7 @@ export function startThreadNotifications(
       return;
     try {
       const notification = new Notification(title, {
-        body: thread.title,
+        body: description,
         tag: threadNotificationTag(environmentId, thread.id),
         silent: true,
         // Windows drops clicks after a toast moves into Notification Center.

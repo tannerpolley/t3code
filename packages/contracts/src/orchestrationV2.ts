@@ -504,6 +504,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedIssue: Schema.optional(ThreadLinkedIssue),
   repositoryOrchestration: Schema.optional(RepositoryOrchestration),
+  silentWakeAttention: Schema.optional(
+    Schema.Struct({ runId: RunId, reason: Schema.String, createdAt: IsoDateTime }),
+  ),
   /** Completion mailbox for managed workers launched outside a parent run. */
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
 
@@ -1361,6 +1364,7 @@ export const OrchestrationV2IdleCompaction = Schema.Literals(["beforeCacheExpire
 export type OrchestrationV2IdleCompaction = typeof OrchestrationV2IdleCompaction.Type;
 
 export const OrchestrationV2ConversationMessage = Schema.Struct({
+  silentWakeFollowupOfRunId: Schema.optional(RunId),
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -2208,6 +2212,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
   latestRunId: Schema.NullOr(RunId),
+  latestRunStatus: Schema.optional(Schema.NullOr(OrchestrationV2RunStatus)),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -3322,6 +3327,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
+    silentWakeFollowupOfRunId: Schema.optional(RunId),
     notification: Schema.optional(OrchestrationV2Notification),
     /** Sends this pending guest message; the server uses the guest's text, not `text`. */
     guestMessageId: Schema.optional(GuestMessageId),
@@ -3571,6 +3577,12 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("run.silence.check"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),

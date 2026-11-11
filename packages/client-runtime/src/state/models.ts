@@ -253,7 +253,8 @@ export function presentThreadShell(
       ? null
       : ({
           runId: thread.latestRunId,
-          status: thread.status === "idle" ? "completed" : thread.status,
+          status:
+            thread.latestRunStatus ?? (thread.status === "idle" ? "completed" : thread.status),
           requestedAt: nullableIso(thread.latestRunRequestedAt ?? null),
           startedAt: nullableIso(thread.latestRunStartedAt ?? null),
           completedAt:

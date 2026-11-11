@@ -1,3 +1,4 @@
+import { clearSilentWakeAttention } from "@t3tools/shared/orchestrationV2ThreadError";
 import { applyThreadPullRequestLinkUpdate } from "../threadPullRequests.ts";
 import type {
   OrchestrationV2DomainEvent,
@@ -306,7 +307,11 @@ export function applyOrchestrationV2ProjectionEvent(
       return { ...projection, thread: event.payload };
     case "run.created":
     case "run.updated": {
-      const next = { ...base, runs: upsertEntity(base.runs, event.payload) };
+      const next = {
+        ...base,
+        thread: clearSilentWakeAttention(base.thread, event.payload, event.occurredAt),
+        runs: upsertEntity(base.runs, event.payload),
+      };
       return { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
     }
     case "run.background-work-cancelled":

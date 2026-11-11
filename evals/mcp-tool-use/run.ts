@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { SILENT_WAKE_FOLLOWUP } from "../../apps/server/src/orchestration-v2/SilentWake.ts";
 import { NotebookToolkit } from "../../apps/server/src/mcp/toolkits/notebook/tools.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 /**
@@ -249,6 +250,7 @@ export const McpToolUseCase = Schema.Struct({
     linkedEnvironments: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
+    silentWakeFollowup: Schema.optional(Schema.Boolean),
     context: Schema.optional(Schema.String),
     issueGuidance: Schema.optional(
       Schema.Literals(["queued-issue", "open-blocker", "managed-worker"]),
@@ -943,9 +945,11 @@ export const buildMessages = (sample: Sample) => {
     if (turn.text) push(turn.role, text(turn.text));
   }
   const userText =
-    testCase.promptContext === undefined
-      ? testCase.prompt
-      : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+    testCase.setup.silentWakeFollowup === true
+      ? SILENT_WAKE_FOLLOWUP
+      : testCase.promptContext === undefined
+        ? testCase.prompt
+        : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const sideChat = testCase.setup.sideChat;
   const prompt =
     sideChat === undefined

@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2AppThread,
   OrchestrationV2ProviderFailure,
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
@@ -106,4 +107,33 @@ export function latestUnheldRun(
     if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
   return latest;
+}
+
+export function clearSilentWakeAttention<
+  T extends Pick<OrchestrationV2AppThread, "silentWakeAttention">,
+>(thread: T, run: OrchestrationV2Run, occurredAt: DateTime.Utc) {
+  const attention = thread.silentWakeAttention;
+  if (
+    attention === undefined ||
+    run.id === attention.runId ||
+    !["starting", "running", "waiting"].includes(run.status) ||
+    !DateTime.isGreaterThanOrEqualTo(occurredAt, DateTime.makeUnsafe(attention.createdAt))
+  )
+    return thread;
+  const { silentWakeAttention: _attention, ...cleared } = thread;
+  return cleared;
+}
+
+export function silentWakeAttentionPresentation(
+  thread: Pick<OrchestrationV2AppThread, "silentWakeAttention">,
+) {
+  return thread.silentWakeAttention === undefined
+    ? {}
+    : {
+        status: "failed" as const,
+        lastError: thread.silentWakeAttention.reason,
+        lastErrorClass: null,
+        lastErrorCode: null,
+        usageLimitResetAt: null,
+      };
 }

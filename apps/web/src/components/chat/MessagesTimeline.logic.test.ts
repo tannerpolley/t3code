@@ -4418,3 +4418,49 @@ describe("shouldCollapseUserMessage", () => {
     expect(shouldCollapseUserMessage(`${citation} ${"More text. ".repeat(60)}`)).toBe(true);
   });
 });
+
+it("keeps a silent completed turn's notice visible", () => {
+  const fixture = makeStreamingTimelineFixture();
+  const notice: OrchestrationV2ProjectedTurnItem = {
+    ...fixture.visibleTurnItems[0]!,
+    item: {
+      id: TurnItemId.make("silent-notice"),
+      threadId: fixture.threadId,
+      runId: fixture.runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      title: null,
+      startedAt: DateTime.makeUnsafe(fixture.time(1)),
+      updatedAt: DateTime.makeUnsafe(fixture.time(1)),
+      type: "system_notice",
+      status: "completed",
+      message: "The turn ended without a reply",
+      completedAt: DateTime.makeUnsafe(fixture.time(1)),
+    },
+  };
+  const entries = deriveTimelineEntriesFromVisibleTurnItems({
+    visibleTurnItems: [notice],
+    optimisticMessages: [],
+  });
+  const rows = deriveMessagesTimelineRows({
+    timelineEntries: entries,
+    isWorking: false,
+    activeTurnStartedAt: null,
+    latestRun: null,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  });
+  expect(
+    rows.some(
+      (row) =>
+        row.kind === "work" &&
+        row.groupedEntries.some(
+          (entry) => workEntryDisplayLabel(entry, undefined) === "The turn ended without a reply",
+        ),
+    ),
+  ).toBe(true);
+});
