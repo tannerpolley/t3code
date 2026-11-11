@@ -13,6 +13,48 @@ vi.mock(import("pdfjs-dist/build/pdf.worker.min.mjs?url"), async () => {
 });
 
 import PdfViewer from "./PdfViewer";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { ContextChip } from "~/components/ContextChip";
+
+const commentTarget = scopeThreadRef(
+  EnvironmentId.make("pdf-comment-test"),
+  ThreadId.make("pdf-comment-test"),
+);
+function PdfCommentFixture(props: { src: string }) {
+  const comments = useComposerDraftStore(
+    (store) => store.getComposerDraft(commentTarget)?.reviewComments,
+  );
+  return (
+    <>
+      <div className="flex h-[600px] w-[500px]">
+        <PdfViewer
+          src={props.src}
+          title="Comment PDF"
+          comments={{ target: commentTarget, filePath: "planning.pdf" }}
+        />
+      </div>
+      {comments?.map((comment) => (
+        <ContextChip
+          key={comment.id}
+          kind="review-comment"
+          render={
+            <button
+              type="button"
+              aria-label={`Remove comment: ${comment.text}`}
+              onClick={() =>
+                useComposerDraftStore.getState().removeReviewComment(commentTarget, comment.id)
+              }
+            />
+          }
+        >
+          {comment.text}
+        </ContextChip>
+      ))}
+    </>
+  );
+}
 
 // Page 1 is a short banner whose title is drawn in two runs with a font change, so pdf.js
 // splits it into two text spans. Page 2 is a letter page rotated a quarter turn.
@@ -157,6 +199,66 @@ it("restores page, within-page offset and zoom after a remount", async () => {
     await expect.element(screen.getByText("1 / 2 pages")).toBeVisible();
     await expect.element(screen.getByText("Fit width")).toBeVisible();
   } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+
+it("marks selected PDF text and removes its marker when the composer chip is deleted", async () => {
+  const url = URL.createObjectURL(twoPagePdf());
+  try {
+    await using screen = await render(<PdfCommentFixture src={url} />);
+    const text = await vi.waitFor(() => {
+      const span = Array.from(screen.container.querySelectorAll("[data-pdf-text-layer] span")).find(
+        (element) => element.textContent === "Quarter",
+      );
+      expect(span).toBeDefined();
+      return span!;
+    });
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    text.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    await screen.getByRole("textbox", { name: "Comment on lines p1" }).fill("Explain the forecast");
+    await screen.getByRole("button", { name: "Comment", exact: true }).click();
+    await expect
+      .element(screen.getByRole("button", { name: "PDF comment 1: Explain the forecast" }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Remove comment: Explain the forecast" }))
+      .toBeVisible();
+    await expect.element(screen.getByText("1 comments")).toBeVisible();
+    await screen.getByRole("button", { name: "Remove comment: Explain the forecast" }).click();
+    await expect
+      .element(screen.getByRole("button", { name: "PDF comment 1: Explain the forecast" }))
+      .not.toBeInTheDocument();
+    await expect.element(screen.getByText("0 comments")).toBeVisible();
+    await using subscriptions = new AsyncDisposableStack();
+    const imageAdded = new Promise<void>((resolve) => {
+      subscriptions.defer(
+        useComposerDraftStore.subscribe((store) => {
+          if (store.getComposerDraft(commentTarget)?.images.length === 1) resolve();
+        }),
+      );
+    });
+    await screen.getByRole("button", { name: "Mark area", exact: true }).click();
+    await screen.getByLabelText("Mark area on page 1").click();
+    await screen.getByRole("textbox", { name: "Comment on lines p1" }).fill("Inspect this picture");
+    await screen.getByRole("button", { name: "Comment", exact: true }).click();
+    await imageAdded;
+    await expect
+      .element(screen.getByRole("button", { name: "PDF comment 1: Inspect this picture" }))
+      .toBeVisible();
+    await screen.getByRole("button", { name: "Remove comment: Inspect this picture" }).click();
+    await expect
+      .element(screen.getByRole("button", { name: "PDF comment 1: Inspect this picture" }))
+      .not.toBeInTheDocument();
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(commentTarget)?.images ?? [],
+    ).toHaveLength(0);
+  } finally {
+    useComposerDraftStore.getState().clearComposerContent(commentTarget);
     URL.revokeObjectURL(url);
   }
 });
