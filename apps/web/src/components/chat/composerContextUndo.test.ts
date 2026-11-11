@@ -1,10 +1,17 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { buildPdfReviewComment } from "../files/PdfComments";
+import type { RetainedContextPayloads } from "./composerContextUndo";
 import type { ComposerImageAttachment } from "../../composerDraftStore";
-import { buildMessageContext, previewAnnotationContextId } from "../../lib/composerContextRecords";
+import {
+  buildMessageContext,
+  previewAnnotationContextId,
+  reviewCommentContextId,
+} from "../../lib/composerContextRecords";
 import {
   reconcileAttachmentContextReferences,
+  reconcileReviewCommentReferences,
   type RetainedAttachmentContextPayloads,
 } from "./composerContextUndo";
 
@@ -88,4 +95,47 @@ describe("reconcileAttachmentContextReferences", () => {
       }),
     ]);
   });
+});
+
+it("restores a PDF comment and its crop after undo", () => {
+  const comment = buildPdfReviewComment({
+    id: image.id,
+    filePath: "deck.pdf",
+    mark: { page: 1, x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+    quote: "",
+    text: "Explain the chart",
+  });
+  const retainedReviews: RetainedContextPayloads["reviewComments"] = new Map();
+  expect(
+    reconcileReviewCommentReferences({
+      referencedContextIds: new Set(),
+      comments: [comment],
+      images: [image],
+      retained: retainedReviews,
+    }).idsToRemove,
+  ).toEqual([comment.id]);
+  const restoredReview = reconcileReviewCommentReferences({
+    referencedContextIds: new Set([reviewCommentContextId(comment.id)]),
+    comments: [],
+    images: [],
+    retained: retainedReviews,
+  });
+  expect(restoredReview.toRestore).toEqual([{ comment, image }]);
+  expect(
+    buildMessageContext({
+      terminalContexts: [],
+      reviewComments: restoredReview.toRestore.map((entry) => entry.comment),
+      previewAnnotations: [],
+      attachments: [
+        { attachment: restoredReview.toRestore[0]!.image!, attachmentId: "uploaded-crop" },
+      ],
+    })?.records,
+  ).toEqual([
+    expect.objectContaining({
+      kind: "review-comment",
+      text: "Explain the chart",
+      rangeLabel: "p1, region x 10–40%, y 20–60%",
+    }),
+    expect.objectContaining({ kind: "image", attachmentId: "uploaded-crop" }),
+  ]);
 });
