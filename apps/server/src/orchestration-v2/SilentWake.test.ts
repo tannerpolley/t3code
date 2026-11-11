@@ -1,3 +1,7 @@
+import { ProviderAdapterCapabilitiesError } from "@t3tools/provider-core/server/ProviderAdapter";
+import { presentThreadShell } from "../../../../packages/client-runtime/src/state/models.ts";
+import { resolveThreadActivity } from "../../../../packages/client-runtime/src/state/forkThreadActivity.ts";
+import * as TestClock from "effect/testing/TestClock";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -690,3 +694,192 @@ const reply = (
       ],
     });
   });
+
+it.effect.each(["before completion", "after completion"])(
+  "Stop suppresses a delayed silence follow-up: %s",
+  (timing) =>
+    Effect.gen(function* () {
+      const o = yield* Orchestrator.OrchestratorV2;
+      const s = yield* EventSink.EventSinkV2;
+      yield* (yield* ThreadLaunch.ThreadLaunchService).launch(
+        launchInput({ command: "create", thread: "stop" }),
+      );
+      const threadId = launchInput({ command: "create", thread: "stop" }).threadId;
+      yield* wakeThread(o, threadId);
+      const run = (yield* o.getThreadProjection(threadId)).runs[0]!;
+      const stop = o.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop"),
+        threadId,
+        stopDelegatedTasks: false,
+      });
+      if (timing === "before completion") {
+        yield* stop;
+        yield* TestClock.adjust("1 second");
+      }
+      yield* finish(s, threadId, run);
+      if (timing === "after completion") yield* stop;
+      yield* deliver(o, threadId, run);
+      const after = yield* o.getThreadProjection(threadId);
+      assert.isTrue(
+        after.turnItems.some((i) => i.type === "run_interrupt_request" && i.runId === run.id),
+      );
+      assert.equal(after.runs.length, 1);
+      assert.isFalse(after.messages.some((m) => m.silentWakeFollowupOfRunId !== undefined));
+    }).pipe(Effect.provide(makeHarness().layer)),
+);
+
+it.effect("a Stop of an earlier run does not suppress a later silence follow-up", () =>
+  Effect.gen(function* () {
+    const o = yield* Orchestrator.OrchestratorV2;
+    const s = yield* EventSink.EventSinkV2;
+    const input = launchInput({ command: "create", thread: "earlier-stop", message: "First task" });
+    yield* (yield* ThreadLaunch.ThreadLaunchService).launch(input);
+    const first = (yield* o.getThreadProjection(input.threadId)).runs[0]!;
+    yield* o.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("stop"),
+      threadId: input.threadId,
+      stopDelegatedTasks: false,
+    });
+    yield* finish(s, input.threadId, first);
+    yield* TestClock.adjust("1 second");
+    yield* wakeThread(o, input.threadId);
+    const run = (yield* o.getThreadProjection(input.threadId)).runs.at(-1)!;
+    yield* finish(s, input.threadId, run);
+    yield* deliver(o, input.threadId, run);
+    assert.equal(
+      (yield* o.getThreadProjection(input.threadId)).messages.filter(
+        (m) => m.silentWakeFollowupOfRunId === run.id,
+      ).length,
+      1,
+    );
+  }).pipe(Effect.provide(makeHarness().layer)),
+);
+
+it.effect(
+  "a failed silence follow-up flags attention once and releases later lifecycle effects",
+  () => {
+    let failing = false;
+    let lookups = 0;
+    const adapter = {
+      instanceId: ProviderInstanceId.make("alternate"),
+      driver: ProviderDriverKind.make("codex"),
+      getCapabilities: () => {
+        lookups++;
+        return failing
+          ? Effect.fail(
+              new ProviderAdapterCapabilitiesError({
+                driver: ProviderDriverKind.make("codex"),
+                cause: "Temporary capabilities lookup failure",
+              }),
+            )
+          : Effect.succeed(CodexProviderCapabilitiesV2);
+      },
+      planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+      openSession: () => Effect.die("disabled"),
+    };
+    const dependencies = executorLayer(
+      makeHarness({
+        adapters: [
+          {
+            ...adapter,
+            instanceId: ProviderInstanceId.make("codex"),
+            getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+          },
+          adapter,
+        ],
+      }).layer,
+    );
+    return Effect.gen(function* () {
+      const o = yield* Orchestrator.OrchestratorV2;
+      const s = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      const input = launchInput({ command: "create", thread: "failed-followup" });
+      yield* (yield* ThreadLaunch.ThreadLaunchService).launch(input);
+      yield* wakeThread(o, input.threadId);
+      const p = yield* o.getThreadProjection(input.threadId);
+      const run = p.runs[0]!;
+      yield* outbox.cancelUnsettled({
+        threadId: input.threadId,
+        effectTypes: ["provider-turn.start", "thread-title.generate"],
+        reason: "Setup completed",
+      });
+      yield* finish(s, input.threadId, run);
+      yield* s.write({
+        events: [
+          {
+            id: EventId.make("selection"),
+            type: "thread.metadata-updated",
+            threadId: input.threadId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              ...p.thread,
+              providerInstanceId: adapter.instanceId,
+              modelSelection: { ...p.thread.modelSelection, instanceId: adapter.instanceId },
+            },
+          },
+        ],
+      });
+      const check = (yield* outbox.listByCommandId(
+        CommandId.make(`silent-wake-check:${run.id}`),
+      ))[0]!;
+      yield* outbox.enqueue([
+        {
+          id: "later-lifecycle",
+          commandId: CommandId.make("later"),
+          threadId: input.threadId,
+          request: { type: "scheduled-tasks.cleanup" },
+        },
+      ]);
+      let laterDelivered = false;
+      const workerLayer = EffectWorker.layerWithOptions().pipe(
+        Layer.provide(
+          Layer.merge(
+            Layer.succeed(EffectOutbox.EffectOutboxV2, outbox),
+            Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+              execute: (effect) =>
+                effect.request.type === "run.silence.check"
+                  ? executor.execute(effect)
+                  : Effect.sync(() => {
+                      if (effect.id === "later-lifecycle") laterDelivered = true;
+                    }),
+            }),
+          ),
+        ),
+      );
+      failing = true;
+      yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
+        Effect.flatMap((w) => w.drain()),
+        Effect.provide(workerLayer),
+      );
+      assert.isTrue(laterDelivered);
+      const after = yield* o.getThreadProjection(input.threadId);
+      assert.equal(after.runs.length, 1);
+      assert.equal(
+        after.thread.silentWakeAttention?.reason,
+        "The automatic follow-up could not be sent",
+      );
+      const shell = (yield* o.getThreadShell(input.threadId))!;
+      const presented = presentThreadShell(EnvironmentId.make("test"), shell);
+      assert.equal(resolveThreadActivity(presented), "failed");
+      assert.equal(
+        presented.runtime?.silentWakeAttention?.reason,
+        after.thread.silentWakeAttention?.reason,
+      );
+      const calls = lookups;
+      failing = false;
+      yield* executor.execute(check);
+      assert.equal(lookups, calls);
+      assert.deepEqual(yield* o.getThreadProjection(input.threadId), after);
+      const sql = yield* SqlClient.SqlClient;
+      const receipts =
+        yield* sql`SELECT status FROM orchestration_command_receipts WHERE command_id = ${`silent-wake-check:${run.id}`}`;
+      assert.equal(receipts[0]?.status, "accepted");
+      const effects = yield* outbox.listByCommandId(check.commandId);
+      assert.equal(effects[0]?.status, "succeeded");
+      assert.equal(effects[0]?.attemptCount, 1);
+    }).pipe(Effect.provide(dependencies));
+  },
+);
