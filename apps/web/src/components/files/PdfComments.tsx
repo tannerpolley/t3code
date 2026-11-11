@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { randomUUID } from "~/lib/utils";
 import { CrosshairIcon } from "lucide-react";
 import { useComposerDraftStore, type ComposerThreadTarget } from "~/composerDraftStore";
@@ -38,7 +46,7 @@ export function pdfCommentNeedsImage(comment: ReviewCommentContext) {
   return comment.diff.length === 0;
 }
 
-type Draft = { id: string; mark: PdfMark; quote: string; text: string; spot: boolean };
+type Draft = { id: string; mark: PdfMark; quote: string; text: string; editing: boolean };
 const CommentsContext = createContext<{
   config: PdfCommentsTarget;
   area: boolean;
@@ -56,6 +64,12 @@ export function PdfCommentsRoot(props: {
   const [area, setArea] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [drag, setDrag] = useState<PdfMark | null>(null);
+  const comments = useComposerDraftStore((store) =>
+    props.config ? store.getComposerDraft(props.config.target)?.reviewComments : undefined,
+  );
+  const openDraft =
+    draft?.editing && !comments?.some((comment) => comment.id === draft.id) ? null : draft;
+  if (draft && !openDraft) setDraft(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Escape cancels PDF gestures even when focus is in the toolbar or comment form.
   useEffect(() => {
     const cancel = (event: KeyboardEvent) => {
@@ -82,7 +96,7 @@ export function PdfCommentsRoot(props: {
               },
               drag,
               setDrag,
-              draft,
+              draft: openDraft,
               setDraft,
             }
           : null
@@ -108,7 +122,9 @@ export function PdfCommentsToolbar() {
         <CrosshairIcon />
         Mark area
       </Button>
-      <span>{count} comments</span>
+      <span>
+        {count} {count === 1 ? "comment" : "comments"}
+      </span>
     </>
   );
 }
@@ -144,16 +160,11 @@ async function attachCrop(
   config: PdfCommentsTarget,
   comment: ReviewCommentContext,
   canvas: HTMLCanvasElement | null,
+  signal: AbortSignal,
 ) {
   try {
     const file = await cropPage(canvas, comment.pdfMark!, comment.id);
-    if (
-      !useComposerDraftStore
-        .getState()
-        .getComposerDraft(config.target)
-        ?.reviewComments.some((entry) => entry.id === comment.id)
-    )
-      return;
+    if (signal.aborted) return false;
     const previewUrl = URL.createObjectURL(file);
     const accepted = useComposerDraftStore.getState().addImage(config.target, {
       type: "image",
@@ -168,14 +179,17 @@ async function attachCrop(
       URL.revokeObjectURL(previewUrl);
       throw new Error("Image rejected");
     }
+    return true;
   } catch {
+    if (signal.aborted) return false;
     toastManager.add(
       stackedThreadToast({
         type: "error",
         title: "Could not capture the picked element",
-        description: "The annotation was kept without the screenshot.",
+        description: "Try saving the comment again once the page has finished drawing.",
       }),
     );
+    return false;
   }
 }
 
@@ -223,7 +237,7 @@ export function PdfCommentsPage(props: { page: number; children: ReactNode }) {
         id: randomUUID(),
         quote,
         text: "",
-        spot: false,
+        editing: false,
         mark: {
           page: props.page,
           x,
@@ -257,25 +271,6 @@ export function PdfCommentsPage(props: { page: number; children: ReactNode }) {
     width: `${mark.width * 100}%`,
     height: `${mark.height * 100}%`,
   });
-  const save = (text: string) => {
-    if (!context || !draft) return;
-    const { config } = context;
-    const store = useComposerDraftStore.getState();
-    const existing = store
-      .getComposerDraft(config.target)
-      ?.reviewComments.some((comment) => comment.id === draft.id);
-    const comment = buildPdfReviewComment({
-      id: draft.id,
-      filePath: config.filePath,
-      mark: draft.mark,
-      quote: draft.quote,
-      text,
-    });
-    store.addReviewComment(config.target, comment);
-    context.setDraft(null);
-    if (existing || !pdfCommentNeedsImage(comment)) return;
-    void attachCrop(config, comment, node.current?.querySelector("canvas") ?? null);
-  };
   return (
     <div ref={node} className="relative h-full w-full">
       {props.children}
@@ -316,7 +311,7 @@ export function PdfCommentsPage(props: { page: number; children: ReactNode }) {
               : box(start.current, end);
             start.current = null;
             context.setDrag(null);
-            context.setDraft({ id: randomUUID(), mark, quote: "", text: "", spot });
+            context.setDraft({ id: randomUUID(), mark, quote: "", text: "", editing: false });
           }}
         />
       )}
@@ -335,7 +330,7 @@ export function PdfCommentsPage(props: { page: number; children: ReactNode }) {
                   mark: comment.pdfMark!,
                   quote: comment.diff,
                   text: comment.text,
-                  spot: !comment.diff && comment.pdfMark!.width === 0.12,
+                  editing: true,
                 })
               }
             >
@@ -352,42 +347,107 @@ export function PdfCommentsPage(props: { page: number; children: ReactNode }) {
           style={position(drag ?? draft!.mark)}
         />
       )}
-      {draft && (
-        <div
-          className="absolute z-20 w-72 max-w-full rounded-md border bg-popover shadow-md"
-          style={{
-            left: `${Math.min(35, draft.mark.x * 100)}%`,
-            top: `${Math.min(70, (draft.mark.y + draft.mark.height) * 100)}%`,
-          }}
-        >
-          <DiffCommentAnnotation
-            key={draft.id}
-            kind="draft"
-            rangeLabel={`p${props.page}`}
-            text={draft.text}
-            onTextChange={(text) => context?.setDraft({ ...draft, text })}
-            onCancel={() => context?.setDraft(null)}
-            onComment={(text) => {
-              void save(text);
-            }}
-            {...(comments?.some((comment) => comment.id === draft.id)
-              ? {
-                  secondaryAction: {
-                    label: "Delete",
-                    allowEmpty: true,
-                    onAction: () => {
-                      if (context)
-                        useComposerDraftStore
-                          .getState()
-                          .removeReviewComment(context.config.target, draft.id);
-                      context?.setDraft(null);
-                    },
-                  },
-                }
-              : {})}
-          />
-        </div>
+      {draft && context && (
+        <PdfCommentForm
+          key={draft.id}
+          draft={draft}
+          context={context}
+          canvas={() => node.current?.querySelector("canvas") ?? null}
+        />
       )}
+    </div>
+  );
+}
+
+function PdfCommentForm(props: {
+  draft: Draft;
+  context: NonNullable<React.ContextType<typeof CommentsContext>>;
+  canvas: () => HTMLCanvasElement | null;
+}) {
+  const { draft, context } = props;
+  const [pending, setPending] = useState(false);
+  const lifetime = useRef<AbortController | null>(null);
+  const saving = useRef(false);
+  const form = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Cancel a pending crop when its form closes or the edited comment disappears.
+  useLayoutEffect(() => {
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- An anchor may be outside the zoomed viewport; reveal the form within the scroll container.
+  useLayoutEffect(() => {
+    form.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, []);
+  const save = async (text: string) => {
+    const signal = lifetime.current?.signal;
+    if (saving.current || !signal || signal.aborted) return;
+    saving.current = true;
+    setPending(true);
+    const comment = buildPdfReviewComment({
+      id: draft.id,
+      filePath: context.config.filePath,
+      mark: draft.mark,
+      quote: draft.quote,
+      text,
+    });
+    if (!draft.editing && pdfCommentNeedsImage(comment)) {
+      const attached = await attachCrop(context.config, comment, props.canvas(), signal);
+      if (!attached) {
+        if (!signal.aborted) {
+          saving.current = false;
+          setPending(false);
+        }
+        return;
+      }
+    }
+    if (signal.aborted) return;
+    const store = useComposerDraftStore.getState();
+    if (
+      draft.editing &&
+      !store
+        .getComposerDraft(context.config.target)
+        ?.reviewComments.some((entry) => entry.id === draft.id)
+    )
+      return;
+    store.addReviewComment(context.config.target, comment);
+    context.setDraft(null);
+  };
+  return (
+    <div
+      data-pdf-comment-form
+      ref={form}
+      className="absolute z-20 w-72 max-w-full rounded-md border bg-popover shadow-md"
+      style={{
+        left: `${draft.mark.x * 100}%`,
+        top: `${(draft.mark.y + draft.mark.height) * 100}%`,
+      }}
+    >
+      <DiffCommentAnnotation
+        kind="draft"
+        rangeLabel={`p${draft.mark.page}`}
+        text={draft.text}
+        pending={pending}
+        onTextChange={(text) => context.setDraft({ ...draft, text })}
+        onCancel={() => context.setDraft(null)}
+        onComment={(text) => {
+          void save(text);
+        }}
+        {...(draft.editing
+          ? {
+              secondaryAction: {
+                label: "Delete",
+                allowEmpty: true,
+                onAction: () => {
+                  useComposerDraftStore
+                    .getState()
+                    .removeReviewComment(context.config.target, draft.id);
+                  context.setDraft(null);
+                },
+              },
+            }
+          : {})}
+      />
     </div>
   );
 }

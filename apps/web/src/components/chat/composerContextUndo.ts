@@ -7,7 +7,11 @@ import type {
 import { useEffect, useState } from "react";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
-import { fileContextReference, previewAnnotationContextId } from "../../lib/composerContextRecords";
+import {
+  fileContextReference,
+  previewAnnotationContextId,
+  reviewCommentContextId,
+} from "../../lib/composerContextRecords";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
@@ -23,7 +27,10 @@ export interface RetainedAttachmentContextPayloads {
 
 export interface RetainedContextPayloads extends RetainedAttachmentContextPayloads {
   terminals: Map<string, TerminalContextDraft>;
-  reviewComments: Map<string, ReviewCommentContext>;
+  reviewComments: Map<
+    string,
+    { comment: ReviewCommentContext; image: ComposerImageAttachment | undefined }
+  >;
   threads: Map<string, ThreadContextRecord>;
   issues: Map<string, IssueContextRecord>;
   environments: Map<string, EnvironmentContextRecord>;
@@ -110,4 +117,31 @@ export function reconcileAttachmentContextReferences(input: {
   });
 
   return { filesToRemove, filesToRestore, annotationIdsToRemove, annotationsToRestore };
+}
+
+export function reconcileReviewCommentReferences(input: {
+  referencedContextIds: ReadonlySet<string>;
+  comments: readonly ReviewCommentContext[];
+  images: readonly ComposerImageAttachment[];
+  retained: RetainedContextPayloads["reviewComments"];
+}) {
+  const liveIds = new Set<string>(
+    input.comments.map((comment) => reviewCommentContextId(comment.id)),
+  );
+  const idsToRemove: string[] = [];
+  for (const comment of input.comments) {
+    const contextId = reviewCommentContextId(comment.id);
+    if (input.referencedContextIds.has(contextId)) continue;
+    input.retained.set(contextId, {
+      comment,
+      image: comment.pdfMark ? input.images.find((image) => image.id === comment.id) : undefined,
+    });
+    idsToRemove.push(comment.id);
+  }
+  const toRestore = [...input.referencedContextIds].flatMap((contextId) => {
+    if (liveIds.has(contextId)) return [];
+    const retained = input.retained.get(contextId);
+    return retained ? [retained] : [];
+  });
+  return { idsToRemove, toRestore };
 }

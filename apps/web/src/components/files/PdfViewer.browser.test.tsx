@@ -228,8 +228,15 @@ it("marks selected PDF text and removes its marker when the composer chip is del
     await expect
       .element(screen.getByRole("button", { name: "Remove comment: Explain the forecast" }))
       .toBeVisible();
-    await expect.element(screen.getByText("1 comments")).toBeVisible();
+    await expect.element(screen.getByText("1 comment")).toBeVisible();
+    await screen.getByRole("button", { name: "PDF comment 1: Explain the forecast" }).click();
+    await expect
+      .element(screen.getByRole("textbox", { name: "Comment on lines p1" }))
+      .toBeVisible();
     await screen.getByRole("button", { name: "Remove comment: Explain the forecast" }).click();
+    await expect
+      .element(screen.getByRole("textbox", { name: "Comment on lines p1" }))
+      .not.toBeInTheDocument();
     await expect
       .element(screen.getByRole("button", { name: "PDF comment 1: Explain the forecast" }))
       .not.toBeInTheDocument();
@@ -242,10 +249,60 @@ it("marks selected PDF text and removes its marker when the composer chip is del
         }),
       );
     });
+    const encode = HTMLCanvasElement.prototype.toBlob;
+    let finishCrop: (() => void) | undefined;
+    let rejectCrop = true;
+    const cropStarted = new Promise<void>((resolve) => {
+      subscriptions.defer(() => cropSpy.mockRestore());
+      const cropSpy = vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(function (
+        this: HTMLCanvasElement,
+        callback,
+        type,
+        quality,
+      ) {
+        if (rejectCrop) {
+          rejectCrop = false;
+          callback(null);
+          return;
+        }
+        finishCrop = () => encode.call(this, callback, type, quality);
+        resolve();
+      });
+    });
+    for (let zoom = 0; zoom < 5; zoom++)
+      await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
     await screen.getByRole("button", { name: "Mark area", exact: true }).click();
     await screen.getByLabelText("Mark area on page 1").click();
     await screen.getByRole("textbox", { name: "Comment on lines p1" }).fill("Inspect this picture");
+    await vi.waitFor(() => {
+      const bounds = screen.container
+        .querySelector("[data-pdf-comment-form]")!
+        .getBoundingClientRect();
+      const viewport = screen
+        .getByRole("region", { name: "Comment PDF" })
+        .element()
+        .getBoundingClientRect();
+      expect(bounds.left).toBeGreaterThanOrEqual(viewport.left);
+      expect(bounds.right).toBeLessThanOrEqual(viewport.right);
+      expect(bounds.top).toBeGreaterThanOrEqual(viewport.top);
+      expect(bounds.bottom).toBeLessThanOrEqual(viewport.bottom);
+    });
     await screen.getByRole("button", { name: "Comment", exact: true }).click();
+    await expect
+      .element(screen.getByRole("button", { name: "Comment", exact: true }))
+      .toBeEnabled();
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(commentTarget)?.reviewComments ?? [],
+    ).toHaveLength(0);
+    await screen.getByRole("button", { name: "Comment", exact: true }).click();
+    await cropStarted;
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(commentTarget)?.reviewComments ?? [],
+    ).toHaveLength(0);
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(commentTarget)?.images ?? [],
+    ).toHaveLength(0);
+    finishCrop!();
     await imageAdded;
     await expect
       .element(screen.getByRole("button", { name: "PDF comment 1: Inspect this picture" }))
@@ -257,6 +314,26 @@ it("marks selected PDF text and removes its marker when the composer chip is del
     expect(
       useComposerDraftStore.getState().getComposerDraft(commentTarget)?.images ?? [],
     ).toHaveLength(0);
+    // Sending clears the same draft the open editor reads.
+    const store = useComposerDraftStore.getState();
+    const sentComment = {
+      id: "sent-pdf",
+      sectionId: "pdf:planning.pdf",
+      sectionTitle: "PDF comment",
+      filePath: "planning.pdf",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "p1",
+      text: "Sent comment",
+      diff: "quote",
+      pdfMark: { page: 1, x: 0.1, y: 0.1, width: 0.1, height: 0.1 },
+    };
+    store.addReviewComment(commentTarget, sentComment);
+    await screen.getByRole("button", { name: "PDF comment 1: Sent comment" }).click();
+    store.clearComposerContent(commentTarget);
+    await expect
+      .element(screen.getByRole("textbox", { name: "Comment on lines p1" }))
+      .not.toBeInTheDocument();
   } finally {
     useComposerDraftStore.getState().clearComposerContent(commentTarget);
     URL.revokeObjectURL(url);

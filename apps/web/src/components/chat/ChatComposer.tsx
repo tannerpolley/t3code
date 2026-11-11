@@ -120,6 +120,7 @@ import { useComposerMenuItems } from "./useComposerMenuItems";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   reconcileAttachmentContextReferences,
+  reconcileReviewCommentReferences,
   useRetainedContextPayloads,
 } from "./composerContextUndo";
 import { ComposerBanner } from "./ComposerBanner";
@@ -1667,22 +1668,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftEnvironmentContexts(composerDraftTarget, nextEnvironments);
     }
 
-    for (const comment of composerReviewComments) {
-      const contextId = reviewCommentContextId(comment.id);
-      if (!referenced.has(contextId)) {
-        retained.reviewComments.set(contextId, comment);
-        removeComposerDraftReviewComment(composerDraftTarget, comment.id);
-      }
-    }
-    const liveReviewIds = new Set<string>(
-      composerReviewComments.map((comment) => reviewCommentContextId(comment.id)),
-    );
-    for (const contextId of referenced) {
-      if (liveReviewIds.has(contextId)) continue;
-      const comment = retained.reviewComments.get(contextId);
-      if (comment) {
-        addComposerDraftReviewComment(composerDraftTarget, comment, { appendReference: false });
-      }
+    const reviewChanges = reconcileReviewCommentReferences({
+      referencedContextIds: referenced,
+      comments: composerReviewComments,
+      images: composerImages,
+      retained: retained.reviewComments,
+    });
+    for (const id of reviewChanges.idsToRemove)
+      removeComposerDraftReviewComment(composerDraftTarget, id);
+    for (const { comment, image } of reviewChanges.toRestore) {
+      if (image)
+        addComposerDraftImages(attachmentDraftTarget, [
+          { ...image, previewUrl: URL.createObjectURL(image.file) },
+        ]);
+      addComposerDraftReviewComment(composerDraftTarget, comment, { appendReference: false });
     }
 
     const attachmentChanges = reconcileAttachmentContextReferences({
