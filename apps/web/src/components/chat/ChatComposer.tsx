@@ -1677,10 +1677,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     for (const id of reviewChanges.idsToRemove)
       removeComposerDraftReviewComment(composerDraftTarget, id);
     for (const { comment, image } of reviewChanges.toRestore) {
-      if (image)
-        addComposerDraftImages(attachmentDraftTarget, [
-          { ...image, previewUrl: URL.createObjectURL(image.file) },
-        ]);
+      if (image) {
+        const previewUrl = URL.createObjectURL(image.file);
+        if (
+          addComposerDraftImages(attachmentDraftTarget, [{ ...image, previewUrl }]).length === 0
+        ) {
+          // A comment whose picture no longer fits stays deleted rather than sending without it.
+          if (activeThreadId) {
+            setThreadError(
+              activeThreadId,
+              `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+            );
+          }
+          continue;
+        }
+      }
       addComposerDraftReviewComment(composerDraftTarget, comment, { appendReference: false });
     }
 
