@@ -1,3 +1,4 @@
+import { isDelegatedThread } from "@t3tools/contracts";
 import { silentWakeAction, SILENT_WAKE_FOLLOWUP, SILENT_WAKE_ATTENTION } from "./SilentWake.ts";
 import { repositoryPhase } from "@t3tools/contracts";
 import { isReadOnlyIssueRole } from "../issues/IssueEligibility.ts";
@@ -13315,38 +13316,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       .getThreadShell(command.threadId)
       .pipe(mapDispatchError(command));
     const now = yield* DateTime.now;
-    yield* emit(
-      events,
-      command,
-    )({
-      type: "turn-item.updated",
-      threadId: command.threadId,
-      runId: run.id,
-      ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
-      providerInstanceId: run.providerInstanceId,
-      occurredAt: now,
-      payload: {
-        id: idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "silent-completion" }),
-        threadId: command.threadId,
-        runId: run.id,
-        nodeId: run.rootNodeId,
-        providerThreadId: run.providerThreadId,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: yield* nextTurnItemOrdinal(projection),
-        status: "completed",
-        title: null,
-        startedAt: now,
-        completedAt: now,
-        updatedAt: now,
-        type: "system_notice",
-        message: "The turn ended without a reply",
-      },
-    });
     if (
-      projection.thread.lineage.relationshipToParent === "subagent" ||
-      run.delegatedTaskId !== undefined ||
+      isDelegatedThread(projection.thread) ||
       projection.thread.archivedAt !== null ||
       projection.thread.deletedAt !== null ||
       projection.runs.some(
@@ -13354,7 +13325,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           candidate.id !== run.id &&
           (candidate.status === "queued" ||
             isBlockingRun(candidate) ||
-            (candidate.startedAt !== null && candidate.ordinal > run.ordinal)),
+            candidate.ordinal > run.ordinal),
       ) ||
       projection.subagents.some(
         (task) =>
@@ -14528,24 +14499,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
         ),
       ),
-  );
-
-  yield* eventSink.setRunCompletionPlanner(
-    Effect.fn("Orchestrator.planSilentCompletion")(function* (run) {
-      const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
-      const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
-      yield* dispatchSilenceCheck(
-        {
-          type: "run.silence.check",
-          commandId: CommandId.make(`silent-wake-check:${run.id}`),
-          threadId: run.threadId,
-          runId: run.id,
-        },
-        events,
-        effects,
-      );
-      return { events: yield* Ref.get(events), effects: yield* Ref.get(effects) };
-    }),
   );
 
   // Projections already contain historical terminals; replaying them delays startup queue promotion with database size.

@@ -576,6 +576,12 @@ export const OrchestrationV2AppThread = Schema.Struct({
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
+export function isDelegatedThread(
+  thread: Pick<OrchestrationV2AppThread, "lineage" | "delegatedFrom">,
+): boolean {
+  return thread.lineage.relationshipToParent === "subagent" || thread.delegatedFrom !== undefined;
+}
+
 /** Provider-native children cannot receive messages; T3 delegate_task children can. */
 export function isProviderNativeSubagentThread(
   thread: Pick<OrchestrationV2AppThread, "creationSource"> & {

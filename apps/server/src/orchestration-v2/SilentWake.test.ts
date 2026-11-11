@@ -1,3 +1,14 @@
+import * as EffectWorker from "./EffectWorker.ts";
+import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
+import * as RuntimeRequestService from "./RuntimeRequestService.ts";
+import { EnvironmentId, ProviderInstanceId, ProviderDriverKind } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { assert, it } from "@effect/vitest";
 import {
   ThreadId,
@@ -14,7 +25,6 @@ import { deriveIssueWorkStatus } from "../issues/IssueWorkStatus.ts";
 import * as Context from "effect/Context";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Sqlite from "../persistence/Sqlite.ts";
-import * as Stream from "effect/Stream";
 import * as Maintenance from "./ProjectionMaintenance.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -36,61 +46,7 @@ it.effect.each([false, true])(
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const input = launchInput({ command: "create", thread: "silent" });
       yield* launches.launch(input);
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make("wake"),
-        threadId: input.threadId,
-        messageId: MessageId.make("wake"),
-        text: "Background command finished",
-        notification: {
-          source: { kind: "command" },
-          outcome: "completed",
-          summary: "Command finished",
-        },
-        attachments: [],
-        createdBy: "agent",
-        creationSource: "provider",
-        dispatchMode: { type: "queue_after_active" },
-      });
-      const complete = (run: OrchestrationV2Run) =>
-        Effect.gen(function* () {
-          const now = yield* DateTime.now;
-          const afterSequence = yield* sink.latestSequence();
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make(`complete:${run.id}`),
-                type: "run.updated",
-                threadId: input.threadId,
-                runId: run.id,
-                occurredAt: now,
-                payload: { ...run, status: "completed", completedAt: now },
-              },
-            ],
-          });
-          if (!(replied && String(run.userMessageId).startsWith("silent-wake-followup:"))) {
-            yield* sink.stream({ afterSequence, eventType: "turn-item.updated" }).pipe(
-              Stream.filter(
-                (stored) =>
-                  stored.event.type === "turn-item.updated" &&
-                  stored.event.payload.runId === run.id &&
-                  stored.event.payload.type === "system_notice",
-              ),
-              Stream.take(1),
-              Stream.runDrain,
-            );
-          }
-          const command = {
-            type: "run.silence.check" as const,
-            commandId: CommandId.make(`silent-wake-check:${run.id}`),
-            threadId: input.threadId,
-            runId: run.id,
-          };
-          yield* orchestrator.dispatch(command);
-          const replay = yield* orchestrator.dispatch(command);
-          assert.isTrue(replay.replayed);
-          return yield* orchestrator.getThreadProjection(input.threadId);
-        });
+      yield* wakeThread(orchestrator, input.threadId);
       yield* orchestrator.dispatch({
         type: "thread.snooze",
         commandId: CommandId.make("snooze"),
@@ -98,7 +54,8 @@ it.effect.each([false, true])(
         snoozedUntil: DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 1 })),
       });
       const wake = (yield* orchestrator.getThreadProjection(input.threadId)).runs[0]!;
-      const nudged = yield* complete(wake);
+      const nudged = yield* complete(orchestrator, sink, input.threadId, wake);
+      assert.isTrue((yield* deliver(orchestrator, input.threadId, wake)).replayed);
       assert.isNotNull(nudged.thread.snoozedUntil);
       const followups = nudged.messages.filter(
         (message) => message.silentWakeFollowupOfRunId !== undefined,
@@ -114,34 +71,9 @@ it.effect.each([false, true])(
       );
       const followup = nudged.runs.find((run) => run.userMessageId === followups[0]!.id)!;
       if (replied) {
-        const now = yield* DateTime.now;
-        yield* sink.write({
-          events: [
-            {
-              id: EventId.make("reply"),
-              type: "message.updated",
-              threadId: input.threadId,
-              runId: followup.id,
-              occurredAt: now,
-              payload: {
-                id: MessageId.make("reply"),
-                threadId: input.threadId,
-                runId: followup.id,
-                nodeId: followup.rootNodeId,
-                createdBy: "agent",
-                creationSource: "provider",
-                role: "assistant",
-                text: "Build succeeded",
-                attachments: [],
-                streaming: false,
-                createdAt: now,
-                updatedAt: now,
-              },
-            },
-          ],
-        });
+        yield* reply(sink, input.threadId, followup, "Build succeeded", "reply");
       }
-      const flagged = yield* complete(followup);
+      const flagged = yield* complete(orchestrator, sink, input.threadId, followup);
       const maintenance = yield* Maintenance.ProjectionMaintenanceV2;
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(
@@ -149,7 +81,9 @@ it.effect.each([false, true])(
         flagged.thread.silentWakeAttention,
       );
       assert.equal(
-        (yield* outbox.listByCommandId(CommandId.make(`silent-wake-check:${wake.id}`))).length,
+        (yield* outbox.listByCommandId(CommandId.make(`silent-wake-check:${wake.id}`))).filter(
+          (effect) => effect.request.type === "provider-turn.start",
+        ).length,
         1,
       );
       assert.equal(flagged.runs.length, 2);
@@ -205,7 +139,6 @@ it.effect.each([
   "queued",
   "background",
   "child",
-  "pending-result",
   "question",
   "approval",
 ] as const)("does not nudge a silent run with %s origin or pending work", (scenario) => {
@@ -275,7 +208,7 @@ it.effect.each([
         ],
       });
     }
-    if (scenario === "child" || scenario === "pending-result")
+    if (scenario === "child")
       yield* orchestrator.dispatch({
         type: "delegated_task.request",
         commandId: CommandId.make("child"),
@@ -290,39 +223,6 @@ it.effect.each([
         createdBy: "agent",
         creationSource: "mcp",
       });
-    if (scenario === "pending-result") {
-      const parent = yield* orchestrator.getThreadProjection(input.threadId);
-      const task = parent.subagents[0]!;
-      const item = parent.turnItems.find(
-        (item) => item.type === "subagent" && item.subagentId === task.id,
-      )!;
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make("pending-result"),
-            type: "subagent.updated",
-            threadId: input.threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload: {
-              ...task,
-              status: "completed",
-              completedAt: now,
-              result: "Build passed",
-              completionDelivery: { state: "pending", observedByRunId: null },
-            },
-          },
-          {
-            id: EventId.make("settled-child-item"),
-            type: "turn-item.updated",
-            threadId: input.threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload: { ...item, status: "completed", completedAt: now, updatedAt: now },
-          },
-        ],
-      });
-    }
     if (scenario === "question" || scenario === "approval")
       yield* sink.write({
         events: [
@@ -346,25 +246,8 @@ it.effect.each([
           },
         ],
       });
-    yield* sink.write({
-      commandId: CommandId.make("command:runtime-reconcile:control"),
-      events: [
-        {
-          id: EventId.make("complete"),
-          type: "run.updated",
-          threadId: input.threadId,
-          runId: run.id,
-          occurredAt: now,
-          payload: { ...run, status: "completed", completedAt: now },
-        },
-      ],
-    });
-    yield* orchestrator.dispatch({
-      type: "run.silence.check",
-      commandId: CommandId.make("check"),
-      threadId: input.threadId,
-      runId: run.id,
-    });
+    yield* finish(sink, input.threadId, run);
+    yield* deliver(orchestrator, input.threadId, run);
     const settled = yield* orchestrator.getThreadProjection(input.threadId);
     assert.isFalse(
       settled.messages.some((candidate) => candidate.silentWakeFollowupOfRunId !== undefined),
@@ -378,7 +261,7 @@ it.effect.each([
   }).pipe(Effect.provide(harness.layer));
 });
 
-const wake = (o: Orchestrator.OrchestratorV2Shape, threadId: ThreadId) =>
+const wakeThread = (o: Orchestrator.OrchestratorV2Shape, threadId: ThreadId) =>
   o.dispatch({
     type: "message.dispatch",
     commandId: CommandId.make("wake"),
@@ -396,29 +279,10 @@ const complete = (
   sink: EventSink.EventSinkV2Shape,
   threadId: ThreadId,
   run: OrchestrationV2Run,
-  key: string,
 ) =>
   Effect.gen(function* () {
-    const now = yield* DateTime.now;
-    yield* sink.write({
-      commandId: CommandId.make("command:runtime-reconcile:" + key),
-      events: [
-        {
-          id: EventId.make("complete:" + key),
-          type: "run.updated",
-          threadId,
-          runId: run.id,
-          occurredAt: now,
-          payload: { ...run, status: "completed", startedAt: now, completedAt: now },
-        },
-      ],
-    });
-    yield* o.dispatch({
-      type: "run.silence.check",
-      commandId: CommandId.make("silent-wake-check:" + run.id),
-      threadId,
-      runId: run.id,
-    });
+    yield* finish(sink, threadId, run);
+    yield* deliver(o, threadId, run);
     return yield* o.getThreadProjection(threadId);
   });
 
@@ -429,10 +293,10 @@ it.effect("attention leaves a completed issue worker outcome as done", () =>
     const l = yield* ThreadLaunch.ThreadLaunchService;
     const input = launchInput({ command: "create", thread: "issue" });
     yield* l.launch(input);
-    yield* wake(o, input.threadId);
+    yield* wakeThread(o, input.threadId);
     const p = yield* o.getThreadProjection(input.threadId);
-    const nudged = yield* complete(o, s, input.threadId, p.runs[0]!, "first");
-    const final = yield* complete(o, s, input.threadId, nudged.runs.at(-1)!, "second");
+    const nudged = yield* complete(o, s, input.threadId, p.runs[0]!);
+    const final = yield* complete(o, s, input.threadId, nudged.runs.at(-1)!);
     const shell = yield* o.getThreadShell(input.threadId);
     const result = deriveIssueWorkStatus({
       shell: shell!,
@@ -459,36 +323,33 @@ it.effect("commits the silent-wake decision with completion and retains it after
         const s = yield* EventSink.EventSinkV2;
         const l = yield* ThreadLaunch.ThreadLaunchService;
         yield* l.launch(input);
-        yield* wake(o, input.threadId);
+        yield* wakeThread(o, input.threadId);
         const p = yield* o.getThreadProjection(input.threadId);
         const r = p.runs[0]!;
-        const now = yield* DateTime.now;
-        // Runtime reconciliation bypasses the live subscriber, as a shutdown before delivery would.
-        yield* s.write({
-          commandId: CommandId.make("command:runtime-reconcile:lost"),
-          events: [
-            {
-              id: EventId.make("lost-completion"),
-              type: "run.updated",
-              threadId: input.threadId,
-              runId: r.id,
-              occurredAt: now,
-              payload: { ...r, status: "completed", startedAt: now, completedAt: now },
-            },
-          ],
-        });
+        yield* finish(s, input.threadId, r);
         const committed = yield* o.getThreadProjection(input.threadId);
-        assert.isTrue(committed.messages.some((m) => m.silentWakeFollowupOfRunId !== undefined));
+        assert.isFalse(committed.messages.some((m) => m.silentWakeFollowupOfRunId !== undefined));
+        const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+          CommandId.make(`silent-wake-check:${r.id}`),
+        );
+        assert.equal(effects[0]?.request.type, "run.silence.check");
         assert.isTrue(committed.turnItems.some((i) => i.type === "system_notice"));
       }).pipe(Effect.provide(makeHarness({ databaseLayer }).layer));
       yield* Effect.gen(function* () {
         const o = yield* Orchestrator.OrchestratorV2;
         yield* o.recoverDelegatedTasks;
         yield* o.resumeQueuedRuns;
+        const before = yield* o.getThreadProjection(input.threadId);
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const effects = yield* outbox.listByCommandId(
+          CommandId.make(`silent-wake-check:${before.runs[0]!.id}`),
+        );
+        yield* executor.execute(effects[0]!);
+        yield* executor.execute(effects[0]!);
         const p = yield* o.getThreadProjection(input.threadId);
-
-        assert.isTrue(p.messages.some((m) => m.silentWakeFollowupOfRunId !== undefined));
-      }).pipe(Effect.provide(makeHarness({ databaseLayer }).layer));
+        assert.equal(p.messages.filter((m) => m.silentWakeFollowupOfRunId !== undefined).length, 1);
+      }).pipe(Effect.provide(executorLayer(makeHarness({ databaseLayer }).layer)));
     }),
   ),
 );
@@ -518,35 +379,8 @@ it.effect("reports a silent delegated wake to its parent without nudging the chi
     const task = (yield* o.getThreadProjection(input.threadId)).subagents[0]!;
     const childId = task.childThreadId!;
     const original = (yield* o.getThreadProjection(childId)).runs[0]!;
-    const now = yield* DateTime.now;
-    const reply = (run: OrchestrationV2Run, text: string, id: string) =>
-      s.write({
-        events: [
-          {
-            id: EventId.make(id),
-            type: "message.updated",
-            threadId: childId,
-            runId: run.id,
-            occurredAt: now,
-            payload: {
-              id: MessageId.make(id),
-              threadId: childId,
-              runId: run.id,
-              nodeId: run.rootNodeId,
-              role: "assistant",
-              text,
-              attachments: [],
-              streaming: false,
-              createdBy: "agent",
-              creationSource: "provider",
-              createdAt: now,
-              updatedAt: now,
-            },
-          },
-        ],
-      });
-    yield* reply(original, "Original result", "original-reply");
-    yield* complete(o, s, childId, original, "original");
+    yield* reply(s, childId, original, "Original result", "original-reply");
+    yield* complete(o, s, childId, original);
     yield* o.recoverDelegatedTasks;
     yield* o.dispatch({
       type: "delegated_task.completion-delivery.acknowledge",
@@ -555,10 +389,10 @@ it.effect("reports a silent delegated wake to its parent without nudging the chi
       taskId: task.id,
       observedByRunId: r.id,
     });
-    yield* wake(o, childId);
+    yield* wakeThread(o, childId);
     const woke = (yield* o.getThreadProjection(childId)).runs.at(-1)!;
     assert.isDefined(woke.delegatedTaskId);
-    const nudged = yield* complete(o, s, childId, woke, "child-wake");
+    const nudged = yield* complete(o, s, childId, woke);
     assert.equal(nudged.runs.length, 2);
     assert.isFalse(nudged.messages.some((m) => m.silentWakeFollowupOfRunId !== undefined));
     assert.isUndefined(nudged.thread.silentWakeAttention);
@@ -571,68 +405,70 @@ it.effect("reports a silent delegated wake to its parent without nudging the chi
   }).pipe(Effect.provide(makeHarness().layer)),
 );
 
-it.effect("a claimed child result prevents an extra wake", () =>
-  Effect.gen(function* () {
-    const o = yield* Orchestrator.OrchestratorV2;
-    const s = yield* EventSink.EventSinkV2;
-    const l = yield* ThreadLaunch.ThreadLaunchService;
-    const input = launchInput({ command: "create", thread: "claimed" });
-    yield* l.launch(input);
-    yield* wake(o, input.threadId);
-    const p = yield* o.getThreadProjection(input.threadId);
-    const r = p.runs[0]!;
-    yield* o.dispatch({
-      type: "delegated_task.request",
-      commandId: CommandId.make("child"),
-      parentThreadId: input.threadId,
-      parentRunId: r.id,
-      parentNodeId: r.rootNodeId!,
-      task: "Check",
-      modelSelection: r.modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      completionWake: "always",
-      createdBy: "agent",
-      creationSource: "mcp",
-    });
-    const parent = yield* o.getThreadProjection(input.threadId);
-    const task = parent.subagents[0]!;
-    const now = yield* DateTime.now;
-    yield* s.write({
-      events: [
-        {
-          id: EventId.make("claimed"),
-          type: "subagent.updated",
-          threadId: input.threadId,
-          runId: r.id,
-          occurredAt: now,
-          payload: {
-            ...task,
-            status: "completed",
-            completedAt: now,
-            result: "OK",
-            completionDelivery: { state: "claimed", observedByRunId: null },
-          },
-        },
-      ],
-    });
-    const item = parent.turnItems.find((i) => i.type === "subagent" && i.subagentId === task.id);
-    if (item)
+it.effect.each(["pending", "claimed"] as const)(
+  "a claimed child result prevents an extra wake: %s",
+  (deliveryState) =>
+    Effect.gen(function* () {
+      const o = yield* Orchestrator.OrchestratorV2;
+      const s = yield* EventSink.EventSinkV2;
+      const l = yield* ThreadLaunch.ThreadLaunchService;
+      const input = launchInput({ command: "create", thread: "claimed" });
+      yield* l.launch(input);
+      yield* wakeThread(o, input.threadId);
+      const p = yield* o.getThreadProjection(input.threadId);
+      const r = p.runs[0]!;
+      yield* o.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("child"),
+        parentThreadId: input.threadId,
+        parentRunId: r.id,
+        parentNodeId: r.rootNodeId!,
+        task: "Check",
+        modelSelection: r.modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const parent = yield* o.getThreadProjection(input.threadId);
+      const task = parent.subagents[0]!;
+      const now = yield* DateTime.now;
       yield* s.write({
         events: [
           {
-            id: EventId.make("claimed-item"),
-            type: "turn-item.updated",
+            id: EventId.make("claimed"),
+            type: "subagent.updated",
             threadId: input.threadId,
             runId: r.id,
             occurredAt: now,
-            payload: { ...item, status: "completed", completedAt: now, updatedAt: now },
+            payload: {
+              ...task,
+              status: "completed",
+              completedAt: now,
+              result: "OK",
+              completionDelivery: { state: deliveryState, observedByRunId: null },
+            },
           },
         ],
       });
-    const after = yield* complete(o, s, input.threadId, r, "claimed");
-    assert.isFalse(after.messages.some((m) => m.silentWakeFollowupOfRunId !== undefined));
-  }).pipe(Effect.provide(makeHarness().layer)),
+      const item = parent.turnItems.find((i) => i.type === "subagent" && i.subagentId === task.id);
+      if (item)
+        yield* s.write({
+          events: [
+            {
+              id: EventId.make("claimed-item"),
+              type: "turn-item.updated",
+              threadId: input.threadId,
+              runId: r.id,
+              occurredAt: now,
+              payload: { ...item, status: "completed", completedAt: now, updatedAt: now },
+            },
+          ],
+        });
+      const after = yield* complete(o, s, input.threadId, r);
+      assert.isFalse(after.messages.some((m) => m.silentWakeFollowupOfRunId !== undefined));
+    }).pipe(Effect.provide(makeHarness().layer)),
 );
 
 it.effect("an active pull request watch prevents a silence nudge", () =>
@@ -642,7 +478,7 @@ it.effect("an active pull request watch prevents a silence nudge", () =>
     const l = yield* ThreadLaunch.ThreadLaunchService;
     const input = launchInput({ command: "create", thread: "prwatch" });
     yield* l.launch(input);
-    yield* wake(o, input.threadId);
+    yield* wakeThread(o, input.threadId);
     const p = yield* o.getThreadProjection(input.threadId);
     const now = yield* DateTime.now;
     const iso = DateTime.formatIso(now);
@@ -687,26 +523,170 @@ it.effect("an active pull request watch prevents a silence nudge", () =>
       ],
     });
     const r = p.runs[0]!;
-    yield* s.write({
-      commandId: CommandId.make("command:runtime-reconcile:watch"),
-      events: [
-        {
-          id: EventId.make("pr-complete"),
-          type: "run.updated",
-          threadId: input.threadId,
-          runId: r.id,
-          occurredAt: now,
-          payload: { ...r, status: "completed", startedAt: now, completedAt: now },
-        },
-      ],
-    });
-    yield* o.dispatch({
-      type: "run.silence.check",
-      commandId: CommandId.make("silent-wake-check:" + r.id),
-      threadId: input.threadId,
-      runId: r.id,
-    });
+    yield* finish(s, input.threadId, r);
+    yield* deliver(o, input.threadId, r);
     const after = yield* o.getThreadProjection(input.threadId);
     assert.isFalse(after.messages.some((m) => m.silentWakeFollowupOfRunId !== undefined));
   }).pipe(Effect.provide(makeHarness().layer)),
 );
+
+const deliver = (
+  o: Orchestrator.OrchestratorV2Shape,
+  threadId: ThreadId,
+  run: OrchestrationV2Run,
+) =>
+  o.dispatch({
+    type: "run.silence.check",
+    commandId: CommandId.make(`silent-wake-check:${run.id}`),
+    threadId,
+    runId: run.id,
+  });
+const finish = (s: EventSink.EventSinkV2Shape, threadId: ThreadId, run: OrchestrationV2Run) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    return yield* s.write({
+      commandId: CommandId.make("command:runtime-reconcile:" + run.id),
+      events: [
+        {
+          id: EventId.make("finish:" + run.id),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+        },
+      ],
+    });
+  });
+it.effect("remote delegated child must not get a nudge or attention", () =>
+  Effect.gen(function* () {
+    const o = yield* Orchestrator.OrchestratorV2,
+      s = yield* EventSink.EventSinkV2,
+      l = yield* ThreadLaunch.ThreadLaunchService;
+    const input = {
+      ...launchInput({ command: "create", thread: "remote" }),
+      linkOrigin: { sessionId: "linked", label: "Linked" },
+      delegatedFrom: {
+        environmentId: EnvironmentId.make("remote"),
+        threadId: ThreadId.make("parent"),
+        title: "Parent",
+      },
+    };
+    yield* l.launch(input);
+    yield* wakeThread(o, input.threadId);
+    let p = yield* o.getThreadProjection(input.threadId);
+    yield* finish(s, input.threadId, p.runs[0]!);
+    yield* deliver(o, input.threadId, p.runs[0]!);
+    p = yield* o.getThreadProjection(input.threadId);
+    assert.equal(p.runs.length, 1);
+    assert.isUndefined(p.thread.silentWakeAttention);
+  }).pipe(Effect.provide(makeHarness().layer)),
+);
+it.effect("concurrent user queue does not reuse the nudge run", () =>
+  Effect.gen(function* () {
+    const reached = yield* Deferred.make<void>(),
+      resume = yield* Deferred.make<void>();
+    let pause = false;
+    const adapter = {
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+      getCapabilities: () =>
+        Effect.gen(function* () {
+          if (pause) {
+            pause = false;
+            yield* Deferred.succeed(reached, undefined);
+            yield* Deferred.await(resume);
+          }
+          return CodexProviderCapabilitiesV2;
+        }),
+      planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+      openSession: () => Effect.die("disabled"),
+    };
+    const harness = makeHarness({ adapters: [adapter] });
+    yield* Effect.gen(function* () {
+      const o = yield* Orchestrator.OrchestratorV2,
+        s = yield* EventSink.EventSinkV2,
+        l = yield* ThreadLaunch.ThreadLaunchService;
+      const input = launchInput({ command: "create", thread: "race" });
+      yield* l.launch(input);
+      yield* wakeThread(o, input.threadId);
+      const p = yield* o.getThreadProjection(input.threadId);
+      pause = true;
+      const sender = yield* o
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("user"),
+          threadId: input.threadId,
+          messageId: MessageId.make("user"),
+          text: "User next task",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          dispatchMode: { type: "queue_after_active" },
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(reached);
+      yield* finish(s, input.threadId, p.runs[0]!);
+      const delivery = yield* deliver(o, input.threadId, p.runs[0]!).pipe(Effect.forkChild);
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(sender);
+      yield* Fiber.join(delivery);
+      const a = yield* o.getThreadProjection(input.threadId);
+      const nudge = a.messages.find((message) => message.silentWakeFollowupOfRunId !== undefined);
+      if (nudge)
+        assert.notEqual(nudge.runId, a.messages.find((message) => message.id === "user")?.runId);
+      assert.equal(a.runs.length, 2);
+      assert.equal(a.messages.filter((m) => m.silentWakeFollowupOfRunId).length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+const executorLayer = (dependencies: ReturnType<typeof makeHarness>["layer"]) =>
+  EffectWorker.layerExecutor.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        dependencies,
+        Layer.mock(RunFinalizationService.RunFinalizationService)({}),
+        Layer.mock(CheckpointRollbackService.CheckpointRollbackServiceV2)({}),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+        Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({}),
+        Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
+        Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
+      ),
+    ),
+  );
+
+const reply = (
+  sink: EventSink.EventSinkV2Shape,
+  threadId: ThreadId,
+  run: OrchestrationV2Run,
+  text: string,
+  id: string,
+) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(id),
+          type: "message.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: {
+            id: MessageId.make(id),
+            threadId,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            role: "assistant",
+            text,
+            attachments: [],
+            streaming: false,
+            createdBy: "agent",
+            creationSource: "provider",
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      ],
+    });
+  });

@@ -123,17 +123,3 @@ export function clearSilentWakeAttention<
   const { silentWakeAttention: _attention, ...cleared } = thread;
   return cleared;
 }
-
-export function silentWakeAttentionPresentation(
-  thread: Pick<OrchestrationV2AppThread, "silentWakeAttention">,
-) {
-  return thread.silentWakeAttention === undefined
-    ? {}
-    : {
-        status: "failed" as const,
-        lastError: thread.silentWakeAttention.reason,
-        lastErrorClass: null,
-        lastErrorCode: null,
-        usageLimitResetAt: null,
-      };
-}

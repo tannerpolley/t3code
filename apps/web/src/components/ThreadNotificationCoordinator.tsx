@@ -141,8 +141,9 @@ export function startThreadNotifications(
                 ? "Guest request"
                 : "Input needed";
     const description =
-      status === "failed" && thread.runtime?.lastError
-        ? `${thread.title}: ${thread.runtime.lastError}`
+      status === "failed" &&
+      (thread.runtime?.silentWakeAttention?.reason ?? thread.runtime?.lastError)
+        ? `${thread.title}: ${thread.runtime?.silentWakeAttention?.reason ?? thread.runtime?.lastError}`
         : thread.title;
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind, () =>

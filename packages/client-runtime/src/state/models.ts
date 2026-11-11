@@ -1,4 +1,3 @@
-import { silentWakeAttentionPresentation } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   runtimeRequestIsOwnerVisible,
   type RoutedRequestParent,
@@ -104,6 +103,7 @@ export interface ThreadRunSummary {
 }
 
 export interface ThreadRuntimeSummary {
+  readonly silentWakeAttention?: OrchestrationV2ThreadShell["silentWakeAttention"];
   readonly status: OrchestrationV2RunStatus | "idle";
   readonly activeRunId: RunId | null;
   readonly activityStartedAt?: string | null | undefined;
@@ -265,7 +265,7 @@ export function presentThreadShell(
               : nullableIso(thread.latestRunCompletedAt),
           assistantMessageId: null,
         } satisfies ThreadRunSummary);
-  const runtime = shellRuntime({ ...thread, ...silentWakeAttentionPresentation(thread) });
+  const runtime = shellRuntime(thread);
   return {
     environmentId,
     id: thread.id,
