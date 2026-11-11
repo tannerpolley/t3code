@@ -29,9 +29,16 @@ it.effect("indexes lineage and notice lookups using only projection state", () =
         (row) => row.detail.includes("SEARCH") && row.detail.includes("issue_queue_notice_run_idx"),
       ),
     );
+    const payload = JSON.stringify({ lineage: { rootThreadId: "root", parentThreadId: "parent" } });
+    yield* sql`INSERT INTO orchestration_v2_projection_threads
+      (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+      VALUES ('legacy', 'project', 'legacy', 'codex', 'full-access', 'default', '2026-11-09', '2026-11-09', ${payload})`;
+    yield* runMigrations({ toForkMigrationInclusive: 30 });
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{broken' WHERE thread_id = 'legacy'`;
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${payload} WHERE thread_id = 'legacy'`;
     const lineage = yield* sql<{ detail: string }>`EXPLAIN QUERY PLAN
       SELECT count(*) FROM orchestration_v2_projection_threads thread
-      WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = 'root'`;
+      WHERE CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = 'root'`;
     assert.isTrue(
       lineage.some(
         (row) =>

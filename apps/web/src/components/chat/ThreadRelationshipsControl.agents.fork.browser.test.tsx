@@ -918,7 +918,7 @@ it("shows readable models and only differing workspace details in agent tooltips
     ["cursor", fastMode, false, ""],
     ["opencode", fastMode, true, "Fast mode on"],
     ["cursor", fastMode, "true", ""],
-    ["cursor", serviceTier, "priority", ""],
+    ["cursor", serviceTier, "priority", "Fast mode on"],
   ] as const) {
     state.configs.set("test", {
       providers: [

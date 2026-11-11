@@ -7,9 +7,10 @@ import { sidebarEffortGlyph, sidebarRoleLabel } from "../sidebar/SidebarBackgrou
 import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
 import { shortModelName } from "./ForkModelNames";
 import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
-import type {
-  SubagentWorkflowGroup,
-  RuntimeSubagent,
+import {
+  workflowMemberModelSelection,
+  type SubagentWorkflowGroup,
+  type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type {
   EnvironmentId,
@@ -160,6 +161,7 @@ function WorkflowMemberRow({
             model={member.model}
             providerInstanceId={providerInstanceId}
             origin="provider_native"
+            modelSelection={workflowMemberModelSelection(member, providerInstanceId)}
             provider={provider}
             providers={providers}
             driver={driver}

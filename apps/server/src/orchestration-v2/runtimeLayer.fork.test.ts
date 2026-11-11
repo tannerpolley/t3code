@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { USAGE_LIMIT_SWITCH_HOLD_MS } from "./usageLimitRecoveryPending.ts";
 import * as UsageLimitProviderSwitchWorker from "./UsageLimitProviderSwitchWorker.ts";
@@ -76,7 +77,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerPlatformTest = Layer.merge(
-  NodeServices.layer,
+  Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),
@@ -348,7 +349,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const reactor = yield* PullRequestWatchReactor.make.pipe(
           Effect.provide(
             Layer.mergeAll(
-              NodeServices.layer,
+              Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
               Layer.mock(ProjectionStore.ProjectionStoreV2)({
                 getThreadsWithPullRequests: () =>
                   projections
@@ -557,7 +558,7 @@ it.layer(layerTest)("thread workspace handoffs", (it) => {
             refreshStatus: () => Effect.succeed({} as never),
           }),
           ServerSettings.layerTest(),
-          NodeServices.layer,
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
         ),
       ),
     );
@@ -1309,12 +1310,6 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
         }
         if (scenario === "back-before-reset") {
           const marker = changed.thread.autoProviderSwitch!;
-          yield* orchestrator.dispatch({
-            type: "thread.model-selection.set",
-            commandId: CommandId.make(`${threadId}:early-back`),
-            threadId,
-            modelSelection: marker.switchBack ?? marker.from,
-          });
           yield* sink.write({
             events: [
               {
@@ -1325,6 +1320,12 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
                 payload: { ...continuation, status: "completed", completedAt: now },
               },
             ],
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${threadId}:early-back`),
+            threadId,
+            modelSelection: marker.switchBack ?? marker.from,
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
@@ -1459,6 +1460,17 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
           );
           return;
         }
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:continue-completed`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...continuation, status: "completed", completedAt: now },
+            },
+          ],
+        });
         yield* TestClock.adjust("1 hour");
         assert.deepEqual(
           (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,

@@ -7,6 +7,7 @@ import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as EventStore from "./EventStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
@@ -280,7 +281,9 @@ describe("fresh-thread repository handoff", () => {
     return Layer.mergeAll(
       service,
       OrchestratorMcp.layer.pipe(Layer.provide(service)),
-      ProjectionMaintenance.layer.pipe(Layer.provide(dependencies)),
+      Layer.merge(ProjectionMaintenance.layer, ProjectionReplay.layer).pipe(
+        Layer.provide(dependencies),
+      ),
       ...(options.recovery
         ? [
             // Memoized: the same lock instance the orchestrator dispatches under.
@@ -549,8 +552,8 @@ describe("fresh-thread repository handoff", () => {
         assert.include(completion.text, notifiedRoot.subagents[0]!.id);
         assert.equal(notifiedRoot.subagents[0]!.completionDelivery?.state, "claimed");
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-        yield* maintenance.compactEventStore();
-        assert.isTrue((yield* maintenance.rebuild).valid);
+        yield* maintenance.pruneEventStore();
+        assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
         assert.deepEqual(
           (yield* threads.getThreadRecords(rootId, [])).thread.delegatedCompletion,
           notifiedRoot.thread.delegatedCompletion,
@@ -943,8 +946,8 @@ describe("fresh-thread repository handoff", () => {
         assert.lengthOf(committed.runs, 0);
         assert.isNotNull(committed.thread.delegatedCompletion!.delivery);
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-        yield* maintenance.compactEventStore();
-        assert.isTrue((yield* maintenance.rebuild).valid);
+        yield* maintenance.pruneEventStore();
+        assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
         // A fresh continuation consumer represents the process after restart.
         const queue =
           yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
@@ -1594,8 +1597,8 @@ describe("fresh-thread repository handoff", () => {
           (yield* store.request(CommandId.make("wrong-root:duplicate-start")))!.cancellation,
         );
         yield* worker.drain();
-        yield* maintenance.compactEventStore();
-        assert.isTrue((yield* maintenance.rebuild).valid);
+        yield* maintenance.pruneEventStore();
+        assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
         assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, originalLeadId);
         assert.equal((yield* store.request(cancelInput.requestId))!.rootThreadId, rootId);
         assert.equal(
@@ -2003,8 +2006,8 @@ describe("fresh-thread repository handoff", () => {
       });
       yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
       // Compaction drops the adopted lead's registration snapshot and keeps its retired one.
-      yield* maintenance.compactEventStore();
-      assert.isTrue((yield* maintenance.rebuild).valid);
+      yield* maintenance.pruneEventStore();
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
       const rebuilt = yield* store.repositoryOwner(config);
       assert.equal(rebuilt?.rootThreadId, successor);
       assert.equal(rebuilt?.revision, owner.revision + 1);
@@ -2474,8 +2477,8 @@ describe("fresh-thread repository handoff", () => {
           threadId: second.rootThreadId!,
           commandId: CommandId.make("restore-latest-root"),
         });
-        yield* maintenance.compactEventStore();
-        assert.isTrue((yield* maintenance.rebuild).valid);
+        yield* maintenance.pruneEventStore();
+        assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
         const rebuilt = yield* service.repositoryStatus(reference);
         assert.equal(rebuilt.rootThreadId, second.rootThreadId);
         assert.equal(rebuilt.orchestration!.revision, paused.orchestration!.revision);

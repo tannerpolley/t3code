@@ -75,6 +75,14 @@ it.effect.each(["startup", "shutdown"] as const)(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
             getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+            getMessagesById: (_threadId, ids) =>
+              Effect.succeed(
+                new Map(
+                  projection.messages
+                    .filter((message) => ids.includes(message.id))
+                    .map((message) => [message.id, message]),
+                ),
+              ),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             commitCommand: (input) => {
@@ -205,6 +213,14 @@ it.effect.each([
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          getMessagesById: (_threadId, ids) =>
+            Effect.succeed(
+              new Map(
+                projection.messages
+                  .filter((message) => ids.includes(message.id))
+                  .map((message) => [message.id, message]),
+              ),
+            ),
           getThreadRecords: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({

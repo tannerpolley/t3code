@@ -1,3 +1,4 @@
+import { issueQueueMailbox } from "./IssueQueueStore.ts";
 import {
   CommandId,
   CLOSED_ISSUE_SUSPENSION_REASON,
@@ -736,7 +737,7 @@ export const layer = Layer.effect(
       // A repository mailbox persists requests before its first orchestrator exists.
       const threadId = Option.isSome(receipt)
         ? receipt.value.threadId
-        : (owner?.rootThreadId ?? ThreadId.make(`issue-queue:${issue.host}:${issue.repositoryId}`));
+        : (owner?.rootThreadId ?? issueQueueMailbox(issue));
       yield* threads
         .dispatch({
           type: "issue.queue.change",

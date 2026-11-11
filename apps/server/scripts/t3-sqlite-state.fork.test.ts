@@ -1,3 +1,4 @@
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -94,8 +95,7 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
         ).pipe(Effect.flip);
         assert.equal(error._tag, "SqliteStateSharedHomeMutationError");
 
-        const originalT3CodeHome = process.env.T3CODE_HOME;
-        process.env.T3CODE_HOME = `${baseDir}-other-home`;
+        vi.stubEnv("T3CODE_HOME", `${baseDir}-other-home`);
         let envOverrideError: { readonly _tag: string } | undefined;
         try {
           envOverrideError = yield* runSqliteState(
@@ -107,8 +107,7 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
             { sharedHome: baseDir },
           ).pipe(Effect.flip);
         } finally {
-          if (originalT3CodeHome === undefined) delete process.env.T3CODE_HOME;
-          else process.env.T3CODE_HOME = originalT3CodeHome;
+          vi.unstubAllEnvs();
         }
         assert.equal(envOverrideError?._tag, "SqliteStateSharedHomeMutationError");
 

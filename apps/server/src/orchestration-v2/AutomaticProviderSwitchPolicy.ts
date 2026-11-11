@@ -10,6 +10,7 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { isActiveRun } from "./CommandPolicy.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
   latestExecutedRun,
@@ -222,7 +223,9 @@ export function makeAutomaticProviderSwitchPolicy<RestartError>({
       command.restartContinuationOfRunId ?? command.automaticProviderContinuationOfRunId;
     const continuedTaskId =
       continuationOf === undefined
-        ? undefined
+        ? command.senderThreadId === command.threadId
+          ? projection.runs.find(isActiveRun)?.delegatedTaskId
+          : undefined
         : (projection.runs.find((run) => run.id === continuationOf)?.delegatedTaskId ??
           (projection.thread.lineage.relationshipToParent === "subagent" &&
           projection.thread.forkedFrom?.type === "node"

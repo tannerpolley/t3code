@@ -48,11 +48,11 @@ export function createIssueEnvironmentAtoms<R, E>(
       let explicitRefresh = false;
       const source = createEnvironmentRpcQueryAtomFamily(runtime, {
         ...options,
-        execute: (input, emit) =>
+        execute: (input, emit, registry) =>
           Effect.suspend(() => {
             const refresh = explicitRefresh || input.refresh === true;
             explicitRefresh = false;
-            return options.execute({ ...input, refresh }, emit);
+            return options.execute({ ...input, refresh }, emit, registry);
           }),
       })(target);
       const exposed = Atom.family((view: typeof source) =>

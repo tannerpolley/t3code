@@ -1,3 +1,4 @@
+import { delegatedTaskResultRun as selectTaskResultRun } from "./RestartBackgroundNote.ts";
 import type {
   NodeId,
   OrchestrationV2AppThread,
@@ -104,9 +105,16 @@ export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
     projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
     taskId: NodeId,
   ) {
+    const switched = usageLimitSwitchResultRun(projection.thread, projection.runs, taskId);
     const taskRuns = projection.runs
       .filter((run) => run.delegatedTaskId === taskId)
       .map((run) => {
+        if (
+          switched !== undefined &&
+          run.startedAt === null &&
+          run.userMessageId === usageLimitSwitchMessageId(projection.thread.id, switched.id)
+        )
+          return switched;
         // Promotion cancels the queue holder and moves its message into the live run.
         const message = projection.messages.find((row) => row.id === run.userMessageId);
         let result = projection.runs.find((row) => row.id === message?.runId) ?? run;
@@ -122,9 +130,11 @@ export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
           result = continuation;
         }
       });
-    return (
-      usageLimitSwitchResultRun(projection.thread, projection.runs, taskId) ??
-      taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0]
+    return selectTaskResultRun(
+      [...taskRuns, ...(switched === undefined ? [] : [switched])].map((run) =>
+        run.delegatedTaskId === taskId ? run : { ...run, delegatedTaskId: taskId },
+      ),
+      taskId,
     );
   }
 

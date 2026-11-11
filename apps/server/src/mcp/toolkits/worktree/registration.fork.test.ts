@@ -1,3 +1,6 @@
+import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as DocumentText from "../../../provider/DocumentText.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
@@ -50,6 +53,9 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 
 const layerStubServices = Layer.mergeAll(
+  NodeCrypto.layer,
+  Layer.mock(AssetSigner.AssetSigner)({}),
+  Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(Sidebar.SidebarLayoutService)({
     get: Effect.succeed({
       revision: 0,

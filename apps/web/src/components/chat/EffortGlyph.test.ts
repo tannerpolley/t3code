@@ -16,26 +16,17 @@ describe("resolveEffortGlyph", () => {
     ["ultrathink"],
   );
 
-  const codex = descriptor(["low", "medium", "high", "xhigh", "max", "ultra"]);
-
-  it("draws max as the top bar and leaves the levels past it off the scale", () => {
+  it("fills bars up to the current level and leaves max and workflow levels off the scale", () => {
     expect(resolveEffortGlyph(claude, "xhigh")).toEqual({
-      count: 5,
+      count: 4,
       filled: 4,
       special: null,
       label: "Xhigh",
     });
-    expect(resolveEffortGlyph(claude, "max")).toEqual({
-      count: 5,
-      filled: 5,
-      special: null,
-      label: "Max",
-    });
-    expect(resolveEffortGlyph(codex, "max")).toMatchObject({ count: 5, filled: 5, special: null });
   });
 
-  it("names Ultra instead of drawing it", () => {
-    expect(resolveEffortGlyph(codex, "ultra")).toMatchObject({ count: 5, special: "Ultra" });
+  it("names max instead of drawing it", () => {
+    expect(resolveEffortGlyph(claude, "max")?.special).toBe("Max");
   });
 
   it("names Ultracode and Ultrathink instead of drawing a level", () => {
@@ -44,8 +35,8 @@ describe("resolveEffortGlyph", () => {
   });
 
   it("draws the lowest level as one bar, and an off level as none", () => {
-    expect(resolveEffortGlyph(claude, "low")).toMatchObject({ count: 5, filled: 1 });
-    expect(resolveEffortGlyph(claude, "medium")).toMatchObject({ count: 5, filled: 2 });
+    expect(resolveEffortGlyph(claude, "low")).toMatchObject({ count: 4, filled: 1 });
+    expect(resolveEffortGlyph(claude, "medium")).toMatchObject({ count: 4, filled: 2 });
     expect(resolveEffortGlyph(descriptor(["off", "low", "high"]), "off")).toEqual({
       count: 2,
       filled: 0,

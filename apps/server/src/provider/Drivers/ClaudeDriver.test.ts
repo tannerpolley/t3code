@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodePath from "node:path";
@@ -69,7 +70,7 @@ const layerTest = Layer.mergeAll(
       withSnapshot: (use) => use(DEFAULT_SERVER_SETTINGS),
     },
   }),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 const creditFixture = Effect.fn("ClaudeDriverTest.creditFixture")(function* () {
   const requests: unknown[] = [];
   const fs = yield* FileSystem.FileSystem;
@@ -143,7 +144,7 @@ const claudeLayer = layerTest.pipe(
   Layer.provideMerge(
     Layer.mock(ModelCatalog.ModelCatalog)({
       bundled: () => undefined,
-      current: () => Effect.sync(() => undefined),
+      current: () => Effect.undefined,
       refreshInBackground: Effect.void,
     }),
   ),

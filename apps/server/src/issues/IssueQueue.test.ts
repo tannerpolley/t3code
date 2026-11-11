@@ -32,6 +32,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "../orchestration-v2/ProviderRuntimeRecoveryService.ts";
@@ -116,7 +117,7 @@ function harness(
     EffectWorker.OrchestrationEffectExecutorV2.of({ execute: () => Effect.void }),
   );
   return Layer.mergeAll(
-    ProjectionMaintenance.layer.pipe(
+    Layer.merge(ProjectionMaintenance.layer, ProjectionReplay.layer).pipe(
       Layer.provide(Layer.merge(dependencies, EventStore.layer.pipe(Layer.provide(dependencies)))),
     ),
     IssueWorkService.layer.pipe(
@@ -945,7 +946,7 @@ it.effect.each([false, true])(
         [1],
       );
       assert.lengthOf((yield* threads.getThreadRecords(rootId, ["messages"])).messages, 1);
-      assert.isTrue((yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild).valid);
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
       assert.deepEqual(yield* store.queue(reference), []);
     }).pipe(Effect.provide(harness(refreshed)));
   },
@@ -1427,7 +1428,7 @@ it.effect.each(["external", "bot", "listing"] as const)(
         (yield* store.queue(reference)).map((entry) => entry.issue.number),
         [3],
       );
-      assert.isTrue((yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild).valid);
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
       assert.deepEqual(
         (yield* store.queue(reference)).map((entry) => entry.issue.number),
         [3],
@@ -1516,14 +1517,13 @@ it.effect("rebuilds the same queue from notice, terminal, claim, retry and remov
     const store = yield* IssueWorkStore.IssueWorkStore;
     const threads = yield* ThreadManagement.ThreadManagementService;
     const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const sql = yield* SqlClient.SqlClient;
     const run = yield* deliverFirst;
     yield* worker.drain();
     const verify = sql.withTransaction(
       Effect.gen(function* () {
         const before = yield* store.queue(reference);
-        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
         assert.deepEqual(yield* store.queue(reference), before);
       }),
     );

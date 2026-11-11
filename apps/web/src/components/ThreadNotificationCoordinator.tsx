@@ -1,6 +1,7 @@
 import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
@@ -26,6 +27,7 @@ import {
   unlockNotificationAudio,
 } from "../threadNotifications";
 import { type ThreadNotificationKind } from "./ThreadNotificationCoordinator.logic";
+
 import {
   createForkThreadNotificationObserver,
   type ForkNotificationState as NotificationState,
@@ -229,6 +231,12 @@ export function startThreadNotifications(
         environmentId,
         (state, kind) => present(environmentId, state, kind),
         (threadId) => retract(environmentId, threadId),
+        () => ({
+          requests: registry.get(
+            environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
+          ),
+          delegatedUnderParent: registry.get(environmentThreadShells.delegatedUnderParentAtom),
+        }),
       ),
     };
     let threads: ReadonlyArray<import("@t3tools/contracts").OrchestrationV2ThreadShell> | null =

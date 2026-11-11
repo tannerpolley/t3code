@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId, ServerSettings } from "@t3tools/contracts";
@@ -63,7 +64,7 @@ it.effect("test settings layer reads and updates dont-ask mode from its current 
   }).pipe(Effect.provide(ServerSettingsModule.layerTest())),
 );
 
-it.layer(NodeServices.layer)("server settings", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings", (it) => {
   it.effect("issue upkeep approval defaults off and persists the user's choice", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -135,5 +136,11 @@ it.effect.each([
     });
     assert.equal(off.usageLimitRecovery, "off");
     assert.isFalse(off.autoResumeLimitedThreads);
-  }).pipe(Effect.provide(layerServerSettings().pipe(Layer.provideMerge(NodeServices.layer)))),
+  }).pipe(
+    Effect.provide(
+      layerServerSettings().pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );

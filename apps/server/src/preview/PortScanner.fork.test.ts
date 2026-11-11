@@ -65,69 +65,66 @@ const PROC_NET_TCP6 = `  sl  local_address                         remote_addres
    0: 00000000000000000000000000000000:0BB9 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 5004 1 0000000000000000 100 0 0 10 0
 `;
 
-effectIt.effect(
-  "reads Linux listeners from /proc when lsof is missing, and stops spawning it",
-  () => {
-    let lsofSpawns = 0;
-    const fdWalks: string[] = [];
-    const procFiles: Record<string, string> = {
-      "/proc/net/tcp": PROC_NET_TCP,
-      "/proc/net/tcp6": PROC_NET_TCP6,
-      "/proc/4242/comm": "python3\n",
-    };
-    const procFds: Record<string, Record<string, string>> = {
-      "4242": { "0": "/dev/null", "3": "socket:[5001]" },
-      "77": { "5": "socket:[9999]" },
-    };
-    const missing = FileSystem.makeNoop({});
-    const fileSystem = FileSystem.layerNoop({
-      readFileString: (path) => {
-        const content = procFiles[path];
-        return content === undefined ? missing.readFileString(path) : Effect.succeed(content);
-      },
-      readDirectory: (path) => {
-        if (path === "/proc") return Effect.succeed(["self", "77", "4242"]);
-        const pid = /^\/proc\/(\d+)\/fd$/.exec(path)?.[1];
-        const fds = pid === undefined ? undefined : procFds[pid];
-        if (pid === undefined || fds === undefined) return missing.readDirectory(path);
-        fdWalks.push(pid);
-        return Effect.succeed(Object.keys(fds));
-      },
-      readLink: (path) => {
-        const [, pid, fd] = /^\/proc\/(\d+)\/fd\/(\d+)$/.exec(path) ?? [];
-        const target = pid && fd ? procFds[pid]?.[fd] : undefined;
-        return target === undefined ? missing.readLink(path) : Effect.succeed(target);
-      },
-    });
-    const fetchFn = (() =>
-      Promise.resolve(
-        new Response("hello", { headers: { "content-type": "text/html" } }),
-      )) as typeof globalThis.fetch;
-    const layer = layerProbeFailure(
-      (input) => {
-        lsofSpawns += 1;
-        return processProbeFailure(input);
-      },
-      fetchFn,
-      fileSystem,
-    );
+effectIt.effect("reads Linux listeners from usable /proc without spawning lsof", () => {
+  let lsofSpawns = 0;
+  const fdWalks: string[] = [];
+  const procFiles: Record<string, string> = {
+    "/proc/net/tcp": PROC_NET_TCP,
+    "/proc/net/tcp6": PROC_NET_TCP6,
+    "/proc/4242/comm": "python3\n",
+  };
+  const procFds: Record<string, Record<string, string>> = {
+    "4242": { "0": "/dev/null", "3": "socket:[5001]" },
+    "77": { "5": "socket:[9999]" },
+  };
+  const missing = FileSystem.makeNoop({});
+  const fileSystem = FileSystem.layerNoop({
+    readFileString: (path) => {
+      const content = procFiles[path];
+      return content === undefined ? missing.readFileString(path) : Effect.succeed(content);
+    },
+    readDirectory: (path) => {
+      if (path === "/proc") return Effect.succeed(["self", "77", "4242"]);
+      const pid = /^\/proc\/(\d+)\/fd$/.exec(path)?.[1];
+      const fds = pid === undefined ? undefined : procFds[pid];
+      if (pid === undefined || fds === undefined) return missing.readDirectory(path);
+      fdWalks.push(pid);
+      return Effect.succeed(Object.keys(fds));
+    },
+    readLink: (path) => {
+      const [, pid, fd] = /^\/proc\/(\d+)\/fd\/(\d+)$/.exec(path) ?? [];
+      const target = pid && fd ? procFds[pid]?.[fd] : undefined;
+      return target === undefined ? missing.readLink(path) : Effect.succeed(target);
+    },
+  });
+  const fetchFn = (() =>
+    Promise.resolve(
+      new Response("hello", { headers: { "content-type": "text/html" } }),
+    )) as typeof globalThis.fetch;
+  const layer = layerProbeFailure(
+    (input) => {
+      lsofSpawns += 1;
+      return processProbeFailure(input);
+    },
+    fetchFn,
+    fileSystem,
+  );
 
-    return Effect.gen(function* () {
-      const scanner = yield* ownedScanner([4242]);
-      const first = yield* scanner.scan();
-      // Unowned listeners stay hidden even when their port is common for development.
-      expect(first.map(({ port, pid, processName }) => ({ port, pid, processName }))).toEqual([
-        { port: 8765, pid: 4242, processName: "python3" },
-      ]);
-      yield* scanner.scan();
-      expect(lsofSpawns).toBe(1);
-      expect(fdWalks).toEqual(["77", "4242", "77", "4242"]);
-      yield* scanner.scan();
-      yield* scanner.scan();
-      expect(fdWalks).toEqual(["77", "4242", "77", "4242", "77", "4242"]);
-    }).pipe(Effect.provide(layer));
-  },
-);
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner([4242]);
+    const first = yield* scanner.scan();
+    // Unowned listeners stay hidden even when their port is common for development.
+    expect(first.map(({ port, pid, processName }) => ({ port, pid, processName }))).toEqual([
+      { port: 8765, pid: 4242, processName: "python3" },
+    ]);
+    yield* scanner.scan();
+    expect(lsofSpawns).toBe(0);
+    expect(fdWalks).toEqual(["77", "4242", "77", "4242"]);
+    yield* scanner.scan();
+    yield* scanner.scan();
+    expect(fdWalks).toEqual(["77", "4242", "77", "4242", "77", "4242"]);
+  }).pipe(Effect.provide(layer));
+});
 
 effectIt.effect.each(["linux", "darwin"] as const)(
   "skips idle listener scans on %s and resumes when candidates exist",

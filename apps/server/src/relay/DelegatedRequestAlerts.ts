@@ -15,7 +15,10 @@ export function makeDelegatedRequestAlerts(
   // The relay publish operation owns the span for each visibility check.
   const isSettled = Effect.fnUntraced(function* (
     threadId: ThreadId,
-    threadShell: OrchestrationV2ThreadShell | null,
+    threadShell: Pick<
+      OrchestrationV2ThreadShell,
+      "pendingRuntimeRequest" | "archivedAt" | "deletedAt"
+    > | null,
     ownerVisible: boolean,
   ) {
     const request = threadShell?.pendingRuntimeRequest;

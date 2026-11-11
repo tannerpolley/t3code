@@ -1,3 +1,4 @@
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -24,13 +25,15 @@ import * as DatabaseStorage from "../persistence/DatabaseStorage.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
 import { EventStoreV2, layer as eventStoreLayer } from "./EventStore.ts";
-import { ProjectionMaintenanceV2, layer as maintenanceLayer } from "./ProjectionMaintenance.ts";
+import { layer as maintenanceLayer } from "./ProjectionMaintenance.ts";
 import { ProjectionStoreV2, layer as projectionLayer } from "./ProjectionStore.ts";
 
 const stores = Layer.mergeAll(eventStoreLayer, projectionLayer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
-const services = Layer.mergeAll(eventSinkLayer, maintenanceLayer).pipe(Layer.provideMerge(stores));
+const services = Layer.mergeAll(eventSinkLayer, maintenanceLayer, ProjectionReplay.layer).pipe(
+  Layer.provideMerge(stores),
+);
 
 const fixture = (suffix: string, now: DateTime.Utc) => {
   const threadId = ThreadId.make(`thread:streaming:${suffix}`);
@@ -105,7 +108,6 @@ it.effect.each(["completed", "cancelled"] as const)(
       const sink = yield* EventSinkV2;
       const events = yield* EventStoreV2;
       const projections = yield* ProjectionStoreV2;
-      const maintenance = yield* ProjectionMaintenanceV2;
       const sql = yield* SqlClient.SqlClient;
       const { threadId, created, item } = fixture(status, yield* DateTime.now);
       yield* sink.write({ events: [created] });
@@ -155,7 +157,7 @@ it.effect.each(["completed", "cancelled"] as const)(
         [1, 2],
       );
       assert.equal(beforeReplay.turnItems[0]!.status, status);
-      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
       assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeReplay);
     }).pipe(Effect.provide(services)),
 );
@@ -166,7 +168,6 @@ it.effect(
     Effect.gen(function* () {
       const sink = yield* EventSinkV2;
       const sql = yield* SqlClient.SqlClient;
-      const maintenance = yield* ProjectionMaintenanceV2;
       const projections = yield* ProjectionStoreV2;
       const { threadId, created, item } = fixture("restart", yield* DateTime.now);
       yield* sink.write({ events: [created, item(0, "first"), item(1, "second")] });
@@ -178,14 +179,14 @@ it.effect(
         )
         .pipe(Effect.result);
       assert.isTrue(attempted._tag === "Failure");
-      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
       const replayed = yield* projections.getThreadProjection(threadId);
       assert.equal(
         replayed.turnItems[0]?.type === "assistant_message" ? replayed.turnItems[0].text : null,
         "second",
       );
       yield* sink.write({ events: [item(3, "committed after rollback")] });
-      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
       const afterRollback = yield* projections.getThreadProjection(threadId);
       assert.equal(
         afterRollback.turnItems[0]?.type === "assistant_message"
@@ -216,7 +217,7 @@ it.effect(
           ),
         ),
       );
-      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
       const final = yield* projections.getThreadProjection(threadId);
       assert.equal(
         final.turnItems[0]?.type === "assistant_message" ? final.turnItems[0].text : null,
@@ -262,11 +263,10 @@ it.effect(
     }).pipe(Effect.provide(services)),
 );
 
-it.effect("scheduled compaction trims ordinary items and leaves subagent rows whole", () =>
+it.effect("scheduled maintenance preserves recent ordinary items and subagent prompt rows", () =>
   Effect.gen(function* () {
     const sink = yield* EventSinkV2;
     const events = yield* EventStoreV2;
-    const maintenance = yield* ProjectionMaintenanceV2;
     const sql = yield* SqlClient.SqlClient;
     const now = yield* DateTime.now;
     const { threadId, created, item } = fixture("subagent-prompt", now);
@@ -335,7 +335,7 @@ it.effect("scheduled compaction trims ordinary items and leaves subagent rows wh
       retained.map((row) => [row.id, row.count]),
       [
         ["item:subagent-prompt", 5],
-        ["item:subagent-prompt:a", 2],
+        ["item:subagent-prompt:a", 3],
       ],
     );
     const replay = yield* events.read({ threadId }).pipe(Stream.runCollect);
@@ -346,7 +346,7 @@ it.effect("scheduled compaction trims ordinary items and leaves subagent rows wh
         latest.payload.prompt === "Audit again." &&
         latest.payload.progress === "step 4",
     );
-    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
   }).pipe(
     Effect.provide(
       DatabaseStorage.layer.pipe(

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   WAKE_NATIVE_SESSION,
   claudeSdkFrame,
@@ -25,7 +26,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import * as DateTime from "effect/DateTime";
 
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
 import * as FileSystem from "effect/FileSystem";
@@ -195,7 +196,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ]);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
@@ -227,7 +233,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachmentsDir,
             fileSystem,
             path: yield* Path.Path,
-            crypto: yield* Crypto.Crypto,
+            random: yield* SecureRandom.SecureRandom,
             idAllocator,
             continuationRequests: {
               offer: () => Effect.void,
@@ -249,6 +255,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   processQueues.push({ nativeThreadId, queue });
                   return {
                     messages: Stream.fromQueue(queue),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unused readMcpResource"),
+                    callMcpTool: () => Effect.die("unused callMcpTool"),
+                    listPermissionRules: Effect.succeed([]),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
                     applyFlagSettings: () => Effect.void,
@@ -460,7 +470,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isFalse(yield* hasPendingBackgroundWork);
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),

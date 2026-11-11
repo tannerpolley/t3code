@@ -103,7 +103,6 @@ export function UsageLimitRecoverySettings() {
                           model={saved.model}
                           modelOptions={saved.options ?? null}
                           allowPromptInjectedEffort={false}
-                          planModeEnabled={settings.planModeEnabled}
                           triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                           onModelOptionsChange={(options) =>
                             save({

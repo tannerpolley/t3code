@@ -6,6 +6,7 @@ import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as IssueInbox from "../issues/IssueInbox.ts";
 import * as DontAskModeWorker from "./DontAskModeWorker.ts";
 import * as UsageLimitProviderSwitchWorker from "./UsageLimitProviderSwitchWorker.ts";
+import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as ThreadTitleRefreshWorker from "./ThreadTitleRefreshWorker.ts";
@@ -262,6 +263,8 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
       layerEventSink,
       IdAllocator.layer,
       ProviderSessionRuntime.layer,
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
+      ThreadCommandExecutor.layer,
     ),
   ),
 );
@@ -422,8 +425,12 @@ export const layer = Layer.mergeAll(
 );
 
 export const layerProduction = Layer.mergeAll(
+  WorktreeBranchSync.layer.pipe(
+    Layer.provide(Layer.merge(layerThreadManagementProvided, ProjectionStore.layer)),
+  ),
   layerIssueChangesProvided,
   layer.pipe(Layer.provide(Layer.merge(layerProjectService, layerIssueChangesProvided))),
+
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,

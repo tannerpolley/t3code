@@ -33,6 +33,8 @@ the agent's context once, on its next normal turn or when you steer an active tu
 Compacting a conversation leaves results for the next normal turn. When several results
 are waiting, the newest are shared first within a 16 KiB limit; earlier results wait for
 a later turn.
+On iPhone and iPad, long-press the terminal to paste or to choose Select Text.
+Select Text shows the visible output, where you can copy text or tap a link.
 
 ## fish
 

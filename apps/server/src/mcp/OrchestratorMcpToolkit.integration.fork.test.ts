@@ -1,3 +1,4 @@
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
@@ -712,7 +713,7 @@ describe("orchestrator MCP toolkit", () => {
           ).pipe(
             Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
             Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
-            Layer.provideMerge(McpServer.McpServer.layer),
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provideMerge(layerOrchestration),
             Layer.provide(layerRegistry),
             Layer.provide(layerProviderRegistry),
@@ -739,6 +740,8 @@ describe("orchestrator MCP toolkit", () => {
               ),
             ),
             Layer.provideMerge(McpProviderSessions.layer),
+            Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+            Layer.provide(NodeCrypto.layer),
             Layer.provide(NodeServices.layer),
           );
 

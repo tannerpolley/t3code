@@ -10,9 +10,9 @@ const BASELINE_INSET = 2;
 
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 
-// Max is the top bar. Levels past it keep their names: Ultra, and Ultracode, which changes the
-// workflow like the prompt-injected Ultrathink.
-const NAMED_LEVELS = new Set(["ultra", "ultracode"]);
+// Older servers offer Ultracode as a level. It changes the workflow, so it keeps its name.
+// Max is named too, so the full scale stops short of it.
+const NAMED_LEVELS = new Set(["ultracode", "max"]);
 const OFF_LEVELS = new Set(["off", "none"]);
 // More bars than this no longer fit the glyph's height in whole pixels.
 const MAX_BARS = 7;

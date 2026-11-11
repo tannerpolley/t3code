@@ -119,7 +119,11 @@ const fixture = Effect.fn("ResetCreditExpiryTest.fixture")(function* (
                 const at = yield* Clock.currentTimeMillis;
                 const seen = yield* Ref.updateAndGet(calls, (previous) => [
                   ...previous,
-                  { creditId: expected?.creditId, key, at },
+                  {
+                    creditId: typeof expected === "string" ? expected : expected?.creditId,
+                    key,
+                    at,
+                  },
                 ]);
                 if (seen.length <= (input.failures ?? 0))
                   return yield* Effect.fail("transient" as const);

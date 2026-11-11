@@ -83,11 +83,13 @@ export const makeBackgroundTaskLogWriter = Effect.fn("orchestration.makeBackgrou
       merge: (current, next) =>
         next.remove ? next : { text: (current.text + next.text).slice(-capBytes), remove: false },
       process: (path, entry) =>
-        Effect.tryPromise(() =>
-          entry.remove
-            ? NodeFSP.rm(path, { force: true })
-            : appendCapped(path, entry.text, capBytes),
-        ).pipe(
+        Effect.tryPromise({
+          try: () =>
+            entry.remove
+              ? NodeFSP.rm(path, { force: true })
+              : appendCapped(path, entry.text, capBytes),
+          catch: (cause) => ({ cause }),
+        }).pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Background task log write failed.", { path, cause }),
           ),

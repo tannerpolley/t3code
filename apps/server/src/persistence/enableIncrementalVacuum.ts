@@ -12,9 +12,10 @@ export const enableIncrementalVacuum = Effect.fn("DatabaseMaintenance.enableIncr
     const pages = yield* sql<{ readonly page_count: number }>`PRAGMA page_count`;
     const size = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
     const beforeBytes = (pages[0]?.page_count ?? 0) * (size[0]?.page_size ?? 0);
-    const disk = yield* Effect.tryPromise(() => NodeFSP.statfs(databasePath)).pipe(
-      Effect.orElseSucceed(() => null),
-    );
+    const disk = yield* Effect.tryPromise({
+      try: () => NodeFSP.statfs(databasePath),
+      catch: (cause) => ({ cause }),
+    }).pipe(Effect.orElseSucceed(() => null));
     if (disk === null) {
       yield* Effect.logWarning(
         "Skipping automatic database shrinking migration: free disk could not be checked",

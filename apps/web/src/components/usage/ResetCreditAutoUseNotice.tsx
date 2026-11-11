@@ -1,3 +1,4 @@
+import { resetCreditChoices } from "@t3tools/shared/usageLimits";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { ResetCreditAccount } from "../ResetCreditAccounts";
 import { Button } from "../ui/button";
@@ -10,7 +11,7 @@ export function ResetCreditAutoUseNotice({
   readonly environmentId: EnvironmentId;
   readonly account: ResetCreditAccount;
 }) {
-  const redeem = useResetCredit(environmentId, account.input);
+  const redeem = useResetCredit(environmentId);
   const result = account.limits.resetCreditAutoUse;
   if (!result) return null;
   const available = account.limits.resetCredits?.expiries?.includes(result.expiresAt);
@@ -27,7 +28,13 @@ export function ResetCreditAutoUseNotice({
           variant="outline"
           size="xs"
           disabled={redeem.busy || !redeem.canManageProviders}
-          onClick={() => redeem.setConfirming(true)}
+          onClick={() => {
+            const credits = account.limits.resetCredits;
+            const choice = credits
+              ? resetCreditChoices(credits, account.input, Date.now())[0]
+              : undefined;
+            if (choice) redeem.confirm(choice);
+          }}
         >
           Use now
         </Button>
@@ -36,6 +43,7 @@ export function ResetCreditAutoUseNotice({
       <ResetCreditDialog
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
+        choice={redeem.choice}
         onConfirm={() => void redeem.redeem()}
         disabled={!redeem.canManageProviders}
       />

@@ -25,6 +25,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
@@ -418,8 +419,8 @@ it.layer(layerTest)("delegated request routing", (it) => {
         yield* endParentRuns(routed.parentThreadId, "completed");
         assert.isTrue(yield* ownerCanSee(routed));
         assert.isTrue(yield* ownerCanSee(fallback));
-        yield* maintenance.compactEventStore();
-        assert.isTrue((yield* maintenance.rebuild).valid);
+        yield* maintenance.pruneEventStore();
+        assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
         assert.equal(
           (yield* orchestrator.getThreadShell(routed.childThreadId))?.pendingRuntimeRequest
             ?.routedTo,

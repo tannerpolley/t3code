@@ -455,6 +455,8 @@ function makeLocalCommandHarness(input: {
             Effect.succeedSome({ workspaceRoot: "/tmp/native-account-project" } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getRun: (_threadId, runId) =>
+            Effect.succeed(projection.runs.find((run) => run.id === runId)),
           getThreadRecords,
           getTurnStartContext,
           getRuntimeRecoveryProjection: () =>

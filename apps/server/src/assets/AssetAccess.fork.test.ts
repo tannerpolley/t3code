@@ -1,3 +1,5 @@
+import * as AssetSigner from "./AssetSigner.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 // @effect-diagnostics nodeBuiltinImport:off - tests inject swaps at the native open boundary.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
@@ -113,8 +115,9 @@ const layerTest = Layer.mergeAll(
     Layer.provide(T3ProjectFileLoader.layer),
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(layerConfig)),
+  AssetSigner.layer.pipe(Layer.provide(ServerSecretStore.layer), Layer.provide(layerConfig)),
   ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("AssetAccess", () => {
   it.effect(

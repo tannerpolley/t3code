@@ -13,6 +13,8 @@ import {
   type LimitPoolWindow,
   paceRemainingPercent,
   remainingPercent,
+  type ResetCreditChoice,
+  resetCreditChoices,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -45,7 +47,6 @@ import {
   ResetCreditExpiries,
   barColor,
   usePaceMark,
-  resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
 
@@ -147,7 +148,7 @@ function SegmentPopover({
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly now: number;
   readonly redeem: ReturnType<typeof useResetCredit> | null;
-  readonly onRedeem: () => void;
+  readonly onRedeem: (choice: ResetCreditChoice) => void;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
@@ -157,8 +158,10 @@ function SegmentPopover({
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
       : account.sourceLabel;
-  const credits =
-    redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
+  const choices =
+    redeem && account.redeem && account.limits.resetCredits?.availableCount
+      ? resetCreditChoices(account.limits.resetCredits, account.redeem.input, now, true)
+      : [];
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -197,20 +200,24 @@ function SegmentPopover({
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
       </div>
-      {credits && redeem ? (
-        <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
-          <span className="flex items-center gap-3">
-            <span className="tabular-nums">{resetCreditsSummary(credits, now, true)}</span>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={redeem.busy || !redeem.canManageProviders}
-              className="ms-auto"
-              onClick={onRedeem}
-            >
-              {redeem.busy ? "Using…" : "Use reset"}
-            </Button>
-          </span>
+      {choices.length > 0 && redeem ? (
+        <div className="flex flex-col gap-1.5 border-t border-border/60 pt-2.5 text-muted-foreground">
+          {choices.map((choice) => (
+            <span key={choice.key} className="flex items-center gap-3">
+              <span className="tabular-nums">{choice.summary}</span>
+              {choice.availableCount > 0 ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={redeem.busy || !redeem.canManageProviders}
+                  className="ms-auto"
+                  onClick={() => onRedeem(choice)}
+                >
+                  {redeem.busy ? "Using…" : choice.actionLabel}
+                </Button>
+              ) : null}
+            </span>
+          ))}
         </div>
       ) : null}
     </div>
@@ -265,9 +272,9 @@ function ActiveSegmentPopover({
       <SegmentPopover
         {...payload}
         now={now}
-        onRedeem={() => {
+        onRedeem={(choice) => {
           handle.close();
-          payload.redeem?.setConfirming(true);
+          payload.redeem?.confirm(choice);
         }}
       />
     </PopoverPopup>
@@ -304,13 +311,14 @@ function RedeemableSegment({
 }: Omit<Parameters<typeof SegmentTriggers>[0], "redeem"> & {
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
 }) {
-  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
+  const redeem = useResetCredit(redeemAt.environmentId);
   return (
     <>
       <SegmentTriggers redeem={redeem} {...props} />
       <ResetCreditDialog
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
+        choice={redeem.choice}
         onConfirm={() => void redeem.redeem()}
         disabled={!redeem.canManageProviders}
       />
@@ -608,16 +616,19 @@ function PoolResetCreditCard({
       </div>
       <div className="flex flex-col items-start gap-3 text-xs text-muted-foreground">
         <ResetCreditExpiries credits={credits} now={now} />
-        {redeem ? (
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={redeem.busy || !redeem.canManageProviders}
-            onClick={() => redeem.setConfirming(true)}
-          >
-            {redeem.busy ? "Using…" : "Use reset"}
-          </Button>
-        ) : null}
+        {redeem && account.redeem
+          ? resetCreditChoices(credits, account.redeem.input, now).map((choice) => (
+              <Button
+                key={choice.key}
+                size="xs"
+                variant="outline"
+                disabled={redeem.busy || !redeem.canManageProviders || choice.availableCount === 0}
+                onClick={() => redeem.confirm(choice)}
+              >
+                {redeem.busy ? "Using…" : choice.actionLabel}
+              </Button>
+            ))
+          : null}
       </div>
     </div>
   );
@@ -634,7 +645,7 @@ function RedeemableResetCreditCard({
   readonly now: number;
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
 }) {
-  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
+  const redeem = useResetCredit(redeemAt.environmentId);
   return (
     <>
       <PoolResetCreditCard
@@ -646,6 +657,7 @@ function RedeemableResetCreditCard({
       <ResetCreditDialog
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
+        choice={redeem.choice}
         onConfirm={() => void redeem.redeem()}
         disabled={!redeem.canManageProviders}
       />
@@ -712,33 +724,25 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
 export function UsageLimitsPooled({
   presentations,
   now,
-  cursorPrompt,
 }: {
   readonly presentations: Parameters<typeof collectLimitAccounts>[0];
   readonly now: number;
-  readonly cursorPrompt?: ReactNode;
 }) {
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
-  const cursorPromptAt =
-    Math.max(
-      pools.findIndex((pool) => pool.driver === "codex"),
-      pools.findIndex((pool) => pool.driver === "claudeAgent"),
-    ) + 1;
   return (
     <div className="flex flex-col gap-8">
-      {pools.length === 0 && notices.length === 0 && !cursorPrompt && externalLinks.length === 0 ? (
+      {pools.length === 0 && notices.length === 0 && externalLinks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
       <SegmentPopoverContext value={segmentPopover}>
-        {pools.map((pool, index) => (
+        {pools.map((pool) => (
           <Fragment key={pool.driver}>
-            {index === cursorPromptAt ? cursorPrompt : null}
             <PoolSection pool={pool} now={now} />
           </Fragment>
         ))}
@@ -756,7 +760,6 @@ export function UsageLimitsPooled({
           ) : null
         }
       </Popover>
-      {cursorPromptAt === pools.length ? cursorPrompt : null}
       {externalLinks.map((link) => (
         <section
           key={link.url}

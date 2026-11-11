@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   DEFAULT_CODEX_SETTINGS,
   CODEX_TEST_MODEL_SELECTION,
@@ -24,7 +25,7 @@ import * as CodexReplay from "effect-codex-app-server/replay";
 
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 
 import * as FileSystem from "effect/FileSystem";
@@ -163,7 +164,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,
-        crypto: yield* Crypto.Crypto,
+        digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
         serverConfig,
@@ -291,6 +292,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           config: {
             "tools.update_plan.enabled": true,
             "features.default_mode_request_user_input": true,
+            "features.concurrent_reasoning_summaries": true,
             mcp_optional_startup_grace_ms: 10_000,
             "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
             ...nativeSubagents,
@@ -313,7 +315,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
       ),
     ),
   );
@@ -515,7 +522,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(childThreads[1]?.id, childThreads[0]?.id);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),

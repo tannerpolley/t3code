@@ -1,3 +1,4 @@
+import * as ProjectionReplay from "../orchestration-v2/testkit/ProjectionReplay.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -495,13 +496,13 @@ it.effect(
       Effect.gen(function* () {
         const service = yield* IssueChangeService.IssueChangeService;
         const pending = yield* propose({ type: "body", number: 10, body: "Exact proposal" });
-        const maintenance = ProjectionMaintenance.layer.pipe(
+        const maintenance = Layer.merge(ProjectionMaintenance.layer, ProjectionReplay.layer).pipe(
           Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
         );
         yield* Effect.gen(function* () {
           const projections = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-          yield* projections.compactEventStore();
-          yield* projections.rebuild;
+          yield* projections.pruneEventStore();
+          yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
         }).pipe(Effect.provide(maintenance));
         const saved = (yield* service.list({ threadId }))[0]!;
         assert.equal(saved.id, pending.id);

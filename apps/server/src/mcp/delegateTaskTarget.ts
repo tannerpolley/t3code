@@ -14,6 +14,7 @@ import {
   type ServerSettings,
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import { withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { elapsedShare, paceOf, remainingPercent } from "@t3tools/shared/usageLimits";
 import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
 import * as Arr from "effect/Array";
@@ -138,7 +139,10 @@ export function checkDelegateTarget(input: {
   if (input.options !== undefined) {
     const descriptors = provider.models.find((candidate) => candidate.slug === model)?.capabilities
       ?.optionDescriptors;
-    const invalid = invalidOptionSelections(input.options, descriptors);
+    const invalid = invalidOptionSelections(
+      withLegacyUltracodeEffort(descriptors, input.options) ?? [],
+      descriptors,
+    );
     if (invalid.length > 0) {
       return fail(
         "invalid_request",

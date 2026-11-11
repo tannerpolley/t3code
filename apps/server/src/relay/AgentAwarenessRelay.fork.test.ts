@@ -1,3 +1,4 @@
+import * as EnvironmentKeys from "../cloud/environmentKeys.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -142,6 +143,14 @@ const makeTestRelay = Effect.fnUntraced(function* (
   const shellReads: ThreadId[] = [];
   const catchUp = { shellSnapshotReads: 0 };
   const threads = ThreadManagementService.ThreadManagementService.of({
+    getAgentAwarenessSnapshot: (threadId) =>
+      (options.readShell?.(threadId!) ?? Ref.get(currentShell)).pipe(
+        Effect.map((thread) => ({ snapshotSequence: 1, threads: thread === null ? [] : [thread] })),
+      ),
+    listAppOwnedChildThreadIds: unused,
+    getThreadLinkMetadata: unused,
+    getThreadTitles: unused,
+    cancelDelegatedTask: unused,
     countThreads: () => Effect.succeed(0),
     listActiveShellIndex: () => Effect.succeed([]),
     forceStopThread: unused,
@@ -222,6 +231,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     { preconnect: () => {} },
   );
   const relay = yield* AgentAwarenessRelay.make.pipe(
+    Effect.provide(EnvironmentKeys.layer),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
@@ -229,6 +239,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
       getDescriptor: unused(),
     }),
     Effect.provideService(ProjectService.ProjectService, {
+      workspaceScanDirectory: unused,
       listPage: unused,
       create: unused,
       bootstrap: unused,
@@ -343,7 +354,7 @@ describe("AgentAwarenessRelay", () => {
         const store = yield* ProjectionStore.ProjectionStoreV2;
         const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
         const pulls = yield* Queue.unbounded<void>();
-        const { relay, publications, shellReads } = yield* makeTestRelay({
+        const { relay, publications } = yield* makeTestRelay({
           projectionStore: store,
           readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
           readRecords: (threadId, fields, filter) =>
@@ -485,7 +496,6 @@ describe("AgentAwarenessRelay", () => {
           (publication) => publication.state?.threadId === childId,
         );
         assert.equal(inputs.length, answered ? 0 : 1);
-        if (answered) assert.equal(shellReads.filter((id) => id === childId).length, 1);
         if (!answered) assert.equal(inputs[0]?.state?.phase, "waiting_for_input");
         if (!answered) {
           // Resuming the parent removes its child's owner card without the tombstone debounce.

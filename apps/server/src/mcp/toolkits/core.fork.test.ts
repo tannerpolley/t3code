@@ -27,13 +27,10 @@ import * as Schema from "effect/Schema";
 
 import { McpSchema, McpServer, Tool } from "effect/ai";
 
-import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
-
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
-import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
@@ -80,16 +77,6 @@ import {
 } from "@t3tools/shared/t3McpToolPresentation";
 
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
-
-const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
-  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-  Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-  Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-
-  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-  Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-  Layer.provide(Layer.mock(OrchestratorV2)({})),
-);
 
 const decodeRepositoryLimit = Schema.decodeUnknownSync(
   OrchestratorToolkit.tools.set_repository_worker_limit.parametersSchema,
@@ -148,19 +135,6 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
   expect(names.has("choose_owner_decision")).toBe(false);
 });
 
-const threadId = ThreadId.make("mcp-core-thread");
-const scope: McpInvocationContext.McpInvocationScope = {
-  environmentId: EnvironmentId.make("mcp-core-environment"),
-  requestNamespace: "mcp-core-session",
-  thread: {
-    threadId,
-    providerSessionId: "mcp-core-session",
-    providerInstanceId: ProviderInstanceId.make("codex"),
-  },
-  client: undefined,
-  issuedAt: 0,
-  capabilities: new Set(["orchestration"]),
-};
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   protocolVersion: "2025-06-18",
@@ -206,7 +180,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
       layerOrchestratorToolkit.pipe(
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(ServerSettings.layerTest()),
@@ -247,7 +221,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
       layerOrchestratorToolkit.pipe(
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(ServerSettings.layerTest()),
@@ -324,7 +298,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
         layerOrchestratorToolkit.pipe(
           Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
           Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(
             Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -430,7 +404,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
       layerOrchestratorToolkit.pipe(
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({

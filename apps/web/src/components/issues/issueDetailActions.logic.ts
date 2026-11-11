@@ -103,3 +103,25 @@ export function issueReferenceCopyTarget(
         failureTitle: "Failed to copy issue link",
       };
 }
+
+export function handoffPrompt(
+  existing: {
+    readonly prompt: string;
+    /** Store only the handoff contribution so later handoffs preserve user text. */
+    readonly lastHandoffPrompt: string | undefined;
+  },
+  incoming: string,
+): string {
+  if (existing.prompt.trim().length === 0) return incoming;
+  const last = existing.lastHandoffPrompt ?? "";
+  const kept =
+    last.length === 0
+      ? existing.prompt
+      : existing.prompt === last
+        ? ""
+        : existing.prompt.endsWith(`\n\n${last}`)
+          ? existing.prompt.slice(0, -(last.length + 2))
+          : existing.prompt;
+  if (kept.trim().length === 0) return incoming;
+  return incoming.length === 0 ? kept : `${kept}\n\n${incoming}`;
+}

@@ -72,7 +72,7 @@ const layerMcpEnvironment = McpHttpServer.toolkitRegistration(
   EnvironmentHandlers.layer,
 ).pipe(
   Layer.provide(ThreadCommandExecutor.layer),
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provide(
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (id) => Effect.succeed(liveThreadShell(id)),

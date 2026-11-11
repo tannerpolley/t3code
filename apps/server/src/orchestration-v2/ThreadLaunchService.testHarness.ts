@@ -1,3 +1,4 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { ISSUE_HOSTS, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -193,10 +194,14 @@ function makeHarness(options: HarnessOptions = {}) {
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
   const layerExternalServices = Layer.mergeAll(
+    NodeFileSystem.layer,
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
     Layer.succeed(ProjectService.ProjectService, {
+      workspaceScanDirectory: Effect.fn("ProjectService.workspaceScanDirectory")(() =>
+        Effect.die("unused workspace scan"),
+      ),
       listPage: Effect.fn("ProjectService.ProjectService.listPage")(() =>
         Effect.succeed({ projects: [], nextCursor: null }),
       ),

@@ -1,3 +1,4 @@
+import * as Config from "effect/Config";
 // @effect-diagnostics nodeBuiltinImport:off
 // Claude shell and monitor output lives in task files; Codex deltas use server-owned logs.
 // Resolve paths from the thread's own items and tasks, never from client-supplied paths.
@@ -338,7 +339,10 @@ const withTaskCommands = Effect.fn("orchestration.withTaskCommands")(function* (
 
 /** A fresh sample of the processes under this server, or null while the monitor is unavailable. */
 const sampleProcesses = Effect.gen(function* () {
-  const fixturePath = process.env.T3CODE_DEV_PROCESS_FIXTURE;
+  const fixturePath = yield* Config.String("T3CODE_DEV_PROCESS_FIXTURE").pipe(
+    Config.withDefault(""),
+    Effect.orDie,
+  );
   if (fixturePath) {
     return yield* readDevProcessFixture(fixturePath);
   }

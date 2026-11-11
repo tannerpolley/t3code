@@ -15,7 +15,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -105,7 +105,7 @@ const toolResult = (id: string, cancelled: boolean) =>
     ...(cancelled ? { tool_result_meta: [{ id, non_execution_kind: "cancelled" }] } : {}),
   });
 
-const result = (uuid: string, aborted: boolean) =>
+const result = (uuid: string, aborted: boolean, text = "") =>
   frame({
     type: "result",
     subtype: "success",
@@ -113,7 +113,7 @@ const result = (uuid: string, aborted: boolean) =>
     session_id: sessionId,
     is_error: false,
     num_turns: 1,
-    result: "",
+    result: text,
     stop_reason: "end_turn",
     terminal_reason: aborted ? "aborted_tools" : "completed",
     permission_denials: [],
@@ -149,7 +149,7 @@ it.effect.each(deliveries)(
           attachmentsDir: cwd,
           fileSystem: yield* FileSystem.FileSystem,
           path: yield* Path.Path,
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           idAllocator: yield* IdAllocator.IdAllocatorV2,
           queryRunner: {
             allocateSessionId: Effect.succeed(sessionId),
@@ -169,6 +169,10 @@ it.effect.each(deliveries)(
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
+                mcpServerStatus: Effect.succeed([]),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
                 stopTask: () => Effect.void,
                 interrupt: Effect.die("automatic delivery must never interrupt"),
                 close: Effect.void,
@@ -433,7 +437,7 @@ it.effect.each(deliveries)(
                       event.payload.completionDelivery?.state === "delivered",
                   )
                 : null;
-            yield* Queue.offer(sdkMessages, result("notice-completed", false));
+            yield* Queue.offer(sdkMessages, result("notice-completed", false, "Acknowledged."));
             yield* Fiber.join(noticeFinished);
             yield* worker.drain();
             if (delivered !== null) yield* Fiber.join(delivered);
@@ -480,7 +484,12 @@ it.effect.each(deliveries)(
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),

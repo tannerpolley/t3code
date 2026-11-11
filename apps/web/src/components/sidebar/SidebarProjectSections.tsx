@@ -1322,6 +1322,7 @@ function ProjectDropLine() {
 }
 
 const THREAD_STATUS_DOT_CLASS = {
+  preparing: "bg-info",
   request: "bg-info",
   approval: "bg-warning",
   failed: "bg-error",

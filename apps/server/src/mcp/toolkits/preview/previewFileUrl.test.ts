@@ -1,3 +1,5 @@
+import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -29,13 +31,14 @@ const layer = PreviewFileUrl.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(T3ProjectFileLoader.layer),
       ),
+      AssetSigner.layer.pipe(Layer.provide(ServerSecretStore.layer), Layer.provide(configLayer)),
       ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
       ServerSettings.layerTest(),
       // Only tool-output image assets read the orchestrator; file paths never do.
       Layer.mock(Orchestrator.OrchestratorV2)({}),
     ),
   ),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.effect("issues a loopback asset URL for an absolute path and rejects a relative one", () =>

@@ -2,9 +2,10 @@ import {
   IssueQueueEntry,
   IssueWorkError,
   type IssueRepositoryRef,
+  type ThreadLinkedIssue,
   type OrchestrationV2DomainEvent,
   type RunId,
-  type ThreadId,
+  ThreadId,
   type OrchestrationV2Run,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -110,3 +111,6 @@ export const finishIssueQueueNotice = Effect.fnUntraced(function* (run: Orchestr
         AND json_extract(payload_json, '$.noticeRunId') = ${run.id}
     `;
 });
+
+export const issueQueueMailbox = (issue: Pick<ThreadLinkedIssue, "host" | "repositoryId">) =>
+  ThreadId.make(`issue-queue:${issue.host}:${issue.repositoryId}`);

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
@@ -50,12 +51,12 @@ function setup() {
   const readDefaultBranch = vi.fn(() => Effect.succeed("main"));
   const dependencies = Layer.mergeAll(
     harness.layer,
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
     IssueLinks.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           harness.layer,
-          NodeServices.layer,
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
           ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
         ),
       ),

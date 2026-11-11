@@ -17,7 +17,7 @@ import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -310,7 +310,7 @@ const makeCodexReplayHarness = Effect.fn("CodexReplay.makeCodexReplayHarness")(f
     settings: DEFAULT_CODEX_SETTINGS,
     environment: {},
     clientFactory,
-    crypto: yield* Crypto.Crypto,
+    digest: yield* Digest.Digest,
     fileSystem,
     idAllocator,
     serverConfig,

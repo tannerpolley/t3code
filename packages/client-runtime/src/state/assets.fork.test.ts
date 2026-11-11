@@ -3,7 +3,6 @@ import { AssetWorkspaceContextNotFoundError } from "@t3tools/contracts";
 import { EnvironmentAuthorizationError } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
-import * as Result from "effect/Result";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -187,8 +186,10 @@ describe("createAssetEnvironmentAtoms", () => {
         );
       } else if (scenario.localDefect) {
         const cause = yield* Effect.sandbox(result).pipe(Effect.flip);
-        expect(Cause.findErrorOption(cause)).toEqual(Option.some(error));
-        expect(Cause.findDefect(cause)).toEqual(Result.succeed("cleanup failed"));
+        // Effect elects typed failures to defects when a finalizer also defects.
+        expect(cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect)).toEqual(
+          expect.arrayContaining([error, "cleanup failed"]),
+        );
       } else {
         expect(yield* Effect.flip(result)).toEqual(error);
       }

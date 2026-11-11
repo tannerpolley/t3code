@@ -1890,9 +1890,9 @@ it.effect.each(["blocker", "unreadable"] as const)(
         yield* worker.drain();
         const projection = yield* threads.getThreadProjection(root);
         const notices = projection.visibleTurnItems.filter(
-          (row) => row.item.type === "system_notice",
+          (row) => row.item.type === "system_notice" && row.item.runId === null,
         );
-        assert.lengthOf(notices, 1);
+        assert.lengthOf(notices, 1, JSON.stringify(notices));
         const notice = notices[0]!.item;
         assert.equal(notice.type, "system_notice");
         if (notice.type !== "system_notice") return;

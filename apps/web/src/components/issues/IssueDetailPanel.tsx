@@ -1,5 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { pullRequestAutolinkPlugins } from "../pullRequest/pullRequestMarkdown.logic";
+import { pullRequestMarkdownPlugins } from "../pullRequest/pullRequestMarkdown.logic";
 import { OwnerDecisionCards } from "./OwnerDecisionCards";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
@@ -701,11 +701,12 @@ export function IssueDetailPanel({
 
       <PullRequestMarkdownContext
         value={{
-          remarkPlugins: pullRequestAutolinkPlugins({
+          remarkPlugins: pullRequestMarkdownPlugins({
             provider:
               project?.repositoryIdentity?.provider ?? SourceControlProviderKind.make("github"),
             url: `https://${repository.host}/${repository.repository}/issues/${issue.number}`,
           }),
+          repository: repository.repository,
           lineBreaks: false,
           threadRef,
         }}

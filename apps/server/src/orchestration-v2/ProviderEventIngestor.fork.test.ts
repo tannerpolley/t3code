@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -38,8 +39,7 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 const layerProviderEventIngestor = ProviderEventIngestor.layer.pipe(
   Layer.provide(
     Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
-      getInstance: () => Effect.succeed(undefined),
+      getInstance: () => Effect.undefined,
     }),
   ),
 );
@@ -55,7 +55,7 @@ const layerTestEventSink = EventSink.layer.pipe(
 
 const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "ingestor-git-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const layerTest = Layer.mergeAll(

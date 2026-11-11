@@ -1,3 +1,4 @@
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import { ProviderAdapterCapabilitiesError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { presentThreadShell } from "../../../../packages/client-runtime/src/state/models.ts";
 import { resolveThreadActivity } from "../../../../packages/client-runtime/src/state/forkThreadActivity.ts";
@@ -78,8 +79,7 @@ it.effect.each([false, true])(
         yield* reply(sink, input.threadId, followup, "Build succeeded", "reply");
       }
       const flagged = yield* complete(orchestrator, sink, input.threadId, followup);
-      const maintenance = yield* Maintenance.ProjectionMaintenanceV2;
-      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
       assert.deepEqual(
         (yield* orchestrator.getThreadProjection(input.threadId)).thread.silentWakeAttention,
         flagged.thread.silentWakeAttention,
@@ -122,7 +122,7 @@ it.effect.each([false, true])(
       );
     }).pipe(
       Effect.provide(
-        Maintenance.layer.pipe(
+        Layer.merge(Maintenance.layer, ProjectionReplay.layer).pipe(
           Layer.provideMerge(
             Layer.mergeAll(
               harness.layer,

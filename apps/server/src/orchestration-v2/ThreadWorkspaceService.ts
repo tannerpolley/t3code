@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -53,7 +53,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const git = yield* GitWorkflowService.GitWorkflowService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   // Both directions use the metadata command's serialized safety checks and detach effect.
   // Keep the continuation durable before the detach can interrupt the caller's request.
@@ -137,7 +137,7 @@ const make = Effect.gen(function* () {
         code: "invalid_request",
         message: `Project workspace '${projectWorkspaceRoot}' is not a git repository.`,
       });
-    const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const uuid = yield* random.uuidV4().pipe(Effect.orDie);
     const continuation = yield* bind({
       command: {
         type: "thread.metadata.update",

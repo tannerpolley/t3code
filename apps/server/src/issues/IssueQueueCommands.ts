@@ -1,3 +1,4 @@
+import { issueQueueMailbox } from "./IssueQueueStore.ts";
 import { issueQueueMessage } from "./IssueQueueMessage.ts";
 import {
   repositoryPhase,
@@ -40,7 +41,11 @@ export function makeIssueQueueCommands(
     if (Option.isNone(issueWorkStore)) return;
     const store = issueWorkStore.value;
     const owner = yield* store.repositoryOwner(command.issue).pipe(mapDispatchError(command));
-    if (owner !== null && owner.rootThreadId !== command.threadId)
+    if (
+      owner !== null &&
+      owner.rootThreadId !== command.threadId &&
+      command.threadId !== issueQueueMailbox(command.issue)
+    )
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,

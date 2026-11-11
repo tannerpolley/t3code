@@ -3,7 +3,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { editModelRolesDraft, modelRolesDraft, receiveServerModelRoles } from "./modelRolesDraft";
 
-const [first, second] = DEFAULT_MODEL_ROLES;
+const [first, defaultSecond] = DEFAULT_MODEL_ROLES;
+const second = {
+  ...defaultSecond!,
+  targets: [
+    defaultSecond!.targets[0],
+    { ...defaultSecond!.targets[0], model: "alternative-test-model" },
+  ] as const,
+};
 const server = [first!, second!];
 
 describe("model roles draft", () => {

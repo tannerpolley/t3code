@@ -1,3 +1,4 @@
+import * as AssetSigner from "../assets/AssetSigner.ts";
 import {
   EnvironmentId,
   NodeId,
@@ -132,6 +133,7 @@ it("taskStatus reports a child waiting on the orchestrator, but not an auth refr
       model: "gpt-5.4",
     }),
     runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    providerTurns: [],
     visibleTurnItems: [],
     runtimeRequests: [],
     messages: [],
@@ -185,6 +187,7 @@ it("taskStatus reports a child waiting on the orchestrator, but not an auth refr
         instanceId: customCodexInstanceId,
       }),
     ],
+    providerTurns: [],
     visibleTurnItems: [],
     runtimeRequests: [
       {
@@ -342,6 +345,7 @@ it("refuses delegated child messages, attachments, and queue sends to ancestors"
           Layer.provide(NodeServices.layer),
         ),
         Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+        Layer.mock(AssetSigner.AssetSigner)({}),
         NodeServices.layer,
         Layer.succeed(McpInvocationContext.McpInvocationContext, scopeFor(childId)),
         NodeCrypto.layer,

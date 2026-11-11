@@ -26,7 +26,7 @@ import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities"
 import { issueEnvironment } from "~/state/issues";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { handoffPrompt } from "../pullRequest/pullRequestDetail.logic";
+import { handoffPrompt } from "./issueDetailActions.logic";
 import { useInlineActionConfirm } from "../pullRequest/useInlineActionConfirm";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger, MenuShortcut } from "../ui/menu";

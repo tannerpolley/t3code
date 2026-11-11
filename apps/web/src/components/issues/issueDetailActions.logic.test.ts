@@ -8,7 +8,7 @@ import {
   issueImplementDestination,
   issueMenuAvailability,
 } from "./issueDetailActions.logic";
-import { handoffPrompt } from "../pullRequest/pullRequestDetail.logic";
+import { handoffPrompt } from "./issueDetailActions.logic";
 
 const threadRef = { environmentId: EnvironmentId.make("host"), threadId: ThreadId.make("thread") };
 const issue = {

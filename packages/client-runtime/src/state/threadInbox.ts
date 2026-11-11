@@ -32,6 +32,25 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
   );
 }
 
+/**
+ * A thread its own client is launching reads as preparing until its first run lands.
+ * The server commits the thread before its run, so the list would otherwise place it twice.
+ */
+export function asLaunchingThread<T extends EnvironmentThreadShell>(thread: T): T {
+  if (thread.latestRun !== null || thread.runtime !== null) return thread;
+  return {
+    ...thread,
+    runtime: {
+      status: "preparing",
+      activeRunId: null,
+      providerInstanceId: thread.providerInstanceId,
+      providerName: null,
+      lastError: null,
+      updatedAt: thread.updatedAt,
+    },
+  };
+}
+
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
@@ -125,7 +144,7 @@ export function createInboxReturnTracker() {
   const keyOf = (thread: ThreadKeyInput) => `${thread.environmentId}:${thread.id}`;
   const states = new Map<
     string,
-    { working: boolean; deadline: number | null; placement: string }
+    { working: boolean; deadline: number | null; placement: string | null }
   >();
   const returns = new Map<string, number>();
   const listeners = new Set<() => void>();
@@ -186,17 +205,21 @@ export function createInboxReturnTracker() {
       for (const thread of threads) {
         const key = keyOf(thread);
         present.add(key);
-        const placement = JSON.stringify([
-          thread.archivedAt,
-          thread.deletedAt,
-          thread.pinnedAt,
-          thread.settledOverride,
-          thread.settledAt,
-          thread.snoozedAt,
-          thread.snoozedUntil,
-          thread.activeOrderKey,
-        ]);
         const previous = states.get(key);
+        const actual = isThreadWorking(thread);
+        const placement =
+          actual || previous?.working
+            ? JSON.stringify([
+                thread.archivedAt,
+                thread.deletedAt,
+                thread.pinnedAt,
+                thread.settledOverride,
+                thread.settledAt,
+                thread.snoozedAt,
+                thread.snoozedUntil,
+                thread.activeOrderKey,
+              ])
+            : null;
         const actionable =
           thread.hasPendingApprovals ||
           thread.hasPendingUserInput ||
@@ -212,7 +235,6 @@ export function createInboxReturnTracker() {
           thread.pinnedAt != null ||
           thread.settledOverride === "settled" ||
           effectiveSnoozed(thread, { now: observedAt });
-        const actual = isThreadWorking(thread);
         // Only shelf placement is held: execution state and attention requests stay authoritative.
         const deadline =
           !actual && previous?.working && !actionable && !moved && !excluded

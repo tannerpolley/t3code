@@ -1,3 +1,4 @@
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
@@ -20,10 +21,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { layer as eventStoreLayer } from "./EventStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
-import {
-  ProjectionMaintenanceV2,
-  layer as projectionMaintenanceLayer,
-} from "./ProjectionMaintenance.ts";
+import { layer as projectionMaintenanceLayer } from "./ProjectionMaintenance.ts";
 import { ProjectionStoreV2, layer as projectionLayer } from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { selectTitleRefreshThreads } from "./ThreadTitleRefreshWorker.ts";
@@ -151,7 +149,7 @@ const database = SqlitePersistence.layerMemory;
 const orchestratorLayer = Layer.mergeAll(
   database,
   projectionLayer.pipe(Layer.provide(database)),
-  projectionMaintenanceLayer.pipe(
+  Layer.merge(projectionMaintenanceLayer, ProjectionReplay.layer).pipe(
     Layer.provide(
       Layer.mergeAll(
         database,
@@ -248,11 +246,10 @@ it.effect("a title typed before the first message is not replaced by the first-m
 it.effect("a client rename stays the user's after the projection is rebuilt from events", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStoreV2;
-    const maintenance = yield* ProjectionMaintenanceV2;
     const threadId = yield* createThread("rebuilt");
     yield* metadata(threadId, "rename:rebuilt", { title: "Typed by hand" });
     // Ownership has no other record: it survives only if the rename event carries it.
-    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
     const rebuilt = yield* projections.getThread(threadId);
     assert.equal(rebuilt.title, "Typed by hand");
     assert.equal(rebuilt.titleSource, "user");
@@ -473,7 +470,6 @@ it.effect(
     Effect.gen(function* () {
       const projections = yield* ProjectionStoreV2;
       const orchestrator = yield* OrchestratorV2;
-      const maintenance = yield* ProjectionMaintenanceV2;
       const linkedIssue = {
         host: "github.com",
         repository: "tannerpolley/t3code",
@@ -515,7 +511,7 @@ it.effect(
         }),
       );
       assert.equal(late._tag, "Failure");
-      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
       assert.equal((yield* projections.getThread(threadId)).title, "#8 Keep the issue number");
       assert.deepEqual((yield* projections.getThreadShell(threadId))?.linkedIssue, linkedIssue);
     }).pipe(Effect.provide(orchestratorLayer)),

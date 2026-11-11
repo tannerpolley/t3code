@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import type { DispatchModeRefusal } from "../orchestration-v2/DispatchModeLimit.ts";
 import { OrchestratorThreadAboveModeLimitError } from "../orchestration-v2/Orchestrator.ts";
@@ -110,6 +111,7 @@ describe("OrchestratorMcpService", () => {
           },
         ],
         contextTransfers: [
+          ...parentProjection.contextTransfers,
           {
             type: "subagent_spawn",
             sourceThreadId: parentThreadId,
@@ -122,10 +124,12 @@ describe("OrchestratorMcpService", () => {
         subagents: [],
         providerThreads: [],
         runtimeRequests: [],
+        providerTurns: [],
+        attempts: [],
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
       const layerDependencies = Layer.mergeAll(
-        NodeServices.layer,
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadShell: () => Effect.succeed(null),
           getThreadRecords: (threadId) =>
@@ -277,7 +281,7 @@ describe("OrchestratorMcpService", () => {
         ],
       ]) as unknown as ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
       const layerDependencies = Layer.mergeAll(
-        NodeServices.layer,
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) => Effect.succeed(projections.get(threadId)!),
           getThreadShell: (threadId) =>
@@ -889,7 +893,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         layerOrchestratorService.pipe(
           Layer.provide(
             Layer.mergeAll(
-              NodeServices.layer,
+              Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
               Layer.mock(ThreadManagementService.ThreadManagementService)({
                 getThreadRecords: () => Effect.succeed(parentProjection([])),
               }),
@@ -938,7 +942,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         };
         let delegated = false;
         const layerDependencies = Layer.mergeAll(
-          NodeServices.layer,
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadShell: () => Effect.succeed(null),
             hasReceipt: () => Effect.succeed(false),
@@ -1135,7 +1139,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
           let delegated = false;
           const layerDependencies = Layer.mergeAll(
-            NodeServices.layer,
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadShell: () => Effect.succeed(null),
               hasReceipt: () => Effect.succeed(false),
@@ -1344,7 +1348,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             result: null,
           };
           const dependencies = Layer.mergeAll(
-            NodeServices.layer,
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               hasReceipt: () => Effect.succeed(false),
               assertProviderInstanceEnabled: () => Effect.void,
@@ -1441,7 +1445,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         } as OrchestrationV2ThreadProjection;
       };
       const dependencies = Layer.mergeAll(
-        NodeServices.layer,
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           hasReceipt: () => Effect.succeed(false),
           assertProviderInstanceEnabled: () => Effect.void,
@@ -1531,7 +1535,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           layerOrchestratorService.pipe(
             Layer.provide(
               Layer.mergeAll(
-                NodeServices.layer,
+                Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                 ServerSettings.layerTest(),
                 Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),

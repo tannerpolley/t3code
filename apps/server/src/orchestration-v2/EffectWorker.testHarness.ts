@@ -1,3 +1,4 @@
+import * as Stream from "effect/Stream";
 import {
   ProviderSessionId,
   ProviderThreadId,
@@ -67,6 +68,7 @@ function layerExecutorFor(input: {
     Layer.succeed(
       ProviderSessionManager.ProviderSessionManagerV2,
       ProviderSessionManager.ProviderSessionManagerV2.of({
+        subscribePromptSuggestion: () => Stream.empty,
         shutdown: Effect.void,
         releaseUnlessBusy: Effect.fn(
           "ProviderSessionManager.ProviderSessionManagerV2.releaseUnlessBusy",

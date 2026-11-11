@@ -1,3 +1,6 @@
+import * as EventStore from "./EventStore.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -46,7 +49,7 @@ import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.tes
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerPlatformTest = Layer.merge(
-  NodeServices.layer,
+  Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),
@@ -161,7 +164,13 @@ const layerTestBase = Layer.mergeAll(
   Layer.provide(layerPlatformTest),
 );
 
-const layerTest = DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTestBase));
+const layerTest = Layer.merge(
+  DelegatedTaskQuestionReactor.layer,
+  ProjectionReplay.layer.pipe(
+    Layer.provide(EventStore.layer),
+    Layer.provide(SqlitePersistence.layerMemory),
+  ),
+).pipe(Layer.provideMerge(layerTestBase));
 
 const seedParentWithTerminalTask = Effect.fn("seedParentWithTerminalTask")(function* (input: {
   readonly threadId: ThreadId;

@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { ArrowDownIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
@@ -58,19 +58,19 @@ export function ModelRolesSection() {
   // blur, then a click) both build on the latest list.
   const [draft, setDraft] = useState(() => modelRolesDraft(serverRoles));
   const draftRef = useRef(draft);
-  useEffect(() => {
-    const next = receiveServerModelRoles(draftRef.current, serverRoles);
-    draftRef.current = next;
-    setDraft(next);
-  }, [serverRoles]);
+  const received = receiveServerModelRoles(draft, serverRoles);
+  if (received !== draft) setDraft(received);
   const edit = (change: ModelRoleEdit) => {
-    const next = editModelRolesDraft(draftRef.current, change);
+    const next = editModelRolesDraft(
+      receiveServerModelRoles(draftRef.current, serverRoles),
+      change,
+    );
     if (next === draftRef.current) return;
     draftRef.current = next;
     setDraft(next);
     updateSettings({ modelRoles: next.roles });
   };
-  const roles = draft.roles;
+  const roles = received.roles;
   const unavailableReason = (target: ModelRoleTarget): string | null => {
     const entry = entries.find((candidate) => candidate.instanceId === target.providerInstanceId);
     if (!entry?.enabled) {
@@ -107,7 +107,7 @@ export function ModelRolesSection() {
         serverScoped
         settingKeys={MODEL_ROLE_KEYS}
         {...searchableSetting("model-roles")}
-        description="Model and effort choices for each kind of delegated work. The first choice is the default; add alternatives and make any choice the default. Agents choose among them at their discretion, and your explicit instructions win. Codex: next turn. Claude: next session. Agents can re-read them anytime via orchestrator_capabilities."
+        description="Delegation defaults in choice order; agents may choose alternatives and follow your instructions. Codex reads changes next turn; Claude next session. Agents can re-read roles anytime."
         resetAction={
           Equal.equals(roles, DEFAULT_MODEL_ROLES) ? null : (
             <SettingResetButton
@@ -147,6 +147,7 @@ export function ModelRolesSection() {
                   );
                   const reason = unavailableReason(target);
                   return (
+                    // oxlint-disable-next-line react/no-array-index-key -- Choices are ordered editable slots and may contain identical configurations.
                     <div key={targetIndex} className="flex flex-col items-end gap-1">
                       <div className="flex flex-wrap items-center justify-end gap-1.5">
                         <Button
@@ -184,7 +185,6 @@ export function ModelRolesSection() {
                             model={target.model}
                             modelOptions={target.options ?? null}
                             allowPromptInjectedEffort={false}
-                            planModeEnabled={settings.planModeEnabled}
                             triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                             onModelOptionsChange={(options) =>
                               edit({ type: "options", id: role.id, index: targetIndex, options })

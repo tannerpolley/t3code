@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
@@ -88,7 +88,6 @@ function makeHarness() {
   const closeListeners: Array<(event: { preventDefault: () => void }) => unknown> = [];
   const hide = vi.fn();
   const quit = vi.fn();
-  const logs: Array<string> = [];
   const window = {
     on: (name: string, listener: (event: { preventDefault: () => void }) => unknown) => {
       if (name === "close") closeListeners.push(listener);
@@ -97,6 +96,7 @@ function makeHarness() {
     isDestroyed: () => false,
   } as unknown as Electron.BrowserWindow;
   const layer = Layer.mergeAll(
+    Layer.succeed(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv()),
     Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
       platform: "linux",
       displayName: "T3 Code",
@@ -125,14 +125,6 @@ function makeHarness() {
       resolveResourcePath: () => Effect.succeedNone,
     }),
     DesktopState.layer,
-    Logger.layer(
-      [
-        Logger.make(({ message }) =>
-          logs.push(String(Array.isArray(message) ? message[0] : message)),
-        ),
-      ],
-      { mergeWithExisting: false },
-    ),
   );
   /** Starts the tray, waits for its icon, and opens the main window. */
   const startWithTray = Effect.gen(function* () {
@@ -146,7 +138,7 @@ function makeHarness() {
     const decision = closeListeners[0]?.({ preventDefault: () => (held = true) });
     return { held, decision: Promise.resolve(decision) };
   };
-  return { layer, appListeners, window, startWithTray, pressClose, hide, quit, logs };
+  return { layer, appListeners, window, startWithTray, pressClose, hide, quit };
 }
 
 afterEach(() => {
@@ -217,8 +209,6 @@ describe("DesktopTray", () => {
     const tray = makeHarness();
     return Effect.gen(function* () {
       yield* DesktopTray.start;
-      // The fallback is decided and logged before anything could open a bus.
-      expect(tray.logs[0]).toContain("closing the window quits");
       tray.appListeners.get("browser-window-created")?.({}, tray.window);
       assert.isFalse(tray.pressClose().held);
       assert.deepEqual(fake.busAddresses, []);

@@ -1,5 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useState } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
@@ -27,6 +27,11 @@ export function BackgroundWorkTaskList(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
+  readonly renderOutput?: (row: BackgroundWorkTaskRow) => ReactNode;
+  readonly renderDetails?: (row: BackgroundWorkTaskRow) => ReactNode;
+  readonly renderAgent?: NonNullable<
+    ComponentProps<typeof SidebarBackgroundWorkRows>["renderAgent"]
+  >;
 }) {
   const { agents, backgroundTasks } = groupBackgroundWorkTaskRows(props.rows);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
@@ -59,12 +64,16 @@ export function BackgroundWorkTaskList(props: {
                   command={row.command}
                   className="size-3.5"
                 />
-                <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
-                    {row.label}
-                  </TooltipTrigger>
-                  <TooltipPopup>{row.label}</TooltipPopup>
-                </Tooltip>
+                {props.renderDetails ? (
+                  <div className="min-w-0 flex-1">{props.renderDetails(row)}</div>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+                      {row.label}
+                    </TooltipTrigger>
+                    <TooltipPopup>{row.label}</TooltipPopup>
+                  </Tooltip>
+                )}
                 <StopBackgroundShellButton {...target} />
               </div>
               <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
@@ -80,7 +89,9 @@ export function BackgroundWorkTaskList(props: {
                   <BackgroundTaskResourceUsageLabel usage={usage} />
                 )}
               </div>
-              {processOutput ? <BackgroundTaskOutputDetails {...target} /> : null}
+              {processOutput ? (
+                <BackgroundTaskOutputDetails {...target} output={props.renderOutput?.(row)} />
+              ) : null}
             </li>
           );
         })}
@@ -94,6 +105,7 @@ function BackgroundTaskOutputDetails(props: {
   readonly threadId: ThreadId;
   readonly taskId: string;
   readonly label: string;
+  readonly output?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -107,7 +119,7 @@ function BackgroundTaskOutputDetails(props: {
       >
         {open ? "Hide output" : "Show output"}
       </Button>
-      {open ? <BackgroundProcessOutputView {...props} /> : null}
+      {open ? (props.output ?? <BackgroundProcessOutputView {...props} />) : null}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -67,8 +68,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 const layerProviderEventIngestor = ProviderEventIngestor.layer.pipe(
   Layer.provide(
     Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
-      getInstance: () => Effect.succeed(undefined),
+      getInstance: () => Effect.undefined,
     }),
   ),
 );
@@ -606,7 +606,7 @@ function layerTest(input: {
         ),
       ),
     ),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 }
 
 const fakeHttpServer = HttpServer.HttpServer.of({
@@ -625,7 +625,7 @@ const layerTestMcpRegistry = Layer.effect(
 ).pipe(
   Layer.provide(Layer.succeed(HttpServer.HttpServer, fakeHttpServer)),
   Layer.provide(Layer.succeed(ServerEnvironment.ServerEnvironment, fakeEnvironment)),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const layerPausingMcpRegistry = (pause: {

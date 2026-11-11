@@ -11,10 +11,10 @@ export function materializeReplayTranscriptRuntimeInstructions(
       ? "Cursor"
       : runtime.driver === "grok"
         ? "Grok"
-        : runtime.driver === "acpRegistry"
-          ? "acpRegistry"
-          : runtime.driver === "muse"
-            ? "Muse Code"
+        : runtime.driver === "kiro"
+          ? "Kiro"
+          : runtime.driver === "acpRegistry"
+            ? "acpRegistry"
             : runtime.driver === "fx"
               ? "fx"
               : undefined;
@@ -103,9 +103,27 @@ export function materializeReplayTranscriptRuntimeInstructions(
           "type" in lastPart &&
           lastPart.type === "text" &&
           "text" in lastPart &&
-          lastPart.text === instructions
+          typeof lastPart.text === "string" &&
+          lastPart.text.startsWith("<runtime_info>")
         ) {
-          return entry;
+          const headerEnd = lastPart.text.indexOf("</runtime_info>") + "</runtime_info>".length;
+          const sharedStart = instructions.indexOf("</runtime_info>") + "</runtime_info>".length;
+          return {
+            ...entry,
+            frame: {
+              ...frame,
+              params: {
+                ...frame.params,
+                prompt: [
+                  ...prompt.slice(0, -1),
+                  {
+                    ...lastPart,
+                    text: lastPart.text.slice(0, headerEnd) + instructions.slice(sharedStart),
+                  },
+                ],
+              },
+            },
+          };
         }
         return {
           ...entry,

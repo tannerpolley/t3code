@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import * as Config from "effect/Config";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -190,9 +191,13 @@ const ensureCopiedDatabaseIsNotLive = Effect.fn("ensureCopiedDatabaseIsNotLive")
     return yield* new SqliteStateSharedHomeMutationError();
   }
 
+  const configuredHome = yield* Config.String("T3CODE_HOME").pipe(
+    Config.withDefault(""),
+    Effect.orDie,
+  );
   const liveHomes = new Set([
     path.join(NodeOS.homedir(), ".t3"),
-    ...(process.env.T3CODE_HOME?.trim() ? [process.env.T3CODE_HOME.trim()] : []),
+    ...(configuredHome.trim() ? [configuredHome.trim()] : []),
     ...(options.sharedHome === undefined ? [] : [options.sharedHome]),
   ]);
 
@@ -215,6 +220,30 @@ const ensureCopiedDatabaseIsNotLive = Effect.fn("ensureCopiedDatabaseIsNotLive")
   }
 });
 
+const inspectProjectionState = Effect.fn("SqliteState.inspectProjectionState")(function* (
+  sql: SqlClient.SqlClient,
+) {
+  const integrity = yield* sql<{ readonly integrity_check: string }>`PRAGMA integrity_check`;
+  const metadata = yield* sql<{
+    readonly schema_version: number;
+    readonly last_sequence: number;
+  }>`SELECT schema_version, last_sequence FROM orchestration_v2_projection_metadata WHERE projection_name = 'thread-projections'`;
+  const schemaVersion = metadata[0]?.schema_version ?? 0;
+  const projectionSequence = metadata[0]?.last_sequence ?? 0;
+  const heads = yield* sql<{
+    readonly sequence: number;
+  }>`SELECT MAX(sequence) AS sequence FROM (SELECT COALESCE(MAX(sequence), 0) AS sequence FROM orchestration_events WHERE application_event_version = 2 UNION ALL SELECT last_sequence AS sequence FROM orchestration_v2_projection_metadata WHERE projection_name = 'event-log-pruned-through')`;
+  const expectedSequence = heads[0]?.sequence ?? 0;
+  return {
+    valid:
+      integrity.every((row) => row.integrity_check === "ok") &&
+      projectionSequence === expectedSequence,
+    schemaVersion,
+    projectionSequence,
+    expectedSequence,
+  };
+});
+
 const compactCopiedDatabase = Effect.fn("compactCopiedSqliteDatabase")(function* (
   databasePath: string,
   options: RunSqliteStateOptions,
@@ -235,7 +264,7 @@ const compactCopiedDatabase = Effect.fn("compactCopiedSqliteDatabase")(function*
     const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     yield* sql`PRAGMA busy_timeout = 5000`;
 
-    const before = yield* maintenance.verify;
+    const before = yield* inspectProjectionState(sql);
     if (!before.valid) {
       return yield* new SqliteStateCompactionVerificationError({
         phase: "before",
@@ -244,7 +273,7 @@ const compactCopiedDatabase = Effect.fn("compactCopiedSqliteDatabase")(function*
       });
     }
 
-    const summary = yield* maintenance.compactEventStore();
+    const summary = yield* maintenance.pruneEventStore();
     yield* sql`VACUUM`;
     const checkpoint = yield* sql<{ readonly busy: number }>`PRAGMA wal_checkpoint(TRUNCATE)`;
     if ((checkpoint[0]?.busy ?? 0) !== 0) {
@@ -255,7 +284,7 @@ const compactCopiedDatabase = Effect.fn("compactCopiedSqliteDatabase")(function*
       });
     }
 
-    const after = yield* maintenance.verify;
+    const after = yield* inspectProjectionState(sql);
     if (!after.valid) {
       return yield* new SqliteStateCompactionVerificationError({
         phase: "after",

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeEvents from "node:events";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -259,6 +260,7 @@ const dependencies = Layer.mergeAll(
   }),
   Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
     available: true,
+    isShown: (key) => desktopRenders(key.tabId),
     turn: () => Effect.void,
     awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
@@ -301,7 +303,7 @@ const dependencies = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layer = ServerBrowser.layer.pipe(Layer.provideMerge(dependencies));
 const ready = Effect.gen(function* () {

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -23,7 +24,9 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
 const brokerDependencies = (settings: Parameters<typeof ServerSettings.layerTest>[0] = {}) =>
-  ServerSettings.layerTest(settings).pipe(Layer.provideMerge(NodeServices.layer));
+  ServerSettings.layerTest(settings).pipe(
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
 const makeBroker = PreviewAutomationBroker.make.pipe(Effect.provide(brokerDependencies()));
 
 const scope = {

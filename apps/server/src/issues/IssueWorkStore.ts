@@ -189,7 +189,7 @@ export const layer = Layer.effect(
     const readOnlyQueue = (rootThreadId: ThreadId) => sql`
       SELECT run.thread_id, min(run.rowid) AS position FROM orchestration_v2_projection_runs run
       JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
-      WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+      WHERE CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
         AND ${isReadOnly} AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
         AND run.status = 'queued'
         AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs held
@@ -227,7 +227,7 @@ export const layer = Layer.effect(
         sql<{
           active: number;
         }>`SELECT count(*) AS active FROM orchestration_v2_projection_threads thread
-          WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+          WHERE CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
             AND ${isReadOnly} AND ${usesWorkerSlot}`.pipe(
           Effect.map((rows) => rows[0]!.active),
           Effect.mapError(mapError),
@@ -237,7 +237,7 @@ export const layer = Layer.effect(
         sql<{ allowed: number }>`
           SELECT (
             (SELECT count(*) FROM orchestration_v2_projection_threads thread
-              WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+              WHERE CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
                 AND thread.thread_id <> ${threadId} AND ${isReadOnly} AND ${usesWorkerSlot})
               < coalesce(json_extract(root.payload_json, '$.repositoryOrchestration.readOnlyLimit'), ${DEFAULT_REPOSITORY_WORK_SETTINGS.readOnlyLimit})
             AND ${sql.unsafe(repositoryAdmissionSql("root.payload_json"))}
@@ -255,7 +255,7 @@ export const layer = Layer.effect(
         sql<{ thread_id: string }>`
           SELECT thread.thread_id FROM orchestration_v2_projection_threads thread
           LEFT JOIN (${readOnlyQueue(rootThreadId)}) queued ON queued.thread_id = thread.thread_id
-          WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+          WHERE CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
             AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
             AND EXISTS (SELECT 1 FROM orchestration_v2_projection_runs pending
               WHERE pending.thread_id = thread.thread_id AND pending.status IN ('queued', 'preparing'))
@@ -325,7 +325,7 @@ export const layer = Layer.effect(
           WITH subtree AS MATERIALIZED (
             SELECT thread_id FROM orchestration_v2_projection_threads
             WHERE thread_id = ${rootThreadId}
-              OR json_extract(payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+              OR CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
           )
           SELECT thread_id FROM subtree
           WHERE EXISTS (SELECT 1 FROM orchestration_v2_projection_runs run
@@ -354,7 +354,7 @@ export const layer = Layer.effect(
         sql<{ thread_id: string; run_id: string }>`
           SELECT run.thread_id, run.run_id FROM orchestration_v2_projection_runs run
           JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
-          WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+          WHERE CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
             AND thread.thread_id <> ${rootThreadId} AND run.status = 'queued'
             AND json_type(thread.payload_json, '$.linkedIssue') = 'object' AND NOT (${isReadOnly})
             AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work work
@@ -505,7 +505,7 @@ export const layer = Layer.effect(
               LEFT JOIN orchestration_v2_projection_issue_work work ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
               WHERE request.root_thread_id = owner.root_thread_id AND work.owner_thread_id IS NULL AND request.queue_state IS NULL AND json_type(request.payload_json, '$.cancellation') IS NULL)
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads worker JOIN orchestration_v2_projection_runs run ON run.thread_id = worker.thread_id
-              WHERE json_extract(worker.payload_json, '$.lineage.rootThreadId') = owner.root_thread_id
+              WHERE CASE WHEN json_valid(worker.payload_json) THEN json_extract(worker.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id
                 AND json_type(worker.payload_json, '$.linkedIssue') = 'object' AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')))
 
       `.pipe(
@@ -530,7 +530,7 @@ export const layer = Layer.effect(
         sql<{ thread_id: string; run_id: string }>`
         SELECT run.thread_id, run.run_id FROM orchestration_v2_projection_runs run
         JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
-        WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+        WHERE CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
           AND thread.thread_id <> ${rootThreadId} AND thread.deleted_at IS NULL
           AND run.status IN ('preparing', 'starting', 'running', 'waiting')
         ORDER BY run.rowid
@@ -551,7 +551,7 @@ export const layer = Layer.effect(
         JOIN orchestration_v2_projection_repository_orchestration repository
           ON repository.host = work.host AND repository.repository_id = work.repository_id
         WHERE repository.root_thread_id = ${rootThreadId}
-          AND json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+          AND CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
           AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
         ORDER BY thread.created_at, thread.thread_id
       `.pipe(
@@ -570,7 +570,7 @@ export const layer = Layer.effect(
           SELECT owner.worker_limit, ${sql.unsafe(repositoryAdmissionSql("root.payload_json", "owner.paused"))} AS allowed,
             EXISTS (SELECT 1 FROM orchestration_v2_projection_threads candidate
               WHERE candidate.thread_id = ${threadId}
-                AND json_extract(candidate.payload_json, '$.lineage.rootThreadId') = owner.root_thread_id) AS lineage_valid,
+                AND CASE WHEN json_valid(candidate.payload_json) THEN json_extract(candidate.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id) AS lineage_valid,
             (SELECT count(*) FROM orchestration_v2_projection_issue_work work
               JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
               WHERE work.host = ${issue.host} AND work.repository_id = ${issue.repositoryId}
@@ -588,7 +588,7 @@ export const layer = Layer.effect(
           WHERE owner.host = ${issue.host} AND owner.repository_id = ${issue.repositoryId}
             AND EXISTS (SELECT 1 FROM orchestration_v2_projection_threads worker
               WHERE worker.thread_id = ${threadId}
-                AND json_extract(worker.payload_json, '$.lineage.rootThreadId') = owner.root_thread_id)
+                AND CASE WHEN json_valid(worker.payload_json) THEN json_extract(worker.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id)
         `;
         const row = rows[0];
         return (
@@ -710,7 +710,7 @@ export const layer = Layer.effect(
         ON repository.host = work.host AND repository.repository_id = work.repository_id
       JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
       WHERE work.host = ${issue.host} AND work.repository_id = ${issue.repositoryId} AND work.issue_id = ${issue.id}
-        AND json_extract(thread.payload_json, '$.lineage.rootThreadId') = repository.root_thread_id
+        AND CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = repository.root_thread_id
     `.pipe(
           Effect.map((rows) =>
             rows[0] === undefined ? null : ThreadId.make(rows[0].owner_thread_id),

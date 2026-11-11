@@ -1,3 +1,4 @@
+import * as ConfigProvider from "effect/ConfigProvider";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -358,12 +359,12 @@ describe("BackgroundTasks", () => {
                 Layer.provideMerge(Layer.mergeAll(dependencies, telemetry, threads)),
               ),
             ),
+            Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv()),
           );
-        const previous = process.env.T3CODE_DEV_PROCESS_FIXTURE;
         try {
-          delete process.env.T3CODE_DEV_PROCESS_FIXTURE;
+          vi.stubEnv("T3CODE_DEV_PROCESS_FIXTURE", undefined);
           assert.deepEqual((yield* read()).processGroups, []);
-          process.env.T3CODE_DEV_PROCESS_FIXTURE = fixture;
+          vi.stubEnv("T3CODE_DEV_PROCESS_FIXTURE", fixture);
           const result = yield* read();
           assert.deepEqual(result.runningTaskIds, ["cpp"]);
           assert.equal(result.processGroups.length, 1);
@@ -376,8 +377,7 @@ describe("BackgroundTasks", () => {
           NodeFS.writeFileSync(fixture, "invalid JSON");
           assert.deepEqual((yield* read()).processGroups, []);
         } finally {
-          if (previous === undefined) delete process.env.T3CODE_DEV_PROCESS_FIXTURE;
-          else process.env.T3CODE_DEV_PROCESS_FIXTURE = previous;
+          vi.unstubAllEnvs();
           NodeFS.rmSync(fixture, { force: true });
         }
       }),

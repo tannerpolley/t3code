@@ -376,7 +376,7 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect("bounds backend teardown after the quit grace when backends hang", () =>
+  it.effect("waits for every backend to exit after the quit grace", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const teardownStarted = yield* Queue.unbounded<string>();
@@ -390,15 +390,21 @@ describe("DesktopBackendManager", () => {
               ChildProcessSpawner.make(() =>
                 Effect.gen(function* () {
                   const scope = yield* Scope.Scope;
+                  const exited = yield* Deferred.make<void>();
                   yield* Scope.addFinalizer(
                     scope,
                     Queue.offer(teardownStarted, name).pipe(
                       Effect.andThen(Deferred.await(allowTeardown)),
                       Effect.andThen(Queue.offer(teardownFinished, name)),
+                      Effect.andThen(Deferred.succeed(exited, undefined)),
                       Effect.asVoid,
                     ),
                   );
-                  return makeProcess({ exitCode: Effect.never });
+                  return makeProcess({
+                    exitCode: Deferred.await(exited).pipe(
+                      Effect.as(ChildProcessSpawner.ExitCode(0)),
+                    ),
+                  });
                 }),
               ),
             ),
@@ -413,21 +419,21 @@ describe("DesktopBackendManager", () => {
 
         const quitFiber = yield* Effect.forEach(
           [instance1, instance2],
-          (instance) => instance.stop({ timeout: DesktopBackendManager.QUIT_BACKEND_STOP_TIMEOUT }),
+          (instance) => instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
           { concurrency: "unbounded" },
         ).pipe(Effect.forkChild);
 
         const started = yield* Queue.takeN(teardownStarted, 2);
         assert.deepEqual(started.toSorted(), ["instance1", "instance2"]);
 
-        // Quit must outlast the 10 s kill grace before giving up on a hung backend.
-        yield* TestClock.adjust(Duration.millis(10_500));
+        yield* TestClock.adjust(
+          Duration.sum(DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT, Duration.seconds(1)),
+        );
         assert.isUndefined(quitFiber.pollUnsafe());
-        yield* TestClock.adjust(Duration.millis(1_500));
-        yield* Fiber.join(quitFiber);
         assert.equal(yield* Queue.size(teardownFinished), 0);
 
         yield* Deferred.succeed(allowTeardown, undefined);
+        yield* Fiber.join(quitFiber);
         const finished = yield* Queue.takeN(teardownFinished, 2);
         assert.deepEqual(finished.toSorted(), ["instance1", "instance2"]);
       }).pipe(Effect.provide(TestClock.layer())),

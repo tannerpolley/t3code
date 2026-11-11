@@ -46,7 +46,7 @@ export interface ProviderInstance {
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   readonly invalidateCaches?: Effect.Effect<void>;
   readonly consumeResetCredit?: (
-    expected?: { readonly creditId: string },
+    expected?: string | { readonly creditId: string },
     canRedeem?: Effect.Effect<boolean>,
   ) => Effect.Effect<ProviderConsumeResetCreditOutcome, ProviderDriverError>;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];

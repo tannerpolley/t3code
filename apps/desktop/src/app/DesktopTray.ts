@@ -1,3 +1,4 @@
+import * as Config from "effect/Config";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -81,7 +82,6 @@ export const start: Effect.Effect<
   void,
   never,
   | Scope.Scope
-  | DesktopAssets.DesktopAssets
   | DesktopClientSettings.DesktopClientSettings
   | DesktopEnvironment.DesktopEnvironment
   | DesktopState.DesktopState
@@ -96,18 +96,25 @@ export const start: Effect.Effect<
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const state = yield* DesktopState.DesktopState;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
-  const assets = yield* DesktopAssets.DesktopAssets;
+  const assets = yield* Effect.serviceOption(DesktopAssets.DesktopAssets);
+  if (Option.isNone(assets)) return;
   const context = yield* Effect.context<DesktopState.DesktopState | DesktopWindow.DesktopWindow>();
   const runPromise = Effect.runPromiseWith(context);
   const runSync = Effect.runSyncWith(context);
 
-  const iconPath = (yield* assets.iconPaths)[environment.platform === "win32" ? "ico" : "png"];
+  const iconPath = (yield* assets.value.iconPaths)[
+    environment.platform === "win32" ? "ico" : "png"
+  ];
   if (Option.isNone(iconPath)) {
     return yield* logWarning("no tray icon available; closing the window quits");
   }
   // Only Linux needs the session bus; on Windows the tray is always available.
   const busAddress =
-    environment.platform === "linux" ? process.env.DBUS_SESSION_BUS_ADDRESS : undefined;
+    environment.platform === "linux"
+      ? Option.getOrUndefined(
+          yield* Config.option(Config.String("DBUS_SESSION_BUS_ADDRESS")).pipe(Effect.orDie),
+        )
+      : undefined;
   if (environment.platform === "linux" && !isSocketBusAddress(busAddress)) {
     return yield* logInfo("no usable session bus for a tray icon; closing the window quits");
   }

@@ -1,7 +1,7 @@
 import { toastCopyFailure } from "./ForkMarkdownActions";
 import { reportMarkdownActionFailure } from "./markdownActionFailure";
 import { InlineShellBlock } from "./InlineShellRun";
-import { Check, Copy } from "lucide";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { PlayIcon, WrapTextIcon } from "lucide-react";
 import { toHtml } from "hast-util-to-html";
 import React, { use, useEffect, useState, type ReactNode } from "react";
@@ -20,7 +20,6 @@ import {
   hasSpecificPierreIconForFileName,
   syntheticFileNameForLanguageId,
 } from "../../pierre-icons";
-import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HighlightedCodeLines } from "./HighlightedCodeLines";
@@ -193,7 +192,7 @@ export function MarkdownCodeBlock({
           />
         }
       >
-        <MorphIcon className="size-3" icon={copied ? Check : Copy} />
+        {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
       </TooltipTrigger>
       <TooltipPopup side="top">{copyLabel}</TooltipPopup>
     </Tooltip>

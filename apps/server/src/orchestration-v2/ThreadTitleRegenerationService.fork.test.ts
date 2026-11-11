@@ -1,3 +1,4 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as DateTime from "effect/DateTime";
 import { assert, describe, it, vi } from "@effect/vitest";
 import {
@@ -58,6 +59,7 @@ function makeHarness(
   const layerServerSettings = ServerSettings.layerTest({});
   const layerThreadManagement = ThreadManagement.layer.pipe(
     Layer.provide(layerOrchestrator),
+    Layer.provide(NodeFileSystem.layer),
     Layer.provide(layerServerSettings),
     Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
   );
@@ -91,6 +93,7 @@ function makeHarness(
   const layerTitleRegeneration = ThreadTitleRegeneration.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        NodeFileSystem.layer,
         layerThreadManagement,
         layerProjectedProjects,
         Layer.mock(TextGeneration.TextGeneration)({ generateThreadTitle }),

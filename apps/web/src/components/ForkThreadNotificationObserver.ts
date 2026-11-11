@@ -1,3 +1,6 @@
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { monitorHoldsWakeCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { resolveBackgroundThreadRequest } from "./backgroundThreadAnnouncement";
 import {
   ROUTED_REQUEST_ALERT_SETTLE_MS,
   runtimeRequestIsOwnerVisible,
@@ -31,6 +34,10 @@ export function createForkThreadNotificationObserver(
   environmentId: EnvironmentId,
   notify: (state: ForkNotificationState, kind: ThreadNotificationKind) => void,
   retract: (threadId: ThreadId) => void,
+  linkedState?: () => {
+    readonly requests: ReadonlyMap<ThreadId, PendingSubagentRequest>;
+    readonly delegatedUnderParent: ReadonlySet<string>;
+  },
 ) {
   let previous = new Map<ThreadId, ForkNotificationState>();
   let initialized = false;
@@ -48,6 +55,7 @@ export function createForkThreadNotificationObserver(
   };
   const disconnect = () => {
     clearTimeout(timer);
+    gate.pause();
     reconnecting = true;
   };
   const observe = (threads: ReadonlyArray<OrchestrationV2ThreadShell>) => {
@@ -57,12 +65,19 @@ export function createForkThreadNotificationObserver(
     let nextAlertDelay = Infinity;
     const index = new Map(threads.map((thread) => [thread.id, thread]));
 
-    const subagentRequests = pendingSubagentRequestsByThread(
-      threads.filter((thread) => thread.pendingRuntimeRequest?.routedTo === undefined),
-    );
+    const linked = linkedState?.();
+    const subagentRequests =
+      linked?.requests ??
+      pendingSubagentRequestsByThread(
+        threads.filter((thread) => thread.pendingRuntimeRequest?.routedTo === undefined),
+      );
     const changed: Array<[ForkNotificationState | undefined, ForkNotificationState]> = [];
     for (const rawThread of threads) {
-      if (rawThread.lineage.sideChat === true) continue;
+      if (
+        rawThread.lineage.sideChat === true ||
+        linked?.delegatedUnderParent.has(threadKey({ environmentId, threadId: rawThread.id }))
+      )
+        continue;
       const parent =
         rawThread.pendingRuntimeRequest?.routedTo === undefined
           ? undefined
@@ -125,9 +140,15 @@ export function createForkThreadNotificationObserver(
           ? `${rawThread.pendingRuntimeRequest?.id ?? thread.latestRun?.runId ?? ""}:${status}`
           : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-      const settled = !child && status === "ready" && thread.latestRun?.status === "completed";
+      const settled =
+        !child &&
+        status === "ready" &&
+        thread.latestRun?.status === "completed" &&
+        !monitorHoldsWakeCompletion(rawThread);
       const state = {
         parent,
+        requestId: attention === null ? null : resolveBackgroundThreadRequest(thread).requestId,
+        backgroundWake: rawThread.latestRunBackgroundWake === true,
         ownerVisibleSince,
         notifiedAttention:
           prior?.notifiedAttention ??

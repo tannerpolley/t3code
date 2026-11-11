@@ -1384,6 +1384,12 @@ it.effect.each([
     const activeOnly = yield* store.getShellSnapshot({ threadIds: [active] });
     assert.deepEqual(activeOnly.threads, shells.threads);
     assert.deepEqual(activeOnly.archivedThreads, []);
+    const otherProject = yield* store.getShellSnapshot({
+      threadIds: [active, archived],
+      projectId: ProjectId.make("project:another"),
+    });
+    assert.deepEqual(otherProject.threads, []);
+    assert.deepEqual(otherProject.archivedThreads, []);
     const empty = yield* store.getShellSnapshot({ threadIds: [] });
     assert.deepEqual(empty.threads, []);
     assert.deepEqual(empty.archivedThreads, []);

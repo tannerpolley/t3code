@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -59,7 +60,7 @@ const testLayer = Layer.mergeAll(
       Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-dont-ask-test-" })),
     ),
   ),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const threadId = ThreadId.make("thread:dont-ask");
 const sessionId = ProviderSessionId.make("session:dont-ask");

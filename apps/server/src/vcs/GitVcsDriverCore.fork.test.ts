@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -25,7 +26,7 @@ const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
 });
 const layerTest = GitVcsDriver.layer.pipe(
   Layer.provide(layerServerConfig),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const makeTmpDir = (

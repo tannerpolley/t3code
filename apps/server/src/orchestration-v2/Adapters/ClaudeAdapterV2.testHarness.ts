@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -367,7 +367,7 @@ const makeWakeHarnessWithOptions = Effect.fn("makeWakeHarnessWithOptions")(funct
     attachmentsDir,
     fileSystem,
     path: yield* Path.Path,
-    crypto: yield* Crypto.Crypto,
+    random: yield* SecureRandom.SecureRandom,
     idAllocator,
     continuationRequests: {
       offer: (request) =>
@@ -393,6 +393,10 @@ const makeWakeHarnessWithOptions = Effect.fn("makeWakeHarnessWithOptions")(funct
             setPermissionMode: () => Effect.void,
             backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
             stopTask: options?.stopTask ?? (() => Effect.void),
+            callMcpTool: () => Effect.die("unused MCP tool"),
+            listPermissionRules: Effect.succeed([]),
+            mcpServerStatus: Effect.succeed([]),
+            readMcpResource: () => Effect.succeed({ contents: [] }),
             interrupt: Effect.void,
             close: Queue.shutdown(processMessages),
           };
@@ -433,6 +437,10 @@ const makeWakeHarnessWithOptions = Effect.fn("makeWakeHarnessWithOptions")(funct
               permissionModeChanges.push(mode);
             }),
           backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+          callMcpTool: () => Effect.die("unused MCP tool"),
+          listPermissionRules: Effect.succeed([]),
+          mcpServerStatus: Effect.succeed([]),
+          readMcpResource: () => Effect.succeed({ contents: [] }),
           stopTask:
             options?.stopTask ?? ((taskId) => Effect.sync(() => void stoppedTaskIds.push(taskId))),
           interrupt: options?.interrupt ?? Effect.void,
