@@ -6,32 +6,29 @@ Only Codex and Claude matter here; mobile is out of scope.
 
 ## Where work is tracked
 
-Since 2026-11-02 the fork lives on Forgejo at
-`https://tnnrpolley21-ms-7c95.taila72856.ts.net:3000/tannerpolley/t3code` (Forgejo 17 on this
-desktop: system service `forgejo`, data in `/srv/forgejo`, published by `tailscale serve`): code,
-issues and pull requests. `origin` points there. All of the owner's repositories live there too,
-except the 9 GB `Unite` fork. The user timer `forgejo-backup` (`~/.local/bin/forgejo-backup`,
-03:30 nightly) copies Forgejo's database, issue attachments and Forgejo-only repositories to
-`chromebox:backups/forgejo`, keeping only the latest copy. The user timer
-`forgejo-merge-repair` (`~/.local/bin/forgejo-merge-repair`, every 5 minutes) keeps manual-merge
-detection on in every repository and marks a closed, unmerged pull request merged once its head
-commit is in its base branch; archived repositories are skipped. Issue #1 is the
-roadmap and maintenance tracker. Every task starts from an issue: the orchestrator creates one
-before delegating, and links each worker thread to it (`link_issue`), so the Issues pane shows it
-In progress. Close an issue when its fix lands on `main`.
+The fork lives on GitHub at `https://github.com/tannerpolley/t3code`: code, issues and pull
+requests. `origin` points there (the older remote `github` is the same URL). Use `gh` and T3's
+issue tools. Issue #1 is the roadmap and maintenance tracker. Every task starts from an issue:
+the orchestrator creates one before delegating, and links each worker thread to it
+(`link_issue`), so the Issues pane shows it In progress. Close an issue when its fix lands on
+`main`.
 
-GitHub `tannerpolley/t3code` (remote `github`) is a one-way copy. The user timer
-`forgejo-github-sync` (`~/.local/bin/forgejo-github-sync`, every 5 minutes) pushes every Forgejo
-repository to its GitHub namesake without force, straight from Forgejo's repository folders: for
-t3code only `main` and the `release/*` and `archive/*` tags, elsewhere every branch and tag. It
-copies issues (title, body, state, labels) and issue comments. Issues it creates on GitHub get
-their own numbers, because Forgejo pull requests are not copied;
-`~/.local/state/forgejo-github-sync/<repo>.json` maps them. Edits made on GitHub
-are overwritten. Never open pull requests or write issues there. Its log is
-`journalctl --user -u forgejo-github-sync`.
+From 2026-11-02 to 2026-11-10 the owner's repositories lived on a Forgejo server on this desktop
+(`https://tnnrpolley21-ms-7c95.taila72856.ts.net:3000`, system service `forgejo`, data in
+`/srv/forgejo`). The owner moved everything back with `switch-to-github`
+(`~/.local/bin/forgejo-github-sync --switch`). Forgejo is now a read-only archive: every
+repository there is archived, the `forgejo-github-sync` and `forgejo-merge-repair` user timers
+are disabled, and the nightly `forgejo-backup` timer still copies it to
+`chromebox:backups/forgejo`. Never push, open pull requests or write issues there.
+
+Forgejo pull requests were copied to GitHub as closed issues titled "Pull request: …", so most
+numbers match. Forgejo issues #289 to #320 are GitHub #288 to #305; their GitHub bodies end with
+"Was Forgejo issue #N". `~/.local/state/forgejo-github-sync/<repo>.json` holds the full map for
+every repository.
 
 The upstream remote is named `pingdotgg`, not `upstream`: T3 keys a project on a remote named
-`upstream` before `origin`, which would make the fork a GitHub project again.
+`upstream` before `origin`, which would key the project on pingdotgg's repository instead of the
+fork's.
 
 ## Forgejo issue host
 
@@ -46,26 +43,12 @@ Forgejo has no sub-issues: T3 writes `Part of #N <!-- t3:parent=N -->` in the ch
 within the same repository. Blockers use Forgejo issue dependencies; Forgejo refuses to close
 an issue with open dependencies (HTTP 412). A fast-forward push of `main` marks a pull request
 merged only if its branch still exists when Forgejo checks, so land through Forgejo's merge
-instead (below); on manual detection Forgejo also does not close the issues its body names.
+instead; on manual detection Forgejo also does not close the issues its body names.
 T3 closes them, with a comment, once it sees a pull request linked to a thread merge; for an
 unlinked pull request, put `Closes #N` in a pushed commit message or close the issue explicitly.
 
-`tannerpolley/process-monitor` has no GitHub copy (owner decision 2026-10-28), so the sync skips
-it, and `t3code-sandbox` is a different dev-preview repository on each host. To move a new
-repository, drain and pause its T3 orchestration. Call
-`POST /api/v1/repos/migrate` with `service: github`, `mirror: false`, and issues, labels,
-milestones, pull requests and releases enabled; read the GitHub credential inside the command
-with `gh auth token` and never print it. Compare counts, then `PATCH` the repository with
-`autodetect_manual_merge: true` and `internal_tracker.enable_issue_dependencies: true`.
-Re-create blockers with `POST issues/{n}/dependencies` and parent markers, and set HTTPS `origin`.
-The sync timer picks it up on its next run.
-
-Migrated issues, comments, releases and reviews keep their GitHub author only as
-`original_author_id`, so Forgejo shows `Ghost` until they are credited to the local account.
-With Forgejo stopped, set `poster_id` (`publisher_id` for releases, `reviewer_id` for reviews)
-to the local user's id where `original_author_id` is the owner's GitHub id (42780259), and clear
-both `original_author` columns. T3's Forgejo host reads no Projects, and Forgejo sends no ETags, so lists
-are plain re-reads. The `state_reason` “not planned” is represented by a close and a comment.
+T3's Forgejo host reads no Projects, and Forgejo sends no ETags, so lists are plain re-reads.
+The `state_reason` “not planned” is represented by a close and a comment.
 
 ## GitLab issue host
 
@@ -99,12 +82,11 @@ changed an issue; git-bug then needs its cache rebuilt (`rm -r .git/git-bug/cach
 
 ## Branches and worktrees
 
-- `main` is the only long-lived branch, and Forgejo `main` mirrors local `main`.
+- `main` is the only long-lived branch, and GitHub `main` mirrors local `main`.
 - **Each task:**
-  - Has a Forgejo issue, and gets a short-lived branch, cut from `main`, in a worktree under the project's `.worktrees/` folder.
-  - Lands through a Forgejo pull request: push the branch to `origin`, open a pull request (`fj pr create`) whose body says `Closes #<issue>`, and link it to the worker's thread and the orchestrator's (`link_pull_request`). Review happens on that branch.
-  - After review, merge on Forgejo with `fj pr merge <n> -M fast-forward-only -d`, or `-M rebase -d` if `main` moved, so `main` stays linear and Forgejo deletes the branch. Then `git fetch` and `git merge --ff-only origin/main` locally. Close the issue if it is still open.
-  - Pushing `main` and deleting the branch yourself closes the pull request as unmerged, because Forgejo's merge check runs after the push and finds the branch gone; `forgejo-merge-repair` marks it merged within 5 minutes.
+  - Has a GitHub issue, and gets a short-lived branch, cut from `main`, in a worktree under the project's `.worktrees/` folder.
+  - Lands through a pull request: push the branch to `origin`, open a pull request (`gh pr create`) whose body says `Closes #<issue>`, and link it to the worker's thread and the orchestrator's (`link_pull_request`). Review happens on that branch.
+  - After review, merge with `gh pr merge <n> --rebase --delete-branch` so `main` stays linear, then `git fetch` and `git merge --ff-only origin/main` locally. Run it from the main checkout: from a worktree it merges but then fails to switch to `main`, which is harmless. Close the issue if it is still open.
   - Then delete the local branch and its worktree. A post-merge hook deletes merged local branches that aren't checked out.
 - **Upstream syncs** follow the same path: one issue per sync, and a pull request for the sync branch.
 - **Releases** are tags on `main`: `release/vX.Y.Z`.
