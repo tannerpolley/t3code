@@ -198,7 +198,11 @@ export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
 function migrateModelRoles(saved: ReadonlyArray<ModelRole>): ReadonlyArray<ModelRole> {
   const migrated: Array<ModelRole> = [];
   for (const entry of saved) {
-    const role = entry.role ?? resolveThreadRole(entry.id);
+    const role =
+      entry.role ??
+      resolveThreadRole(entry.id) ??
+      // A custom row the user already named Designer becomes the Designer row, not a second one.
+      (entry.name.toLowerCase() === "designer" ? "designer" : undefined);
     const profile =
       role === "implementor" ? (entry.profile ?? modelRoleProfile(entry.id) ?? "fast") : undefined;
     const id =

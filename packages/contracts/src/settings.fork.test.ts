@@ -65,6 +65,27 @@ describe("model roles", () => {
     );
   });
 
+  it("turns a saved custom row named Designer into the Designer row", () => {
+    const custom = {
+      id: "personal-designer",
+      name: "Designer",
+      description: "Saved custom choice",
+      targets: [
+        {
+          providerInstanceId: "codex",
+          model: "custom-design-model",
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+      ],
+    };
+    const designers = decodeServerSettings({ modelRoles: [custom] }).modelRoles.filter(
+      (entry) => entry.name === "Designer",
+    );
+    expect(designers).toMatchObject([
+      { id: "designer", role: "designer", targets: custom.targets },
+    ]);
+  });
+
   it("seeds the Fast Implementor profile with Claude medium and Codex Sol medium, in default order", () => {
     expect(decodeServerSettings({}).modelRoles[2]!.targets).toEqual([
       {
