@@ -4,6 +4,14 @@ import * as Schema from "effect/Schema";
 
 import { isLineInFileDiff } from "./components/pullRequest/pullRequestDiff.logic";
 
+const PdfMarkSchema = Schema.Struct({
+  page: Schema.Number,
+  x: Schema.Number,
+  y: Schema.Number,
+  width: Schema.Number,
+  height: Schema.Number,
+});
+
 const ReviewCommentSelectionSchema = Schema.Struct({
   start: Schema.Number,
   side: Schema.Literals(["additions", "deletions"]),
@@ -23,6 +31,7 @@ export const ReviewCommentContextSchema = Schema.Struct({
   text: Schema.String,
   diff: Schema.String,
   fenceLanguage: Schema.optional(Schema.String),
+  pdfMark: Schema.optional(PdfMarkSchema),
   selection: Schema.optional(ReviewCommentSelectionSchema),
   pullRequest: Schema.optional(PullRequestContextMetadata),
 });
@@ -38,6 +47,7 @@ export interface ReviewCommentContext {
   readonly text: string;
   readonly diff: string;
   readonly fenceLanguage?: string | undefined;
+  readonly pdfMark?: typeof PdfMarkSchema.Type | undefined;
   readonly selection?: ReviewCommentSelection | undefined;
   readonly pullRequest?: PullRequestContextMetadata | undefined;
 }

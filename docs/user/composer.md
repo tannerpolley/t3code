@@ -427,6 +427,8 @@ On web and desktop, HTML and PDF files open as rendered pages. Switch an HTML
 file to source view to read its markup; a link to a specific line opens source
 automatically. HTML previews cannot access your T3 Code session.
 
+Select PDF text or use **Mark area** to add comments; send them together with the composer’s normal Send. Area comments include a cropped picture.
+
 The file viewer recognizes images, HTML, and PDF files by their filename extension,
 including filenames or folders containing `#` or `?`.
 

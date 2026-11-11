@@ -42,6 +42,13 @@ import {
 } from "./pdfLayout";
 import "./pdfViewer.css";
 
+import {
+  PdfCommentsRoot,
+  PdfCommentsToolbar,
+  PdfCommentsPage,
+  type PdfCommentsTarget,
+} from "./PdfComments";
+
 const MAX_PAGES = 2000;
 const MAX_FIND_TEXT = 4 * 1024 * 1024;
 
@@ -89,6 +96,7 @@ function PdfPage(props: {
         window.devicePixelRatio || 1,
         Math.sqrt((8 * 1024 * 1024) / (viewport.width * viewport.height)),
       );
+      canvas.current.dataset.pdfReady = "false";
       canvas.current.width = Math.ceil(viewport.width * ratio);
       canvas.current.height = Math.ceil(viewport.height * ratio);
       paint = page.render({
@@ -105,6 +113,7 @@ function PdfPage(props: {
         textContentSource: page.streamTextContent(),
       });
       await Promise.all([paint.promise, layer.render()]);
+      if (!cancelled && canvas.current) canvas.current.dataset.pdfReady = "true";
     })().catch((cause: unknown) => {
       if (!cancelled)
         onError(cause instanceof Error ? cause.message : "This PDF page could not render.");
@@ -142,13 +151,24 @@ function PdfPage(props: {
   );
 }
 
-export default function PdfViewer(props: {
+type PdfViewerProps = {
+  comments?: PdfCommentsTarget | undefined;
   src: string;
   title: string;
   positionKey?: string;
   initialView?: PdfViewState;
   onViewChange?: (view: PdfViewState) => void;
-}) {
+};
+
+export default function PdfViewer(props: PdfViewerProps) {
+  return (
+    <PdfCommentsRoot config={props.comments}>
+      <PdfViewerContent {...props} />
+    </PdfCommentsRoot>
+  );
+}
+
+function PdfViewerContent(props: PdfViewerProps) {
   const [savedPosition] = useState(() =>
     props.positionKey === undefined ? undefined : positions.get(props.positionKey),
   );
@@ -372,6 +392,7 @@ export default function PdfViewer(props: {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-2 py-1 text-xs">
+        <PdfCommentsToolbar />
         {outline.length > 0 && (
           <FileSurfaceAction
             label="Bookmarks"
@@ -563,14 +584,16 @@ export default function PdfViewer(props: {
                     } as CSSProperties
                   }
                 >
-                  <PdfPage
-                    document={pdf}
-                    index={index}
-                    width={width}
-                    query={query}
-                    onSize={onSize}
-                    onError={setError}
-                  />
+                  <PdfCommentsPage page={index + 1}>
+                    <PdfPage
+                      document={pdf}
+                      index={index}
+                      width={width}
+                      query={query}
+                      onSize={onSize}
+                      onError={setError}
+                    />
+                  </PdfCommentsPage>
                 </div>
               ))}
             </div>

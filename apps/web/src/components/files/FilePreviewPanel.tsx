@@ -229,6 +229,8 @@ function WorkspaceImagePreview(props: {
 }
 
 export function WorkspaceBrowserPreview(props: {
+  readonly composerDraftTarget?: ScopedThreadRef | DraftId;
+  readonly relativePath?: string;
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -290,6 +292,11 @@ export function WorkspaceBrowserPreview(props: {
       documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${revision}`}
       documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
       title={props.title}
+      comments={
+        pdf && props.composerDraftTarget && props.relativePath
+          ? { target: props.composerDraftTarget, filePath: props.relativePath }
+          : undefined
+      }
       pdf={pdf}
     />
   );
@@ -1433,6 +1440,8 @@ export default function FilePreviewPanel({
             />
           ) : relativePath && renderBrowserFile && absolutePath ? (
             <WorkspaceBrowserPreview
+              composerDraftTarget={composerDraftTarget}
+              relativePath={relativePath}
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}

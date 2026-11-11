@@ -4022,6 +4022,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         removeReviewComment: (threadRef, commentId) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey || !commentId) return;
+          if (
+            get()
+              .getComposerDraft(threadRef)
+              ?.reviewComments.some((comment) => comment.id === commentId && comment.pdfMark)
+          )
+            get().removeImage(threadRef, commentId);
           set((state) => {
             const current = state.draftsByThreadKey[threadKey];
             if (!current) return state;

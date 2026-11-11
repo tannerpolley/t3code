@@ -33,6 +33,7 @@ import {
 } from "react";
 import { isElectron } from "~/env";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
+import type { PdfCommentsTarget } from "./PdfComments";
 import type { PdfViewState } from "./PdfViewer";
 
 import { useOpenLink } from "~/browser/useOpenLink";
@@ -75,7 +76,12 @@ export const isPdfPreviewFile = (path: string): boolean =>
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
 // The document stays mounted while each revision gets a fresh PDF.js document.
-function PdfDocument(props: { src: string; title: string; documentKey: string }) {
+function PdfDocument(props: {
+  src: string;
+  title: string;
+  documentKey: string;
+  comments?: PdfCommentsTarget | undefined;
+}) {
   const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
   return (
     <PdfDocumentRevision
@@ -83,6 +89,7 @@ function PdfDocument(props: { src: string; title: string; documentKey: string })
       src={props.src}
       title={props.title}
       positionKey={props.documentKey}
+      comments={props.comments}
       initialView={view}
       onViewChange={setView}
     />
@@ -94,6 +101,7 @@ function PdfDocumentRevision(props: {
   src: string;
   title: string;
   positionKey: string;
+  comments?: PdfCommentsTarget | undefined;
   initialView: PdfViewState;
   onViewChange: (view: PdfViewState) => void;
 }) {
@@ -101,6 +109,7 @@ function PdfDocumentRevision(props: {
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
   // expose only the first page, even when pdfViewerEnabled reports support.
   const native =
+    !props.comments &&
     !isElectron &&
     navigator.pdfViewerEnabled &&
     !/iPad|iPhone|iPod/.test(navigator.userAgent) &&
@@ -115,6 +124,7 @@ function PdfDocumentRevision(props: {
   ) : (
     <Suspense fallback={<FileSurfaceLoading />}>
       <PdfViewer
+        comments={props.comments}
         src={src}
         title={props.title}
         positionKey={props.positionKey}
@@ -133,6 +143,7 @@ export function BrowserDocumentFrame(props: {
   readonly src: string;
   readonly title: string;
   readonly pdf: boolean;
+  readonly comments?: PdfCommentsTarget | undefined;
   readonly htmlRender?: boolean;
   readonly threadRef?: ScopedThreadRef | undefined;
   /** Stable resource identity and revision; defaults to src for callers that reload on URL changes. */
@@ -144,6 +155,7 @@ export function BrowserDocumentFrame(props: {
   return props.pdf ? (
     <PdfDocument
       key={props.documentId ?? key}
+      comments={props.comments}
       documentKey={key}
       src={props.src}
       title={props.title}
