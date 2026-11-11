@@ -95,6 +95,7 @@ import {
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -13293,12 +13294,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
+    // A failed read dies so the effect is retried; a rejection would refuse every redelivery.
     const completed = yield* projectionStore
       .getThreadRecords(command.threadId, ["runs", "messages"], {
         runIds: [command.runId],
         messageRunIds: [command.runId],
       })
-      .pipe(mapDispatchError(command));
+      .pipe(Effect.orDie);
     const run = completed.runs[0];
     if (
       run === undefined ||
@@ -13311,15 +13313,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         omitSettledSubagents: true,
         turnItemStatuses: ["pending", "running", "waiting"],
       })
-      .pipe(mapDispatchError(command));
+      .pipe(Effect.orDie);
     const interrupts = yield* projectionStore
       .getThreadRecords(command.threadId, ["turnItems"], {
         turnItemTypes: ["run_interrupt_request"],
       })
-      .pipe(mapDispatchError(command));
-    const shell = yield* projectionStore
-      .getThreadShell(command.threadId)
-      .pipe(mapDispatchError(command));
+      .pipe(Effect.orDie);
+    const shell = yield* projectionStore.getThreadShell(command.threadId).pipe(Effect.orDie);
     const now = yield* DateTime.now;
     if (
       interrupts.turnItems.some(
@@ -13373,12 +13373,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         effects,
       ).pipe(
         Effect.as(true),
-        Effect.catch(() =>
-          Effect.gen(function* () {
-            yield* Ref.set(events, priorEvents);
-            yield* Ref.set(effects, priorEffects);
-            return false;
-          }),
+        // Failures and defects flag the thread; only an interruption (shutdown) is redelivered.
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          () =>
+            Effect.gen(function* () {
+              yield* Ref.set(events, priorEvents);
+              yield* Ref.set(effects, priorEffects);
+              return false;
+            }),
         ),
       );
       if (sent) return;

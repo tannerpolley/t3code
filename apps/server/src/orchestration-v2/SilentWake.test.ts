@@ -757,9 +757,9 @@ it.effect("a Stop of an earlier run does not suppress a later silence follow-up"
   }).pipe(Effect.provide(makeHarness().layer)),
 );
 
-it.effect(
-  "a failed silence follow-up flags attention once and releases later lifecycle effects",
-  () => {
+it.effect.each(["failure", "defect"] as const)(
+  "a failed silence follow-up flags attention once and releases later lifecycle effects: %s",
+  (fault) => {
     let failing = false;
     let lookups = 0;
     const adapter = {
@@ -767,14 +767,15 @@ it.effect(
       driver: ProviderDriverKind.make("codex"),
       getCapabilities: () => {
         lookups++;
-        return failing
-          ? Effect.fail(
+        if (!failing) return Effect.succeed(CodexProviderCapabilitiesV2);
+        return fault === "defect"
+          ? Effect.die("Unexpected capabilities lookup defect")
+          : Effect.fail(
               new ProviderAdapterCapabilitiesError({
                 driver: ProviderDriverKind.make("codex"),
                 cause: "Temporary capabilities lookup failure",
               }),
-            )
-          : Effect.succeed(CodexProviderCapabilitiesV2);
+            );
       },
       planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
       openSession: () => Effect.die("disabled"),
