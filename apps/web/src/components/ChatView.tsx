@@ -3279,6 +3279,7 @@ export default function ChatView(props: ChatViewProps) {
             pullRequestIssueOrigin === null ? undefined : `issue #${pullRequestIssueOrigin.number}`,
         }}
         files={{
+          projectId: activeThread.projectId,
           projectName: activeProject?.title ?? null,
           workspaceRoot: activeWorkspaceRoot,
           availableEditors,
