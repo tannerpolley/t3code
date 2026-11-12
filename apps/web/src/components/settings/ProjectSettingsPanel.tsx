@@ -49,6 +49,7 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
+import { ProjectRepositoryOrchestration } from "../issues/IssueRepositoryControls";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import {
@@ -652,6 +653,7 @@ function ProjectDetail({
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
+        <ProjectRepositoryOrchestration members={group.memberProjects} />
         {checkoutChoices}
         <SettingsSection title="Danger">
           <SettingsRow

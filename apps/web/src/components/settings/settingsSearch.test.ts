@@ -217,6 +217,8 @@ describe("searchSettings", () => {
       ["Native sessions", "providers"],
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
+      ["Repository orchestration", "repository-orchestration"],
+      ["worker limit", "repository-orchestration"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
     }

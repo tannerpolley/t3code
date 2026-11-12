@@ -1208,6 +1208,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["commands scripts setup run dev server checkout worktree t3.json import"],
   },
   {
+    id: "repository-orchestration",
+    title: "Repository orchestration",
+    to: "/settings/projects",
+    searchTerms: [
+      "issues orchestrator worker limit implementors read-only limit usage sprint pause resume handoff close out attempt",
+    ],
+  },
+  {
     id: "environment-icon",
     title: "Environment icon",
     to: "/settings/access",

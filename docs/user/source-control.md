@@ -371,7 +371,7 @@ branch named after the issue, created from the default branch; there is no check
 Starting allows T3 to update one status comment and publish a closeout comment for each finished
 attempt; the publishing policy is shown before you start. When a worker has been created, select
 its name to open its conversation with the issue beside it. A queued start can appear before a
-worker exists; use the repository's orchestrator link on the Issues page to open the lead.
+worker exists; use the **Orchestrator** link in **Settings → Projects → Repository orchestration** to open the lead.
 **Linked issue** in thread details opens the issue beside that thread. A worker marked done may
 still need review, publishing, or merge approval; T3 does not automatically close the GitHub issue.
 
@@ -387,13 +387,19 @@ orchestrator finishes without any of these outcomes, the row shows **Orchestrato
 notices are retried when the orchestrator is next available. Repository pause and the **Workers** limit apply. Without a
 registered orchestrator, the queue waits. Claimed work is managed through its orchestrator or worker.
 
-To change how much issue work runs at once, edit **Workers** at the top of the repository on the
-Issues pane. The limit starts at 4 and can be set from 1 to 32; **Workers** shows how many slots
+Repository orchestration is managed in **Settings → Projects**, under the project that holds the
+repository's checkout; the section is named **Repository orchestration**. It shows the
+orchestrator, the limits, the usage sprint and the repository **Status**. Until a repository has
+an orchestrator the section only says so, because the limits need one. The Issues pane keeps no
+such controls. It shows a single status line with a **Project settings** link while repository work
+is paused, a handoff is pending, or issues are on hold.
+
+To change how much issue work runs at once, edit **Workers** in that section. The limit starts at 4 and can be set from 1 to 32; **Workers** shows how many slots
 are in use. Raising it starts eligible queued work. Lowering it lets current workers finish and
 holds new starts until there is room. A slot covers a managed worker preparing, running, waiting,
 or awaiting your response. Queued workers and completed workers, including those with an open PR,
 do not hold slots. The repository orchestrator and read-only designers, reviewers, checkers and investigators
-do not use worker slots. They use a separate **Read-only** limit in repository **Status**, initially
+do not use worker slots. They use a separate **Read-only** limit in the same section, initially
 4 and adjustable from 1 to 32. It covers children throughout the repository's thread tree, including
 restart continuations. Excess requests wait in order until a slot frees. Raising the limit starts
 queued children; lowering it lets current children finish. Agents can set either limit through
@@ -412,7 +418,7 @@ to resume the stopped work under its normal model roles. **Stop** ends the sprin
 stopping anything. Orchestrators can start or stop a sprint with
 `set_repository_usage_sprint`.
 An issue worker paused by an open GitHub blocker resumes by itself within about a minute after
-all its blockers close. Other pauses wait until you resume repository work from **Status**.
+all its blockers close. Other pauses wait until you resume repository work from **Status** in **Repository orchestration**.
 If an issue closes during work, cancel or finish its remaining work, then use **Close out attempt**
 under the repository's **Status** to finish the retained attempt and clear its hold.
 
@@ -428,8 +434,8 @@ preview, the agent must propose a new change. If GitHub may have created an issu
 recover it, the change needs your attention. Check GitHub, then choose **Mark resolved** to stop
 its remaining writes. Propose another create only when you intend to create another issue.
 
-To replace the orchestrator's conversation, open the repository on the Issues page, choose
-**Hand off to a fresh thread** from the menu beside its orchestrator, and provide a summary. Your approval pauses new issue admissions until existing
+To replace the orchestrator's conversation, open **Repository orchestration** in the project's
+settings, choose **Hand off to a fresh thread** from the menu beside its orchestrator, and provide a summary. Your approval pauses new issue admissions until existing
 workers and their final results finish; the fresh thread receives your summary and a recovery
 inventory. You can cancel a pending handoff there too, and the same menu opens previous
 orchestrators. For a routine provider or model change, keep the same thread.

@@ -126,6 +126,9 @@ vi.mock(import("./ProjectDefaultsSettings"), () => ({
 vi.mock(import("./ProjectActionsSettings"), () => ({
   ProjectActionsSettings: (() => null) as never,
 }));
+vi.mock(import("../issues/IssueRepositoryControls"), () => ({
+  ProjectRepositoryOrchestration: (() => null) as never,
+}));
 
 vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
   ...(await original()),

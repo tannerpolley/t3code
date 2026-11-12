@@ -121,7 +121,7 @@ describe("implementation composer routing", () => {
   it("disables implementation while repository work is paused", () => {
     expect(issueImplementDestination({ ...input, paused: true })).toEqual({
       threadRef: null,
-      disabledReason: "Repository work is paused; resume it first",
+      disabledReason: "Repository work is paused; resume it in Project settings",
     });
   });
 

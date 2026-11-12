@@ -1,9 +1,13 @@
-import type {
-  IssueHostCapabilities,
-  EnvironmentId,
-  IssueRepositorySummary,
-  IssueSummary,
+import {
+  repositoryPhase,
+  type IssueHostCapabilities,
+  type EnvironmentId,
+  type IssueRepositorySummary,
+  type IssueSummary,
+  type RepositoryOrchestration,
+  type RepositoryIdentity,
 } from "@t3tools/contracts";
+import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { issuePriorityRank } from "./issueProjects.logic";
@@ -223,4 +227,42 @@ export function viewerRepositoriesFirst<T extends Pick<IssueRepositorySummary, "
   const viewers = new Set(viewerLogins.map((login) => login.toLowerCase()));
   const own = (repository: T) => Number(viewers.has(repository.owner.toLowerCase()));
   return repositories.toSorted((left, right) => own(right) - own(left));
+}
+
+/** The repository work status the settings Status row and the Issues pane line both show. */
+export function repositoryWorkStatus(
+  config: Pick<RepositoryOrchestration, "paused" | "handoff" | "retiredToThreadId"> & {
+    readonly suspendedIssues: readonly unknown[];
+  },
+): { readonly label: string; readonly needsAttention: boolean } {
+  const phase = repositoryPhase(config);
+  const suspended = config.suspendedIssues.length;
+  if (phase === "draining") return { label: "Handing off", needsAttention: true };
+  if (config.paused) return { label: "Paused", needsAttention: true };
+  if (phase === "handoff_awaiting_approval")
+    return { label: "Handoff awaiting approval", needsAttention: true };
+  if (suspended > 0)
+    return {
+      label: `Active, ${suspended} ${suspended === 1 ? "issue" : "issues"} on hold`,
+      needsAttention: true,
+    };
+  return { label: "Active", needsAttention: false };
+}
+
+/** The distinct issue repositories of a project group's checkouts, one per environment. */
+export function projectIssueRepositories(
+  members: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+  }>,
+): Array<{ environmentId: EnvironmentId; host: string; repository: string }> {
+  const seen = new Set<string>();
+  return members.flatMap((member) => {
+    const reference = threadIssueRepository(member.repositoryIdentity);
+    if (reference === null) return [];
+    const key = `${member.environmentId}:${repositoryKey(reference.host, reference.repository)}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ environmentId: member.environmentId, ...reference }];
+  });
 }

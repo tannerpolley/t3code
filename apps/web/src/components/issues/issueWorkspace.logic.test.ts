@@ -1,4 +1,13 @@
-import { EnvironmentId, type IssueRepositorySummary, type IssueSummary } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  ProviderInstanceId,
+  SourceControlProviderKind,
+  ThreadId,
+  type IssueRepositorySummary,
+  type IssueSummary,
+  type RepositoryIdentity,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -14,6 +23,8 @@ import {
   repositoryKnownEmpty,
   repositoryListed,
   repositoryShown,
+  projectIssueRepositories,
+  repositoryWorkStatus,
 } from "./issueWorkspace.logic";
 
 const decodePreferences = Schema.decodeUnknownSync(IssueFilterPreferences);
@@ -265,6 +276,66 @@ describe("issue repository targets", () => {
       "me/old",
       "zeta/tool",
       "acme/site",
+    ]);
+  });
+});
+
+describe("repositoryWorkStatus", () => {
+  const handoff = (status: "awaiting_approval" | "draining") => ({
+    status,
+    requestId: CommandId.make("request"),
+    nextThreadId: ThreadId.make("next"),
+    summary: "Continue",
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+    wasPaused: false,
+  });
+  const held = (count: number) => Array.from({ length: count }, () => ({}));
+  it.each([
+    ["active", { paused: false, suspendedIssues: [] }, "Active", false],
+    ["paused", { paused: true, suspendedIssues: [] }, "Paused", true],
+    [
+      "awaiting approval",
+      { paused: false, handoff: handoff("awaiting_approval"), suspendedIssues: [] },
+      "Handoff awaiting approval",
+      true,
+    ],
+    [
+      "draining",
+      { paused: true, handoff: handoff("draining"), suspendedIssues: [] },
+      "Handing off",
+      true,
+    ],
+    ["one on hold", { paused: false, suspendedIssues: held(1) }, "Active, 1 issue on hold", true],
+    ["two on hold", { paused: false, suspendedIssues: held(2) }, "Active, 2 issues on hold", true],
+  ])("%s", (_name, config, label, needsAttention) => {
+    expect(repositoryWorkStatus(config)).toEqual({ label, needsAttention });
+  });
+});
+
+describe("projectIssueRepositories", () => {
+  const github = (name: string): RepositoryIdentity => ({
+    provider: SourceControlProviderKind.make("github"),
+    canonicalKey: `github.com/${name}`,
+    displayName: name,
+    locator: {
+      source: "git-remote",
+      remoteName: "origin",
+      remoteUrl: `https://github.com/${name}`,
+    },
+  });
+  const local = EnvironmentId.make("local");
+  const remote = EnvironmentId.make("remote");
+  it("gives one entry per environment and repository", () => {
+    expect(
+      projectIssueRepositories([
+        { environmentId: local, repositoryIdentity: github("acme/app") },
+        { environmentId: local, repositoryIdentity: github("Acme/App") },
+        { environmentId: remote, repositoryIdentity: github("acme/app") },
+        { environmentId: remote, repositoryIdentity: null },
+      ]).map((entry) => [entry.environmentId, entry.repository]),
+    ).toEqual([
+      [local, "acme/app"],
+      [remote, "acme/app"],
     ]);
   });
 });

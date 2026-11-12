@@ -3,6 +3,7 @@ import {
   repositoryPhase,
   CommandId,
   type EnvironmentId,
+  type ProjectId,
   type IssueRepositoryRef,
   type ProviderInstanceId,
   type RepositoryOrchestration,
@@ -12,26 +13,23 @@ import { formatDateTimeShort } from "@t3tools/shared/usageFormat";
 import { useNavigate } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
-  ActivityIcon,
   ArrowRightLeftIcon,
-  GaugeIcon,
   MoreHorizontalIcon,
-  NetworkIcon,
   PauseIcon,
   PlayIcon,
   ReplaceIcon,
-  UsersIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { useServerConfigs, useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
-import { useEnvironmentProviders } from "~/state/environments";
+import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { issueEnvironment } from "~/state/issues";
 import { useEnvironmentQuery, formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { randomUUID } from "~/lib/utils";
 import { RelativeTime } from "../RelativeTime";
-import { MetaRow } from "../pullRequest/PullRequestSummaryTab";
+import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -48,6 +46,7 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { IssueWorkerLimitControl } from "./IssueWorkerLimitControl";
 import { useRepositoryLeads } from "./IssueStartAction";
+import { projectIssueRepositories, repositoryWorkStatus } from "./issueWorkspace.logic";
 
 /** Shown only by servers that support repository orchestration. */
 function useRepositoryOrchestrationCapability(environmentId: EnvironmentId) {
@@ -61,22 +60,119 @@ function useRepositoryWork(environmentId: EnvironmentId, reference: IssueReposit
   return { statusAtom, data, config: data?.orchestration };
 }
 
-/** Repository-wide orchestrator ownership, pause and handoff. */
+const REPOSITORY_ORCHESTRATION_SECTION_ID = "repository-orchestration";
+
+/** Project settings section for each repository the project group's checkouts belong to. */
+export function ProjectRepositoryOrchestration({
+  members,
+}: {
+  members: Parameters<typeof projectIssueRepositories>[0];
+}) {
+  const environments = useEnvironments().environments;
+  const repositories = projectIssueRepositories(members);
+  return repositories.map((entry, index) => (
+    <IssueRepositoryControls
+      key={`${entry.environmentId}:${entry.host}/${entry.repository}`}
+      environmentId={entry.environmentId}
+      reference={{ host: entry.host, repository: entry.repository }}
+      {...(repositories.length > 1
+        ? {
+            title: `Repository orchestration: ${entry.repository} on ${
+              environments.find((environment) => environment.environmentId === entry.environmentId)
+                ?.label ?? entry.environmentId
+            }`,
+          }
+        : {})}
+      {...(index === 0 ? { id: REPOSITORY_ORCHESTRATION_SECTION_ID } : {})}
+    />
+  ));
+}
+
+/** Repository-wide orchestrator ownership, limits, pause and handoff. */
 export function IssueRepositoryControls(props: {
   environmentId: EnvironmentId;
   reference: IssueRepositoryRef;
+  title?: string;
+  id?: string;
 }) {
   return useRepositoryOrchestrationCapability(props.environmentId) ? (
     <RepositoryControls {...props} />
   ) : null;
 }
 
-function RepositoryControls({
+/** The Issues pane's one-line pointer to the settings section, shown only while it needs attention. */
+export function IssueRepositoryStatusLine(props: {
+  environmentId: EnvironmentId;
+  reference: IssueRepositoryRef;
+}) {
+  return useRepositoryOrchestrationCapability(props.environmentId) ? (
+    <RepositoryStatusLine {...props} />
+  ) : null;
+}
+
+function RepositoryStatusLine({
   environmentId,
   reference,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRepositoryRef;
+}) {
+  const { config } = useRepositoryWork(environmentId, reference);
+  if (config == null) return null;
+  const status = repositoryWorkStatus(config);
+  if (!status.needsAttention) return null;
+  return (
+    <div className="flex items-center gap-2 px-2 pt-1 pb-2 text-xs text-muted-foreground">
+      <span role="status" className="min-w-0 truncate">
+        {status.label}
+      </span>
+      <SettingsLink environmentId={environmentId} projectId={config.projectId} />
+    </div>
+  );
+}
+
+/** Mounted only while the line shows, so an active repository does not build project groups. */
+function SettingsLink({
+  environmentId,
+  projectId,
+}: {
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
+}) {
+  const navigate = useNavigate();
+  const group = useSettingsProjectGroups().find((entry) =>
+    entry.memberProjects.some(
+      (member) => member.environmentId === environmentId && member.id === projectId,
+    ),
+  );
+  if (group === undefined) return null;
+  return (
+    <Button
+      variant="link"
+      size="xs"
+      onClick={() =>
+        void navigate({
+          to: "/settings/projects",
+          search: { project: group.projectKey, machine: environmentId, checkout: undefined },
+          hash: REPOSITORY_ORCHESTRATION_SECTION_ID,
+        })
+      }
+    >
+      Project settings
+    </Button>
+  );
+}
+
+function RepositoryControls({
+  environmentId,
+  reference,
+  title = "Repository orchestration",
+  id,
+}: {
+  environmentId: EnvironmentId;
+  reference: IssueRepositoryRef;
+  title?: string;
+  id?: string;
 }) {
   const { statusAtom, data, config } = useRepositoryWork(environmentId, reference);
   const navigate = useNavigate();
@@ -110,7 +206,16 @@ function RepositoryControls({
     config?.projectId ?? null,
     reference,
   ).filter((lead) => lead.id !== data?.rootThreadId);
-  if (config == null || data?.rootThreadId == null) return null;
+  if (data == null) return null;
+  if (config == null || data.rootThreadId == null)
+    return (
+      <SettingsSection title={title} {...(id === undefined ? {} : { id })}>
+        <SettingsRow
+          title="Orchestrator"
+          description="No orchestrator yet. Start an agent on an issue, or choose Make repository orchestrator from a thread's menu."
+        />
+      </SettingsSection>
+    );
   const restoreTarget = restoreCandidates.find((lead) => lead.id === restoreTargetId);
   const replaceRoot = async () => {
     if (busy || !config.paused || restoreTarget === undefined) return;
@@ -124,7 +229,7 @@ function RepositoryControls({
         expectedRootThreadId: data.rootThreadId,
         expectedRevision: config.revision,
         targetThreadId: restoreTarget.id,
-        reason: "Chose another thread as orchestrator from the Issues page",
+        reason: "Chose another thread as orchestrator from Project settings",
         clientRequestId: CommandId.make(randomUUID()),
       },
     });
@@ -218,245 +323,261 @@ function RepositoryControls({
       });
     else appAtomRegistry.refresh(statusAtom);
   };
-  const suspended = config.suspendedIssues.length;
-  const status =
-    repositoryPhase(config) === "draining"
-      ? "Handing off"
-      : config.paused
-        ? "Paused"
-        : suspended > 0
-          ? `Active, ${suspended} ${suspended === 1 ? "issue" : "issues"} on hold`
-          : "Active";
+  const status = repositoryWorkStatus(config);
   const pauseLabel = canResume ? "Resume repository work" : "Pause repository work";
   const canHandOff = config.handoff === undefined;
   return (
-    <section aria-label="Repository orchestration" className="flex flex-col gap-1.5 px-2 pt-1 pb-2">
-      <MetaRow icon={<NetworkIcon className="size-3.5" />} label="Orchestrator">
-        <span className="flex min-w-0 items-center gap-1">
-          <button
-            type="button"
-            className="min-w-0 truncate text-left underline-offset-2 hover:underline"
-            onClick={() => openRoot(data.rootThreadId!)}
-          >
-            {root?.title ?? data.rootThreadId}
-          </button>
-          {canHandOff || (config.handoffHistory?.length ?? 0) > 0 ? (
-            <Menu>
-              <MenuTrigger
-                render={<Button variant="ghost" size="icon-xs" aria-label="Orchestrator actions" />}
-              >
-                <MoreHorizontalIcon />
-              </MenuTrigger>
-              <MenuPopup align="start">
-                {canHandOff ? (
-                  <MenuItem disabled={busy} onClick={() => setHandoffExpanded(true)}>
-                    <ArrowRightLeftIcon className="size-3.5" />
-                    Hand off to a fresh thread
-                  </MenuItem>
-                ) : null}
-                {canHandOff && canRestore ? (
-                  <MenuItem disabled={busy} onClick={() => setRestoreExpanded(true)}>
-                    <ReplaceIcon className="size-3.5" />
-                    Use another thread as orchestrator
-                  </MenuItem>
-                ) : null}
-                {config.handoffHistory?.length ? (
-                  <>
-                    {canHandOff ? <MenuSeparator /> : null}
-                    <MenuGroup>
-                      <MenuGroupLabel>Previous orchestrators</MenuGroupLabel>
-                      {config.handoffHistory.map((entry) => (
-                        <PreviousRootItem
-                          key={entry.threadId}
-                          environmentId={environmentId}
-                          threadId={entry.threadId}
-                          transferredAt={entry.transferredAt}
-                          onOpen={openRoot}
-                        />
-                      ))}
-                    </MenuGroup>
-                  </>
-                ) : null}
-              </MenuPopup>
-            </Menu>
-          ) : null}
-        </span>
-      </MetaRow>
-      <MetaRow icon={<UsersIcon className="size-3.5" />} label="Workers">
-        <IssueWorkerLimitControl
-          key={`${data.rootThreadId}:${config.revision}`}
-          environmentId={environmentId}
-          reference={reference}
-          config={config}
-          slotsInUse={data.slotsInUse}
-          onSettled={() => appAtomRegistry.refresh(statusAtom)}
-        />
-      </MetaRow>
-      <MetaRow icon={<UsersIcon className="size-3.5" />} label="Read-only">
-        <IssueWorkerLimitControl
-          key={`read-only:${data.rootThreadId}:${config.revision}`}
-          environmentId={environmentId}
-          reference={reference}
-          config={config}
-          pool="readOnly"
-          slotsInUse={data.readOnlySlotsInUse}
-          onSettled={() => appAtomRegistry.refresh(statusAtom)}
-        />
-      </MetaRow>
-      <MetaRow icon={<GaugeIcon className="size-3.5" />} label="Usage sprint">
-        <UsageSprintControl
-          key={`sprint:${data.rootThreadId}:${config.revision}`}
-          environmentId={environmentId}
-          reference={reference}
-          config={config}
-          onSettled={() => appAtomRegistry.refresh(statusAtom)}
-        />
-      </MetaRow>
-      <MetaRow icon={<ActivityIcon className="size-3.5" />} label="Status">
-        <span className="flex min-w-0 items-center gap-1">
-          <span className="truncate" role="status">
-            {status}
+    <SettingsSection title={title} {...(id === undefined ? {} : { id })}>
+      <SettingsRow
+        title="Orchestrator"
+        description="The thread that starts and coordinates issue work for this repository."
+        control={
+          <span className="flex min-w-0 items-center gap-1">
+            <button
+              type="button"
+              className="min-w-0 truncate text-left underline-offset-2 hover:underline"
+              onClick={() => openRoot(data.rootThreadId!)}
+            >
+              {root?.title ?? data.rootThreadId}
+            </button>
+            {canHandOff || (config.handoffHistory?.length ?? 0) > 0 ? (
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button variant="ghost" size="icon-xs" aria-label="Orchestrator actions" />
+                  }
+                >
+                  <MoreHorizontalIcon />
+                </MenuTrigger>
+                <MenuPopup align="start">
+                  {canHandOff ? (
+                    <MenuItem disabled={busy} onClick={() => setHandoffExpanded(true)}>
+                      <ArrowRightLeftIcon className="size-3.5" />
+                      Hand off to a fresh thread
+                    </MenuItem>
+                  ) : null}
+                  {canHandOff && canRestore ? (
+                    <MenuItem disabled={busy} onClick={() => setRestoreExpanded(true)}>
+                      <ReplaceIcon className="size-3.5" />
+                      Use another thread as orchestrator
+                    </MenuItem>
+                  ) : null}
+                  {config.handoffHistory?.length ? (
+                    <>
+                      {canHandOff ? <MenuSeparator /> : null}
+                      <MenuGroup>
+                        <MenuGroupLabel>Previous orchestrators</MenuGroupLabel>
+                        {config.handoffHistory.map((entry) => (
+                          <PreviousRootItem
+                            key={entry.threadId}
+                            environmentId={environmentId}
+                            threadId={entry.threadId}
+                            transferredAt={entry.transferredAt}
+                            onOpen={openRoot}
+                          />
+                        ))}
+                      </MenuGroup>
+                    </>
+                  ) : null}
+                </MenuPopup>
+              </Menu>
+            ) : null}
           </span>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={pauseLabel}
-                  disabled={busy || repositoryPhase(config) === "draining"}
-                  onClick={() => void togglePause()}
-                />
+        }
+      >
+        {restoreExpanded && config.handoff === undefined ? (
+          <div className="flex w-full max-w-md flex-col gap-2 pt-1">
+            <span className="text-xs text-muted-foreground">
+              Pause the repository first. The current orchestrator must be stopped, with no active
+              issue workers or unclaimed start requests. Existing issue workers keep their threads.
+            </span>
+            <Select
+              items={restoreCandidates.map((lead) => ({ value: lead.id, label: lead.title }))}
+              value={restoreTarget?.id ?? null}
+              onValueChange={(value) =>
+                setRestoreTargetId(restoreCandidates.find((lead) => lead.id === value)?.id ?? null)
               }
             >
-              {canResume ? <PlayIcon /> : <PauseIcon />}
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">{pauseLabel}</TooltipPopup>
-          </Tooltip>
-        </span>
-      </MetaRow>
-      {config.suspendedIssues
-        .filter((entry) => entry.kind === "closed")
-        .map((entry) => (
-          <div key={entry.id} className="flex items-center justify-between gap-2 text-xs">
-            <span className="text-muted-foreground">
-              {issueThreads.find((thread) => thread.linkedIssue?.id === entry.id)?.title ??
-                "Closed issue"}
-              : {entry.reason}
-            </span>
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={busy || !canCloseOut || repositoryPhase(config) === "draining"}
-              onClick={() => void finishAttempt(entry.id)}
-            >
-              Close out attempt
-            </Button>
-          </div>
-        ))}
-      {restoreExpanded && config.handoff === undefined ? (
-        <div className="flex w-full max-w-md flex-col gap-2 pt-1">
-          <span className="text-xs text-muted-foreground">
-            Pause the repository first. The current orchestrator must be stopped, with no active
-            issue workers or unclaimed start requests. Existing issue workers keep their threads.
-          </span>
-          <Select
-            items={restoreCandidates.map((lead) => ({ value: lead.id, label: lead.title }))}
-            value={restoreTarget?.id ?? null}
-            onValueChange={(value) =>
-              setRestoreTargetId(restoreCandidates.find((lead) => lead.id === value)?.id ?? null)
-            }
-          >
-            <SelectTrigger size="compact" aria-label="New repository orchestrator">
-              <SelectValue placeholder="Choose a lead thread" />
-            </SelectTrigger>
-            <SelectContent>
-              {restoreCandidates.map((lead) => (
-                <SelectItem key={lead.id} value={lead.id}>
-                  {lead.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {restoreCandidates.length === 0 ? (
-            <span className="text-xs text-muted-foreground">
-              No other top-level thread in this project can lead.
-            </span>
-          ) : null}
-          <div className="flex justify-end gap-1">
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => setRestoreExpanded(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="xs"
-              disabled={busy || !config.paused || restoreTarget === undefined}
-              onClick={() => void replaceRoot()}
-            >
-              Make orchestrator
-            </Button>
-          </div>
-        </div>
-      ) : null}
-      {config.handoff || handoffExpanded ? (
-        <div className="flex w-full max-w-md flex-col gap-2 pt-1">
-          <span className="text-xs text-muted-foreground" role="status">
-            {repositoryPhase(config) === "draining"
-              ? "Handoff is pending while existing work finishes and the recovery inventory is prepared. The current root keeps ownership until then."
-              : "Approve a fresh thread after existing work finishes. Routine model changes can keep the current thread."}
-          </span>
-          {config.handoff ? (
-            <p className="break-words whitespace-pre-wrap text-xs">
-              {config.handoff.summary}
-              <br />
-              Next model: {config.handoff.modelSelection.instanceId} /{" "}
-              {config.handoff.modelSelection.model}
-            </p>
-          ) : (
-            <Textarea
-              aria-label="Handoff summary"
-              placeholder="Summarize decisions and remaining work for the new root"
-              value={summary}
-              onChange={(event) => setSummary(event.target.value)}
-            />
-          )}
-          <div className="flex justify-end gap-1">
-            {config.handoff ? (
+              <SelectTrigger size="compact" aria-label="New repository orchestrator">
+                <SelectValue placeholder="Choose a lead thread" />
+              </SelectTrigger>
+              <SelectContent>
+                {restoreCandidates.map((lead) => (
+                  <SelectItem key={lead.id} value={lead.id}>
+                    {lead.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {restoreCandidates.length === 0 ? (
+              <span className="text-xs text-muted-foreground">
+                No other top-level thread in this project can lead.
+              </span>
+            ) : null}
+            <div className="flex justify-end gap-1">
               <Button
                 size="xs"
                 variant="ghost"
                 disabled={busy}
-                onClick={() => void transfer("cancel")}
-              >
-                Cancel handoff
-              </Button>
-            ) : (
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => setHandoffExpanded(false)}
+                onClick={() => setRestoreExpanded(false)}
               >
                 Cancel
               </Button>
-            )}
-            {repositoryPhase(config) !== "draining" ? (
               <Button
                 size="xs"
-                disabled={busy || (config.handoff === undefined && summary.trim().length === 0)}
-                onClick={() => void transfer("approve")}
+                disabled={busy || !config.paused || restoreTarget === undefined}
+                onClick={() => void replaceRoot()}
               >
-                Approve fresh-thread handoff
+                Make orchestrator
               </Button>
-            ) : null}
+            </div>
           </div>
-        </div>
-      ) : null}
-    </section>
+        ) : null}
+        {config.handoff || handoffExpanded ? (
+          <div className="flex w-full max-w-md flex-col gap-2 pt-1">
+            <span className="text-xs text-muted-foreground" role="status">
+              {repositoryPhase(config) === "draining"
+                ? "Handoff is pending while existing work finishes and the recovery inventory is prepared. The current root keeps ownership until then."
+                : "Approve a fresh thread after existing work finishes. Routine model changes can keep the current thread."}
+            </span>
+            {config.handoff ? (
+              <p className="break-words whitespace-pre-wrap text-xs">
+                {config.handoff.summary}
+                <br />
+                Next model: {config.handoff.modelSelection.instanceId} /{" "}
+                {config.handoff.modelSelection.model}
+              </p>
+            ) : (
+              <Textarea
+                aria-label="Handoff summary"
+                placeholder="Summarize decisions and remaining work for the new root"
+                value={summary}
+                onChange={(event) => setSummary(event.target.value)}
+              />
+            )}
+            <div className="flex justify-end gap-1">
+              {config.handoff ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => void transfer("cancel")}
+                >
+                  Cancel handoff
+                </Button>
+              ) : (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => setHandoffExpanded(false)}
+                >
+                  Cancel
+                </Button>
+              )}
+              {repositoryPhase(config) !== "draining" ? (
+                <Button
+                  size="xs"
+                  disabled={busy || (config.handoff === undefined && summary.trim().length === 0)}
+                  onClick={() => void transfer("approve")}
+                >
+                  Approve fresh-thread handoff
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </SettingsRow>
+      <SettingsRow
+        title="Workers"
+        description="How many issue workers can run at once."
+        control={
+          <IssueWorkerLimitControl
+            key={`${data.rootThreadId}:${config.revision}`}
+            environmentId={environmentId}
+            reference={reference}
+            config={config}
+            slotsInUse={data.slotsInUse}
+            onSettled={() => appAtomRegistry.refresh(statusAtom)}
+          />
+        }
+      />
+      <SettingsRow
+        title="Read-only"
+        description="How many read-only agents, such as designers and reviewers, can run at once."
+        control={
+          <IssueWorkerLimitControl
+            key={`read-only:${data.rootThreadId}:${config.revision}`}
+            environmentId={environmentId}
+            reference={reference}
+            config={config}
+            pool="readOnly"
+            slotsInUse={data.readOnlySlotsInUse}
+            onSettled={() => appAtomRegistry.refresh(statusAtom)}
+          />
+        }
+      />
+      <SettingsRow
+        title="Usage sprint"
+        description="Spend a provider's remaining weekly usage before its limit resets."
+        control={
+          <UsageSprintControl
+            key={`sprint:${data.rootThreadId}:${config.revision}`}
+            environmentId={environmentId}
+            reference={reference}
+            config={config}
+            onSettled={() => appAtomRegistry.refresh(statusAtom)}
+          />
+        }
+      />
+      <SettingsRow
+        title="Status"
+        description="Pause stops new issue work from starting; resume continues it."
+        control={
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="truncate" role="status">
+              {status.label}
+            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={pauseLabel}
+                    disabled={busy || repositoryPhase(config) === "draining"}
+                    onClick={() => void togglePause()}
+                  />
+                }
+              >
+                {canResume ? <PlayIcon /> : <PauseIcon />}
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">{pauseLabel}</TooltipPopup>
+            </Tooltip>
+          </span>
+        }
+      >
+        {config.suspendedIssues
+          .filter((entry) => entry.kind === "closed")
+          .map((entry) => (
+            <div key={entry.id} className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-muted-foreground">
+                {issueThreads.find((thread) => thread.linkedIssue?.id === entry.id)?.title ??
+                  "Closed issue"}
+                : {entry.reason}
+              </span>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={busy || !canCloseOut || repositoryPhase(config) === "draining"}
+                onClick={() => void finishAttempt(entry.id)}
+              >
+                Close out attempt
+              </Button>
+            </div>
+          ))}
+      </SettingsRow>
+    </SettingsSection>
   );
 }
 

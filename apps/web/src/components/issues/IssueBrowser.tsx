@@ -1,6 +1,6 @@
 import { OwnerDecisionsToggle, OwnerDecisionsView } from "./OwnerDecisionCards";
 import { useOwnerDecisions } from "~/state/ownerDecisions";
-import { IssueRepositoryControls } from "./IssueRepositoryControls";
+import { IssueRepositoryStatusLine } from "./IssueRepositoryControls";
 import { IssueInboxSection } from "./IssueInbox";
 import { IssueStateIcon } from "./IssueStateIcon";
 import * as Cause from "effect/Cause";
@@ -301,6 +301,7 @@ export function IssueBrowser({
     return errors;
   })();
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Merges each finished query answer into the paging state this component owns.
   useEffect(() => {
     if (issueLists.answers.length === 0) return;
     setPagingByKey((current) => {
@@ -341,6 +342,7 @@ export function IssueBrowser({
     });
   }, [issueLists.answers]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Query failures settle the pending page refresh owned by this component.
   useEffect(() => {
     if (issueLists.failures.length === 0) return;
     // oxlint-disable-next-line react/set-state-in-effect -- Query failures settle the pending page refresh owned by this component.
@@ -597,7 +599,7 @@ export function IssueBrowser({
     if (scopedToOne)
       return (
         <section key={entry.key}>
-          <IssueRepositoryControls
+          <IssueRepositoryStatusLine
             environmentId={entry.environmentId}
             reference={{ host: entry.host, repository: entry.repository }}
           />
@@ -666,7 +668,7 @@ export function IssueBrowser({
             </div>
             {!collapsed ? (
               <div id={panelId}>
-                <IssueRepositoryControls
+                <IssueRepositoryStatusLine
                   environmentId={entry.environmentId}
                   reference={{ host: entry.host, repository: entry.repository }}
                 />

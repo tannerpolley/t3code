@@ -131,7 +131,7 @@ the supplied database. `shot.mjs` keeps direct routes to labeled examples for op
   fetches; `seed.py` uses read-only API calls for repository/linked-issue metadata.
 - **Passive repository work:** `paused=1`, no milestones, worker limit 1 (the minimum), and both
   publish flags off prevent admission, scheduled work and comments. **Resume repository work**
-  or **Work through milestone** starts real agents.
+  (in Settings → Projects → Repository orchestration) or **Work through milestone** starts real agents.
 - **Issues pane:** lists the `gh` account's real repositories too and can take 15–40 seconds.
   Use the sandbox project or `/issues?host=github.com&repository=tannerpolley/t3code-sandbox`.
   Roadmap shows dependency/worker colors; the full page shows gray closed rows with Closed on.

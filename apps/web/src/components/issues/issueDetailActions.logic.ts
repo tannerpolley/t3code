@@ -24,7 +24,7 @@ export function issueImplementDestination(input: {
   if (input.paused) {
     return {
       threadRef: null,
-      disabledReason: "Repository work is paused; resume it first",
+      disabledReason: "Repository work is paused; resume it in Project settings",
     };
   }
   if (input.rootThreadId == null) {
