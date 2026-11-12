@@ -163,13 +163,6 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "List the repository's open issues in their own Issues section of thread details, grouped by collapsible milestones, and open them beside the thread.",
   },
   {
-    key: "issuesPage",
-    searchId: "issues-page",
-    section: "versionControl",
-    description:
-      "Show Issues in the sidebar: browse open issues across the repositories you control, grouped by owner, filtered, with pinned repositories.",
-  },
-  {
     key: "branchPickerGroups",
     searchId: "branch-picker-groups",
     section: "versionControl",
@@ -486,7 +479,7 @@ function ForkGeneralSettings() {
       <CustomizationsGroup title="Lineage & background work" section="lineage">
         <SettingsRow
           {...searchableSetting("lineage-auto-clear")}
-          description="Hide finished agents from Lineage's Previous agents once they have sat unused this long, as if you pressed Clear. An agent you resume shows again. Show brings cleared ones back. Needs the Lineage redesign."
+          description="Hide finished agents from Lineage's Previous agents after they sit unused this long, as if you pressed Clear. A resumed agent shows again; Show brings cleared ones back. Needs the Lineage redesign."
           control={
             <Select
               value={String(settings.lineageAutoClearMinutes)}

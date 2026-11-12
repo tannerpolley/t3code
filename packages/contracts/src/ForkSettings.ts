@@ -315,8 +315,6 @@ export const ForkClientSettingsFields = {
   lineageDetailsExpanded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   revealOpenThreadInSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   lineageAutoClearMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
-  /** Show the Issues page in the sidebar; off by default, since thread details lists issues. */
-  issuesPage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** List the thread repository's issues in thread details. */
   versionControlIssues: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Offer Claude Code plugin skills in the composer menus, labeled Plugin. */
@@ -423,7 +421,6 @@ export const ForkClientSettingsPatchFields = {
   lineageDetailsExpanded: Schema.optionalKey(Schema.Boolean),
   revealOpenThreadInSidebar: Schema.optionalKey(Schema.Boolean),
   lineageAutoClearMinutes: Schema.optionalKey(NonNegativeInt),
-  issuesPage: Schema.optionalKey(Schema.Boolean),
   versionControlIssues: Schema.optionalKey(Schema.Boolean),
   pluginSkills: Schema.optionalKey(Schema.Boolean),
   branchPickerGroups: Schema.optionalKey(Schema.Boolean),

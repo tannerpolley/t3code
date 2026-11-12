@@ -14,7 +14,6 @@ import {
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
-import { SidebarIssuesItem } from "./SidebarIssuesItem";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -200,7 +199,7 @@ function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
   );
 }
 
-export function SidebarUtilityItem({
+function SidebarUtilityItem({
   icon,
   label,
   onClick,
@@ -292,7 +291,6 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
-          <SidebarIssuesItem onNavigate={closeMobileSidebar} />
         </>
       )}
       <SidebarThreadUndoNotice />

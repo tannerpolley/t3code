@@ -7,7 +7,6 @@ describe("fork settings destinations", () => {
     ["organize by folder", "organize-by-folder", "/settings/general"],
     ["default project icon", "project-icon-fallback", "/settings/appearance"],
     ["hidden local servers", "local-server-hide-rules", "/settings/browser"],
-    ["issues page", "issues-page", "/settings/source-control"],
     ["model roles", "model-roles", "/settings/providers"],
     ["role display", "sidebar-role-display", "/settings/appearance"],
     ["location icon style", "sidebar-location-icon-style", "/settings/appearance"],
@@ -39,7 +38,7 @@ describe("fork settings destinations", () => {
       scope: "environment-defaults",
     });
   });
-  it.each(["branch-picker-groups", "version-control-issues", "issues-page"])(
+  it.each(["branch-picker-groups", "version-control-issues"])(
     "keeps %s client-scoped after moving it to Source Control",
     (id) => {
       expect(getSettingsSearchTargetScope(id)).toMatchObject({ scope: null });
