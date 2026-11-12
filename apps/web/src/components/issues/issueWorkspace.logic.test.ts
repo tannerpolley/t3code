@@ -300,6 +300,12 @@ describe("repositoryWorkStatus", () => {
       true,
     ],
     [
+      "paused and awaiting approval",
+      { paused: true, handoff: handoff("awaiting_approval"), suspendedIssues: [] },
+      "Handoff awaiting approval",
+      true,
+    ],
+    [
       "draining",
       { paused: true, handoff: handoff("draining"), suspendedIssues: [] },
       "Handing off",

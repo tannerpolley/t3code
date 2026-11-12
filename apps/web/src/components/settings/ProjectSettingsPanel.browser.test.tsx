@@ -126,6 +126,7 @@ vi.mock(import("./ProjectDefaultsSettings"), () => ({
 vi.mock(import("./ProjectActionsSettings"), () => ({
   ProjectActionsSettings: (() => null) as never,
 }));
+// The orchestration section queries the server; its status rule is tested in issueWorkspace.logic.
 vi.mock(import("../issues/IssueRepositoryControls"), () => ({
   ProjectRepositoryOrchestration: (() => null) as never,
 }));
