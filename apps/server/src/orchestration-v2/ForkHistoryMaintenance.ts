@@ -235,7 +235,8 @@ export const maintainForkHistory = Effect.fn("ForkHistoryMaintenance.run")(funct
             WHERE thread_id = ${row.thread_id} AND turn_item_id = ${row.turn_item_id}`;
             yield* sql`UPDATE orchestration_events
             SET payload_json = json_remove(json_set(payload_json, '$.output', ${marker}), '$.viewedImagePath')
-            WHERE stream_id = ${row.thread_id} AND event_type = 'turn-item.updated'
+            WHERE aggregate_kind = 'thread' AND stream_id = ${row.thread_id}
+              AND event_type = 'turn-item.updated'
               AND json_extract(payload_json, '$.id') = ${row.turn_item_id}
               AND json_type(payload_json, '$.output') IS NOT NULL`;
           }),

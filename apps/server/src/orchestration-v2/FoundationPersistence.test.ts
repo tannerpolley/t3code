@@ -1563,6 +1563,18 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         assert.deepEqual(yield* projections.getThreadProjection(threadId), before);
         const replay = yield* ProjectionReplay.ProjectionReplay;
         let batches = 0;
+        // Each trimmed item rewrites its events; a full scan here read the 31 GB log per item.
+        const trimPlans: string[] = [];
+        const prepare = NodeSqlite.DatabaseSync.prototype.prepare;
+        using _plans = vi
+          .spyOn(NodeSqlite.DatabaseSync.prototype, "prepare")
+          .mockImplementation(function (this: NodeSqlite.DatabaseSync, query) {
+            if (query.trimStart().startsWith("UPDATE orchestration_events")) {
+              const plan = prepare.call(this, "EXPLAIN QUERY PLAN " + query).all();
+              trimPlans.push(...plan.map((row) => String(row.detail)));
+            }
+            return prepare.call(this, query);
+          });
         const summary = yield* maintenance.pruneEventStore(
           Effect.gen(function* () {
             assert.isTrue((yield* replay.verify.pipe(Effect.orDie)).valid);
@@ -1571,6 +1583,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           14,
         );
         assert.isAbove(batches, 0);
+        assert.isAbove(trimPlans.length, 0);
+        assert.isFalse(trimPlans.some((line) => /\bSCAN orchestration_events\b/.test(line)));
         const after = yield* projections.getThreadProjection(threadId);
         assert.deepEqual(after.messages, before.messages);
         for (const entry of after.turnItems) {
