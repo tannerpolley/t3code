@@ -68,6 +68,7 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import * as IdleThreadCleanup from "./IdleThreadCleanup.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -346,7 +347,7 @@ const tablesMentioning = (text: string) =>
     return found;
   });
 
-it.effect("purges threads deleted over a week ago and keeps everything still reachable", () =>
+it.effect("purges threads deleted over a day ago and keeps everything still reachable", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-10-22T00:00:00.000Z"));
     const eventSink = yield* EventSink.EventSinkV2;
@@ -466,7 +467,7 @@ it.effect("purges threads deleted over a week ago and keeps everything still rea
             updatedAt: now,
           },
         },
-        deleted(recent, DateTime.subtract(now, { days: 1 })),
+        deleted(recent, DateTime.subtract(now, { hours: 12 })),
         deleted(heldParent, eightDaysAgo),
         deleted(liveSubagent, eightDaysAgo),
         deleted(expiredChild, eightDaysAgo),
@@ -528,6 +529,63 @@ it.effect("purges threads deleted over a week ago and keeps everything still rea
       yield* Effect.forEach(kept, (id) => projections.getThreadProjection(id)),
       projectionsBefore,
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("selects idle archived and subagent threads for daily cleanup", () =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const old = DateTime.subtract(now, { days: 8 });
+    const thread = (
+      id: string,
+      at: DateTime.Utc,
+      extra: Partial<OrchestrationV2AppThread> = {},
+    ) => ({
+      ...makeThread(ThreadId.make(id), at),
+      ...extra,
+    });
+    const childOf = (id: string, parent: OrchestrationV2AppThread, at = old) =>
+      thread(id, at, {
+        lineage: {
+          parentThreadId: parent.id,
+          relationshipToParent: "subagent",
+          rootThreadId: parent.lineage.rootThreadId,
+        },
+      });
+    const idleParent = thread("thread:idle-parent", old);
+    const runningParent = thread("thread:running-parent", old);
+    const threads = [
+      idleParent,
+      runningParent,
+      thread("thread:archived", old, { archivedAt: old }),
+      thread("thread:archived-recently-used", now, { archivedAt: old }),
+      thread("thread:archived-deleted", old, { archivedAt: old, deletedAt: old }),
+      childOf("thread:idle-child", idleParent),
+      childOf("thread:recent-child", idleParent, now),
+      childOf("thread:child-of-running", runningParent),
+      childOf("thread:running-child", idleParent),
+    ];
+    yield* eventSink.write({
+      events: threads.map((entry) =>
+        threadCreatedEvent({ id: `event:${entry.id}:created`, thread: entry, now: old }),
+      ),
+    });
+    for (const [runId, threadId] of [
+      ["run:parent", runningParent.id],
+      ["run:child", "thread:running-child"],
+    ]) {
+      yield* sql`INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES (${runId}, ${threadId}, 1, 'codex', 'running', ${DateTime.formatIso(now)}, '{}')`;
+    }
+
+    const cutoff = DateTime.formatIso(DateTime.subtract(now, { days: 7 }));
+    assert.deepEqual([...(yield* IdleThreadCleanup.findIdleThreads(cutoff))].sort(), [
+      "thread:archived",
+      "thread:idle-child",
+    ]);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -1563,6 +1621,18 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         assert.deepEqual(yield* projections.getThreadProjection(threadId), before);
         const replay = yield* ProjectionReplay.ProjectionReplay;
         let batches = 0;
+        // Each trimmed item rewrites its events; a full scan here read the 31 GB log per item.
+        const trimPlans: string[] = [];
+        const prepare = NodeSqlite.DatabaseSync.prototype.prepare;
+        using _plans = vi
+          .spyOn(NodeSqlite.DatabaseSync.prototype, "prepare")
+          .mockImplementation(function (this: NodeSqlite.DatabaseSync, query) {
+            if (query.trimStart().startsWith("UPDATE orchestration_events")) {
+              const plan = prepare.call(this, "EXPLAIN QUERY PLAN " + query).all();
+              trimPlans.push(...plan.map((row) => String(row.detail)));
+            }
+            return prepare.call(this, query);
+          });
         const summary = yield* maintenance.pruneEventStore(
           Effect.gen(function* () {
             assert.isTrue((yield* replay.verify.pipe(Effect.orDie)).valid);
@@ -1571,6 +1641,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           14,
         );
         assert.isAbove(batches, 0);
+        assert.isAbove(trimPlans.length, 0);
+        assert.isFalse(trimPlans.some((line) => /\bSCAN orchestration_events\b/.test(line)));
         const after = yield* projections.getThreadProjection(threadId);
         assert.deepEqual(after.messages, before.messages);
         for (const entry of after.turnItems) {

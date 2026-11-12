@@ -13,7 +13,7 @@ export const maintainForkHistory = Effect.fn("ForkHistoryMaintenance.run")(funct
   const sql = yield* SqlClient.SqlClient;
   // Deleted threads have no restore path. The grace lets the effects that
   // follow a delete (provider stop, worktree cleanup) finish first.
-  const DELETED_THREAD_RETENTION = Duration.days(7);
+  const DELETED_THREAD_RETENTION = Duration.days(1);
 
   // Forks, subagents, handoff successors and unfinished work can still replay a deleted
   // thread. Purge unreferenced children first so their parents become eligible.
@@ -235,7 +235,8 @@ export const maintainForkHistory = Effect.fn("ForkHistoryMaintenance.run")(funct
             WHERE thread_id = ${row.thread_id} AND turn_item_id = ${row.turn_item_id}`;
             yield* sql`UPDATE orchestration_events
             SET payload_json = json_remove(json_set(payload_json, '$.output', ${marker}), '$.viewedImagePath')
-            WHERE stream_id = ${row.thread_id} AND event_type = 'turn-item.updated'
+            WHERE aggregate_kind = 'thread' AND stream_id = ${row.thread_id}
+              AND event_type = 'turn-item.updated'
               AND json_extract(payload_json, '$.id') = ${row.turn_item_id}
               AND json_type(payload_json, '$.output') IS NOT NULL`;
           }),
