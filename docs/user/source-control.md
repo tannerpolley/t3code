@@ -297,9 +297,8 @@ and their marks follow the same rules as on web and desktop.
 Drag an issue onto the composer or type `#` to reference a repository issue in chat.
 
 When a connected environment has GitHub Issues support, a thread's details list its repository's
-issues; open one, or the full list, beside the thread. To browse issues across repositories, turn on
-**Settings → Version control → Issues page** for an **Issues** button in the sidebar. From a
-thread, it opens that project’s repository. Without a current repository, it lists issues from every
+issues; open one, or the full list, beside the thread. The full list opens on that project’s
+repository. Opened without a current repository, the Issues page lists issues from every
 repository your GitHub account owns and every organization repository you administer, whether or
 not the repository is a T3 Code project. Repositories you only collaborate on, including the upstream
 of a fork, are left out. Repositories are grouped by owner, with your own account first.

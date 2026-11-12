@@ -329,13 +329,6 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork github issues thread details version control milestones"],
   },
   {
-    id: "issues-page",
-    title: "Issues page",
-    to: "/settings/source-control",
-    scope: null,
-    searchTerms: ["customization fork github issues page browser sidebar repositories filters pin"],
-  },
-  {
     id: "plugin-skills",
     title: "Plugin skills in the composer",
     to: "/settings/browser",
