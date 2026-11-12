@@ -13,7 +13,7 @@ export const maintainForkHistory = Effect.fn("ForkHistoryMaintenance.run")(funct
   const sql = yield* SqlClient.SqlClient;
   // Deleted threads have no restore path. The grace lets the effects that
   // follow a delete (provider stop, worktree cleanup) finish first.
-  const DELETED_THREAD_RETENTION = Duration.days(7);
+  const DELETED_THREAD_RETENTION = Duration.days(1);
 
   // Forks, subagents, handoff successors and unfinished work can still replay a deleted
   // thread. Purge unreferenced children first so their parents become eligible.
