@@ -13,6 +13,11 @@ the orchestrator creates one before delegating, and links each worker thread to 
 (`link_issue`), so the Issues pane shows it In progress. Close an issue when its fix lands on
 `main`.
 
+This section owns the hosting rules. Scheduled task prompts and the owner's skills point here
+instead of naming a host, because the 2026-11-10 move missed copies in both (#382). When the
+host changes, update this section, then search every project's scheduled task prompts, the
+`skills` repository and each repository's docs and scripts for the old host.
+
 From 2026-11-02 to 2026-11-10 the owner's repositories lived on a Forgejo server on this desktop
 (`https://tnnrpolley21-ms-7c95.taila72856.ts.net:3000`, system service `forgejo`, data in
 `/srv/forgejo`). The owner moved everything back with `switch-to-github`
