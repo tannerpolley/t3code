@@ -1436,8 +1436,7 @@ const make = Effect.gen(function* () {
     if (typeof model !== "string") return yield* model;
     const provider = input.providers.find((candidate) => candidate.instanceId === instanceId)!;
     const advertised = advertisedModel(provider, model);
-    const descriptors = provider?.models.find((candidate) => candidate.slug === model)?.capabilities
-      ?.optionDescriptors;
+    const descriptors = advertised?.capabilities?.optionDescriptors;
 
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId &&

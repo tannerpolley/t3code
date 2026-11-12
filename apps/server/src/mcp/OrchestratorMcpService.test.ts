@@ -3491,6 +3491,18 @@ describe("OrchestratorMcpService provider resolution", () => {
               ],
             },
           },
+          {
+            name: "old Ultracode effort level by alias",
+            target: { model: "ultra", options: { effort: "ultracode" } },
+            expected: {
+              instanceId: codexInstanceId,
+              model: "ultra",
+              options: [
+                { id: "effort", value: "xhigh" },
+                { id: "ultracode", value: true },
+              ],
+            },
+          },
         ] as const;
         for (const testCase of cases) {
           const commands: Array<unknown> = [];
@@ -3549,6 +3561,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                     slug: "ultracode-model",
                     name: "ultracode-model",
                     isCustom: false,
+                    aliases: ["ultra"],
                     capabilities: {
                       optionDescriptors: [
                         {
