@@ -700,7 +700,9 @@ it.layer(
         type: "message.dispatch",
         commandId: CommandId.make("command:checkpoint-exhausted:wake"),
         threadId: child.parentThreadId,
-        messageId: MessageId.make("message:checkpoint-exhausted:wake"),
+        messageId: MessageId.make(
+          `message:delegated-task-question:${child.parentThreadId}:${child.requestId}`,
+        ),
         text: "A child is waiting for your answer.",
         notification: {
           source: { kind: "delegated_task", taskIds: [parent.subagents[0]!.id] },

@@ -1,3 +1,4 @@
+import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
 import * as PeerForwarding from "../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../peer/PeerLinks.ts";
@@ -54,6 +55,7 @@ import { WorktreeToolkit } from "./worktree/tools.ts";
 import { DeviceToolkit } from "./device/tools.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
+  Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
   Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
   Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -178,6 +180,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -219,6 +222,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -296,6 +300,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
     }).pipe(
       Effect.provide(
         layerOrchestratorToolkit.pipe(
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
           Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
           Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
           Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -402,6 +407,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),

@@ -270,6 +270,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   };
                 }),
               forkSession: () => Effect.die("unused forkSession"),
+              subagentModel: () => Effect.succeed(null),
               subagentLaunchToolUseId: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },

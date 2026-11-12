@@ -585,7 +585,7 @@ describe("managed issue work", () => {
       const beforeStaleRetry = writeCalls.length;
       yield* executor.execute(staleWaiting);
       assert.equal(writeCalls.length, beforeStaleRetry);
-      yield* orchestrator.recoverDelegatedTask(child.thread.id, childRun.id);
+      yield* orchestrator.recoverDelegatedTask(child.thread.id, { sourceRunId: childRun.id });
       yield* worker.drain();
       assert.equal(published.size, 2);
       assert.equal(writeCalls.filter((call) => call.operation === "closeout_create").length, 1);
@@ -599,7 +599,7 @@ describe("managed issue work", () => {
       assert.equal(closeouts.length, 1);
       const closeout = Option.getOrThrow(yield* outbox.get(closeouts[0]!.effect_id));
       yield* executor.execute(closeout);
-      yield* orchestrator.recoverDelegatedTask(child.thread.id, childRun.id);
+      yield* orchestrator.recoverDelegatedTask(child.thread.id, { sourceRunId: childRun.id });
       yield* worker.drain();
       assert.equal(writeCalls.filter((call) => call.operation === "closeout_create").length, 1);
       assert.equal(
@@ -675,9 +675,9 @@ describe("managed issue work", () => {
             },
           ],
         });
-        yield* orchestrator.recoverDelegatedTask(child.thread.id, resumed.id);
+        yield* orchestrator.recoverDelegatedTask(child.thread.id, { sourceRunId: resumed.id });
         yield* worker.drain();
-        yield* orchestrator.recoverDelegatedTask(child.thread.id, resumed.id);
+        yield* orchestrator.recoverDelegatedTask(child.thread.id, { sourceRunId: resumed.id });
         yield* worker.drain();
         yield* sink.stream({ afterSequence: 0, eventType: "message.updated" }).pipe(
           Stream.filter(

@@ -22,6 +22,7 @@ vi.mock("./ChatCanvasContext", () => ({
   }),
 }));
 vi.mock("../ui/popover", () => ({
+  PopoverCreateHandle: () => PopoverPrimitive.createHandle(),
   Popover: ({ children }: { children: ReactNode }) => children,
   PopoverPopup: ({ children }: { children: ReactNode }) => children,
 }));
@@ -31,14 +32,16 @@ vi.mock("../ui/scroll-area", () => ({
 vi.mock("./ThreadDetailsPrRow", () => ({
   ThreadDetailsPrRow: ({ number }: { number: number }) => <div data-test-row>#{number}</div>,
 }));
-vi.mock("~/state/entities", () => ({ useProjects: () => [] }));
+vi.mock("~/state/entities", () => ({ useProjects: () => [], useQuietThreadShell: () => null }));
 vi.mock("../ThreadStatusIndicators", () => ({
+  useThreadDisplayedPullRequest: () => null,
   linkedPullRequestSnapshotStatus: () => null,
   prStatusIndicator: () => null,
 }));
 vi.mock("~/state/threads", () => ({ threadEnvironment: {} }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/lib/openPullRequestLink", () => ({
+  useOpenPrLink: () => vi.fn(),
   parseChangeRequestUrl: () => null,
   findProjectOnChangeRequestHost: () => undefined,
 }));

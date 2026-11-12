@@ -232,9 +232,9 @@ it.effect("delivers an early steer as a steer once the provider turn goes live",
       const held = (yield* orchestrator.getThreadProjection(threadId)).runs;
       const heldSteer = held.find((run) => run.userMessageId === "message:steer")!;
       assert.equal(heldSteer.status, "queued");
-      assert.equal(heldSteer.steerTargetRunId, first.id);
+      assert.equal(heldSteer.steerWhenReadyRunId, first.id);
       const queued = held.find((run) => run.userMessageId === "message:queue")!;
-      assert.equal(queued.steerTargetRunId, undefined);
+      assert.equal(queued.steerWhenReadyRunId, undefined);
 
       const promoted = yield* watch(
         (event) =>

@@ -259,6 +259,7 @@ const dependencies = Layer.mergeAll(
     installed: Effect.die("mock Chromium does not need an executable"),
   }),
   Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
+    loadFailure: () => undefined,
     available: true,
     isShown: (key) => desktopRenders(key.tabId),
     turn: () => Effect.void,

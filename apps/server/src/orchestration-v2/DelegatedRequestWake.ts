@@ -4,6 +4,7 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
+import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
 import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -157,3 +158,10 @@ export const wakeRoutedDelegatedRequest = Effect.fnUntraced(function* (
   if (wake !== undefined) yield* engine.dispatchDelegatedRequestWake(task, request, wake);
   return true;
 });
+
+export function isRoutedDelegatedRequest(
+  request: OrchestrationV2RuntimeRequest,
+  parentThreadId: ThreadId,
+) {
+  return request.routedTo === parentThreadId && runtimeRequestNeedsUser(request.kind);
+}

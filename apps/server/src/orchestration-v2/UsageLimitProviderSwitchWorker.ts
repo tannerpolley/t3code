@@ -155,7 +155,7 @@ const make = Effect.gen(function* () {
         const arm = limitRecoveryCommand(current, true, nowMs, true);
         if (arm?.type === "thread.metadata.update") yield* threads.dispatch(arm);
         // Waiting is a terminal switch decision, even when the child schedules its own resume.
-        yield* orchestrator.recoverDelegatedTask(threadId, marker.runId);
+        yield* orchestrator.recoverDelegatedTask(threadId, { sourceRunId: marker.runId });
         return;
       }
       const current = yield* projections.getThreadRecords(threadId, ["runs"]);
@@ -189,7 +189,7 @@ const make = Effect.gen(function* () {
     if ((yield* settings.getSettings).usageLimitRecovery !== "switch") return;
     const now = yield* DateTime.now;
     for (const child of yield* projections.getRecentUsageLimitChildren(now))
-      yield* orchestrator.recoverDelegatedTask(child.threadId, child.runId);
+      yield* orchestrator.recoverDelegatedTask(child.threadId, { sourceRunId: child.runId });
     const candidates = yield* projections.getLimitRecoveryCandidates({
       now,
       autoResume: false,

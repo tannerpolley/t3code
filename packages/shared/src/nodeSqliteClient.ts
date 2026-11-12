@@ -38,13 +38,6 @@ export interface SqliteClientConfig {
   readonly readerWorker?: boolean | undefined;
   /** Ignored for in-memory databases. */
   readonly checkpointWorker?: boolean | undefined;
-  /**
-   * How long writes wait at a time for the checkpoint to catch up. A reader in
-   * another process can hold it back for minutes (a long scan, or a copy of the
-   * whole database); after this, writes go ahead and the WAL grows until the
-   * checkpoint moves again. Default 1 second.
-   */
-  readonly checkpointPauseLimit?: Duration.Input | undefined;
 }
 
 // SqlClient masks transaction acquisition, so readOnly carries the caller's interruption policy.
@@ -532,8 +525,9 @@ const initialize = () => {
 const atCeiling = (state) => state.log >= workerData.backpressureFrames;
 const exceedsSizeLimit = () =>
   journalSizeLimit >= 0 && statSync(workerData.filename + "-wal").size > journalSizeLimit;
-const schedule = (state, blocked) => {
-  if (blocked || state.log - state.checkpointed >= workerData.frames) {
+// Retry a WAL past its limits even with admission open, so it resets once a pinning reader closes.
+const schedule = (state, retry) => {
+  if (retry || state.log - state.checkpointed >= workerData.frames) {
     idle = setTimeout(() => check(undefined, undefined, true), workerData.idleMs);
   }
 };
@@ -543,8 +537,11 @@ const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => 
   if (Number.isSafeInteger(nextJournalSizeLimit)) journalSizeLimit = nextJournalSizeLimit;
   let state = frames.get();
   const oversized = exceedsSizeLimit();
+  let pinned = false;
   if (force || state.log - state.checkpointed >= workerData.frames || oversized) {
-    checkpoint.get();
+    const result = checkpoint.get();
+    // A reader's snapshot stopped the backfill; holding writes cannot let it catch up.
+    pinned = result.checkpointed < result.log;
     state = frames.get();
   }
   if (state.checkpointed === state.log && (atCeiling(state) || oversized)) {
@@ -558,24 +555,22 @@ const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => 
     });
     return;
   }
-  const blocked = (atCeiling(state) || oversized) && state.checkpointed < state.log;
+  const blocked = !pinned && (atCeiling(state) || oversized) && state.checkpointed < state.log;
   parentPort.postMessage({ type: "checkpoint", id, generation, ...state, blocked });
-  schedule(state, blocked);
+  schedule(state, atCeiling(state) || oversized);
 };
 const finishTruncate = (truncateId) => {
   if (pendingTruncate === undefined || pendingTruncate.truncateId !== truncateId) return;
   const pending = pendingTruncate;
   parentPort.postMessage({ type: "truncate-start", truncateId });
-  let busy;
   // Admission is paused here; a pinned reader must not make truncation wait.
   db.exec("PRAGMA busy_timeout = 0;");
   try {
-    busy = truncate.get().busy !== 0;
+    truncate.get();
   } finally {
     db.exec("PRAGMA busy_timeout = 5000;");
   }
   const state = frames.get();
-  const blocked = (atCeiling(state) && (busy || state.checkpointed < state.log)) || exceedsSizeLimit();
   pendingTruncate = undefined;
   parentPort.postMessage({
     type: "checkpoint",
@@ -583,13 +578,15 @@ const finishTruncate = (truncateId) => {
     generation: pending.generation,
     truncateId,
     ...state,
-    blocked,
+    // With writes held, only a reader can stop the reset, and holding them longer would not
+    // release it.
+    blocked: false,
   });
   while (pendingBarriers > 0) {
     pendingBarriers--;
     parentPort.postMessage("barrier");
   }
-  schedule(state, blocked);
+  schedule(state, atCeiling(state) || exceedsSizeLimit());
 };
 parentPort.on("message", (request) => {
   clearTimeout(idle);
@@ -624,7 +621,6 @@ parentPort.on("message", (request) => {
 const startCheckpointWorker = Effect.fnUntraced(function* (
   filename: string,
   writer: NodeSqlite.DatabaseSync,
-  pauseLimitMs: number,
 ) {
   const warn = (reason: string) =>
     Effect.logWarning(
@@ -635,17 +631,25 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     yield* warn("Node SQLite lacks transaction-state or statement-authorizer support");
     return undefined;
   }
-  // These are the writer's first statements, before callers set their own wait.
-  writer.exec("PRAGMA busy_timeout = 5000;");
-  const version = String(writer.prepare("SELECT sqlite_version() AS version").get()?.version);
+  // These are the writer's first statements, before callers set their own wait. A file that is
+  // not a database first fails here.
+  const { version, frames, sizeLimit } = yield* Effect.try({
+    try: () => {
+      writer.exec("PRAGMA busy_timeout = 5000;");
+      return {
+        version: String(writer.prepare("SELECT sqlite_version() AS version").get()?.version),
+        frames: writer.prepare("PRAGMA wal_checkpoint(NOOP)"),
+        sizeLimit: writer.prepare("PRAGMA journal_size_limit"),
+      };
+    },
+    catch: (cause) => failed(cause, "Failed to open database", "open"),
+  });
   const [major = 0, minor = 0] = version.split(".").map(Number);
   // Older SQLite treats NOOP as PASSIVE, which would checkpoint on the writer.
   if (major < 3 || (major === 3 && minor < 51)) {
     yield* warn(`SQLite ${version} has no NOOP checkpoint`);
     return undefined;
   }
-  const frames = writer.prepare("PRAGMA wal_checkpoint(NOOP)");
-  const sizeLimit = writer.prepare("PRAGMA journal_size_limit");
   const started = Result.try(
     () =>
       new NodeWorkerThreads.Worker(checkpointWorkerSource, {
@@ -677,37 +681,12 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   type Waiter = { resume: () => void; cancelled: boolean };
   const waiters: Array<Waiter> = [];
   let elected: Waiter | undefined;
-  // Set once writes have waited pauseLimitMs on a backlog. Cleared when the
-  // checkpoint moves again, so writes pause for it to catch up, or once the WAL
-  // is back under its bounds. A truncate still pauses writes, but only briefly.
-  let overflowing = false;
-  let overflowCheckpointed = 0;
-  let pauseTimer: ReturnType<typeof setTimeout> | undefined;
-  const backlogged = () => blocked || log >= CHECKPOINT_BACKPRESSURE_FRAMES;
   const gated = () =>
-    !stopped &&
-    !writer.isTransaction &&
-    (unknown || truncate !== undefined || (!overflowing && backlogged()));
+    !stopped && !writer.isTransaction && (unknown || blocked || truncate !== undefined);
   const wake = () => {
-    if (overflowing && (!backlogged() || checkpointed > overflowCheckpointed)) overflowing = false;
     if (!gated() && elected === undefined) {
       elected = waiters.shift();
       elected?.resume();
-    }
-    if (waiters.length > 0 && !overflowing && gated() && backlogged()) {
-      // @effect-diagnostics-next-line globalTimers:off -- A wall-clock bound on waiting for another process, like the worker's own timers; a test clock must not stall it.
-      pauseTimer ??= setTimeout(() => {
-        pauseTimer = undefined;
-        if (backlogged()) {
-          overflowing = true;
-          overflowCheckpointed = checkpointed;
-        }
-        wake();
-      }, pauseLimitMs);
-      pauseTimer.unref();
-    } else if (pauseTimer !== undefined) {
-      clearTimeout(pauseTimer);
-      pauseTimer = undefined;
     }
     if (waiters.length === 0 && elected === undefined) worker.unref();
   };
@@ -751,6 +730,8 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       log = nextLog;
       checkpointed = nextCheckpointed;
       unknown = false;
+      // Past the ceiling, hold writes until the worker judges this WAL; a reader can pin it there.
+      if (log >= CHECKPOINT_BACKPRESSURE_FRAMES) blocked = true;
     } catch {
       unknown = true;
     }
@@ -915,17 +896,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
     // Started after the close finalizer, so the worker stops before the writer closes.
     const checkpoint =
       options.checkpointWorker && isFileDatabase
-        ? yield* startCheckpointWorker(
-            options.filename,
-            db,
-            // Node fires a longer timeout, Infinity included, after 1 ms.
-            Math.min(
-              Duration.toMillis(
-                Duration.fromInputUnsafe(options.checkpointPauseLimit ?? Duration.seconds(1)),
-              ),
-              2 ** 31 - 1,
-            ),
-          )
+        ? yield* startCheckpointWorker(options.filename, db)
         : undefined;
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();

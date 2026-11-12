@@ -12,7 +12,14 @@ import * as TestClock from "effect/testing/TestClock";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { layerExecutorFor, oldSessionId, providerThreadId, providerTurnId, runId, threadId } from "./EffectWorker.testHarness.ts";
+import {
+  layerExecutorFor,
+  oldSessionId,
+  providerThreadId,
+  providerTurnId,
+  runId,
+  threadId,
+} from "./EffectWorker.testHarness.ts";
 
 it.effect(
   "isolates stalled and failing issue comments from lifecycle work and bounds retries",
@@ -193,9 +200,10 @@ it.effect("a stalled title cannot occupy the lifecycle worker lane", () =>
       assert.equal(Option.getOrThrow(checkpoint).status, "succeeded");
       assert.isFalse(yield* worker.runOnceInLane("lifecycle"));
       assert.isTrue(Option.isNone(yield* outbox.nextClaimableAtInLane("lifecycle")));
-      assert.isTrue(Option.isSome(yield* outbox.nextClaimableAtInLane("title")));
+      assert.isTrue(Option.isNone(yield* outbox.nextClaimableAtInLane("title")));
       yield* Deferred.succeed(stopTitle, undefined);
       assert.isTrue(yield* Fiber.join(titleFiber));
+      assert.isTrue(Option.isSome(yield* outbox.nextClaimableAtInLane("title")));
     }).pipe(Effect.provide(workerLayer));
   }),
 );
@@ -297,7 +305,7 @@ it.effect("keeps a suspension's provider interrupt pending past the normal retry
     ]);
     for (const delay of [0, 100, 200]) {
       if (delay > 0) yield* TestClock.adjust(delay);
-      assert.isTrue(yield* worker.runOnce);
+      assert.isTrue(yield* worker.runOnce());
       const effect = Option.getOrThrow(yield* outbox.get(effectId));
       assert.equal(effect.status, failures >= 0 ? "pending" : "succeeded");
     }

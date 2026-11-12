@@ -127,6 +127,9 @@ const layerTestBase = Layer.mergeAll(
   Layer.provide(ProviderTurnStartServiceTestkit.layer),
   Layer.provide(
     Layer.succeed(ProjectEnrichmentService.ProjectEnrichmentService, {
+      refreshRepositoryIdentity: Effect.fn(
+        "ProjectEnrichmentService.ProjectEnrichmentService.refreshRepositoryIdentity",
+      )(() => Effect.succeed(null)),
       readRepositoryIdentity: Effect.fn(
         "ProjectEnrichmentService.ProjectEnrichmentService.readRepositoryIdentity",
       )(() => Effect.succeed(null)),

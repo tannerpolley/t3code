@@ -1,3 +1,4 @@
+import * as ProviderInstallationGate from "../ProviderInstallationGate.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -40,6 +41,7 @@ import * as ProviderInstanceRegistry from "../ProviderInstanceRegistry.ts";
 import * as UsageLimitSources from "../../usage/UsageLimitSources.ts";
 
 const layerTest = Layer.mergeAll(
+  ProviderInstallationGate.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-claude-credit-race-" }),
   ServerSettings.layerTest(),
   ResetCreditCoordinator.layerTest,

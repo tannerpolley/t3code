@@ -1,3 +1,4 @@
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as NetAddress from "effect/net/NetAddress";
@@ -590,6 +591,7 @@ function layerTest(input: {
       ...(input.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: input.idleTimeoutMs }),
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
     }).pipe(
+      Layer.provide(ProviderInstallationGate.layer),
       Layer.provide(
         Layer.mergeAll(
           layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),

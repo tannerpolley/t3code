@@ -1811,7 +1811,7 @@ it.effect.each([
         (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result,
         "Off does no per-tick child recovery",
       );
-      yield* orchestrator.recoverDelegatedTask(childThreadId, original.id);
+      yield* orchestrator.recoverDelegatedTask(childThreadId, { sourceRunId: original.id });
       yield* assertFailed;
       return;
     }

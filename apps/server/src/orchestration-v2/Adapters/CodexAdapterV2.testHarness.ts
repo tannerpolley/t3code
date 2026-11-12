@@ -225,7 +225,7 @@ function codexReplayPreamble(input: {
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
-          summary: "detailed",
+          summary: "auto",
           collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
         },
       },

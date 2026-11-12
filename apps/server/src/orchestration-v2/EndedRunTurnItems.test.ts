@@ -199,13 +199,14 @@ it.effect.each([
         events: [runEvent("run.updated", threadId, 1, ended, now)],
       });
 
-      assert.equal(stored.length, 3);
+      assert.equal(stored.length, ended === "completed" ? 4 : 3);
       // Commands and dynamic tools can outlive the turn as background work.
       assert.deepStrictEqual(yield* itemStates(threadId), {
         "1:dynamic_tool": "running",
         "1:command_execution": "running",
         "1:todo_list": itemStatus,
         "1:reasoning": itemStatus,
+        ...(ended === "completed" ? { "1:system_notice": "completed" } : {}),
       });
     }).pipe(Effect.provide(layer)),
 );

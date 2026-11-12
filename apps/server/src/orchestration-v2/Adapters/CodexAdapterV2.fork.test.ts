@@ -43,7 +43,11 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 
-import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
+import {
+  withConfigReads,
+  makeReplayServerConfig,
+  withCodexReplayChildMetadata,
+} from "./CodexAdapterV2.testkit.ts";
 
 describe("CodexAdapterV2 file change approvals", () => {
   it("keeps the reason, grant root, all file operations, and renamed paths", () => {
@@ -130,7 +134,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         [];
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
         open: (openInput) =>
-          Layer.build(CodexReplay.layerReplay(transcript)).pipe(
+          Layer.build(CodexReplay.layerReplay(withConfigReads(transcript))).pipe(
             Effect.mapError(
               (cause) =>
                 new ProviderAdapter.ProviderAdapterOpenSessionError({

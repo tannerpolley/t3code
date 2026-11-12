@@ -288,8 +288,8 @@ describe("ChatMarkdown streaming", () => {
 describe("ChatMarkdown file citations", () => {
   it.each([
     ':codex-file-citation{purpose="output"}',
-    ':codex-file-citation-extra{path="/tmp/project/outputs/report.xlsx"}',
-    'Example: \\:codex-file-citation{path="/tmp/project/outputs/report.xlsx"}',
+    ':codex-file-citation-extra{path="outputs/report.xlsx"}',
+    'Example: \\:codex-file-citation{path="outputs/report.xlsx"}',
   ])("leaves %s literal", async (text) => {
     setup();
     await using screen = await renderText(text);

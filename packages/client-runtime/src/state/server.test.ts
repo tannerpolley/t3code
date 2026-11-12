@@ -1,5 +1,8 @@
+import { createEnvironmentSessionAtoms } from "./session.ts";
 import {
   EnvironmentId,
+  AuthProvidersManageScope,
+  type AuthSessionState,
   ProviderDriverKind,
   ServerSelfUpdateError,
   ProviderInstanceId,
@@ -1663,6 +1666,90 @@ describe("provider setup commands", () => {
         value: { driver: "antigravity" },
       });
       expect(yield* Queue.takeAll(requested)).toEqual(["antigravity"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("toggles a provider while another provider's update is still running", () =>
+    Effect.gen(function* () {
+      const updateStarted = yield* Deferred.make<void>();
+      const settingsSaved = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.serverUpdateProvider]: () =>
+          Deferred.succeed(updateStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        [WS_METHODS.serverUpdateSettings]: () =>
+          Deferred.succeed(settingsSaved, undefined).pipe(Effect.as(CONFIG.settings)),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const runtime = Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (_environmentId, effect) =>
+              Effect.provideService(
+                effect,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.succeed(
+            Persistence.EnvironmentCacheStore,
+            {} as Persistence.EnvironmentCacheStore["Service"],
+          ),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(CONFIG),
+      });
+      const registry = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          AtomRegistry.make({
+            initialValues: [
+              [
+                createEnvironmentSessionAtoms(runtime).sessionStateAtom(TARGET.environmentId),
+                AsyncResult.success({
+                  authenticated: true,
+                  auth: {
+                    policy: "remote-reachable",
+                    bootstrapMethods: [],
+                    sessionMethods: [],
+                    sessionCookieName: "test",
+                  },
+                  scopes: [AuthProvidersManageScope],
+                  permissions: [AuthProvidersManageScope],
+                } satisfies AuthSessionState),
+              ],
+            ],
+          }),
+        ),
+        (registry) => Effect.sync(() => registry.dispose()),
+      );
+
+      void atoms.updateProvider.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { provider: ProviderDriverKind.make("opencode") },
+      });
+      yield* Deferred.await(updateStarted);
+      const toggled = atoms.mutateProviderInstance.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: {
+          patch: {},
+          providerInstanceMutation: {
+            operation: "upsert",
+            instanceId: ProviderInstanceId.make("codex"),
+            instance: { driver: ProviderDriverKind.make("codex"), enabled: false },
+          },
+        },
+      });
+
+      expect(yield* Effect.promise(() => toggled)).toMatchObject({ _tag: "Success" });
+      yield* Deferred.await(settingsSaved);
     }).pipe(Effect.scoped),
   );
 });

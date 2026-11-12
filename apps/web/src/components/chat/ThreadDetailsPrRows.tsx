@@ -5,7 +5,9 @@ import type {
   RepositoryIdentity,
   ScopedThreadRef,
   ThreadPullRequestLink,
+  VcsStatusResult,
 } from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   pullRequestListLines,
   resolveThreadPullRequestChains,
@@ -16,13 +18,22 @@ import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { findProjectOnChangeRequestHost } from "@t3tools/client-runtime/change-request-links";
+import {
+  findProjectForChangeRequest,
+  findProjectOnChangeRequestHost,
+} from "@t3tools/client-runtime/change-request-links";
 
-import { useProjects } from "~/state/entities";
+import type { ComposerThreadTarget } from "~/composerDraftStore";
+import { useProjects, useQuietThreadShell } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
+import { useOpenPrLink } from "../../lib/openPullRequestLink";
+import {
+  linkedPullRequestSnapshotStatus,
+  prStatusIndicator,
+  useThreadDisplayedPullRequest,
+} from "../ThreadStatusIndicators";
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
 import { threadPullRequestLabel } from "./threadPullRequestLabel";
@@ -34,6 +45,7 @@ function ThreadDetailsPrLinkRow({
   onOpen,
   onActed,
   onStopWatching,
+  composerTarget,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
@@ -41,6 +53,7 @@ function ThreadDetailsPrLinkRow({
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
+  composerTarget?: ComposerThreadTarget | undefined;
 }) {
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
@@ -67,6 +80,7 @@ function ThreadDetailsPrLinkRow({
       openAriaLabel={link.url}
       onOpen={onOpen}
       onStopWatching={onStopWatching}
+      composerTarget={composerTarget}
       {...(onActed ? { onActed } : {})}
     />
   );
@@ -123,6 +137,7 @@ export function ThreadDetailsPrRows({
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}
               onStopWatching={stopWatching(link)}
+              composerTarget={row.composerTarget}
             />
           ))}
         </div>
@@ -144,5 +159,70 @@ export function ThreadDetailsPrRows({
         {expanded ? "Show less" : `Show ${rest.length} more`}
       </ThreadDetailsControl>
     </>
+  );
+}
+
+/** Linked pull requests need no repository; only the branch's own pull request comes from git. */
+export function ThreadDetailsThreadPrRows({
+  threadRef,
+  project,
+  branchPr = null,
+  branchSourceControlProvider,
+  onActed,
+  composerTarget,
+}: {
+  threadRef: ScopedThreadRef;
+  project: EnvironmentProject | null;
+  branchPr?: VcsStatusResult["pr"];
+  branchSourceControlProvider?: VcsStatusResult["sourceControlProvider"];
+  onActed?: () => void;
+  composerTarget?: ComposerThreadTarget | undefined;
+}) {
+  const thread = useQuietThreadShell(threadRef);
+  const displayed = useThreadDisplayedPullRequest(
+    threadRef.environmentId,
+    thread,
+    branchPr,
+    branchSourceControlProvider,
+  );
+  const openPrLink = useOpenPrLink(threadRef);
+  const { currentLink, pr, number, url } = displayed;
+  const projects = useProjects();
+  const parsed =
+    currentLink === null
+      ? undefined
+      : sourceControlClients.parseChangeRequestUrl(currentLink.url)?.link;
+  // Merge settings belong to the project holding the linked repository, the thread's own first.
+  const rowProject =
+    parsed === undefined || (project !== null && findProjectForChangeRequest([project], parsed))
+      ? project
+      : (findProjectForChangeRequest(
+          projects.filter((candidate) => candidate.environmentId === threadRef.environmentId),
+          parsed,
+        ) ?? project);
+  if (number === undefined || url === undefined) return null;
+  const referenceLabel = threadPullRequestLabel(
+    currentLink ?? { number },
+    project?.repositoryIdentity,
+  );
+  return (
+    <ThreadDetailsPrRows
+      threadRef={threadRef}
+      links={thread?.pullRequests ?? []}
+      currentLink={currentLink}
+      onOpenLink={openPrLink}
+      environmentId={threadRef.environmentId}
+      pr={pr}
+      number={number}
+      reference={currentLink}
+      status={displayed.status}
+      project={rowProject}
+      referenceLabel={referenceLabel}
+      label={`${referenceLabel}${pr?.title.trim() ? `: ${pr.title}` : ""}`}
+      openAriaLabel={url}
+      onOpen={(event) => openPrLink(event, url)}
+      composerTarget={composerTarget}
+      {...(onActed ? { onActed } : {})}
+    />
   );
 }

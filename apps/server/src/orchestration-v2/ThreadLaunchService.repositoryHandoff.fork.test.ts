@@ -535,10 +535,9 @@ describe("fresh-thread repository handoff", () => {
         const sink = yield* EventSink.EventSinkV2;
         const beforeCompletion = yield* sink.latestSequence();
         yield* finish(childId, `shared-start:${path}:done`);
-        yield* (yield* Orchestrator.OrchestratorV2).recoverDelegatedTask(
-          childId,
-          child.runs[0]!.id,
-        );
+        yield* (yield* Orchestrator.OrchestratorV2).recoverDelegatedTask(childId, {
+          sourceRunId: child.runs[0]!.id,
+        });
         yield* awaitFollowup(rootId, beforeCompletion);
         const notifiedRoot = yield* threads.getThreadRecords(rootId, [
           "messages",
@@ -941,7 +940,7 @@ describe("fresh-thread repository handoff", () => {
         );
         const childRun = (yield* threads.getThreadRecords(childId, ["runs"])).runs[0]!;
         yield* finish(childId, "runless-recovery:finished");
-        yield* orchestrator.recoverDelegatedTask(childId, childRun.id);
+        yield* orchestrator.recoverDelegatedTask(childId, { sourceRunId: childRun.id });
         const committed = yield* threads.getThreadRecords(rootId, ["runs", "messages"]);
         assert.lengthOf(committed.runs, 0);
         assert.isNotNull(committed.thread.delegatedCompletion!.delivery);
@@ -1012,10 +1011,9 @@ describe("fresh-thread repository handoff", () => {
           );
         const beforeFirst = yield* sink.latestSequence();
         yield* finish(first, "stop-mailbox:first-finished");
-        yield* orchestrator.recoverDelegatedTask(
-          first,
-          (yield* threads.getThreadRecords(first, ["runs"])).runs[0]!.id,
-        );
+        yield* orchestrator.recoverDelegatedTask(first, {
+          sourceRunId: (yield* threads.getThreadRecords(first, ["runs"])).runs[0]!.id,
+        });
         yield* awaitFollowup(rootId, beforeFirst);
         const wake = (yield* threads.getThreadRecords(rootId, ["runs"])).runs[0]!;
         if (stop === "root-stop")
@@ -1041,10 +1039,9 @@ describe("fresh-thread repository handoff", () => {
         );
         const beforeLater = yield* sink.latestSequence();
         yield* finish(later, "stop-mailbox:later-finished");
-        yield* orchestrator.recoverDelegatedTask(
-          later,
-          (yield* threads.getThreadRecords(later, ["runs"])).runs[0]!.id,
-        );
+        yield* orchestrator.recoverDelegatedTask(later, {
+          sourceRunId: (yield* threads.getThreadRecords(later, ["runs"])).runs[0]!.id,
+        });
         yield* awaitFollowup(rootId, beforeLater);
         const notified = yield* threads.getThreadRecords(rootId, ["messages", "subagents"]);
         assert.lengthOf(notified.messages, 2);

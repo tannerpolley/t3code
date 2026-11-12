@@ -219,6 +219,7 @@ function setup() {
       },
     },
     navigate: state.navigate,
+    subscribe: () => () => {},
   } as unknown as AnyRouter;
   let started = false;
   const renderCoordinator = async () => {

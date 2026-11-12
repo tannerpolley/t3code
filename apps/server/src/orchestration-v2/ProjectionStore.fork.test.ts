@@ -1152,7 +1152,7 @@ const assertNativeSubagentChildShell = Effect.fn("assertNativeSubagentChildShell
     assert.equal(epochMillis(shell?.activityRunStartedAt), DateTime.toEpochMillis(startedAt));
     assert.isNull(shell?.latestRunId);
   }
-  assert.equal((yield* store.getSettlementCandidates(childId))[0]?.activityRunStatus, "running");
+  assert.isEmpty(yield* store.getSettlementCandidates(childId));
   assert.equal((yield* store.getThreadShell(parentId))?.status, "idle");
 
   yield* updateSubagent("completed");

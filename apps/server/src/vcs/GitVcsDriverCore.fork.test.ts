@@ -206,9 +206,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               { worktreesDirectory: PROJECT_LOCAL_WORKTREES },
             );
           const first = yield* create(subfolder, "feature/finance");
-          assert.equal(first.worktree.path, path.join(cwd, ".worktrees", "feature-finance"));
+          assert.equal(path.dirname(first.worktree.path), path.join(cwd, ".worktrees"));
+          assert.match(path.basename(first.worktree.path), /^feature-finance-/);
           const second = yield* create(first.worktree.path, "feature/child");
-          assert.equal(second.worktree.path, path.join(cwd, ".worktrees", "feature-child"));
+          assert.equal(path.dirname(second.worktree.path), path.join(cwd, ".worktrees"));
+          assert.match(path.basename(second.worktree.path), /^feature-child-/);
           assert.equal(
             yield* fs.readFileString(exclude),
             "# preserve existing rules\nlocal.txt\n.worktrees/\n",
@@ -240,12 +242,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           results.map((result) => result.worktree.refName).toSorted();
 
         // A taken branch, a stray folder, and a ref namespace each move to the next suffix.
-        yield* git(cwd, ["branch", "issue-7-fix"]);
-        yield* fs.makeDirectory(path.join(local, "issue-7-fix-2"), { recursive: true });
-        yield* fs.writeFileString(path.join(local, "issue-7-fix-2", "keep"), "");
+        const taken = yield* create("issue-7-fix");
+        const directory = path.basename(taken.worktree.path);
+        yield* fs.makeDirectory(path.join(local, `${directory}-2`), { recursive: true });
+        yield* fs.writeFileString(path.join(local, `${directory}-2`, "keep"), "");
         const created = yield* create("issue-7-fix");
         assert.equal(created.worktree.refName, "issue-7-fix-3");
-        assert.equal(created.worktree.path, path.join(local, "issue-7-fix-3"));
+        assert.equal(created.worktree.path, path.join(local, `${directory}-3`));
         yield* git(cwd, ["branch", "parser/old"]);
         assert.equal((yield* create("parser")).worktree.refName, "parser-2");
 

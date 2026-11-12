@@ -241,6 +241,7 @@ function makeHarness(options: HarnessOptions = {}) {
       ),
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
+      currentBranch: () => Effect.succeed("main"),
       createWorktree,
       resolveDefaultBranchRef: () => Effect.succeed("main"),
       renameBranch,

@@ -21,6 +21,12 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { usageSprintRefusal } from "../issues/usageSprint.ts";
 
+export const advertisedModel = (provider: ServerProvider, model: string) =>
+  provider.models.find((candidate) => candidate.slug === model) ??
+  provider.models.find((candidate) =>
+    candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
+  );
+
 export function providerConstraints(
   provider: ServerProvider | undefined,
   supportsOrchestrationV2: boolean,
@@ -129,7 +135,7 @@ export function checkDelegateTarget(input: {
   if (
     requestedModel !== undefined &&
     provider.models.length > 0 &&
-    !provider.models.some((candidate) => candidate.slug === requestedModel)
+    advertisedModel(provider, requestedModel) === undefined
   ) {
     return fail(
       "model_unavailable",
@@ -137,8 +143,7 @@ export function checkDelegateTarget(input: {
     );
   }
   if (input.options !== undefined) {
-    const descriptors = provider.models.find((candidate) => candidate.slug === model)?.capabilities
-      ?.optionDescriptors;
+    const descriptors = advertisedModel(provider, model)?.capabilities?.optionDescriptors;
     const invalid = invalidOptionSelections(
       withLegacyUltracodeEffort(descriptors, input.options) ?? [],
       descriptors,

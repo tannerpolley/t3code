@@ -50,6 +50,9 @@ function layerExecutorFor(input: {
     Layer.succeed(
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
+        applyModelSelection: Effect.fn(
+          "ProviderTurnControlService.ProviderTurnControlServiceV2.applyModelSelection",
+        )(() => Effect.void),
         interrupt: input.interrupt ?? (() => Effect.void),
         steer: Effect.fn("ProviderTurnControlService.ProviderTurnControlServiceV2.steer")(
           () => Effect.void,

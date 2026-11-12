@@ -1,3 +1,4 @@
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
@@ -101,6 +102,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
+  Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
   Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
   Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -586,7 +588,17 @@ describe("orchestrator MCP toolkit", () => {
             ProviderContinuationRequests.ProviderContinuationRequests,
             {
               offer: (request) =>
-                Ref.update(continuationOffers, (existing) => [...existing, request]).pipe(
+                Ref.update(continuationOffers, (existing) =>
+                  request.delegatedCompletion !== undefined &&
+                  existing.some(
+                    (prior) =>
+                      prior.threadId === request.threadId &&
+                      prior.delegatedCompletion?.messageId ===
+                        request.delegatedCompletion?.messageId,
+                  )
+                    ? existing
+                    : [...existing, request],
+                ).pipe(
                   Effect.andThen(Queue.offer(continuationOfferSignals, undefined)),
                   Effect.andThen(
                     request.threadId === approvalParentId
@@ -711,6 +723,7 @@ describe("orchestrator MCP toolkit", () => {
             layerOrchestratorToolkit,
             McpHttpServer.layerThreadToolkit,
           ).pipe(
+            Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
             Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
             Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
             Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -727,7 +740,7 @@ describe("orchestrator MCP toolkit", () => {
               Layer.mock(ProjectService.ProjectService)({
                 getById: (id) =>
                   Effect.succeed(
-                    id === projectId
+                    id === projectId || id === "project:mcp-foreign"
                       ? Option.some({ id, defaultModelSelection: null } as never)
                       : Option.none(),
                   ),
@@ -1917,7 +1930,7 @@ describe("orchestrator MCP toolkit", () => {
               threadId: parentThreadId,
               cursor: 90,
             }).pipe(Effect.flip);
-            expect(unknownPagingParamError.message).toContain("Expected no excess property");
+            expect(unknownPagingParamError.message).toContain('Unknown argument "cursor"');
             const threadUpdateTool = server.tools.find(
               ({ tool }) => tool.name === "t3_thread_update",
             );

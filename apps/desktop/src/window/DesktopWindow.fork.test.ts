@@ -1,3 +1,4 @@
+import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 
@@ -323,6 +324,7 @@ function layerTest(input: {
               input.copiedTexts?.push(text);
             }),
         } satisfies ElectronShell.ElectronShell["Service"]),
+        Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
         layerElectronTheme,
         layerElectronWindow,
         Layer.mock(PreviewPasskeys.PreviewPasskeys)({
@@ -433,6 +435,8 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
             openSystemSettings: () => Effect.succeed(true),
             copyText: () => Effect.void,
           } satisfies ElectronShell.ElectronShell["Service"]),
+          Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
+          Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
           layerElectronTheme,
           Layer.succeed(ElectronWindow.ElectronWindow, electronWindowShape),
           Layer.mock(PreviewPasskeys.PreviewPasskeys)({

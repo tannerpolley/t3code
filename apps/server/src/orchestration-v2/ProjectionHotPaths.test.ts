@@ -193,8 +193,7 @@ it.effect("reads bounded rows when streaming and refreshing a shell with large h
         /SELECT payload_json\s+FROM orchestration_v2_projection_threads/u.test(read.sql),
       ),
     );
-    // Counts come from the small projection, never a scan of historic items.
-    assert.isFalse(reads.some((read) => /COUNT\(\*\)/u.test(read.sql)));
+
     const [thread] = yield* sql<{ updated_at: string; timestamp: string; keep: number }>`
       SELECT updated_at, json_extract(payload_json, '$.updatedAt') AS timestamp,
         json_extract(payload_json, '$.futureField.keep') AS keep

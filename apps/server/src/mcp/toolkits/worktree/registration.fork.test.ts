@@ -1,3 +1,4 @@
+import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -116,9 +117,11 @@ it.effect("production mcp layer lists worktree tools over http", () =>
     Effect.gen(function* () {
       const layerRegistry = McpSessionRegistry.layer;
       const layerRoutes = McpHttpServer.layer.pipe(
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
         Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
