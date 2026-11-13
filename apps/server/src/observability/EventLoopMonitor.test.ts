@@ -15,6 +15,7 @@ const stalled: EventLoopMonitor.EventLoopReadings = {
     majorPageFault: 8_412,
     minorPageFault: 20_031,
     involuntaryContextSwitches: 57,
+    fsRead: 0,
   },
   rssBytes: 1536 * 1024 * 1024,
   heapUsedBytes: 512 * 1024 * 1024,
