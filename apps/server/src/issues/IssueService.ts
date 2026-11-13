@@ -183,8 +183,9 @@ export class IssueService extends Context.Service<
   }
 >()("t3/issues/IssueService") {}
 /**
- * Leaves out each GitHub repository whose owner/name a Forgejo host also lists: forgejo-github-sync
- * keeps those as one-way copies. The Forgejo repository names its hidden copy so old links reach it.
+ * Leaves out each GitHub repository whose owner/name a Forgejo host lists unarchived: forgejo-github-sync
+ * keeps those as one-way copies. An archived Forgejo repository leaves the GitHub one live.
+ * The Forgejo repository names its hidden copy so old links reach it.
  */
 function hideGitHubCopies(
   github: ReadonlyArray<IssueRepositorySummary>,
@@ -193,7 +194,9 @@ function hideGitHubCopies(
 ): IssueRepositorySummary[] {
   const name = (repository: IssueRepositorySummary) => repository.repository.toLowerCase();
   const forgejoNames = new Set(
-    others.filter((repository) => forgejoHosts.has(repository.host)).map(name),
+    others
+      .filter((repository) => forgejoHosts.has(repository.host) && !repository.isArchived)
+      .map(name),
   );
   const copies = new Map(
     github
