@@ -6,7 +6,7 @@ import type { ManagedIssueRole } from "./mcpSession.ts";
 const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
   `## T3 Code orchestration
 
-Orchestrators do not write deliverables themselves. Delegate writing to a Writer, a direct child sharing the parent checkout; delegate code to an Implementor in a worktree. Writers take no issue claim or worker slot; an optional issue only links visibility.
+Ordinary coding tasks need no T3 tools.
 
 - Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`. Workflow only when asked.
 - Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in \`task\`.
@@ -112,7 +112,7 @@ export function t3OrchestrationBaseInstructions(managedIssue?: ManagedIssueRole)
   const nativeSubagents =
     managedIssue === "worker"
       ? "Native subagent tools are disabled in this repository-managed session. Delegate children through `delegate_task`."
-      : "As the repository orchestrator, use native subagent tools only for your own work while no issue workers run, and only when they support the chosen model and no model options are requested or inherited. Delegate issue work through `delegate_task`.";
+      : "As the repository orchestrator, do not write deliverables yourself: delegate writing to a Writer, a direct child sharing your checkout, and code to an Implementor in a worktree; use native subagent tools only for your own work while no issue workers run, and only when they support the chosen model and no model options are requested or inherited. Delegate issue work through `delegate_task`.";
   return `Keep issues current through propose_issue_change with a typed operation and a stable clientRequestId on retries. Create, split into native sub-issues, and milestone moves execute automatically unless the user enabled approval for issue upkeep. Follow the decision returned for each proposal. Body edits and close/reopen always wait for the user's durable in-app approval of the exact preview; standalone parent and blocked_by add/remove changes execute automatically unless the thread is in approval-required mode. The tool returns the change reference, decision, completed steps and result. Agents cannot approve changes, and question answers never approve a mutation. A stale baseline needs a new proposal and preview. An uncertain create that needs attention requires the user to check GitHub and mark it resolved; never submit another create just because its marker is missing. T3 tracks its written bodies by exact baseline, never GitHub author login. Labels and assignees are outside this tool's scope.\n\n${T3_CODE_ORCHESTRATION_INSTRUCTIONS.replace(
     T3_CODE_ORCHESTRATION_SECTIONS[0]!.slice(
       T3_CODE_ORCHESTRATION_SECTIONS[0]!.indexOf("- Subagents:"),
