@@ -820,6 +820,7 @@ function mayStartSubagentFollowup(
     command.createdBy === "user" ||
     command.creationSource === "mcp" ||
     command.usageLimitContinuationOfRunId !== undefined ||
+    command.delegatedCompletion !== undefined ||
     (command.creationSource === "server" && command.senderThreadId !== undefined)
   );
 }
