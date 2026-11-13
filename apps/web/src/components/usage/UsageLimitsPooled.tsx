@@ -42,6 +42,7 @@ import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
+  CreditBalance,
   PaceIcon,
   ResetCreditDialog,
   ResetCreditExpiries,
@@ -702,6 +703,14 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           />
         );
       })}
+      {pool.accounts
+        .filter((account) => account.limits.credits?.hasCredits)
+        .map((account) => (
+          <div key={`credits:${account.key}`} className="flex items-center gap-2">
+            {pool.accounts.length > 1 ? <AccountName account={account} /> : null}
+            <CreditBalance credits={account.limits.credits} />
+          </div>
+        ))}
       {pool.accounts.map((account) =>
         account.redeem ? (
           <RedeemableResetCreditCard

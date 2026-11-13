@@ -66,6 +66,33 @@ describe("applyUsageLimitsUpdate", () => {
     ).toEqual({ checkedAt, windows: [weekly], unavailable: { reason: "probeFailed" } });
   });
 
+  it("applies balance-only updates, preserves credits on window ticks, and clears an explicit null", () => {
+    const credits = { hasCredits: true, unlimited: false, balance: "123.45" };
+    const next = applyUsageLimitsUpdate({
+      previous: published,
+      checkedAt,
+      update: { windows: [], credits },
+    });
+    expect(next).toEqual({ ...published, credits });
+    expect(
+      applyUsageLimitsUpdate({
+        previous: next,
+        checkedAt,
+        update: { windows: [], credits: { ...credits } },
+      }),
+    ).toBe(next);
+    const tick = applyUsageLimitsUpdate({
+      previous: next,
+      checkedAt,
+      update: { windows: [{ ...session, usedPercent: 55 }] },
+    });
+    expect(tick?.credits).toEqual(credits);
+    expect(
+      applyUsageLimitsUpdate({ previous: tick, checkedAt, update: { windows: [], credits: null } })
+        ?.credits,
+    ).toBeNull();
+  });
+
   it("preserves reset credits when a streamed window update changes usage", () => {
     const resetCredits = { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00.000Z" };
     const next = applyUsageLimitsUpdate({
@@ -90,12 +117,14 @@ describe("resolveUsageLimitsAfterProbe", () => {
         { ...session, usedPercent: 95 },
         { ...weekly, usedPercent: 70 },
       ],
+      credits: { hasCredits: true, unlimited: false, balance: "100" },
       resetCredits: { availableCount: 2 },
       externalUsage: { label: "Old dashboard", url: "https://example.com/old" },
     };
     const probed = {
       ...published,
       windows: [{ ...session, usedPercent: 0 }],
+      credits: { hasCredits: true, unlimited: false, balance: "200" },
       resetCredits: { availableCount: 1 },
       externalUsage: { label: "Usage dashboard", url: "https://example.com/usage" },
     };
@@ -104,6 +133,7 @@ describe("resolveUsageLimitsAfterProbe", () => {
       ...probed,
       checkedAt: live.checkedAt,
       windows: live.windows,
+      credits: live.credits,
     });
 
     const sameTime = { ...probed, checkedAt: live.checkedAt };

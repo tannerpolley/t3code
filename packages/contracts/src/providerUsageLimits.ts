@@ -43,6 +43,13 @@ export const ServerProviderResetCredits = Schema.Struct({
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
+export const ServerProviderCredits = Schema.Struct({
+  hasCredits: Schema.Boolean,
+  unlimited: Schema.Boolean,
+  balance: Schema.optional(Schema.NullOr(Schema.String)),
+});
+export type ServerProviderCredits = typeof ServerProviderCredits.Type;
+
 /** Clear bars for unavailable accounts; retain last good bars after a failed probe. */
 export const ServerProviderUsageLimits = Schema.Struct({
   resetCreditAutoUse: Schema.optional(ResetCreditAutoUseResult),
@@ -50,6 +57,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  credits: Schema.optional(Schema.NullOr(ServerProviderCredits)),
   externalUsage: Schema.optional(
     Schema.Struct({
       label: TrimmedNonEmptyString,
@@ -67,6 +75,7 @@ export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 
 /** Partial updates merge windows by id; omitted windows remain unchanged. */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
+  credits: Schema.optional(Schema.NullOr(ServerProviderCredits)),
   windows: Schema.Array(ServerProviderUsageWindow),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
