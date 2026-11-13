@@ -87,17 +87,22 @@ function IssueRows({
     "section",
   );
   const open = !collapsed;
+  const state = issueStateFilter(preferences);
   const result = useAtomValue(
     issueEnvironment.liveList({
       environmentId,
-      input: { host, repository, state: "all", roadmap: true },
+      input: {
+        host,
+        repository,
+        state: state === "all" || state === "closed" ? "all" : "open",
+        roadmap: true,
+      },
     }),
   );
   const cachedList = Option.getOrNull(AsyncResult.value(result));
   const liveIssueWork = useLiveIssueWork();
   const list = cachedList === null ? null : liveIssueWork(cachedList, environmentId);
   const [showAll, setShowAll] = useState(false);
-  const state = issueStateFilter(preferences);
   const shown =
     list === null || state === null
       ? []
@@ -115,9 +120,7 @@ function IssueRows({
     useRightPanelStore
       .getState()
       .openIssueList(scopeThreadRef(environmentId, threadId), { host, repository });
-  const showAllLabel = showAll
-    ? "Show fewer issues"
-    : `Show all issues (${hidden}${more} more)`;
+  const showAllLabel = showAll ? "Show fewer issues" : `Show all issues (${hidden}${more} more)`;
 
   return (
     <ThreadDetailsSection

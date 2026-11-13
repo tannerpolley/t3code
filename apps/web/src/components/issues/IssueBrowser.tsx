@@ -268,14 +268,15 @@ export function IssueBrowser({
   const baseListTargets = (() =>
     shownRepositories
       .filter((target) => !repositoryKnownEmpty(target, "all"))
-      // The roadmap reads every issue with blockers and live work.
+      // The roadmap reads the shown state with blockers and live work; an all-state read
+      // can fill its first pages with closed issues and show no open ones.
       .map((target) => ({
         environmentId: target.environmentId,
         live: explicitScope,
         input: {
           host: target.host,
           repository: target.repository,
-          state: "all" as const,
+          state: stateFilter === "open" ? ("open" as const) : ("all" as const),
           roadmap: true,
         },
       })))();
