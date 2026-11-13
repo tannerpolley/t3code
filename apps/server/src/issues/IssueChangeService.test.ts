@@ -447,6 +447,14 @@ it.effect("an unmanaged agent cannot propose and a retry cannot replace a propos
   inDatabase((h) =>
     Effect.gen(function* () {
       const service = yield* IssueChangeService.IssueChangeService;
+      const invalidProposal = yield* Effect.flip(
+        service.propose(threadId, {
+          ...repository,
+          clientRequestId: "missing-body",
+          operation: { type: "body", number: 10 },
+        } as Parameters<typeof service.propose>[1]),
+      );
+      assert.include(invalidProposal.message, "body");
       assert.isTrue(
         Result.isFailure(
           yield* Effect.result(

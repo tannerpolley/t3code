@@ -1073,6 +1073,13 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
 );
 
 it("keeps fork tools in their toolkits with presentation labels", () => {
+  const backgroundInput = OrchestratorToolkit.tools.t3_background_wait.parametersSchema;
+  expect(Schema.decodeUnknownSync(backgroundInput)({ taskId: "task-1" })).toEqual({
+    taskId: "task-1",
+  });
+  expect(Schema.decodeUnknownSync(backgroundInput)({ taskIds: ["task-1"] })).toEqual({
+    taskIds: ["task-1"],
+  });
   const tools = {
     ...OrchestratorToolkit.tools,
     ...ThreadToolkit.tools,

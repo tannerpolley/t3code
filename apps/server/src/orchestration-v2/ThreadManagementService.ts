@@ -292,7 +292,9 @@ export class ThreadManagementNoSteerableRunError extends Schema.TaggedError<Thre
   },
 ) {
   override get message(): string {
-    return `Thread ${this.threadId} has no running turn that can be ${this.mode === "steer" ? "steered" : "restarted"}.`;
+    return this.mode === "steer"
+      ? `Thread ${this.threadId} has no running turn that can be steered. Use auto or queue instead.`
+      : `Thread ${this.threadId} has no running turn that can be restarted.`;
   }
 }
 
