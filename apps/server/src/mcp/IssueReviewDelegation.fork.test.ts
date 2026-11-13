@@ -366,6 +366,9 @@ it.effect(
       yield* work.reconcile(root);
       assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 1);
       yield* worker.drain();
+      const retained = (yield* threads.getThreadProjection(childId)).thread;
+      assert.isNull(retained.archivedAt);
+      assert.isNull(retained.deletedAt);
       // Suspension stops the worker; close-out explicitly finishes that retained attempt.
       const config = (yield* store.configuration(root))!;
       const stale = yield* work
@@ -384,6 +387,10 @@ it.effect(
       const closed = yield* mcp.closeOutIssue(scopeFor(root), accepted);
       assert.lengthOf(closed.orchestration!.suspendedIssues, 0);
       assert.isTrue(yield* store.resultAvailable(childId));
+      const afterCloseOut = (yield* threads.getThreadProjection(childId)).thread;
+      assert.isNull(afterCloseOut.archivedAt);
+      assert.isNull(afterCloseOut.deletedAt);
+      assert.equal(afterCloseOut.worktreePath, retained.worktreePath);
       const parent = yield* threads.getThreadRecords(root, ["subagents"]);
       assert.equal(
         parent.subagents.find((task) => task.childThreadId === childId)!.status,

@@ -1,3 +1,5 @@
+import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
+import { MessageId } from "@t3tools/contracts";
 import type {
   NodeId,
   OrchestrationV2AppThread,
@@ -57,6 +59,15 @@ export interface ForkCommandHooks {
 }
 
 interface IssueWorkCommandHooks extends ForkCommandHooks {
+  readonly recordSubagentFollowup: (
+    command: Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) => Effect.Effect<void, OrchestratorV2Error>;
+  readonly dispatchMessage: (
+    command: Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) => Effect.Effect<void, OrchestratorV2Error>;
   readonly providerAdapters: ProviderAdapterRegistryV2["Service"];
   readonly dispatchDelegatedTaskRequest: (
     request: DelegatedTaskRequest,
@@ -77,6 +88,8 @@ export function makeIssueWorkCommands({
   OrchestratorDispatchError,
   providerAdapters,
   dispatchDelegatedTaskRequest,
+  dispatchMessage,
+  recordSubagentFollowup,
 }: IssueWorkCommandHooks) {
   const issueSnapshot = (issue: ThreadLinkedIssue) =>
     Effect.map(IssueReadSnapshots, (reads) =>
@@ -238,11 +251,13 @@ export function makeIssueWorkCommands({
       });
     const owner = yield* store.issueOwner(command.issue).pipe(mapDispatchError(command));
     let issueThreadId: ThreadId | null = null;
+    let retainedOwner: ThreadId | null = null;
     if (owner !== null) {
       const current = yield* projectionStore
         .getThreadRecords(owner, ["runs", "messages", "subagents"])
         .pipe(mapDispatchError(command));
       const shell = yield* projectionStore.getThreadShell(owner).pipe(mapDispatchError(command));
+      if (keepIssueWorktree(current.thread)) retainedOwner = owner;
       if (
         delegatedTaskProgress({
           ...current,
@@ -251,7 +266,10 @@ export function makeIssueWorkCommands({
       )
         issueThreadId = owner;
     }
-    const attemptKey = issueThreadId === null ? (owner ?? "first") : `active:${issueThreadId}`;
+    const attemptKey =
+      issueThreadId === null && retainedOwner === null
+        ? (owner ?? "first")
+        : `active:${issueThreadId ?? retainedOwner}`;
     const now = yield* DateTime.now;
     yield* emit(
       events,
@@ -305,7 +323,8 @@ export function makeIssueWorkCommands({
       effects,
       command,
     );
-    const childThreadId = idAllocator.derive.delegatedTaskThread({ commandId: command.commandId });
+    const childThreadId =
+      retainedOwner ?? idAllocator.derive.delegatedTaskThread({ commandId: command.commandId });
     yield* Ref.update(events, (pending) =>
       pending.map((event) =>
         event.type === "issue.work.requested" && event.payload.requestId === command.commandId
@@ -321,6 +340,7 @@ export function makeIssueWorkCommands({
       "runs" | "nodes" | "subagents" | "providerThreads" | "providerTurns" | "attempts"
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     command: OrchestrationV2ServerCommand,
   ) {
     if (isUnmanagedIssueRole(request.role)) return false;
@@ -401,12 +421,12 @@ export function makeIssueWorkCommands({
         const shell = yield* projectionStore
           .getThreadShell(currentOwner)
           .pipe(mapDispatchError(command));
-        if (
+        const finished =
           delegatedTaskProgress({
             ...current,
             pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
-          }).state !== "result_available"
-        ) {
+          }).state === "result_available";
+        if (!finished || keepIssueWorktree(current.thread)) {
           const ownerThread = shell;
           const parent = ownerThread?.lineage.parentThreadId;
           const existing =
@@ -424,6 +444,24 @@ export function makeIssueWorkCommands({
               cause:
                 "This issue already has a current worker under another parent. Read its issue status and use that parent thread to manage it.",
             });
+          if (finished) {
+            const message = {
+              type: "message.dispatch",
+              commandId: request.commandId,
+              threadId: currentOwner,
+              senderThreadId: request.parentThreadId,
+              messageId: MessageId.make(`issue-resume:${request.commandId}`),
+              text: request.task,
+              attachments: [],
+              modelSelection: request.modelSelection,
+              dispatchMode: { type: "start_immediately" },
+              createdBy: request.createdBy,
+              creationSource: request.creationSource,
+            } satisfies Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }>;
+            yield* dispatchMessage(message, events, effects);
+            yield* recordSubagentFollowup(message, events);
+            return true;
+          }
           yield* emit(
             events,
             command,

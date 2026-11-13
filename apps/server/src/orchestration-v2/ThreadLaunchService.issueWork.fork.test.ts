@@ -57,7 +57,7 @@ import {
 } from "./ThreadLaunchService.testHarness.ts";
 
 describe("managed issue work", () => {
-  const exercise = (scenario: "baseline" | "direct-resume" | "deletion") => {
+  const exercise = (scenario: "baseline" | "direct-resume" | "delegate-resume" | "deletion") => {
     const provider: ServerProvider = {
       instanceId: modelSelection.instanceId,
       driver: ProviderDriverKind.make("codex"),
@@ -95,7 +95,7 @@ describe("managed issue work", () => {
         blockersComplete: true,
       });
     const harness = makeHarness({
-      runContinuationWorker: scenario === "direct-resume",
+      runContinuationWorker: scenario === "direct-resume" || scenario === "delegate-resume",
       issueServiceLayer: Layer.mock(IssueService.IssueService)({ workRead }),
       localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
       hasCommit: () => Effect.succeed(true),
@@ -378,6 +378,7 @@ describe("managed issue work", () => {
       assert.include(setupStage?.detail ?? "", "No setup action");
       const child = yield* threads.getThreadProjection(taskEvent.event.payload.childThreadId);
       assert.deepEqual(child.thread.linkedIssue, issue);
+
       assert.equal(child.thread.role, "implementor");
       assert.equal(
         effectiveThreadRole((yield* threads.getThreadProjection(root.thread.id)).thread),
@@ -612,7 +613,13 @@ describe("managed issue work", () => {
         1,
       );
       assert.equal((yield* issues.workStatus(input)).status, "done");
-      if (scenario === "direct-resume") {
+      yield* threads.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("issue-worker:settle"),
+        threadId: child.thread.id,
+      });
+      assert.isNull((yield* threads.getThreadProjection(child.thread.id)).thread.settledOverride);
+      if (scenario === "direct-resume" || scenario === "delegate-resume") {
         const originalTaskId = taskEvent.event.payload.id;
         yield* sink.stream({ afterSequence: 0, eventType: "message.updated" }).pipe(
           Stream.filter(
@@ -626,19 +633,34 @@ describe("managed issue work", () => {
         );
         const before = yield* threads.getThreadProjection(root.thread.id);
         const originalTask = before.subagents.find((task) => task.id === originalTaskId)!;
-        yield* threads.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("issue-worker:direct-followup"),
-          threadId: child.thread.id,
-          messageId: MessageId.make("issue-worker:direct-followup"),
-          text: "Finish the local follow-up",
-          attachments: [],
-          modelSelection,
-          dispatchMode: { type: "start_immediately" },
-          createdBy: "user",
-          creationSource: "web",
-        });
+        if (scenario === "delegate-resume") {
+          const followup = yield* threads.dispatch({
+            ...command,
+            commandId: CommandId.make("issue-worker:delegate-followup"),
+            task: "Finish the local follow-up",
+          });
+          assert.isFalse(
+            followup.storedEvents.some((stored) => stored.event.type === "thread.created"),
+          );
+        } else {
+          yield* threads.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("issue-worker:direct-followup"),
+            threadId: child.thread.id,
+            messageId: MessageId.make("issue-worker:direct-followup"),
+            text: "Finish the local follow-up",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
         const resumed = (yield* threads.getThreadProjection(child.thread.id)).runs.at(-1)!;
+        assert.equal(
+          (yield* threads.getThreadProjection(child.thread.id)).thread.worktreePath,
+          child.thread.worktreePath,
+        );
         assert.isDefined(resumed.delegatedTaskId);
         assert.notEqual(resumed.delegatedTaskId, originalTask.id);
         const finishedAt = yield* DateTime.now;
@@ -757,7 +779,7 @@ describe("managed issue work", () => {
       });
       assert.equal(successor.rootThreadId, root.thread.id);
       assert.equal(yield* issueStore.issueOwner(issue), successor.issueThreadId);
-      assert.notEqual(successor.issueThreadId, child.thread.id);
+      assert.equal(successor.issueThreadId, child.thread.id);
       assert.equal((yield* issues.workStatus(input)).status, "queued_preparing");
       assert.equal((yield* issues.workStatus(input)).threadId, successor.issueThreadId);
       yield* issues.start({
@@ -791,26 +813,22 @@ describe("managed issue work", () => {
         child.thread.lineage,
       );
       assert.equal((yield* threads.getThreadProjection(root.thread.id)).subagents.length, 2);
-      // A follow-up to the former worker could never be admitted; it names the successor instead.
       const runsBefore = (yield* threads.getThreadRecords(child.thread.id, ["runs"])).runs.length;
-      const refused = yield* threads
-        .dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("issue-worker:former-followup"),
-          threadId: child.thread.id,
-          messageId: MessageId.make("issue-worker:former-followup"),
-          text: "Revise the fix",
-          attachments: [],
-          modelSelection,
-          dispatchMode: { type: "start_immediately" },
-          createdBy: "agent",
-          creationSource: "mcp",
-        })
-        .pipe(Effect.flip);
-      assert.include(refused.message, successorTask.event.payload.childThreadId);
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("issue-worker:retained-followup"),
+        threadId: child.thread.id,
+        messageId: MessageId.make("issue-worker:retained-followup"),
+        text: "Revise the fix",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
       assert.equal(
         (yield* threads.getThreadRecords(child.thread.id, ["runs"])).runs.length,
-        runsBefore,
+        runsBefore + 1,
       );
     }).pipe(Effect.provide(testLayer));
   };
@@ -822,6 +840,9 @@ describe("managed issue work", () => {
   it.effect(
     "a directly resumed worker publishes one closeout and delivers one parent result per task",
     () => exercise("direct-resume"),
+  );
+  it.effect("delegating a finished issue reuses its thread and worktree", () =>
+    exercise("delegate-resume"),
   );
   it.effect(
     "deleting a waiting worker publishes Unavailable and drops an older queued status",
