@@ -353,6 +353,20 @@ const make = Effect.gen(function* () {
       return canonical;
     });
   };
+  // An owner that ended its turn still owns its worktree while its delegated
+  // tasks run elsewhere or their results wait to wake it.
+  const awaitingDelegatedWork = (threadIds: ReadonlyArray<ThreadId>) =>
+    sql<{ threadId: string }>`
+      SELECT thread_id AS "threadId" FROM orchestration_v2_projection_subagents
+      WHERE thread_id IN (SELECT value FROM json_each(${JSON.stringify(threadIds)}))
+        AND origin = 'app_owned'
+        AND (status IN ('pending', 'running', 'waiting')
+          OR completion_delivery_state IN ('pending', 'claimed'))
+      LIMIT 1
+    `.pipe(
+      NodeSqliteClient.readOnly,
+      Effect.map((rows) => rows.length > 0),
+    );
   const hasTerminal = Effect.fnUntraced(function* (
     worktreePath: string,
     canonicalPath: ReturnType<typeof makeCanonicalPath>,
@@ -1045,7 +1059,8 @@ const make = Effect.gen(function* () {
       if (
         thread.branch === null ||
         (!deleted &&
-          !group.every((member) => storageCleanupThreadIdle(member, now, serverSettings)))
+          (!group.every((member) => storageCleanupThreadIdle(member, now, serverSettings)) ||
+            (yield* awaitingDelegatedWork(group.map((member) => member.id)))))
       )
         return keep(waitForStop("thread is running or has pending work"));
       if (members.some((member) => member.branch !== thread.branch))

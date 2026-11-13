@@ -656,40 +656,43 @@ export const layer: Layer.Layer<
         const exists = yield* fileSystem
           .exists(worktreePath)
           .pipe(Effect.orElseSucceed(() => true));
-        if (!exists && (yield* isManagedWorktreePath(worktreePath))) {
-          const project = yield* projects.getById(projection.thread.projectId).pipe(
-            Effect.map(Option.getOrUndefined),
-            Effect.orElseSucceed(() => undefined),
-          );
-          if (project !== undefined) {
-            yield* Effect.logWarning("provider turn start recreating missing worktree", {
-              threadId: projection.thread.id,
+        const project = exists
+          ? undefined
+          : yield* projects.getById(projection.thread.projectId).pipe(
+              Effect.map(Option.getOrUndefined),
+              Effect.orElseSucceed(() => undefined),
+            );
+        if (
+          project !== undefined &&
+          (yield* isManagedWorktreePath(worktreePath, project.workspaceRoot))
+        ) {
+          yield* Effect.logWarning("provider turn start recreating missing worktree", {
+            threadId: projection.thread.id,
+            worktreePath,
+            branch,
+          });
+          const recreateResult = yield* Effect.result(
+            recreateMissingWorktree({
+              cwd: project.workspaceRoot,
               worktreePath,
               branch,
-            });
-            const recreateResult = yield* Effect.result(
-              recreateMissingWorktree({
-                cwd: project.workspaceRoot,
-                worktreePath,
-                branch,
-              }).pipe(
-                Effect.mapError((cause) =>
-                  cause._tag === "WorktreeRecreateNoBaseError"
-                    ? cause
-                    : new WorktreeRecreateError({ worktreePath, branch, cause }),
-                ),
+            }).pipe(
+              Effect.mapError((cause) =>
+                cause._tag === "WorktreeRecreateNoBaseError"
+                  ? cause
+                  : new WorktreeRecreateError({ worktreePath, branch, cause }),
               ),
-            );
-            if (recreateResult._tag === "Failure") {
-              if (input.willRetry === true) return yield* recreateResult.failure;
-              yield* settleStartFailure({
-                signal: "worktree-recreate-failure",
-                title: "Couldn't recreate thread workspace",
-                error: recreateResult.failure,
-                message: recreateResult.failure.message,
-              });
-              return;
-            }
+            ),
+          );
+          if (recreateResult._tag === "Failure") {
+            if (input.willRetry === true) return yield* recreateResult.failure;
+            yield* settleStartFailure({
+              signal: "worktree-recreate-failure",
+              title: "Couldn't recreate thread workspace",
+              error: recreateResult.failure,
+              message: recreateResult.failure.message,
+            });
+            return;
           }
         }
       }

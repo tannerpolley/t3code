@@ -66,7 +66,11 @@ export const makeIsManagedWorktreePath = Effect.gen(function* () {
       }),
     );
 
-  return Effect.fn("worktreesDirectory.isManagedWorktreePath")(function* (worktreePath: string) {
+  /** `repositoryRoot` also admits that project's `.worktrees/<folder>`. */
+  return Effect.fn("worktreesDirectory.isManagedWorktreePath")(function* (
+    worktreePath: string,
+    repositoryRoot?: string,
+  ) {
     // git resolves a relative path against the project, not the server cwd.
     if (!path.isAbsolute(worktreePath)) return false;
     // Require normalized paths; Git and realPath disagree on .. after symlink traversal.
@@ -87,15 +91,20 @@ export const makeIsManagedWorktreePath = Effect.gen(function* () {
       realLocation,
     );
     const candidate = yield* realLocation(worktreePath);
-    return roots.some((root) => {
+    const within = (root: string, depth: number) => {
       if (isFilesystemRoot(root, path)) return false;
       const relative = path.relative(root, candidate);
       const segments = relative.split(path.sep);
       return (
         !path.isAbsolute(relative) &&
-        segments.length === 2 &&
+        segments.length === depth &&
         segments.every((segment) => segment !== "" && segment !== "..")
       );
-    });
+    };
+    return (
+      roots.some((root) => within(root, 2)) ||
+      (repositoryRoot !== undefined &&
+        within(yield* realLocation(path.join(repositoryRoot, PROJECT_WORKTREES_FOLDER)), 1))
+    );
   });
 });
