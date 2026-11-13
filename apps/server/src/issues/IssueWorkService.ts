@@ -55,7 +55,7 @@ import { issueRepositoryOf } from "./issueRepositoryOf.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import * as Layer from "effect/Layer";
 import { IssueService } from "./IssueService.ts";
-import { IssueWorkStore } from "./IssueWorkStore.ts";
+import { IssueWorkStore, missingOwnerMessage } from "./IssueWorkStore.ts";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import {
@@ -523,7 +523,11 @@ export const layer = Layer.effect(
       if (owner === null || config === null)
         return yield* new IssueWorkError({
           code: "invalid-request",
-          message: "The repository orchestrator is unavailable.",
+          message: yield* missingOwnerMessage(
+            store,
+            command.issue,
+            "The repository orchestrator is unavailable.",
+          ),
         });
       let worktree: { baseRef: string; branch: string } | undefined;
       if (!(yield* threads.hasReceipt(command.commandId))) {
@@ -689,10 +693,8 @@ export const layer = Layer.effect(
       };
     });
 
-    const repositoryStatus: IssueWorkService["Service"]["repositoryStatus"] = Effect.fn(
-      "IssueWorkService.repositoryStatus",
-    )(
-      function* (input) {
+    const readRepositoryStatus = Effect.fn("IssueWorkService.readRepositoryStatus")(
+      function* (input: IssueRepositoryRef) {
         const owner = yield* store.repositoryOwnerByRef(input);
         const orchestration =
           owner === null ? null : yield* store.configuration(owner.rootThreadId);
@@ -709,6 +711,24 @@ export const layer = Layer.effect(
       (reads) => sql.withTransaction(reads).pipe(NodeSqliteClient.readOnly),
       Effect.mapError(mapError),
     );
+    const repositoryStatus: IssueWorkService["Service"]["repositoryStatus"] = Effect.fn(
+      "IssueWorkService.repositoryStatus",
+    )(function* (input) {
+      const status = yield* readRepositoryStatus(input);
+      if (status.orchestration === null) return status;
+      // A host that cannot answer must not hide the registration, so only a successful read can report a mismatch.
+      const live = yield* Effect.exit(issues.repositoryIdentity(input));
+      return live._tag === "Success" &&
+        live.value.repositoryId !== status.orchestration.repositoryId
+        ? {
+            ...status,
+            idMismatch: {
+              registeredRepositoryId: status.orchestration.repositoryId,
+              liveRepositoryId: live.value.repositoryId,
+            },
+          }
+        : status;
+    });
     const deliverQueuedIssue = (rootThreadId: ThreadId, key: string) =>
       threads
         .dispatch({

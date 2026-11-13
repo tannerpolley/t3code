@@ -768,3 +768,16 @@ export const layer = Layer.effect(
     return store;
   }),
 );
+
+/** The refusal for an issue whose repository has no registered orchestrator; a same-name registration under another ID says so and names the fix. */
+export const missingOwnerMessage = Effect.fn("IssueWorkStore.missingOwnerMessage")(function* (
+  store: IssueWorkStore["Service"],
+  issue: Pick<ThreadLinkedIssue, "host" | "repository" | "repositoryId">,
+  fallback: string,
+) {
+  const owner = yield* store.repositoryOwnerByRef(issue);
+  const registered = owner === null ? null : yield* store.configuration(owner.rootThreadId);
+  return registered === null || registered.repositoryId === issue.repositoryId
+    ? fallback
+    : `${issue.repository} is registered under repository ID ${registered.repositoryId}, but the host now reports ID ${issue.repositoryId} (the repository was recreated under the same name). Move the registration with restore_repository_root: repositoryId ${issue.repositoryId}, expectedRootThreadId null.`;
+});

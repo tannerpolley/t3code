@@ -316,6 +316,17 @@ describe("repositoryWorkStatus", () => {
   ])("%s", (_name, config, label, needsAttention) => {
     expect(repositoryWorkStatus(config)).toEqual({ label, needsAttention });
   });
+  it("a recreated repository outranks Active and names both IDs", () => {
+    expect(
+      repositoryWorkStatus(
+        { paused: false, suspendedIssues: [] },
+        { registeredRepositoryId: "1", liveRepositoryId: "2" },
+      ),
+    ).toEqual({
+      label: "Repository recreated: registered ID 1, now 2. Move it with restore_repository_root.",
+      needsAttention: true,
+    });
+  });
 });
 
 describe("projectIssueRepositories", () => {

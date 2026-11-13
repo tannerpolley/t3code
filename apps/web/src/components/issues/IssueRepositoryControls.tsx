@@ -117,9 +117,9 @@ function RepositoryStatusLine({
   environmentId: EnvironmentId;
   reference: IssueRepositoryRef;
 }) {
-  const { config } = useRepositoryWork(environmentId, reference);
+  const { data, config } = useRepositoryWork(environmentId, reference);
   if (config == null) return null;
-  const status = repositoryWorkStatus(config);
+  const status = repositoryWorkStatus(config, data?.idMismatch);
   if (!status.needsAttention) return null;
   return (
     <div className="flex items-center gap-2 px-2 pt-1 pb-2 text-xs text-muted-foreground">
@@ -323,7 +323,7 @@ function RepositoryControls({
       });
     else appAtomRegistry.refresh(statusAtom);
   };
-  const status = repositoryWorkStatus(config);
+  const status = repositoryWorkStatus(config, data.idMismatch);
   const pauseLabel = canResume ? "Resume repository work" : "Pause repository work";
   const canHandOff = config.handoff === undefined;
   return (

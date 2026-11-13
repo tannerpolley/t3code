@@ -5,6 +5,7 @@ import {
   type IssueRepositorySummary,
   type IssueSummary,
   type RepositoryOrchestration,
+  type RepositoryWorkResult,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
@@ -234,7 +235,13 @@ export function repositoryWorkStatus(
   config: Pick<RepositoryOrchestration, "paused" | "handoff" | "retiredToThreadId"> & {
     readonly suspendedIssues: readonly unknown[];
   },
+  idMismatch?: RepositoryWorkResult["idMismatch"],
 ): { readonly label: string; readonly needsAttention: boolean } {
+  if (idMismatch !== undefined)
+    return {
+      label: `Repository recreated: registered ID ${idMismatch.registeredRepositoryId}, now ${idMismatch.liveRepositoryId}. Move it with restore_repository_root.`,
+      needsAttention: true,
+    };
   const phase = repositoryPhase(config);
   const suspended = config.suspendedIssues.length;
   if (phase === "draining") return { label: "Handing off", needsAttention: true };
