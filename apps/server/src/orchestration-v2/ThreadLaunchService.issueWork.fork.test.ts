@@ -57,7 +57,9 @@ import {
 } from "./ThreadLaunchService.testHarness.ts";
 
 describe("managed issue work", () => {
-  const exercise = (scenario: "baseline" | "direct-resume" | "delegate-resume" | "deletion") => {
+  const exercise = (
+    scenario: "baseline" | "archived" | "direct-resume" | "delegate-resume" | "deletion",
+  ) => {
     const provider: ServerProvider = {
       instanceId: modelSelection.instanceId,
       driver: ProviderDriverKind.make("codex"),
@@ -773,6 +775,19 @@ describe("managed issue work", () => {
         2,
       );
       const issueStore = yield* IssueWorkStore.IssueWorkStore;
+      if (scenario === "archived") {
+        yield* threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("issue-worker:archive"),
+          threadId: child.thread.id,
+        });
+        const replacement = yield* issues.start({
+          ...input,
+          clientRequestId: CommandId.make("issue-click:after-archive"),
+        });
+        assert.notEqual(replacement.issueThreadId, child.thread.id);
+        return;
+      }
       const successor = yield* issues.start({
         ...input,
         clientRequestId: CommandId.make("issue-click:successor"),
@@ -844,6 +859,7 @@ describe("managed issue work", () => {
   it.effect("delegating a finished issue reuses its thread and worktree", () =>
     exercise("delegate-resume"),
   );
+  it.effect("an archived issue thread is not reused", () => exercise("archived"));
   it.effect(
     "deleting a waiting worker publishes Unavailable and drops an older queued status",
     () => exercise("deletion"),
