@@ -2805,3 +2805,119 @@ it.effect(
     }).pipe(Effect.provide(harness.layer));
   },
 );
+
+it.effect(
+  "a message to a blocked worker reports why it waits and starts once the blocker clears",
+  () => {
+    let blocked = false;
+    const harness = reviewHarness((input) =>
+      Effect.succeed({
+        ...reviewRead(reviewIssue(input.number)),
+        blockedBy: blocked ? [{ issue: reviewIssue(99), state: "open" as const }] : [],
+      }),
+    );
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const root = yield* createReviewRoot();
+      yield* delegateReviewIssue(root, reviewIssue(1), "waiting-worker");
+      const child = (yield* store.issueOwner(reviewIssue(1)))!;
+      const first = (yield* threads.getThreadRecords(child, ["runs"])).runs[0]!;
+      yield* threads.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("waiting-worker-stop"),
+        threadId: child,
+        runId: first.id,
+      });
+      blocked = true;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      const sent = yield* threads.sendToThread({
+        projectId,
+        threadId: child,
+        commandId: CommandId.make("waiting-worker-message"),
+        messageId: MessageId.make("waiting-worker-message"),
+        text: "Carry on",
+        attachments: [],
+        mode: "auto",
+        senderThreadId: root,
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      assert.equal(sent.delivery, "queued");
+      assert.equal(sent.run.status, "queued");
+      assert.equal(sent.run.admissionWait, "issue_suspended");
+      // A run waiting for admission has not reached the transcript.
+      assert.isNull(sent.turnItem);
+      // The reported case: the root pauses, clears the blocker, then unpauses.
+      const reference = { host: "github.com", repository: "tannerpolley/t3code" };
+      yield* service.setPaused({
+        ...reference,
+        paused: true,
+        clientRequestId: CommandId.make("waiting-worker-pause"),
+      });
+      blocked = false;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      const paused = (yield* threads.getThreadRecords(child, ["runs"])).runs.find(
+        (run) => run.id === sent.run.id,
+      )!;
+      assert.equal(paused.status, "queued");
+      yield* service.setPaused({
+        ...reference,
+        paused: false,
+        clientRequestId: CommandId.make("waiting-worker-unpause"),
+      });
+      yield* worker.drain();
+      const started = (yield* threads.getThreadRecords(child, ["runs"])).runs.find(
+        (run) => run.id === sent.run.id,
+      )!;
+      assert.equal(started.status, "starting");
+      assert.isUndefined(started.admissionWait);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("cancels a queued run on a former worker thread that can never be admitted", () => {
+  const harness = reviewHarness((input) => Effect.succeed(reviewRead(reviewIssue(input.number))));
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const service = yield* IssueWorkService.IssueWorkService;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const sql = yield* SqlClient.SqlClient;
+    const root = yield* createReviewRoot();
+    yield* delegateReviewIssue(root, reviewIssue(1), "former-worker");
+    const child = (yield* store.issueOwner(reviewIssue(1)))!;
+    const first = (yield* threads.getThreadRecords(child, ["runs"])).runs[0]!;
+    yield* threads.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("former-worker-stop"),
+      threadId: child,
+      runId: first.id,
+    });
+    // The attempt moved to a successor thread.
+    yield* sql`UPDATE orchestration_v2_projection_issue_work SET owner_thread_id = 'successor-worker'
+      WHERE owner_thread_id = ${child}`;
+    yield* threads.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("former-worker-notification"),
+      threadId: child,
+      messageId: MessageId.make("former-worker-notification"),
+      text: "Background command completed",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "system",
+      creationSource: "server",
+    });
+    const queued = (yield* threads.getThreadRecords(child, ["runs"])).runs.at(-1)!;
+    assert.equal(queued.status, "queued");
+    assert.equal(queued.admissionWait, "not_current_worker");
+    yield* service.reconcile(root);
+    const after = (yield* threads.getThreadRecords(child, ["runs"])).runs.find(
+      (run) => run.id === queued.id,
+    )!;
+    assert.equal(after.status, "cancelled");
+  }).pipe(Effect.provide(harness.layer));
+});

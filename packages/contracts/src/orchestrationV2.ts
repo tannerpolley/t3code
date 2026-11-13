@@ -742,6 +742,31 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
+/** Why a queued run waits for its repository root to admit it; the server owns this. */
+export const OrchestrationV2RunAdmissionWait = Schema.Literals([
+  "repository_paused",
+  "issue_suspended",
+  "worker_limit",
+  "read_only_limit",
+  "not_current_worker",
+]);
+export type OrchestrationV2RunAdmissionWait = typeof OrchestrationV2RunAdmissionWait.Type;
+
+export function orchestrationV2RunAdmissionWaitLabel(wait: OrchestrationV2RunAdmissionWait) {
+  switch (wait) {
+    case "repository_paused":
+      return "Waiting: the repository's issue work is paused.";
+    case "issue_suspended":
+      return "Waiting: its issue is suspended, blocked, closed, or unreadable.";
+    case "worker_limit":
+      return "Waiting: every issue worker slot is in use.";
+    case "read_only_limit":
+      return "Waiting: every read-only child slot is in use.";
+    case "not_current_worker":
+      return "Waiting: this thread no longer works its issue, so it will not start.";
+  }
+}
+
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
@@ -755,6 +780,7 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  admissionWait: Schema.optional(OrchestrationV2RunAdmissionWait),
   steerWhenReadyRunId: Schema.optional(RunId),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),

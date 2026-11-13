@@ -5,12 +5,13 @@ import {
   isAttachmentOnlyBootstrapPrompt,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
-import type {
-  ChatAttachment as ContractChatAttachment,
-  EnvironmentId,
-  MessageId,
-  RunId,
-  ThreadId,
+import {
+  orchestrationV2RunAdmissionWaitLabel,
+  type ChatAttachment as ContractChatAttachment,
+  type EnvironmentId,
+  type MessageId,
+  type RunId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
@@ -135,6 +136,11 @@ export function QueuedRunsControl({
       runId: run.id,
       messageId: run.userMessageId,
       freshContext: run.freshContext === true,
+      // The server says why its root has not admitted this run; Send now cannot start it.
+      waiting:
+        run.admissionWait === undefined
+          ? null
+          : orchestrationV2RunAdmissionWaitLabel(run.admissionWait),
       serverIndex,
       text,
       // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
@@ -155,6 +161,7 @@ export function QueuedRunsControl({
       runId: null,
       messageId: null,
       freshContext: false,
+      waiting: null,
       serverIndex: null,
       text: message.text,
       editable: true,
@@ -195,7 +202,12 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !canSendRun(next.run.freshContext === true)) return false;
+      if (
+        !next ||
+        next.run.admissionWait !== undefined ||
+        !canSendRun(next.run.freshContext === true)
+      )
+        return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
@@ -276,7 +288,13 @@ export function QueuedRunsControl({
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
               >
-                {canSendRun(item.freshContext) && !isEditing ? (
+                {item.waiting !== null && !isEditing ? (
+                  <span className="flex items-center gap-1 px-1">
+                    <Clock3Icon aria-hidden className="size-3" />
+                    {item.waiting}
+                  </span>
+                ) : null}
+                {canSendRun(item.freshContext) && item.waiting === null && !isEditing ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>

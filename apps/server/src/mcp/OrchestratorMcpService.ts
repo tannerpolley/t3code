@@ -10,6 +10,7 @@ import {
   type ModelSelection,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+  orchestrationV2RunAdmissionWaitLabel,
   TurnItemId,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
@@ -3337,6 +3338,9 @@ const make = Effect.gen(function* () {
         ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
         status: result.run.status,
         delivery: result.delivery,
+        ...(result.run.admissionWait === undefined
+          ? {}
+          : { waiting: orchestrationV2RunAdmissionWaitLabel(result.run.admissionWait) }),
       } satisfies OrchestratorMcpThreadSendResult;
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
