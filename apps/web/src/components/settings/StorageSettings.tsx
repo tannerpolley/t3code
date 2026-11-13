@@ -3,7 +3,6 @@ import type {
   StorageCleanupSettings,
   WorktreeCleanupRules,
 } from "@t3tools/contracts";
-import { resolvePastedPath } from "@t3tools/shared/path";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -19,7 +18,6 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useDebouncedValue } from "../../state/queries";
 import { AnimatedHeight } from "../AnimatedHeight";
-import { Input } from "../ui/input";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
@@ -32,7 +30,7 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
-import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { DatabaseStorageNotice } from "./DatabaseStorageNotice";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
@@ -44,70 +42,9 @@ import { searchableSetting } from "./settingsSearch";
 import {
   useClearScopedSettings,
   useScopedSettings,
-  useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
-
-export function WorktreesDirectoryRow() {
-  const { connectedEnvironments, targets } = useSettingsScope();
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  const mixed = useScopedSettingsMixed(["worktreesDirectory"]);
-  const edited = useRef(false);
-  const draft = useRef("");
-  if (
-    connectedEnvironments.some(
-      (environment) =>
-        environment.serverConfig?.environment.capabilities.worktreesDirectory !== true,
-    )
-  )
-    return null;
-  const scopeKey = targets.map((target) => target.environmentId).join(",");
-
-  return (
-    <SettingsRow
-      {...searchableSetting("storage-worktrees-location")}
-      description={
-        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
-      }
-      serverScoped
-      settingKeys={["worktreesDirectory"]}
-      resetAction={
-        mixed || settings.worktreesDirectory !== "" ? (
-          <SettingResetButton
-            label="worktree location"
-            onClick={() => updateSettings({ worktreesDirectory: "" })}
-          />
-        ) : null
-      }
-      control={
-        <Input
-          key={`${scopeKey}:${mixed}:${settings.worktreesDirectory}`}
-          aria-label="Worktree location"
-          autoCapitalize="none"
-          spellCheck={false}
-          placeholder={mixed ? "Mixed" : "Default"}
-          defaultValue={mixed ? "" : settings.worktreesDirectory}
-          onFocus={(event) => {
-            draft.current = event.target.value;
-          }}
-          onChange={(event) => {
-            edited.current = true;
-            draft.current = resolvePastedPath(draft.current, event.target.value);
-            event.target.value = draft.current;
-          }}
-          onBlur={(event) => {
-            const value = event.target.value.trim();
-            if (edited.current && (mixed || value !== settings.worktreesDirectory))
-              updateSettings({ worktreesDirectory: value });
-            edited.current = false;
-          }}
-        />
-      }
-    />
-  );
-}
 
 type SaveOptions = Parameters<ReturnType<typeof useUpdateScopedSettings>>[1];
 

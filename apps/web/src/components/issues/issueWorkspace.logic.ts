@@ -96,7 +96,7 @@ function searchableText(issue: IssueSummary): string {
 }
 
 /** Project Priority comes first; the chosen sort breaks ties and orders missing priorities. */
-export function sortIssues(issues: readonly IssueSummary[], sort: IssueSort): IssueSummary[] {
+function sortIssues(issues: readonly IssueSummary[], sort: IssueSort): IssueSummary[] {
   const priorityRanks = new Map(issues.map((issue) => [issue.number, issuePriorityRank(issue)]));
   return issues.toSorted((left, right) => {
     const priorityOrder = priorityRanks.get(left.number)! - priorityRanks.get(right.number)!;

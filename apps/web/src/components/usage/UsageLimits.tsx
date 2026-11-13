@@ -322,22 +322,6 @@ export function ResetCreditDialog({
   );
 }
 
-export function resetCreditsSummary(
-  credits: ServerProviderResetCredits,
-  now: number,
-  compact = false,
-): string {
-  const expiresIn = credits.nextExpiresAt
-    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
-    : null;
-  if (credits.availableCount === 0) return "No reset credits banked";
-  if (compact)
-    return `${credits.availableCount} banked${expiresIn ? ` · expires in ${expiresIn}` : ""}`;
-  return `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-    expiresIn ? ` · next expires in ${expiresIn}` : ""
-  }`;
-}
-
 export function ResetCreditExpiries({
   credits,
   now,

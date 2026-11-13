@@ -639,7 +639,6 @@ export {
   makeHarness,
   modelSelection,
   otherProjectId,
-  project,
   projectId,
   reviewHarness,
   reviewIssue,

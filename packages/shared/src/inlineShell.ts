@@ -22,7 +22,7 @@ export function inlineShellOutputTail(output: string): string {
 }
 
 /** Reuse terminal context chips' provider projection for automatic sharing. */
-export function inlineShellContext(records: readonly InlineShellRunRecord[]): string {
+function inlineShellContext(records: readonly InlineShellRunRecord[]): string {
   return records
     .filter((record) => record.status !== "running")
     .map((record) => {
@@ -60,12 +60,9 @@ export function inlineShellContext(records: readonly InlineShellRunRecord[]): st
 
 export function inlineShellDisplayOutput(output: string): string {
   // Keep partial sequences in the raw stream buffer until the following chunk arrives.
-  return (
-    output
-      // eslint-disable-next-line no-control-regex -- PTY output contains ANSI control sequences.
-      .replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, "")
-      .replace(/\r/g, "")
-  );
+  return output
+    .replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, "")
+    .replace(/\r/g, "");
 }
 
 export function inlineShellIsPasswordPrompt(output: string): boolean {
@@ -120,7 +117,8 @@ export function selectInlineShellContext(
     remaining -= byteLength(part) + 2;
   }
   const omitted = totalCount - ids.length;
-  if (omitted > 0) parts.push(`${omitted} older runs did not fit and will be shared on a later turn.`);
+  if (omitted > 0)
+    parts.push(`${omitted} older runs did not fit and will be shared on a later turn.`);
   return { text: parts.join("\n\n"), ids };
 }
 

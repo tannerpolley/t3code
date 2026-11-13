@@ -11,11 +11,7 @@ import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { BranchPickerGroup } from "../uiStateStore";
-export {
-  dedupeRemoteBranchesWithLocalMatches,
-  deriveLocalBranchNameFromRemoteRef,
-  sanitizeNewRefName,
-} from "@t3tools/shared/git";
+export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 import { deriveCanInterruptRunningThread } from "../session-logic";
 
 export interface EnvironmentOption {

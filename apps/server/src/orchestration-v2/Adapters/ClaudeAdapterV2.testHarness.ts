@@ -23,7 +23,6 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { BUNDLED_CLAUDE_MODEL_CATALOG } from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
@@ -37,11 +36,6 @@ const CLAUDE_TEST_MODEL_SELECTION = {
   options: [{ id: "effort", value: "ultrathink" }],
 } satisfies ModelSelection;
 // Thinking is a launch flag, so switching to this selection needs a new process.
-const CLAUDE_TEST_RESTART_MODEL_SELECTION = {
-  ...CLAUDE_TEST_MODEL_SELECTION,
-  model: "claude-haiku-4-5-20251001",
-  options: [{ id: "thinking", value: false }],
-} satisfies ModelSelection;
 
 const CLAUDE_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
@@ -122,41 +116,11 @@ function makeClaudeTestTurnInput(input: {
 }
 
 // A model only the fetched manifest knows, like a release newer than the app.
-const MANIFEST_ONLY_CLAUDE_CATALOG = (() => {
-  const opus5 = BUNDLED_CLAUDE_MODEL_CATALOG.models.find(
-    (entry) => entry.model.slug === "claude-opus-5",
-  )!;
-  return {
-    models: [
-      ...BUNDLED_CLAUDE_MODEL_CATALOG.models,
-      {
-        ...opus5,
-        model: { ...opus5.model, slug: "claude-opus-5-5-manifest-only", aliases: [] },
-      },
-    ],
-  };
-})();
-
-const MANIFEST_ONLY_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
-  model: "claude-opus-5-5-manifest-only",
-} satisfies ModelSelection;
 
 const WAKE_NATIVE_SESSION = "native-thread-claude-wake";
 
 // Background Bash ids and texts follow the claude_background_task_wake
 // recording, so the frames below have the shapes the CLI really sends.
-const WAKE_TASK_ID = "bdqirlcyw";
-
-const WAKE_TOOL_USE_ID = "toolu_01Rs6JNNf5SqHRxpq5DeJHrW";
-
-const WAKE_TASK_DESCRIPTION = "Background sleep test";
-
-const WAKE_SUMMARY = 'Background command "Background sleep test" completed (exit code 0)';
-
-const WAKE_ASSISTANT_TEXT = "WAKE_DONE";
-
-const WAKE_RESULT_TEXT = "WAKE_DONE";
 
 function claudeSdkFrame(frame: unknown): SDKMessage {
   if (
@@ -168,41 +132,6 @@ function claudeSdkFrame(frame: unknown): SDKMessage {
   }
   return frame as SDKMessage;
 }
-
-const wakeTaskStarted = claudeSdkFrame({
-  type: "system",
-  subtype: "task_started",
-  task_id: WAKE_TASK_ID,
-  tool_use_id: WAKE_TOOL_USE_ID,
-  description: WAKE_TASK_DESCRIPTION,
-  is_backgrounded: true,
-  task_type: "local_bash",
-  uuid: "00000000-0000-4000-8000-000000000101",
-  session_id: WAKE_NATIVE_SESSION,
-});
-
-const makeAssistantTextFrame = (input: { readonly uuid: string; readonly text: string }) =>
-  claudeSdkFrame({
-    type: "assistant",
-    message: {
-      model: "claude-sonnet-4-6",
-      id: `msg_${input.uuid}`,
-      type: "message",
-      role: "assistant",
-      content: [{ type: "text", text: input.text }],
-      stop_reason: null,
-      stop_sequence: null,
-      usage: {
-        input_tokens: 1,
-        output_tokens: 1,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-      },
-    },
-    parent_tool_use_id: null,
-    uuid: input.uuid,
-    session_id: WAKE_NATIVE_SESSION,
-  });
 
 const makeResultFrame = (input: {
   readonly uuid: string;
@@ -250,41 +179,7 @@ const makeResultFrame = (input: {
       : { terminal_reason: input.terminalReason ?? "completed" }),
   });
 
-const turnOneResult = makeResultFrame({
-  uuid: "00000000-0000-4000-8000-000000000102",
-  result: "Kicked off the build in the background.",
-});
-
-const wakeNotification = claudeSdkFrame({
-  type: "system",
-  subtype: "task_notification",
-  task_id: WAKE_TASK_ID,
-  tool_use_id: WAKE_TOOL_USE_ID,
-  status: "completed",
-  output_file: `/tmp/claude-replay/tasks/${WAKE_TASK_ID}.output`,
-  summary: WAKE_SUMMARY,
-  uuid: "00000000-0000-4000-8000-000000000103",
-  session_id: WAKE_NATIVE_SESSION,
-});
-
-const wakeAssistant = makeAssistantTextFrame({
-  uuid: "00000000-0000-4000-8000-000000000107",
-  text: WAKE_ASSISTANT_TEXT,
-});
-
 // The CLI opens the wake turn with `init`, seconds before its first output.
-const wakeTurnInit = claudeSdkFrame({
-  type: "system",
-  subtype: "init",
-  uuid: "00000000-0000-4000-8000-000000000110",
-  session_id: WAKE_NATIVE_SESSION,
-});
-
-const wakeResult = makeResultFrame({
-  uuid: "00000000-0000-4000-8000-000000000104",
-  result: WAKE_RESULT_TEXT,
-  origin: { kind: "task-notification" },
-});
 
 const awaitUntil = Effect.fn("awaitUntil")(function* (predicate: () => boolean, label: string) {
   for (let attempt = 0; attempt < 5000; attempt++) {
@@ -547,28 +442,12 @@ const providerThreadRosterEvents = (
 export {
   awaitUntil,
   CLAUDE_TEST_MODEL_SELECTION,
-  CLAUDE_TEST_RESTART_MODEL_SELECTION,
   CLAUDE_TEST_RUNTIME_POLICY,
   claudeSdkFrame,
   DEFAULT_CLAUDE_SETTINGS,
-  makeAssistantTextFrame,
   makeClaudeTestTurnInput,
   makeResultFrame,
   makeWakeHarness,
-  makeWakeHarnessWithOptions,
-  MANIFEST_ONLY_CLAUDE_CATALOG,
-  MANIFEST_ONLY_MODEL_SELECTION,
   providerThreadRosterEvents,
-  turnOneResult,
-  WAKE_ASSISTANT_TEXT,
   WAKE_NATIVE_SESSION,
-  WAKE_RESULT_TEXT,
-  WAKE_SUMMARY,
-  WAKE_TASK_DESCRIPTION,
-  WAKE_TASK_ID,
-  wakeAssistant,
-  wakeNotification,
-  wakeResult,
-  wakeTaskStarted,
-  wakeTurnInit,
 };

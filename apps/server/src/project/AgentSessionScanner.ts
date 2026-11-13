@@ -242,9 +242,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Codex trust is the only project setting with a direct T3 runtime equivalent. */
-export function parseCodexProjectSettings(
-  raw: string,
-): ReadonlyMap<string, CodexProjectSettingsPreview> {
+function parseCodexProjectSettings(raw: string): ReadonlyMap<string, CodexProjectSettingsPreview> {
   let config: unknown;
   try {
     config = parseToml(raw);

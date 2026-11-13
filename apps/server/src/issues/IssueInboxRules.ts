@@ -123,7 +123,7 @@ const KIND_WORDS: Record<IssueInboxEventKind, string> = {
 const MAX_LISTED = 6;
 
 /** `epc-saft #61 comment from amine, #62 opened (needs triage)`; callers sort priority first. */
-export function listEvents(events: ReadonlyArray<DigestEvent>): string {
+function listEvents(events: ReadonlyArray<DigestEvent>): string {
   const listed = events.slice(0, MAX_LISTED).map((event, index) => {
     const name = event.repository.slice(event.repository.indexOf("/") + 1);
     const prefix = index === 0 || events[index - 1]!.repository !== event.repository;

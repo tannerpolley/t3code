@@ -3,7 +3,7 @@ import type { OrchestratorMcpModelRole, ProviderInteractionMode } from "@t3tools
 import type { ManagedIssueRole } from "./mcpSession.ts";
 
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
-export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
+const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
   `## T3 Code orchestration
 
 Ordinary coding tasks need no T3 tools.

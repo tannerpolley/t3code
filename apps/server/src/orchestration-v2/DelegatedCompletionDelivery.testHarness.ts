@@ -638,10 +638,8 @@ const endParentRuns = Effect.fn("endParentRuns")(function* (
 export {
   childQuestionNotices,
   childQuestionWake,
-  driver,
   endParentRuns,
   layerTest,
-  modelSelection,
   ownerCanSee,
   reconcileCommandId,
   seedChildWaitingOnUser,

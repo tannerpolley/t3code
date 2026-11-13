@@ -22,7 +22,7 @@ export const PROJECTS_WORK_ROW_HEIGHT = "h-6";
 
 const CARET_SLOT_CLASS = "flex w-4 shrink-0 items-center justify-center";
 
-export function SidebarCaret(props: { readonly open: boolean }) {
+function SidebarCaret(props: { readonly open: boolean }) {
   return (
     <ChevronRightIcon
       aria-hidden

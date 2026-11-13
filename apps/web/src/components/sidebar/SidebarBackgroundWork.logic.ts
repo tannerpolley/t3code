@@ -253,7 +253,7 @@ export function describeSidebarBackgroundWork(
 }
 
 /** Warn after two hours, while long-lived servers keep their normal age display. */
-export const POSSIBLY_STUCK_SHELL_MS = 2 * 60 * 60 * 1000;
+const POSSIBLY_STUCK_SHELL_MS = 2 * 60 * 60 * 1000;
 export function msUntilPossiblyStuck(startedAt: string, nowMs: number): number {
   return Math.max(0, Date.parse(startedAt) + POSSIBLY_STUCK_SHELL_MS - nowMs);
 }
