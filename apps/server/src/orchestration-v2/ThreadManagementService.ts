@@ -974,7 +974,7 @@ const make = Effect.gen(function* () {
       );
     const delivery: ThreadManagementSendResult["delivery"] = restartedAsNextTurn
       ? "restarted"
-      : turnItem === null || turnItem.inputIntent === "queued_turn"
+      : run.status === "queued" || turnItem === null || turnItem.inputIntent === "queued_turn"
         ? "queued"
         : turnItem.inputIntent === "turn_start"
           ? "started"

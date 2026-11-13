@@ -2219,8 +2219,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );
       const modelSelection = queuedRunModelSelection(projection, storedQueuedRun);
+      // Dropping the stored wait here clears it from every payload written when the run starts.
+      const { admissionWait: storedWait, ...waitingRun } = storedQueuedRun;
       const queuedRun = {
-        ...storedQueuedRun,
+        ...waitingRun,
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
       };
@@ -2234,7 +2236,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
-      if (!(yield* issueWork.canStartRun(projection.thread))) return;
+      const admissionWait = yield* issueWork.admissionWait(projection.thread);
+      if (admissionWait !== null) {
+        if (admissionWait !== storedWait)
+          yield* writeSystemEvents([
+            {
+              type: "run.updated",
+              threadId,
+              runId: storedQueuedRun.id,
+              occurredAt: yield* DateTime.now,
+              payload: { ...storedQueuedRun, admissionWait },
+            },
+          ]);
+        return;
+      }
       if (queuedRun.workspacePreparation !== undefined && projection.thread.worktreePath === null) {
         const now = yield* DateTime.now;
         const preparation = (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
@@ -7130,11 +7145,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? latestRun
         : undefined;
     const queueBehindRun = activeRun ?? worktreeMissingRun;
+    const admissionWait =
+      activeRun === undefined ? yield* issueWork.admissionWait(projection.thread) : null;
     const admissionQueued =
-      activeRun === undefined &&
-      ((projection.thread.linkedIssue !== undefined &&
-        projection.runs.some((run) => run.status === "queued")) ||
-        !(yield* issueWork.canStartRun(projection.thread)));
+      admissionWait !== null ||
+      (activeRun === undefined &&
+        projection.thread.linkedIssue !== undefined &&
+        projection.runs.some((run) => run.status === "queued"));
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
@@ -7767,6 +7784,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(admissionQueued && heldRunsToRelease.length === 0 && queueIsHeld
           ? { queueHeld: true }
           : {}),
+        ...(admissionWait === null ? {} : { admissionWait }),
         queuePosition: admissionQueued ? ordinal : null,
         requestedAt: now,
         startedAt: null,
@@ -7969,19 +7987,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: message,
       });
-      yield* emitEvent({
-        type: "turn-item.updated",
-        threadId: command.threadId,
-        runId,
-        nodeId: rootNodeId,
-        providerInstanceId: modelSelection.instanceId,
-        occurredAt: now,
-        payload: notificationTurnItem(
-          turnItem,
-          message,
-          yield* notificationTasks(command.threadId, message, projection.subagents),
-        ),
-      });
+      // A run waiting for admission reaches the transcript when it starts, like any queued run.
+      if (!admissionQueued || dispatchMode.type === "defer_start")
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId,
+          nodeId: rootNodeId,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: notificationTurnItem(
+            turnItem,
+            message,
+            yield* notificationTasks(command.threadId, message, projection.subagents),
+          ),
+        });
       if (preparationTurnItem !== null) {
         yield* emitEvent({
           type: "turn-item.updated",
@@ -8560,6 +8580,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       rootNodeId,
       activeAttemptId: attemptId,
       status: admissionQueued ? "queued" : "starting",
+      ...(admissionWait === null ? {} : { admissionWait }),
       queuePosition: admissionQueued ? ordinal : null,
       requestedAt: now,
       startedAt: null,
@@ -8985,19 +9006,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: message,
     });
-    yield* emitEvent({
-      type: "turn-item.updated",
-      threadId: command.threadId,
-      runId,
-      nodeId: rootNodeId,
-      providerInstanceId: modelSelection.instanceId,
-      occurredAt: now,
-      payload: notificationTurnItem(
-        turnItem,
-        message,
-        yield* notificationTasks(command.threadId, message, projection.subagents),
-      ),
-    });
+    if (!admissionQueued)
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId: modelSelection.instanceId,
+        occurredAt: now,
+        payload: notificationTurnItem(
+          turnItem,
+          message,
+          yield* notificationTasks(command.threadId, message, projection.subagents),
+        ),
+      });
     const forkResolution = nativeForkResolution ?? portableForkResolution;
     if (pendingForkTransfer !== undefined && forkResolution !== null) {
       yield* emitEvent({
@@ -11740,7 +11762,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "Another run is active on this thread.",
       });
     }
-    const admitted = yield* issueWork.canStartRun(projection.thread);
+    const admissionWait = yield* issueWork.admissionWait(projection.thread);
+    const admitted = admissionWait === null;
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const scope = {
@@ -11783,6 +11806,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: {
         ...state.run,
         status: admitted ? "preparing" : "queued",
+        ...(admissionWait === null ? {} : { admissionWait }),
         queuePosition: admitted ? null : state.run.ordinal,
         completedAt: null,
         workspacePreparationCommandId: command.commandId,

@@ -7,6 +7,7 @@ import {
   ThreadId,
   type CommandId,
   type IssueRef,
+  type OrchestrationV2RunAdmissionWait,
   type ThreadLinkedIssue,
   LEGACY_AUTOMATIC_SUSPENSIONS,
   RepositoryOrchestration,
@@ -117,6 +118,11 @@ export class IssueWorkStore extends Context.Service<
       issue: ThreadLinkedIssue,
       threadId: ThreadId,
     ) => Effect.Effect<boolean, IssueWorkError>;
+    /** Why the repository cannot admit this worker now, or null when it can. */
+    readonly admissionWait: (
+      issue: ThreadLinkedIssue,
+      threadId: ThreadId,
+    ) => Effect.Effect<OrchestrationV2RunAdmissionWait | null, IssueWorkError>;
     readonly request: (
       requestId: CommandId,
     ) => Effect.Effect<import("@t3tools/contracts").IssueWorkRequested | null, IssueWorkError>;
@@ -560,6 +566,9 @@ export const layer = Layer.effect(
         ),
       ),
       canAdmit: Effect.fn("IssueWorkStore.canAdmit")(function* (issue, threadId) {
+        return (yield* store.admissionWait(issue, threadId)) === null;
+      }),
+      admissionWait: Effect.fn("IssueWorkStore.admissionWait")(function* (issue, threadId) {
         const rows = yield* sql<{
           allowed: number;
           worker_limit: number;
@@ -591,13 +600,11 @@ export const layer = Layer.effect(
                 AND CASE WHEN json_valid(worker.payload_json) THEN json_extract(worker.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id)
         `;
         const row = rows[0];
-        return (
-          row !== undefined &&
-          row.lineage_valid === 1 &&
-          row.allowed === 1 &&
-          row.suspended === 0 &&
-          row.active < row.worker_limit
-        );
+        if (row === undefined || row.lineage_valid !== 1) return "not_current_worker" as const;
+        if (row.allowed !== 1) return "repository_paused" as const;
+        if (row.suspended !== 0) return "issue_suspended" as const;
+        if (row.active >= row.worker_limit) return "worker_limit" as const;
+        return null;
       }, Effect.mapError(mapError)),
       request: Effect.fn("IssueWorkStore.request")((requestId) =>
         sql<{ payload_json: string }>`

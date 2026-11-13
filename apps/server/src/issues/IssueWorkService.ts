@@ -914,22 +914,6 @@ export const layer = Layer.effect(
             commandId: CommandId.make(`handoff-drain:${handoff.requestId}:${config.revision}`),
           })
           .pipe(Effect.mapError(mapError));
-        // These would hold the drain forever; cancelling settles their tasks through the parent.
-        for (const run of yield* store.strandedQueuedRuns(rootThreadId))
-          yield* threads
-            .dispatch({
-              type: "queued-run.cancel",
-              commandId: CommandId.make(`handoff-drain-cancel:${handoff.requestId}:${run.runId}`),
-              threadId: run.threadId,
-              runId: run.runId,
-            })
-            .pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Could not cancel a queued run the draining root cannot start", {
-                  cause,
-                }),
-              ),
-            );
         if (!(yield* store.subtreeDrained(rootThreadId))) return;
         yield* threads
           .dispatch({
@@ -974,6 +958,23 @@ export const layer = Layer.effect(
             runId: run.id,
           });
       }
+      // A former worker's queued run would wait forever and hold a drain; cancelling settles
+      // its task through the parent.
+      for (const run of yield* store.strandedQueuedRuns(rootThreadId))
+        yield* threads
+          .dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`stranded-queued-run-cancel:${run.runId}`),
+            threadId: run.threadId,
+            runId: run.runId,
+          })
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not cancel a queued run its root can never start", {
+                cause,
+              }),
+            ),
+          );
       if (draining) return yield* drainHandoff(rootThreadId);
       if ((yield* store.queue(config)).length > 0)
         yield* deliverQueuedIssue(

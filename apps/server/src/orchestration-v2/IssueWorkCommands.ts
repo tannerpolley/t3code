@@ -81,37 +81,40 @@ export function makeIssueWorkCommands({
     Effect.map(IssueReadSnapshots, (reads) =>
       reads.find((read) => sameIssueRepository(read.issue, issue) && read.issue.id === issue.id),
     );
-  const canStartIssueRun = Effect.fn("canStartIssueRun")(
+  /** Why this thread's next run must wait for admission, or null when it may start now. */
+  const issueRunAdmissionWait = Effect.fn("issueRunAdmissionWait")(
     function* (thread: OrchestrationV2AppThread) {
       if (isReadOnlyIssueRole(thread.role) && thread.lineage.relationshipToParent === "subagent") {
-        if (Option.isNone(issueWorkStore)) return true;
+        if (Option.isNone(issueWorkStore)) return null;
         const store = issueWorkStore.value;
-        if (!(yield* store.isRepositoryOrchestrator(thread.lineage.rootThreadId))) return true;
-        return yield* store.canAdmitReadOnly(thread.lineage.rootThreadId, thread.id);
+        const root = thread.lineage.rootThreadId;
+        if (!(yield* store.isRepositoryOrchestrator(root))) return null;
+        if (yield* store.canAdmitReadOnly(root, thread.id)) return null;
+        return (yield* store.configuration(root))?.paused === true
+          ? "repository_paused"
+          : "read_only_limit";
       }
       const issue = thread.linkedIssue;
-      if (issue === undefined) return true;
-      if (Option.isNone(issueWorkStore)) return false;
+      if (issue === undefined) return null;
+      if (Option.isNone(issueWorkStore)) return "repository_paused";
       const store = issueWorkStore.value;
-      if (
-        !(yield* store.canAdmit(issue, thread.id)) ||
-        (yield* store.issueOwner(issue)) !== thread.id
-      )
-        return false;
+      if ((yield* store.issueOwner(issue)) !== thread.id) return "not_current_worker";
+      const wait = yield* store.admissionWait(issue, thread.id);
+      if (wait !== null) return wait;
       const read = yield* issueSnapshot(issue);
       if (
         read === undefined ||
         issueEligibility(read) !== "eligible" ||
         (read.parent !== null && !sameIssueRepository(read.parent, issue))
       )
-        return false;
+        return "issue_suspended";
       const parent =
         read.parent === null
           ? (yield* store.repositoryOwner(issue))?.rootThreadId
           : yield* store.issueOwner(read.parent);
-      return parent === thread.lineage.parentThreadId;
+      return parent === thread.lineage.parentThreadId ? null : "not_current_worker";
     },
-    Effect.orElseSucceed(() => false),
+    Effect.orElseSucceed(() => "issue_suspended" as const),
   );
   // Only messages someone chose to send are refused; automatic follow-ups run normally.
   // Only issue workers and read-only children live below a repository root, so others skip the read.
@@ -496,7 +499,7 @@ export function makeIssueWorkCommands({
 
   return {
     guardThreadCreate,
-    canStartRun: canStartIssueRun,
+    admissionWait: issueRunAdmissionWait,
     guardFormerWorkerMessage,
     guardUsageSprintMessage,
     start,
