@@ -324,6 +324,13 @@ export const RepositoryWorkResult = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed(0)),
   ),
   queue: Schema.optional(Schema.Array(IssueQueueEntry)),
+  /** Set when the host now reports another ID for this name, so the registration cannot admit work. */
+  idMismatch: Schema.optional(
+    Schema.Struct({
+      registeredRepositoryId: TrimmedNonEmptyString,
+      liveRepositoryId: TrimmedNonEmptyString,
+    }),
+  ),
 });
 export type RepositoryWorkResult = typeof RepositoryWorkResult.Type;
 

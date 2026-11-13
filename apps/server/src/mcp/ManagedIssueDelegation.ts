@@ -64,7 +64,13 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
       if (repositoryOwner === null || repositoryOwner.paused)
         return yield* failure(
           "invalid_request",
-          "The repository orchestrator is unavailable or paused.",
+          repositoryOwner === null
+            ? yield* IssueWorkStore.missingOwnerMessage(
+                issueWorkStore.value,
+                linkedIssue,
+                "The repository orchestrator is unavailable or paused.",
+              ).pipe(Effect.mapError((error) => failure("orchestration_error", error.message)))
+            : "The repository orchestrator is unavailable or paused.",
         );
     }
     return { readOnly, linkedIssue };

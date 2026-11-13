@@ -750,6 +750,28 @@ const createRoot = (paused = true) =>
     });
   });
 
+it.effect(
+  "status names both repository IDs when the repository was recreated under the same name",
+  () => {
+    let liveId = "queue-repo";
+    const recreated = Layer.mock(IssueService.IssueService)({
+      repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: liveId }),
+    });
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      yield* createRoot(false);
+      assert.isUndefined((yield* service.repositoryStatus(reference)).idMismatch);
+      liveId = "recreated-repo";
+      const status = yield* service.repositoryStatus(reference);
+      assert.equal(status.phase, "active");
+      assert.deepEqual(status.idMismatch, {
+        registeredRepositoryId: "queue-repo",
+        liveRepositoryId: "recreated-repo",
+      });
+    }).pipe(Effect.provide(harness(recreated as typeof reads)));
+  },
+);
+
 it.effect("replays the original mailbox receipt after an orchestrator is registered", () =>
   Effect.gen(function* () {
     const service = yield* IssueWorkService.IssueWorkService;
