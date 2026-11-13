@@ -811,7 +811,14 @@ const make = Effect.gen(function* () {
           yield* setupTracker.stageStatus(threadId, "setup-script", "done");
         }
       } else {
-        yield* setupTracker.stageStatus(threadId, "setup-script", "skipped");
+        yield* setupTracker.stageStatus(
+          threadId,
+          "setup-script",
+          "skipped",
+          setup.status === "skipped-for-link"
+            ? "Work from a linked environment does not run setup actions."
+            : "No setup action: no project action runs on worktree creation. Import or mark one in Settings → Projects → Actions.",
+        );
       }
       // The agent must start on the branch name the thread will show.
       if (branchRename !== null) yield* Fiber.join(branchRename);
