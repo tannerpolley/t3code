@@ -435,6 +435,43 @@ it.layer(layerTest)("delegated request routing", (it) => {
       }),
   );
 
+  it.effect("keeps Writer questions visible to the owner and refuses parent answers", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const child = yield* seedChildWaitingOnUser({
+        name: "writer-owner-question",
+        requestKind: "user_input",
+        role: "writer",
+      });
+      assert.isTrue(yield* ownerCanSee(child));
+      yield* wakeChildQuestion(child);
+      assert.lengthOf(yield* childQuestionNotices(child.parentThreadId), 0);
+      const response = {
+        projectId: child.projectId,
+        threadId: child.childThreadId,
+        requestId: child.requestId,
+        commandId: CommandId.make("command:writer-parent-answer"),
+        answers: { q1: "Yes" },
+      };
+      const error = yield* threads
+        .respondToPendingRequest({
+          ...response,
+          callerThreadId: child.parentThreadId,
+        })
+        .pipe(Effect.flip);
+      assert.include(error.message, "delegated descendant");
+      yield* threads.respondToPendingRequest({
+        ...response,
+        commandId: CommandId.make("command:writer-owner-answer"),
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(child.childThreadId)).runtimeRequests[0]?.answers,
+        { q1: "Yes" },
+      );
+    }),
+  );
+
   it.effect("routes approvals with their full command and records parent responses", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

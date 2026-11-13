@@ -10,7 +10,7 @@ import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueLinks from "../issues/IssueLinks.ts";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
-import { isReadOnlyIssueRole, requiresManagedIssueAdmission } from "../issues/IssueEligibility.ts";
+import { isUnmanagedIssueRole, requiresManagedIssueAdmission } from "../issues/IssueEligibility.ts";
 
 export const makeManagedIssueDelegation = Effect.gen(function* () {
   const issueWork = yield* Effect.serviceOption(IssueWorkService.IssueWorkService);
@@ -25,13 +25,13 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
     parent: { readonly thread: OrchestrationV2AppThread },
     loadRoot: (id: ThreadId) => Effect.Effect<OrchestrationV2AppThread, OrchestratorMcpFailure>,
   ) {
-    const readOnly = isReadOnlyIssueRole(input.role);
+    const unmanaged = isUnmanagedIssueRole(input.role);
     const root =
-      readOnly || parent.thread.lineage.rootThreadId === parent.thread.id
+      unmanaged || parent.thread.lineage.rootThreadId === parent.thread.id
         ? parent.thread
         : yield* loadRoot(parent.thread.lineage.rootThreadId);
     const managed = requiresManagedIssueAdmission(input.role, parent.thread, root);
-    if (readOnly && input.issue !== undefined && Option.isNone(issueLinks))
+    if (unmanaged && input.issue !== undefined && Option.isNone(issueLinks))
       return yield* failure("orchestration_error", "Issue linking is unavailable on this server.");
     if (managed && input.issue === undefined)
       return yield* failure(
@@ -44,7 +44,7 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
         "Managed issue delegation uses async mode so the root can finish its turn while workers run.",
       );
     let linkedIssue: import("@t3tools/contracts").ThreadLinkedIssue | undefined;
-    if (input.issue !== undefined && !readOnly) {
+    if (input.issue !== undefined && !unmanaged) {
       if (Option.isNone(issueService) || Option.isNone(issueWorkStore))
         return yield* failure(
           "orchestration_error",
@@ -73,7 +73,7 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
             : "The repository orchestrator is unavailable or paused.",
         );
     }
-    return { readOnly, linkedIssue };
+    return { unmanaged, linkedIssue };
   });
   // The delegateTask span owns admission and its transport error mapping.
   const startWorker = Effect.fnUntraced(function* (
@@ -96,16 +96,16 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
       );
   });
   // Linking happens after the task projection is committed, as in the caller.
-  const linkReadOnly = Effect.fnUntraced(function* (
-    readOnly: boolean,
+  const linkUnmanaged = Effect.fnUntraced(function* (
+    unmanaged: boolean,
     issue: OrchestratorMcpDelegateTaskInput["issue"],
     childThreadId: ThreadId | null,
     parentThreadId: ThreadId,
   ) {
-    if (readOnly && issue !== undefined && childThreadId !== null && Option.isSome(issueLinks))
+    if (unmanaged && issue !== undefined && childThreadId !== null && Option.isSome(issueLinks))
       yield* issueLinks.value
         .link({ ...issue, threadId: childThreadId }, parentThreadId)
         .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
   });
-  return { resolveIssue, startWorker, linkReadOnly };
+  return { resolveIssue, startWorker, linkUnmanaged };
 });

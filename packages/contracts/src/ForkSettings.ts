@@ -19,7 +19,7 @@ export const SidebarTogglePosition = Schema.Literals(["left", "right"]);
 export type SidebarTogglePosition = typeof SidebarTogglePosition.Type;
 
 const MAX_LEGACY_CUSTOM_MODEL_ROLES = 26;
-export const MAX_MODEL_ROLES = MAX_LEGACY_CUSTOM_MODEL_ROLES + 7;
+export const MAX_MODEL_ROLES = MAX_LEGACY_CUSTOM_MODEL_ROLES + 8;
 // Legacy lists can converge on one profile without discarding any saved choices.
 export const MAX_MODEL_ROLE_TARGETS = 12;
 export const MAX_MODEL_ROLE_NAME_LENGTH = 60;
@@ -191,6 +191,14 @@ export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
     "codex",
     "gpt-6-astra",
     "xhigh",
+  ),
+  modelRole(
+    "writer",
+    "Writer",
+    "Writes deliverables in the parent checkout with direct owner guidance",
+    "claudeAgent",
+    "claude-fable-5-2",
+    "high",
   ),
 ].map((entry) => ({ ...entry, role: resolveThreadRole(entry.id)! }));
 

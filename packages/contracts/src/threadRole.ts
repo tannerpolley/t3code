@@ -5,6 +5,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 export const THREAD_ROLES = [
   "orchestrator",
   "designer",
+  "writer",
   "implementor",
   "reviewer",
   "investigator",
@@ -15,6 +16,7 @@ export type ThreadRole = typeof ThreadRole.Type;
 export const THREAD_ROLE_LABELS: Record<ThreadRole, string> = {
   orchestrator: "Orchestrator",
   designer: "Designer",
+  writer: "Writer",
   implementor: "Implementor",
   reviewer: "Reviewer",
   investigator: "Investigator",
@@ -62,6 +64,7 @@ const NATIVE_SUBAGENT_ROLE_PATTERNS: ReadonlyArray<readonly [RegExp, ThreadRole]
   [/review/, "reviewer"],
   [/test|check|verif/, "checker"],
   [/explor|research|investigat|search/, "investigator"],
+  [/writ/, "writer"],
   [/worker|implement|builder|coder/, "implementor"],
 ];
 

@@ -6,15 +6,15 @@ import type { ManagedIssueRole } from "./mcpSession.ts";
 const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
   `## T3 Code orchestration
 
-Ordinary coding tasks need no T3 tools.
+Orchestrators do not write deliverables themselves. Delegate writing to a Writer, a direct child sharing the parent checkout; delegate code to an Implementor in a worktree. Writers take no issue claim or worker slot; an optional issue only links visibility.
 
 - Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`. Workflow only when asked.
 - Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in \`task\`.
 - Every new delegate review or re-check is a new \`delegate_task\` (brief, findings, objections), never a \`t3_thread_send\`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, \`task_cancel\` the extras. Start no replacement.
 - Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
 - If you are a subagent or child, do the work yourself. Start no subagents unless your task says to.`,
-  `- Multiple selections: use \`t3_request_user_input\`. Children ask decisions through their question tool; parents read and respond with \`t3_pending_request\` with action \`read\` or \`respond\` (answers or approval decision). Approve only delegated descendants within task authority. Never message ancestors; final results return automatically.
-- Inherited options apply only to the same provider and model; explicit values override, [] or {} clears. Implementors default to worktree; read-only roles share.
+  `- Multiple selections: use \`t3_request_user_input\`. Writers ask the owner directly through their question tool, and the owner can message their thread directly. Parents must not answer Writer questions; final results still return to the parent. Other children ask decisions through their question tool; parents read and respond with \`t3_pending_request\` with action \`read\` or \`respond\` (answers or approval decision). Approve only delegated descendants within task authority. Never message ancestors; final results return automatically.
+- Inherited options apply only to the same provider and model; explicit values override, [] or {} clears. Implementors default to worktree; Writers and read-only roles share.
 - Cross-project issues: \`t3_issue_post\` notifies the repository owner.
 - \`t3_thread_launch\` and \`create_threads\` make new top-level threads, only when the user asks for a new thread. "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`; shell worktrees do not bind it, and no checkout setup in its prompt. No \`workspaceStrategy\`: project root, not your worktree.
 - Given a thread id, \`t3_thread_read\` it before you answer about it. Asked to settle a thread, this one too: \`t3_thread_organize\`.

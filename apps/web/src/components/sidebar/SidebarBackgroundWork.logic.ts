@@ -189,6 +189,7 @@ export function describeSidebarBackgroundWork(
     checker: 3,
     designer: 4,
     orchestrator: 5,
+    writer: 6,
   };
   const elsewhere = (child: ChildThread) =>
     ownerWorktreePath !== undefined && child.worktreePath !== ownerWorktreePath ? 1 : 0;

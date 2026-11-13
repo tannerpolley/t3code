@@ -108,7 +108,7 @@ const ProposeIssueChangeTool = Tool.make("propose_issue_change", {
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
-    "List providers, models, options, and runtime modes for `delegate_task`. Short list. `search` finds others. Any catalog model works. Includes model roles in configured order with low-headroom choices demoted, and inherited options.",
+    "List providers, models, options, and runtime modes for `delegate_task`. Short list. `search` finds others. Any catalog model works. Orchestrators do not write deliverables: delegate writing to a Writer in the parent checkout and code to an Implementor in a worktree. Includes model roles in configured order with low-headroom choices demoted, and inherited options.",
   parameters: OrchestratorMcpCapabilitiesInput,
   success: OrchestratorMcpCapabilitiesResult,
   failure: OrchestratorMcpFailure,
@@ -122,7 +122,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Implementors default to worktree; read-only roles share. Designer researches and plans issues through issue tools, without code edits. Managed implementors require `issue` and async mode. Read-only roles only link the issue. Options inherit for the same provider and model; explicit options override. Questions and approvals route to the parent. Keep `taskId` for `task_status` and `task_cancel`.",
+    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Orchestrators do not write deliverables. Delegate writing to a Writer, a direct child sharing the parent checkout by default with no issue claim or worker slot. Delegate code to an Implementor in a worktree; read-only roles share. Designer researches and plans issues through issue tools, without code edits. Managed implementors require `issue` and async mode. Writers and read-only roles only link the issue. Options inherit for the same provider and model; explicit options override. Writer questions go directly to the owner; the parent must not answer them. Other child questions and approvals route to the parent. Final results return to the parent. Keep `taskId` for `task_status` and `task_cancel`.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,

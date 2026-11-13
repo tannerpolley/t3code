@@ -21,7 +21,10 @@ type Threads<E> = {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<
-    Pick<OrchestrationV2ThreadShell, "lineage" | "forkedFrom" | "archivedAt" | "deletedAt"> | null,
+    Pick<
+      OrchestrationV2ThreadShell,
+      "lineage" | "forkedFrom" | "archivedAt" | "deletedAt" | "role"
+    > | null,
     E
   >;
   readonly getThreadRecords: (
@@ -43,6 +46,7 @@ const delegatedParent = Effect.fn("delegatedParent")(function* <E>(
   const child = yield* threads.getThreadShell(childThreadId);
   const parentThreadId = child?.lineage.parentThreadId;
   if (
+    child?.role === "writer" ||
     child?.lineage.relationshipToParent !== "subagent" ||
     parentThreadId == null ||
     child.forkedFrom?.type !== "node"

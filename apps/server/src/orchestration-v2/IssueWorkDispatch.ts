@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { sameIssueRepository, isReadOnlyIssueRole } from "../issues/IssueEligibility.ts";
+import { sameIssueRepository, isUnmanagedIssueRole } from "../issues/IssueEligibility.ts";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
@@ -57,7 +57,7 @@ export function threadDispatchLockKey(
 ) {
   // Registration can change while a command waits; only thread identity determines its key.
   return shell?.linkedIssue !== undefined ||
-    (isReadOnlyIssueRole(shell?.role) &&
+    (isUnmanagedIssueRole(shell?.role) &&
       shell?.lineage.relationshipToParent === "subagent" &&
       !isProviderNativeSubagentThread(shell))
     ? shell.lineage.rootThreadId
@@ -113,7 +113,7 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     const shell = yield* projectionStore.getThreadShell(threadId);
     if (
       shell?.linkedIssue !== undefined &&
-      !isReadOnlyIssueRole(shell.role) &&
+      !isUnmanagedIssueRole(shell.role) &&
       shell.activeRunId === null &&
       Option.isSome(issueWorkStore) &&
       (yield* issueWorkStore.value.canAdmit(shell.linkedIssue, threadId))

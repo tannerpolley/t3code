@@ -145,6 +145,26 @@ it.effect(
           assert.lengthOf(links, issue === undefined ? 0 : 1);
         }
       }
+      for (const issue of [undefined, reviewIssue(1)]) {
+        const result = yield* mcp.delegateTask(scope, {
+          role: "writer",
+          task: "Write the document with the owner",
+          issue,
+          clientRequestId: `writer:${issue?.id ?? "no-issue"}`,
+        });
+        const child = yield* threads.getThreadRecords(result.childThreadId!, ["runs"]);
+        assert.equal(child.thread.role, "writer");
+        assert.equal(child.thread.worktreePath, null);
+        assert.equal(child.thread.branch, null);
+        assert.isUndefined(child.thread.linkedIssue);
+        assert.equal(child.runs[0]!.status, "starting");
+        assert.equal(yield* store.slotsInUse(root), 1);
+        assert.equal(yield* store.readOnlySlotsInUse(root), 4);
+        assert.equal(yield* store.issueOwner(reviewIssue(1)), originalOwner);
+        const links =
+          yield* sql`SELECT thread_id FROM issue_thread_links WHERE thread_id = ${result.childThreadId}`;
+        assert.lengthOf(links, issue === undefined ? 0 : 1);
+      }
       yield* work.queueIssue({
         ...repository,
         number: 3,

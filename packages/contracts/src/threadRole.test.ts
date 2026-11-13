@@ -9,6 +9,8 @@ describe("nativeSubagentRole", () => {
     ["sol-advisor-implementer", "implementor"],
     ["thorough-builder", "implementor"],
     ["coder", "implementor"],
+    ["writer", "writer"],
+    ["manuscript-writing", "writer"],
     ["reviewer", "reviewer"],
     ["final-reviewer", "reviewer"],
     ["Explore", "investigator"],
