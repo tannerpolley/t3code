@@ -225,10 +225,10 @@ const projectWebProbeSnapshot = (
 };
 
 /** The user systemd service a process runs in, from its `/proc/<pid>/cgroup`. */
-export const systemdUnitFromCgroup = (cgroup: string): string | null =>
+const systemdUnitFromCgroup = (cgroup: string): string | null =>
   /\/app\.slice\/([^/\s]+\.service)(?:\/|\s|$)/.exec(cgroup)?.[1] ?? null;
 
-export const isLocalServerHidden = (
+const isLocalServerHidden = (
   server: Pick<DiscoveredLocalServer, "port" | "processName">,
   rules: ReadonlyArray<LocalServerHideRule>,
 ): boolean => {
@@ -244,7 +244,7 @@ export const isLocalServerHidden = (
  * The project with the deepest workspace root containing `cwd`, a `/proc/<pid>/cwd` target.
  * Roots must be physical paths, as the kernel reports cwd; on equal roots the first project wins.
  */
-export const projectIdForCwd = (
+const projectIdForCwd = (
   cwd: string,
   projects: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">>,
 ): ProjectId | null => {

@@ -59,7 +59,7 @@ export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgres
 }
 
 /** Tones match the pull request glyphs: open green, done purple, shelved gray, failing red. */
-export const ISSUE_PROGRESS_PRESENTATION = {
+const ISSUE_PROGRESS_PRESENTATION = {
   dependencies_unknown: {
     label: "Dependencies unknown",
     toneClassName: "text-muted-foreground",

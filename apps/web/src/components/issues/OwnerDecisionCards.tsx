@@ -8,7 +8,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 
-export function OwnerDecisionCard({
+function OwnerDecisionCard({
   environmentId,
   decision,
 }: {

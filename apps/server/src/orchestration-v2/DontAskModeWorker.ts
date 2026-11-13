@@ -45,7 +45,7 @@ export function dontAskAnswers(
  * be answered, or its turn item has not been committed yet (adapters commit
  * request and item separately).
  */
-export function dontAskResponse(
+function dontAskResponse(
   threadId: ThreadId,
   { request, item }: ProjectionStore.ProjectionRuntimeResponseContext,
 ): Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }> | null {

@@ -60,7 +60,7 @@ const delegatedParent = Effect.fn("delegatedParent")(function* <E>(
 });
 
 /** Only a live app-owned parent receives newly created requests. */
-export const delegatedRequestOwner = Effect.fn("delegatedRequestOwner")(function* <E>(
+const delegatedRequestOwner = Effect.fn("delegatedRequestOwner")(function* <E>(
   projections: Threads<E>,
   childThreadId: ThreadId,
   inactiveParents: ReadonlySet<ThreadId> = new Set(),

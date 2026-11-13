@@ -27,7 +27,7 @@ export const advertisedModel = (provider: ServerProvider, model: string) =>
     candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
   );
 
-export function providerConstraints(
+function providerConstraints(
   provider: ServerProvider | undefined,
   supportsOrchestrationV2: boolean,
 ): ReadonlyArray<string> {

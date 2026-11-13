@@ -14,7 +14,7 @@ import { TITLE_REFRESH_MODEL_SELECTION } from "./ThreadTitleRegenerationService.
 
 const MINUTE_MS = 60_000;
 /** A thread's title is re-evaluated at most this often, and only after new messages. */
-export const TITLE_REFRESH_INTERVAL_MS = 10 * MINUTE_MS;
+const TITLE_REFRESH_INTERVAL_MS = 10 * MINUTE_MS;
 /** A sweep starts refreshes only while fewer regenerations than this are pending in its read. */
 const MAX_IN_FLIGHT = 2;
 
@@ -59,7 +59,7 @@ export function selectTitleRefreshThreads(
 }
 
 /** One pass: arm the regular title regeneration for each due thread. */
-export const makeSweep = Effect.gen(function* () {
+const makeSweep = Effect.gen(function* () {
   const projections = yield* ProjectionStoreV2;
   const threads = yield* ThreadManagementService;
   const settings = yield* ServerSettings.ServerSettingsService;

@@ -684,7 +684,7 @@ function answerValueToStrings(value: unknown): ReadonlyArray<string> {
   return [JSON.stringify(value)];
 }
 
-export function codexUserInputQuestions(
+function codexUserInputQuestions(
   questions: ReadonlyArray<CodexSchema.ToolRequestUserInputParams__ToolRequestUserInputQuestion>,
 ) {
   return questions.map((question, index) => ({

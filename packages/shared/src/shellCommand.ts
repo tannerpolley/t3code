@@ -1,9 +1,5 @@
 /**
- * Reading agent shell commands without running them: a tokenizer, the simple commands a command
- * line runs, and what kind of program it mostly runs (`classifyShellCommand`), which background
- * task rows show as an icon.
- *
- * A small tokenizer, not a shell: quotes, escapes, separators, redirects and heredocs. A `$NAME`
+ * Reading agent shell commands without running them. A small tokenizer, not a shell: a `$NAME`
  * stays in its word as `\0NAME\0`; a word it cannot know statically (`$(…)`, a glob, `~user`) is
  * marked `dynamic`.
  */
@@ -16,7 +12,7 @@ export type ShellToken =
 const VAR = "\0";
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
 
-export function tokenizeShell(command: string): Array<ShellToken> {
+function tokenizeShell(command: string): Array<ShellToken> {
   const tokens: Array<ShellToken> = [];
   const heredocs: Array<string> = [];
   let word = "";
@@ -542,12 +538,9 @@ function programKind(
 }
 
 /**
- * The kind of program a background shell's command mostly runs: a recognized server, otherwise
- * the first command this recognizes, looking through wrappers (`nohup`, `setsid`, `timeout`,
- * `nice`, env assignments, `bash -lc '…'`), paths (`.venv/bin/python`) and runners (`python -m pytest`, `uv run`). A
- * command that watches a file or polls a process (`while kill -0 123; do sleep 20; done`) is a
- * watcher: any `while`/`until` loop waits on something unless it reads input or counts. Sleeping
- * alone, including inside a finite `for` loop, does not imply watching.
+ * The kind of program a background shell's command mostly runs, looking through wrappers, paths
+ * and runners. Any `while`/`until` loop that waits on something (a file, a process) is a watcher;
+ * a loop that reads input or counts, and sleeping alone, is not.
  */
 const NUMERIC_TEST_OPERATORS = ["-lt", "-le", "-gt", "-ge", "-eq", "-ne"];
 

@@ -48,7 +48,7 @@ import {
   type ThreadSortInput,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { SidebarThreadSummary, Thread } from "../types";
-import { cn, normalizeSearchText } from "../lib/utils";
+import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
@@ -948,49 +948,6 @@ export function resolveAdjacentThreadId<T>(input: {
   return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
 }
 
-export function isContextMenuPointerDown(input: {
-  button: number;
-  ctrlKey: boolean;
-  isMac: boolean;
-}): boolean {
-  if (input.button === 2) return true;
-  return input.isMac && input.button === 0 && input.ctrlKey;
-}
-
-export function resolveThreadRowClassName(input: {
-  isActive: boolean;
-  isSelected: boolean;
-}): string {
-  const baseClassName =
-    "h-8 w-full translate-x-0 cursor-pointer justify-start rounded-md px-2 text-left text-sm select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
-
-  if (input.isSelected && input.isActive) {
-    return cn(
-      baseClassName,
-      "bg-sidebar-row-active text-sidebar-foreground font-medium hover:bg-sidebar-row-active hover:text-sidebar-foreground",
-    );
-  }
-
-  if (input.isSelected) {
-    return cn(
-      baseClassName,
-      "bg-sidebar-row-selected text-sidebar-foreground hover:bg-sidebar-row-active hover:text-sidebar-foreground",
-    );
-  }
-
-  if (input.isActive) {
-    return cn(
-      baseClassName,
-      "bg-sidebar-row-active text-sidebar-foreground font-medium hover:bg-sidebar-row-active hover:text-sidebar-foreground",
-    );
-  }
-
-  return cn(
-    baseClassName,
-    "text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-  );
-}
-
 export type SidebarThreadStatus =
   | "approval"
   | "input"
@@ -1151,7 +1108,7 @@ export function groupRunningSubagentsByParent<
 }
 
 /** Where a thread works: its environment and worktree, or the main checkout without one. */
-export function threadLocationKey(
+function threadLocationKey(
   thread: Pick<SidebarThreadSummary, "environmentId" | "worktreePath">,
 ): string {
   return `${thread.environmentId}:${thread.worktreePath ?? ""}`;
@@ -1409,14 +1366,6 @@ export function resolveWorkingStartedAt(
   thread: Pick<SidebarThreadSummary, "latestRun" | "runtime">,
 ): string | null {
   return resolveThreadWorkingStartedAt(thread);
-}
-
-export function formatWorkingDurationLabel(elapsedMs: number): string {
-  const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 export function formatStoppedThreadDuration(
