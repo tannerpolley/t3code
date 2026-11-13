@@ -71,7 +71,7 @@ import { checkDelegateTarget, workerProviderTargets } from "../mcp/delegateTaskT
 import { usageSprintCheck, usageSprintRefusal, usageSprintWindow } from "./usageSprint.ts";
 import {
   issueEligibility,
-  isReadOnlyIssueRole,
+  isUnmanagedIssueRole,
   sameIssueRepository,
   supportsManagedIssueWork,
   issueScopeExpansionError,
@@ -508,10 +508,10 @@ export const layer = Layer.effect(
     const startWorker: IssueWorkService["Service"]["startWorker"] = Effect.fn(
       "IssueWorkService.startWorker",
     )(function* (command) {
-      if (command.type === "delegated_task.request" && isReadOnlyIssueRole(command.role))
+      if (command.type === "delegated_task.request" && isUnmanagedIssueRole(command.role))
         return yield* new IssueWorkError({
           code: "invalid-request",
-          message: "Read-only children use ordinary delegation and issue links.",
+          message: "Writers and read-only children use ordinary delegation and issue links.",
         });
       if (command.issue === undefined)
         return yield* new IssueWorkError({
@@ -971,7 +971,7 @@ export const layer = Layer.effect(
         const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
         if (shell == null || shell.activeRunId === null) continue;
         if (
-          !isReadOnlyIssueRole(shell.role) &&
+          !isUnmanagedIssueRole(shell.role) &&
           (shell.linkedIssue === undefined || !(yield* store.canAdmit(shell.linkedIssue, threadId)))
         )
           continue;
@@ -2204,7 +2204,7 @@ export const layer = Layer.effect(
             // Root availability also releases one queued notice.
             if (
               owner !== null &&
-              !isReadOnlyIssueRole(shell?.role) &&
+              !isUnmanagedIssueRole(shell?.role) &&
               (shell?.linkedIssue === undefined ||
                 stored.event.type === "subagent.updated" ||
                 stored.event.type === "runtime-request.updated" ||

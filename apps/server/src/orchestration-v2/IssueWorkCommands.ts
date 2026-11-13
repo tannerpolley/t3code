@@ -18,6 +18,7 @@ import * as Ref from "effect/Ref";
 import {
   issueEligibility,
   isReadOnlyIssueRole,
+  isUnmanagedIssueRole,
   requiresManagedIssueAdmission,
   sameIssueRepository,
   supportsManagedIssueWork,
@@ -94,6 +95,7 @@ export function makeIssueWorkCommands({
           ? "repository_paused"
           : "read_only_limit";
       }
+      if (thread.role === "writer") return null;
       const issue = thread.linkedIssue;
       if (issue === undefined) return null;
       if (Option.isNone(issueWorkStore)) return "repository_paused";
@@ -128,7 +130,7 @@ export function makeIssueWorkCommands({
       command.automaticProviderContinuationOfRunId !== undefined ||
       (command.createdBy !== "user" && command.creationSource !== "mcp") ||
       thread.lineage.rootThreadId === thread.id ||
-      (thread.linkedIssue === undefined && !isReadOnlyIssueRole(thread.role))
+      (thread.linkedIssue === undefined && !isUnmanagedIssueRole(thread.role))
     )
       return;
     const refusal = usageSprintRefusal(
@@ -151,7 +153,7 @@ export function makeIssueWorkCommands({
     const issue = thread.linkedIssue;
     if (
       issue === undefined ||
-      isReadOnlyIssueRole(thread.role) ||
+      isUnmanagedIssueRole(thread.role) ||
       Option.isNone(issueWorkStore) ||
       command.delegatedCompletion !== undefined ||
       command.usageLimitContinuationOfRunId !== undefined ||
@@ -321,7 +323,7 @@ export function makeIssueWorkCommands({
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     command: OrchestrationV2ServerCommand,
   ) {
-    if (isReadOnlyIssueRole(request.role)) return false;
+    if (isUnmanagedIssueRole(request.role)) return false;
     const parent = parentProjection.thread;
     const root =
       parent.lineage.rootThreadId === parent.id
@@ -441,7 +443,7 @@ export function makeIssueWorkCommands({
   });
 
   const childIssueFields = (request: DelegatedTaskRequest) => ({
-    ...(request.issue === undefined || isReadOnlyIssueRole(request.role)
+    ...(request.issue === undefined || isUnmanagedIssueRole(request.role)
       ? {}
       : { linkedIssue: request.issue, titleSource: "generated" as const }),
     ...(request.role === undefined ? {} : { role: request.role }),
@@ -451,7 +453,7 @@ export function makeIssueWorkCommands({
   // preparation binds one; it never borrows the parent's.
   const childWorkspaceFields = (request: DelegatedTaskRequest) =>
     request.workspaceStrategy === undefined
-      ? request.issue === undefined || isReadOnlyIssueRole(request.role)
+      ? request.issue === undefined || isUnmanagedIssueRole(request.role)
         ? {}
         : { branch: null, worktreePath: null }
       : { branch: request.workspaceStrategy.branch ?? null, worktreePath: null };

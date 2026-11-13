@@ -116,7 +116,18 @@ describe("stored fork settings compatibility", () => {
       id: "builder",
       targets: stored.server.modelRoles.map((role: { target: unknown }) => role.target),
     });
-    expect(server.modelRoles).toHaveLength(8);
+    expect(server.modelRoles).toHaveLength(9);
+    expect(server.modelRoles.find((role) => role.id === "writer")).toMatchObject({
+      role: "writer",
+      name: "Writer",
+      targets: [
+        {
+          providerInstanceId: "claudeAgent",
+          model: "claude-fable-5-2",
+          options: [{ id: "effort", value: "high" }],
+        },
+      ],
+    });
     expect(encodeServerSettings(server)).toMatchObject({
       ...serverFields,
       projectFolderRoot: "/work/projects",

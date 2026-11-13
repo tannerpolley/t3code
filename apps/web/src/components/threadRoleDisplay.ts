@@ -7,6 +7,7 @@ import {
 import {
   BriefcaseIcon,
   PencilRulerIcon,
+  PenLineIcon,
   HardHatIcon,
   ListChecksIcon,
   NetworkIcon,
@@ -25,6 +26,7 @@ export type RoleDisplayThread = Pick<
 const ROLE_ICONS = {
   orchestrator: NetworkIcon,
   designer: PencilRulerIcon,
+  writer: PenLineIcon,
   implementor: WrenchIcon,
   reviewer: ShieldCheckIcon,
   investigator: SearchIcon,
@@ -32,6 +34,7 @@ const ROLE_ICONS = {
 };
 const ROLE_DESCRIPTIONS = {
   designer: "Researches requests and plans issues",
+  writer: "Writes deliverables with your direct guidance",
   orchestrator: "Coordinates the repository's work and starts workers",
   implementor: "Makes the changes in its own worktree",
   reviewer: "Reviews work read-only",

@@ -37,6 +37,7 @@ describe("model roles", () => {
       "Implementor",
       "Investigator",
       "Reviewer",
+      "Writer",
     ]);
     expect(roles[0]!.targets[0]).toMatchObject({
       model: "claude-opus-5-5",
@@ -48,7 +49,15 @@ describe("model roles", () => {
       options: [{ id: "effort", value: "medium" }],
     });
     expect(new Set(roles.map((entry) => entry.role))).toEqual(
-      new Set(["designer", "orchestrator", "implementor", "reviewer", "investigator", "checker"]),
+      new Set([
+        "designer",
+        "orchestrator",
+        "writer",
+        "implementor",
+        "reviewer",
+        "investigator",
+        "checker",
+      ]),
     );
   });
 
@@ -154,6 +163,7 @@ describe("model roles", () => {
       "investigator",
       "reviewer",
       "designer",
+      "writer",
     ]);
     expect(roles.find((entry) => entry.id === "implementor-fast")?.name).toBe("Sprinter");
     expect(roles.find((entry) => entry.id === "implementor-thorough")?.name).toBe("Implementor");
@@ -171,7 +181,7 @@ describe("model roles", () => {
     expect(roles.find((entry) => entry.id === "checker")?.targets).toEqual(saved[2]!.targets);
     expect(
       roles
-        .filter((entry) => entry.id !== "designer")
+        .filter((entry) => entry.id !== "designer" && entry.id !== "writer")
         .flatMap((entry) => entry.targets)
         .map((target) => target.model)
         .sort(),

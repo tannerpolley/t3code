@@ -438,8 +438,11 @@ To tell agents which model and effort suit each kind of delegated work, edit
 **Model roles** in **Settings → Providers** on web and desktop. **Settings → Customizations**
 also gathers every fork setting, grouped by its normal tab. Agents use these
 roles at their own discretion; your explicit instructions in a thread win. The
-standard roles are Orchestrator, Designer, Implementor, Reviewer, Investigator and Checker.
+standard roles are Orchestrator, Designer, Writer, Implementor, Reviewer, Investigator and Checker.
 Designer researches requests and writes issue plans before implementation.
+For documents and other writing, ask the orchestrator to delegate to a Writer.
+The Writer shares its parent’s checkout; open its thread to give guidance and answer
+its questions directly. Its final result still returns to the orchestrator.
 Implementor has separate Sprinter and Implementor profiles, each with its own model and
 effort choices. Choices are ranked by available weekly usage; unavailable choices
 are marked. Codex agents see changes on their next turn and
@@ -454,7 +457,7 @@ Implementors. Other threads you start are Orchestrators. Child agents are
 Implementors unless their parent gives them another role. Forks keep their source's
 role. A native provider subagent takes its role from its agent type: Codex's manager
 is an Orchestrator; reviewer types are Reviewers; explorer or researcher types are
-Investigators; tester or checker types are Checkers; and every other type, including
+Investigators; writing types are Writers; tester or checker types are Checkers; and every other type, including
 the default agents, is an Implementor. Native subagents with the Implementor role display as
 Worker with a hard hat icon. Role icons appear in the chat header, and in
 thread rows when you turn them on in **Settings → Appearance → Sidebar & projects**.
@@ -540,7 +543,7 @@ Choose **Family style → Colors** to tint each family instead, with deeper rows
 Turn off **Codex-style sidebar** in **Settings → General** to use the classic rows and flat child list.
 The Activity view keeps its cards.
 
-Rows are titled by their role (Orchestrator, Implementor, Reviewer, Investigator, Checker,
+Rows are titled by their role (Orchestrator, Designer, Writer, Implementor, Reviewer, Investigator, Checker,
 or Worker). Hover a title to see the thread's name. An orchestrator shows its pull request
 state; an issue-linked thread shows its issue number; other threads show their pull request
 state when they have one.

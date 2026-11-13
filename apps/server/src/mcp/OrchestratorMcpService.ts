@@ -2562,7 +2562,7 @@ const make = Effect.gen(function* () {
           "Delegated tasks require an active run owned by this MCP provider session.",
         );
       }
-      const { readOnly, linkedIssue } = yield* managedIssueDelegation.resolveIssue(
+      const { unmanaged, linkedIssue } = yield* managedIssueDelegation.resolveIssue(
         input,
         parent,
         (id) =>
@@ -2685,8 +2685,8 @@ const make = Effect.gen(function* () {
       }
       const taskId = taskEvent.event.payload.id;
       const childThreadId = taskEvent.event.payload.childThreadId;
-      yield* managedIssueDelegation.linkReadOnly(
-        readOnly,
+      yield* managedIssueDelegation.linkUnmanaged(
+        unmanaged,
         input.issue,
         childThreadId,
         parent.thread.id,

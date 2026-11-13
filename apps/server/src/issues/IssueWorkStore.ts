@@ -363,6 +363,7 @@ export const layer = Layer.effect(
           WHERE CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
             AND thread.thread_id <> ${rootThreadId} AND run.status = 'queued'
             AND json_type(thread.payload_json, '$.linkedIssue') = 'object' AND NOT (${isReadOnly})
+            AND coalesce(json_extract(thread.payload_json, '$.role'), '') <> 'writer'
             AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work work
               JOIN orchestration_v2_projection_repository_orchestration owner
                 ON owner.host = work.host AND owner.repository_id = work.repository_id

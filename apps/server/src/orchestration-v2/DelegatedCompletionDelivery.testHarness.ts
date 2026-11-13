@@ -335,6 +335,7 @@ const seedChildWaitingOnUser = Effect.fn("seedChildWaitingOnUser")(function* (in
   readonly parentState?: "archived" | "deleted" | "missing";
   readonly origin?: "app_owned" | "provider_native";
   readonly legacyUnrouted?: boolean;
+  readonly role?: "writer";
   /** settled_only with the parent run active is a blocking delegate_task wait. */
   readonly completionWake?: "always" | "settled_only";
   /** A Codex async question, answered by message, survives a restart. */
@@ -455,6 +456,7 @@ const seedChildWaitingOnUser = Effect.fn("seedChildWaitingOnUser")(function* (in
           rootThreadId: parentThreadId,
         },
         forkedFrom: { type: "node", nodeId: taskId },
+        ...(input.role === undefined ? {} : { role: input.role }),
       },
     },
     {
