@@ -13,6 +13,26 @@ import {
 const checkedAt = "2026-07-18T10:00:00.000Z";
 
 describe("codexRateLimitsToLimits", () => {
+  it("carries credits through probes, sparse notifications, and balance-only changes", () => {
+    const credits = { hasCredits: true, unlimited: false, balance: "123.45" };
+    const snapshot = { credits };
+    expect(codexRateLimitsToLimits({ checkedAt, snapshot }).credits).toEqual(credits);
+    expect(codexRateLimitsToUpdate(snapshot)).toEqual({ windows: [], credits });
+    expect(codexRateLimitsToUpdate({ credits: { ...credits } }, snapshot)).toBeUndefined();
+    expect(codexRateLimitsToUpdate({ credits: { ...credits, balance: "0" } }, snapshot)).toEqual({
+      windows: [],
+      credits: { ...credits, balance: "0" },
+    });
+    expect(mergeCodexRateLimits(snapshot, { primary: { usedPercent: 10 } })?.credits).toEqual(
+      credits,
+    );
+    expect(codexRateLimitsToUpdate({ credits: null }, snapshot)).toEqual({
+      windows: [],
+      credits: null,
+    });
+    expect(codexRateLimitsToUpdate({ limitId: "spark", credits })).toBeUndefined();
+  });
+
   it("shows an Enterprise monthly credit allowance in reads and notifications without a duration", () => {
     const snapshot = {
       limitId: "codex",

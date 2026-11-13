@@ -53,12 +53,20 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  if (
+    (update.windows.length === 0 && update.credits === undefined) ||
+    previous?.unavailable?.reason === "unsupported"
+  ) {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
   // Codex repeats unchanged limits on token ticks; avoid allocating snapshots for no-ops.
-  let changed = false;
+  const credits = update.credits !== undefined ? update.credits : previous?.credits;
+  let changed =
+    credits?.hasCredits !== previous?.credits?.hasCredits ||
+    credits?.unlimited !== previous?.credits?.unlimited ||
+    credits?.balance !== previous?.credits?.balance ||
+    (credits !== previous?.credits && (credits == null || previous?.credits == null));
   for (const window of update.windows) {
     const existing = merged.get(window.id);
     const next: ServerProviderUsageWindow = {
@@ -83,6 +91,7 @@ export function applyUsageLimitsUpdate(input: {
     previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
+    ...(credits !== undefined ? { credits } : {}),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
   };
@@ -99,15 +108,7 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
   );
 }
 
-/**
- * Choose what to publish after a status probe finishes. A probe that failed
- * this time must not wipe bars a previous probe or a turn already
- * established, so the last good snapshot stays; `unsupported` is
- * authoritative and replaces them.
- *
- * A successful probe replaces the published windows only when its read is
- * at least as recent. Finishing a probe does not make its usage read newer.
- */
+/** Preserve a good snapshot after probe failure; successful reads replace only older usage. */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;
@@ -123,7 +124,12 @@ export function resolveUsageLimitsAfterProbe(input: {
     !probed.unavailable &&
     Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
   ) {
-    return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
+    return {
+      ...probed,
+      checkedAt: published.checkedAt,
+      windows: published.windows,
+      ...(published.credits !== undefined ? { credits: published.credits } : {}),
+    };
   }
   return probed;
 }

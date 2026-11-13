@@ -87,11 +87,17 @@ describe("claudeResetCreditsToContract", () => {
         eligible: true,
         next_grant_id: "weekly_a",
         grants: [
-          grant({ id: "weekly_a", clears: ["seven_day"], ends_at: "2026-12-10T22:00:00Z" }),
+          grant({
+            id: "weekly_a",
+            type: "weekly",
+            clears: ["seven_day", "seven_day_overage_included"],
+            ends_at: "2026-12-10T22:00:00Z",
+          }),
           grant({
             id: "fable_a",
             clears: ["seven_day_overage_included"],
             gives_back_weekly: true,
+            type: "full",
             ends_at: "2027-03-09T07:59:00Z",
           }),
           grant({ id: "fable_b", gives_back_weekly: true, type: "weekly" }),
@@ -147,6 +153,12 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         expect(UrlParams.toString(request.urlParams)).toBe("cedar_ember=1&skip_spend=1");
         expect(request.headers.authorization).toBe("Bearer oauth-token");
         expect(request.headers["anthropic-beta"]).toBe("oauth-2025-04-20");
+        // The OAuth endpoint rejects this CLI request without its application header.
+        if (request.headers["x-app"] !== "cli") {
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, Response.json({}, { status: 429 })),
+          );
+        }
         expect(request.headers["user-agent"]).toBe("claude-cli/2.1.0 (external, cli)");
         return Effect.succeed(
           HttpClientResponse.fromWeb(

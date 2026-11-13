@@ -216,6 +216,7 @@ const withClaudeHeaders = (token: string, version: string) =>
   HttpClientRequest.setHeaders({
     authorization: `Bearer ${token}`,
     "anthropic-beta": "oauth-2025-04-20",
+    "x-app": "cli",
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 

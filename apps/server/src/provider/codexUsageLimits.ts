@@ -1,6 +1,7 @@
 import type {
   ProviderUsageLimitsUpdate,
   ServerProviderResetCredits,
+  ServerProviderCredits,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
@@ -17,6 +18,7 @@ interface CodexRateLimitWindow {
 }
 
 export interface CodexRateLimitSnapshot {
+  readonly credits?: ServerProviderCredits | null;
   readonly limitId?: string | null;
   readonly planType?: string | null;
   readonly rateLimitReachedType?: string | null;
@@ -130,13 +132,17 @@ export function codexRateLimitsToLimits(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
-  const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
+  const snapshot = input.rateLimitsByLimitId?.codex ?? input.snapshot;
+  const windows = codexRateLimitsToWindows(snapshot);
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
       windows,
     }),
     ...(resetCredits ? { resetCredits } : {}),
+    ...((!snapshot.limitId || snapshot.limitId === "codex") && snapshot.credits !== undefined
+      ? { credits: snapshot.credits }
+      : {}),
   };
 }
 
@@ -144,6 +150,7 @@ export function codexRateLimitsToUpdate(
   snapshot: CodexRateLimitSnapshot,
   previous?: CodexRateLimitSnapshot,
 ): ProviderUsageLimitsUpdate | undefined {
+  if (snapshot.limitId && snapshot.limitId !== "codex") return undefined;
   const previousWindows = previous ? codexRateLimitsToWindows(previous) : [];
   // Token ticks repeat session-cached limits that may predate an account probe or reset.
   const windows = codexRateLimitsToWindows(snapshot).filter((window) => {
@@ -156,7 +163,16 @@ export function codexRateLimitsToUpdate(
       existing.windowDurationMins !== window.windowDurationMins
     );
   });
-  return windows.length > 0 ? { windows } : undefined;
+  const creditsChanged =
+    snapshot.credits !== undefined &&
+    (snapshot.credits?.hasCredits !== previous?.credits?.hasCredits ||
+      snapshot.credits?.unlimited !== previous?.credits?.unlimited ||
+      snapshot.credits?.balance !== previous?.credits?.balance ||
+      (snapshot.credits !== previous?.credits &&
+        (snapshot.credits == null || previous?.credits == null)));
+  return windows.length > 0 || creditsChanged
+    ? { windows, ...(creditsChanged ? { credits: snapshot.credits } : {}) }
+    : undefined;
 }
 
 export function codexRateLimitsFailureMessage(error: CodexErrors.CodexAppServerError): string {
@@ -187,6 +203,7 @@ export function mergeCodexRateLimits(
     ...(update.rateLimitReachedType !== undefined
       ? { rateLimitReachedType: update.rateLimitReachedType }
       : {}),
+    ...(update.credits !== undefined ? { credits: update.credits } : {}),
     ...(update.primary !== undefined ? { primary: update.primary } : {}),
     ...(update.secondary !== undefined ? { secondary: update.secondary } : {}),
     ...(update.individualLimit !== undefined ? { individualLimit: update.individualLimit } : {}),

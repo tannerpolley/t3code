@@ -8,7 +8,7 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
-import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
+import { CreditBalance, LimitWindows, ResetCredits } from "../usage/UsageLimits";
 import { ComposerBanner } from "./ComposerBanner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
@@ -144,6 +144,7 @@ function UsageLimitsBannerBody({
                   now={now}
                 />
               )}
+              <CreditBalance credits={account.limits.credits} />
               {externalUsage ? (
                 <Button
                   size="sm"

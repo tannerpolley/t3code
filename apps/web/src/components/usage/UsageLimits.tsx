@@ -8,6 +8,7 @@ import {
   ProviderConsumeResetCreditInput,
   ServerProvider,
   ServerProviderResetCredits,
+  type ServerProviderUsageLimits,
   ServerProviderUsageWindow,
   UsageProviderKind,
 } from "@t3tools/contracts";
@@ -186,6 +187,24 @@ function WindowBar({
         </div>
       </TooltipPopup>
     </Tooltip>
+  );
+}
+
+export function CreditBalance({
+  credits,
+}: {
+  readonly credits: ServerProviderUsageLimits["credits"];
+}) {
+  if (!credits?.hasCredits) return null;
+  return (
+    <span className="text-xs text-muted-foreground tabular-nums">
+      Credits:{" "}
+      {credits.unlimited
+        ? "Unlimited"
+        : credits.balance != null
+          ? `${credits.balance} remaining`
+          : "Available"}
+    </span>
   );
 }
 
