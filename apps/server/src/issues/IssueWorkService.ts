@@ -54,7 +54,7 @@ import { sourceControlDefinitions } from "../sourceControl/sourceControlDefiniti
 import { issueRepositoryOf } from "./issueRepositoryOf.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import * as Layer from "effect/Layer";
-import { IssueService } from "./IssueService.ts";
+import { IssueService, makeLiveReadCache } from "./IssueService.ts";
 import { IssueWorkStore, missingOwnerMessage } from "./IssueWorkStore.ts";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
@@ -693,6 +693,8 @@ export const layer = Layer.effect(
       };
     });
 
+    // Status is polled, a rename is rare, and only registered repositories reach this cache.
+    const liveIdentity = makeLiveReadCache<{ readonly repositoryId: string }>(10 * 60_000);
     const readRepositoryStatus = Effect.fn("IssueWorkService.readRepositoryStatus")(
       function* (input: IssueRepositoryRef) {
         const owner = yield* store.repositoryOwnerByRef(input);
@@ -717,7 +719,13 @@ export const layer = Layer.effect(
       const status = yield* readRepositoryStatus(input);
       if (status.orchestration === null) return status;
       // A host that cannot answer must not hide the registration, so only a successful read can report a mismatch.
-      const live = yield* Effect.exit(issues.repositoryIdentity(input));
+      const live = yield* Effect.exit(
+        liveIdentity(
+          `${input.host}/${input.repository}`.toLowerCase(),
+          issues.repositoryIdentity(input),
+          undefined,
+        ),
+      );
       return live._tag === "Success" &&
         live.value.repositoryId !== status.orchestration.repositoryId
         ? {

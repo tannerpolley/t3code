@@ -753,21 +753,25 @@ const createRoot = (paused = true) =>
 it.effect(
   "status names both repository IDs when the repository was recreated under the same name",
   () => {
-    let liveId = "queue-repo";
+    let identityReads = 0;
     const recreated = Layer.mock(IssueService.IssueService)({
-      repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: liveId }),
+      repositoryIdentity: () =>
+        Effect.sync(() => {
+          identityReads += 1;
+          return { ...reference, repositoryId: "recreated-repo" };
+        }),
     });
     return Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
       yield* createRoot(false);
-      assert.isUndefined((yield* service.repositoryStatus(reference)).idMismatch);
-      liveId = "recreated-repo";
       const status = yield* service.repositoryStatus(reference);
       assert.equal(status.phase, "active");
       assert.deepEqual(status.idMismatch, {
         registeredRepositoryId: "queue-repo",
         liveRepositoryId: "recreated-repo",
       });
+      yield* service.repositoryStatus(reference);
+      assert.equal(identityReads, 1);
     }).pipe(Effect.provide(harness(recreated as typeof reads)));
   },
 );
