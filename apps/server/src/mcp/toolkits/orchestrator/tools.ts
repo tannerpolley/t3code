@@ -95,7 +95,7 @@ const threadMetadataDependencies = [
 ];
 const ProposeIssueChangeTool = Tool.make("propose_issue_change", {
   description:
-    "Propose an exact issue change from a repository-managed thread. Use a stable clientRequestId on retries. Create/split and milestone moves execute automatically. Body edits, close/reopen, standalone parent changes, and blocked_by add/remove also execute automatically, unless the requesting thread is in approval-required mode; then they wait for the user's approval on the Issues page. The returned change includes the exact preview, decision and result. Agents cannot approve changes. A conflict needs a new proposal and preview. Labels and assignees are outside this tool's scope.",
+    "Propose an exact issue change from a repository-managed thread. Create needs title, body and milestoneNumber (null for none); split needs number and issues with those fields. Other operations need number and their action, state, body, milestoneNumber, childNumber or blockerNumber. Use a stable clientRequestId on retries. Create/split and milestone moves execute automatically. Body edits, close/reopen, standalone parent changes, and blocked_by add/remove also execute automatically, unless the requesting thread is in approval-required mode; then they wait for the user's approval on the Issues page. The returned change includes the exact preview, decision and result. Agents cannot approve changes. A conflict needs a new proposal and preview. Labels and assignees are outside this tool's scope.",
   parameters: IssueChangeProposeInput,
   success: IssueChange,
   failure: OrchestratorMcpFailure,
@@ -176,11 +176,11 @@ const WorkflowStopTool = Tool.make("t3_workflow_stop", {
 
 const BackgroundWaitTool = Tool.make("t3_background_wait", {
   description:
-    "Keep this thread in Working while background work runs. Pass its task ID after starting it. Not for work left running (dev server, watcher). `waiting=false` clears. Does not stop the task. Claude only.",
+    "Keep this thread in Working while background work runs. Pass `taskId` or `taskIds` after starting it. Not for work left running (dev server, watcher). `waiting=false` clears. Does not stop the task. Claude only.",
   parameters: Schema.Struct({
-    taskIds: Schema.Array(TrimmedNonEmptyString).check(
-      Schema.isMinLength(1),
-      Schema.isMaxLength(20),
+    taskId: Schema.optional(TrimmedNonEmptyString),
+    taskIds: Schema.optional(
+      Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
     ),
     waiting: Schema.optional(Schema.Boolean),
   }),

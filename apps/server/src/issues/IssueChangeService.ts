@@ -200,7 +200,7 @@ const make = Effect.gen(function* () {
   const propose: IssueChangeService["Service"]["propose"] = Effect.fn("IssueChangeService.propose")(
     function* (threadId, rawInput) {
       const decoded = yield* decodeProposal(rawInput).pipe(
-        Effect.mapError(() => invalid("Invalid issue change proposal.")),
+        Effect.mapError((cause) => invalid(`Invalid issue change proposal: ${cause.message}`)),
       );
       const input = {
         ...decoded,
