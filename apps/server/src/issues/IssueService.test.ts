@@ -1880,14 +1880,14 @@ it.effect("lists only repositories the viewer owns or administers, across pages"
 );
 
 it.effect(
-  "hides GitHub copies of the viewer's Forgejo repositories and names them on the Forgejo one",
+  "hides GitHub copies of the viewer's live Forgejo repositories and names them on the Forgejo one",
   () => {
-    const forgejoRepository = (fullName: string) => ({
+    const forgejoRepository = (fullName: string, archived = false) => ({
       id: fullName.length,
       full_name: fullName,
       owner: { login: fullName.split("/")[0] },
       private: false,
-      archived: false,
+      archived,
       fork: false,
       has_issues: true,
       open_issues_count: 1,
@@ -1908,6 +1908,7 @@ it.effect(
         [
           ["github.com", "octocat/digest", undefined],
           ["forge.example:3000", "OctoCat/App", { host: "github.com", repository: "octocat/app" }],
+          ["forge.example:3000", "OctoCat/Digest", undefined],
         ],
       );
     }).pipe(
@@ -1928,7 +1929,7 @@ it.effect(
                 input.path === "user"
                   ? { id: 1, login: "octocat" }
                   : input.path.startsWith("user/repos")
-                    ? [forgejoRepository("OctoCat/App")]
+                    ? [forgejoRepository("OctoCat/App"), forgejoRepository("OctoCat/Digest", true)]
                     : [],
               ),
               stderr: "",
