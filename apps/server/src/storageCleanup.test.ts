@@ -350,6 +350,7 @@ const cleanupFixture = (
     let sessionLiveChecks = 0;
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
+    let delegatedWorkThreadIds: string[] = [];
     let fullStatusCalls = 0;
     let gitInspections = 0;
     let snapshotReads = 0;
@@ -448,19 +449,21 @@ const cleanupFixture = (
                   }),
                 },
               ]
-            : outboxStatus !== null && strings.join("").includes("orchestration_v2_effect_outbox")
-              ? [{ status: outboxStatus }]
-              : strings.join("").includes("deleted_at IS NOT NULL")
-                ? deletedThreads.map((thread) => ({
-                    payload_json: JSON.stringify(thread),
-                    workspaceRoot: repo,
-                  }))
-                : strings.join("").includes('AS "worktreePath"')
-                  ? [
-                      ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                      ...storedWorktreePaths,
-                    ].map((worktreePath) => ({ worktreePath }))
-                  : [],
+            : strings.join("").includes("orchestration_v2_projection_subagents")
+              ? delegatedWorkThreadIds.map((threadId) => ({ threadId }))
+              : outboxStatus !== null && strings.join("").includes("orchestration_v2_effect_outbox")
+                ? [{ status: outboxStatus }]
+                : strings.join("").includes("deleted_at IS NOT NULL")
+                  ? deletedThreads.map((thread) => ({
+                      payload_json: JSON.stringify(thread),
+                      workspaceRoot: repo,
+                    }))
+                  : strings.join("").includes('AS "worktreePath"')
+                    ? [
+                        ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                        ...storedWorktreePaths,
+                      ].map((worktreePath) => ({ worktreePath }))
+                    : [],
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
@@ -525,6 +528,9 @@ const cleanupFixture = (
       },
       setOutboxStatus: (status: string | null) => {
         outboxStatus = status;
+      },
+      setDelegatedWorkThreadIds: (ids: string[]) => {
+        delegatedWorkThreadIds = ids;
       },
       setDeletedThreads: (next: OrchestrationV2ThreadShell[]) => {
         deletedThreads = next;
@@ -2514,14 +2520,16 @@ describe("storage cleanup reports and local file policies", () => {
     ["unmerged", "kept", "Has commits beyond the project branch"],
     ["detached", "kept", "Project branch is unavailable"],
     ["merged-only", "kept", "No remote is configured for merged-worktree cleanup"],
+    ["awaiting-delegated-work", "kept", "Thread is running or has pending work"],
   ] as const)("cleans archived local-only worktrees: %s", ([state, outcome, reason]) =>
     runCleanupTest(
       Effect.gen(function* () {
-        const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
-          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-          worktreeUnchanged: state !== "merged-only",
-          worktreeOnMerge: true,
-        });
+        const { service, fs, repo, worktree, command, setThreads, setDelegatedWorkThreadIds } =
+          yield* cleanupFixture({
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeUnchanged: state !== "merged-only",
+            worktreeOnMerge: true,
+          });
         yield* command(repo, ["branch", "-m", "main", "trunk"]);
         setThreads([shell({ branch: "feature", worktreePath: worktree, archivedAt: at(-DAY_MS) })]);
         if (state === "unmerged") {
@@ -2529,6 +2537,8 @@ describe("storage cleanup reports and local file policies", () => {
           yield* command(worktree, ["commit", "-am", "unmerged work"]);
         }
         if (state === "detached") yield* command(repo, ["checkout", "--detach"]);
+        // An issue owner that ended its turn while its delegated task runs elsewhere.
+        if (state === "awaiting-delegated-work") setDelegatedWorkThreadIds(["thread-1"]);
 
         const report = yield* service.runNow;
         expect(report.entries[0]).toMatchObject({ outcome, reason });
