@@ -143,6 +143,7 @@ const makeCleanupFixture = (
             : "",
       storageCleanup,
     };
+    let pullRequest: GitManager.GitBranchPullRequest | null = null;
     let threads = [shell({ branch: "feature", worktreePath: worktree })];
     let storedWorktreePaths: string[] = [worktree];
     let projectRoots = [repo];
@@ -221,6 +222,13 @@ const makeCleanupFixture = (
       } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),
       Effect.provideService(Orchestrator.OrchestratorV2, {
         streamDomainEvents: Stream.suspend(() => events),
+        dispatch: (input: { type: string; threadId: ThreadId }) =>
+          Effect.sync(() => {
+            if (input.type === "thread.archive")
+              threads = threads.map((thread) =>
+                thread.id === input.threadId ? { ...thread, archivedAt: at(0) } : thread,
+              );
+          }),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
       Effect.provideService(SqlClient.SqlClient, ((strings: TemplateStringsArray) =>
         Effect.sync(() =>
@@ -250,6 +258,7 @@ const makeCleanupFixture = (
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
+        branchPullRequest: () => Effect.succeed(pullRequest),
       } as unknown as GitManager.GitManager["Service"]),
       Effect.provideService(TerminalManager.TerminalManager, {
         subscribeMetadata: (
@@ -264,6 +273,9 @@ const makeCleanupFixture = (
     );
     return {
       service: Context.get(context, StorageCleanup.StorageCleanup),
+      setPullRequest: (value: GitManager.GitBranchPullRequest) => {
+        pullRequest = value;
+      },
       repo,
       editBeforeRemoval: () => {
         editBeforeRemoval = true;
@@ -347,6 +359,81 @@ const runCleanupTest = <A, E>(
   >,
 ) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);
 
+it.effect.each([true, false])(
+  "requires a merged PR for the current head before retiring issue work (%s)",
+  (exactHead) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const f = yield* makeCleanupFixture("project-local");
+        yield* f.command(f.repo, ["remote", "add", "origin", f.repo]);
+        const head = (yield* f.command(f.worktree, ["rev-parse", "HEAD"])).stdout.trim();
+        f.disable();
+        f.setPullRequest({
+          state: "merged",
+          headRef: "feature",
+          baseRef: "main",
+          headSha: exactHead ? head : "a".repeat(40),
+        } as GitManager.GitBranchPullRequest);
+        f.setThreads([shell({ branch: "feature", worktreePath: f.worktree, linkedIssue })]);
+        const report = yield* f.service.runNow;
+        expect(report.entries).toContainEqual(
+          expect.objectContaining({ outcome: exactHead ? "removed" : "kept" }),
+        );
+        expect(yield* f.fs.exists(f.worktree)).toBe(!exactHead);
+        expect(f.currentThreads()[0]?.archivedAt !== null).toBe(exactHead);
+        expect(
+          (yield* f.command(f.repo, ["branch", "--list", "feature"])).stdout.trim() === "",
+        ).toBe(exactHead);
+      }),
+    ),
+);
+
+const linkedIssue = {
+  host: "github.com",
+  repository: "tannerpolley/t3code",
+  repositoryId: "repo",
+  nodeId: "node:405",
+  id: "405",
+  number: 405,
+  title: "Keep work",
+  url: "https://github.com/tannerpolley/t3code/issues/405",
+};
+
+it.effect(
+  "keeps unfinished issue worktrees despite age and settlement, but permits owner removal",
+  () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const f = yield* makeCleanupFixture("project-local");
+        f.setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: f.worktree,
+            linkedIssue,
+            settledAt: at(-10 * DAY_MS),
+            settledOverride: "settled",
+          }),
+        ]);
+        const report = yield* f.service.runNow;
+        expect(report.entries).toContainEqual(
+          expect.objectContaining({
+            outcome: "kept",
+            reason: "Issue work is awaiting a merged pull request",
+          }),
+        );
+        expect(yield* f.fs.exists(f.worktree)).toBe(true);
+        expect(
+          yield* f.service.removeWorktreeNow({
+            projectId: ProjectId.make("project-1"),
+            worktreePath: f.worktree,
+          }),
+        ).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+);
+
 describe("storage cleanup reports and local file policies", () => {
   it.live("cleans old custom worktrees after switching to project-local mode", () =>
     runCleanupTest(
@@ -409,7 +496,7 @@ describe("explicit worktree removal", () => {
           expect(
             (yield* f.command(f.repo, ["show-ref", "--verify", "refs/heads/feature"])).exitCode,
           ).toBe(0);
-          expect(f.snapshotReads()).toBe(1);
+          expect(f.snapshotReads()).toBe(2);
           expect(f.currentThreads()[0]).toMatchObject({
             branch: "feature",
             worktreePath: f.worktree,

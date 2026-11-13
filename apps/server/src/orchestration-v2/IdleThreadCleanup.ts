@@ -8,6 +8,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
+import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
+
 const IDLE_DAYS = 7;
 
 /** Archived threads and subagent threads whose parent is idle, untouched since `cutoff`. */
@@ -16,8 +18,12 @@ export const findIdleThreads = Effect.fn("IdleThreadCleanup.findIdleThreads")(fu
 ) {
   const sql = yield* SqlClient.SqlClient;
   const active = sql.in(["queued", "preparing", "starting", "running", "waiting"]);
-  const rows = yield* sql<{ readonly thread_id: ThreadId }>`
-    SELECT thread.thread_id FROM orchestration_v2_projection_threads AS thread
+  const rows = yield* sql<{
+    readonly thread_id: ThreadId;
+    readonly payload_json: string;
+    readonly archived_at: string | null;
+  }>`
+    SELECT thread.thread_id, thread.payload_json, thread.archived_at FROM orchestration_v2_projection_threads AS thread
     WHERE thread.deleted_at IS NULL
       AND thread.updated_at <= ${cutoff}
       AND (
@@ -37,7 +43,9 @@ export const findIdleThreads = Effect.fn("IdleThreadCleanup.findIdleThreads")(fu
       )
     ORDER BY thread.updated_at
   `.pipe(NodeSqliteClient.readOnly);
-  return rows.map((row) => row.thread_id);
+  return rows
+    .filter((row) => row.archived_at !== null || !keepIssueWorktree(JSON.parse(row.payload_json)))
+    .map((row) => row.thread_id);
 });
 
 /** Deletes idle threads once a day; the history purge then removes their data. */

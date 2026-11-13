@@ -1,3 +1,4 @@
+import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
 import { isDelegatedAppThread } from "@t3tools/contracts";
 import { silentWakeAction, SILENT_WAKE_FOLLOWUP, SILENT_WAKE_ATTENTION } from "./SilentWake.ts";
 import { repositoryPhase } from "@t3tools/contracts";
@@ -3924,6 +3925,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
       ),
     );
+    if (command.type === "thread.settle" && keepIssueWorktree(thread)) return;
     if (command.type === "thread.archive")
       yield* repositoryWork.guardRootLifecycle(command, thread);
     if (
@@ -9140,7 +9142,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
-      if (yield* issueWork.reuseManagedChild(request, parentProjection, events, command)) return;
+      if (yield* issueWork.reuseManagedChild(request, parentProjection, events, effects, command))
+        return;
 
       const targetAdapter = yield* providerAdapters.get(request.modelSelection.instanceId).pipe(
         Effect.mapError(
@@ -14757,6 +14760,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ...forkCommandHooks,
     providerAdapters,
     dispatchDelegatedTaskRequest,
+    dispatchMessage,
+    recordSubagentFollowup: (command, events) =>
+      recordSubagentFollowup(command, events).pipe(mapDispatchError(command)),
   });
 
   const issueQueue = makeIssueQueueCommands({ ...forkCommandHooks, dispatchMessage });
@@ -15338,6 +15344,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.type === "thread.background-work.settle" ||
             command.type === "thread.interrupt.unresponsive" ||
             command.type === "thread.stop" ||
+            command.type === "thread.settle" ||
+            command.type === "thread.auto-settle" ||
             command.type === "subagent.stop" ||
             // Closing a share again, or after it ended, is not an error.
             command.type === "thread.guest-share.close" ||

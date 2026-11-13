@@ -1,4 +1,6 @@
+import { keepIssueWorktree } from "./issues/issueThreadRetention.ts";
 import {
+  CommandId,
   GitCommandError,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
@@ -1001,7 +1003,7 @@ const make = Effect.gen(function* () {
     const settings = explicit
       ? { ...configured, worktreeKeepWhen: "any-local-files" as const }
       : configured;
-    if (!explicit && !worktreeCleanupEnabled(settings)) return [];
+    if (!explicit && !worktreeCleanupEnabled(settings) && !keepIssueWorktree(thread)) return [];
     // Physical, so later path joins can't re-collapse `..` after a symlink lexically.
     const worktreePath = yield* Effect.try({
       try: () => physicalWorkspacePath(thread.worktreePath!),
@@ -1037,6 +1039,11 @@ const make = Effect.gen(function* () {
       bytes: null,
       files: null,
     };
+    const retainedIssue =
+      !explicit &&
+      !deleted &&
+      members.some((member) => member.archivedAt === null && keepIssueWorktree(member));
+    let issueMerged = false;
     const entries: StorageCleanupReportEntry[] = [];
     const keep = (reason: string) => entries.push({ ...entry, reason: sentence(reason) });
     yield* Effect.gen(function* () {
@@ -1089,7 +1096,7 @@ const make = Effect.gen(function* () {
         settledFor !== null &&
         settings.worktreeSettledAfterDays !== null &&
         settledFor >= settings.worktreeSettledAfterDays * DAY_MS;
-      let eligible = explicit || deleted || old || settled;
+      let eligible = !retainedIssue && (explicit || deleted || old || settled);
       let removalReason = explicit
         ? "requested by owner"
         : deleted
@@ -1109,7 +1116,7 @@ const make = Effect.gen(function* () {
               : settings.worktreeUnchanged
                 ? "has commits beyond the default branch"
                 : "no rules apply";
-      if (!eligible && !settings.worktreeUnchanged && !settings.worktreeOnMerge)
+      if (!retainedIssue && !eligible && !settings.worktreeUnchanged && !settings.worktreeOnMerge)
         return keep(notDueReason);
       // Roots are canonical, so compare canonical paths. A symlinked parent
       // (a linked drive) is fine; a symlinked worktree directory is not.
@@ -1130,7 +1137,7 @@ const make = Effect.gen(function* () {
       const changes = yield* localChangesReason(worktreePath, settings);
       if (changes !== null) return keep(changes);
       const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
-      if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
+      if (!eligible && (retainedIssue || settings.worktreeUnchanged || settings.worktreeOnMerge)) {
         const repositoryCwd = path.resolve(project.workspaceRoot);
         const remotes = yield* git.execute({
           operation: "StorageCleanup.listRemotes",
@@ -1142,6 +1149,7 @@ const make = Effect.gen(function* () {
         let branch: string | null | undefined;
         let defaultRef: string;
         if (remote === null) {
+          if (retainedIssue) return keep("issue work is awaiting a merged pull request");
           if (!settings.worktreeUnchanged)
             return keep("no remote is configured for merged-worktree cleanup");
           const projectHead = yield* git.execute({
@@ -1202,13 +1210,18 @@ const make = Effect.gen(function* () {
           allowNonZeroExit: true,
         });
         const integrated = ancestor.exitCode === 0;
-        eligible = integrated && settings.worktreeUnchanged;
+        eligible = !retainedIssue && integrated && settings.worktreeUnchanged;
         if (eligible)
           removalReason =
             remote === null
               ? "no commits beyond the project branch"
               : "no commits beyond the default branch";
-        if (!eligible && remote !== null && settings.worktreeOnMerge && thread.branch !== null) {
+        if (
+          !eligible &&
+          remote !== null &&
+          (retainedIssue || settings.worktreeOnMerge) &&
+          thread.branch !== null
+        ) {
           const pullRequest = yield* gitManager.branchPullRequest(
             { cwd: worktreePath, branch: thread.branch },
             { refresh: true },
@@ -1217,12 +1230,15 @@ const make = Effect.gen(function* () {
             branch: thread.branch,
             defaultBranch: branch,
             headSha: head.commitSha,
-            integrated,
+            integrated: retainedIssue ? false : integrated,
           });
+          issueMerged = retainedIssue && eligible;
           if (eligible) removalReason = "pull request was merged";
         }
         if (!eligible && remote === null) return keep("has commits beyond the project branch");
       }
+      if (retainedIssue && members.some((member) => keepIssueWorktree(member, issueMerged)))
+        return keep("issue work is awaiting a merged pull request");
       if (!eligible)
         return keep(
           !deleted && settings.worktreeAfterDays !== null
@@ -1385,8 +1401,21 @@ const make = Effect.gen(function* () {
           });
           entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
           yield* gitManager.invalidateStatus(project.workspaceRoot);
-          // Preserve branch and path: ProviderTurnStartService recreates the checkout
-          // from that branch when the thread is resumed.
+          if (issueMerged) {
+            yield* git.deleteLocalBranch({
+              cwd: project.workspaceRoot,
+              refName: thread.branch!,
+              force: true,
+            });
+            for (const member of members) {
+              yield* engine.dispatch({
+                type: "thread.archive",
+                commandId: CommandId.make(`storage-cleanup:merged:${member.id}:${head.commitSha}`),
+                threadId: member.id,
+              });
+            }
+          }
+          // Ordinary threads retain the branch and path for recreation on resume.
           yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
         }),
       ).pipe(
@@ -1460,7 +1489,11 @@ const make = Effect.gen(function* () {
     now: number,
     entries: StorageCleanupReportEntry[],
   ) {
-    if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled))
+    const snapshot = yield* readThreads();
+    if (
+      !anyWorktreePolicy(serverSettings, worktreeCleanupEnabled) &&
+      !snapshot.threads.some((thread) => thread.archivedAt === null && keepIssueWorktree(thread))
+    )
       return { waiting: false, kept: [] };
     let waiting = false;
     const kept: string[] = [];
@@ -1475,7 +1508,6 @@ const make = Effect.gen(function* () {
         Effect.map((thread) => ({ ...thread, workspaceRoot: row.workspaceRoot })),
       ),
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
-    const snapshot = yield* readThreads();
     const canonicalPath = makeCanonicalPath();
     const roots = yield* managedRoots(
       serverSettings,

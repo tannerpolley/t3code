@@ -1,3 +1,4 @@
+import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -864,6 +865,14 @@ const make = Effect.gen(function* () {
             ((cancelled && !runReleased) || !workspaceRecorded)
           ) {
             if (branchRename !== null) yield* Fiber.interrupt(branchRename);
+            if (
+              workspaceRecorded &&
+              (yield* threads.getThreadShell(threadId).pipe(
+                Effect.map((thread) => thread !== null && keepIssueWorktree(thread)),
+                Effect.orElseSucceed(() => true),
+              ))
+            )
+              return;
             const removedPath = createdWorktreePath;
             const removedBranch = createdBranch;
             // Forget worktrees only after removal succeeds; failed removals must not reuse partially written checkouts.
