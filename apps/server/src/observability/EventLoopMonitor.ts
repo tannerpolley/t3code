@@ -4,6 +4,7 @@ import * as NodePerfHooks from "node:perf_hooks";
 
 import type { ServerEventLoopStall } from "@t3tools/contracts";
 import { RotatingFileSink, RotatingFileSinkError } from "@t3tools/shared/logging";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -18,6 +19,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "../config.ts";
 import * as Metrics from "./Metrics.ts";
 import * as HeapSamplingProfile from "./HeapSamplingProfile.ts";
+import * as StallAttribution from "./StallAttribution.ts";
 
 // Subtract the histogram's timer resolution; this can undercount stalls by up to RESOLUTION_MS.
 const RESOLUTION_MS = 1000;
@@ -51,6 +53,7 @@ export interface EventLoopReadings {
     | "majorPageFault"
     | "minorPageFault"
     | "involuntaryContextSwitches"
+    | "fsRead"
   >;
   readonly rssBytes: number;
   readonly heapUsedBytes: number;
@@ -92,6 +95,7 @@ const makeNodeSampler = Effect.gen(function* () {
         minorPageFault: nextUsage.minorPageFault - usage.minorPageFault,
         involuntaryContextSwitches:
           nextUsage.involuntaryContextSwitches - usage.involuntaryContextSwitches,
+        fsRead: nextUsage.fsRead - usage.fsRead,
       },
       rssBytes: memory.rss,
       heapUsedBytes: memory.heapUsed,
@@ -146,6 +150,7 @@ const layerWith = (
     EventLoopMonitor,
     Effect.gen(function* () {
       yield* HeapSamplingProfile.start;
+      const stallAttribution = yield* StallAttribution.StallAttribution;
       const sample = yield* makeSampler;
       // Clients sample on connect as well as the timer, and the sampler resets shared state.
       const sampling = yield* Semaphore.make(1);
@@ -205,6 +210,13 @@ const layerWith = (
           minorPageFaults: usage.minorPageFault,
           involuntaryContextSwitches: usage.involuntaryContextSwitches,
           rssMb: Math.round(rssBytes / 1024 / 1024),
+          // Disk reads by every thread of the server, including SQLite reader workers.
+          fileSystemReads: usage.fsRead,
+          suspects: stallAttribution.suspects({
+            stallMs: delayMaxMs,
+            windowMs: readings.elapsedMs,
+            nowNs: yield* Clock.currentTimeNanos,
+          }),
         };
         yield* Effect.logWarning(`event loop stalled for ${delayMaxMs} ms`).pipe(
           Effect.withSpan("server.eventLoop.stall", { root: true, level: "Warn", attributes }),

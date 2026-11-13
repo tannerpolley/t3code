@@ -17,6 +17,7 @@ import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.t
 import * as ServerLogger from "../serverLogger.ts";
 import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
 import * as HeapAttribution from "./HeapAttribution.ts";
+import * as StallAttribution from "./StallAttribution.ts";
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
@@ -74,9 +75,11 @@ export const layer = Layer.unwrap(
 
         const heapAttribution = yield* HeapAttribution.make(tracer);
         yield* heapAttribution.run;
+        const stalls = StallAttribution.make(heapAttribution.tracer);
 
         return Layer.mergeAll(
-          Layer.succeed(Tracer.Tracer, heapAttribution.tracer),
+          Layer.succeed(Tracer.Tracer, stalls.tracer),
+          Layer.succeed(StallAttribution.StallAttribution, stalls.attribution),
           BrowserTraceCollector.layer(sink),
         );
       }),
