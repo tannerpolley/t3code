@@ -3544,6 +3544,122 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
+    it.effect("delivers an owner's wake-up result after its task already published one", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:owner-wake-parent");
+        const projectId = ProjectId.make("project:owner-wake");
+        const parentRunId = RunId.make("run:owner-wake-parent");
+        const rootNodeId = NodeId.make("node:owner-wake-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:owner-wake-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const owner = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "owner-wake-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.isNotNull(
+          (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+            (task) => task.id === owner.taskId,
+          )?.result,
+        );
+
+        // The owner's own child finished, so its reserved completion wakes the owner.
+        const wakeMessageId = MessageId.make("message:owner-wake");
+        const ownerThread = (yield* orchestrator.getThreadProjection(owner.childThreadId)).thread;
+        yield* eventSink.write({
+          commandId: reconcileCommandId("owner-wake-cohort"),
+          events: [
+            {
+              id: EventId.make("event:owner-wake-cohort"),
+              type: "thread.metadata-updated",
+              threadId: owner.childThreadId,
+              occurredAt: now,
+              payload: {
+                ...ownerThread,
+                delegatedCompletion: {
+                  disposition: "open",
+                  nextGeneration: 2,
+                  delivery: {
+                    generation: 1,
+                    messageId: wakeMessageId,
+                    taskIds: [NodeId.make("node:owner-wake-reviewer")],
+                  },
+                },
+              },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("command:owner-wake"),
+          threadId: owner.childThreadId,
+          messageId: wakeMessageId,
+          text: "Reviewer finished.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: {
+            parentRunId: null,
+            generation: 1,
+            taskIds: [NodeId.make("node:owner-wake-reviewer")],
+          },
+        });
+
+        const wakeRun = (yield* orchestrator.getThreadProjection(owner.childThreadId)).runs.find(
+          (run) => run.userMessageId === wakeMessageId,
+        );
+        assert.isDefined(wakeRun?.delegatedTaskId);
+        const before = yield* eventSink.latestSequence();
+        yield* eventSink.write({
+          events: [
+            {
+              ...runEvent({
+                threadId: owner.childThreadId,
+                runId: wakeRun!.id,
+                ordinal: wakeRun!.ordinal,
+                status: "completed",
+                now,
+              }),
+              payload: { ...wakeRun!, status: "completed", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        yield* eventSink.stream({ afterSequence: before, eventType: "subagent.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.id === wakeRun!.delegatedTaskId &&
+              stored.event.payload.status === "completed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === wakeRun!.delegatedTaskId,
+        );
+        assert.isNotNull(followup?.result);
+        assert.notEqual(followup?.completionDelivery?.state, "disposed");
+      }),
+    );
+
     it.effect("serializes a recovered child answer with its parent and tracks the follow-up", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
