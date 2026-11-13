@@ -214,6 +214,24 @@ function hideGitHubCopies(
   ];
 }
 
+/** Per-key reads kept for `ttlMs` after a success; failures are not kept. */
+export const makeLiveReadCache = <A>(ttlMs = LIVE_ISSUE_REFRESH_MS) => {
+  const reads = new Map<string, Effect.Effect<A, IssueReadError>>();
+  return Effect.fn("IssueService.liveRead")(function* (
+    key: string,
+    read: Effect.Effect<A, IssueReadError>,
+    refresh: boolean | undefined,
+  ) {
+    let cached = refresh !== true ? reads.get(key) : undefined;
+    if (cached === undefined) {
+      cached = yield* Effect.cachedWithTTL(read, (exit) => (Exit.isSuccess(exit) ? ttlMs : 0));
+      reads.delete(key);
+      reads.set(key, cached);
+      if (reads.size > 256) reads.delete(reads.keys().next().value!);
+    }
+    return yield* cached;
+  });
+};
 export const make = Effect.fn("IssueService.make")(function* () {
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const serviceScope = yield* Effect.scope;
@@ -246,25 +264,6 @@ export const make = Effect.fn("IssueService.make")(function* () {
       ).pipe(Effect.catchTags({ ExceededCapacityError: () => Effect.sync(makePageCaches) })),
   );
 
-  const makeLiveReadCache = <A>() => {
-    const reads = new Map<string, Effect.Effect<A, IssueReadError>>();
-    return Effect.fn("IssueService.liveRead")(function* (
-      key: string,
-      read: Effect.Effect<A, IssueReadError>,
-      refresh: boolean | undefined,
-    ) {
-      let cached = refresh !== true ? reads.get(key) : undefined;
-      if (cached === undefined) {
-        cached = yield* Effect.cachedWithTTL(read, (exit) =>
-          Exit.isSuccess(exit) ? LIVE_ISSUE_REFRESH_MS : 0,
-        );
-        reads.delete(key);
-        reads.set(key, cached);
-        if (reads.size > 256) reads.delete(reads.keys().next().value!);
-      }
-      return yield* cached;
-    });
-  };
   const liveStatuses =
     makeLiveReadCache<ReadonlyArray<IssueStatusBatchResult[number] & IssueRef>>();
   const liveDetails = makeLiveReadCache<IssueDetailResultType>();
