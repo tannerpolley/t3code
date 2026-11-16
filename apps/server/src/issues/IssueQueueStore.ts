@@ -9,6 +9,7 @@ import {
   type OrchestrationV2Run,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -72,16 +73,20 @@ export const isIssueQueueNoticeRun = Effect.fn("IssueQueueStore.isIssueQueueNoti
   runId: RunId,
 ) {
   const sql = yield* SqlClient.SqlClient;
+  // Receipt-first joins avoid reading metadata past large payloads in unrelated thread events.
   const rows = yield* sql`
-      SELECT 1 FROM orchestration_events event
-      JOIN orchestration_command_receipts receipt ON receipt.command_id = event.command_id
-      WHERE event.aggregate_kind = 'thread' AND event.stream_id = ${threadId}
-        AND event.application_event_version = 2 AND json_extract(event.metadata_json, '$.runId') = ${runId}
-        AND event.event_type = 'run.created' AND receipt.command_type = 'issue.queue.deliver'
+      SELECT 1 FROM orchestration_command_receipts receipt
+      CROSS JOIN orchestration_events event INDEXED BY idx_orch_events_command_id
+      WHERE receipt.aggregate_kind = 'thread' AND receipt.aggregate_id = ${threadId}
+        AND receipt.command_type = 'issue.queue.deliver'
+        AND event.command_id = receipt.command_id
+        AND event.aggregate_kind = 'thread' AND event.stream_id = ${threadId}
+        AND event.event_type = 'run.created' AND event.application_event_version = 2
+        AND json_extract(event.metadata_json, '$.runId') = ${runId}
       LIMIT 1
     `;
   return rows.length > 0;
-});
+}, NodeSqliteClient.readOnly);
 
 export const readIssueQueueNotice = Effect.fn("IssueQueueStore.readIssueQueueNotice")(function* (
   threadId: ThreadId,
