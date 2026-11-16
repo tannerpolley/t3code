@@ -1,4 +1,5 @@
 import { resolveForkSubagentMetadata } from "../chat/ForkModelNames";
+import { getDescriptorStringValue } from "@t3tools/client-runtime/model-traits";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   formatModelSelectionEffort,
@@ -114,21 +115,27 @@ export function sidebarEffortGlyph(
 ) {
   if (!selection) return null;
   let option = modelSelectionEffortOption(selection, provider?.models);
+  const descriptor =
+    option?.descriptor ??
+    provider?.models
+      .find((model) => model.slug === selection.model)
+      ?.capabilities?.optionDescriptors?.find(
+        (candidate): candidate is Extract<typeof candidate, { type: "select" }> =>
+          candidate.type === "select" && REASONING_EFFORT_OPTION_IDS.includes(candidate.id),
+      );
   if (reportedEffort) {
-    const descriptor =
-      option?.descriptor ??
-      provider?.models
-        .find((model) => model.slug === selection.model)
-        ?.capabilities?.optionDescriptors?.find(
-          (candidate): candidate is Extract<typeof candidate, { type: "select" }> =>
-            candidate.type === "select" && REASONING_EFFORT_OPTION_IDS.includes(candidate.id),
-        );
     const match = descriptor?.options.find((candidate) =>
       [candidate.id, candidate.label].some((text) => effortKey(text) === effortKey(reportedEffort)),
     );
     option = descriptor && match ? { descriptor, value: match.id, label: match.label } : null;
   }
-  const glyph = option && resolveEffortGlyph(option.descriptor, option.value);
+  const value =
+    option?.value ??
+    (!reportedEffort &&
+    !selection.options?.some((item) => REASONING_EFFORT_OPTION_IDS.includes(item.id))
+      ? getDescriptorStringValue(descriptor ?? null, selection)
+      : null);
+  const glyph = descriptor && resolveEffortGlyph(descriptor, value);
   return glyph ? { count: glyph.count, filled: glyph.filled, label: glyph.label } : null;
 }
 
