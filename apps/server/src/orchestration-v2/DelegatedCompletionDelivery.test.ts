@@ -1658,6 +1658,63 @@ const queueCompletionWakeBesideRunningSibling = (key: string) =>
     };
   });
 
+it.layer(layerTest)("queued completion wakes", (it) => {
+  it.effect("adds a finished sibling to the spawning run's queued delivery", () =>
+    Effect.gen(function* () {
+      const {
+        orchestrator,
+        sink,
+        threadId,
+        originRunId,
+        incomingTaskId,
+        sibling,
+        delivery,
+        wake,
+        completeSibling,
+      } = yield* queueCompletionWakeBesideRunningSibling("sibling-queued-completion");
+      const afterSequence = yield* completeSibling;
+      yield* sink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "subagent.updated" &&
+            stored.event.payload.id === sibling.id &&
+            stored.event.payload.status === "completed",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      const completed = yield* orchestrator.getThreadProjection(threadId);
+      const cohort = completed.runs.find((run) => run.id === originRunId)?.delegatedCompletion;
+      assert.deepEqual(cohort?.delivery, {
+        ...delivery,
+        taskIds: [incomingTaskId, sibling.id],
+      });
+      assert.equal(cohort?.nextGeneration, delivery.generation + 1);
+      const message = completed.messages.find((row) => row.id === delivery.messageId)!;
+      assert.deepEqual(message.delegatedCompletion?.taskIds, [incomingTaskId, sibling.id]);
+      assert.include(message.text, String(incomingTaskId));
+      assert.include(message.text, String(sibling.id));
+      assert.equal(completed.runs.find((run) => run.id === wake.id)?.status, "queued");
+      yield* orchestrator.dispatch({
+        type: "notification.delivery.accept",
+        commandId: CommandId.make("sibling-queued-completion-accept"),
+        threadId,
+        messageId: delivery.messageId,
+      });
+      const accepted = yield* orchestrator.getThreadProjection(threadId);
+      for (const taskId of [incomingTaskId, sibling.id]) {
+        assert.equal(
+          accepted.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
+          "delivered",
+        );
+      }
+      assert.isNull(
+        accepted.runs.find((run) => run.id === originRunId)?.delegatedCompletion?.delivery,
+      );
+    }),
+  );
+});
+
 it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
   it.effect.each([
     { name: "an interrupt keeps", holdQueue: false, siblingFinishesFirst: false },

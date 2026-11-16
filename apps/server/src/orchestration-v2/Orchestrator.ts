@@ -2069,8 +2069,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } = yield* projectionStore.getThreadRecords(parentThreadId, ["runs"], {
         runIds: task.runId === null ? [] : [task.runId],
       });
-      const delivery = parentRun?.delegatedCompletion?.delivery;
-      if (delivery == null) return { thread, parentRun, runs: [], messages: [], subagents: [] };
+      const parentRuns = parentRun === undefined ? [] : [parentRun];
+      const delivery = completionCohort({ thread, runs: parentRuns }, task.runId)?.delivery;
+      if (delivery == null)
+        return {
+          thread,
+          parentRun,
+          runs: parentRuns,
+          messages: [],
+          subagents: [],
+        };
       const { messages } = yield* projectionStore.getThreadRecords(parentThreadId, ["messages"], {
         messageIds: [delivery.messageId],
         messageRoles: ["user"],
@@ -2080,7 +2088,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         parentThreadId,
         ["runs", "subagents"],
         {
-          runIds: deliveryRunId == null ? [] : [deliveryRunId],
+          runIds: [
+            ...parentRuns.map((run) => run.id),
+            ...(deliveryRunId == null ? [] : [deliveryRunId]),
+          ],
           subagentIds: [...delivery.taskIds, task.id],
         },
       );
