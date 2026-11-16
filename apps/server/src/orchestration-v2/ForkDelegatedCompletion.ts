@@ -1,4 +1,8 @@
-import { delegatedTaskResultRun as selectTaskResultRun } from "./RestartBackgroundNote.ts";
+import {
+  delegatedTaskAwaitsWork,
+  delegatedTaskResultRun as selectTaskResultRun,
+  delegatedTaskRuns,
+} from "./RestartBackgroundNote.ts";
 import type {
   NodeId,
   OrchestrationV2AppThread,
@@ -106,30 +110,28 @@ export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
     taskId: NodeId,
   ) {
     const switched = usageLimitSwitchResultRun(projection.thread, projection.runs, taskId);
-    const taskRuns = projection.runs
-      .filter((run) => run.delegatedTaskId === taskId)
-      .map((run) => {
-        if (
-          switched !== undefined &&
-          run.startedAt === null &&
-          run.userMessageId === usageLimitSwitchMessageId(projection.thread.id, switched.id)
-        )
-          return switched;
-        // Promotion cancels the queue holder and moves its message into the live run.
-        const message = projection.messages.find((row) => row.id === run.userMessageId);
-        let result = projection.runs.find((row) => row.id === message?.runId) ?? run;
-        for (;;) {
-          const continuation = projection.runs.find(
-            (row) =>
-              row.ordinal > result.ordinal &&
-              (row.restartContinuationOfRunId === result.id ||
-                (row.userMessageId === usageLimitSwitchMessageId(projection.thread.id, result.id) &&
-                  row.startedAt !== null)),
-          );
-          if (continuation === undefined) return result;
-          result = continuation;
-        }
-      });
+    const taskRuns = delegatedTaskRuns(projection, taskId).map((run) => {
+      if (
+        switched !== undefined &&
+        run.startedAt === null &&
+        run.userMessageId === usageLimitSwitchMessageId(projection.thread.id, switched.id)
+      )
+        return switched;
+      // Promotion cancels the queue holder and moves its message into the live run.
+      const message = projection.messages.find((row) => row.id === run.userMessageId);
+      let result = projection.runs.find((row) => row.id === message?.runId) ?? run;
+      for (;;) {
+        const continuation = projection.runs.find(
+          (row) =>
+            row.ordinal > result.ordinal &&
+            (row.restartContinuationOfRunId === result.id ||
+              (row.userMessageId === usageLimitSwitchMessageId(projection.thread.id, result.id) &&
+                row.startedAt !== null)),
+        );
+        if (continuation === undefined) return result;
+        result = continuation;
+      }
+    });
     return selectTaskResultRun(
       [...taskRuns, ...(switched === undefined ? [] : [switched])].map((run) =>
         run.delegatedTaskId === taskId ? run : { ...run, delegatedTaskId: taskId },
@@ -245,7 +247,11 @@ export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
             isTerminalDelegatedTaskStatus(task.status),
         );
       }
-      if (delegatedTaskTerminalStatus(run.status) === null) return true;
+      if (
+        delegatedTaskTerminalStatus(run.status) === null ||
+        delegatedTaskAwaitsWork(delegatedTaskRuns(child, taskId), child)
+      )
+        return true;
       return yield* childAwaitsRecoveryContinuation(child.thread, child.runs, run);
     }
   });
