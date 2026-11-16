@@ -482,6 +482,7 @@ describe("sidebarEffortGlyph", () => {
                 options: ["Low", "Medium", "High", "Extra High", "Max"].map((label) => ({
                   id: label === "Extra High" ? "xhigh" : label.toLowerCase(),
                   label,
+                  ...(label === "High" ? { isDefault: true } : {}),
                 })),
               },
             ],
@@ -492,6 +493,7 @@ describe("sidebarEffortGlyph", () => {
     const opus = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
     const glyph = (effort: string) =>
       sidebarEffortGlyph(provider, { ...opus, options: [{ id: "effort", value: effort }] });
+    expect(sidebarEffortGlyph(provider, opus)).toEqual({ count: 5, filled: 3, label: "High" });
     expect(glyph("high")).toEqual({ count: 5, filled: 3, label: "High" });
     expect(glyph("max")).toEqual({ count: 5, filled: 5, label: "Max" });
     // An agent's reported effort, by id or label, wins over the selection.
