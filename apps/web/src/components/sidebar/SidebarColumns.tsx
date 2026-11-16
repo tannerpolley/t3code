@@ -264,7 +264,7 @@ function SidebarEffortMeter(props: {
           <span className="sidebar-thread-effort" role="img" aria-label={props.effort.label} />
         }
       >
-        <EffortGlyph count={props.effort.count} filled={props.effort.filled} />
+        <EffortGlyph count={props.effort.count} filled={props.effort.filled} size="xs" />
       </TooltipTrigger>
       <TooltipPopup side="top">{props.effort.label}</TooltipPopup>
     </Tooltip>
