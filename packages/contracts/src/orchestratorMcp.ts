@@ -257,6 +257,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   executedModel: Schema.optional(OrchestratorMcpExecutedModel),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
+  queueNote: Schema.optional(Schema.String),
   workspaceNote: Schema.optional(Schema.String).annotate({
     description:
       "Present on the delegate_task result when the role's default worktree was not possible and the child shares this thread's checkout instead.",
