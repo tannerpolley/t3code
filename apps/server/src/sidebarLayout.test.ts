@@ -26,6 +26,7 @@ const row = (id: string, workspaceRoot = "/work/Apps/" + id): Projects.ProjectRo
   projectId: ProjectId.make(id),
   workspaceRoot,
   title: id,
+  hasCustomTitle: false,
   defaultModelSelection: null,
   defaultThreadEnvMode: null,
   autoPull: false,

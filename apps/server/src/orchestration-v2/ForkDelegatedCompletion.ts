@@ -134,7 +134,6 @@ export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
       [...taskRuns, ...(switched === undefined ? [] : [switched])].map((run) =>
         run.delegatedTaskId === taskId ? run : { ...run, delegatedTaskId: taskId },
       ),
-      taskId,
     );
   }
 

@@ -135,7 +135,7 @@ it.effect(
           assert.isUndefined(child.thread.linkedIssue);
           readOnlyRequests++;
           assert.equal(child.runs[0]!.status, readOnlyRequests <= 4 ? "starting" : "queued");
-          assert.equal(result.status, readOnlyRequests <= 4 ? "running" : "queued");
+          assert.equal(result.status, readOnlyRequests <= 4 ? "starting" : "queued");
           assert.equal(yield* store.readOnlySlotsInUse(root), Math.min(readOnlyRequests, 4));
           assert.isUndefined(child.runs[0]!.workspacePreparation);
           assert.equal(yield* store.slotsInUse(root), 1);

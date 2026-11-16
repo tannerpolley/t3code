@@ -1,3 +1,4 @@
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { ISSUE_HOSTS, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -194,6 +195,7 @@ function makeHarness(options: HarnessOptions = {}) {
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
   const layerExternalServices = Layer.mergeAll(
+    Layer.mock(CheckpointStore.CheckpointStore)({ isGitRepository: () => Effect.succeed(true) }),
     NodeFileSystem.layer,
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
@@ -248,7 +250,12 @@ function makeHarness(options: HarnessOptions = {}) {
       localStatus,
       invalidateLocalStatus: options.invalidateLocalStatus ?? (() => Effect.void),
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
-      hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      hasCommit:
+        options.hasCommit ??
+        (({ refName }) =>
+          Effect.succeed(
+            ["main", "refs/heads/main", "HEAD", "parent-local-commit"].includes(refName),
+          )),
       fetchWorktreeBaseCommit:
         options.fetchWorktreeBaseCommit ??
         (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
@@ -293,6 +300,7 @@ function makeHarness(options: HarnessOptions = {}) {
           ? Option.some({
               projectId,
               title: project.title,
+              hasCustomTitle: false,
               workspaceRoot: project.workspaceRoot,
               defaultModelSelection: project.defaultModelSelection,
               defaultThreadEnvMode: null,

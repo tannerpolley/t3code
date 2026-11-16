@@ -39,10 +39,6 @@ vi.mock("./useRepositoryOrchestratorAction", () => ({
   useRepositoryOrchestratorAction: () => ({ forThread: state.prepare }),
 }));
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
-vi.mock("../components/titleRegenerationFeedback", () => ({
-  newTitleRegenerationRequestId: () => "title-request",
-  reportTitleRegenerationOutcomes: vi.fn(),
-}));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),

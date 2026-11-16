@@ -22,17 +22,11 @@ export async function copyThreadReference(
 ): Promise<void> {
   const fragment = target.fragment ? encodeComposerContextFragment(target.fragment) : null;
   try {
-    const didCopy = await writeTextToClipboard(
+    await writeTextToClipboard(
       target.value,
       target.clipboardTarget,
       fragment ? { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment } : undefined,
     );
-    if (!didCopy) return;
-    toastManager.add({
-      type: "success",
-      title: target.successTitle,
-      description: target.description,
-    });
   } catch (error) {
     console.error(error);
     toastManager.add(

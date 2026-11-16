@@ -160,7 +160,7 @@ It checks for staged builds shortly after startup and every four minutes while r
 
 ## Upstream syncs
 
-- A scheduled task merges the newest upstream nightly tag (on `pingdotgg/main`) daily at 12:00. It uses a short-lived `sync/upstream-<date>` branch that is merged into `main` and deleted. `git rerere` replays repeated conflict resolutions.
+- Syncs are manual; no daily scheduled task is configured. The last completed sync was 2026-11-12. Merge the selected upstream nightly tag from `pingdotgg/main` on a short-lived `sync/upstream-<date>` branch, preserving the upstream parent in a real merge. Merge the sync PR without rebasing or squashing, then delete the branch. `git rerere` replays repeated conflict resolutions.
 - Upstream's version wins by default. Drop fork code once upstream covers the same thing.
 - Keep fork code modular so syncs conflict less (issue #24):
   - fork logic lives in fork-owned files, joined to upstream files by small hook points;

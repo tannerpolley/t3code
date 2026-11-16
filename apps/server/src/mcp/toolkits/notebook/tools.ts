@@ -6,7 +6,7 @@ import {
   NotebookKernelList,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -37,14 +37,17 @@ export const NotebookToolkit = Toolkit.make(
     success: NotebookSnapshot,
   })
     .annotate(Tool.Readonly, true)
-    .annotate(Tool.Destructive, false),
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("notebook_create", {
     ...shared,
     description:
       "Create and save a valid nbformat 4 notebook without overwriting an existing file. Supply the full document with metadata and initial cells. Does not execute code; use notebook_run explicitly.",
     parameters: Schema.Struct({ ...path, document: NotebookDocument }),
     success: NotebookSnapshot,
-  }).annotate(Tool.Destructive, false),
+  })
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("notebook_edit_cells", {
     ...shared,
     description:
@@ -55,7 +58,9 @@ export const NotebookToolkit = Toolkit.make(
       operations: NotebookEditCells.fields.operations,
     }),
     success: NotebookSnapshot,
-  }).annotate(Tool.Destructive, false),
+  })
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("notebook_run", {
     ...shared,
     description:
@@ -68,7 +73,9 @@ export const NotebookToolkit = Toolkit.make(
       requestId: Schema.String,
     }),
     success: Schema.Struct({ runId: Schema.String }),
-  }).annotate(Tool.Destructive, false),
+  })
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("notebook_read_outputs", {
     ...shared,
     description:
@@ -83,7 +90,8 @@ export const NotebookToolkit = Toolkit.make(
     success: Schema.Unknown,
   })
     .annotate(Tool.Readonly, true)
-    .annotate(Tool.Destructive, false),
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("notebook_list_kernels", {
     ...shared,
     description:
@@ -92,33 +100,42 @@ export const NotebookToolkit = Toolkit.make(
     success: NotebookKernelList,
   })
     .annotate(Tool.Readonly, true)
-    .annotate(Tool.Destructive, false),
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("notebook_save", {
     ...shared,
     description:
       "Atomically save the service-owned notebook with its outputs and metadata. Pass current revision and base diskHash from notebook_open/create or the last save. Conflicts retain the draft; never overwrite external edits blindly.",
     parameters: Schema.Struct({ ...handle, ...revision, diskHash: Schema.String }),
     success: NotebookSnapshot,
-  }).annotate(Tool.Destructive, false),
+  })
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("notebook_interrupt", {
     ...shared,
     description:
       "Interrupt the active run and cancel its undispatched cells. Pass runId and current generation. Acknowledgement is not completion: wait through notebook_read_outputs.",
     parameters: Schema.Struct({ ...control, runId: Schema.String }),
     success: Schema.Void,
-  }).annotate(Tool.Destructive, false),
+  })
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("notebook_restart", {
     ...shared,
     description:
       "Explicitly restart the owned kernel at the expected generation, clearing variables and resolving unknown execution state. Preserves draft outputs with their previous-generation provenance. Does not rerun code.",
     parameters: Schema.Struct(control),
     success: Schema.Void,
-  }).annotate(Tool.Destructive, true),
+  })
+    .annotate(Tool.Destructive, true)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("notebook_shutdown", {
     ...shared,
     description:
       "Shut down only this notebook's owned kernel at the expected generation, including recovery from unknown outcomes. Retains the draft and outputs for notebook_save. Does not stop the Jupyter server.",
     parameters: Schema.Struct(control),
     success: Schema.Void,
-  }).annotate(Tool.Destructive, true),
+  })
+    .annotate(Tool.Destructive, true)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
 );

@@ -76,6 +76,7 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
 
   const threadDispatch: ThreadCommandExecutor.ThreadCommandExecutor["Service"] = {
     activeKeys: threadExecutor.activeKeys,
+    withDeletionLock: threadExecutor.withDeletionLock,
     withLock: Effect.fn("withLock")(function* (threadId, effect) {
       const shell = yield* projectionStore
         .getThread(threadId)

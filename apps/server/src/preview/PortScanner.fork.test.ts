@@ -1,3 +1,4 @@
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { it as effectIt } from "@effect/vitest";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -34,6 +35,12 @@ const layerProbeFailure = (
   fileSystem: Layer.Layer<FileSystem.FileSystem> = layerNoProc,
 ) =>
   PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunOpportunisticWork: Effect.succeed(true),
+        shouldRunScopeWork: () => Effect.succeed(true),
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         Path.layer,
@@ -131,6 +138,12 @@ effectIt.effect.each(["linux", "darwin"] as const)(
   (platform) => {
     let listenerScans = 0;
     const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+          shouldRunOpportunisticWork: Effect.succeed(true),
+          shouldRunScopeWork: () => Effect.succeed(true),
+        }),
+      ),
       Layer.provide(
         Layer.mergeAll(
           layerNoProc,

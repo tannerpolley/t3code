@@ -283,6 +283,7 @@ const makeWakeHarnessWithOptions = Effect.fn("makeWakeHarnessWithOptions")(funct
               Effect.sync(() => {
                 offeredMessages.push(message);
               }),
+            renameSession: () => Effect.void,
             setModel: () => Effect.void,
             applyFlagSettings: () => Effect.void,
             setPermissionMode: () => Effect.void,
@@ -319,6 +320,7 @@ const makeWakeHarnessWithOptions = Effect.fn("makeWakeHarnessWithOptions")(funct
             Effect.sync(() => {
               offeredMessages.push(message);
             }),
+          renameSession: () => Effect.void,
           setModel: (model) =>
             Effect.sync(() => {
               liveSelectionChanges.push({ model });
