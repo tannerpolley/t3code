@@ -217,7 +217,7 @@ import {
   isForkableSourceRunStatus,
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
-import { planThreadDeletion } from "./ThreadDeletion.ts";
+import { isRegisteredRepositoryRoot, planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeAutomaticProviderSwitchPolicy } from "./AutomaticProviderSwitchPolicy.ts";
@@ -3917,7 +3917,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    const thread = yield* projectionStore.getThread(command.threadId).pipe(
+    let thread = yield* projectionStore.getThread(command.threadId).pipe(
       Effect.mapError(
         (cause) =>
           new OrchestratorProjectionError({
@@ -3927,8 +3927,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
     if (command.type === "thread.settle" && keepIssueWorktree(thread)) return;
-    if (command.type === "thread.archive")
-      yield* repositoryWork.guardRootLifecycle(command, thread);
+    if (command.type === "thread.archive" && isRegisteredRepositoryRoot(thread)) {
+      yield* repositoryWork.end(
+        {
+          type: "repository.work.end",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          expectedRevision: thread.repositoryOrchestration!.revision,
+        },
+        events,
+      );
+      thread = (yield* getProjectionWithPendingEvents(command.threadId, events)).thread;
+    }
     if (
       thread.linkedIssue !== undefined &&
       ((command.type === "thread.metadata.update" &&
@@ -14866,6 +14876,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 (cause) => new OrchestratorProjectionError({ threadId: deletion.threadId, cause }),
               ),
             );
+          yield* repositoryWork.guardRootLifecycle(deletion, projection.thread);
           return yield* mapDispatchError(command)(
             planThreadDeletion({
               command: deletion,
@@ -14875,11 +14886,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 .pipe(mapDispatchError(command)),
               now,
               idAllocator,
-            }).pipe(
-              Effect.catchTags({
-                RegisteredRepositoryRootDeletionError: (error) => Effect.fail(error.message),
-              }),
-            ),
+            }),
           );
         });
         // Checked under the thread lock: a message sent since the client looked keeps the thread.

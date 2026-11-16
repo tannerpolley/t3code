@@ -533,9 +533,9 @@ it.effect(
     }).pipe(Effect.provide(layerDatabase)),
 );
 
-it.effect(
-  "refuses a forced project deletion before deleting any thread when it holds a repository root",
-  () =>
+it.effect.each([false, true])(
+  "ends repository orchestration when deleting its project (archived: %s)",
+  (archived) =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project:repository-root");
       const workerId = ThreadId.make("thread:ordinary");
@@ -552,6 +552,7 @@ it.effect(
               ...root,
               payload: {
                 ...root.payload,
+                archivedAt: archived ? root.occurredAt : null,
                 repositoryOrchestration: {
                   host: "github.com",
                   repository: "tannerpolley/t3code",
@@ -572,46 +573,62 @@ it.effect(
             },
           ],
         });
-        const service = yield* ProjectService.make;
-        const failure = yield* service
-          .delete({
-            commandId: CommandId.make("command:root-project-delete"),
-            projectId,
-            force: true,
-          })
-          .pipe(Effect.flip);
-        assert.equal(failure._tag, "ProjectNotEmptyError");
-        if (failure._tag === "ProjectNotEmptyError")
-          assert.equal(failure.repositoryRootThreadId, rootId);
-        assert.isTrue(Option.isSome(yield* service.getById(projectId)));
-        for (const threadId of [workerId, rootId])
-          assert.isNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
-        const current = (yield* projections.getThreadProjection(rootId)).thread;
+        const issue = {
+          host: "github.com",
+          repository: "tannerpolley/t3code",
+          repositoryId: "repo:root",
+          id: "issue:412",
+          nodeId: "node:412",
+          number: 412,
+          title: "Delete project",
+          url: "https://github.com/tannerpolley/t3code/issues/412",
+        };
         yield* eventSink.write({
           events: [
             {
-              id: EventId.make("end:root"),
-              type: "thread.metadata-updated",
+              id: EventId.make("queued:root"),
+              type: "issue.queue.updated",
               threadId: rootId,
-              occurredAt: yield* DateTime.now,
+              occurredAt: root.occurredAt,
+              payload: { requestId: CommandId.make("queue:root"), issue, state: "queued" },
+            },
+            {
+              id: EventId.make("requested:root"),
+              type: "issue.work.requested",
+              threadId: rootId,
+              occurredAt: root.occurredAt,
               payload: {
-                ...current,
-                repositoryOrchestration: {
-                  ...current.repositoryOrchestration!,
-                  paused: true,
-                  retiredToThreadId: null,
-                  revision: 2,
-                },
+                requestId: CommandId.make("request:root"),
+                issue: { ...issue, id: "issue:413", number: 413 },
+                parent: null,
+                rootThreadId: rootId,
+                issueThreadId: null,
+                attemptKey: "first",
+                modelSelection: root.payload.modelSelection,
               },
             },
           ],
         });
+        const service = yield* ProjectService.make;
         const deleted = yield* service.delete({
           commandId: CommandId.make("command:ended-project-delete"),
           projectId,
           force: true,
         });
         assert.isNotNull(deleted.deletedAt);
+        const config = (yield* projections.getThreadProjection(rootId)).thread
+          .repositoryOrchestration!;
+        assert.isNull(config.retiredToThreadId);
+        assert.equal(config.revision, 2);
+        const sql = yield* SqlClient.SqlClient;
+        assert.lengthOf(
+          yield* sql`SELECT request_id FROM orchestration_v2_projection_issue_work_requests WHERE root_thread_id = ${rootId}`,
+          0,
+        );
+        assert.lengthOf(
+          yield* sql`SELECT root_thread_id FROM orchestration_v2_projection_repository_orchestration WHERE root_thread_id = ${rootId}`,
+          0,
+        );
         for (const threadId of [workerId, rootId])
           assert.isNotNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
       }).pipe(Effect.provide(layerServices));

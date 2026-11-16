@@ -48,9 +48,7 @@ function projectFailure(error: Project.ProjectServiceError) {
         ? "The project was not found."
         : error._tag === "ProjectConflictError"
           ? "The workspace is already registered to a project."
-          : error.repositoryRootThreadId !== undefined
-            ? error.message
-            : "The project is not empty; force=true is required to delete it.";
+          : "The project is not empty; force=true is required to delete it.";
   return new OrchestratorMcpFailure({ code: "invalid_request", message });
 }
 

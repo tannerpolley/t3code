@@ -357,8 +357,8 @@ active eligible Orchestrator thread in the repository's project. Without one, wo
 
 To stop coordinating a repository permanently, open its project settings and choose **End repository
 orchestration** from the orchestrator actions. Finish or cancel outstanding work, remove queued
-issues, and cancel any pending handoff first. Ending releases the project and root thread for
-deletion. You can set up orchestration again through Start agent or Make repository orchestrator.
+issues, and cancel any pending handoff first. Deleting a project ends its repository orchestration and drops queued issues and unclaimed start requests.
+Archiving or deleting an idle orchestrator thread also ends orchestration; live work must finish or be cancelled first. You can set up orchestration again through Start agent or Make repository orchestrator.
 
 To run issue work, open an issue, choose **Start agent**, then a model role and the
 matching repository project. Use a model role with an available Codex or Claude target.
