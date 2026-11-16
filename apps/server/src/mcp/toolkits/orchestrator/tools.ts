@@ -105,7 +105,8 @@ const ProposeIssueChangeTool = Tool.make("propose_issue_change", {
 })
   .annotate(Tool.Title, "Propose an issue change")
   .annotate(Tool.Destructive, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
@@ -410,7 +411,9 @@ export const OrchestratorToolkit = Toolkit.make(
     failure: OrchestratorMcpFailure,
     failureMode: "return",
     dependencies,
-  }).annotate(Tool.Destructive, false),
+  })
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("work_through_milestone", {
     description:
       "Authorize the registered repository orchestrator to work through this milestone. Every issue worker gets its own new issue worktree and branch from the repository default branch. Parent ownership, blockers and shared worker capacity are enforced by the server.",

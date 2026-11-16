@@ -6,7 +6,7 @@ import {
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Tool } from "effect/ai";
+import { McpSchema, Tool } from "effect/ai";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -28,7 +28,8 @@ export const RequestUserInputTool = Tool.make("t3_request_user_input", {
   ],
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const requestUserInput = McpToolAccess.actsAsCaller(
   (input: { readonly questions: OrchestrationV2UserInputQuestions }) =>
