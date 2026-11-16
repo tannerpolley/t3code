@@ -48,6 +48,7 @@ import {
   RepositoryWorkInput,
   RepositoryHandoffInput,
   RepositoryOrchestratorInput,
+  RepositoryWorkEndInput,
   RepositoryWorkControlInput,
   RepositoryUsageSprintInput,
   RepositoryWorkerLimitInput,
@@ -74,6 +75,7 @@ export const ISSUE_WS_METHODS = {
   issuesWorkStatus: "issues.workStatus",
   issuesWorkMilestone: "issues.workMilestone",
   issuesRepositoryStatus: "issues.repositoryStatus",
+  issuesEndRepository: "issues.endRepository",
   issuesSetPaused: "issues.setPaused",
   issuesSetUsageSprint: "issues.setUsageSprint",
   issuesCloseOut: "issues.closeOut",
@@ -195,6 +197,11 @@ const WsIssuesCloseOutRpc = Rpc.make(ISSUE_WS_METHODS.issuesCloseOut, {
   success: RepositoryWorkResult,
   error: IssueRpcError,
 });
+const WsIssuesEndRepositoryRpc = Rpc.make(ISSUE_WS_METHODS.issuesEndRepository, {
+  payload: RepositoryWorkEndInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
 const WsIssuesSetPausedRpc = Rpc.make(ISSUE_WS_METHODS.issuesSetPaused, {
   payload: RepositoryWorkControlInput,
   success: RepositoryWorkResult,
@@ -291,6 +298,7 @@ export const issueRpcs = [
   WsIssuesWorkStatusRpc,
   WsIssuesWorkMilestoneRpc,
   WsIssuesRepositoryStatusRpc,
+  WsIssuesEndRepositoryRpc,
   WsIssuesSetPausedRpc,
   WsIssuesSetUsageSprintRpc,
   WsIssuesCloseOutRpc,
@@ -312,6 +320,7 @@ export const issueRpcs = [
 ] as const;
 
 export const ISSUE_CLIENT_GUARDED_RPC_SCOPES = {
+  [ISSUE_WS_METHODS.issuesEndRepository]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issuesSetState]: AuthSourceControlWriteScope,
   [ISSUE_WS_METHODS.issuesCleanup]: AuthSourceControlWriteScope,
   [ISSUE_WS_METHODS.issuesUnlink]: AuthOrchestrationOperateScope,

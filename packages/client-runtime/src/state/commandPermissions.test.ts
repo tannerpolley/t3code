@@ -281,6 +281,7 @@ describe("command permissions", () => {
             PROJECT_ARTIFACT_METHODS.update,
             PROJECT_ARTIFACT_METHODS.renameSection,
             PROJECT_ARTIFACT_METHODS.reorderSections,
+            WS_METHODS.issuesEndRepository,
             WS_METHODS.issuesCloseOut,
             WS_METHODS.issuesCancelRequest,
             WS_METHODS.issuesRestoreRoot,
@@ -316,6 +317,8 @@ describe("command permissions", () => {
           client: {
             [WS_METHODS.ownerDecisionsChoose]: () =>
               Effect.sync(() => calls.push(WS_METHODS.ownerDecisionsChoose)),
+            [WS_METHODS.issuesEndRepository]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesEndRepository)),
             [WS_METHODS.issuesCloseOut]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesCloseOut)),
             [WS_METHODS.issuesCancelRequest]: () =>
@@ -374,6 +377,13 @@ describe("command permissions", () => {
             }),
           );
           expect(chosen._tag).toBe(outcome);
+          const ended = yield* Effect.promise(() =>
+            issues.endRepository.run(registry, {
+              environmentId,
+              input: { ...scope, expectedRevision: 2 },
+            }),
+          );
+          expect(ended._tag).toBe(outcome);
           const closedOut = yield* Effect.promise(() =>
             issues.closeOut.run(registry, {
               environmentId,
@@ -420,6 +430,7 @@ describe("command permissions", () => {
         }
         expect(calls).toEqual([
           WS_METHODS.ownerDecisionsChoose,
+          WS_METHODS.issuesEndRepository,
           WS_METHODS.issuesCloseOut,
           WS_METHODS.issuesCancelRequest,
           WS_METHODS.issuesRestoreRoot,

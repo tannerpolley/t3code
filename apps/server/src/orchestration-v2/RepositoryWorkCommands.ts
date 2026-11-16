@@ -70,7 +70,7 @@ export function makeRepositoryWorkCommands({
   const guardRootLifecycle = Effect.fn("orchestrationV2.guardRepositoryRootLifecycle")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
-      { readonly type: "thread.archive" | "repository.work.restore" }
+      { readonly type: "thread.archive" | "repository.work.restore" | "repository.work.end" }
     >,
     thread: OrchestrationV2AppThread,
     // A paused root moving to its project's new record stays the same thread, so its own turns may run.
@@ -99,6 +99,12 @@ export function makeRepositoryWorkCommands({
     const unclaimed = Option.isSome(issueWorkStore)
       ? yield* issueWorkStore.value.hasUnclaimedRequests(thread.id).pipe(mapDispatchError(command))
       : true;
+    const queued =
+      command.type === "repository.work.end" && Option.isSome(issueWorkStore)
+        ? (yield* issueWorkStore.value
+            .queue(thread.repositoryOrchestration)
+            .pipe(mapDispatchError(command))).length > 0
+        : false;
     const activePlan =
       !thread.repositoryOrchestration.paused &&
       thread.repositoryOrchestration.milestones.some((plan) => plan.status !== "complete");
@@ -109,6 +115,7 @@ export function makeRepositoryWorkCommands({
         : !(yield* issueWorkStore.value.subtreeDrained(thread.id).pipe(mapDispatchError(command))));
     const blockers = [
       unfinished && "unfinished runs, subagents or final deliveries",
+      queued && "queued issues (remove them from the queue)",
       unclaimed &&
         "unclaimed issue start requests (cancel them from the issue's Start agent controls)",
       activePlan && "an unpaused milestone plan (pause the repository)",
@@ -119,7 +126,7 @@ export function makeRepositoryWorkCommands({
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `This repository root still owns active work: ${blockers.join("; ")}. Resolve these or hand off ownership before archiving or replacing this root.`,
+        cause: `This repository root still owns active work: ${blockers.join("; ")}. Resolve these or hand off ownership before ending, archiving or replacing this root.`,
       });
   });
 
@@ -134,7 +141,7 @@ export function makeRepositoryWorkCommands({
       return yield* new OrchestratorDispatchError({
         commandId: request.commandId,
         commandType: request.type,
-        cause: `This repository root has retired. Delegate through ${thread.repositoryOrchestration.retiredToThreadId}.`,
+        cause: `This repository root has retired. ${thread.repositoryOrchestration.retiredToThreadId == null ? "Set up repository orchestration again before delegating." : `Delegate through ${thread.repositoryOrchestration.retiredToThreadId}.`}`,
       });
   });
 
@@ -151,8 +158,48 @@ export function makeRepositoryWorkCommands({
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `This repository root has retired. Route scheduled work to ${thread.repositoryOrchestration.retiredToThreadId}.`,
+        cause: `This repository root has retired. ${thread.repositoryOrchestration.retiredToThreadId == null ? "Set up repository orchestration again before scheduling work." : `Route scheduled work to ${thread.repositoryOrchestration.retiredToThreadId}.`}`,
       });
+  });
+
+  const end = Effect.fn("orchestrationV2.endRepositoryWork")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "repository.work.end" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const shell = (yield* projectionStore
+      .getThreadRecords(command.threadId, [])
+      .pipe(mapDispatchError(command))).thread;
+    const config = shell.repositoryOrchestration;
+    if (
+      config === undefined ||
+      repositoryPhase(config) === "retired" ||
+      config.revision !== command.expectedRevision
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Repository ownership changed. Refresh before ending orchestration.",
+      });
+    yield* guardRootLifecycle(command, shell);
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.metadata-updated",
+      threadId: command.threadId,
+      occurredAt: now,
+      payload: {
+        ...shell,
+        repositoryOrchestration: {
+          ...config,
+          paused: true,
+          retiredToThreadId: null,
+          revision: config.revision + 1,
+        },
+        updatedAt: now,
+      },
+    });
   });
 
   const restore = Effect.fn("restore")(function* (
@@ -171,7 +218,10 @@ export function makeRepositoryWorkCommands({
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    if (!isValidRepositoryPhase(command.orchestration))
+    if (
+      !isValidRepositoryPhase(command.orchestration) ||
+      repositoryPhase(command.orchestration) === "retired"
+    )
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -686,6 +736,7 @@ export function makeRepositoryWorkCommands({
     guardRootLifecycle,
     guardDelegationParent,
     guardScheduledMessage,
+    end,
     restore,
     update,
     endUsageSprint,

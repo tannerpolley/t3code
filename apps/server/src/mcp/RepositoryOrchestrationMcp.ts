@@ -38,6 +38,10 @@ export interface RepositoryMcpMethods {
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").IssueWorkCloseOutInput,
   ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
+  readonly endRepositoryOrchestration: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").RepositoryWorkEndInput,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly setRepositoryPaused: (
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").RepositoryWorkControlInput,
@@ -175,6 +179,16 @@ export function makeRepositoryMcpMethods({
         .closeOut(input, caller.parent.thread.id)
         .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
     }),
+    endRepositoryOrchestration: Effect.fn("OrchestratorMcpService.endRepositoryOrchestration")(
+      function* (scope, input) {
+        yield* requireRepositoryController(scope);
+        if (Option.isNone(issueWork))
+          return yield* failure("orchestration_error", "Issue work is unavailable.");
+        return yield* issueWork.value
+          .endRepository(input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      },
+    ),
     setRepositoryPaused: Effect.fn("OrchestratorMcpService.setRepositoryPaused")(
       function* (scope, input) {
         yield* requireRepositoryController(scope);

@@ -173,6 +173,10 @@ export const makeIssueWorkProjection = (
                     updated_at = excluded.updated_at
                 `;
     }
+    if (event.payload.repositoryOrchestration?.retiredToThreadId === null) {
+      yield* sql`DELETE FROM orchestration_v2_projection_repository_orchestration
+        WHERE root_thread_id = ${event.threadId}`;
+    }
     if (
       event.payload.repositoryOrchestration !== undefined &&
       repositoryPhase(event.payload.repositoryOrchestration) !== "retired"

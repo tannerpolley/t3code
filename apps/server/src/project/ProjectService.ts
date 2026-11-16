@@ -93,7 +93,7 @@ export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyErro
   override get message(): string {
     return this.repositoryRootThreadId === undefined
       ? `Project ${this.projectId} is not empty.`
-      : `Project ${this.projectId} contains repository orchestrator ${this.repositoryRootThreadId}. Hand off repository ownership before deleting the project.`;
+      : `Project ${this.projectId} contains repository orchestrator ${this.repositoryRootThreadId}. End repository orchestration or hand off ownership before deleting the project.`;
   }
 }
 

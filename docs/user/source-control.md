@@ -355,6 +355,11 @@ Choosing another thread moves the role after live issue work drains. If none is 
 an issue is queued or a marked cross-project item reaches the Inbox, T3 selects the most recently
 active eligible Orchestrator thread in the repository's project. Without one, work waits.
 
+To stop coordinating a repository permanently, open its project settings and choose **End repository
+orchestration** from the orchestrator actions. Finish or cancel outstanding work, remove queued
+issues, and cancel any pending handoff first. Ending releases the project and root thread for
+deletion. You can set up orchestration again through Start agent or Make repository orchestrator.
+
 To run issue work, open an issue, choose **Start agent**, then a model role and the
 matching repository project. Use a model role with an available Codex or Claude target.
 **Start agent on issue…** in the command palette opens the current

@@ -145,6 +145,9 @@ export class IssueWorkService extends Context.Service<
       input: IssueWorkCloseOutInput,
       callerThreadId?: ThreadId,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
+    readonly endRepository: (
+      input: import("@t3tools/contracts").RepositoryWorkEndInput,
+    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly setPaused: (
       input: RepositoryWorkControlInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
@@ -431,7 +434,14 @@ export const layer = Layer.effect(
         });
         // All projects pointing at this repository share a command identity. The
         // serialized receipt and unique projected repository key are the lock.
-        const commandId = CommandId.make(`issue-root:${issue.host}:${issue.repositoryId}`);
+        let commandId = CommandId.make(`issue-root:${issue.host}:${issue.repositoryId}`);
+        for (;;) {
+          const previous = yield* store.configuration(
+            ids.derive.delegatedTaskThread({ commandId }),
+          );
+          if (previous === null || repositoryPhase(previous) !== "retired") break;
+          commandId = CommandId.make(`${commandId}:restart`);
+        }
         const orchestratorRole = roles.find((entry) => entry.id === "orchestrator");
         let rootSelection = fallbackSelection;
         for (const target of orchestratorRole?.targets ?? []) {
@@ -1433,6 +1443,26 @@ export const layer = Layer.effect(
       (effect, rootThreadId) => reconcile(rootThreadId, effect),
     );
 
+    const endRepository: IssueWorkService["Service"]["endRepository"] = Effect.fn(
+      "IssueWorkService.endRepository",
+    )(function* (input) {
+      const owner = yield* store.repositoryOwnerByRef(input);
+      if (owner === null)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "This repository has no registered orchestrator.",
+        });
+      yield* threads
+        .dispatch({
+          type: "repository.work.end",
+          commandId: input.clientRequestId,
+          threadId: owner.rootThreadId,
+          expectedRevision: input.expectedRevision,
+        })
+        .pipe(Effect.mapError(mapError));
+      return yield* repositoryStatus(input);
+    });
+
     const setPaused: IssueWorkService["Service"]["setPaused"] = Effect.fn(
       "IssueWorkService.setPaused",
     )(function* (input) {
@@ -2049,6 +2079,7 @@ export const layer = Layer.effect(
       restoreRoot,
       workMilestone,
       repositoryStatus,
+      endRepository,
       setPaused,
       setUsageSprint,
       sweepUsageSprints,

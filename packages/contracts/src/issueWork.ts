@@ -93,7 +93,7 @@ export type RepositoryPhase = typeof RepositoryPhase.Type;
 type RepositoryPhaseFields = {
   readonly paused: boolean;
   readonly handoff?: { readonly status: "awaiting_approval" | "draining" } | undefined;
-  readonly retiredToThreadId?: string | undefined;
+  readonly retiredToThreadId?: string | null | undefined;
 };
 
 export const repositoryPhase = (config: RepositoryPhaseFields): RepositoryPhase => {
@@ -154,7 +154,8 @@ export const RepositoryOrchestration = Schema.Struct({
       }),
     ),
   ),
-  retiredToThreadId: Schema.optional(ThreadId),
+  /** Present when retired; null means there is no successor. */
+  retiredToThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   usageSprint: Schema.optional(RepositoryUsageSprint),
   usageSprintHistory: Schema.optional(
     Schema.Array(
@@ -215,6 +216,13 @@ export const IssueWorkCloseOutInput = Schema.Struct({
   clientRequestId: CommandId,
 });
 export type IssueWorkCloseOutInput = typeof IssueWorkCloseOutInput.Type;
+
+export const RepositoryWorkEndInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  expectedRevision: Schema.Int,
+  clientRequestId: CommandId,
+});
+export type RepositoryWorkEndInput = typeof RepositoryWorkEndInput.Type;
 
 export const RepositoryWorkControlInput = Schema.Struct({
   ...IssueRepositoryRef.fields,

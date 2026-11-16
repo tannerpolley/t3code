@@ -178,7 +178,7 @@ it.effect("SQL phase and admission agree with contracts for every stored field c
     const sql = yield* SqlClient.SqlClient;
     for (const paused of [false, true]) {
       for (const status of [undefined, "awaiting_approval", "draining"] as const) {
-        for (const retired of [false, true]) {
+        for (const retired of [undefined, null, ThreadId.make("next")]) {
           const config = {
             paused,
             ...(status
@@ -193,7 +193,7 @@ it.effect("SQL phase and admission agree with contracts for every stored field c
                   },
                 }
               : {}),
-            ...(retired ? { retiredToThreadId: ThreadId.make("next") } : {}),
+            ...(retired !== undefined ? { retiredToThreadId: retired } : {}),
           };
           const payload = JSON.stringify({ repositoryOrchestration: config });
           const rows = yield* sql<{ phase: string; allowed: number }>`SELECT

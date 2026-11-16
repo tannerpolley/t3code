@@ -43,6 +43,7 @@ import {
   ThreadMetadataMcpUpdateResult,
   RepositoryWorkInput,
   IssueQueueInput,
+  RepositoryWorkEndInput,
   RepositoryWorkControlInput,
   RepositoryUsageSprintInput,
   RepositoryConcurrencyLimitInput,
@@ -444,6 +445,15 @@ export const OrchestratorToolkit = Toolkit.make(
     description:
       "Set either independent repository limit (1–32): workerLimit for implementors, or readOnlyLimit for designer/reviewer/checker/investigator children (default 4). Read get_repository_orchestration for the current revision. Raising admits queued work promptly; lowering holds new starts without stopping running children.",
     parameters: RepositoryConcurrencyLimitInput,
+    success: RepositoryWorkResult,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Destructive, true),
+  Tool.make("end_repository_orchestration", {
+    description:
+      "End an idle repository orchestration without a successor, allowing its project and root thread to be deleted. Read get_repository_orchestration for expectedRevision. Refuses unfinished runs, live workers, queued issues, unclaimed requests and pending handoffs. Repository orchestration can be set up again through the existing launch flow.",
+    parameters: RepositoryWorkEndInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
     failureMode: "return",

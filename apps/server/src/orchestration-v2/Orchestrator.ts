@@ -714,6 +714,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "issue.work.cancel":
     case "repository.work.restore":
     case "issue.work.start":
+    case "repository.work.end":
     case "repository.work.update":
     case "repository.work.continue":
     case "repository.work.handoff":
@@ -15177,6 +15178,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "repository.work.restore":
         yield* repositoryWork.restore(command, events);
+        break;
+      case "repository.work.end":
+        yield* repositoryWork.end(command, events);
         break;
       case "repository.work.update":
         yield* repositoryWork.update(command, events, effects);
