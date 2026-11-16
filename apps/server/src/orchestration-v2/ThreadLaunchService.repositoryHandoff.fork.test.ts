@@ -321,6 +321,37 @@ describe("fresh-thread repository handoff", () => {
       creationSource: "web",
     });
   });
+  it.effect.each(["thread.archive", "thread.delete"] as const)(
+    "ends idle orchestration with %s",
+    (type) =>
+      Effect.gen(function* () {
+        yield* createRoot;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        yield* threads.dispatch({
+          type: "repository.work.update",
+          threadId: rootId,
+          commandId: CommandId.make(`idle:${type}:pause`),
+          expectedRevision: config.revision,
+          orchestration: { ...config, paused: true },
+        });
+        const result = yield* threads.dispatch({
+          type,
+          threadId: rootId,
+          commandId: CommandId.make(`idle:${type}`),
+        });
+        assert.isNull(yield* store.repositoryOwnerByRef(reference));
+        const retired = result.storedEvents.find(
+          ({ event }) => event.type === "thread.metadata-updated",
+        )!;
+        assert.equal(retired.event.type, "thread.metadata-updated");
+        if (retired.event.type === "thread.metadata-updated")
+          assert.isNull(retired.event.payload.repositoryOrchestration!.retiredToThreadId);
+        const thread = (yield* threads.getThreadRecords(rootId, [])).thread;
+        assert.isNotNull(type === "thread.archive" ? thread.archivedAt : thread.deletedAt);
+      }).pipe(Effect.provide(fixture())),
+  );
+
   it.effect(
     "ends idle orchestration, releases deletion, and starts a fresh root through launch",
     () =>
@@ -429,6 +460,14 @@ describe("fresh-thread repository handoff", () => {
           );
         });
       yield* refuse("end:unclaimed", /unclaimed/);
+      for (const type of ["thread.archive", "thread.delete"] as const) {
+        const error = yield* threads
+          .dispatch({ type, threadId: rootId, commandId: CommandId.make(`live:${type}`) })
+          .pipe(Effect.flip);
+        assert.include(error.message, "unclaimed issue start requests");
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
+      }
+
       yield* service.cancelRequest({
         ...reference,
         requestId: input.clientRequestId,
@@ -1683,12 +1722,6 @@ describe("fresh-thread repository handoff", () => {
           })).status,
           "cancelled",
         );
-        yield* archive("wrong:archive-after-cancel");
-        yield* threads.dispatch({
-          type: "thread.unarchive",
-          threadId: rootId,
-          commandId: CommandId.make("wrong:unarchive-for-restore"),
-        });
         const restored = yield* service.restoreRoot(restoreInput);
         assert.equal(restored.rootThreadId, originalLeadId);
         assert.isTrue(restored.orchestration!.paused);
@@ -2643,11 +2676,13 @@ describe("fresh-thread repository handoff", () => {
         yield* maintenance.pruneEventStore();
         assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
         const rebuilt = yield* service.repositoryStatus(reference);
-        assert.equal(rebuilt.rootThreadId, second.rootThreadId);
-        assert.equal(rebuilt.orchestration!.revision, paused.orchestration!.revision);
-        assert.isTrue(rebuilt.orchestration!.paused);
+        assert.isNull(rebuilt.rootThreadId);
+        const ended = (yield* store.configuration(second.rootThreadId!))!;
+        assert.isNull(ended.retiredToThreadId);
+        assert.equal(ended.revision, paused.orchestration!.revision + 1);
+        assert.isTrue(ended.paused);
         assert.deepEqual(
-          rebuilt.orchestration!.handoffHistory?.map((entry) => entry.threadId),
+          ended.handoffHistory?.map((entry) => entry.threadId),
           [rootId, first.rootThreadId],
         );
         assert.equal((yield* store.configuration(rootId))!.retiredToThreadId, first.rootThreadId);

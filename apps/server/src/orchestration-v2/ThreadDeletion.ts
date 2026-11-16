@@ -1,6 +1,6 @@
 import {
+  CommandId,
   repositoryPhase,
-  ThreadId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import { planRepositoryWorkEnd } from "./RepositoryWorkCommands.ts";
 
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -25,15 +25,6 @@ export const isRegisteredRepositoryRoot = (
   thread.repositoryOrchestration !== undefined &&
   repositoryPhase(thread.repositoryOrchestration) !== "retired";
 
-export class RegisteredRepositoryRootDeletionError extends Schema.TaggedError<RegisteredRepositoryRootDeletionError>()(
-  "RegisteredRepositoryRootDeletionError",
-  { threadId: ThreadId },
-) {
-  override get message(): string {
-    return "End repository orchestration or hand off ownership before deleting its current root. Its history and final deliveries must be retained.";
-  }
-}
-
 export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")(function* (input: {
   readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.delete" }>;
   readonly projection: Pick<
@@ -43,14 +34,25 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
   readonly attachmentIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-}): Effect.fn.Return<
-  ThreadDeletionPlan,
-  IdAllocator.IdAllocatorV2Error | RegisteredRepositoryRootDeletionError
-> {
-  const { command, projection, now, idAllocator } = input;
-  if (isRegisteredRepositoryRoot(projection.thread))
-    return yield* new RegisteredRepositoryRootDeletionError({ threadId: command.threadId });
+}): Effect.fn.Return<ThreadDeletionPlan, IdAllocator.IdAllocatorV2Error | string> {
+  const { command, now, idAllocator } = input;
+  let projection = input.projection;
   const events: Array<OrchestrationV2DomainEvent> = [];
+  if (isRegisteredRepositoryRoot(projection.thread)) {
+    const ended = yield* planRepositoryWorkEnd(
+      {
+        type: "repository.work.end",
+        commandId: CommandId.make(`${command.commandId}:end-repository-work`),
+        threadId: command.threadId,
+        expectedRevision: projection.thread.repositoryOrchestration!.revision,
+      },
+      projection.thread,
+      now,
+      idAllocator,
+    );
+    events.push(ended);
+    projection = { ...projection, thread: ended.payload };
+  }
   const effects: Array<PendingOrchestrationEffectV2> = [];
   let current = projection;
   const emitEvent = Effect.fn("ThreadDeletion.emitEvent")(function* <

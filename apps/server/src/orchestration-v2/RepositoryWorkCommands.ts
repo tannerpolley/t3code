@@ -51,6 +51,40 @@ interface RepositoryWorkCommandHooks extends ForkCommandHooks {
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorProjectionError>;
 }
 
+export const planRepositoryWorkEnd = Effect.fn("orchestrationV2.planRepositoryWorkEnd")(function* (
+  command: Extract<OrchestrationV2ServerCommand, { readonly type: "repository.work.end" }>,
+  thread: OrchestrationV2AppThread,
+  now: DateTime.Utc,
+  idAllocator: ForkCommandHooks["idAllocator"],
+) {
+  const config = thread.repositoryOrchestration;
+  if (
+    config === undefined ||
+    repositoryPhase(config) === "retired" ||
+    config.revision !== command.expectedRevision
+  )
+    return yield* Effect.fail("Repository ownership changed. Refresh before ending orchestration.");
+  return {
+    id: yield* idAllocator.allocate.event({
+      threadId: command.threadId,
+      commandId: command.commandId,
+    }),
+    type: "thread.metadata-updated" as const,
+    threadId: command.threadId,
+    occurredAt: now,
+    payload: {
+      ...thread,
+      repositoryOrchestration: {
+        ...config,
+        paused: true,
+        retiredToThreadId: null,
+        revision: config.revision + 1,
+      },
+      updatedAt: now,
+    },
+  };
+});
+
 // Ownership decisions collect events and effects in the caller's existing command plan.
 export function makeRepositoryWorkCommands({
   issueWorkStore,
@@ -70,7 +104,13 @@ export function makeRepositoryWorkCommands({
   const guardRootLifecycle = Effect.fn("orchestrationV2.guardRepositoryRootLifecycle")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
-      { readonly type: "thread.archive" | "repository.work.restore" | "repository.work.end" }
+      {
+        readonly type:
+          | "thread.archive"
+          | "thread.delete"
+          | "repository.work.restore"
+          | "repository.work.end";
+      }
     >,
     thread: OrchestrationV2AppThread,
     // A paused root moving to its project's new record stays the same thread, so its own turns may run.
@@ -100,7 +140,7 @@ export function makeRepositoryWorkCommands({
       ? yield* issueWorkStore.value.hasUnclaimedRequests(thread.id).pipe(mapDispatchError(command))
       : true;
     const queued =
-      command.type === "repository.work.end" && Option.isSome(issueWorkStore)
+      command.type !== "repository.work.restore" && Option.isSome(issueWorkStore)
         ? (yield* issueWorkStore.value
             .queue(thread.repositoryOrchestration)
             .pipe(mapDispatchError(command))).length > 0
@@ -126,7 +166,7 @@ export function makeRepositoryWorkCommands({
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `This repository root still owns active work: ${blockers.join("; ")}. Resolve these or hand off ownership before ending, archiving or replacing this root.`,
+        cause: `This repository root still owns active work: ${blockers.join("; ")}. Resolve these or hand off ownership before ending, archiving, deleting or replacing this root.`,
       });
   });
 
@@ -169,37 +209,14 @@ export function makeRepositoryWorkCommands({
     const shell = (yield* projectionStore
       .getThreadRecords(command.threadId, [])
       .pipe(mapDispatchError(command))).thread;
-    const config = shell.repositoryOrchestration;
-    if (
-      config === undefined ||
-      repositoryPhase(config) === "retired" ||
-      config.revision !== command.expectedRevision
-    )
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "Repository ownership changed. Refresh before ending orchestration.",
-      });
-    yield* guardRootLifecycle(command, shell);
-    const now = yield* DateTime.now;
-    yield* emit(
-      events,
+    const event = yield* planRepositoryWorkEnd(
       command,
-    )({
-      type: "thread.metadata-updated",
-      threadId: command.threadId,
-      occurredAt: now,
-      payload: {
-        ...shell,
-        repositoryOrchestration: {
-          ...config,
-          paused: true,
-          retiredToThreadId: null,
-          revision: config.revision + 1,
-        },
-        updatedAt: now,
-      },
-    });
+      shell,
+      yield* DateTime.now,
+      idAllocator,
+    ).pipe(mapDispatchError(command));
+    yield* guardRootLifecycle(command, shell);
+    yield* Ref.update(events, (current) => [...current, event]);
   });
 
   const restore = Effect.fn("restore")(function* (

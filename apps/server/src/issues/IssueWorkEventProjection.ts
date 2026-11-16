@@ -176,6 +176,15 @@ export const makeIssueWorkProjection = (
     if (event.payload.repositoryOrchestration?.retiredToThreadId === null) {
       yield* sql`DELETE FROM orchestration_v2_projection_repository_orchestration
         WHERE root_thread_id = ${event.threadId}`;
+      yield* sql`DELETE FROM orchestration_v2_projection_issue_work_requests
+        WHERE root_thread_id = ${event.threadId}
+          AND (queue_state IN ('queued', 'needs_attention')
+            OR (queue_state IS NULL AND json_type(payload_json, '$.cancellation') IS NULL
+              AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work work
+                WHERE work.host = orchestration_v2_projection_issue_work_requests.host
+                  AND work.repository_id = orchestration_v2_projection_issue_work_requests.repository_id
+                  AND work.issue_id = orchestration_v2_projection_issue_work_requests.issue_id
+                  AND work.owner_thread_id <> orchestration_v2_projection_issue_work_requests.attempt_key)))`;
     }
     if (
       event.payload.repositoryOrchestration !== undefined &&
