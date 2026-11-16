@@ -30,7 +30,7 @@ export class RegisteredRepositoryRootDeletionError extends Schema.TaggedError<Re
   { threadId: ThreadId },
 ) {
   override get message(): string {
-    return "Hand off repository ownership before deleting its current root. Its history and final deliveries must be retained.";
+    return "End repository orchestration or hand off ownership before deleting its current root. Its history and final deliveries must be retained.";
   }
 }
 

@@ -497,7 +497,7 @@ const make = Effect.gen(function* () {
     while (!visited.has(destination) && visited.size < 100) {
       visited.add(destination);
       const configuration = yield* work.configuration(destination);
-      if (configuration?.retiredToThreadId !== undefined) {
+      if (configuration?.retiredToThreadId != null) {
         destination = configuration.retiredToThreadId;
         continue;
       }

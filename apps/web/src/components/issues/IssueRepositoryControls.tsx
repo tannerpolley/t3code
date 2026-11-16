@@ -195,6 +195,8 @@ function RepositoryControls({
   const [summary, setSummary] = useState("");
   const closeOut = useAtomCommand(issueEnvironment.closeOut, { reportFailure: false });
   const canCloseOut = useAtomValue(issueEnvironment.closeOut.permissionAtom(environmentId));
+  const endRepository = useAtomCommand(issueEnvironment.endRepository, { reportFailure: false });
+  const canEnd = useAtomValue(issueEnvironment.endRepository.permissionAtom(environmentId));
   const pause = useAtomCommand(issueEnvironment.setPaused, { reportFailure: false });
   const handoff = useAtomCommand(issueEnvironment.handoff, { reportFailure: false });
   const restore = useAtomCommand(issueEnvironment.restoreRoot, { reportFailure: false });
@@ -307,6 +309,26 @@ function RepositoryControls({
       });
     appAtomRegistry.refresh(statusAtom);
   };
+  const end = async () => {
+    if (busy || !canEnd) return;
+    setBusy(true);
+    const result = await endRepository({
+      environmentId,
+      input: {
+        ...reference,
+        expectedRevision: config.revision,
+        clientRequestId: CommandId.make(randomUUID()),
+      },
+    });
+    setBusy(false);
+    if (result._tag === "Failure")
+      toastManager.add({
+        type: "error",
+        title: "Could not end repository orchestration",
+        description: formatEnvironmentQueryError(result.cause),
+      });
+    appAtomRegistry.refresh(statusAtom);
+  };
   const togglePause = async () => {
     if (busy) return;
     setBusy(true);
@@ -350,6 +372,9 @@ function RepositoryControls({
                   <MoreHorizontalIcon />
                 </MenuTrigger>
                 <MenuPopup align="start">
+                  <MenuItem disabled={busy || !canEnd} onClick={() => void end()}>
+                    End repository orchestration
+                  </MenuItem>
                   {canHandOff ? (
                     <MenuItem disabled={busy} onClick={() => setHandoffExpanded(true)}>
                       <ArrowRightLeftIcon className="size-3.5" />

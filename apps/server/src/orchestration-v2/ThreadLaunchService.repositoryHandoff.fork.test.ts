@@ -47,6 +47,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -320,6 +321,171 @@ describe("fresh-thread repository handoff", () => {
       creationSource: "web",
     });
   });
+  it.effect(
+    "ends idle orchestration, releases deletion, and starts a fresh root through launch",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        const input = {
+          ...reference,
+          projectId,
+          number: 9,
+          modelRoleId: "worker",
+          createOrchestrator: true,
+          clientRequestId: CommandId.make("end:first-start"),
+        };
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const commandId = CommandId.make(`issue-root:${reference.host}:${config.repositoryId}`);
+        const root = ids.derive.delegatedTaskThread({ commandId });
+        yield* (yield* ThreadLaunch.ThreadLaunchService).launch({
+          commandId,
+          threadId: root,
+          projectId,
+          title: "Repository orchestrator",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          repositoryOrchestration: { ...config, launchCommandId: commandId, milestones: [] },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const revision = (yield* service.repositoryStatus(reference)).orchestration!.revision;
+        yield* service.endRepository({
+          ...reference,
+          expectedRevision: revision,
+          clientRequestId: CommandId.make("end:idle"),
+        });
+        assert.isNull(yield* store.repositoryOwnerByRef(reference));
+        assert.isNull((yield* store.configuration(root))!.retiredToThreadId);
+        yield* threads.dispatch({
+          type: "thread.delete",
+          threadId: root,
+          commandId: CommandId.make("end:delete"),
+        });
+        const next = yield* service.start({
+          ...input,
+          clientRequestId: CommandId.make("end:next-start"),
+        });
+        assert.notEqual(next.rootThreadId, root);
+        assert.equal(
+          (yield* store.repositoryOwnerByRef(reference))!.rootThreadId,
+          next.rootThreadId,
+        );
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect("refuses ending while requests, queued issues, runs or a handoff remain", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = {
+        ...reference,
+        projectId,
+        number: 9,
+        modelRoleId: "worker",
+        createOrchestrator: true,
+        clientRequestId: CommandId.make("end:request"),
+      };
+      yield* createRoot;
+      const first = { rootThreadId: rootId };
+      const sink = yield* EventSink.EventSinkV2;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("end:unclaimed"),
+            type: "issue.work.requested",
+            threadId: rootId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              requestId: input.clientRequestId,
+              issue: linked(9),
+              parent: null,
+              rootThreadId: rootId,
+              issueThreadId: null,
+              attemptKey: "first",
+              modelSelection,
+            },
+          },
+        ],
+      });
+
+      const refuse = (key: string, reason: RegExp) =>
+        Effect.gen(function* () {
+          const status = yield* service.repositoryStatus(reference);
+          const error = yield* service
+            .endRepository({
+              ...reference,
+              expectedRevision: status.orchestration!.revision,
+              clientRequestId: CommandId.make(key),
+            })
+            .pipe(Effect.flip);
+          assert.match(error.message, reason);
+          assert.equal(
+            (yield* service.repositoryStatus(reference)).rootThreadId,
+            first.rootThreadId,
+          );
+        });
+      yield* refuse("end:unclaimed", /unclaimed/);
+      yield* service.cancelRequest({
+        ...reference,
+        requestId: input.clientRequestId,
+        projectId,
+        expectedRootThreadId: rootId,
+        reason: "End orchestration",
+        clientRequestId: CommandId.make("end:cancel-request"),
+      });
+      yield* service.setPaused({
+        ...reference,
+        paused: true,
+        clientRequestId: CommandId.make("end:pause"),
+      });
+      yield* service.queueIssue({
+        ...reference,
+        number: 9,
+        clientRequestId: CommandId.make("end:queue"),
+      });
+      yield* refuse("end:queued", /queued issues/);
+      yield* service.unqueueIssue({
+        ...reference,
+        number: 9,
+        clientRequestId: CommandId.make("end:unqueue"),
+      });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        threadId: first.rootThreadId,
+        commandId: CommandId.make("end:run"),
+        messageId: MessageId.make("end:run"),
+        text: "Coordinate",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* refuse("end:running", /unfinished runs/);
+      const current = (yield* service.repositoryStatus(reference)).orchestration!;
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        threadId: rootId,
+        commandId: CommandId.make("end:admit-worker"),
+        expectedRevision: current.revision,
+        orchestration: { ...current, paused: false, milestones: [] },
+      });
+      yield* service.start({ ...input, number: 10, clientRequestId: CommandId.make("end:worker") });
+      yield* refuse("end:live-worker", /active issue workers/);
+      yield* service.handoff({
+        ...reference,
+        expectedRevision: (yield* service.repositoryStatus(reference)).orchestration!.revision,
+        action: "approve",
+        summary: "Continue",
+        clientRequestId: CommandId.make("end:handoff"),
+      });
+      yield* refuse("end:pending-handoff", /pending handoff/);
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
   const scope = (threadId: ThreadId): McpInvocationScope => ({
     environmentId: EnvironmentId.make("environment:handoff"),
     requestNamespace: "handoff",

@@ -174,6 +174,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Update", "Updating", "Updated", "repository concurrency limit"],
     "issue-work",
   ),
+  end_repository_orchestration: tool(
+    ["End", "Ending", "Ended", "repository orchestration"],
+    "issue-work",
+  ),
   set_repository_work_paused: tool(
     ["Update", "Updating", "Updated", "repository pause state"],
     "issue-work",

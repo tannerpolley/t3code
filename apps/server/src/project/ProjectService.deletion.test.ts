@@ -586,6 +586,34 @@ it.effect(
         assert.isTrue(Option.isSome(yield* service.getById(projectId)));
         for (const threadId of [workerId, rootId])
           assert.isNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
+        const current = (yield* projections.getThreadProjection(rootId)).thread;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("end:root"),
+              type: "thread.metadata-updated",
+              threadId: rootId,
+              occurredAt: yield* DateTime.now,
+              payload: {
+                ...current,
+                repositoryOrchestration: {
+                  ...current.repositoryOrchestration!,
+                  paused: true,
+                  retiredToThreadId: null,
+                  revision: 2,
+                },
+              },
+            },
+          ],
+        });
+        const deleted = yield* service.delete({
+          commandId: CommandId.make("command:ended-project-delete"),
+          projectId,
+          force: true,
+        });
+        assert.isNotNull(deleted.deletedAt);
+        for (const threadId of [workerId, rootId])
+          assert.isNotNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
       }).pipe(Effect.provide(layerServices));
     }).pipe(Effect.provide(layerDatabase)),
 );

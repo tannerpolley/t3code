@@ -316,6 +316,10 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:close-out",
       tag: WS_METHODS.issuesCloseOut,
     }),
+    endRepository: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:end-repository",
+      tag: WS_METHODS.issuesEndRepository,
+    }),
     setPaused: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:pause",
       tag: WS_METHODS.issuesSetPaused,

@@ -3132,6 +3132,12 @@ export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJs
 
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
+    type: Schema.Literal("repository.work.end"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    expectedRevision: Schema.Int,
+  }),
+  Schema.Struct({
     type: Schema.Literal("repository.work.continue"),
     commandId: CommandId,
     threadId: ThreadId,
