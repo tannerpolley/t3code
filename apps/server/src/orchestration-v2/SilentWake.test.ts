@@ -21,6 +21,7 @@ import {
   EventId,
   MessageId,
   RuntimeRequestId,
+  TurnItemId,
   type OrchestrationV2Run,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -264,6 +265,90 @@ it.effect.each([
     );
   }).pipe(Effect.provide(harness.layer));
 });
+
+it.effect.each([false, true])(
+  "only suppresses silence handling for compaction without work: %s",
+  (work) =>
+    Effect.gen(function* () {
+      const o = yield* Orchestrator.OrchestratorV2;
+      const s = yield* EventSink.EventSinkV2;
+      const input = launchInput({
+        command: "create",
+        thread: "compact-silent",
+        message: "Do the work",
+      });
+      yield* (yield* ThreadLaunch.ThreadLaunchService).launch(input);
+      const run = (yield* o.getThreadProjection(input.threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const base = {
+        threadId: input.threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId: run.providerThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      yield* s.write({
+        events: [
+          {
+            id: EventId.make("compact"),
+            type: "turn-item.updated",
+            threadId: input.threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              ...base,
+              id: TurnItemId.make("compact"),
+              type: "compaction",
+              driver: ProviderDriverKind.make("codex"),
+            },
+          },
+          ...(work
+            ? [
+                {
+                  id: EventId.make("work"),
+                  type: "turn-item.updated" as const,
+                  threadId: input.threadId,
+                  runId: run.id,
+                  occurredAt: now,
+                  payload: {
+                    ...base,
+                    id: TurnItemId.make("work"),
+                    ordinal: 2,
+                    type: "reasoning" as const,
+                    text: "Working",
+                    streaming: false,
+                  },
+                },
+              ]
+            : []),
+        ],
+      });
+      yield* finish(s, input.threadId, run);
+      const items = (yield* o.getThreadProjection(input.threadId)).turnItems;
+      const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+        CommandId.make(`silent-wake-check:${run.id}`),
+      );
+      assert.equal(
+        items.some(
+          (item) =>
+            item.type === "system_notice" && item.message === "The turn ended without a reply",
+        ),
+        work,
+      );
+      assert.equal(
+        effects.some((effect) => effect.request.type === "run.silence.check"),
+        work,
+      );
+    }).pipe(Effect.provide(makeHarness().layer)),
+);
 
 const wakeThread = (o: Orchestrator.OrchestratorV2Shape, threadId: ThreadId) =>
   o.dispatch({

@@ -438,10 +438,21 @@ const layerBase: Layer.Layer<
         let completionEffects = 0;
         for (const completion of completed) {
           const run = completion.payload;
-          const projection = yield* projectionStore.getThreadRecords(run.threadId, ["messages"], {
-            messageRunIds: [run.id],
-          });
+          const projection = yield* projectionStore.getThreadRecords(
+            run.threadId,
+            ["messages", "turnItems"],
+            {
+              messageRunIds: [run.id],
+              turnItemRunIds: [run.id],
+            },
+          );
           if (projection.messages.some((message) => message.role === "assistant")) continue;
+          const activity = projection.turnItems.filter(
+            (item) =>
+              item.type !== "user_message" &&
+              !(item.type === "command_execution" && item.input === "Preparing workspace"),
+          );
+          if (activity.length > 0 && activity.every((item) => item.type === "compaction")) continue;
           const now = yield* DateTime.now;
           const notice: OrchestrationV2DomainEvent = {
             id: EventId.make(`silent-completion:${completion.id}`),
