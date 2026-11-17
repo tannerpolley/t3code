@@ -109,7 +109,7 @@ function upsertClientActivityLease(
   return next;
 }
 
-function isForegroundLease(lease: ClientActivityLease, now: DateTime.Utc): boolean {
+export function isForegroundLease(lease: ClientActivityLease, now: DateTime.Utc): boolean {
   return isLeaseActive(lease, now) && lease.visible && (lease.focused || lease.recentlyInteracted);
 }
 

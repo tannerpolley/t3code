@@ -355,7 +355,12 @@ const WorkerProvider = Schema.Literals(["mixed", "claude", "codex"]);
 
 const ToolOutputRetentionDays = Schema.NullOr(NonNegativeInt.check(Schema.isGreaterThan(0)));
 
+const AwayMode = Schema.Literals(["auto", "away", "here"]);
+const AwayIdleMinutes = NonNegativeInt.check(Schema.isGreaterThan(0));
+
 export const ForkServerSettingsFields = {
+  awayMode: AwayMode.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
+  awayIdleMinutes: AwayIdleMinutes.pipe(Schema.withDecodingDefault(Effect.succeed(5))),
   toolOutputRetentionDays: ToolOutputRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(14)),
   ),
@@ -441,6 +446,8 @@ export const ForkClientSettingsPatchFields = {
 };
 
 export const ForkServerSettingsPatchFields = {
+  awayMode: Schema.optionalKey(AwayMode),
+  awayIdleMinutes: Schema.optionalKey(AwayIdleMinutes),
   toolOutputRetentionDays: Schema.optionalKey(ToolOutputRetentionDays),
   workerProvider: Schema.optionalKey(WorkerProvider),
   autoUseExpiringResetCredits: Schema.optionalKey(Schema.Boolean),
