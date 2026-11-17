@@ -2062,20 +2062,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const offerDelegatedCompletionDelivery =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (threadId: ThreadId, parentRunId: RunId | null) {
-      const projection = yield* projectionStore.getThreadRecords(threadId, [
-        "runs",
-        "providerThreads",
-      ]);
-      const parentRun = projection.runs.find((candidate) => candidate.id === parentRunId);
-      const cohort = completionCohort(projection, parentRunId);
+      const controls = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+        runIds: parentRunId === null ? [] : [parentRunId],
+      });
+      const parentRun = controls.runs[0];
+      const cohort = completionCohort(controls, parentRunId);
       const delivery = cohort?.delivery;
       if (
         (parentRunId !== null && parentRun === undefined) ||
         cohort?.disposition !== "open" ||
         delivery == null ||
         delivery.taskIds.length === 0 ||
-        projection.thread.archivedAt !== null ||
-        projection.thread.deletedAt !== null
+        controls.thread.archivedAt !== null ||
+        controls.thread.deletedAt !== null
       )
         return;
       const messages = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
@@ -2097,9 +2096,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const providerThread =
         parentRun?.providerThreadId == null
           ? undefined
-          : projection.providerThreads.find(
-              (candidate) => candidate.id === parentRun.providerThreadId,
-            );
+          : (yield* projectionStore.getThreadRecords(threadId, ["providerThreads"], {
+              providerThreadIds: [parentRun.providerThreadId],
+            })).providerThreads[0];
       if (parentRunId !== null && providerThread === undefined) {
         return;
       }
@@ -9835,21 +9834,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
       command: OrchestrationV2ServerCommand,
     ) {
-      const parentProjection = yield* projectionStore
-        .getThreadRecords(
-          request.parentThreadId,
-          ["runs", "nodes", "subagents", "providerThreads", "providerTurns", "attempts"],
-          { omitSettledLeafNodes: true },
-        )
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestratorProjectionError({
-                threadId: request.parentThreadId,
-                cause,
-              }),
-          ),
-        );
+      // A run-less delegation (fork) has no run to scope the read to.
+      const parentProjection = yield* (
+        request.parentRunId === null || request.parentNodeId === null
+          ? projectionStore.getThreadRecords(
+              request.parentThreadId,
+              ["runs", "nodes", "providerThreads", "providerTurns", "attempts"],
+              { omitSettledLeafNodes: true },
+            )
+          : projectionStore.getRunProviderRecords(
+              request.parentThreadId,
+              request.parentRunId,
+              request.parentNodeId,
+            )
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProjectionError({
+              threadId: request.parentThreadId,
+              cause,
+            }),
+        ),
+      );
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === request.parentRunId,
       );
@@ -15215,7 +15221,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
     });
     yield* forkDelegatedCompletion.publishUntaggedIssueCloseout(childControls, progress, options);
-    const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"]);
+    // Each task of this child names it, so the parent's other tasks stay unread.
+    const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+      subagentChildThreadIds: [childThreadId],
+    });
     const closed =
       childControls.thread.archivedAt !== null || childControls.thread.deletedAt !== null;
     for (const task of parent.subagents) {

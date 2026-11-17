@@ -18,6 +18,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -509,6 +510,13 @@ it.effect("sql: a subagent thread becomes a candidate once its parent is done", 
         payload: { ...parentThread, ...overrides, updatedAt: now },
       });
       assert.deepEqual(yield* ids(), [child]);
+      // Active-thread reads filter on the column, so the event must write it, not only the payload.
+      if (type === "thread.archived") {
+        const [row] = yield* (yield* SqlClient.SqlClient)<{
+          readonly archived_at: string | null;
+        }>`SELECT archived_at FROM orchestration_v2_projection_threads WHERE thread_id = ${parent}`;
+        assert.equal(row?.archived_at, DateTime.formatIso(now));
+      }
     }
     const orphan = yield* createThread("orphan", {
       lineage: {

@@ -1363,7 +1363,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         (yield* pull).map((stored) => stored.sequence),
         live.map((stored) => stored.sequence),
       );
-    }),
+    }).pipe(Effect.scoped, Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("paginates catch-up beyond the event-store read limit", () =>

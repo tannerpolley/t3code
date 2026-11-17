@@ -900,8 +900,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ["archivedAt", DateTime.formatIso(now)],
         ["settledOverride", "settled"],
       ]) {
+        // A real archive writes the archived_at column along with the payload.
         yield* sql`UPDATE orchestration_v2_projection_threads
-          SET payload_json = json_set(payload_json, ${`$.${field}`}, ${value})
+          SET payload_json = json_set(payload_json, ${`$.${field}`}, ${value}),
+            archived_at = ${field === "archivedAt" ? value : null}
           WHERE thread_id = ${threadId}`;
         assert.isUndefined(
           (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
@@ -909,7 +911,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ),
         );
         yield* sql`UPDATE orchestration_v2_projection_threads
-          SET payload_json = ${originalRow!.payload_json} WHERE thread_id = ${threadId}`;
+          SET payload_json = ${originalRow!.payload_json}, archived_at = NULL WHERE thread_id = ${threadId}`;
       }
       yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${DateTime.formatIso(now)} WHERE thread_id = ${threadId}`;
       assert.isUndefined(
@@ -1222,7 +1224,7 @@ it.effect("live command records search the recovery index and retain filtering a
     assert.ok(
       plan.some((row) =>
         row.detail.includes(
-          "SEARCH orchestration_v2_projection_turn_items USING INDEX orchestration_v2_projection_turn_items_recovery_idx (thread_id=?)",
+          "SEARCH orchestration_v2_projection_turn_items USING COVERING INDEX orchestration_v2_projection_turn_items_thread_type_idx (thread_id=? AND type=? AND status=?)",
         ),
       ),
     );
