@@ -63,4 +63,12 @@ describe("renderComparison", () => {
     expect(output).toContain("| `Row` | 300 → 150 (-150, -50%) |");
     expect(output).not.toContain("`Header`");
   });
+
+  it("adds a subscriptions column when a scenario measured them", () => {
+    const output = renderComparison(
+      { mount: { commits: 1, renders: 9, components: {}, subscriptions: 120 } },
+      { mount: { commits: 1, renders: 9, components: {}, subscriptions: 100 } },
+    );
+    expect(output).toContain("| mount | 1 | 9 | 120 → 100 (-20, -17%) |");
+  });
 });
