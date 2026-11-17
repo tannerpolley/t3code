@@ -269,3 +269,28 @@ it("projects-expand-project", async () => {
   });
   await report("projects-expand-project", counted);
 });
+
+it("projects-worker-expansion", async () => {
+  using _clock = frozenClock();
+  await using _app = (await mountApp(LIVE)).screen;
+  const leadKey = scopedThreadKey(scopeThreadRef(ENVIRONMENT_ID, LEAD));
+  const toggle = () =>
+    rowOf(LEAD)?.closest("li")?.querySelector<HTMLElement>('[aria-label*=" running "]');
+  const children = () => document.querySelectorAll(`[data-sidebar-parent="${leadKey}"]`).length;
+  await vi.waitFor(() => expect(toggle()?.getAttribute("aria-expanded")).toBe("true"));
+  const shown = children();
+  await userEvent.click(toggle()!);
+  await vi.waitFor(() => expect(toggle()?.getAttribute("aria-expanded")).toBe("false"));
+  const hidden = children();
+  const counted = await measure(async () => {
+    await userEvent.click(toggle()!);
+    await vi.waitFor(() => expect(toggle()?.getAttribute("aria-expanded")).toBe("true"));
+  });
+  rowOf(LEAD)!.focus();
+  await userEvent.keyboard("{ArrowDown}");
+  await report("projects-worker-expansion", counted, {
+    childRows: { shown, hidden, reshown: children() },
+    arrowDownFromLeadLandsOnChild:
+      document.activeElement?.getAttribute("data-sidebar-parent") === leadKey,
+  });
+});
