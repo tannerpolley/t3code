@@ -2,10 +2,12 @@ import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
 import { MessageId } from "@t3tools/contracts";
 import type {
   NodeId,
+  ProviderDriverKind,
   OrchestrationV2AppThread,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2ServerCommand,
+  OrchestrationV2StoredEvent,
   RunId,
   ThreadId,
   ThreadLinkedIssue,
@@ -480,6 +482,35 @@ export function makeIssueWorkCommands({
     return false;
   });
 
+  // Commit owns the claim; this only starts already queued, committed runs.
+  const continueAdmissions = Effect.fnUntraced(function* <E, R>(
+    command: OrchestrationV2ServerCommand,
+    storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>,
+    startNextQueuedRun: (id: ThreadId) => Effect.Effect<void, E, R>,
+  ) {
+    for (const stored of storedEvents) {
+      if (stored.event.type !== "run.created" || stored.event.payload.status !== "queued") continue;
+      const shell = yield* projectionStore
+        .getThreadShell(stored.event.threadId)
+        .pipe(mapDispatchError(command));
+      if (shell?.linkedIssue !== undefined || (shell !== null && isReadOnlyIssueRole(shell.role)))
+        yield* mapDispatchError(command)(startNextQueuedRun(stored.event.threadId));
+    }
+  });
+
+  // Delegation owns the surrounding span and adapter lookup order.
+  const guardDelegatedProvider = Effect.fnUntraced(function* (
+    request: DelegatedTaskRequest,
+    driver: ProviderDriverKind,
+  ) {
+    if (request.issue !== undefined && !supportsManagedIssueWork(driver))
+      return yield* new OrchestratorDispatchError({
+        commandId: request.commandId,
+        commandType: request.type,
+        detail: managedIssueProviderError,
+      });
+  });
+
   const childIssueFields = (request: DelegatedTaskRequest) => ({
     ...(request.issue === undefined || isUnmanagedIssueRole(request.role)
       ? {}
@@ -544,6 +575,8 @@ export function makeIssueWorkCommands({
     guardUsageSprintMessage,
     start,
     reuseManagedChild,
+    guardDelegatedProvider,
+    continueAdmissions,
     childIssueFields,
     childWorkspaceFields,
     closeOut,

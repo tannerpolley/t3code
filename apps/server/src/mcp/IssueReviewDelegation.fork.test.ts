@@ -136,6 +136,8 @@ it.effect(
           readOnlyRequests++;
           assert.equal(child.runs[0]!.status, readOnlyRequests <= 4 ? "starting" : "queued");
           assert.equal(result.status, readOnlyRequests <= 4 ? "starting" : "queued");
+          if (readOnlyRequests > 4)
+            assert.equal(result.queueNote, "Queued on the readers pool: 4 of 4 slots in use.");
           assert.equal(yield* store.readOnlySlotsInUse(root), Math.min(readOnlyRequests, 4));
           assert.isUndefined(child.runs[0]!.workspacePreparation);
           assert.equal(yield* store.slotsInUse(root), 1);
@@ -153,6 +155,14 @@ it.effect(
           clientRequestId: `writer:${issue?.id ?? "no-issue"}`,
         });
         const child = yield* threads.getThreadRecords(result.childThreadId!, ["runs"]);
+        const reused = yield* mcp.delegateTask(scope, {
+          role: "writer",
+          task: "Write the document with the owner",
+          issue,
+          clientRequestId: `writer:${issue?.id ?? "no-issue"}`,
+        });
+        assert.equal(reused.childThreadId, result.childThreadId);
+        assert.isUndefined(result.queueNote);
         assert.equal(child.thread.role, "writer");
         assert.equal(child.thread.worktreePath, null);
         assert.equal(child.thread.branch, null);
@@ -200,6 +210,17 @@ it.effect(
         task: "Implement",
         clientRequestId: "queued-worker",
       });
+      assert.equal(worker.queueNote, "Queued on the workers pool: 1 of 1 slots in use.");
+      const reused = yield* mcp.delegateTask(scope, {
+        role: "implementor",
+        isolation: "shared",
+        issue: reviewIssue(2),
+        task: "Implement",
+        clientRequestId: "queued-worker",
+      });
+      assert.equal(reused.taskId, worker.taskId);
+      assert.equal(reused.childThreadId, worker.childThreadId);
+      assert.equal(reused.queueNote, worker.queueNote);
       const queued = yield* threads.getThreadRecords(worker.childThreadId!, ["runs", "turnItems"]);
       assert.equal(queued.runs[0]!.status, "queued");
       assert.equal(queued.runs[0]!.workspacePreparation?.type, "worktree");

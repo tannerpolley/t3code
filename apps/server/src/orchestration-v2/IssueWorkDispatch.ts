@@ -1,6 +1,7 @@
 import { repositoryPhase, isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type {
   IssueWorkRead,
+  OrchestrationV2ServerCommand,
   ThreadId,
   ThreadLinkedIssue,
   OrchestrationV2AppThread,
@@ -13,6 +14,9 @@ import * as Schema from "effect/Schema";
 import { sameIssueRepository, isUnmanagedIssueRole } from "../issues/IssueEligibility.ts";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import type { ForkCommandHooks } from "./IssueWorkCommands.ts";
+import type { OrchestratorV2Error } from "./Orchestrator.ts";
+import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
@@ -38,6 +42,8 @@ export class IssueQueueRefreshRequired extends Schema.TaggedError<IssueQueueRefr
   "IssueQueueRefreshRequired",
   {},
 ) {}
+
+const isIssueQueueRefreshRequired = Schema.is(IssueQueueRefreshRequired);
 
 /** Dispatch lock keys the current fiber already holds. */
 class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
@@ -70,6 +76,7 @@ export function threadDispatchLockKey(
  */
 export const makeIssueWorkDispatch = Effect.gen(function* () {
   const projectionStore = yield* ProjectionStoreV2;
+  const commandReceipts = yield* CommandReceiptStoreV2;
   const threadExecutor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const issueReads = yield* Effect.serviceOption(IssueService.IssueService);
@@ -233,11 +240,82 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     }
   });
 
+  // Receipt replay skips remote eligibility reads; admission still commits in the caller.
+  const withAdmissionReads = Effect.fnUntraced(function* <A, E extends OrchestratorV2Error, R>(
+    command: OrchestrationV2ServerCommand,
+    dispatch: (command: OrchestrationV2ServerCommand) => Effect.Effect<A, E, R>,
+    dispatchUnderLock: (command: OrchestrationV2ServerCommand) => Effect.Effect<A, E, R>,
+    {
+      commandThreadId,
+      mapDispatchError,
+      OrchestratorDispatchError,
+    }: Pick<ForkCommandHooks, "mapDispatchError" | "OrchestratorDispatchError"> & {
+      readonly commandThreadId: (command: OrchestrationV2ServerCommand) => ThreadId;
+    },
+  ) {
+    const needsReads =
+      command.type === "issue.work.start" ||
+      command.type === "issue.work.close-out" ||
+      command.type === "issue.queue.deliver" ||
+      command.type === "delegated_task.request" ||
+      command.type === "message.dispatch" ||
+      command.type === "prepared-run.retry" ||
+      command.type === "queue.resume" ||
+      command.type === "repository.work.continue";
+    const receipt = needsReads
+      ? yield* commandReceipts.getByCommandId(command.commandId).pipe(mapDispatchError(command))
+      : Option.none();
+    if (command.type === "issue.queue.deliver" && Option.isNone(receipt)) {
+      let attempts = 1;
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        const preflight = yield* readIssueQueueSnapshots(command.threadId).pipe(
+          mapDispatchError(command),
+        );
+        if (attempt === 0) attempts = Math.max(1, preflight.queueLength);
+        const result = yield* threadDispatch
+          .withLock(
+            command.threadId,
+            dispatchUnderLock(command).pipe(
+              Effect.provideService(IssueQueueReads, preflight.reads),
+            ),
+          )
+          .pipe(Effect.result);
+        if (result._tag === "Success") return result.success;
+        if (
+          result.failure._tag !== "OrchestratorDispatchError" ||
+          !isIssueQueueRefreshRequired(result.failure.cause)
+        )
+          return yield* result.failure;
+      }
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The issue queue kept changing during refresh. Retry delivery.",
+      });
+    }
+    const issueReads =
+      needsReads &&
+      (Option.isNone(receipt) ||
+        command.type === "queue.resume" ||
+        command.type === "repository.work.continue")
+        ? yield* readIssueSnapshots(
+            commandThreadId(command),
+            "issue" in command && command.issue !== undefined ? [command.issue] : [],
+            command.type === "repository.work.continue",
+            command.type === "issue.work.start",
+          ).pipe(mapDispatchError(command))
+        : [];
+    const dispatchCommand: OrchestrationV2ServerCommand = needsReads
+      ? { ...command, issueReads }
+      : command;
+    return yield* dispatch(dispatchCommand);
+  });
+
   return {
+    withAdmissionReads,
     promoteOtherIssueQueues,
     threadExecutor,
     threadDispatch,
     readIssueSnapshots,
-    readIssueQueueSnapshots,
   };
 });

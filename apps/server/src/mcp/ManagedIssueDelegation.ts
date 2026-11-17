@@ -1,6 +1,8 @@
 import {
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
+  type OrchestratorMcpDelegateTaskResult,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2AppThread,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -10,7 +12,11 @@ import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueLinks from "../issues/IssueLinks.ts";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
-import { isUnmanagedIssueRole, requiresManagedIssueAdmission } from "../issues/IssueEligibility.ts";
+import {
+  isReadOnlyIssueRole,
+  isUnmanagedIssueRole,
+  requiresManagedIssueAdmission,
+} from "../issues/IssueEligibility.ts";
 
 export const makeManagedIssueDelegation = Effect.gen(function* () {
   const issueWork = yield* Effect.serviceOption(IssueWorkService.IssueWorkService);
@@ -107,5 +113,35 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
         .link({ ...issue, threadId: childThreadId }, parentThreadId)
         .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
   });
-  return { resolveIssue, startWorker, linkUnmanaged };
+  // The delegateTask span owns the response; pool policy belongs with admission.
+  const withQueueNote = Effect.fnUntraced(function* (
+    taskResult: OrchestratorMcpDelegateTaskResult,
+    parent: OrchestrationV2AppThread,
+    taskCommand: Extract<OrchestrationV2ServerCommand, { type: "delegated_task.request" }>,
+    loadRoot: (id: ThreadId) => Effect.Effect<OrchestrationV2AppThread, OrchestratorMcpFailure>,
+  ) {
+    if (taskResult.status !== "queued" || Option.isNone(issueWork)) return taskResult;
+    const root =
+      parent.repositoryOrchestration === undefined
+        ? yield* loadRoot(parent.lineage.rootThreadId)
+        : parent;
+    const config = root?.repositoryOrchestration;
+    if (config === undefined) return taskResult;
+    const status = yield* issueWork.value
+      .repositoryStatus(config)
+      .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+    const readers = isReadOnlyIssueRole(taskCommand.role);
+    if (!readers && taskCommand.issue === undefined) return taskResult;
+    const current = status.orchestration;
+    if (current === null) return taskResult;
+    const limit = readers ? current.readOnlyLimit : current.workerLimit;
+    const used = readers ? status.readOnlySlotsInUse : status.slotsInUse;
+    return used < limit
+      ? taskResult
+      : {
+          ...taskResult,
+          queueNote: `Queued on the ${readers ? "readers" : "workers"} pool: ${used} of ${limit} slots in use.`,
+        };
+  });
+  return { resolveIssue, startWorker, linkUnmanaged, withQueueNote };
 });
