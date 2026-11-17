@@ -338,9 +338,7 @@ export function makeIssueWorkCommands({
 
   const reuseManagedChild = Effect.fn("reuseManagedChild")(function* (
     request: DelegatedTaskRequest,
-    parentProjection: ProjectionRecords<
-      "runs" | "nodes" | "subagents" | "providerThreads" | "providerTurns" | "attempts"
-    >,
+    parentProjection: ProjectionRecords<never>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     command: OrchestrationV2ServerCommand,
@@ -490,10 +488,14 @@ export function makeIssueWorkCommands({
   ) {
     for (const stored of storedEvents) {
       if (stored.event.type !== "run.created" || stored.event.payload.status !== "queued") continue;
-      const shell = yield* projectionStore
-        .getThreadShell(stored.event.threadId)
+      // The thread row alone: a shell read walks the thread's history for fields unused here.
+      const thread = yield* projectionStore
+        .getThread(stored.event.threadId)
         .pipe(mapDispatchError(command));
-      if (shell?.linkedIssue !== undefined || (shell !== null && isReadOnlyIssueRole(shell.role)))
+      if (
+        thread.deletedAt === null &&
+        (thread.linkedIssue !== undefined || isReadOnlyIssueRole(thread.role))
+      )
         yield* mapDispatchError(command)(startNextQueuedRun(stored.event.threadId));
     }
   });
