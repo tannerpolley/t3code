@@ -21,15 +21,12 @@ import {
   type IssueListState,
   type IssueHostCapabilities,
   type IssueRef,
-  type IssueRepositorySummary,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { IssueListPageCache } from "./IssueListPageCache.ts";
-import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
-import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
-import * as IssueHostRegistry from "./IssueHostRegistry.ts";
+import * as IssueGitHubHost from "./IssueGitHubHost.ts";
 import {
   type IssueHost,
   type IssuePullRequestFacts,
@@ -100,12 +97,9 @@ function safeHost(value: string): string | null {
   }
 }
 
-function safeRepository(host: string, value: string, nested = false): string | null {
+function safeRepository(host: string, value: string): string | null {
   const parts = value.trim().split("/");
-  if (
-    (nested ? parts.length < 2 : parts.length !== 2) ||
-    parts.some((part) => part.length === 0 || /[\s\\?#]/u.test(part))
-  ) {
+  if (parts.length !== 2 || parts.some((part) => part.length === 0 || /[\s\\?#]/u.test(part))) {
     return null;
   }
   const key = sourceControlDefinitions
@@ -113,10 +107,7 @@ function safeRepository(host: string, value: string, nested = false): string | n
     .toLowerCase();
   const prefix = `${host.toLowerCase()}/`;
   const repository = key.startsWith(prefix) ? key.slice(prefix.length) : null;
-  return repository !== null &&
-    (nested ? repository.split("/").length >= 2 : repository.split("/").length === 2)
-    ? repository
-    : null;
+  return repository !== null && repository.split("/").length === 2 ? repository : null;
 }
 
 const decodeIssueCursor = Schema.decodeUnknownOption(IssueCursorSchema);
@@ -150,7 +141,6 @@ export class IssueService extends Context.Service<
   > & {
     /** Closes the issues a merged pull request's body names where its host does not. */
     readonly closeIssuesFixedBy: (pullRequest: IssueRef) => Effect.Effect<void, IssueReadError>;
-    /** The claimed issue host `host` means, such as a Forgejo host typed without its port. */
     readonly canonicalHost: (host: string) => Effect.Effect<string>;
     /** What the issue host serving `host` supports. */
     readonly capabilities: (host: string) => Effect.Effect<IssueHostCapabilities>;
@@ -182,38 +172,6 @@ export class IssueService extends Context.Service<
     ) => Effect.Effect<IssueListResultType, IssueReadError>;
   }
 >()("t3/issues/IssueService") {}
-/**
- * Leaves out each GitHub repository whose owner/name a Forgejo host lists unarchived: forgejo-github-sync
- * keeps those as one-way copies. An archived Forgejo repository leaves the GitHub one live.
- * The Forgejo repository names its hidden copy so old links reach it.
- */
-function hideGitHubCopies(
-  github: ReadonlyArray<IssueRepositorySummary>,
-  others: ReadonlyArray<IssueRepositorySummary>,
-  forgejoHosts: ReadonlySet<string>,
-): IssueRepositorySummary[] {
-  const name = (repository: IssueRepositorySummary) => repository.repository.toLowerCase();
-  const forgejoNames = new Set(
-    others
-      .filter((repository) => forgejoHosts.has(repository.host) && !repository.isArchived)
-      .map(name),
-  );
-  const copies = new Map(
-    github
-      .filter((repository) => forgejoNames.has(name(repository)))
-      .map((copy) => [name(copy), { host: copy.host, repository: copy.repository }] as const),
-  );
-  return [
-    ...github.filter((repository) => !copies.has(name(repository))),
-    ...others.map((repository) => {
-      const githubCopy = forgejoHosts.has(repository.host)
-        ? copies.get(name(repository))
-        : undefined;
-      return githubCopy === undefined ? repository : { ...repository, githubCopy };
-    }),
-  ];
-}
-
 /** Per-key reads kept for `ttlMs` after a success; failures are not kept. */
 export const makeLiveReadCache = <A>(ttlMs = LIVE_ISSUE_REFRESH_MS) => {
   const reads = new Map<string, Effect.Effect<A, IssueReadError>>();
@@ -268,15 +226,12 @@ export const make = Effect.fn("IssueService.make")(function* () {
     makeLiveReadCache<ReadonlyArray<IssueStatusBatchResult[number] & IssueRef>>();
   const liveDetails = makeLiveReadCache<IssueDetailResultType>();
 
-  let nestedRepositoryHosts: ReadonlySet<string> = new Set();
-  const repositoryFor = (host: string, value: string) =>
-    safeRepository(host, value, nestedRepositoryHosts.has(host));
   const resolveScope = Effect.fn("IssueService.resolveScope")(function* (
     operation: IssueOperation,
     input: { readonly host: string; readonly repository: string },
   ): Effect.fn.Return<IssueRepositoryScope, IssueReadError> {
     const host = safeHost(input.host);
-    const repository = host === null ? null : repositoryFor(host, input.repository);
+    const repository = host === null ? null : safeRepository(host, input.repository);
     if (host === null || repository === null) {
       return yield* readError(
         operation,
@@ -288,9 +243,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
     return { cwd: homeDirectory, host, repository };
   });
 
-  const registry = yield* IssueHostRegistry.make({ safeRepository: repositoryFor, resolveScope });
-  nestedRepositoryHosts = registry.nestedRepositoryHosts;
-  const hostFor = registry.forHost;
+  const github: IssueHost = yield* IssueGitHubHost.make({ safeRepository, resolveScope });
   const pageResult = <A>(
     response: PageResponse<A>,
     cached: { readonly page: PageResult<A>; readonly etag: string | undefined } | undefined,
@@ -314,13 +267,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
     milestoneNumber?: number,
   ): Effect.fn.Return<IssuePageResult & { readonly missing?: true }, IssueReadError> {
     const cached = pages.issues.get(issueListEndpoint(scope, state, page, milestoneNumber));
-    const response = yield* hostFor(scope.host).listIssuePage(
-      scope,
-      state,
-      page,
-      milestoneNumber,
-      cached?.etag,
-    );
+    const response = yield* github.listIssuePage(scope, state, page, milestoneNumber, cached?.etag);
     if (response.missing) return { items: [], nextPage: null, missing: true as const };
     return yield* pageResult(response, cached);
   });
@@ -330,7 +277,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
     state: IssueListState,
     page: number,
   ): Effect.fn.Return<PageResult<IssueMilestone>, IssueReadError> {
-    const host = hostFor(scope.host);
+    const host = github;
     if (!host.capabilities.milestones) return { items: [], nextPage: null };
     const cached = pages.milestones.get(milestoneListEndpoint(scope, state, page));
     return yield* pageResult(
@@ -342,7 +289,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
     "IssueService.milestoneIssues",
   )(function* (input) {
     const scope = yield* resolveScope("list", input);
-    return yield* hostFor(scope.host).withIdentity(scope, "list", (identity) =>
+    return yield* github.withIdentity(scope, "list", (identity) =>
       Effect.gen(function* () {
         const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
         const generation = repositoryGeneration(scope);
@@ -396,7 +343,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
         "The issue cursor is invalid for this repository.",
       );
     }
-    return yield* hostFor(scope.host).withIdentity(
+    return yield* github.withIdentity(
       scope,
       "list",
       (identity): Effect.Effect<IssueListResultType, IssueReadError> =>
@@ -471,7 +418,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
             const [milestoneResult, projects] = yield* Effect.all(
               [
                 Fiber.join(milestoneRead),
-                hostFor(scope.host).listMetadata(
+                github.listMetadata(
                   scope,
                   issueResult.items.map((issue) => issue.number),
                   input.roadmap === true,
@@ -567,9 +514,9 @@ export const make = Effect.fn("IssueService.make")(function* () {
       }
       const result: Array<IssueStatusBatchResult[number] & IssueRef> = [];
       for (const [host, nodeIds] of byHost) {
-        yield* hostFor(host)
+        yield* github
           .withIdentity({ cwd: homeDirectory, host, repository: "" }, "detail", (identity) =>
-            hostFor(host)
+            github
               .statuses(host, [...nodeIds])
               .pipe((read) =>
                 liveStatuses(
@@ -601,8 +548,8 @@ export const make = Effect.fn("IssueService.make")(function* () {
   const detail: IssueService["Service"]["detail"] = Effect.fn("IssueService.detail")(
     function* (input) {
       const scope = yield* resolveScope("detail", input);
-      return yield* hostFor(scope.host).withIdentity(scope, "detail", (identity) =>
-        hostFor(scope.host)
+      return yield* github.withIdentity(scope, "detail", (identity) =>
+        github
           .detail(input, identity)
           .pipe((read) =>
             liveDetails(
@@ -623,104 +570,76 @@ export const make = Effect.fn("IssueService.make")(function* () {
     },
   );
   return IssueService.of({
-    canonicalHost: Effect.fn("IssueService.canonicalHost")((host) =>
-      Effect.succeed(registry.canonicalHost(host)),
-    ),
-    capabilities: Effect.fn("IssueService.capabilities")((host) =>
-      Effect.succeed(hostFor(host).capabilities),
+    canonicalHost: Effect.fn("IssueService.canonicalHost")((host) => Effect.succeed(host)),
+    capabilities: Effect.fn("IssueService.capabilities")((_host) =>
+      Effect.succeed(github.capabilities),
     ),
     pullRequest: Effect.fn("IssueService.pullRequest")(function* (input) {
-      const read = hostFor(input.host).pullRequest;
+      const read = github.pullRequest;
       return read === undefined ? null : yield* read(input);
     }),
     refreshes: SubscriptionRef.changes(refreshes),
     list,
     readChangeState: Effect.fn("IssueService.readChangeState")((input) =>
-      hostFor(input.host).readChangeState(input),
+      github.readChangeState(input),
     ),
     createIssue: Effect.fn("IssueService.createIssue")((input) =>
-      afterWrite(input, hostFor(input.host).createIssue(input)),
+      afterWrite(input, github.createIssue(input)),
     ),
     updateBody: Effect.fn("IssueService.updateBody")((input) =>
-      afterWrite(input, hostFor(input.host).updateBody(input)),
+      afterWrite(input, github.updateBody(input)),
     ),
     setMilestone: Effect.fn("IssueService.setMilestone")((input) =>
-      afterWrite(input, hostFor(input.host).setMilestone(input)),
+      afterWrite(input, github.setMilestone(input)),
     ),
     setState: Effect.fn("IssueService.setState")((input) =>
-      afterWrite(input, hostFor(input.host).setState(input)),
+      afterWrite(input, github.setState(input)),
     ),
     closeIssuesFixedBy: Effect.fn("IssueService.closeIssuesFixedBy")((pullRequest) => {
-      const host = hostFor(pullRequest.host);
+      const host = github;
       const close = host.capabilities.closesFromMergedChangeRequests
         ? host.closeIssuesFixedBy
         : undefined;
       return close === undefined ? Effect.void : afterWrite(pullRequest, close(pullRequest));
     }),
     detail,
-    workRead: Effect.fn("IssueService.workRead")((input) => hostFor(input.host).workRead(input)),
+    workRead: Effect.fn("IssueService.workRead")((input) => github.workRead(input)),
     milestoneIssues,
     repositoryIdentity: Effect.fn("IssueService.repositoryIdentity")((input) =>
-      hostFor(input.host).repositoryIdentity(input),
+      github.repositoryIdentity(input),
     ),
     resolveLinkedIssue: Effect.fn("IssueService.resolveLinkedIssue")((input) =>
-      hostFor(input.host).resolveLinkedIssue(input),
+      github.resolveLinkedIssue(input),
     ),
     activitySince: Effect.fn("IssueService.activitySince")((input, ...args) =>
-      hostFor(input.host).activitySince(input, ...args),
+      github.activitySince(input, ...args),
     ),
     listComments: Effect.fn("IssueService.listComments")((input, ...args) =>
-      hostFor(input.host).listComments(input, ...args),
+      github.listComments(input, ...args),
     ),
     postComment: Effect.fn("IssueService.postComment")((input, ...args) =>
-      afterWrite(input, hostFor(input.host).postComment(input, ...args)),
+      afterWrite(input, github.postComment(input, ...args)),
     ),
     postIssue: Effect.fn("IssueService.postIssue")((input, ...args) =>
-      afterWrite(input, hostFor(input.host).postIssue(input, ...args)),
+      afterWrite(input, github.postIssue(input, ...args)),
     ),
     ensureLabels: Effect.fn("IssueService.ensureLabels")((input, ...args) =>
-      afterWrite(input, hostFor(input.host).ensureLabels(input, ...args)),
+      afterWrite(input, github.ensureLabels(input, ...args)),
     ),
     setLabels: Effect.fn("IssueService.setLabels")((input, ...args) =>
-      afterWrite(input, hostFor(input.host).setLabels(input, ...args)),
+      afterWrite(input, github.setLabels(input, ...args)),
     ),
-    repositories: Effect.fn("IssueService.repositories")(function* () {
-      if (registry.all.length === 1) return yield* registry.all[0]!.repositories();
-      const results = yield* Effect.forEach(
-        registry.all,
-        (transport) => transport.repositories().pipe(Effect.result),
-        { concurrency: 8 },
-      );
-      const successful = results.flatMap((result) =>
-        result._tag === "Success" ? [result.success] : [],
-      );
-      if (successful.length === 0) {
-        const first = results[0]!;
-        if (first._tag === "Failure") return yield* first.failure;
-      }
-      const listed = results.map((result) =>
-        result._tag === "Success" ? result.success.repositories : [],
-      );
-      return {
-        ...successful[0]!,
-        // registry.all puts the GitHub fallback first.
-        repositories: hideGitHubCopies(listed[0]!, listed.slice(1).flat(), registry.forgejoHosts),
-        complete:
-          successful.length === results.length && successful.every((result) => result.complete),
-      };
-    }),
+    repositories: github.repositories,
     statusBatch,
     setBlockedBy: Effect.fn("IssueService.setBlockedBy")((input) =>
-      afterWrite(input.issue, hostFor(input.issue.host).setBlockedBy(input)),
+      afterWrite(input.issue, github.setBlockedBy(input)),
     ),
     setParent: Effect.fn("IssueService.setParent")((input) =>
-      afterWrite(input.parent, hostFor(input.parent.host).setParent(input)),
+      afterWrite(input.parent, github.setParent(input)),
     ),
     writeManagedComment: Effect.fn("IssueService.writeManagedComment")((input) =>
-      afterWrite(input.issue, hostFor(input.issue.host).writeManagedComment(input)),
+      afterWrite(input.issue, github.writeManagedComment(input)),
     ),
   });
 });
-export const layer = Layer.effect(IssueService, make()).pipe(
-  Layer.provide([ForgejoCli.layer, GitLabCli.layer]),
-);
+export const layer = Layer.effect(IssueService, make());

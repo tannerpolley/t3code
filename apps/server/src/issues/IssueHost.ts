@@ -271,19 +271,3 @@ export interface IssueHostContext {
     input: IssueRepositoryRef,
   ) => Effect.Effect<IssueRepositoryScope, IssueReadError>;
 }
-
-/** Hosts claimed by an adapter use it; every other host uses the fallback (GitHub). */
-export const routeIssueHosts = (
-  fallback: IssueHost,
-  claimed: ReadonlyMap<string, IssueHost> = new Map(),
-) => ({
-  forHost: (host: string): IssueHost => claimed.get(host) ?? fallback,
-  /** A port-less host names the one claimed host on that hostname; anything else is kept. */
-  canonicalHost: (host: string): string => {
-    if (claimed.has(host) || host.includes(":")) return host;
-    const matches = [...claimed.keys()].filter((claimedHost) => claimedHost.split(":")[0] === host);
-    return matches.length === 1 ? matches[0]! : host;
-  },
-  all: [fallback, ...claimed.values()] as ReadonlyArray<IssueHost>,
-});
-export type IssueHostRegistry = ReturnType<typeof routeIssueHosts>;

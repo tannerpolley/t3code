@@ -32,23 +32,6 @@ const everything: IssueHostCapabilities = {
 /** Issue hosts by kind (a source-control provider, or an opt-in); a kind absent here has no Issues. */
 export const ISSUE_HOSTS: { readonly [kind: string]: IssueHostRegistration | undefined } = {
   github: { capabilities: everything, hosts: ["github.com"] },
-  // Sub-issues are body markers and closing on merge is done by T3; see IssueForgejoHost.ts.
-  forgejo: { capabilities: everything },
-  // Blocking links depend on project tier; GitLab inbox polling is not implemented.
-  gitlab: { capabilities: { ...everything, blockers: false, liveChanges: false } },
-  // Issues stored in the repository itself; served under the host name "git-bug". IssueGitBugHost.ts.
-  "git-bug": {
-    capabilities: {
-      subIssues: false,
-      blockers: false,
-      milestones: false,
-      labels: true,
-      assignees: false,
-      closesFromMergedChangeRequests: false,
-      liveChanges: false,
-    },
-    hosts: ["git-bug"],
-  },
 };
 
 /** The kind of issue host serving a repository: its explicit opt-in, else its provider's. */

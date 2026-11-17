@@ -1079,7 +1079,7 @@ it.effect(
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("includes Forgejo inbox discovery and registered polling", () =>
+it.effect("does not discover retired Forgejo repositories", () =>
   Effect.gen(function* () {
     yield* seedRepository;
     const github = fakeGitHub();
@@ -1117,7 +1117,7 @@ it.effect("includes Forgejo inbox discovery and registered polling", () =>
     yield* inbox.pollDue;
     yield* TestClock.adjust("15 minutes");
     yield* inbox.pollDue;
-    assert.isTrue(github.identityReads.some((read) => read.repository === "acme/discovery"));
+    assert.isFalse(github.identityReads.some((read) => read.repository === "acme/discovery"));
     assert.isTrue(github.requests.length > 0);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory), Effect.scoped),
 );
