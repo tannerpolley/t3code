@@ -931,21 +931,6 @@ function readRouteThreadKey(router: AnyRouter): string | null {
 
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const {
-    projectsViewEnabled,
-    sidebarMode,
-    setSidebarMode,
-    sidebarProjectSections,
-    sidebarOtherProjectsExpanded,
-    sectionDialog,
-    setSectionDialogOpen,
-    openCreateSectionDialog,
-    openCreateSubsectionDialog,
-    openRenameSectionDialog,
-    isProjectExpanded,
-    toggleProjectExpanded,
-  } = useSidebarProjectsView();
-
-  const {
     projects,
     serverConfigs,
     projectGroups,
@@ -956,6 +941,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectGroupByScopeKey,
     projectScopeItems: lookupProjectScopeItems,
   } = useSidebarLookups();
+  const {
+    projectsViewEnabled,
+    sidebarMode,
+    setSidebarMode,
+    sidebarProjectSections,
+    sidebarOtherProjectsExpanded,
+    sectionDialog,
+    setSectionDialogOpen,
+    openCreateSectionDialog,
+    openCreateSubsectionDialog,
+    openRenameSectionDialog,
+    projectExpansionKeys,
+    isProjectExpanded,
+    toggleProjectExpanded,
+  } = useSidebarProjectsView(projectGroupByScopeKey);
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1645,7 +1645,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       sections: uiState.sidebarProjectSections,
       otherProjectsExpanded: uiState.sidebarOtherProjectsExpanded,
       isProjectExpanded: (projectKey) =>
-        resolveProjectExpanded(uiState.projectExpandedById, [projectKey]),
+        resolveProjectExpanded(uiState.projectExpandedById, projectExpansionKeys(projectKey)),
     });
     if (reveal === null) return;
     revealedThreadKeyRef.current = routeThreadKey;
@@ -1685,6 +1685,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setProjectScopeKeys,
     sidebarMode,
     threads,
+    projectExpansionKeys,
     toggleProjectExpanded,
   ]);
   const selectThreadSearchResult = (thread: EnvironmentThreadShell) => {
