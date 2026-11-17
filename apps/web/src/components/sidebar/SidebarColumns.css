@@ -41,25 +41,55 @@
   min-width: 0;
 }
 /*
- * The model pieces, then the name. The name truncates to its reserve first; then the pieces
- * narrow, and one that no longer fits wraps onto the clipped second line, so it drops whole.
+ * The model name and version, the effort bars, then the name, all in one nowrap row, so the bars
+ * never wrap off the row. When a role title is the name and the row is short, the version drops
+ * first, then the model name narrows, and the title only when the bars and 6ch of it fill the row.
+ * Any other name gives way first.
  */
 @utility sidebar-thread-main {
-  @apply flex min-w-0 items-center gap-1.5 overflow-hidden;
+  @apply flex min-w-0 items-center overflow-hidden;
+  container-type: inline-size;
+}
+@utility sidebar-thread-model-name {
+  @apply min-w-0 truncate;
+  font-size: 0.6875rem;
+}
+/* The gap before the version is its own indent, so it goes with the version when that drops. */
+@utility sidebar-thread-model-version {
+  @apply min-w-0 truncate;
+  font-size: 0.6875rem;
+  text-indent: 0.1875rem;
 }
 @utility sidebar-thread-name {
   @apply min-w-0 truncate;
   flex-shrink: 1000;
   font-size: inherit;
 }
+.sidebar-thread-effort:not(:first-child) {
+  margin-inline-start: 0.1875rem;
+}
+.sidebar-thread-name:not(:first-child) {
+  margin-inline-start: 0.375rem;
+}
+.sidebar-thread-main:has(.sidebar-role-title) {
+  & .sidebar-thread-name {
+    flex-shrink: 1;
+  }
+  & .sidebar-thread-model-name {
+    flex-shrink: 1000;
+  }
+  & .sidebar-thread-model-version {
+    flex-shrink: 1000000;
+  }
+}
+@container (width < 8.5rem) {
+  .sidebar-thread-main:has(.sidebar-role-title) .sidebar-thread-model-version {
+    display: none;
+  }
+}
 [data-sidebar-role-display="name"] .sidebar-thread-name:has(.sidebar-role-title) {
   min-width: 6ch;
 }
-@utility sidebar-thread-model {
-  @apply flex h-4.75 min-w-0 flex-wrap items-center gap-x-0.75 overflow-hidden;
-  font-size: 0.6875rem;
-}
-/* The fixed height keeps a hover target when no bars show. */
 @utility sidebar-thread-effort {
   @apply flex h-4.75 shrink-0 items-center justify-center text-sidebar-muted-foreground;
 }
