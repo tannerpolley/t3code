@@ -1,15 +1,10 @@
 import { repositoryPhaseSql } from "../issues/RepositoryPhaseSql.ts";
-import {
-  makeIssueWorkCommentReads,
-  readIssueWorkThreads,
-  type IssueWorkThread,
-} from "../issues/IssueWorkProjection.ts";
+import { readIssueWorkThreads, type IssueWorkThread } from "../issues/IssueWorkProjection.ts";
 import {
   USAGE_LIMIT_SWITCH_RESUME_PREFIX,
   USAGE_LIMIT_SWITCH_HOLD_MS,
   USAGE_LIMIT_SWITCH_RELEASE_MARGIN_MS,
 } from "./usageLimitRecoveryPending.ts";
-import { finishIssueQueueNotice } from "../issues/IssueQueueStore.ts";
 import { makeIssueWorkProjection } from "../issues/IssueWorkEventProjection.ts";
 import { pendingRoutedRequestThreadIds } from "./ForkProjectionReads.ts";
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
@@ -535,31 +530,6 @@ export interface OlderSettledThreadsListing {
 }
 
 export interface ProjectionStoreV2Shape {
-  readonly getIssueWorkCommentState: (input: {
-    readonly threadId: ThreadId;
-    readonly host: string;
-    readonly repositoryId: string;
-    readonly issueId: string;
-  }) => Effect.Effect<
-    {
-      readonly requestCancelled: boolean;
-      readonly ownerThreadId: ThreadId | null;
-      readonly effectiveStatusThreadId: ThreadId | null;
-      readonly latestStatusWriteKey: string | null;
-      readonly statusCommentId: string | null;
-    } | null,
-    ProjectionStoreReadError
-  >;
-  readonly getIssueCommentReceipt: (input: {
-    readonly threadId: ThreadId;
-    readonly writeKey: string;
-  }) => Effect.Effect<
-    {
-      readonly commentId: string | null;
-      readonly resultEventId: string | null;
-    } | null,
-    ProjectionStoreReadError
-  >;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, ProjectionStoreV2Error>;
@@ -2473,16 +2443,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           for (const [key, cached] of timelineIndexes) {
             if (cached.index.threadIds.includes(event.threadId)) timelineIndexes.delete(key);
           }
+          if (yield* issueProjection.applyEvent(event)) return;
           switch (event.type) {
-            case "repository.work.restored":
-            case "issue.queue.updated":
-            case "issue.work.cancelled":
-            case "issue.work.requested":
-              yield* issueProjection.applyEvent(event);
-              return;
-            case "issue.github-comment.recorded":
-              yield* issueProjection.applyEvent(event);
-              break;
             case "thread.pull-request-link-updated": {
               const thread = yield* getThread(event.threadId);
               yield* apply({
@@ -2584,9 +2546,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     AND json_extract(payload_json, '$.silentWakeAttention.runId') <> ${event.payload.id}
                     AND json_extract(payload_json, '$.silentWakeAttention.createdAt') <= ${DateTime.formatIso(event.occurredAt)}`;
               }
-              yield* finishIssueQueueNotice(event.payload).pipe(
-                Effect.provideService(SqlClient.SqlClient, sql),
-              );
               const payloadJson = yield* encodeRunPayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
@@ -9669,7 +9628,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         method(...args).pipe(NodeSqliteClient.readOnly);
 
     return {
-      ...makeIssueWorkCommentReads(sql, ProjectionStoreReadError),
       apply,
       getAgentAwarenessSnapshot: readOnReader(getAgentAwarenessSnapshot),
       getShellSnapshot: readOnReader(getShellSnapshot),

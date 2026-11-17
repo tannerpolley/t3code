@@ -261,54 +261,60 @@ it.effect(
     }),
 );
 
-it.effect("keeps a suspension's provider interrupt pending past the normal retry limit", () => {
-  let failures = 2;
-  const executor = Layer.succeed(
-    EffectWorker.OrchestrationEffectExecutorV2,
-    EffectWorker.OrchestrationEffectExecutorV2.of({
-      execute: (effect, options) => {
-        assert.isTrue(options?.willRetry);
-        return failures-- > 0
-          ? Effect.fail(
-              new EffectWorker.OrchestrationEffectExecutionError({
-                effectId: effect.id,
-                effectType: effect.request.type,
-                cause: "Injected provider interrupt failure",
-              }),
-            )
-          : Effect.void;
-      },
-    }),
-  );
-  const layer = EffectWorker.layerWithOptions({ maxAttempts: 1 }).pipe(
-    Layer.provideMerge(EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
-    Layer.provide(executor),
-    Layer.provide(NodeServices.layer),
-  );
-  return Effect.gen(function* () {
-    const outbox = yield* EffectOutbox.EffectOutboxV2;
-    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-    const effectId = "suspension-provider-interrupt";
-    yield* outbox.enqueue([
-      {
-        id: effectId,
-        commandId: CommandId.make(effectId),
-        threadId,
-        request: {
-          type: "provider-turn.interrupt",
-          retryUntilDone: true,
-          providerSessionId: oldSessionId,
-          providerThreadId,
-          providerTurnId,
+it.effect.each([
+  {
+    type: "provider-turn.interrupt",
+    retryUntilDone: true,
+    providerSessionId: oldSessionId,
+    providerThreadId,
+    providerTurnId,
+  },
+  { type: "issue.suspension.interrupt", runId },
+] satisfies ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2>)(
+  "keeps a suspension's $type pending past the normal retry limit",
+  (request) => {
+    let failures = 2;
+    const executor = Layer.succeed(
+      EffectWorker.OrchestrationEffectExecutorV2,
+      EffectWorker.OrchestrationEffectExecutorV2.of({
+        execute: (effect, options) => {
+          assert.isTrue(options?.willRetry);
+          return failures-- > 0
+            ? Effect.fail(
+                new EffectWorker.OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  cause: "Injected provider interrupt failure",
+                }),
+              )
+            : Effect.void;
         },
-      },
-    ]);
-    for (const delay of [0, 100, 200]) {
-      if (delay > 0) yield* TestClock.adjust(delay);
-      assert.isTrue(yield* worker.runOnce());
-      const effect = Option.getOrThrow(yield* outbox.get(effectId));
-      assert.equal(effect.status, failures >= 0 ? "pending" : "succeeded");
-    }
-    assert.equal(Option.getOrThrow(yield* outbox.get(effectId)).attemptCount, 3);
-  }).pipe(Effect.provide(layer));
-});
+      }),
+    );
+    const layer = EffectWorker.layerWithOptions({ maxAttempts: 1 }).pipe(
+      Layer.provideMerge(EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      Layer.provide(executor),
+      Layer.provide(NodeServices.layer),
+    );
+    return Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const effectId = "suspension-provider-interrupt";
+      yield* outbox.enqueue([
+        {
+          id: effectId,
+          commandId: CommandId.make(effectId),
+          threadId,
+          request,
+        },
+      ]);
+      for (const delay of [0, 100, 200]) {
+        if (delay > 0) yield* TestClock.adjust(delay);
+        assert.isTrue(yield* worker.runOnce());
+        const effect = Option.getOrThrow(yield* outbox.get(effectId));
+        assert.equal(effect.status, failures >= 0 ? "pending" : "succeeded");
+      }
+      assert.equal(Option.getOrThrow(yield* outbox.get(effectId)).attemptCount, 3);
+    }).pipe(Effect.provide(layer));
+  },
+);

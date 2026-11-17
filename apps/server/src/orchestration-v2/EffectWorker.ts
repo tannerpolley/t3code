@@ -1,10 +1,4 @@
-import {
-  legacyIssueSuspensionKind,
-  CommandId,
-  type RunId,
-  IssueChangeError,
-  MessageId,
-} from "@t3tools/contracts";
+import { CommandId, type RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -15,7 +9,6 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
-import * as Semaphore from "effect/Semaphore";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SqlError from "effect/sql/SqlError";
@@ -27,10 +20,9 @@ import {
   orchestrationEffectQueueWait,
 } from "../observability/Metrics.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
-import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -38,12 +30,9 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import * as ProjectionStore from "./ProjectionStore.ts";
-import * as IssueService from "../issues/IssueService.ts";
-import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
-import { isAutomaticIssueSuspension } from "../issues/IssueEligibility.ts";
+import * as IssueEffects from "../issues/IssueEffects.ts";
 
 const isProviderTurnControlError = Schema.is(ProviderTurnControlService.ProviderTurnControlError);
 
@@ -56,7 +45,6 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
-const isIssueChangeError = Schema.is(IssueChangeError);
 
 const isOrchestrationEffectExecutionError = Schema.is(OrchestrationEffectExecutionError);
 
@@ -129,31 +117,9 @@ export const layerExecutor: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
-    const issues = yield* Effect.serviceOption(IssueService.IssueService);
-    const issueChanges = yield* Effect.serviceOption(IssueChangeService.IssueChangeService);
-    const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
-    const eventSink = yield* Effect.serviceOption(EventSink.EventSinkV2);
-    const idAllocator = yield* Effect.serviceOption(IdAllocator.IdAllocatorV2);
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const settings = yield* ServerSettings.ServerSettingsService;
-    const issueWriteLocks = new Map<string, Semaphore.Semaphore>();
-    const issueWriteLockMap = yield* Semaphore.make(1);
-    const withIssueWriteLock = <A, E, R>(
-      issue: { readonly host: string; readonly repositoryId: string; readonly id: string },
-      use: Effect.Effect<A, E, R>,
-    ) =>
-      issueWriteLockMap
-        .withPermit(
-          Effect.gen(function* () {
-            const key = `${issue.host.toLowerCase()}:${issue.repositoryId}:${issue.id}`;
-            const existing = issueWriteLocks.get(key);
-            if (existing !== undefined) return existing;
-            const created = yield* Semaphore.make(1);
-            issueWriteLocks.set(key, created);
-            return created;
-          }),
-        )
-        .pipe(Effect.flatMap((lock) => lock.withPermit(use)));
+    const issueEffects = yield* IssueEffects.make;
     const startRun = (
       effect: EffectOutbox.OrchestrationEffectV2,
       runId: RunId,
@@ -194,128 +160,21 @@ export const layerExecutor: Layer.Layer<
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
+        if (IssueEffects.isIssueEffectRequest(effect.request)) {
+          const effectType = effect.request.type;
+          return issueEffects.execute(effect, effect.request).pipe(
+            Effect.mapError((cause) => {
+              const retryAt = IssueEffects.retryAtOf(cause);
+              return new OrchestrationEffectExecutionError({
+                effectId: effect.id,
+                effectType,
+                cause,
+                ...(retryAt === undefined ? {} : { retryAt }),
+              });
+            }),
+          );
+        }
         switch (effect.request.type) {
-          case "issue.change.execute":
-            return (
-              Option.isNone(issueChanges)
-                ? Effect.fail(
-                    new IssueChangeError({
-                      code: "github",
-                      message: "IssueChangeService is unavailable in this runtime.",
-                    }),
-                  )
-                : issueChanges.value.execute(effect.request.changeId)
-            ).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                    ...(isIssueChangeError(cause) && cause.retryAt !== undefined
-                      ? { retryAt: cause.retryAt }
-                      : {}),
-                  }),
-              ),
-            );
-          case "issue.suspension.interrupt": {
-            const runId = effect.request.runId;
-            return Effect.gen(function* () {
-              const shell = yield* threads.getThreadShell(effect.threadId);
-              if (shell?.activeRunId !== runId) return;
-              yield* threads.dispatch({
-                type: "run.interrupt",
-                threadId: effect.threadId,
-                runId,
-                retryInterruptUntilDone: true,
-                // A failed command has a rejected receipt. A new outbox attempt
-                // may retry it; the recorded run guards against stopping later work.
-                commandId: CommandId.make(`${effect.id}:attempt:${effect.attemptCount}`),
-              });
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
-            );
-          }
-          case "issue.suspension.notify": {
-            const request = effect.request;
-            // Older outbox entries may predate quiet, event-sourced suspension notices.
-            if (
-              isAutomaticIssueSuspension({
-                kind: request.kind ?? legacyIssueSuspensionKind(request.reason),
-              })
-            )
-              return Effect.void;
-            return Effect.gen(function* () {
-              const messageId = MessageId.make(effect.id);
-              const prior = yield* threads.getThreadRecords(effect.threadId, ["messages"], {
-                messageIds: [messageId],
-              });
-              if (prior.messages.some((message) => message.id === messageId)) return;
-              yield* threads.sendToThread({
-                projectId: request.projectId,
-                threadId: effect.threadId,
-                commandId: CommandId.make(`${effect.id}:attempt:${effect.attemptCount}`),
-                messageId,
-                text: `Issue #${request.issue.number} paused: ${request.reason} Its workspace, link and results are retained. Ask through t3_request_user_input; do not reopen it or change the existing lineage.`,
-                attachments: [],
-                mode: "queue",
-                createdBy: "agent",
-                creationSource: "server",
-              });
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: request.type,
-                    cause,
-                  }),
-              ),
-            );
-          }
-          case "usage-sprint.notify": {
-            const text = effect.request.text;
-            return Effect.gen(function* () {
-              const messageId = MessageId.make(effect.id);
-              const prior = yield* threads.getThreadRecords(effect.threadId, ["messages"], {
-                messageIds: [messageId],
-              });
-              if (prior.messages.some((message) => message.id === messageId)) return;
-              yield* threads.dispatch({
-                type: "message.dispatch",
-                commandId: CommandId.make(`${effect.id}:attempt:${effect.attemptCount}`),
-                messageId,
-                threadId: effect.threadId,
-                text,
-                notification: {
-                  source: { kind: "system" },
-                  outcome: "updated",
-                  summary: "Usage sprint ended",
-                  detail: text,
-                },
-                attachments: [],
-                dispatchMode: { type: "queue_after_active" },
-                createdBy: "agent",
-                creationSource: "server",
-              });
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: "usage-sprint.notify",
-                    cause,
-                  }),
-              ),
-            );
-          }
           case "run.silence.check":
             return threads
               .dispatch({
@@ -892,129 +751,6 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
-          case "issue.status.refresh": {
-            if (Option.isNone(eventSink))
-              return Effect.fail(
-                new OrchestrationEffectExecutionError({
-                  effectId: effect.id,
-                  effectType: effect.request.type,
-                  cause: "Issue event sink is unavailable.",
-                }),
-              );
-            return withIssueWriteLock(
-              effect.request.issue,
-              eventSink.value.refreshIssueStatus({
-                ...effect.request,
-                threadId: effect.threadId,
-              }),
-            ).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
-            );
-          }
-          case "issue.github.comment": {
-            const request = effect.request;
-            if (
-              Option.isNone(issues) ||
-              Option.isNone(projections) ||
-              Option.isNone(eventSink) ||
-              Option.isNone(idAllocator)
-            ) {
-              return Effect.fail(
-                new OrchestrationEffectExecutionError({
-                  effectId: effect.id,
-                  effectType: effect.request.type,
-                  cause: "IssueService is unavailable in this runtime.",
-                }),
-              );
-            }
-            return withIssueWriteLock(
-              request.issue,
-              Effect.gen(function* () {
-                let commentId: string | undefined;
-                if (request.operation === "status_sync") {
-                  const current = yield* projections.value.getIssueWorkCommentState({
-                    threadId: effect.threadId,
-                    host: request.issue.host,
-                    repositoryId: request.issue.repositoryId,
-                    issueId: request.issue.id,
-                  });
-                  // An old issue attempt may still finish writing after a successor takes over.
-                  // Its result is useful, but its status must not replace the current owner.
-                  if (
-                    current === null ||
-                    current.effectiveStatusThreadId !== effect.threadId ||
-                    current.latestStatusWriteKey !== request.writeKey
-                  )
-                    return;
-                  const thread = yield* projections.value.getThread(effect.threadId);
-                  if (thread.deletedAt !== null && request.status !== "unavailable") return;
-                  commentId = current.statusCommentId ?? undefined;
-                } else {
-                  const receipt = yield* projections.value.getIssueCommentReceipt({
-                    threadId: effect.threadId,
-                    writeKey: request.writeKey,
-                  });
-                  if (receipt?.commentId !== null && receipt?.commentId !== undefined) return;
-                }
-
-                const write = yield* issues.value.writeManagedComment({
-                  issue: request.issue,
-                  operation: request.operation,
-                  ...(commentId === undefined ? {} : { commentId }),
-                  marker: request.marker,
-                  body: request.body,
-                });
-                const commandId = CommandId.make(`command:issue-comment-receipt:${effect.id}`);
-                const now = yield* DateTime.now;
-                const eventId = yield* idAllocator.value.allocate.event({
-                  threadId: effect.threadId,
-                  commandId,
-                });
-                yield* eventSink.value.commitCommand({
-                  commandId,
-                  threadId: effect.threadId,
-                  commandType: "issue.github-comment.recorded",
-                  acceptedAt: now,
-                  effects: [],
-                  events: [
-                    {
-                      id: eventId,
-                      threadId: effect.threadId,
-                      type: "issue.github-comment.recorded",
-                      occurredAt: now,
-                      payload: {
-                        operation: request.operation,
-                        issue: request.issue,
-                        threadId: effect.threadId,
-                        writeKey: request.writeKey,
-                        ...(request.resultEventId === undefined
-                          ? {}
-                          : { resultEventId: request.resultEventId }),
-                        commentId: write.commentId,
-                        marker: request.marker,
-                      },
-                    },
-                  ],
-                });
-              }).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              ),
-            );
-          }
         }
       }),
     });
@@ -1246,8 +982,7 @@ export const layerWithOptions = (
           if (cancelledBeforeExecution) return true;
 
           const retryUntilDone =
-            effect.request.type.startsWith("issue.suspension.") ||
-            effect.request.type === "usage-sprint.notify" ||
+            IssueEffects.retriesUntilDone(effect.request) ||
             (effect.request.type === "provider-turn.interrupt" &&
               effect.request.retryUntilDone === true);
           const execution = executor
