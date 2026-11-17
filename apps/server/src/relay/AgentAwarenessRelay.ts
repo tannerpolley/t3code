@@ -616,7 +616,8 @@ export const make = Effect.gen(function* () {
       !(
         threadShell.lineage.relationshipToParent === "subagent" &&
         ownerVisible &&
-        threadShell.pendingRuntimeRequest?.kind === "user_input"
+        threadShell.pendingRuntimeRequest?.kind === "user_input" &&
+        threadShell.pendingRuntimeRequest.userOnly !== true
       ) &&
       !hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)
     ) {
