@@ -834,6 +834,26 @@ function isOptimisticDropReleased(input: {
   return membershipChanged || foreignKeyLanded || allAssignmentsLanded;
 }
 
+let projectMemberMapsCache: {
+  readonly text: string;
+  readonly maps: ReturnType<typeof buildProjectMemberMaps>;
+} | null = null;
+function buildProjectMemberMaps(text: string) {
+  const members: Array<[string, string, string]> = JSON.parse(text);
+  return {
+    projectDisplayNameByKey: new Map(members.map(([ref, , name]) => [ref, name])),
+    logicalProjectKeyByScopedProjectRef: new Map(members.map(([ref, key]) => [ref, key])),
+  };
+}
+// Groups are rebuilt with the same members, as an expansion does; thread rows compare these maps
+// by identity, so they change only with the members.
+function projectMemberMaps(text: string) {
+  if (projectMemberMapsCache?.text !== text) {
+    projectMemberMapsCache = { text, maps: buildProjectMemberMaps(text) };
+  }
+  return projectMemberMapsCache.maps;
+}
+
 // Build maps in a hook so the compiler can prove they are frozen and cache them.
 function useSidebarLookups() {
   const projects = useProjects();
@@ -847,24 +867,19 @@ function useSidebarLookups() {
   const projectByKey = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project] as const),
   );
-  // As text, so the maps keep their identity when groups are rebuilt with the same members, as an
-  // expansion does; thread rows compare them by identity.
-  const projectMembersText = JSON.stringify(
-    projectGroups.flatMap((group) =>
-      group.memberProjects.map((project) => [
-        `${project.environmentId}:${project.id}`,
-        group.projectKey,
-        group.displayName,
-      ]),
+  const { projectDisplayNameByKey, logicalProjectKeyByScopedProjectRef } = projectMemberMaps(
+    JSON.stringify(
+      projectGroups.flatMap((group) =>
+        group.memberProjects.map((project) => [
+          `${project.environmentId}:${project.id}`,
+          group.projectKey,
+          group.displayName,
+        ]),
+      ),
     ),
   );
-  const projectMembers: Array<[string, string, string]> = JSON.parse(projectMembersText);
-  const projectDisplayNameByKey = new Map(projectMembers.map(([ref, , name]) => [ref, name]));
   const projectGroupByScopeKey = new Map(
     projectGroups.map((project) => [project.projectKey, project] as const),
-  );
-  const logicalProjectKeyByScopedProjectRef = new Map(
-    projectMembers.map(([ref, projectKey]) => [ref, projectKey]),
   );
   const projectScopeItems = [
     { value: "all", label: "All projects" },
