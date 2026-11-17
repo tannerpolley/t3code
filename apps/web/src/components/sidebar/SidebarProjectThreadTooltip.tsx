@@ -5,7 +5,6 @@ import {
   effectiveThreadRole,
   isProviderNativeSubagentThread,
   type EnvironmentId,
-  type ServerProvider,
   type ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -24,7 +23,10 @@ import { isThreadPreparingWorktree } from "../ThreadLocationIcon.logic";
 import { ThreadPullRequestsMiniList } from "../ThreadStatusIndicators";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
-import { resolveSidebarThreadModelLabel } from "./SidebarBackgroundWork.logic";
+import {
+  resolveSidebarThreadModelLabel,
+  type SidebarThreadProvider,
+} from "./SidebarBackgroundWork.logic";
 import {
   sidebarProjectThreadCheckout,
   sidebarProjectThreadPullRequests,
@@ -125,7 +127,7 @@ export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(p
 
 type ThreadTooltipProps = {
   readonly thread: SidebarThreadSummary;
-  readonly provider: ServerProvider | undefined;
+  readonly provider: SidebarThreadProvider | undefined;
 };
 
 /** The portal mounts these local-state reads only while its row is hovered; no Git/PR queries. */
