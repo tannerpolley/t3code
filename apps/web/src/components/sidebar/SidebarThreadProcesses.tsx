@@ -9,7 +9,6 @@ import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import type { SidebarThreadSummary } from "../../types";
-import { useBackgroundTaskListVisibility } from "../chat/BackgroundTaskUsage";
 import { PROJECTS_WORK_ROW_HEIGHT, SidebarThreadColumns } from "./SidebarColumns";
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
 import {
@@ -28,12 +27,13 @@ const NO_GROUPS: ReadonlyArray<ThreadProcessGroup> = [];
 /**
  * A thread's tasks, running commands and spawned processes as one list under the thread caret.
  * Commands and processes poll only while their setting is on, work is known or last seen, and
- * the `watchRow` element (the thread's row) is on screen.
+ * the row is `visible`: its `useSidebarRowSubscriptionLease`.
  */
 export function useSidebarThreadProcesses(
   thread: SidebarThreadSummary,
   status: SidebarThreadStatus,
   rows: ReadonlyArray<BackgroundWorkTaskRow>,
+  visible: boolean,
 ) {
   const hasKnownWork = hasKnownSidebarWork(thread, status, rows);
   // A command can outlive its turn without a roster entry; once a sample sees running work, keep
@@ -42,7 +42,7 @@ export function useSidebarThreadProcesses(
   const wanted =
     useClientSettings((settings) => settings.runningCommandsAndProcesses) &&
     (hasKnownWork || sampledWork);
-  const { listRef, isVisible: enabled } = useBackgroundTaskListVisibility(wanted);
+  const enabled = wanted && visible;
   const query = useEnvironmentQuery(
     enabled
       ? serverEnvironment.threadProcesses({
@@ -74,8 +74,6 @@ export function useSidebarThreadProcesses(
   const processCount = work.work.length + processGroups.length + hiddenProcessGroups;
   return {
     status: withRunningProcessWork(status, data, hasKnownWork),
-    // Only rows that would poll watch their visibility.
-    watchRow: wanted ? listRef : undefined,
     workRows: work.rows,
     /** The agents and process entries under the thread, folded ones included. */
     workCount: work.agents.length + processCount,

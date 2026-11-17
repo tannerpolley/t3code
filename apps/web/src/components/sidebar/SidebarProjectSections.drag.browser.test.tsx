@@ -11,9 +11,10 @@ const commands = vi.hoisted(() => ({ update: vi.fn() }));
 vi.mock("../../hooks/useSidebarLayoutPermission", () => ({
   useSidebarLayoutPermission: () => true,
 }));
-vi.mock("../../hooks/useSettings", () => ({
-  useClientSettings: (select: (settings: object) => unknown) =>
-    select({ codexStyleSidebar: true, sectionFolderColors: false }),
+vi.mock(import("../../hooks/useSettings"), async (original) => ({
+  ...(await original()),
+  useClientSettings: ((select: (settings: object) => unknown) =>
+    select({ codexStyleSidebar: true, sectionFolderColors: false })) as never,
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => commands.update }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
@@ -97,7 +98,42 @@ function view(sections: Sections = [section, emptySection]) {
       projects={projects}
       sections={sections}
       selectedProjectKey={null}
-      activeThreadKey={null}
+      threadRowAssembly={{
+        onThreadClick: noop,
+        onThreadActivate: noop,
+        onStartRename: noop,
+        onRenameTitleChange: noop,
+        onCommitRename: noop,
+        onCancelRename: noop,
+        onContextMenu: noop,
+        onSettle: noop,
+        onActionSweepStart: noop,
+        onUnsettle: noop,
+        onSnooze: noop,
+        onUnsnooze: noop,
+        onUnpin: noop,
+        onAcknowledgeWoke: noop,
+        onFileDropThreads: noop,
+        readOpensPullRequestsInRightPanel: () => false,
+        timestampFormat: "locale",
+        currentEnvironmentId: environmentId,
+        environmentLabelById: new Map(),
+        environmentMachineById: new Map(),
+        projectByKey: new Map(),
+        projectDisplayNameByKey: new Map(),
+        logicalProjectKeyByScopedProjectRef: new Map(),
+        providerEntriesByEnvironment: new Map(),
+        serverConfigs: new Map(),
+        scratchMachineLabelFor: () => null,
+      }}
+      threadRowState={{
+        activeKey: null,
+        routeKey: null,
+        revealActiveRow: () => undefined,
+        renamingKey: null,
+        renamingTitle: "",
+        snoozeNow: "2026-10-15T00:00:00.000Z",
+      }}
       isProjectExpanded={() => false}
       threadsByProjectKey={new Map()}
       runningSubagentsByParentKey={new Map()}
@@ -110,8 +146,6 @@ function view(sections: Sections = [section, emptySection]) {
       onOpenProjectSettings={noop}
       onRemoveProject={noop}
       onSelectProject={noop}
-      onThreadClick={noop}
-      onThreadContextMenu={noop}
       onToggleProject={(key, expanded) =>
         useUiStateStore.getState().setProjectExpanded(key, expanded)
       }

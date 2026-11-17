@@ -5,7 +5,6 @@ import {
   sidebarSeparatorStyle,
   type SidebarFamilySeparator,
 } from "./SidebarFamilySeparators.logic";
-import { useEnvironmentProviders } from "../../state/environments";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isProviderNativeSubagentThread,
@@ -62,8 +61,10 @@ import {
   resolveSidebarThreadModelLabel,
   sidebarEffortGlyph,
   sidebarRoleLabel,
+  sidebarThreadProvider,
   type BackgroundWorkTaskRow,
 } from "./SidebarBackgroundWork.logic";
+import type { SidebarProviderEntry } from "./SidebarThreadRow";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { workRowProgram } from "./SidebarThreadProcesses.logic";
@@ -96,13 +97,19 @@ export type NestedWork = {
     readonly onToggle: () => void;
   } | null;
   readonly children: ReactNode;
-  readonly ref?: ((element: Element | null) => void) | undefined;
+  /** The agent's row lease; see `useSidebarRowSubscriptionLease`. */
+  readonly ref?: ((element: HTMLElement | null) => (() => void) | undefined) | undefined;
 };
 
 export type SidebarBackgroundWorkRowsProps = {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
+  /**
+   * The environment's sidebar provider entries, steady through provider status pushes. Only
+   * subagent rows read them, so lists without agent rows leave them out.
+   */
+  readonly providerEntries?: ReadonlyMap<string, SidebarProviderEntry> | undefined;
   readonly compact?: boolean;
   readonly columns?: boolean;
   readonly familySeparators?: ReadonlyMap<string, SidebarFamilySeparator> | undefined;
@@ -131,9 +138,11 @@ export type SidebarBackgroundWorkRowsProps = {
 /** Subagent and background task rows in the sidebar's shared thread columns. */
 export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps) {
   const navigate = useNavigate();
-  const providers = useEnvironmentProviders().get(props.environmentId);
   const owner = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
-  const ownerProvider = providers?.find((entry) => entry.instanceId === owner?.providerInstanceId);
+  const ownerProvider =
+    owner === null
+      ? undefined
+      : sidebarThreadProvider(props.providerEntries, owner.providerInstanceId);
   // One drag at a time, so the list shares one drag and notes which subagent row started it.
   const draggedChild = useRef<{ readonly threadId: ThreadId; readonly title: string } | null>(null);
   const childDrag = useThreadContextPointerDrag(() => ({
@@ -179,7 +188,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
         const childThreadId = row.kind === "subagent" ? row.childThreadId : null;
         const provider =
           row.kind === "subagent" && row.child
-            ? providers?.find((entry) => entry.instanceId === row.child?.providerInstanceId)
+            ? sidebarThreadProvider(props.providerEntries, row.child.providerInstanceId)
             : ownerProvider;
         const icon =
           row.kind === "subagent" ? (
@@ -336,6 +345,9 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               <SidebarChildWorkButton
                 environmentId={props.environmentId}
                 threadId={childThreadId}
+                navigationParent={scopedThreadKey(
+                  scopeThreadRef(props.environmentId, props.threadId),
+                )}
                 className={cn(
                   "sidebar-caret-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left hover:bg-accent",
                   PROJECTS_WORK_ROW_HEIGHT,
@@ -501,17 +513,22 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
 function SidebarChildWorkButton({
   environmentId,
   threadId,
+  navigationParent,
   className,
   ...props
 }: ComponentProps<"button"> & {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  /** The owning thread's tree row. */
+  readonly navigationParent: string;
 }) {
   const key = scopedThreadKey(scopeThreadRef(environmentId, threadId));
   const selected = useThreadSelectionStore((store) => store.selectedThreadKeys.has(key));
   return (
     <button
       type="button"
+      data-sidebar-row={key}
+      data-sidebar-parent={navigationParent}
       {...props}
       className={cn(className, selected && "bg-sidebar-row-selected")}
     />

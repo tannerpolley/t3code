@@ -56,7 +56,7 @@ export function ThreadRelationshipIcon({
   fallbackIcon: FallbackIcon = BotIcon,
 }: {
   driver?: ProviderDriverKind | undefined;
-  provider?: ServerProvider | undefined;
+  provider?: Pick<ServerProvider, "instanceId" | "displayName" | "iconUrl"> | undefined;
   providerEntries?: ReadonlyArray<ProviderInstanceEntry>;
   /** For rows that can't take `providerEntries` but sit in the same list as rows that do. */
   anyInstanceBadge?: boolean;

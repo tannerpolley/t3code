@@ -6,6 +6,7 @@ interface Fiber {
   readonly tag: number;
   readonly type: unknown;
   readonly flags: number;
+  readonly memoizedState: unknown;
   readonly alternate: Fiber | null;
   readonly child: Fiber | null;
   readonly sibling: Fiber | null;
@@ -42,6 +43,7 @@ const state = ((globalThis as { [STATE]?: CounterState })[STATE] ??= {
   commits: 0,
   everCommitted: 0,
   counts: new Map(),
+  roots: new Set(),
 });
 
 interface CounterState {
@@ -49,6 +51,7 @@ interface CounterState {
   commits: number;
   everCommitted: number;
   counts: Map<string, number>;
+  roots: Set<{ readonly current: Fiber }>;
 }
 
 /** Adds the components that rendered under `fiber` and returns how many did. */
@@ -79,6 +82,7 @@ if (!("__REACT_DEVTOOLS_GLOBAL_HOOK__" in globalThis))
       onCommitFiberUnmount: () => {},
       onPostCommitFiberRoot: () => {},
       onCommitFiberRoot: (_id: unknown, root: { current: Fiber }) => {
+        state.roots.add(root);
         state.everCommitted += 1;
         // Commits that render no component (layout-only batches) vary with frame timing.
         if (state.on && visit(root.current.child) > 0) state.commits += 1;
@@ -104,5 +108,84 @@ export function stopCounting(): RenderReport {
     commits: state.commits,
     renders: sorted.reduce((total, [, count]) => total + count, 0),
     components: Object.fromEntries(sorted),
+  };
+}
+
+// Function, forwardRef and simple memo fibers hold their own hook lists.
+const HOOK_TAGS = new Set([0, 11, 15]);
+
+/**
+ * External-store subscriptions (`useSyncExternalStore`, which store and atom hooks use) held by
+ * the mounted tree, by component. React keeps such a hook's `{ value, getSnapshot }` as its queue.
+ */
+export function mountedSubscriptions(): {
+  readonly total: number;
+  readonly components: Readonly<Record<string, number>>;
+} {
+  const counts = new Map<string, number>();
+  const walk = (fiber: Fiber | null) => {
+    for (let node = fiber; node; node = node.sibling) {
+      if (HOOK_TAGS.has(node.tag)) {
+        let held = 0;
+        type Hook = { readonly queue: unknown; readonly next: Hook | null };
+        for (let hook = node.memoizedState as Hook | null; hook; hook = hook.next) {
+          if (typeof hook.queue === "object" && hook.queue !== null && "getSnapshot" in hook.queue)
+            held += 1;
+        }
+        const name = held > 0 ? nameOf(node) : null;
+        if (name) counts.set(name, (counts.get(name) ?? 0) + held);
+      }
+      walk(node.child);
+    }
+  };
+  for (const root of state.roots) walk(root.current.child);
+  const sorted = [...counts].sort(([a, x], [b, y]) => y - x || a.localeCompare(b));
+  return {
+    total: sorted.reduce((total, [, count]) => total + count, 0),
+    components: Object.fromEntries(sorted),
+  };
+}
+
+/**
+ * Counts snapshot reads, the store and atom selector runs React makes to check each subscription
+ * when its store changes, from now until the returned function is called. A component that
+ * re-renders in between hands React a new reader, so its later reads go uncounted.
+ */
+export function countSnapshotReads(): () => {
+  readonly total: number;
+  readonly components: Readonly<Record<string, number>>;
+} {
+  const counts = new Map<string, number>();
+  const restores: Array<() => void> = [];
+  const walk = (fiber: Fiber | null) => {
+    for (let node = fiber; node; node = node.sibling) {
+      if (HOOK_TAGS.has(node.tag)) {
+        type Hook = { readonly queue: unknown; readonly next: Hook | null };
+        for (let hook = node.memoizedState as Hook | null; hook; hook = hook.next) {
+          const store = hook.queue as { getSnapshot?: (...args: unknown[]) => unknown } | null;
+          if (typeof store !== "object" || store === null || !("getSnapshot" in store)) continue;
+          const original = store.getSnapshot!;
+          const name = nameOf(node) ?? "Anonymous";
+          const counted = (...args: unknown[]) => {
+            counts.set(name, (counts.get(name) ?? 0) + 1);
+            return original(...args);
+          };
+          store.getSnapshot = counted;
+          restores.push(() => {
+            if (store.getSnapshot === counted) store.getSnapshot = original;
+          });
+        }
+      }
+      walk(node.child);
+    }
+  };
+  for (const root of state.roots) walk(root.current.child);
+  return () => {
+    for (const restore of restores) restore();
+    const sorted = [...counts].sort(([a, x], [b, y]) => y - x || a.localeCompare(b));
+    return {
+      total: sorted.reduce((total, [, count]) => total + count, 0),
+      components: Object.fromEntries(sorted),
+    };
   };
 }

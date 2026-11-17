@@ -1036,6 +1036,135 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect.each([
+    ["role without a target uses the role's first available choice", "designer", {}, "gpt-5.5"],
+    ["implementor uses the Implementor role, not Sprinter", "implementor", {}, "gpt-5.5"],
+    ["sprinter uses the Sprinter role", "sprinter", {}, "gpt-5.4"],
+    ["explicit target wins", "designer", { model: "gpt-5.4" }, "gpt-5.4"],
+    ["unconfigured role copies the parent", "checker", {}, "gpt-5.4"],
+    ["no available choice copies the parent and says so", "reviewer", {}, "gpt-5.4"],
+  ] as const)("delegate_task model role default: %s", ([, role, target, expectedModel]) =>
+    Effect.gen(function* () {
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const choice = (model: string) => ({ providerInstanceId: codexInstanceId, model });
+      const modelRole = (
+        id: string,
+        targets: readonly [ReturnType<typeof choice>, ...ReturnType<typeof choice>[]],
+        profile?: "fast" | "thorough",
+      ): ModelRole => ({
+        id,
+        name: id,
+        description: "",
+        role: id === "sprinter" ? "implementor" : (id as ModelRole["role"]),
+        ...(profile === undefined ? {} : { profile }),
+        targets,
+      });
+      const modelRoles = [
+        modelRole("designer", [choice("gpt-0"), choice("gpt-5.5")]),
+        modelRole("sprinter", [choice("gpt-5.4")], "fast"),
+        modelRole("implementor", [choice("gpt-5.5")], "thorough"),
+        modelRole("reviewer", [choice("gpt-0")]),
+      ];
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Summarize the diff.",
+        title: null,
+        model: expectedModel,
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      let delegated = false;
+      const layerDependencies = Layer.mergeAll(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(null),
+          hasReceipt: () => Effect.succeed(false),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(delegated ? [task] : [])
+                : childProjection,
+            ),
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          assertProviderInstanceEnabled: () => Effect.void,
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  delegated = true;
+                }),
+              ),
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          {
+            ...providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+            }),
+            models: ["gpt-5.4", "gpt-5.5"].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              capabilities: null,
+            })),
+          },
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, modelRoles }),
+        }),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const result = yield* service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          role,
+          target,
+          isolation: "shared",
+          mode: "async",
+          clientRequestId: `delegate-role-default-${role}`,
+        });
+        const [request] = (yield* Ref.get(dispatched)) as ReadonlyArray<{
+          modelSelection: { model: string };
+        }>;
+        assert.equal(request!.modelSelection.model, expectedModel);
+        assert.equal(
+          result.modelNote,
+          role === "reviewer"
+            ? "No reviewer model role choice is available, so the child uses this thread's model. First choice: Model gpt-0 is not advertised by provider codex. Advertised models: gpt-5.4, gpt-5.5."
+            : undefined,
+        );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect(
     "inherits an available parent instance for driver-only targets and otherwise selects a healthy peer",
     () =>

@@ -24,6 +24,7 @@ import { threadRoleDisplay, type RoleDisplayThread } from "../threadRoleDisplay"
 import { resolveEffortGlyph } from "../chat/EffortGlyph";
 
 import type { SidebarThreadSummary } from "../../types";
+import type { SidebarProviderEntry } from "./SidebarThreadRow";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
 import { shortModelName } from "../chat/ForkModelNames";
 
@@ -101,6 +102,27 @@ export function resolveSidebarThreadModelLabel(
   );
   return !includeEffort || effort === null ? modelLabel : `${modelLabel} · ${effort}`;
 }
+
+/**
+ * A thread's provider from the sidebar's provider entries, which keep their identity through
+ * provider status pushes, in the shape the columns' model, effort and icon read.
+ */
+export function sidebarThreadProvider(
+  entries: ReadonlyMap<string, SidebarProviderEntry> | undefined,
+  instanceId: string,
+) {
+  const entry = entries?.get(instanceId);
+  if (entry === undefined) return undefined;
+  return {
+    instanceId: entry.instanceId,
+    driver: entry.driverKind,
+    displayName: entry.displayName,
+    models: entry.models,
+    ...(entry.acpRegistryIconUrl === undefined ? {} : { iconUrl: entry.acpRegistryIconUrl }),
+  };
+}
+
+export type SidebarThreadProvider = NonNullable<ReturnType<typeof sidebarThreadProvider>>;
 
 const effortKey = (text: string) => text.toLowerCase().replace(/[ _-]/g, "");
 

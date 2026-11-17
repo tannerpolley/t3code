@@ -1,5 +1,6 @@
 import {
   isProviderAvailable,
+  modelRoleProfile,
   type ModelRole,
   type ModelRoleTarget,
   resolveThreadRole,
@@ -207,6 +208,32 @@ export function workerProviderTargets<T extends ModelRoleTarget>(
   );
   const [first, ...rest] = matching;
   return first === undefined ? role.targets : [first, ...rest];
+}
+
+/**
+ * The first choice, in `modelRoleStatuses` order, of the model role a requested
+ * `delegate_task` role names. Implementors get Implementor unless the name means
+ * the fast profile, such as `sprinter`. A string explains why none is available.
+ */
+export function roleDefaultTarget(
+  roles: ReadonlyArray<OrchestratorMcpModelRole>,
+  requestedRole: string,
+): ModelRoleTarget | string | undefined {
+  const threadRole = resolveThreadRole(requestedRole);
+  const profile =
+    requestedRole === "implementor" || requestedRole === "implementation"
+      ? "thorough"
+      : modelRoleProfile(requestedRole);
+  const role = roles.find(
+    (entry) =>
+      (entry.role ?? resolveThreadRole(entry.id)) === threadRole &&
+      (profile === undefined || (entry.profile ?? modelRoleProfile(entry.id)) === profile),
+  );
+  if (role === undefined) return undefined;
+  const [{ providerInstanceId, model, options, unavailableReason }] = role.targets;
+  if (unavailableReason !== null)
+    return `No ${role.name} model role choice is available, so the child uses this thread's model. First choice: ${unavailableReason}`;
+  return { providerInstanceId, model, ...(options === undefined ? {} : { options }) };
 }
 
 const MIN_WEEKLY_HEADROOM = 0.8;
