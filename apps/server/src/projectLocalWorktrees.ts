@@ -110,7 +110,17 @@ export const placeWorktree = Effect.fn("GitVcsDriver.placeWorktree")(function* (
         excludeProjectWorktrees(input.cwd, repository.gitCommonDir, repositoryRoot),
       );
   }
-  if (input.uniqueRefName === undefined) return { worktreePath: resolvedPath };
+  if (input.uniqueRefName === undefined) {
+    let worktreePath = resolvedPath;
+    for (
+      let suffix = 2;
+      yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false));
+      suffix++
+    ) {
+      worktreePath = resolve(`${input.directoryName}-${suffix}`)!;
+    }
+    return { worktreePath };
+  }
   // Each attempt is the creation itself, so concurrent requests cannot
   // both pass a check and then collide: the folder is claimed with an
   // atomic mkdir (Git accepts an empty folder), and Git's own refusal of

@@ -9,13 +9,15 @@ import {
   type PointerEvent,
 } from "react";
 
+import type { ThreadContextDropRef } from "./threadContextDrop.logic";
+
 export const THREAD_CONTEXT_DROP_EVENT = "t3-thread-context-drop";
 
 export function useThreadContextDrop(
   targetRef: RefObject<EventTarget | null>,
   environmentId: EnvironmentId,
   targetKey: string,
-  onDrop: (refs: ReadonlyArray<ScopedThreadRef>, isActive: () => boolean) => void,
+  onDrop: (refs: ReadonlyArray<ThreadContextDropRef>, isActive: () => boolean) => void,
 ) {
   const handleDrop = useEffectEvent(onDrop);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes the target element to thread-context drop events and marks old drops inactive
@@ -24,7 +26,7 @@ export function useThreadContextDrop(
     if (!target) return;
     let active = true;
     const listener = (event: Event) =>
-      handleDrop((event as CustomEvent<ReadonlyArray<ScopedThreadRef>>).detail, () => active);
+      handleDrop((event as CustomEvent<ReadonlyArray<ThreadContextDropRef>>).detail, () => active);
     target.addEventListener(THREAD_CONTEXT_DROP_EVENT, listener);
     return () => {
       active = false;
@@ -99,7 +101,7 @@ export function endThreadContextDrag() {
 
 export function dropThreadContext(
   point: { x: number; y: number },
-  threads: ReadonlyArray<ScopedThreadRef>,
+  threads: ReadonlyArray<ThreadContextDropRef>,
 ): boolean {
   const target = findDropTarget(point);
   if (!target || threads.length === 0) return false;
@@ -121,6 +123,7 @@ export function useThreadContextPointerDrag(
 ) {
   const dragged = useRef(false);
   const cleanup = useRef<(() => void) | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases pointer listeners and the drag overlay on unmount
   useEffect(() => () => cleanup.current?.(), []);
   const onPointerDown = (event: PointerEvent) => {
     if (event.button !== 0 || event.pointerType === "touch") return;

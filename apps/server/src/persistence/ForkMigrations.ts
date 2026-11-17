@@ -86,6 +86,21 @@ export const moveForkMigrationsOutOfUpstreamLedger = Effect.fn(
   "moveForkMigrationsOutOfUpstreamLedger",
 )(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const ledger =
+    yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
+  if (ledger.length === 0) return [];
+  const candidates = yield* sql<{
+    migration_id: number;
+    name: string;
+  }>`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id > ${UPSTREAM_LEDGER_OFFSET}`;
+  if (
+    !candidates.some((row) =>
+      forkMigrationEntries.some(
+        ([id, name]) => id + UPSTREAM_LEDGER_OFFSET === row.migration_id && name === row.name,
+      ),
+    )
+  )
+    return [];
   return yield* sql.withTransaction(
     Effect.gen(function* () {
       const tables = yield* sql`
@@ -139,8 +154,9 @@ export const moveForkMigrationsOutOfUpstreamLedger = Effect.fn(
 const run = Migrator.make({});
 
 /** Runs pending fork migrations, optionally only through `throughId`. */
-export const runForkMigrations = (throughId?: number) =>
-  run({
+export const runForkMigrations = Effect.fn("runForkMigrations")(function* (throughId?: number) {
+  if (!(yield* hasPendingForkMigrations(throughId))) return [];
+  return yield* run({
     table: FORK_MIGRATIONS_TABLE,
     loader: Migrator.fromRecord(
       Object.fromEntries(
@@ -153,3 +169,27 @@ export const runForkMigrations = (throughId?: number) =>
       ),
     ),
   });
+});
+
+export const prepareUpstreamTurnItemCounts = Effect.fn("prepareUpstreamTurnItemCounts")(
+  function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const columns = yield* sql<{
+      name: string;
+    }>`PRAGMA table_info(orchestration_v2_projection_turn_item_counts)`;
+    if (columns.some(({ name }) => name === "run_id")) yield* RetireTurnItemCounts;
+  },
+);
+
+export const hasPendingForkMigrations = Effect.fn("hasPendingForkMigrations")(function* (
+  throughId?: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const tables =
+    yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ${FORK_MIGRATIONS_TABLE}`;
+  if (tables.length === 0) return true;
+  const [row] = yield* sql<{
+    latest: number | null;
+  }>`SELECT MAX(migration_id) AS latest FROM ${sql(FORK_MIGRATIONS_TABLE)}`;
+  return (row?.latest ?? 0) < (throughId ?? forkMigrationEntries.at(-1)![0]);
+});

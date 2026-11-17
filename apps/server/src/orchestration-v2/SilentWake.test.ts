@@ -734,6 +734,7 @@ const executorLayer = (dependencies: ReturnType<typeof makeHarness>["layer"]) =>
     Layer.provideMerge(
       Layer.mergeAll(
         dependencies,
+        ProjectionStore.layer.pipe(Layer.provide(dependencies)),
         Layer.mock(RunFinalizationService.RunFinalizationService)({}),
         Layer.mock(CheckpointRollbackService.CheckpointRollbackServiceV2)({}),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
@@ -921,6 +922,7 @@ it.effect.each(["failure", "defect"] as const)(
       ]);
       let laterDelivered = false;
       const workerLayer = EffectWorker.layerWithOptions().pipe(
+        Layer.provide(ProjectionStore.layer.pipe(Layer.provide(dependencies))),
         Layer.provide(
           Layer.merge(
             Layer.succeed(EffectOutbox.EffectOutboxV2, outbox),

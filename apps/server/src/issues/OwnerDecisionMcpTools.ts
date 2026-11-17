@@ -4,7 +4,7 @@ import {
   OwnerDecisionWithdrawInput,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
-import { Tool } from "effect/ai";
+import { McpSchema, Tool } from "effect/ai";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -29,7 +29,8 @@ export const RequestOwnerDecisionTool = Tool.make("request_owner_decision", {
   .annotate(Tool.Title, "Request an owner decision")
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 export const ListOwnerDecisionsTool = Tool.make("list_owner_decisions", {
   description:
     "List this calling thread's owner decision requests, including publication, choice and undelivered notification status.",
@@ -40,7 +41,8 @@ export const ListOwnerDecisionsTool = Tool.make("list_owner_decisions", {
   dependencies,
 })
   .annotate(Tool.Title, "List owner decisions")
-  .annotate(Tool.Readonly, true);
+  .annotate(Tool.Readonly, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 export const WithdrawOwnerDecisionTool = Tool.make("withdraw_owner_decision", {
   description:
     "Withdraw this calling thread's own unanswered owner decision, with a reason. Options are immutable: withdraw and make a new request to change them. Answered decisions cannot be withdrawn.",
@@ -52,7 +54,8 @@ export const WithdrawOwnerDecisionTool = Tool.make("withdraw_owner_decision", {
 })
   .annotate(Tool.Title, "Withdraw an owner decision")
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 const caller = Effect.gen(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   if (scope.thread === undefined)

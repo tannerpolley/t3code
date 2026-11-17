@@ -8,7 +8,7 @@ import { runMigrations } from "../Migrations.ts";
 it.effect("backfills counts and keeps moves, streaming, rollback and rebuild atomic", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toForkMigrationInclusive: 1 });
+    yield* runMigrations({ toMigrationInclusive: 83, toForkMigrationInclusive: 1 });
     const insert = (id: string, threadId: string, runId: string | null) => sql`
       INSERT INTO orchestration_v2_projection_turn_items
         (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
@@ -20,7 +20,7 @@ it.effect("backfills counts and keeps moves, streaming, rollback and rebuild ato
     yield* insert("b", "thread", "run");
     yield* insert("c", "thread", null);
     yield* insert("d", "thread", "orphaned-run");
-    yield* runMigrations({ toForkMigrationInclusive: 2 });
+    yield* runMigrations({ toMigrationInclusive: 83, toForkMigrationInclusive: 2 });
     const counts = sql<{ thread_id: string; run_id: string; item_count: number }>`
       SELECT thread_id, run_id, item_count
       FROM orchestration_v2_projection_turn_item_counts ORDER BY thread_id, run_id
@@ -68,7 +68,7 @@ it.effect("backfills counts and keeps moves, streaming, rollback and rebuild ato
       ["thread", "", 1],
       ["thread", "run", 1],
     ]);
-    yield* runMigrations({ toForkMigrationInclusive: 24 });
+    yield* runMigrations({ toMigrationInclusive: 83, toForkMigrationInclusive: 24 });
     const retired = yield* sql`SELECT name FROM sqlite_master
       WHERE name = 'orchestration_v2_projection_turn_item_counts'
         OR name LIKE 'orchestration_v2_turn_item_count_%'`;

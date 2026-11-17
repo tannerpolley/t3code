@@ -1936,10 +1936,11 @@ export const layer = Layer.effect(
             !names.some((name) => name?.toLowerCase() === input.repository.toLowerCase())
           )
             continue;
-          for (const thread of yield* threads
+          for (const entry of yield* threads
             .listProjectThreads({ projectId: project.id, includeSubagents: false })
             .pipe(Effect.mapError(mapError))) {
-            if ((yield* store.configuration(thread.id)) !== null) continue;
+            const thread = yield* threads.getThreadShell(entry.id).pipe(Effect.mapError(mapError));
+            if (thread === null || (yield* store.configuration(thread.id)) !== null) continue;
             const adapter = yield* adapters
               .get(thread.modelSelection.instanceId)
               .pipe(Effect.option);

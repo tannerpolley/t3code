@@ -139,6 +139,7 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (legacyPr = true
             Effect.succeedSome({
               projectId: thread.projectId,
               title: "Repo",
+              hasCustomTitle: false,
               workspaceRoot: cwd,
               defaultModelSelection: null,
               defaultThreadEnvMode: null,

@@ -881,7 +881,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             ...choice,
             unavailableReason: [
               null,
-              "Model gpt-0 is not advertised by provider codex.",
+              "Model gpt-0 is not advertised by provider codex. Advertised models: gpt-5.4.",
               "Provider instance ghost is not registered.",
               "Provider claudeAgent cannot run a child task: Provider is not authenticated.",
             ][index]!,

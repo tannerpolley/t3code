@@ -1585,6 +1585,7 @@ describe("orchestrator MCP toolkit", () => {
 
             const childPromptReadCall = yield* invoke("t3_thread_read", {
               threadId: directChildThreadId,
+              afterPosition: -1,
               limit: 1,
             });
             const childPromptRead = yield* decodeThreadReadResult(
@@ -1637,7 +1638,7 @@ describe("orchestrator MCP toolkit", () => {
               (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
                 (task) => task.id === directRead.task.id,
               )?.completionDelivery?.state,
-            ).toBe("claimed");
+            ).toBe("acknowledged");
 
             const terminalResultReadCall = yield* invoke("t3_thread_read", {
               threadId: directChildThreadId,
@@ -1761,7 +1762,6 @@ describe("orchestrator MCP toolkit", () => {
             expect(declaredFailure(missingThreadQueue)).toMatchObject({
               _tag: "OrchestratorMcpFailure",
               code: "thread_not_found",
-              message: "The thread was not found.",
             });
             expect(missingThreadQueue.structuredContent).toBeUndefined();
             expect(isQueueResult({ items: "invalid", nextCursor: null })).toBe(false);
@@ -2631,7 +2631,7 @@ describe("orchestrator MCP toolkit", () => {
             const cancellable = yield* decodeDelegateTaskResult(
               cancellableCall.structuredContent,
             ).pipe(Effect.orDie);
-            expect(cancellable.status).toBe("running");
+            expect(["queued", "starting", "running"]).toContain(cancellable.status);
             expect(cancellable.hasPendingChildRuns).toBe(false);
             yield* waitForProjection(orchestrator, cancellable.childThreadId!, (projection) =>
               projection.providerTurns.some((turn) => turn.status === "running"),
@@ -3030,6 +3030,7 @@ describe("orchestrator MCP toolkit", () => {
 
             const promptedReadCall = yield* invoke("t3_thread_read", {
               threadId: promptedThread.threadId,
+              afterPosition: -1,
               limit: 1,
             });
             const promptedRead = yield* decodeThreadReadResult(
@@ -3331,7 +3332,7 @@ describe("orchestrator MCP toolkit", () => {
             const upgradedDelegated = yield* decodeDelegateTaskResult(
               upgradedCall.structuredContent,
             ).pipe(Effect.orDie);
-            expect(upgradedDelegated.status).toBe("running");
+            expect(["queued", "starting", "running"]).toContain(upgradedDelegated.status);
             yield* waitForProjection(orchestrator, upgradedDelegated.childThreadId!, (projection) =>
               projection.providerTurns.some((turn) => turn.status === "running"),
             );

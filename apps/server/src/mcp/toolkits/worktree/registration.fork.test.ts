@@ -1,3 +1,5 @@
+import * as EnvironmentThemeService from "../../../environmentTheme.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
 import * as DocumentText from "../../../provider/DocumentText.ts";
@@ -142,6 +144,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         Layer.provide(PreviewAutomationBroker.layer),
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(layerStubServices),
+        Layer.provide(Layer.mock(EnvironmentThemeService.EnvironmentThemeService)({})),
+        Layer.provide(Layer.mock(PullRequestService.PullRequestService)({})),
         Layer.build,
       );
 

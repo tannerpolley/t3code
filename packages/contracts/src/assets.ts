@@ -8,6 +8,7 @@ import {
 } from "./chatAttachment.ts";
 import { ProjectFaviconPath } from "./project.ts";
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
+import { EnvironmentThemeId } from "./server.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
@@ -36,6 +37,8 @@ export const AssetResource = Schema.Union([
     /** Markdown embeds permit only bounded image and video files. */
     mediaOnly: Schema.optionalKey(Schema.Boolean),
     disposition: Schema.optionalKey(Schema.Literal("attachment")),
+    // Written relative to the thread's workspace, so only that host's file is meant.
+    hostOnly: Schema.optionalKey(Schema.Literal(true)),
   }),
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
@@ -66,6 +69,9 @@ export const AssetResource = Schema.Union([
   // to a request that carries a credential, which the client has none of, so the server fetches
   // them with the credential the host's driver holds for the repository at `cwd`. `repository`
   // names the change request's repository, which can differ from the checkout at `cwd`.
+  Schema.TaggedStruct("environment-theme-background", {
+    themeId: EnvironmentThemeId,
+  }),
   Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),

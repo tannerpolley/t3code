@@ -16,6 +16,7 @@ it("reads only user settings when the probe starts in the home directory", () =>
     environment: { HOME: "/home/user" },
     cwd: "/home/user/",
     managedMcpConfig: false,
+    spawnVia: "env",
   });
   assert.deepEqual(options.settingSources, ["user"]);
 });

@@ -161,22 +161,31 @@ const clientScope = (
   capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
 });
 
-it.effect("refuses act-as-caller tools to a client caller", () =>
+it.effect("hides act-as-caller tools from a client caller", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const result = yield* server
-      .callTool({
+    for (const request of [
+      {
         name: "delegate_task",
         arguments: { task: "Review", mode: "async" },
-      })
-      .pipe(
-        Effect.provideService(
-          McpInvocationContext.McpInvocationContext,
-          clientScope("full-access"),
-        ),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    expect(declaredFailure(result)).toMatchObject({ code: "thread_credential_required" });
+      },
+      {
+        name: "t3_issue_post",
+        arguments: { repository: "owner/repo", title: "Issue", body: "Details" },
+      },
+    ]) {
+      const error = yield* server
+        .callTool(request)
+        .pipe(
+          Effect.flip,
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            clientScope("full-access"),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(error.message).toContain(`Tool '${request.name}' not found`);
+    }
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
@@ -417,7 +426,8 @@ it.effect("discovers workflow stop targets and requires orchestration capability
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
             getProjectThreadRecords: () =>
               Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell)),
-            getTimelinePage: () => Effect.succeed({ items: [row], totalItems: 1, hasMore: false }),
+            getTimelinePage: () =>
+              Effect.succeed({ items: [row], totalItems: 1, hasMore: false, hasEarlier: false }),
             stopWorkflow: (input) =>
               Effect.sync(() => {
                 stopped.push(input);

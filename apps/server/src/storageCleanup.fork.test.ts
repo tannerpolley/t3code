@@ -1,3 +1,6 @@
+import type * as Digest from "effect/crypto/Digest";
+import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -249,12 +252,14 @@ const makeCleanupFixture = (
                   }),
                 },
               ]
-            : strings.join("").includes('AS "worktreePath"')
-              ? [
-                  ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                  ...storedWorktreePaths,
-                ].map((worktreePath) => ({ worktreePath }))
-              : [],
+            : strings.join("").includes("retained_checkpoint_threads")
+              ? []
+              : strings.join("").includes('AS "worktreePath"')
+                ? [
+                    ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                    ...storedWorktreePaths,
+                  ].map((worktreePath) => ({ worktreePath }))
+                : [],
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
@@ -269,6 +274,16 @@ const makeCleanupFixture = (
             return () => {};
           }),
       } as unknown as TerminalManager.TerminalManager["Service"]),
+      Effect.provideService(GitWorkflowService.GitWorkflowService, {
+        currentBranch: (cwd: string) =>
+          command(cwd, ["symbolic-ref", "--short", "HEAD"]).pipe(
+            Effect.map((result) => result.stdout.trim()),
+          ),
+      } as unknown as GitWorkflowService.GitWorkflowService["Service"]),
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        getShellSnapshot: () => Effect.succeed({ threads, archivedThreads: [] }),
+        dispatch: () => Effect.void,
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
       Effect.provideService(ServerActivation, Deferred.await(activated)),
     );
     return {
@@ -351,6 +366,7 @@ const runCleanupTest = <A, E>(
   effect: Effect.Effect<
     A,
     E,
+    | Digest.Digest
     | FileSystem.FileSystem
     | ServerConfig.ServerConfig
     | GitVcsDriver.GitVcsDriver

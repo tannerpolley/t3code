@@ -1,6 +1,5 @@
 import {
   isOrchestrationV2WorkActive,
-  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -9,6 +8,8 @@ import {
   backgroundWorkHoldsCompletion,
   pendingBackgroundWorkOfThread,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+
+import type { ThreadStructure } from "./models.ts";
 
 export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
 
@@ -38,7 +39,7 @@ export interface ThreadRelationshipWalkRow {
 }
 
 export function resolveMergeBackTargetThreadId(
-  projection: Pick<OrchestrationV2ThreadProjection, "thread"> | null,
+  projection: Pick<ThreadStructure, "thread"> | null,
 ): ThreadId | null {
   if (projection?.thread.lineage.relationshipToParent !== "fork") return null;
   return projection.thread.forkedFrom?.type === "run"
@@ -52,7 +53,7 @@ function edgeKey(edge: ThreadRelationshipEdge): string {
 
 export function deriveThreadRelationshipGraph(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
-  readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly projection: ThreadStructure | null;
 }): ThreadRelationshipGraph {
   const threadsById = new Map<ThreadId, OrchestrationV2ThreadShell>();
   for (const thread of input.threads) {

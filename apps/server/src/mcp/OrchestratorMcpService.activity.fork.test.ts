@@ -230,7 +230,8 @@ it("taskStatus reports a child waiting on the orchestrator, but not an auth refr
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadShell: () => Effect.succeed(null),
-          getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+          getTimelinePage: () =>
+            Effect.succeed({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
           getThreadRecords: (threadId) => {
             if (threadId === parentThreadId) return Effect.succeed(parentProjection);
             if (threadId === childThreadId) return Effect.succeed(childProjection);

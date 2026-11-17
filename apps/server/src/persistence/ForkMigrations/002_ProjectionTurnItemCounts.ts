@@ -3,6 +3,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const columns = yield* sql<{
+    name: string;
+  }>`PRAGMA table_info(orchestration_v2_projection_turn_item_counts)`;
+  if (columns.some(({ name }) => name === "run_key")) return;
 
   // Empty run_id is the runless bucket; contract run IDs are nonempty. Keep
   // counts with their source rows so imports, replay, rollback and rebuild all

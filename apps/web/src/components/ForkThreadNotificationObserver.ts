@@ -16,6 +16,7 @@ import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3too
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
 import {
   createThreadNotificationGate,
+  isSnoozedForNotification,
   type ThreadNotificationKind,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
@@ -94,7 +95,8 @@ export function createForkThreadNotificationObserver(
         continue;
       }
       const ownerVisible = runtimeRequestIsOwnerVisible(rawThread.pendingRuntimeRequest, parent);
-      const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
+      const rolledRequest = subagentRequests.get(rawThread.id) ?? null;
+      const subagentRequest = rolledRequest === "user_only_input" ? "user_input" : rolledRequest;
       const request = rawThread.pendingRuntimeRequest;
       const ownerVisibleSince =
         ownerVisible && rawThread.archivedAt === null
@@ -184,6 +186,7 @@ export function createForkThreadNotificationObserver(
         {
           archived: state.thread.archivedAt !== null,
           quiet: state.raw.latestRunStopRequested === true,
+          snoozed: isSnoozedForNotification(state.thread, state.completedAt, now),
         },
       );
     }

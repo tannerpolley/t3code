@@ -6,7 +6,7 @@ import {
   IssuePostResult,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
-import { Tool } from "effect/ai";
+import { McpSchema, Tool } from "effect/ai";
 import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
@@ -30,7 +30,8 @@ export const IssuePostTool = Tool.make("t3_issue_post", {
 })
   .annotate(Tool.Title, "Post to an issue")
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const IssueInboxTool = Tool.make("t3_issue_inbox", {
   description:
@@ -44,7 +45,8 @@ export const IssueInboxTool = Tool.make("t3_issue_inbox", {
   .annotate(Tool.Title, "Read the issue inbox")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const failure = (cause: { readonly code: string; readonly message: string }) =>
   new OrchestratorMcpFailure({

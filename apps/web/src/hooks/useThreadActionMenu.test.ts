@@ -37,10 +37,6 @@ function recordEffect(action: string) {
 vi.mock("./useRepositoryOrchestratorAction", () => ({
   useRepositoryOrchestratorAction: () => ({ forThread: async () => null }),
 }));
-vi.mock("../components/titleRegenerationFeedback", () => ({
-  newTitleRegenerationRequestId: () => "title-request",
-  reportTitleRegenerationOutcomes: vi.fn(),
-}));
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,

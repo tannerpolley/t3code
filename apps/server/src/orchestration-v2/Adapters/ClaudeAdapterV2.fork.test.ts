@@ -260,6 +260,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     callMcpTool: () => Effect.die("unused callMcpTool"),
                     listPermissionRules: Effect.succeed([]),
                     offer: () => Effect.void,
+                    renameSession: () => Effect.void,
                     setModel: () => Effect.void,
                     applyFlagSettings: () => Effect.void,
                     setPermissionMode: () => Effect.void,

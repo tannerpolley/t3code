@@ -50,6 +50,9 @@ function layerExecutorFor(input: {
     Layer.succeed(
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
+        applyThreadTitle: Effect.fn(
+          "ProviderTurnControlService.ProviderTurnControlServiceV2.applyThreadTitle",
+        )(() => Effect.void),
         applyModelSelection: Effect.fn(
           "ProviderTurnControlService.ProviderTurnControlServiceV2.applyModelSelection",
         )(() => Effect.void),
@@ -105,6 +108,9 @@ function layerExecutorFor(input: {
     Layer.succeed(
       ProviderTurnStartService.ProviderTurnStartServiceV2,
       ProviderTurnStartService.ProviderTurnStartServiceV2.of({
+        failStartingRun: Effect.fn(
+          "ProviderTurnStartService.ProviderTurnStartServiceV2.failStartingRun",
+        )(() => Effect.void),
         start: Effect.fn("EffectWorkerTestHarness.start")(function* () {
           yield* record("start");
           if (

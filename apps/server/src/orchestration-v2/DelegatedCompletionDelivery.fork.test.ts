@@ -60,7 +60,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "thread-owned completion recovery",
   (it) => {
     it.effect(
-      "restart recovery re-offers and settles a thread-owned parentRunId-null delivery",
+      "restart recovery adds a second worker to a queued thread-owned delivery and settles both",
       () =>
         Effect.gen(function* () {
           const engine = yield* Orchestrator.OrchestratorV2;
@@ -109,6 +109,20 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                 },
               },
               {
+                id: EventId.make("thread-owned-busy-parent"),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...run,
+                  id: RunId.make("run:thread-owned-busy-parent"),
+                  ordinal: 2,
+                  userMessageId: MessageId.make("message:thread-owned-busy-parent"),
+                  rootNodeId: null,
+                  delegatedCompletion: { disposition: "open", nextGeneration: 1, delivery: null },
+                },
+              },
+              {
                 id: EventId.make("thread-owned-task"),
                 type: "subagent.updated",
                 threadId,
@@ -142,6 +156,98 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             const deliveryRun = dispatched.runs.find(
               (candidate) => candidate.userMessageId === messageId,
             )!;
+            assert.equal(deliveryRun.status, "queued");
+            const childThreadId = ThreadId.make("thread:thread-owned-second-worker");
+            const childRunId = RunId.make("run:thread-owned-second-worker");
+            const secondTask = {
+              ...task,
+              id: NodeId.make("task:thread-owned-second-worker"),
+              runId: null,
+              childThreadId,
+              status: "running" as const,
+              result: null,
+              completedAt: null,
+              completionDelivery: { state: "pending" as const, observedByRunId: null },
+            };
+            yield* sink.write({
+              commandId: reconcileCommandId("thread-owned-second-worker-finished"),
+              events: [
+                {
+                  id: EventId.make("thread-owned-second-worker-created"),
+                  type: "thread.created",
+                  threadId: childThreadId,
+                  occurredAt: now,
+                  payload: {
+                    ...parent.thread,
+                    id: childThreadId,
+                    activeProviderThreadId: null,
+                    lineage: {
+                      parentThreadId: threadId,
+                      rootThreadId: threadId,
+                      relationshipToParent: "subagent",
+                    },
+                    forkedFrom: { type: "node", nodeId: secondTask.id },
+                  },
+                },
+                {
+                  id: EventId.make("thread-owned-second-worker-task"),
+                  type: "subagent.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: secondTask,
+                },
+                {
+                  id: EventId.make("thread-owned-second-worker-result"),
+                  type: "message.updated",
+                  threadId: childThreadId,
+                  runId: childRunId,
+                  occurredAt: now,
+                  payload: {
+                    id: MessageId.make("message:thread-owned-second-worker-result"),
+                    threadId: childThreadId,
+                    runId: childRunId,
+                    nodeId: null,
+                    role: "assistant",
+                    text: "Second issue worker result.",
+                    attachments: [],
+                    streaming: false,
+                    createdBy: "agent",
+                    creationSource: "server",
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                },
+                {
+                  id: EventId.make("thread-owned-second-worker-ended"),
+                  type: "run.updated",
+                  threadId: childThreadId,
+                  occurredAt: now,
+                  payload: {
+                    ...run,
+                    id: childRunId,
+                    threadId: childThreadId,
+                    userMessageId: MessageId.make("message:thread-owned-second-worker"),
+                    providerThreadId: null,
+                    rootNodeId: null,
+                    delegatedTaskId: secondTask.id,
+                    delegatedCompletion: { disposition: "open", nextGeneration: 1, delivery: null },
+                    status: "completed",
+                    completedAt: now,
+                  },
+                },
+              ],
+            });
+            yield* engine.recoverDelegatedTasks;
+            const coalesced = yield* engine.getThreadProjection(threadId);
+            assert.deepEqual(coalesced.thread.delegatedCompletion?.delivery, {
+              generation: 1,
+              messageId,
+              taskIds: [taskId, secondTask.id],
+            });
+            const message = coalesced.messages.find((candidate) => candidate.id === messageId)!;
+            assert.deepEqual(message.delegatedCompletion?.taskIds, [taskId, secondTask.id]);
+            assert.include(message.text, "child finished");
+            assert.include(message.text, "Second issue worker result.");
             // This delivery also ended before startup's terminal-run listener was attached.
             yield* sink.write({
               commandId: reconcileCommandId("thread-owned-delivery-ended"),
@@ -158,9 +264,21 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             yield* engine.recoverDelegatedTasks;
             const settled = yield* engine.getThreadProjection(threadId);
             assert.isNull(settled.thread.delegatedCompletion?.delivery);
-            assert.equal(settled.subagents[0]!.completionDelivery?.state, "delivered");
-            assert.equal(settled.subagents[0]!.result, "child finished");
-            assert.equal(offer.mock.calls.length, 1);
+            for (const id of [taskId, secondTask.id]) {
+              assert.equal(
+                settled.subagents.find((candidate) => candidate.id === id)?.completionDelivery
+                  ?.state,
+                "delivered",
+              );
+            }
+            assert.equal(
+              settled.subagents.find((candidate) => candidate.id === taskId)?.result,
+              "child finished",
+            );
+            assert.lengthOf(
+              settled.messages.filter((candidate) => candidate.delegatedCompletion !== undefined),
+              1,
+            );
           }).pipe(Effect.ensuring(Effect.sync(() => offer.mockRestore())));
         }),
     );

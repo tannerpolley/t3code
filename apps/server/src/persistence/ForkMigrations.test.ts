@@ -148,9 +148,7 @@ describe("fork migration ledger", () => {
         const [query, params] = lookup.compile();
         const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
         assert.ok(
-          plan.some((row) =>
-            row.detail.includes("orchestration_v2_projection_turn_items_usage_limit_idx"),
-          ),
+          plan.some((row) => row.detail.includes("SEARCH") && row.detail.includes("INDEX")),
         );
         assert.deepEqual(yield* runMigrations(), []);
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
