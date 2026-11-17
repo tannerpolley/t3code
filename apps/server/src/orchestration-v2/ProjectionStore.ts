@@ -3828,9 +3828,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
                 ${
-                  filter?.turnItemTypes === undefined
+                  filter?.turnItemTypes === undefined && filter?.turnItemRunId === undefined
                     ? sql`WHERE ${turnItemMatch(threadId, filter)}`
-                    : // Seeks the type index. Sorted, SQLite would walk the thread by ordinal instead.
+                    : // Seeks the type or run index. Sorted, SQLite would walk the thread by ordinal instead.
                       sql`WHERE rowid IN (
                     SELECT rowid FROM orchestration_v2_projection_turn_items
                     WHERE ${turnItemMatch(threadId, filter)}
@@ -5088,7 +5088,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                      ORDER BY ordinal DESC LIMIT 1
                     ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
                     OR EXISTS (
+                      -- The type index would read every error of the thread to find a usage limit.
                       SELECT 1 FROM orchestration_v2_projection_turn_items error
+                        INDEXED BY orchestration_v2_projection_turn_items_usage_limit_idx
                       WHERE error.thread_id = child.thread_id AND error.type = 'error'
                         AND CASE WHEN json_valid(error.payload_json) THEN json_extract(error.payload_json, '$.failure.class') END = 'usage_limit'
                     ))
