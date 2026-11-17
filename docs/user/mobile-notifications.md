@@ -8,7 +8,9 @@ For activity without ordinary alerts on Android 8 or newer, leave **Ongoing agen
 
 On iOS you can also add the **Agent Activity** widget to your Home Screen or Lock Screen. It shows the same agents as the Live Activity, using your T3 Connect sign-in. The widget refreshes when you open T3 and shows unfinished work as out of date after 10 minutes.
 
-Ordinary alerts stay quiet while the mobile app is in the foreground. Ongoing activity continues to update. Viewing a thread on another device does not silence your phone's alerts.
+Ordinary alerts stay quiet while the mobile app is in the foreground. Ongoing activity continues to update. Use **Phone alerts** in the sidebar footer to choose **Auto**, **Away** (always alert), or **Here** (silence input and approval alerts). Auto uses the desktop computer’s idle or lock state, with a default idle threshold of five minutes that you can change in the same menu. A foreground web client also counts as Here; the mobile app does not report computer presence. Finished and failed alerts continue in every mode.
+
+When you become away, requests still waiting alert once; requests already answered do not. While Here, phone activity cards may continue showing running or be absent because waiting states are deferred until away. Other activity updates continue. The mode and idle threshold are saved on the server.
 
 Android notifications require Android 7.0 or newer and Google Play services. Android 16 and newer can promote ongoing activity to a Live Update, subject to system settings and device support. Other devices show a regular ongoing notification. If Live Updates don't appear on Android 16 or newer, check **Live Update Settings** in T3 Code's **Settings → Notifications**. Android 7's battery-saving modes can delay removal of expired cards.
 

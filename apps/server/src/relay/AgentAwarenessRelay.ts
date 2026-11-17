@@ -1,3 +1,4 @@
+import * as AwayPolicy from "../background/AwayPolicy.ts";
 import type { AgentAwarenessThread } from "../orchestration-v2/ProjectionStore.ts";
 import {
   isListedThreadLineage,
@@ -440,6 +441,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
 
 /** @public */
 export const make = Effect.gen(function* () {
+  const away = yield* AwayPolicy.AwayPolicy;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -635,6 +637,7 @@ export const make = Effect.gen(function* () {
       parent,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
+    if (AwayPolicy.deferWaitingAlert(snapshot.state?.phase, yield* away.snapshot)) return;
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
@@ -1007,6 +1010,16 @@ export const make = Effect.gen(function* () {
       yield* forkParked(
         Effect.sleep("1 second").pipe(
           Effect.andThen(publishActiveThreadsWhenConfigured(startupState !== "enabled")),
+        ),
+      );
+      yield* forkParked(
+        away.changes.pipe(
+          Stream.runForEach((isAway) =>
+            isAway ? Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid) : Effect.void,
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Away policy monitoring failed", { cause }),
+          ),
         ),
       );
       yield* forkParked(

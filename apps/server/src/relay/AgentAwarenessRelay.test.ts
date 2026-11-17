@@ -1,3 +1,4 @@
+import * as AwayPolicy from "../background/AwayPolicy.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
@@ -316,6 +317,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
     deletedAt: null,
   };
   const relay = yield* AgentAwarenessRelay.make.pipe(
+    Effect.provideService(AwayPolicy.AwayPolicy, {
+      snapshot: Effect.succeed(true),
+      set: unused,
+      changes: Stream.empty,
+    }),
     Effect.provide(EnvironmentKeys.layer),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),

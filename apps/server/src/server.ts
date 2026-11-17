@@ -1,3 +1,4 @@
+import * as AwayPolicy from "./background/AwayPolicy.ts";
 import * as NotebookConfiguration from "./notebook/NotebookConfiguration.ts";
 import * as NotebookJupyterTransport from "./notebook/JupyterTransport.ts";
 import * as NotebookService from "./notebook/NotebookService.ts";
@@ -692,7 +693,10 @@ const layerServerRestart = Layer.effect(
 );
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
-  AgentAwarenessRelay.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+  AgentAwarenessRelay.layer.pipe(
+    Layer.provide(AwayPolicy.layer),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
 
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,

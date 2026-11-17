@@ -1,3 +1,4 @@
+import { SidebarAwayItem } from "./SidebarAwayItem";
 import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
@@ -296,6 +297,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
       <SidebarWorkerProviderItem />
+      <SidebarAwayItem />
       {isOnUtilityPage ? null : <SidebarAskModeItem />}
     </SidebarMenu>
   );

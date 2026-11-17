@@ -1,3 +1,4 @@
+import * as AwayPolicy from "../background/AwayPolicy.ts";
 import * as EnvironmentKeys from "../cloud/environmentKeys.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { assert, describe, it } from "@effect/vitest";
@@ -103,6 +104,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
+    readonly away?: Effect.Effect<boolean>;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly readRecords?: ThreadManagementService.ThreadManagementService["Service"]["getThreadRecords"];
@@ -232,6 +234,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
     { preconnect: () => {} },
   );
   const relay = yield* AgentAwarenessRelay.make.pipe(
+    Effect.provideService(AwayPolicy.AwayPolicy, {
+      snapshot: options.away ?? Effect.succeed(true),
+      set: unused,
+      changes: Stream.empty,
+    }),
     Effect.provide(EnvironmentKeys.layer),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
@@ -325,22 +332,69 @@ describe("AgentAwarenessRelay", () => {
       }),
   );
 
-  it.effect("publishes an unrouted input immediately", () =>
+  it.effect.each(["completed", "failed"] as const)("publishes %s while here", (status) =>
     Effect.gen(function* () {
-      const { relay, currentShell, publications } = yield* makeTestRelay();
+      const { relay, currentShell, publications } = yield* makeTestRelay({
+        away: Effect.succeed(false),
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, shell({ status }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications[1]?.state?.phase, status);
+    }),
+  );
+
+  it.effect.each(["user_input", "permission"] as const)(
+    "defers %s while here and publishes a still-pending request once away",
+    (kind) =>
+      Effect.gen(function* () {
+        const away = yield* Ref.make(false);
+        const { relay, currentShell, publications } = yield* makeTestRelay({ away: Ref.get(away) });
+        yield* Ref.set(
+          currentShell,
+          shell({
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("pending"),
+              kind,
+              createdAt: yield* DateTime.now,
+            },
+          }),
+        );
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications.length, 0);
+        yield* Ref.set(away, true);
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications.length, 1);
+        assert.equal(
+          publications[0]?.state?.phase,
+          kind === "user_input" ? "waiting_for_input" : "waiting_for_approval",
+        );
+      }),
+  );
+
+  it.effect("does not replay a request answered while here", () =>
+    Effect.gen(function* () {
+      const away = yield* Ref.make(false);
+      const { relay, currentShell, publications } = yield* makeTestRelay({ away: Ref.get(away) });
       yield* Ref.set(
         currentShell,
         shell({
           pendingRuntimeRequest: {
-            id: RuntimeRequestId.make("unrouted"),
+            id: RuntimeRequestId.make("answered"),
             kind: "user_input",
             createdAt: yield* DateTime.now,
           },
         }),
       );
       yield* relay.publishThread(THREAD_ID);
-      assert.equal(publications.length, 1);
-      assert.equal(publications[0]?.state?.phase, "waiting_for_input");
+      yield* Ref.set(currentShell, shell());
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(away, true);
+      yield* relay.publishThread(THREAD_ID);
+      assert.isFalse(publications.some((entry) => entry.state?.phase === "waiting_for_input"));
     }),
   );
 
