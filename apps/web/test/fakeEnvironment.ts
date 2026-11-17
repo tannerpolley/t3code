@@ -35,6 +35,8 @@ import {
   type OrchestrationV2TurnItem,
   type TerminalMetadataStreamEvent,
   type ResolvedKeybindingsConfig,
+  type ServerConfigStreamEvent,
+  type ThreadRole,
 } from "@t3tools/contracts";
 import type {
   ConnectionAttemptError,
@@ -232,6 +234,12 @@ export interface FakeThread {
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
   readonly runtimeRequests?: OrchestrationV2ThreadProjection["runtimeRequests"];
+  /** Defaults to PROJECT_ID; others come from `extraProjects`. */
+  readonly projectId?: ProjectId;
+  readonly role?: ThreadRole;
+  readonly worktreePath?: string;
+  /** Makes this a running subagent of that thread. */
+  readonly subagentOf?: ThreadId;
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
@@ -306,29 +314,30 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
   const latest = thread.runs.at(-1);
   const modelSelection = thread.modelSelection ?? MODEL;
   return {
+    ...(thread.role ? { role: thread.role } : {}),
     id: thread.id,
-    projectId: PROJECT_ID,
+    projectId: thread.projectId ?? PROJECT_ID,
     title: thread.title,
     providerInstanceId: modelSelection.instanceId,
     modelSelection,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: "main",
-    worktreePath: null,
+    worktreePath: thread.worktreePath ?? null,
     activeProviderThreadId: thread.providerThreads?.[0]?.id ?? null,
     lineage: {
-      rootThreadId: thread.sideChatOf ?? thread.id,
-      parentThreadId: thread.sideChatOf ?? null,
-      relationshipToParent: null,
+      rootThreadId: thread.sideChatOf ?? thread.subagentOf ?? thread.id,
+      parentThreadId: thread.sideChatOf ?? thread.subagentOf ?? null,
+      relationshipToParent: thread.subagentOf ? "subagent" : null,
       ...(thread.sideChatOf ? { sideChat: true } : {}),
     },
     forkedFrom: null,
     createdBy: "user",
     creationSource: "web",
     latestRunId: latest?.id ?? null,
-    activeRunId: null,
+    activeRunId: thread.subagentOf ? (latest?.id ?? null) : null,
     // Idle reads as waiting on the user, which shows a per-second duration in the sidebar.
-    status: latest ? "completed" : "idle",
+    status: thread.subagentOf ? "running" : latest ? "completed" : "idle",
     pendingRuntimeRequest: null,
     latestVisibleMessage: null,
     latestUserMessageAt: AT,
@@ -418,6 +427,8 @@ let pendingDispatches: Array<{
 let pendingAssetUrls: Array<Deferred.Deferred<AssetCreateUrlResult>> = [];
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
+const serverConfigSubscribers = new Set<Queue.Queue<ServerConfigStreamEvent>>();
+const rpcCalls = new Map<string, number>();
 
 const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>) => () => void) =>
   Stream.unwrap(
@@ -507,25 +518,34 @@ const handlers: Record<string, (input: never) => unknown> = {
         if (vcsStatusSubscriber === queue) vcsStatusSubscriber = null;
       };
     }),
-  [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig() }]),
+  [WS_METHODS.subscribeServerConfig]: () => subscribeServerConfig(),
 };
+
+function subscribeServerConfig() {
+  return subscribe<ServerConfigStreamEvent>(
+    [{ version: 1, type: "snapshot", config: serverConfig() }],
+    (queue) => {
+      serverConfigSubscribers.add(queue);
+      return () => serverConfigSubscribers.delete(queue);
+    },
+  );
+}
 
 // Unanswered calls stay pending, like a server that has not replied yet.
 const client = new Proxy(handlers, {
-  get: (target, method: string) =>
-    target[method] ??
-    (() => {
-      const rpc = WsRpcGroup.requests.get(method);
-      return rpc && RpcSchema.isStreamSchema(rpc.successSchema) ? Stream.never : Effect.never;
-    }),
+  get: (target, method: string) => (input: never) => {
+    rpcCalls.set(method, (rpcCalls.get(method) ?? 0) + 1);
+    const handler = target[method];
+    if (handler) return handler(input);
+    const rpc = WsRpcGroup.requests.get(method);
+    return rpc && RpcSchema.isStreamSchema(rpc.successSchema) ? Stream.never : Effect.never;
+  },
 });
 
 const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
   initialConfig: Effect.sync(serverConfig),
-  subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig() }]),
+  subscribeServerConfig,
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -576,6 +596,7 @@ export function installFakeEnvironment(
     keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
   };
   dispatched = [];
+  rpcCalls.clear();
   acceptCommands = options?.acceptCommands === true;
   projects = [
     project,
@@ -704,6 +725,21 @@ export function runningRun(threadId: ThreadId, id: string, ordinal: number, user
 }
 
 export { userItem };
+
+/** Requests and subscriptions the app opened, by method, since the environment was installed. */
+export function rpcCallCounts(): ReadonlyMap<string, number> {
+  return new Map(rpcCalls);
+}
+
+/** Pushes a provider status update, as the server does when it re-checks its providers. */
+export async function emitProviderStatuses(providers: ReadonlyArray<unknown>): Promise<void> {
+  const event: ServerConfigStreamEvent = {
+    version: 1,
+    type: "providerStatuses",
+    payload: { providers: makeServerConfig(providers).providers },
+  };
+  for (const queue of serverConfigSubscribers) await Effect.runPromise(Queue.offer(queue, event));
+}
 
 export async function emitVcsStatus(event: VcsStatusStreamEvent): Promise<void> {
   if (vcsStatusSubscriber === null) throw new Error("No VCS status subscription");

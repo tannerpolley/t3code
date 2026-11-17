@@ -34,6 +34,8 @@ export interface ScenarioReport {
   readonly commits: number | null;
   readonly renders: number;
   readonly components: Readonly<Record<string, number>>;
+  /** Store and atom subscriptions the mounted tree holds at the window's end, where measured. */
+  readonly subscriptions?: number;
 }
 export type RenderMetrics = Readonly<Record<string, ScenarioReport>>;
 
@@ -82,18 +84,25 @@ const change = (before: number | null, after: number | null) =>
 
 export function renderComparison(before: RenderMetrics, after: RenderMetrics, top = 10): string {
   const scenarios = [...new Set([...Object.keys(before), ...Object.keys(after)])].toSorted();
+  const subscriptions = scenarios.some(
+    (scenario) =>
+      before[scenario]?.subscriptions !== undefined || after[scenario]?.subscriptions !== undefined,
+  );
   const lines = [
     "### Render scenarios",
     "",
-    "| scenario | commits | renders |",
-    "| :-- | --: | --: |",
+    `| scenario | commits | renders |${subscriptions ? " subscriptions |" : ""}`,
+    `| :-- | --: | --: |${subscriptions ? " --: |" : ""}`,
   ];
   const empty: ScenarioReport = { commits: 0, renders: 0, components: {} };
   for (const scenario of scenarios) {
     const a = before[scenario] ?? empty;
     const b = after[scenario] ?? empty;
+    const held = subscriptions
+      ? ` ${change(a.subscriptions ?? null, b.subscriptions ?? null)} |`
+      : "";
     lines.push(
-      `| ${scenario} | ${change(a.commits, b.commits)} | ${change(a.renders, b.renders)} |`,
+      `| ${scenario} | ${change(a.commits, b.commits)} | ${change(a.renders, b.renders)} |${held}`,
     );
   }
   for (const scenario of scenarios) {
