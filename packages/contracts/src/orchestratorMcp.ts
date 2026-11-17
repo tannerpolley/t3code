@@ -268,6 +268,10 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description:
       "Present on the delegate_task result when the role's default worktree was not possible and the child shares this thread's checkout instead.",
   }),
+  modelNote: Schema.optional(Schema.String).annotate({
+    description:
+      "Present on the delegate_task result when no choice of the role's model role was available and the child uses this thread's model instead.",
+  }),
   waitingOnUser: Schema.optional(
     Schema.Struct({
       kind: Schema.Literals(["input", "approval"]),

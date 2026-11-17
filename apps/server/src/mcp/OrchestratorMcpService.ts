@@ -70,6 +70,9 @@ import {
   latestProviderTurnForAttempt,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
+  type RepositoryUsageSprint,
+  resolveThreadRole,
+  type ThreadRole,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -108,6 +111,7 @@ import {
   checkDelegateTarget,
   LISTED_MODEL_LIMIT,
   modelRoleStatuses,
+  roleDefaultTarget,
   unavailableModelMessage,
 } from "./delegateTaskTarget.ts";
 import { lineageUsageSprint, usageSprintRefusal } from "../issues/usageSprint.ts";
@@ -1519,6 +1523,27 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(threadManagementFailure));
 
+  const loadRoleDefaultTarget = Effect.fn("OrchestratorMcpService.loadRoleDefaultTarget")(
+    function* (
+      threadRole: ThreadRole,
+      providers: ReadonlyArray<ServerProvider>,
+      usageSprint: RepositoryUsageSprint | undefined,
+    ) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const roles = modelRoleStatuses(
+        settings.modelRoles,
+        providers,
+        yield* loadOrchestrationCapableInstanceIds(),
+        yield* Clock.currentTimeMillis,
+        settings.workerProvider,
+        usageSprint,
+      );
+      return roleDefaultTarget(roles, threadRole);
+    },
+  );
+
   const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
     const instanceId =
       input.target?.providerInstanceId ??
@@ -2769,16 +2794,26 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      const usageSprint = yield* loadUsageSprint(parent.thread);
+      const roleDefault =
+        input.role === undefined ||
+        input.role === "general" ||
+        input.target?.providerInstanceId !== undefined ||
+        input.target?.driverKind !== undefined ||
+        input.target?.model !== undefined ||
+        input.target?.options !== undefined
+          ? undefined
+          : yield* loadRoleDefaultTarget(resolveThreadRole(input.role)!, providers, usageSprint);
       const target = yield* resolveTargetRechecking({
         parent,
-        target: input.target,
+        target:
+          roleDefault === undefined || typeof roleDefault === "string"
+            ? input.target
+            : { ...input.target, ...roleDefault },
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
-      const sprintRefusal = usageSprintRefusal(
-        yield* loadUsageSprint(parent.thread),
-        target.modelSelection.instanceId,
-      );
+      const sprintRefusal = usageSprintRefusal(usageSprint, target.modelSelection.instanceId);
       if (sprintRefusal !== null) return yield* failure("provider_unavailable", sprintRefusal);
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
@@ -2818,8 +2853,11 @@ const make = Effect.gen(function* () {
             ),
           );
       }
-      const withNote = (result: OrchestratorMcpDelegateTaskResult) =>
-        workspace.note === undefined ? result : { ...result, workspaceNote: workspace.note };
+      const withNote = (result: OrchestratorMcpDelegateTaskResult) => ({
+        ...result,
+        ...(workspace.note === undefined ? {} : { workspaceNote: workspace.note }),
+        ...(typeof roleDefault === "string" ? { modelNote: roleDefault } : {}),
+      });
       const taskCommand = {
         type: "delegated_task.request",
         ...(linkedIssue === undefined ? {} : { issue: linkedIssue }),

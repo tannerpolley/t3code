@@ -13,6 +13,7 @@ import {
   type ServerProvider,
   type ServerSettings,
   type ServerProviderUsageWindow,
+  type ThreadRole,
 } from "@t3tools/contracts";
 import { withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { elapsedShare, paceOf, remainingPercent } from "@t3tools/shared/usageLimits";
@@ -207,6 +208,26 @@ export function workerProviderTargets<T extends ModelRoleTarget>(
   );
   const [first, ...rest] = matching;
   return first === undefined ? role.targets : [first, ...rest];
+}
+
+/**
+ * The first choice of the model role a thread role delegates to, from `modelRoleStatuses`
+ * order; implementors use Implementor, not Sprinter. A string explains why none is available.
+ */
+export function roleDefaultTarget(
+  roles: ReadonlyArray<OrchestratorMcpModelRole>,
+  threadRole: ThreadRole,
+): ModelRoleTarget | string | undefined {
+  const role = roles.find(
+    (entry) =>
+      (entry.role ?? resolveThreadRole(entry.id)) === threadRole &&
+      (threadRole !== "implementor" || entry.profile === "thorough"),
+  );
+  if (role === undefined) return undefined;
+  const [{ providerInstanceId, model, options, unavailableReason }] = role.targets;
+  if (unavailableReason !== null)
+    return `No ${role.name} model role choice is available, so the child uses this thread's model. First choice: ${unavailableReason}`;
+  return { providerInstanceId, model, ...(options === undefined ? {} : { options }) };
 }
 
 const MIN_WEEKLY_HEADROOM = 0.8;
