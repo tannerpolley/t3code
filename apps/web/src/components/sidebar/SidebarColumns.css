@@ -43,8 +43,8 @@
 /*
  * The model name and version, the effort bars, then the name, all in one nowrap row, so the bars
  * never wrap off the row. When a role title is the name and the row is short, the version drops
- * first, then the model name narrows, and the title only when the bars and 6ch of it fill the row.
- * Any other name gives way first.
+ * first, then the title truncates to its reserve, and only then does the model name truncate.
+ * Any other name gives way first, as before.
  */
 @utility sidebar-thread-main {
   @apply flex min-w-0 items-center overflow-hidden;
@@ -71,16 +71,8 @@
 .sidebar-thread-name:not(:first-child) {
   margin-inline-start: 0.375rem;
 }
-.sidebar-thread-main:has(.sidebar-role-title) {
-  & .sidebar-thread-name {
-    flex-shrink: 1;
-  }
-  & .sidebar-thread-model-name {
-    flex-shrink: 1000;
-  }
-  & .sidebar-thread-model-version {
-    flex-shrink: 1000000;
-  }
+.sidebar-thread-main:has(.sidebar-role-title) .sidebar-thread-model-version {
+  flex-shrink: 1000000;
 }
 @container (width < 8.5rem) {
   .sidebar-thread-main:has(.sidebar-role-title) .sidebar-thread-model-version {
