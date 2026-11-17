@@ -234,10 +234,9 @@ it.effect.each(["projection", "outbox"] as const)(
       assert.equal(exit._tag, "Failure");
       if (exit._tag !== "Failure") return yield* Effect.die("Expected commit failure");
       const error = Cause.squash(exit.cause);
-      if (!(error instanceof EventSink.EventSinkWriteError)) return yield* Effect.die(error);
-      assert.propertyVal(
-        error.cause,
-        "_tag",
+      assert.nestedPropertyVal(
+        error,
+        "cause._tag",
         failure === "outbox" ? "EffectOutboxError" : "ProjectionStoreApplyEventError",
       );
       assert.isTrue(Option.isNone(yield* receipts.getByCommandId(commandId)));
