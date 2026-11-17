@@ -1039,6 +1039,7 @@ describe("OrchestratorMcpService provider resolution", () => {
   it.effect.each([
     ["role without a target uses the role's first available choice", "designer", {}, "gpt-5.5"],
     ["implementor uses the Implementor role, not Sprinter", "implementor", {}, "gpt-5.5"],
+    ["sprinter uses the Sprinter role", "sprinter", {}, "gpt-5.4"],
     ["explicit target wins", "designer", { model: "gpt-5.4" }, "gpt-5.4"],
     ["unconfigured role copies the parent", "checker", {}, "gpt-5.4"],
     ["no available choice copies the parent and says so", "reviewer", {}, "gpt-5.4"],

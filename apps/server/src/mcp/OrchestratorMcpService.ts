@@ -71,8 +71,6 @@ import {
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
   type RepositoryUsageSprint,
-  resolveThreadRole,
-  type ThreadRole,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -1525,7 +1523,7 @@ const make = Effect.gen(function* () {
 
   const loadRoleDefaultTarget = Effect.fn("OrchestratorMcpService.loadRoleDefaultTarget")(
     function* (
-      threadRole: ThreadRole,
+      requestedRole: string,
       providers: ReadonlyArray<ServerProvider>,
       usageSprint: RepositoryUsageSprint | undefined,
     ) {
@@ -1540,7 +1538,7 @@ const make = Effect.gen(function* () {
         settings.workerProvider,
         usageSprint,
       );
-      return roleDefaultTarget(roles, threadRole);
+      return roleDefaultTarget(roles, requestedRole);
     },
   );
 
@@ -2803,7 +2801,7 @@ const make = Effect.gen(function* () {
         input.target?.model !== undefined ||
         input.target?.options !== undefined
           ? undefined
-          : yield* loadRoleDefaultTarget(resolveThreadRole(input.role)!, providers, usageSprint);
+          : yield* loadRoleDefaultTarget(input.role, providers, usageSprint);
       const target = yield* resolveTargetRechecking({
         parent,
         target:

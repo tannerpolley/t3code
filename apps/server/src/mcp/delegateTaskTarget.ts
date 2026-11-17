@@ -1,5 +1,6 @@
 import {
   isProviderAvailable,
+  modelRoleProfile,
   type ModelRole,
   type ModelRoleTarget,
   resolveThreadRole,
@@ -13,7 +14,6 @@ import {
   type ServerProvider,
   type ServerSettings,
   type ServerProviderUsageWindow,
-  type ThreadRole,
 } from "@t3tools/contracts";
 import { withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { elapsedShare, paceOf, remainingPercent } from "@t3tools/shared/usageLimits";
@@ -211,17 +211,23 @@ export function workerProviderTargets<T extends ModelRoleTarget>(
 }
 
 /**
- * The first choice of the model role a thread role delegates to, from `modelRoleStatuses`
- * order; implementors use Implementor, not Sprinter. A string explains why none is available.
+ * The first choice, in `modelRoleStatuses` order, of the model role a requested
+ * `delegate_task` role names. Implementors get Implementor unless the name means
+ * the fast profile, such as `sprinter`. A string explains why none is available.
  */
 export function roleDefaultTarget(
   roles: ReadonlyArray<OrchestratorMcpModelRole>,
-  threadRole: ThreadRole,
+  requestedRole: string,
 ): ModelRoleTarget | string | undefined {
+  const threadRole = resolveThreadRole(requestedRole);
+  const profile =
+    requestedRole === "implementor" || requestedRole === "implementation"
+      ? "thorough"
+      : modelRoleProfile(requestedRole);
   const role = roles.find(
     (entry) =>
       (entry.role ?? resolveThreadRole(entry.id)) === threadRole &&
-      (threadRole !== "implementor" || entry.profile === "thorough"),
+      (profile === undefined || (entry.profile ?? modelRoleProfile(entry.id)) === profile),
   );
   if (role === undefined) return undefined;
   const [{ providerInstanceId, model, options, unavailableReason }] = role.targets;
