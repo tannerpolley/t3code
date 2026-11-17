@@ -2,7 +2,6 @@ import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
 import { isDelegatedAppThread } from "@t3tools/contracts";
 import { silentWakeAction, SILENT_WAKE_FOLLOWUP, SILENT_WAKE_ATTENTION } from "./SilentWake.ts";
 import { repositoryPhase } from "@t3tools/contracts";
-import { isReadOnlyIssueRole } from "../issues/IssueEligibility.ts";
 import type {
   OrchestrationV2ThreadLinkMetadata,
   GuestShareId,
@@ -18,7 +17,6 @@ import {
 import { makeIssueQueueCommands } from "../issues/IssueQueueCommands.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { makeAppOwnedUserInputCommands } from "./AppOwnedUserInputCommands.ts";
-import { supportsManagedIssueWork, managedIssueProviderError } from "../issues/IssueEligibility.ts";
 import { effectiveThreadRole, issueThreadTitle, worktreeRole } from "@t3tools/contracts";
 import {
   latestExecutedRun,
@@ -171,7 +169,6 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   IssueReadSnapshots,
-  IssueQueueReads,
   IssueQueueRefreshRequired,
   makeIssueWorkDispatch,
 } from "./IssueWorkDispatch.ts";
@@ -1665,7 +1662,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     threadExecutor,
     threadDispatch,
     readIssueSnapshots,
-    readIssueQueueSnapshots,
+    withAdmissionReads,
     promoteOtherIssueQueues,
   } = yield* makeIssueWorkDispatch;
   const issueWorkRecovery = yield* makeIssueWorkRecovery;
@@ -9815,12 +9812,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
-      if (request.issue !== undefined && !supportsManagedIssueWork(targetAdapter.driver))
-        return yield* new OrchestratorDispatchError({
-          commandId: request.commandId,
-          commandType: request.type,
-          detail: managedIssueProviderError,
-        });
+      yield* issueWork.guardDelegatedProvider(request, targetAdapter.driver);
 
       const now = request.createdAt ?? (yield* DateTime.now);
       if (
@@ -16355,15 +16347,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       yield* repositoryWork.continueQueues(command, startNextQueuedRun);
-      for (const stored of committed.storedEvents) {
-        if (stored.event.type !== "run.created" || stored.event.payload.status !== "queued")
-          continue;
-        const shell = yield* projectionStore
-          .getThreadShell(stored.event.threadId)
-          .pipe(mapDispatchError(command));
-        if (shell?.linkedIssue !== undefined || (shell !== null && isReadOnlyIssueRole(shell.role)))
-          yield* mapDispatchError(command)(startNextQueuedRun(stored.event.threadId));
-      }
+      yield* issueWork.continueAdmissions(command, committed.storedEvents, startNextQueuedRun);
       // A concurrent command with this id for another thread can commit first,
       // under that thread's lock; its receipt is not this command's result.
       if (committed.receipt.threadId !== commandThreadId(command)) {
@@ -16430,63 +16414,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
-  // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
+  // dispatchWithReceiptEffect owns the span; issue policy supplies reads before locking.
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
-    const needsReads =
-      command.type === "issue.work.start" ||
-      command.type === "issue.work.close-out" ||
-      command.type === "issue.queue.deliver" ||
-      command.type === "delegated_task.request" ||
-      command.type === "message.dispatch" ||
-      command.type === "prepared-run.retry" ||
-      command.type === "queue.resume" ||
-      command.type === "repository.work.continue";
-    const receipt = needsReads
-      ? yield* commandReceipts.getByCommandId(command.commandId).pipe(mapDispatchError(command))
-      : Option.none();
-    if (command.type === "issue.queue.deliver" && Option.isNone(receipt)) {
-      let attempts = 1;
-      for (let attempt = 0; attempt < attempts; attempt++) {
-        const preflight = yield* readIssueQueueSnapshots(command.threadId).pipe(
-          mapDispatchError(command),
-        );
-        if (attempt === 0) attempts = Math.max(1, preflight.queueLength);
-        const result = yield* threadDispatch
-          .withLock(
-            command.threadId,
-            dispatchWithReceiptEffect(command).pipe(
-              Effect.provideService(IssueQueueReads, preflight.reads),
-            ),
-          )
-          .pipe(Effect.result);
-        if (result._tag === "Success") return result.success;
-        if (
-          result.failure._tag !== "OrchestratorDispatchError" ||
-          !isIssueQueueRefreshRequired(result.failure.cause)
-        )
-          return yield* result.failure;
-      }
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "The issue queue kept changing during refresh. Retry delivery.",
-      });
-    }
-    const issueReads =
-      needsReads &&
-      (Option.isNone(receipt) ||
-        command.type === "queue.resume" ||
-        command.type === "repository.work.continue")
-        ? yield* readIssueSnapshots(
-            commandThreadId(command),
-            "issue" in command && command.issue !== undefined ? [command.issue] : [],
-            command.type === "repository.work.continue",
-            command.type === "issue.work.start",
-          ).pipe(mapDispatchError(command))
-        : [];
-    const dispatchCommand: OrchestrationV2ServerCommand = needsReads
-      ? { ...command, issueReads }
-      : command;
+    return yield* withAdmissionReads(command, dispatchWithLocks, dispatchWithReceiptEffect, {
+      commandThreadId,
+      mapDispatchError,
+      OrchestratorDispatchError,
+    });
+  });
+  // The admission wrapper supplies snapshots before any planning locks are taken.
+  const dispatchWithLocks = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+    const dispatchCommand = command;
     const dispatchEffect = dispatchWithReceiptEffect(dispatchCommand);
     const repositoryLocks = yield* repositoryWork.dispatchLockKeys(command);
     if (repositoryLocks !== undefined)

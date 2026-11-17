@@ -110,7 +110,6 @@ import {
   modelRoleStatuses,
   unavailableModelMessage,
 } from "./delegateTaskTarget.ts";
-import { isReadOnlyIssueRole } from "../issues/IssueEligibility.ts";
 import { lineageUsageSprint, usageSprintRefusal } from "../issues/usageSprint.ts";
 import {
   DispatchModeLimit,
@@ -2903,31 +2902,16 @@ const make = Effect.gen(function* () {
           ? awaitTask(scope, taskId, key, input.timeoutMs)
           : readTask(scope, taskId, false, true),
       );
-      if (taskResult.status !== "queued" || Option.isNone(issueWork)) return taskResult;
-      const root =
-        parent.thread.repositoryOrchestration === undefined
-          ? yield* threadManagement.getThreadRecords(parent.thread.lineage.rootThreadId, []).pipe(
-              Effect.map((records) => records.thread),
-              Effect.mapError(threadManagementFailure),
-            )
-          : parent.thread;
-      const config = root?.repositoryOrchestration;
-      if (config === undefined) return taskResult;
-      const status = yield* issueWork.value
-        .repositoryStatus(config)
-        .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
-      const readers = isReadOnlyIssueRole(taskCommand.role);
-      if (!readers && linkedIssue === undefined) return taskResult;
-      const current = status.orchestration;
-      if (current === null) return taskResult;
-      const limit = readers ? current.readOnlyLimit : current.workerLimit;
-      const used = readers ? status.readOnlySlotsInUse : status.slotsInUse;
-      return used < limit
-        ? taskResult
-        : {
-            ...taskResult,
-            queueNote: `Queued on the ${readers ? "readers" : "workers"} pool: ${used} of ${limit} slots in use.`,
-          };
+      return yield* managedIssueDelegation.withQueueNote(
+        taskResult,
+        parent.thread,
+        taskCommand,
+        (id) =>
+          threadManagement.getThreadRecords(id, []).pipe(
+            Effect.map((records) => records.thread),
+            Effect.mapError(threadManagementFailure),
+          ),
+      );
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");
