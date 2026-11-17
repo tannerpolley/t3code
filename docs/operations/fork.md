@@ -18,72 +18,17 @@ instead of naming a host, because the 2026-11-10 move missed copies in both (#38
 host changes, update this section, then search every project's scheduled task prompts, the
 `skills` repository and each repository's docs and scripts for the old host.
 
-From 2026-11-02 to 2026-11-10 the owner's repositories lived on a Forgejo server on this desktop
-(`https://tnnrpolley21-ms-7c95.taila72856.ts.net:3000`, system service `forgejo`, data in
-`/srv/forgejo`). The owner moved everything back with `switch-to-github`
-(`~/.local/bin/forgejo-github-sync --switch`). Forgejo is now a read-only archive: every
-repository there is archived, the `forgejo-github-sync` and `forgejo-merge-repair` user timers
-are disabled, and the nightly `forgejo-backup` timer still copies it to
-`chromebox:backups/forgejo`. Never push, open pull requests or write issues there.
-
-Forgejo pull requests were copied to GitHub as closed issues titled "Pull request: …", so most
-numbers match. Forgejo issues #289 to #320 are GitHub #288 to #305; their GitHub bodies end with
-"Was Forgejo issue #N". `~/.local/state/forgejo-github-sync/<repo>.json` holds the full map for
-every repository.
+Forgejo is a read-only archive of the 2026-11-02 to 2026-11-10 period; never write to it.
 
 The upstream remote is named `pingdotgg`, not `upstream`: T3 keys a project on a remote named
 `upstream` before `origin`, which would key the project on pingdotgg's repository instead of the
 fork's.
 
-## Forgejo issue host
+## Issue host
 
-The fork's issue features (Issues pane, inbox, roadmap, managed `delegate_task(issue=…)`,
-`t3_issue_post`, and `propose_issue_change`) support Forgejo. A host is Forgejo when an `fj`
-login key matches it, including the port; GitLab hosts come from `glab auth status --all`,
-and unclaimed hosts use GitHub. Logins are read at server
-start, so restart T3 after adding one. Store the Forgejo token with `git credential approve` in
-the git libsecret helper; `fj` does not install a git credential helper.
-
-Forgejo has no sub-issues: T3 writes `Part of #N <!-- t3:parent=N -->` in the child body,
-within the same repository. Blockers use Forgejo issue dependencies; Forgejo refuses to close
-an issue with open dependencies (HTTP 412). A fast-forward push of `main` marks a pull request
-merged only if its branch still exists when Forgejo checks, so land through Forgejo's merge
-instead; on manual detection Forgejo also does not close the issues its body names.
-T3 closes them, with a comment, once it sees a pull request linked to a thread merge; for an
-unlinked pull request, put `Closes #N` in a pushed commit message or close the issue explicitly.
-
-T3's Forgejo host reads no Projects, and Forgejo sends no ETags, so lists are plain re-reads.
-The `state_reason` “not planned” is represented by a close and a comment.
-
-## GitLab issue host
-
-Authenticate with `glab auth login`, then restart T3 to discover self-managed hosts (including
-ports). GitLab.com is recognized before login. Group and subgroup project paths are supported.
-Sub-issues use the same body markers as Forgejo. Blocking links depend on the project tier and
-are unsupported; GitLab has no live issue inbox polling in T3. Labels and milestones work.
-After a linked merge request merges, T3 uses GitLab's closing-reference resolution and closes
-any named issues still open, including cross-project references.
-
-## git-bug issue host (prototype)
-
-A repository opts in with `git config t3.issues git-bug` in any of its checkouts (the setting is
-shared by linked worktrees). Its projects then read and write issues stored in the repository by
-[git-bug](https://github.com/git-bug/git-bug) (v0.11.0 tested) under the issue host `git-bug`,
-while pull requests stay on the remote's host. Install `git-bug` on the server's PATH and create
-or adopt an identity in the repository (`git bug user new`) first. Restart T3 after opting in: as
-with Forgejo logins, the git-bug host is added at server start.
-
-T3 runs every git-bug command for a repository in one in-process queue, because git-bug fails
-rather than waits when another command holds its repository lock; the user's own `git bug`
-commands can still collide with T3's. Issue numbers are git-bug's 7-hex-digit id read as a
-number. Labels work; milestones, sub-issues, blockers, assignees, closing from merged pull
-requests and inbox notifications do not.
-
-Issues travel as `refs/bugs/*` and `refs/identities/*`. Forgejo accepts them; push with
-`git push origin 'refs/bugs/*:refs/bugs/*' 'refs/identities/*:refs/identities/*'`. `git bug
-push` and `git bug pull` do not use git's credential helper, so they fail against an HTTPS
-remote that needs the Forgejo token. A plain fetch of the same refspecs works when only one side
-changed an issue; git-bug then needs its cache rebuilt (`rm -r .git/git-bug/cache`).
+GitHub is the only active issue host. Forgejo, GitLab and git-bug issue adapters and login
+discovery are no longer supported. Historical issue records and links remain readable;
+T3 does not fetch or write issues on those retired hosts.
 
 ## Branches and worktrees
 

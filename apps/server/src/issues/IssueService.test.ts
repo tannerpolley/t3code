@@ -18,9 +18,6 @@ import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/Git
 import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
 
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
-import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as IssueService from "./IssueService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
@@ -1468,61 +1465,6 @@ it.effect("continues milestones after issues finish and does not request issues 
   }),
 );
 
-it.effect("addresses nested paths only on GitLab-routed hosts", () => {
-  const paths: string[] = [];
-  return Effect.gen(function* () {
-    const harness = makeHarness({ responses: [] });
-    const issues = yield* service(harness);
-    const list = yield* issues.list({
-      host: "gitlab.example:8443",
-      repository: "group/subgroup/repo",
-    });
-    assert.equal(list.repository.repository, "group/subgroup/repo");
-    assert.isTrue(
-      paths.some((path) => path.startsWith("projects/group%2Fsubgroup%2Frepo/issues?")),
-    );
-    for (const host of [HOST, "forge.example:3000"]) {
-      const error = yield* issues
-        .list({ host, repository: "group/subgroup/repo" })
-        .pipe(Effect.flip);
-      assert.equal(error.code, "scope-unavailable");
-    }
-    assert.deepEqual(harness.calls, []);
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        Layer.mock(GitLabCli.GitLabCli)({
-          execute: (input) => {
-            const auth = input.args[0] === "auth";
-            const path = input.args[3] ?? "";
-            paths.push(path);
-            return Effect.succeed({
-              stdout: auth
-                ? "gitlab.example:8443\n  Logged in to gitlab.example:8443 as alice"
-                : JSON.stringify(path === "user" ? { id: 1, username: "alice" } : []),
-              stderr: "",
-              exitCode: ChildProcessSpawner.ExitCode(0),
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            });
-          },
-        }),
-        Layer.mock(ForgejoCli.ForgejoCli)({
-          listLogins: () =>
-            Effect.succeed([
-              {
-                name: "forge.example:3000",
-                url: "https://forge.example:3000",
-                user: "",
-                default: "false",
-              },
-            ]),
-        }),
-      ),
-    ),
-  );
-});
-
 it.effect("rejects a repository that cannot be addressed before calling GitHub", () =>
   Effect.gen(function* () {
     const harness = makeHarness({ responses: [] });
@@ -1877,70 +1819,6 @@ it.effect("lists only repositories the viewer owns or administers, across pages"
     assert.include(harness.calls[0]!.url, "user/repos?affiliation=owner,organization_member");
     assert.include(harness.calls[1]!.url, "page=2");
   }),
-);
-
-it.effect(
-  "hides GitHub copies of the viewer's live Forgejo repositories and names them on the Forgejo one",
-  () => {
-    const forgejoRepository = (fullName: string, archived = false) => ({
-      id: fullName.length,
-      full_name: fullName,
-      owner: { login: fullName.split("/")[0] },
-      private: false,
-      archived,
-      fork: false,
-      has_issues: true,
-      open_issues_count: 1,
-    });
-    return Effect.gen(function* () {
-      const harness = makeHarness({
-        responses: [httpResponse([rawRepository("octocat/app"), rawRepository("octocat/digest")])],
-      });
-      const issues = yield* service(harness);
-      const result = yield* issues.repositories();
-
-      assert.deepEqual(
-        result.repositories.map((repository) => [
-          repository.host,
-          repository.repository,
-          repository.githubCopy,
-        ]),
-        [
-          ["github.com", "octocat/digest", undefined],
-          ["forge.example:3000", "OctoCat/App", { host: "github.com", repository: "octocat/app" }],
-          ["forge.example:3000", "OctoCat/Digest", undefined],
-        ],
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ForgejoCli.ForgejoCli)({
-          listLogins: () =>
-            Effect.succeed([
-              {
-                name: "forge.example:3000",
-                url: "https://forge.example:3000",
-                user: "",
-                default: "false",
-              },
-            ]),
-          api: (input) =>
-            Effect.succeed({
-              stdout: JSON.stringify(
-                input.path === "user"
-                  ? { id: 1, login: "octocat" }
-                  : input.path.startsWith("user/repos")
-                    ? [forgejoRepository("OctoCat/App"), forgejoRepository("OctoCat/Digest", true)]
-                    : [],
-              ),
-              stderr: "",
-              exitCode: ChildProcessSpawner.ExitCode(0),
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            }),
-        }),
-      ),
-    );
-  },
 );
 
 it.effect("maps credential failures without exposing credential details", () =>
@@ -2801,42 +2679,3 @@ it.effect("inbox labels preserve existing labels and tolerate a failed create", 
     assert.isTrue(harness.calls[5]!.url.endsWith("/issues/7/labels/decision-needed"));
   }),
 );
-
-it.effect("routes an fj login key including its port to Forgejo without GitHub fallthrough", () => {
-  const forgejoHosts: Array<string> = [];
-  return Effect.gen(function* () {
-    const harness = makeHarness({ responses: [] });
-    const issues = yield* service(harness);
-    yield* issues
-      .updateBody({ host: "forge.example:3000", repository: REPOSITORY, number: 7, body: "edit" })
-      .pipe(Effect.result);
-    assert.deepStrictEqual(forgejoHosts, ["forge.example:3000"]);
-    assert.strictEqual(harness.calls.length, 0);
-  }).pipe(
-    Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
-        listLogins: () =>
-          Effect.succeed([
-            {
-              name: "forge.example:3000",
-              url: "https://forge.example:3000",
-              user: "",
-              default: "false",
-            },
-          ]),
-        api: (input) => {
-          forgejoHosts.push(input.host ?? "");
-          return Effect.fail(
-            new ForgejoCli.ForgejoCliError({
-              command: "fj",
-              cwd: input.cwd,
-              detail: "stop",
-              reason: "not-found",
-              httpStatus: 404,
-            }),
-          );
-        },
-      }),
-    ),
-  );
-});

@@ -14,10 +14,7 @@ it("addresses GitHub origins and rejects providers without an issue host", () =>
     },
     origin: { canonicalKey: "forge.example:3000/owner/repo", displayName: "owner/repo" },
   };
-  expect(issueRepositoryOf(identity)).toEqual({
-    host: "forge.example:3000",
-    repository: "owner/repo",
-  });
+  expect(issueRepositoryOf(identity)).toBeNull();
   expect(
     issueRepositoryOf({
       ...identity,
@@ -28,7 +25,7 @@ it("addresses GitHub origins and rejects providers without an issue host", () =>
   expect(
     issueRepositoryOf({ ...identity, provider: SourceControlProviderKind.make("bitbucket") }),
   ).toBeNull();
-  // A git-bug opt-in routes to the "git-bug" host whatever the remote's provider.
+  // Historical opt-ins remain decodable but cannot select an active issue host.
   for (const provider of ["forgejo", "bitbucket"])
     expect(
       issueRepositoryOf({
@@ -36,6 +33,6 @@ it("addresses GitHub origins and rejects providers without an issue host", () =>
         provider: SourceControlProviderKind.make(provider),
         issueHost: "git-bug",
       }),
-    ).toEqual({ host: "git-bug", repository: "owner/repo" });
+    ).toBeNull();
   expect(issueRepositoryOf(null)).toBeNull();
 });

@@ -77,6 +77,14 @@ describe("GitHub issue contract boundaries", () => {
     expect(
       decodeRef({ ...ref, host: "gitlab.com", repository: "group/subgroup/repo" }).repository,
     ).toBe("group/subgroup/repo");
+    for (const host of ["forge.example:3000", "gitlab.com", "git-bug"]) {
+      expect(
+        decodeDetailResult({
+          ...detailResult,
+          repository: { ...detailResult.repository, host },
+        }).repository.host,
+      ).toBe(host);
+    }
     for (const repository of ["owner//repo", "/owner/repo", "owner/repo/", "owner/re po"]) {
       expect(() => decodeRef({ ...ref, repository })).toThrow();
     }
