@@ -9,7 +9,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import { applyIssueQueueEvent, claimQueuedIssue } from "./IssueQueueStore.ts";
+import {
+  applyIssueQueueEvent,
+  claimQueuedIssue,
+  finishIssueQueueNotice,
+} from "./IssueQueueStore.ts";
 import type { ProjectionStoreApplyEventError } from "../orchestration-v2/ProjectionStore.ts";
 
 const encodeIssueCancellation = Schema.encodeEffect(Schema.fromJsonString(IssueWorkCancelled));
@@ -39,8 +43,15 @@ export const makeIssueWorkProjection = (
         )
       `;
 
+  /** Returns true for issue-only events, which leave nothing for the shared projection. */
   const applyEvent = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
     switch (event.type) {
+      case "run.created":
+      case "run.updated":
+        yield* finishIssueQueueNotice(event.payload).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+        );
+        return false;
       case "repository.work.restored":
         // Existing roots have no thread.created event to register their first owner.
         if (event.payload.previousRootThreadId === null) {
@@ -55,10 +66,10 @@ export const makeIssueWorkProjection = (
             event.occurredAt,
           );
         }
-        return;
+        return true;
       case "issue.queue.updated":
         yield* applyIssueQueueEvent(event).pipe(Effect.provideService(SqlClient.SqlClient, sql));
-        return;
+        return true;
       case "issue.work.cancelled": {
         const payload = yield* encodeIssueCancellation(event.payload);
         yield* sql`
@@ -67,7 +78,7 @@ export const makeIssueWorkProjection = (
                 WHERE request_id = ${event.payload.requestId}
                   AND json_type(payload_json, '$.cancellation') IS NULL
               `;
-        return;
+        return true;
       }
       case "issue.work.requested": {
         const request = event.payload;
@@ -100,7 +111,7 @@ export const makeIssueWorkProjection = (
                 VALUES (${request.requestId}, ${request.issue.host}, ${request.issue.repositoryId}, ${request.issue.repository}, ${request.issue.id}, ${request.issue.number}, ${request.attemptKey}, ${request.rootThreadId}, ${payloadJson}, ${DateTime.formatIso(event.occurredAt)})
                 ON CONFLICT(request_id) DO NOTHING
               `;
-        return;
+        return true;
       }
       case "issue.github-comment.recorded": {
         const receipt = event.payload;
@@ -133,10 +144,11 @@ export const makeIssueWorkProjection = (
                     updated_at = excluded.updated_at
                 `;
         }
-        return;
+        // A receipt still touches its thread's updatedAt.
+        return false;
       }
       default:
-        return;
+        return false;
     }
   });
   const applyThread = Effect.fnUntraced(function* (

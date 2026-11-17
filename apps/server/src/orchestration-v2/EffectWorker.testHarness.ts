@@ -166,10 +166,7 @@ function layerExecutorFor(input: {
           writeManagedComment: () => Effect.die("Issue comments are unused in this test"),
         }),
         Layer.mock(IssueChangeService.IssueChangeService)(input.changes ?? {}),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getIssueWorkCommentState: () => Effect.succeed(null),
-          getIssueCommentReceipt: () => Effect.succeed(null),
-        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
         Layer.mock(EventSink.EventSinkV2)({
           commitCommand: () => Effect.die("Issue comment receipts are unused in this test"),
         }),

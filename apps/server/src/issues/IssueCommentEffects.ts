@@ -23,6 +23,7 @@ import {
 import type { ProjectionStoreV2Shape } from "../orchestration-v2/ProjectionStore.ts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
+import { readIssueWorkCommentState } from "./IssueWorkProjection.ts";
 
 const decodeRequest = Schema.decodeEffect(Schema.fromJsonString(IssueWorkRequested));
 const decodeCommentEffect = Schema.decodeEffect(
@@ -173,8 +174,7 @@ export const enqueueIssueStatusEffects = Effect.fn("enqueueIssueStatusEffects")(
   }
   const revision = input.events.at(-1)?.sequence ?? 0;
   for (const issue of issues.values()) {
-    const work = yield* projections.getIssueWorkCommentState({
-      threadId: relevant[0]!.event.threadId,
+    const work = yield* readIssueWorkCommentState(sql, {
       host: issue.host,
       repositoryId: issue.repositoryId,
       issueId: issue.id,
@@ -216,8 +216,7 @@ export const refreshIssueStatus = Effect.fn("refreshIssueStatus")(function* (inp
       WHERE host = ${issue.host} AND repository_id = ${issue.repositoryId} AND publish_status_comments = 1
     `;
   if (policy[0] === undefined) return;
-  const work = yield* projections.getIssueWorkCommentState({
-    threadId: input.threadId,
+  const work = yield* readIssueWorkCommentState(sql, {
     host: issue.host,
     repositoryId: issue.repositoryId,
     issueId: issue.id,

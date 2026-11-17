@@ -220,8 +220,6 @@ it.effect(
         ProjectionStore.ProjectionStoreV2.of({
           issueWorkRevision: Effect.succeed(0),
           getIssueWorkThreads: () => Effect.succeed([]),
-          getIssueWorkCommentState: () => Effect.succeed(null),
-          getIssueCommentReceipt: () => Effect.succeed(null),
           apply: () => Effect.void,
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
           getRecentUsageLimitChildren: () => Effect.succeed([]),
