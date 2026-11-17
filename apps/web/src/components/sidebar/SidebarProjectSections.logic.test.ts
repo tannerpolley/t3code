@@ -111,6 +111,15 @@ describe("collectVisibleProjectThreadOrder", () => {
         otherProjectsExpanded: false,
       }),
     ).toEqual([]);
+    // A collapsed subsection hides its expanded projects; its parent's own projects stay.
+    expect(
+      collect({
+        sections: sections.map((section) =>
+          section.id === "client" ? { ...section, collapsed: true } : section,
+        ),
+        otherProjectsExpanded: false,
+      }),
+    ).toEqual(["a-1", "a-2", "b-1"].map(key));
   });
 
   it("includes expanded worktree workers before the next standalone thread", () => {

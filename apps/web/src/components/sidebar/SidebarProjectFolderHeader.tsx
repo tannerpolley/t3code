@@ -2,7 +2,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
-import { memo } from "react";
+import { memo, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { contextMenuSourceOf } from "../../contextMenuSource";
@@ -33,6 +33,21 @@ export function sidebarFolderRowId(projectKey: string) {
 }
 
 /**
+ * How a Projects section places the header: inside its own sortable item, with its own look,
+ * drag handle and controls. The header keeps the row ID, expansion, status dot and context menu.
+ */
+export interface SidebarProjectFolderPlacement {
+  /** The section's tree row, so arrow keys move between section, project and thread rows. */
+  readonly parentRow: string;
+  readonly button: ComponentProps<"button">;
+  readonly leading: ReactNode;
+  readonly titleClassName: string;
+  readonly trailing: ReactNode;
+  /** Sit beside the button, never inside it. */
+  readonly controls: ReactNode;
+}
+
+/**
  * A project folder in the boring sidebar. It reads like a shelf header: a trailing
  * count and chevron, with the count and a status dot only while it is closed, so a
  * closed folder still says when a hidden thread needs you.
@@ -48,23 +63,59 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
     position: { x: number; y: number },
     source: ContextMenuSource,
   ) => void;
+  placement?: SidebarProjectFolderPlacement | undefined;
 }) {
-  const { group, collapsed, hiddenThreads } = props;
+  const { group, collapsed, hiddenThreads, placement } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
-  const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const dot = collapsed
-    ? resolveSidebarFolderDot(
-        hiddenThreads.map((thread) => ({
-          ...thread,
-          lastVisitedAt: resolveThreadLastVisitedAt(
-            thread.lastVisitedAt,
-            localLastVisitedAtById[
-              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
-            ],
-          ),
-        })),
-      )
-    : null;
+  // Selecting the dot, not the visit map, keeps other visits from redrawing every folder.
+  const dot = useUiStateStore((state) =>
+    collapsed
+      ? resolveSidebarFolderDot(
+          hiddenThreads.map((thread) => ({
+            ...thread,
+            lastVisitedAt: resolveThreadLastVisitedAt(
+              thread.lastVisitedAt,
+              state.threadLastVisitedAtById[
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+              ],
+            ),
+          })),
+        )
+      : null,
+  );
+  const dotMark = dot ? (
+    <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
+      <span className="sr-only">{FOLDER_DOT_LABEL[dot]}</span>
+    </span>
+  ) : null;
+  if (placement) {
+    return (
+      <div data-testid="sidebar-project-folder" className="group/project-folder relative">
+        <button
+          type="button"
+          {...placement.button}
+          data-sidebar-row={rowId}
+          data-sidebar-parent={placement.parentRow}
+          aria-expanded={!collapsed}
+          onClick={() => props.onToggle(group)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            props.onContextMenu(
+              group,
+              { x: event.clientX, y: event.clientY },
+              contextMenuSourceOf(event),
+            );
+          }}
+        >
+          {placement.leading}
+          <span className={placement.titleClassName}>{group.displayName}</span>
+          {dotMark}
+          {placement.trailing}
+        </button>
+        {placement.controls}
+      </div>
+    );
+  }
   return (
     <li
       data-testid="sidebar-project-folder"
@@ -89,11 +140,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
           {group.displayName}
         </span>
-        {dot ? (
-          <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
-            <span className="sr-only">{FOLDER_DOT_LABEL[dot]}</span>
-          </span>
-        ) : null}
+        {dotMark}
         {collapsed && hiddenThreads.length > 0 ? (
           <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
             {hiddenThreads.length}
