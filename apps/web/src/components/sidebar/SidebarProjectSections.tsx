@@ -1096,35 +1096,37 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   );
   const { folderColor, forceFolder } = useProjectFolderAppearance(project.projectKey);
   const familyStyle = useClientSettings((settings) => settings.sidebarFamilyStyle);
-  // Selecting this project's lines as text, not the whole expansion record, re-renders the
-  // project and its rows only when its own lines change.
-  const familySeparatorsText = useUiStateStore((state) =>
-    codexStyle && familyStyle === "lines" && props.isProjectExpanded
-      ? JSON.stringify([
-          ...resolveSidebarFamilySeparators(
-            collectDisplayedFamilyRows({
-              ...props,
-              expandedByKey: state.sidebarWorkExpandedById,
-            }),
-          ),
-        ])
-      : "",
-  );
-  // Only the displayed lead keys subscribe this project to expansion changes.
-  const leadKeyList = useUiStateStore((state) => {
+  // Each row's own block (its row and its displayed work) of separators and location leads, as
+  // text: changing one row's work re-renders that row and only rows whose marks changed.
+  const familyBlocksText = useUiStateStore((state) => {
     if (!codexStyle || !props.isProjectExpanded) return "";
     const rows = collectDisplayedFamilyRows({
       ...props,
       expandedByKey: state.sidebarWorkExpandedById,
     });
-    return [
-      ...resolveLocationLeads(
-        rows.flatMap(({ thread, topLevel }) => (thread === null ? [] : [{ thread, topLevel }])),
-      ).values(),
-    ]
-      .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
-      .join("\n");
+    const separators =
+      familyStyle === "lines"
+        ? resolveSidebarFamilySeparators(rows)
+        : new Map<string, SidebarFamilySeparator>();
+    const leads = new Set(
+      [
+        ...resolveLocationLeads(
+          rows.flatMap(({ thread, topLevel }) => (thread === null ? [] : [{ thread, topLevel }])),
+        ).values(),
+      ].map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    );
+    const blocks: Record<string, SidebarFamilyBlock> = {};
+    let block: SidebarFamilyBlock = { separators: [], leads: [] };
+    for (const row of rows) {
+      if (row.topLevel) block = blocks[row.key] = { separators: [], leads: [] };
+      const separator = separators.get(row.key);
+      if (separator !== undefined) block.separators.push([row.key, separator]);
+      if (leads.has(row.key)) block.leads.push(row.key);
+    }
+    return JSON.stringify(blocks);
   });
+  const familyBlocks: Record<string, SidebarFamilyBlock> =
+    familyBlocksText === "" ? {} : JSON.parse(familyBlocksText);
   const toggle = () => {
     if (canWrite) props.onToggleProject(project.projectKey, !props.isProjectExpanded);
   };
@@ -1292,8 +1294,15 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               thread={thread}
               navigationParent={sidebarFolderRowId(project.projectKey)}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
-              locationLeadText={codexStyle ? leadKeyList : undefined}
-              familySeparatorsText={familySeparatorsText}
+              familyBlockText={
+                codexStyle
+                  ? JSON.stringify(
+                      familyBlocks[
+                        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+                      ] ?? EMPTY_FAMILY_BLOCK,
+                    )
+                  : undefined
+              }
             />
           ))}
           {props.threads.length === 0 ? (
@@ -1341,12 +1350,12 @@ const THREAD_STATUS_DOT_CLASS = {
   working: "bg-info",
 } as const;
 
-/** Parses the project's separators, sent as text so equal text means an equal map. */
-function parseFamilySeparators(text: string) {
-  if (text === "") return undefined;
-  const entries: Array<[string, SidebarFamilySeparator]> = JSON.parse(text);
-  return new Map(entries);
-}
+type SidebarFamilyBlock = {
+  separators: Array<[string, SidebarFamilySeparator]>;
+  /** Keys of threads that carry their location's icon; see `resolveLocationLeads`. */
+  leads: string[];
+};
+const EMPTY_FAMILY_BLOCK: SidebarFamilyBlock = { separators: [], leads: [] };
 
 /**
  * A top-level Projects thread: the shared sidebar row, drawing the compact columns and the
@@ -1362,10 +1371,8 @@ const SidebarProjectThreadRow = memo(
     readonly assembly: SidebarThreadRowAssembly;
     readonly rowState: SidebarThreadRowState;
     readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-    /** Keys, one per line, of threads that carry their location's icon; see `resolveLocationLeads`. */
-    readonly locationLeadText: string | undefined;
-    /** The project's separators as JSON; equal text means an equal map. */
-    readonly familySeparatorsText: string;
+    /** This row's `SidebarFamilyBlock` as JSON, in Codex style; equal text means equal marks. */
+    readonly familyBlockText: string | undefined;
   }) {
     const { assembly, codexStyle, thread } = props;
     const threadRef = scopeThreadRef(thread.environmentId, thread.id);
@@ -1407,11 +1414,10 @@ const SidebarProjectThreadRow = memo(
     }));
     const providerEntries = assembly.providerEntriesByEnvironment.get(thread.environmentId);
     const provider = sidebarThreadProvider(providerEntries, thread.providerInstanceId);
-    const familySeparators = parseFamilySeparators(props.familySeparatorsText);
-    const locationLeadKeys =
-      props.locationLeadText === undefined
-        ? undefined
-        : new Set(props.locationLeadText.split("\n"));
+    const familyBlock: SidebarFamilyBlock | undefined =
+      props.familyBlockText === undefined ? undefined : JSON.parse(props.familyBlockText);
+    const familySeparators = familyBlock && new Map(familyBlock.separators);
+    const locationLeadKeys = familyBlock && new Set(familyBlock.leads);
     const role = sidebarRoleLabel(thread.source);
     const onChildClick = (event: ReactMouseEvent, child: SidebarThreadSummary) =>
       assembly.onThreadClick(event, scopeThreadRef(child.environmentId, child.id));
@@ -1626,8 +1632,7 @@ const SidebarProjectThreadRow = memo(
       previous.codexStyle === next.codexStyle &&
       previous.assembly === next.assembly &&
       sameSidebarThreadRowState(next.thread, previous.rowState, next.rowState) &&
-      previous.locationLeadText === next.locationLeadText &&
-      previous.familySeparatorsText === next.familySeparatorsText &&
+      previous.familyBlockText === next.familyBlockText &&
       sameSidebarSubagentTree(
         key,
         previous.runningSubagentsByParentKey,
