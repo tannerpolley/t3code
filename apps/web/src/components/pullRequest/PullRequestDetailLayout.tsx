@@ -37,7 +37,12 @@ export function PullRequestDetailHeaderBody({
         </PullRequestMetaLine>
         {checkout}
       </div>
-      <div className="mt-4 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
+      <div
+        className={cn(
+          "flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground",
+          branchLine === false ? "hidden" : "mt-4",
+        )}
+      >
         {branchLine ?? (
           <>
             <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
