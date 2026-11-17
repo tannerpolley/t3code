@@ -1,18 +1,21 @@
 import { useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { resolveProjectExpanded, useUiStateStore } from "../../uiStateStore";
+import { sidebarFolderExpansionKeys } from "../Sidebar.logic";
 import type { ProjectSectionDialogTarget } from "./SidebarProjectSections";
 
 /** The Projects sidebar view's mode, sections, project expansion, and section dialog state. */
-export function useSidebarProjectsView() {
+export function useSidebarProjectsView(
+  projectGroupByKey: ReadonlyMap<string, SidebarProjectSnapshot>,
+) {
   // Without the Projects view switched on, the sidebar is the vanilla Activity list.
   const storedSidebarMode = useUiStateStore((store) => store.sidebarMode);
   const projectsViewEnabled = useClientSettings((settings) => settings.projectsView);
   const sidebarMode = projectsViewEnabled ? storedSidebarMode : "activity";
   const setSidebarMode = useUiStateStore((store) => store.setSidebarMode);
   const sidebarProjectSections = useUiStateStore((store) => store.sidebarProjectSections);
-  const sectionFolderColors = useClientSettings((settings) => settings.sectionFolderColors);
   const sidebarOtherProjectsExpanded = useUiStateStore(
     (store) => store.sidebarOtherProjectsExpanded,
   );
@@ -37,22 +40,27 @@ export function useSidebarProjectsView() {
     openSectionDialog({ kind: "rename", id: section.id, name: section.name });
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
+  // Same keys as Activity's folders, so both views open and close one project together.
+  const projectExpansionKeys = (projectKey: string) => {
+    const group = projectGroupByKey.get(projectKey);
+    return group ? sidebarFolderExpansionKeys(group) : [projectKey];
+  };
   const isProjectExpanded = (projectKey: string) =>
-    resolveProjectExpanded(projectExpandedById, [projectKey]);
+    resolveProjectExpanded(projectExpandedById, projectExpansionKeys(projectKey));
   const toggleProjectExpanded = (projectKey: string, expanded: boolean) =>
-    setProjectExpanded(projectKey, expanded);
+    setProjectExpanded(projectExpansionKeys(projectKey), expanded);
   return {
     projectsViewEnabled,
     sidebarMode,
     setSidebarMode,
     sidebarProjectSections,
-    sectionFolderColors,
     sidebarOtherProjectsExpanded,
     sectionDialog,
     setSectionDialogOpen,
     openCreateSectionDialog,
     openCreateSubsectionDialog,
     openRenameSectionDialog,
+    projectExpansionKeys,
     isProjectExpanded,
     toggleProjectExpanded,
   };

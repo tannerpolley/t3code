@@ -19,7 +19,13 @@ import {
 } from "./sidebarLayoutProjection";
 import { createLegacySidebarRetirement } from "./sidebarLayoutMigration";
 import { createSidebarLayoutClient, readLocalSidebarLayout } from "./sidebarLayoutClient";
-import { clearLegacySidebarLayout, PERSISTED_STATE_KEY, parsePersistedState } from "./uiStateStore";
+import { sidebarFolderExpansionKeys } from "./components/Sidebar.logic";
+import {
+  clearLegacySidebarLayout,
+  PERSISTED_STATE_KEY,
+  parsePersistedState,
+  resolveProjectExpanded,
+} from "./uiStateStore";
 afterEach(() => vi.unstubAllGlobals());
 const local = EnvironmentId.make("local");
 const remote = EnvironmentId.make("remote");
@@ -285,6 +291,27 @@ describe("shared sidebar projection", () => {
         primaryEnvironmentId: local,
       }).sidebarProjectSections[0]!.projectKeys,
     ).toHaveLength(2);
+    // Both views read and toggle a row through its folder keys, reaching every member once.
+    for (const [snapshot, expanded] of [
+      [joined, [false]],
+      [separate, [false, true]],
+    ] as const) {
+      const projected = projectSidebarLayout({
+        layouts: new Map([[local, saved]]),
+        groups: snapshot,
+        primaryEnvironmentId: local,
+      });
+      expect(
+        snapshot.map((group) =>
+          resolveProjectExpanded(projected.projectExpandedById, sidebarFolderExpansionKeys(group)),
+        ),
+      ).toEqual(expanded);
+    }
+    expect(
+      sidebarProjectRefsForKeys(joined, sidebarFolderExpansionKeys(joined[0]!)).map(
+        (ref) => ref.projectId,
+      ),
+    ).toEqual(["clone", "copy"]);
   });
   it("isolates identical section and project IDs on two environments", () => {
     const snapshot = groups([project("clone"), project("clone", remote)], "separate");
