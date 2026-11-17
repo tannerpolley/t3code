@@ -9,7 +9,7 @@ import {
   ProjectId,
   ThreadId,
   RuntimeRequestId,
-  type IssueListResult,
+  type RepositoryIssueListResult,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -91,7 +91,7 @@ function harness(initial: OrchestrationV2ThreadShell[]) {
     lookups,
   };
 }
-function list(): IssueListResult {
+function list(): RepositoryIssueListResult {
   return {
     repository: ref,
     viewer: null,

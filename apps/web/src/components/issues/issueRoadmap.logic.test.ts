@@ -1,6 +1,6 @@
 import { issueStatePresentation } from "./IssueStateIcon";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { ThreadId, type IssueMilestone, type IssueSummary } from "@t3tools/contracts";
+import { ThreadId, type IssueMilestone, type RepositoryIssueSummary } from "@t3tools/contracts";
 import {
   issueRoadmap,
   issueLiveStatus,
@@ -15,7 +15,10 @@ const ref = (number: number, state: "open" | "closed" = "open", repository = sco
   number,
   state,
 });
-function issue(number: number, overrides: Partial<IssueSummary> = {}): IssueSummary {
+function issue(
+  number: number,
+  overrides: Partial<RepositoryIssueSummary> = {},
+): RepositoryIssueSummary {
   return {
     number,
     title: `Issue ${number}`,
@@ -70,14 +73,13 @@ const inSection = (sections: ReturnType<typeof issueRoadmap>, id: string) =>
 describe("live roadmap", () => {
   it("orders the acceptance chains and keeps every blocked issue behind its blockers within its section", () => {
     const sections = issueRoadmap(scope, [
-        issue(435, { blockedBy: [ref(439)] }),
-        issue(439, { blockedBy: [ref(423)] }),
-        issue(434, { blockedBy: [ref(423)] }),
-        issue(432, { blockedBy: [ref(431)] }),
-        issue(431),
-        issue(423),
-      ],
-    );
+      issue(435, { blockedBy: [ref(439)] }),
+      issue(439, { blockedBy: [ref(423)] }),
+      issue(434, { blockedBy: [ref(423)] }),
+      issue(432, { blockedBy: [ref(431)] }),
+      issue(431),
+      issue(423),
+    ]);
     expect(numbers(inSection(sections, "ready").rows)).toEqual([423, 431]);
     expect(numbers(inSection(sections, "blocked").rows)).toEqual([432, 434, 439, 435]);
     const blocked = numbers(inSection(sections, "blocked").rows);
@@ -85,12 +87,11 @@ describe("live roadmap", () => {
   });
   it("orders an open child before its parent, ignores closed children and closed blockers, and separates closed issues", () => {
     const sections = issueRoadmap(scope, [
-        issue(1),
-        issue(7, { parent: ref(1) }),
-        issue(2, { blockedBy: [ref(99, "closed")] }),
-        issue(5, { state: "closed", parent: ref(1) }),
-      ],
-    );
+      issue(1),
+      issue(7, { parent: ref(1) }),
+      issue(2, { blockedBy: [ref(99, "closed")] }),
+      issue(5, { state: "closed", parent: ref(1) }),
+    ]);
     expect(numbers(inSection(sections, "ready").rows)).toEqual([2, 7, 1]);
     expect(inSection(sections, "blocked").rows).toEqual([]);
   });
@@ -110,35 +111,32 @@ describe("live roadmap", () => {
   });
   it("dependency order beats priority in the same section", () => {
     const sections = issueRoadmap(scope, [
-        issue(2, {
-          parent: null,
-          liveWork: work("working"),
-          projects: [{ id: "p", title: "P", status: null, priority: { name: "High", rank: 0 } }],
-        }),
-        // An open blocker would move #2 to Blocked; a child edge orders it within In progress.
-        issue(3, { parent: ref(2), liveWork: work("working") }),
-      ],
-    );
+      issue(2, {
+        parent: null,
+        liveWork: work("working"),
+        projects: [{ id: "p", title: "P", status: null, priority: { name: "High", rank: 0 } }],
+      }),
+      // An open blocker would move #2 to Blocked; a child edge orders it within In progress.
+      issue(3, { parent: ref(2), liveWork: work("working") }),
+    ]);
     expect(numbers(inSection(sections, "in-progress").rows)).toEqual([3, 2]);
   });
   it("shows external and unloaded open blockers without giving an external issue number an ordering edge", () => {
     const sections = issueRoadmap(scope, [
-        issue(1, { blockedBy: [ref(7, "open", "other/repo")] }),
-        issue(2, { blockedBy: [ref(999)] }),
-        issue(7, { blockedBy: [ref(1000)] }),
-      ],
-    );
+      issue(1, { blockedBy: [ref(7, "open", "other/repo")] }),
+      issue(2, { blockedBy: [ref(999)] }),
+      issue(7, { blockedBy: [ref(1000)] }),
+    ]);
     expect(numbers(inSection(sections, "blocked").rows)).toEqual([1, 2, 7]);
   });
   it("numbers cycles deterministically, including child/blocker cycles and self edges, without badging their descendants", () => {
     const sections = issueRoadmap(scope, [
-        issue(9, { parent: ref(4) }),
-        issue(4, { blockedBy: [ref(9)], parent: ref(9) }),
-        issue(2, { blockedBy: [ref(4)] }),
-        issue(3, { blockedBy: [ref(3)] }),
-        issue(1),
-      ],
-    );
+      issue(9, { parent: ref(4) }),
+      issue(4, { blockedBy: [ref(9)], parent: ref(9) }),
+      issue(2, { blockedBy: [ref(4)] }),
+      issue(3, { blockedBy: [ref(3)] }),
+      issue(1),
+    ]);
     expect(numbers(inSection(sections, "ready").rows)).toEqual([1, 9]);
     expect(
       sections
@@ -154,24 +152,23 @@ describe("live roadmap", () => {
   });
   it("keeps working or waiting agents In progress, idle work and open PRs Paused, and blockers ahead of both", () => {
     const first = issueRoadmap(scope, [
-        issue(1, { liveWork: work("working"), blockedBy: [ref(99)] }),
-        issue(2, { liveWork: work("waiting_on_you") }),
-        issue(3, { liveWork: work("idle") }),
-        issue(4, { relationshipsComplete: false }),
-        issue(5, { liveWork: work("idle"), blockedBy: [ref(98)] }),
-        issue(6, { liveWork: work("idle"), relationshipsComplete: false }),
-        issue(7, { liveWork: work("working") }),
-        issue(8, { pullRequests: [pr("open")] }),
-        issue(9, { pullRequests: [pr("merged")] }),
-        issue(10, { pullRequests: [pr("open")], blockedBy: [ref(99)] }),
-        issue(11, { pullRequests: [pr("open")], liveWork: work("working") }),
-        issue(12, { pullRequests: [pr("open")], liveWork: work("waiting_on_you") }),
-        issue(13, {
-          projects: [{ id: "p", title: "Board", status: "In progress", priority: null }],
-        }),
-        issue(14, { pullRequests: [pr("closed")] }),
-      ],
-    );
+      issue(1, { liveWork: work("working"), blockedBy: [ref(99)] }),
+      issue(2, { liveWork: work("waiting_on_you") }),
+      issue(3, { liveWork: work("idle") }),
+      issue(4, { relationshipsComplete: false }),
+      issue(5, { liveWork: work("idle"), blockedBy: [ref(98)] }),
+      issue(6, { liveWork: work("idle"), relationshipsComplete: false }),
+      issue(7, { liveWork: work("working") }),
+      issue(8, { pullRequests: [pr("open")] }),
+      issue(9, { pullRequests: [pr("merged")] }),
+      issue(10, { pullRequests: [pr("open")], blockedBy: [ref(99)] }),
+      issue(11, { pullRequests: [pr("open")], liveWork: work("working") }),
+      issue(12, { pullRequests: [pr("open")], liveWork: work("waiting_on_you") }),
+      issue(13, {
+        projects: [{ id: "p", title: "Board", status: "In progress", priority: null }],
+      }),
+      issue(14, { pullRequests: [pr("closed")] }),
+    ]);
     expect(first.map((section) => numbers(section.rows))).toEqual([
       [],
       [2, 7, 11, 12],
@@ -188,12 +185,11 @@ describe("live roadmap", () => {
       ),
     ).toBe("working");
     const refreshed = issueRoadmap(scope, [
-        issue(1, { liveWork: work("idle"), blockedBy: [ref(99, "closed")] }),
-        issue(2, { liveWork: work("idle") }),
-        issue(3),
-        issue(4),
-      ],
-    );
+      issue(1, { liveWork: work("idle"), blockedBy: [ref(99, "closed")] }),
+      issue(2, { liveWork: work("idle") }),
+      issue(3),
+      issue(4),
+    ]);
     expect(refreshed.map((section) => numbers(section.rows))).toEqual([
       [],
       [],
@@ -207,7 +203,9 @@ describe("live roadmap", () => {
 });
 
 it("puts queued issues above Ready in insertion order and removes them from their other sections", () => {
-  const sections = issueRoadmap(scope, [issue(1), issue(2, { blockedBy: [ref(99)] }), issue(3), issue(4, { state: "closed" })],
+  const sections = issueRoadmap(
+    scope,
+    [issue(1), issue(2, { blockedBy: [ref(99)] }), issue(3), issue(4, { state: "closed" })],
     [2, 1, 4],
   );
   expect(sections.map((section) => [section.title, numbers(section.rows)])).toEqual([
@@ -322,12 +320,11 @@ it("keeps unknown dependencies distinct from confirmed blockers and Ready", () =
     issue(868, { relationshipsComplete: false }),
   ];
   const sections = issueRoadmap(scope, [
-      ...unknown,
-      issue(860),
-      issue(859, { blockedBy: undefined }),
-      issue(1, { blockedBy: [ref(2)] }),
-    ],
-  );
+    ...unknown,
+    issue(860),
+    issue(859, { blockedBy: undefined }),
+    issue(1, { blockedBy: [ref(2)] }),
+  ]);
   expect(numbers(inSection(sections, "dependencies-unknown").rows)).toEqual([868, 948]);
   expect(numbers(inSection(sections, "ready").rows)).toEqual([859, 860]);
   expect(numbers(inSection(sections, "blocked").rows)).toEqual([1]);

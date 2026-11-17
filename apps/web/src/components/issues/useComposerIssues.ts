@@ -1,8 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, IssueListResult, IssueRepositoryRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  RepositoryIssueListResult,
+  IssueRepositoryRef,
+} from "@t3tools/contracts";
 import { Atom, AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
-import { issueEnvironment, useLiveIssueWork } from "~/state/issues";
+import { repositoryIssueEnvironment, useLiveIssueWork } from "~/state/repositoryIssues";
 import { useServerConfigs } from "~/state/entities";
 import { useIssueQueue } from "./IssueQueueAction";
 import { filterComposerIssues, issueContextMetadata } from "./issueComposerContext";
@@ -13,13 +17,13 @@ const repositoryIssues = Atom.family((key: string) =>
       environmentId: EnvironmentId;
       scope: IssueRepositoryRef;
     };
-    const pages: IssueListResult[] = [];
+    const pages: RepositoryIssueListResult[] = [];
     const visited = new Set<string>();
     let cursor: string | undefined;
     let waiting = false;
     do {
       const result = get(
-        issueEnvironment.list({
+        repositoryIssueEnvironment.list({
           environmentId,
           input: {
             ...scope,
@@ -40,7 +44,7 @@ const repositoryIssues = Atom.family((key: string) =>
     return { pages, waiting };
   }),
 );
-const emptyIssues = Atom.make<{ pages: IssueListResult[]; waiting: boolean }>({
+const emptyIssues = Atom.make<{ pages: RepositoryIssueListResult[]; waiting: boolean }>({
   pages: [],
   waiting: false,
 });

@@ -1,4 +1,4 @@
-import { threadIssueRepository } from "./ThreadDetailsIssueRows";
+import { threadIssueRepository } from "./ThreadDetailsRepositoryIssueRows";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ThreadPreviewState } from "../../previewStateStore";

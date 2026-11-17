@@ -1,4 +1,8 @@
-import type { IssueDetailResult, IssuePullRequest, IssueSummary } from "@t3tools/contracts";
+import type {
+  IssueDetailResult,
+  IssuePullRequest,
+  RepositoryIssueSummary,
+} from "@t3tools/contracts";
 import { resolveThreadPullRequestChains } from "@t3tools/client-runtime/thread-pull-requests";
 import { expect, it } from "vite-plus/test";
 
@@ -14,7 +18,7 @@ const pr = (number: number, overrides: Partial<IssuePullRequest> = {}): IssuePul
   isDraft: false,
   ...overrides,
 });
-const issue = (pullRequests: IssuePullRequest[]): IssueSummary => ({
+const issue = (pullRequests: IssuePullRequest[]): RepositoryIssueSummary => ({
   number: 44,
   title: "Issue hover",
   url: "https://github.com/acme/web/issues/44",
@@ -29,7 +33,7 @@ const issue = (pullRequests: IssuePullRequest[]): IssueSummary => ({
   updatedAt: "2026-10-20T00:00:00Z",
   pullRequests,
 });
-const detail = (summary: IssueSummary, refs: IssuePullRequest[]): IssueDetailResult => ({
+const detail = (summary: RepositoryIssueSummary, refs: IssuePullRequest[]): IssueDetailResult => ({
   repository: { host: "github.com", repository: "acme/web" },
   issue: summary,
   viewer: null,

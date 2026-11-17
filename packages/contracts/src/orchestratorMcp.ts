@@ -1,6 +1,6 @@
 import { ThreadRoleInput } from "./threadRole.ts";
 import { RepositoryUsageSprint, RepositoryWorkTarget } from "./issueWork.ts";
-import { IssueRef } from "./issue.ts";
+import { RepositoryIssueRef } from "./repositoryIssue.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -168,7 +168,7 @@ export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
-  issue: Schema.optional(IssueRef).annotate({
+  issue: Schema.optional(RepositoryIssueRef).annotate({
     description:
       "Required for managed implementors. Starts or claims an eligible GitHub issue; an existing worker is reused. For writer, designer, checker, reviewer and investigator, this is only a visibility link: no claim, slot or issue worktree.",
   }),

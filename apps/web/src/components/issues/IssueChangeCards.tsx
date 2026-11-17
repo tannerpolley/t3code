@@ -6,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { useState } from "react";
 import { useServerConfigs } from "~/state/entities";
-import { issueEnvironment } from "~/state/issues";
+import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { Button } from "../ui/button";
@@ -51,8 +51,8 @@ function Cards({
   input: IssueChangesListInput;
   compact?: boolean;
 }) {
-  const query = useEnvironmentQuery(issueEnvironment.changes({ environmentId, input }));
-  const decide = useAtomCommand(issueEnvironment.decideChange, { reportFailure: false });
+  const query = useEnvironmentQuery(repositoryIssueEnvironment.changes({ environmentId, input }));
+  const decide = useAtomCommand(repositoryIssueEnvironment.decideChange, { reportFailure: false });
   const [responding, setResponding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const changes = query.data ?? [];

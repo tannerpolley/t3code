@@ -68,7 +68,7 @@ import {
 } from "./issueWork.ts";
 import { IssueGithubCommentRecorded } from "./issueComment.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
-import type { IssueWorkRead } from "./issue.ts";
+import type { IssueWorkRead } from "./repositoryIssue.ts";
 import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,

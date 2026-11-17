@@ -43,7 +43,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
 import { createOwnerDecisionAtoms } from "./ownerDecisions.ts";
-import { createIssueEnvironmentAtoms } from "./issues.ts";
+import { createRepositoryIssueEnvironmentAtoms } from "./repositoryIssues.ts";
 import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
 
@@ -346,7 +346,7 @@ describe("command permissions", () => {
               Effect.provideService(effect, EnvironmentSupervisor, supervisor),
           } as unknown as EnvironmentRegistry["Service"]),
         );
-        const issues = createIssueEnvironmentAtoms(issueRuntime, () => Atom.make(null));
+        const issues = createRepositoryIssueEnvironmentAtoms(issueRuntime, () => Atom.make(null));
         const decisions = createOwnerDecisionAtoms(issueRuntime);
         const scope = {
           host: "github.com",
@@ -473,7 +473,7 @@ describe("command permissions", () => {
             target: { environmentId: env, label: "target" },
             session: yield* SubscriptionRef.make(Option.some(session)),
           } as unknown as EnvironmentSupervisor["Service"];
-          const issues = createIssueEnvironmentAtoms(
+          const issues = createRepositoryIssueEnvironmentAtoms(
             Atom.runtime(
               Layer.succeed(EnvironmentRegistry, {
                 run: (_id: EnvironmentId, effect: Effect.Effect<unknown, never, never>) =>
@@ -1065,7 +1065,7 @@ it.effect("issue state and unlink writes check the destination's exact grant", (
   Effect.scoped(
     Effect.gen(function* () {
       const registry = yield* setup;
-      const issues = createIssueEnvironmentAtoms(runtime, () => Atom.make(null));
+      const issues = createRepositoryIssueEnvironmentAtoms(runtime, () => Atom.make(null));
       const statePermission = issues.setState.permissionAtom(env);
       const unlinkPermission = issues.unlink.permissionAtom(env);
       registry.set(

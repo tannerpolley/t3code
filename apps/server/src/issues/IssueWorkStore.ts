@@ -6,7 +6,7 @@ import {
   RunId,
   ThreadId,
   type CommandId,
-  type IssueRef,
+  type RepositoryIssueRef,
   type OrchestrationV2RunAdmissionWait,
   type ThreadLinkedIssue,
   LEGACY_AUTOMATIC_SUSPENSIONS,
@@ -133,20 +133,20 @@ export class IssueWorkStore extends Context.Service<
       IssueWorkError
     >;
     readonly latestRequest: (
-      issue: IssueRef,
+      issue: RepositoryIssueRef,
     ) => Effect.Effect<import("@t3tools/contracts").IssueWorkRequested | null, IssueWorkError>;
     readonly hasAttempt: (
       issue: ThreadLinkedIssue,
       attemptKey: string,
     ) => Effect.Effect<boolean, IssueWorkError>;
     readonly linkedIssue: (
-      issue: IssueRef,
+      issue: RepositoryIssueRef,
     ) => Effect.Effect<ThreadLinkedIssue | null, IssueWorkError>;
     readonly repositoryOwner: (
       issue: Pick<ThreadLinkedIssue, "host" | "repositoryId">,
     ) => Effect.Effect<RepositoryOwner | null, IssueWorkError>;
     readonly repositoryOwnerByRef: (
-      issue: Pick<IssueRef, "host" | "repository">,
+      issue: Pick<RepositoryIssueRef, "host" | "repository">,
     ) => Effect.Effect<RepositoryOwner | null, IssueWorkError>;
     readonly issueOwner: (
       issue: ThreadLinkedIssue,

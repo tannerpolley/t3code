@@ -16,12 +16,12 @@ vi.mock("../../state/threads", async () => {
   state.shells = Atom.make<readonly EnvironmentThreadShell[]>([]);
   return { environmentThreadShells: { threadShellsAtom: state.shells } };
 });
-vi.mock("@t3tools/client-runtime/state/issues", async () => {
+vi.mock("@t3tools/client-runtime/state/repositoryIssues", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   state.detail = Atom.make<AsyncResult.AsyncResult<IssueDetailResult, Error>>(
     AsyncResult.initial(),
   );
-  return { createIssueEnvironmentAtoms: () => ({ detail: () => state.detail }) };
+  return { createRepositoryIssueEnvironmentAtoms: () => ({ detail: () => state.detail }) };
 });
 vi.mock("../../connection/runtime", async () => {
   const { Atom } = await import("effect/reactivity");

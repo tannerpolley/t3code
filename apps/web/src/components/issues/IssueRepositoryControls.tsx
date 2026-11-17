@@ -22,7 +22,7 @@ import {
 import { useState } from "react";
 import { useServerConfigs, useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
 import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
-import { issueEnvironment } from "~/state/issues";
+import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { useEnvironmentQuery, formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -55,7 +55,10 @@ function useRepositoryOrchestrationCapability(environmentId: EnvironmentId) {
 }
 
 function useRepositoryWork(environmentId: EnvironmentId, reference: IssueRepositoryRef) {
-  const statusAtom = issueEnvironment.repositoryStatus({ environmentId, input: reference });
+  const statusAtom = repositoryIssueEnvironment.repositoryStatus({
+    environmentId,
+    input: reference,
+  });
   const { data } = useEnvironmentQuery(statusAtom);
   return { statusAtom, data, config: data?.orchestration };
 }
@@ -193,14 +196,22 @@ function RepositoryControls({
   const [busy, setBusy] = useState(false);
   const [handoffExpanded, setHandoffExpanded] = useState(false);
   const [summary, setSummary] = useState("");
-  const closeOut = useAtomCommand(issueEnvironment.closeOut, { reportFailure: false });
-  const canCloseOut = useAtomValue(issueEnvironment.closeOut.permissionAtom(environmentId));
-  const endRepository = useAtomCommand(issueEnvironment.endRepository, { reportFailure: false });
-  const canEnd = useAtomValue(issueEnvironment.endRepository.permissionAtom(environmentId));
-  const pause = useAtomCommand(issueEnvironment.setPaused, { reportFailure: false });
-  const handoff = useAtomCommand(issueEnvironment.handoff, { reportFailure: false });
-  const restore = useAtomCommand(issueEnvironment.restoreRoot, { reportFailure: false });
-  const canRestore = useAtomValue(issueEnvironment.restoreRoot.permissionAtom(environmentId));
+  const closeOut = useAtomCommand(repositoryIssueEnvironment.closeOut, { reportFailure: false });
+  const canCloseOut = useAtomValue(
+    repositoryIssueEnvironment.closeOut.permissionAtom(environmentId),
+  );
+  const endRepository = useAtomCommand(repositoryIssueEnvironment.endRepository, {
+    reportFailure: false,
+  });
+  const canEnd = useAtomValue(
+    repositoryIssueEnvironment.endRepository.permissionAtom(environmentId),
+  );
+  const pause = useAtomCommand(repositoryIssueEnvironment.setPaused, { reportFailure: false });
+  const handoff = useAtomCommand(repositoryIssueEnvironment.handoff, { reportFailure: false });
+  const restore = useAtomCommand(repositoryIssueEnvironment.restoreRoot, { reportFailure: false });
+  const canRestore = useAtomValue(
+    repositoryIssueEnvironment.restoreRoot.permissionAtom(environmentId),
+  );
   const [restoreExpanded, setRestoreExpanded] = useState(false);
   const [restoreTargetId, setRestoreTargetId] = useState<ThreadId | null>(null);
   const restoreCandidates = useRepositoryLeads(
@@ -622,8 +633,12 @@ function UsageSprintControl({
     (provider) =>
       provider.enabled && (provider.driver === "codex" || provider.driver === "claudeAgent"),
   );
-  const setSprint = useAtomCommand(issueEnvironment.setUsageSprint, { reportFailure: false });
-  const canSet = useAtomValue(issueEnvironment.setUsageSprint.permissionAtom(environmentId));
+  const setSprint = useAtomCommand(repositoryIssueEnvironment.setUsageSprint, {
+    reportFailure: false,
+  });
+  const canSet = useAtomValue(
+    repositoryIssueEnvironment.setUsageSprint.permissionAtom(environmentId),
+  );
   const [choice, setChoice] = useState<ProviderInstanceId | null>(null);
   const [busy, setBusy] = useState(false);
   const label = (instanceId: ProviderInstanceId) =>

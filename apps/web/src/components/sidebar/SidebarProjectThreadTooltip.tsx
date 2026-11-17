@@ -12,7 +12,7 @@ import { Atom } from "effect/reactivity";
 import { CircleDotIcon, GitBranchIcon } from "lucide-react";
 import { memo, type ReactElement, type ReactNode } from "react";
 import { useProject } from "../../state/entities";
-import { useSidebarIssuePresentation } from "../../state/issues";
+import { useSidebarIssuePresentation } from "../../state/repositoryIssues";
 import { cn } from "../../lib/utils";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { environmentSummaries } from "../../state/presentation";

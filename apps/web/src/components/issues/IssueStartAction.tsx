@@ -4,7 +4,7 @@ import {
   isRepositoryOrchestratorEligible,
   type IssueRepositoryRef,
   type EnvironmentId,
-  type IssueRef,
+  type RepositoryIssueRef,
   type ProjectId,
   type ThreadId,
   type ScopedThreadRef,
@@ -24,7 +24,7 @@ import {
   useThreadShell,
   useThreadShellsForProjectRefs,
 } from "~/state/entities";
-import { issueEnvironment } from "~/state/issues";
+import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -38,7 +38,7 @@ import { findIssueProject } from "./issueWorktree.logic";
 
 interface IssueStartActionProps {
   readonly environmentId: EnvironmentId;
-  readonly reference: IssueRef;
+  readonly reference: RepositoryIssueRef;
   readonly threadRef: ScopedThreadRef | null;
   readonly closed: boolean;
 }
@@ -89,7 +89,7 @@ function IssueStartControls({
   const projects = useProjects();
   const thread = useThreadShell(threadRef);
   const roles = useEnvironmentSettings(environmentId, (settings) => settings.modelRoles);
-  const statusAtom = issueEnvironment.workStatus({ environmentId, input: reference });
+  const statusAtom = repositoryIssueEnvironment.workStatus({ environmentId, input: reference });
   const statusQuery = useEnvironmentQuery(statusAtom);
   const status = statusQuery.data;
   const matchingProjects = projects.filter(
@@ -121,12 +121,12 @@ function IssueStartControls({
   const orchestratorThreadId = status?.rootThreadId ?? selectedLead?.id;
   const hasOrchestrator = orchestratorThreadId !== undefined || createOrchestrator;
   const role = roles.find((entry) => entry.id === selectedRoleId) ?? roles[0];
-  const startIssue = useAtomCommand(issueEnvironment.start, { reportFailure: false });
-  const cancelStartRequest = useAtomCommand(issueEnvironment.cancelRequest, {
+  const startIssue = useAtomCommand(repositoryIssueEnvironment.start, { reportFailure: false });
+  const cancelStartRequest = useAtomCommand(repositoryIssueEnvironment.cancelRequest, {
     reportFailure: false,
   });
   const canCancelStartRequest = useAtomValue(
-    issueEnvironment.cancelRequest.permissionAtom(environmentId),
+    repositoryIssueEnvironment.cancelRequest.permissionAtom(environmentId),
   );
   const [cancelling, setCancelling] = useState(false);
   const awaitingAcceptedStatus =

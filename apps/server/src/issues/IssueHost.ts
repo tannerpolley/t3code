@@ -5,14 +5,14 @@ import {
   type IssueDetailInput as IssueDetailInputType,
   type IssueDetailResult as IssueDetailResultType,
   type IssueStatusBatchResult,
-  type IssueListState,
+  type RepositoryIssueListState,
   type IssueRepositoriesResult as IssueRepositoriesResultType,
-  type IssueSummary as IssueSummaryType,
+  type RepositoryIssueSummary as IssueSummaryType,
   type IssueWorkRead,
   type IssueChangeBaseline,
   type IssueHostCapabilities,
   type IssueRepositoryRef,
-  type IssueRef,
+  type RepositoryIssueRef,
   type ThreadLinkedIssue as ThreadLinkedIssueType,
 } from "@t3tools/contracts";
 export interface IssueRepositoryScope {
@@ -128,7 +128,7 @@ export interface IssuePullRequestFacts {
 export interface IssueHost {
   readonly capabilities: IssueHostCapabilities;
   readonly readChangeState: (
-    input: import("@t3tools/contracts").IssueRef,
+    input: import("@t3tools/contracts").RepositoryIssueRef,
   ) => Effect.Effect<IssueChangeBaseline, IssueReadError>;
   readonly createIssue: (
     input: IssueRepositoryRef & {
@@ -141,13 +141,15 @@ export interface IssueHost {
     },
   ) => Effect.Effect<IssueChangeBaseline, IssueReadError>;
   readonly updateBody: (
-    input: import("@t3tools/contracts").IssueRef & { readonly body: string },
+    input: import("@t3tools/contracts").RepositoryIssueRef & { readonly body: string },
   ) => Effect.Effect<void, IssueReadError>;
   readonly setMilestone: (
-    input: import("@t3tools/contracts").IssueRef & { readonly milestoneNumber: number | null },
+    input: import("@t3tools/contracts").RepositoryIssueRef & {
+      readonly milestoneNumber: number | null;
+    },
   ) => Effect.Effect<void, IssueReadError>;
   readonly setState: (
-    input: import("@t3tools/contracts").IssueRef & { readonly state: "open" | "closed" },
+    input: import("@t3tools/contracts").RepositoryIssueRef & { readonly state: "open" | "closed" },
   ) => Effect.Effect<void, IssueReadError>;
   readonly setParent: (input: {
     readonly parent: ThreadLinkedIssueType;
@@ -160,10 +162,12 @@ export interface IssueHost {
     readonly action: "add" | "remove";
   }) => Effect.Effect<void, IssueReadError>;
   /** For hosts that do not themselves close the issues a merged pull request's body names. */
-  readonly closeIssuesFixedBy?: (pullRequest: IssueRef) => Effect.Effect<void, IssueReadError>;
+  readonly closeIssuesFixedBy?: (
+    pullRequest: RepositoryIssueRef,
+  ) => Effect.Effect<void, IssueReadError>;
   /** Reads a pull request's merge facts; absent where the host cannot verify a squash merge. */
   readonly pullRequest?: (
-    input: IssueRef & { readonly cwd: string },
+    input: RepositoryIssueRef & { readonly cwd: string },
   ) => Effect.Effect<IssuePullRequestFacts, IssueReadError>;
   readonly repositories: () => Effect.Effect<IssueRepositoriesResultType, IssueReadError>;
 
@@ -174,14 +178,14 @@ export interface IssueHost {
   ) => Effect.Effect<A, IssueReadError, R>;
   readonly listIssuePage: (
     scope: IssueRepositoryScope,
-    state: IssueListState,
+    state: RepositoryIssueListState,
     page: number,
     milestoneNumber?: number,
     etag?: string,
   ) => Effect.Effect<PageResponse<IssueSummaryType> & { readonly missing?: true }, IssueReadError>;
   readonly listMilestonePage: (
     scope: IssueRepositoryScope,
-    state: IssueListState,
+    state: RepositoryIssueListState,
     page: number,
     etag?: string,
   ) => Effect.Effect<PageResponse<IssueMilestone>, IssueReadError>;
@@ -193,7 +197,10 @@ export interface IssueHost {
   readonly statuses: (
     host: string,
     nodeIds: ReadonlyArray<string>,
-  ) => Effect.Effect<ReadonlyArray<IssueStatusBatchResult[number] & IssueRef>, IssueReadError>;
+  ) => Effect.Effect<
+    ReadonlyArray<IssueStatusBatchResult[number] & RepositoryIssueRef>,
+    IssueReadError
+  >;
   readonly detail: (
     input: IssueDetailInputType,
     identity: IssueHostIdentity,
@@ -231,7 +238,7 @@ export interface IssueHost {
     IssueReadError
   >;
   readonly listComments: (
-    ref: IssueRef,
+    ref: RepositoryIssueRef,
     options?: {
       readonly maxPages?: number;
       /** Stops reading further pages once the comments read so far satisfy it. */
@@ -244,7 +251,10 @@ export interface IssueHost {
     },
     IssueReadError
   >;
-  readonly postComment: (ref: IssueRef, body: string) => Effect.Effect<InboxPosted, IssueReadError>;
+  readonly postComment: (
+    ref: RepositoryIssueRef,
+    body: string,
+  ) => Effect.Effect<InboxPosted, IssueReadError>;
   readonly postIssue: (
     scope: IssueRepositoryRef,
     input: {
@@ -258,7 +268,7 @@ export interface IssueHost {
     labels: ReadonlyArray<{ readonly name: string; readonly color: string }>,
   ) => Effect.Effect<void, IssueReadError>;
   readonly setLabels: (
-    ref: IssueRef,
+    ref: RepositoryIssueRef,
     add: ReadonlyArray<string>,
     remove: ReadonlyArray<string>,
   ) => Effect.Effect<void, IssueReadError>;

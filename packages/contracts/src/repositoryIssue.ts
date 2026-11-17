@@ -27,20 +27,23 @@ export const IssueRepositoryRef = Schema.Struct({
 });
 export type IssueRepositoryRef = typeof IssueRepositoryRef.Type;
 
-export const IssueRef = Schema.Struct({ ...IssueRepositoryRef.fields, number: IssueNumber });
-export type IssueRef = typeof IssueRef.Type;
+export const RepositoryIssueRef = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  number: IssueNumber,
+});
+export type RepositoryIssueRef = typeof RepositoryIssueRef.Type;
 
-export const IssueActor = Schema.Struct({
+export const RepositoryIssueActor = Schema.Struct({
   login: TrimmedNonEmptyString,
   avatarUrl: Schema.NullOr(IssueUrl),
 });
-export type IssueActor = typeof IssueActor.Type;
+export type RepositoryIssueActor = typeof RepositoryIssueActor.Type;
 
-export const IssueLabel = Schema.Struct({
+export const RepositoryIssueLabel = Schema.Struct({
   name: TrimmedNonEmptyString,
   color: Schema.NullOr(Schema.String.check(Schema.isPattern(/^[0-9a-f]{6}$/iu))),
 });
-export type IssueLabel = typeof IssueLabel.Type;
+export type RepositoryIssueLabel = typeof RepositoryIssueLabel.Type;
 
 export const IssueMilestone = Schema.Struct({
   number: IssueNumber,
@@ -55,7 +58,7 @@ export type IssueMilestone = typeof IssueMilestone.Type;
 
 /** Closing references and visible pull requests of linked threads, deduplicated by identity. */
 export const IssuePullRequest = Schema.Struct({
-  ...IssueRef.fields,
+  ...RepositoryIssueRef.fields,
   url: IssueUrl,
   title: Schema.String,
   /** Null until a linked thread's pull request has its first host snapshot. */
@@ -72,16 +75,16 @@ const IssueWorkStatus = Schema.Struct({
   status: Schema.Literals(["working", "waiting_on_you", "idle"]),
 });
 
-export const IssueSummary = Schema.Struct({
+export const RepositoryIssueSummary = Schema.Struct({
   suspensionReason: Schema.optional(Schema.String),
   number: IssueNumber,
   title: Schema.String,
   url: IssueUrl,
   state: Schema.Literals(["open", "closed"]),
   stateReason: Schema.NullOr(Schema.String),
-  author: Schema.NullOr(IssueActor),
-  assignees: Schema.Array(IssueActor),
-  labels: Schema.Array(IssueLabel),
+  author: Schema.NullOr(RepositoryIssueActor),
+  assignees: Schema.Array(RepositoryIssueActor),
+  labels: Schema.Array(RepositoryIssueLabel),
   /** Optional for compatibility with servers that predate GitHub Project fields. */
   projects: Schema.optional(
     Schema.Array(
@@ -103,15 +106,15 @@ export const IssueSummary = Schema.Struct({
   blockedBy: Schema.optional(
     Schema.Array(
       Schema.Struct({
-        ...IssueRef.fields,
+        ...RepositoryIssueRef.fields,
         state: Schema.Literals(["open", "closed"]),
       }),
     ),
   ),
-  parent: Schema.optional(Schema.NullOr(IssueRef)),
+  parent: Schema.optional(Schema.NullOr(RepositoryIssueRef)),
   relationshipsComplete: Schema.optional(Schema.Boolean),
   /** Closing PR references, read with the list's metadata batch. */
-  pullRequestRefs: Schema.optional(Schema.Array(IssueRef)),
+  pullRequestRefs: Schema.optional(Schema.Array(RepositoryIssueRef)),
   /** Count of the deduplicated closing and linked-thread pull requests. */
   pullRequestCount: Schema.optional(NonNegativeInt),
   pullRequests: Schema.optional(Schema.Array(IssuePullRequest)),
@@ -141,7 +144,7 @@ export const IssueSummary = Schema.Struct({
   closedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   commentCount: NonNegativeInt,
 });
-export type IssueSummary = typeof IssueSummary.Type;
+export type RepositoryIssueSummary = typeof RepositoryIssueSummary.Type;
 
 export const IssueViewer = Schema.Struct({
   accountId: TrimmedNonEmptyString,
@@ -151,7 +154,7 @@ export type IssueViewer = typeof IssueViewer.Type;
 
 /** PR identity and observation time keep sidebar status consistent with streamed thread PRs. */
 export const IssuePullRequestStatus = Schema.Struct({
-  ...IssueRef.fields,
+  ...RepositoryIssueRef.fields,
   state: IssuePullRequest.fields.state,
   updatedAt: IssuePullRequest.fields.updatedAt,
 });
@@ -177,10 +180,10 @@ export const IssueStatusBatchResult = Schema.Array(
   Schema.Struct({
     host: Host,
     nodeId: ThreadLinkedIssue.fields.nodeId,
-    suspensionReason: IssueSummary.fields.suspensionReason,
-    state: IssueSummary.fields.state,
-    stateReason: IssueSummary.fields.stateReason,
-    blockedBy: Schema.Array(Schema.Struct({ state: IssueSummary.fields.state })),
+    suspensionReason: RepositoryIssueSummary.fields.suspensionReason,
+    state: RepositoryIssueSummary.fields.state,
+    stateReason: RepositoryIssueSummary.fields.stateReason,
+    blockedBy: Schema.Array(Schema.Struct({ state: RepositoryIssueSummary.fields.state })),
     pullRequests: Schema.Array(IssuePullRequestStatus),
     closingPullRequests: Schema.optional(Schema.Array(IssuePullRequestStatus)),
     liveWork: Schema.optional(Schema.Array(IssueWorkStatus)),
@@ -188,17 +191,17 @@ export const IssueStatusBatchResult = Schema.Array(
 );
 export type IssueStatusBatchResult = typeof IssueStatusBatchResult.Type;
 
-export const IssueListState = Schema.Literals(["open", "all"]);
-export type IssueListState = typeof IssueListState.Type;
+export const RepositoryIssueListState = Schema.Literals(["open", "all"]);
+export type RepositoryIssueListState = typeof RepositoryIssueListState.Type;
 
-export const IssueListInput = Schema.Struct({
+export const RepositoryIssueListInput = Schema.Struct({
   ...IssueReadOptions,
   ...IssueRepositoryRef.fields,
-  state: Schema.optional(IssueListState),
+  state: Schema.optional(RepositoryIssueListState),
   roadmap: Schema.optional(Schema.Boolean),
   cursor: Schema.optional(Cursor),
 });
-export type IssueListInput = typeof IssueListInput.Type;
+export type RepositoryIssueListInput = typeof RepositoryIssueListInput.Type;
 
 const IssueContext = {
   repository: IssueRepositoryRef,
@@ -206,15 +209,15 @@ const IssueContext = {
   fetchedAt: IsoDateTime,
 };
 
-export const IssueListResult = Schema.Struct({
+export const RepositoryIssueListResult = Schema.Struct({
   ...IssueContext,
-  issues: Schema.Array(IssueSummary),
+  issues: Schema.Array(RepositoryIssueSummary),
   milestones: Schema.Array(IssueMilestone),
   nextCursor: Schema.NullOr(Cursor),
   issuesComplete: Schema.Boolean,
   milestonesComplete: Schema.Boolean,
 });
-export type IssueListResult = typeof IssueListResult.Type;
+export type RepositoryIssueListResult = typeof RepositoryIssueListResult.Type;
 
 export const IssueRepositorySummary = Schema.Struct({
   ...IssueRepositoryRef.fields,
@@ -241,7 +244,7 @@ export type IssueRepositoriesResult = typeof IssueRepositoriesResult.Type;
 
 export const IssueDetailInput = Schema.Struct({
   ...IssueReadOptions,
-  ...IssueRef.fields,
+  ...RepositoryIssueRef.fields,
   expectedAccountId: Schema.optional(TrimmedNonEmptyString),
 });
 export type IssueDetailInput = typeof IssueDetailInput.Type;
@@ -261,16 +264,16 @@ export const IssueWorkRead = Schema.Struct({
 });
 export type IssueWorkRead = typeof IssueWorkRead.Type;
 
-export const IssueComment = Schema.Struct({
-  author: Schema.NullOr(IssueActor),
+export const RepositoryIssueComment = Schema.Struct({
+  author: Schema.NullOr(RepositoryIssueActor),
   body: Schema.String,
   createdAt: IsoDateTime,
   url: IssueUrl,
 });
-export type IssueComment = typeof IssueComment.Type;
+export type RepositoryIssueComment = typeof RepositoryIssueComment.Type;
 
 /** A pull request that closes the issue or mentions it in its timeline. */
-export const IssueLinkedPullRequest = Schema.Struct({
+export const RepositoryIssueLinkedPullRequest = Schema.Struct({
   /** `owner/name`, which can differ from the issue's repository. */
   repository: Repository,
   number: IssueNumber,
@@ -280,18 +283,20 @@ export const IssueLinkedPullRequest = Schema.Struct({
   url: IssueUrl,
   closesIssue: Schema.Boolean,
 });
-export type IssueLinkedPullRequest = typeof IssueLinkedPullRequest.Type;
+export type RepositoryIssueLinkedPullRequest = typeof RepositoryIssueLinkedPullRequest.Type;
 
 export const IssueDetailResult = Schema.Struct({
   ...IssueContext,
-  issue: IssueSummary,
+  issue: RepositoryIssueSummary,
   body: Schema.String,
   /**
    * The most recent comments, oldest first. Fewer than `issue.commentCount` means older ones
    * were left out.
    */
-  comments: Schema.Array(IssueComment).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
-  linkedPullRequests: Schema.Array(IssueLinkedPullRequest).pipe(
+  comments: Schema.Array(RepositoryIssueComment).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
+  linkedPullRequests: Schema.Array(RepositoryIssueLinkedPullRequest).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
 });

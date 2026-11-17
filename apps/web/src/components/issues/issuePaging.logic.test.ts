@@ -1,4 +1,8 @@
-import { type IssueListResult, type IssueMilestone, type IssueSummary } from "@t3tools/contracts";
+import {
+  type RepositoryIssueListResult,
+  type IssueMilestone,
+  type RepositoryIssueSummary,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { acceptIssueListPage } from "./issuePaging.logic";
@@ -13,7 +17,11 @@ const milestone: IssueMilestone = {
   closedCount: 0,
 };
 
-function issue(number: number, updatedAt: string, title = `Issue ${number}`): IssueSummary {
+function issue(
+  number: number,
+  updatedAt: string,
+  title = `Issue ${number}`,
+): RepositoryIssueSummary {
   return {
     number,
     title,
@@ -31,10 +39,10 @@ function issue(number: number, updatedAt: string, title = `Issue ${number}`): Is
 }
 
 function result(
-  issues: readonly IssueSummary[],
+  issues: readonly RepositoryIssueSummary[],
   nextCursor: string | null,
   fetchedAt: string,
-): IssueListResult {
+): RepositoryIssueListResult {
   return {
     repository: { host: "github.com", repository: "acme/app" },
     viewer: null,

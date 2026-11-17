@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString, IsoDateTime, ThreadId } from "./baseSchemas.ts";
-import { IssueRef, IssueRepositoryRef, IssueReadError } from "./issue.ts";
+import { RepositoryIssueRef, IssueRepositoryRef, IssueReadError } from "./repositoryIssue.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 
 const Number = Schema.Int.check(
@@ -92,7 +92,7 @@ export const IssueChange = Schema.Struct({
 export type IssueChange = typeof IssueChange.Type;
 export const IssueChangesListInput = Schema.Union([
   Schema.Struct({ threadId: ThreadId }),
-  IssueRef,
+  RepositoryIssueRef,
 ]);
 export type IssueChangesListInput = typeof IssueChangesListInput.Type;
 export const IssueChangeDecisionInput = Schema.Struct({

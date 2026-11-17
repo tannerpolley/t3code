@@ -1,7 +1,7 @@
-import type { IssueSummary } from "@t3tools/contracts";
+import type { RepositoryIssueSummary } from "@t3tools/contracts";
 
 /** Project names disambiguate chips only when an issue belongs to multiple accessible Projects. */
-export function issueProjectChips(projects: IssueSummary["projects"] = []) {
+export function issueProjectChips(projects: RepositoryIssueSummary["projects"] = []) {
   const chips: Array<{ key: string; label: string }> = [];
   for (const project of projects) {
     const prefix = projects.length > 1 ? `${project.title}: ` : "";
@@ -19,7 +19,7 @@ export function issueProjectChips(projects: IssueSummary["projects"] = []) {
 }
 
 /** With multiple Projects, the earliest known Priority option takes precedence. */
-export function issuePriorityRank(issue: IssueSummary) {
+export function issuePriorityRank(issue: RepositoryIssueSummary) {
   let rank = Number.POSITIVE_INFINITY;
   for (const project of issue.projects ?? []) {
     if (project.priority?.rank != null) rank = Math.min(rank, project.priority.rank);

@@ -1,11 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createIssueEnvironmentAtoms } from "@t3tools/client-runtime/state/issues";
+import { createRepositoryIssueEnvironmentAtoms } from "@t3tools/client-runtime/state/repositoryIssues";
 import type {
   EnvironmentId,
-  IssueListInput,
-  IssueListResult,
+  RepositoryIssueListInput,
+  RepositoryIssueListResult,
   IssueRepositoryRef,
-  IssueSummary,
+  RepositoryIssueSummary,
   IssueRepositoriesResult,
   IssueStatusBatchInput,
   IssueStatusBatchResult,
@@ -32,7 +32,7 @@ const issueWorkIndexAtom = Atom.make((get) =>
   indexIssueWork(get(environmentThreadShells.threadShellsAtom)),
 );
 
-export const issueEnvironment = createIssueEnvironmentAtoms(
+export const repositoryIssueEnvironment = createRepositoryIssueEnvironmentAtoms(
   connectionAtomRuntime,
   environmentSnapshotAtom,
 );
@@ -66,7 +66,9 @@ const sidebarIssueStatuses = Atom.family((environmentId: EnvironmentId) =>
       get(sidebarIssueRefs(environmentId)),
     ) as IssueStatusBatchInput["issues"];
     if (issues.length === 0) return EMPTY_ISSUE_STATUSES;
-    const result = get(issueEnvironment.statusBatch({ environmentId, input: { issues } }));
+    const result = get(
+      repositoryIssueEnvironment.statusBatch({ environmentId, input: { issues } }),
+    );
     if (!AsyncResult.isSuccess(result)) return EMPTY_ISSUE_STATUSES;
     return new Map(
       result.value.map((issue) => [
@@ -134,7 +136,7 @@ export function useLiveIssueWork() {
   const overlay = useMemo(() => createLiveIssueWorkOverlay(), []);
   const ready = useAllEnvironmentShellsBootstrapped();
   return useCallback(
-    <T extends IssueListResult>(list: T, environmentId: EnvironmentId): T => {
+    <T extends RepositoryIssueListResult>(list: T, environmentId: EnvironmentId): T => {
       if (!ready) return list;
       return overlay.list(list, environmentId, index);
     },
@@ -144,7 +146,7 @@ export function useLiveIssueWork() {
 
 /** The durable Linked issue row uses the same shell overlay as repository issue rows. */
 export function useLiveIssueSummary(
-  issue: IssueSummary | undefined,
+  issue: RepositoryIssueSummary | undefined,
   scope: IssueRepositoryRef,
   environmentId: EnvironmentId,
 ) {
@@ -156,21 +158,21 @@ export function useLiveIssueSummary(
     : overlay.summary(issue, scope, environmentId, index);
 }
 
-export interface IssueListTarget {
+export interface RepositoryIssueListTarget {
   readonly environmentId: EnvironmentId;
-  readonly input: IssueListInput;
+  readonly input: RepositoryIssueListInput;
   /** A pane scoped to this one repository, whose first page stays live like a thread's list. */
   readonly live?: boolean;
 }
 
 export interface IssueListAnswer {
-  readonly target: IssueListTarget;
-  readonly result: IssueListResult;
+  readonly target: RepositoryIssueListTarget;
+  readonly result: RepositoryIssueListResult;
   readonly waiting: boolean;
 }
 
 export interface IssueListFailure {
-  readonly target: IssueListTarget;
+  readonly target: RepositoryIssueListTarget;
   readonly cause: Cause.Cause<unknown>;
 }
 
@@ -181,14 +183,14 @@ interface IssueListsView {
 }
 
 // Only a one-repository pane's first page is polled; all pages also re-read when issue links change.
-const issueListAtom = (target: IssueListTarget) =>
+const issueListAtom = (target: RepositoryIssueListTarget) =>
   (target.input.cursor === undefined && target.live
-    ? issueEnvironment.liveList
-    : issueEnvironment.list)(target);
+    ? repositoryIssueEnvironment.liveList
+    : repositoryIssueEnvironment.list)(target);
 
 const issueLists = Atom.family((key: string) =>
   Atom.make((get): IssueListsView => {
-    const targets = JSON.parse(key) as ReadonlyArray<IssueListTarget>;
+    const targets = JSON.parse(key) as ReadonlyArray<RepositoryIssueListTarget>;
     const answers: IssueListAnswer[] = [];
     const failures: IssueListFailure[] = [];
     let isPending = false;
@@ -210,11 +212,11 @@ const EMPTY_ISSUE_LISTS = Atom.make<IssueListsView>({
 }).pipe(Atom.withLabel("web-issues:lists:empty"));
 
 /** One guarded project query per target, observed through one hook-safe derived atom. */
-export function useIssueLists(targets: ReadonlyArray<IssueListTarget>) {
+export function useIssueLists(targets: ReadonlyArray<RepositoryIssueListTarget>) {
   const key = JSON.stringify(targets);
   const view = useAtomValue(targets.length === 0 ? EMPTY_ISSUE_LISTS : issueLists(key));
   const refresh = useCallback(
-    (override?: ReadonlyArray<IssueListTarget>) => {
+    (override?: ReadonlyArray<RepositoryIssueListTarget>) => {
       const refreshTargets = override ?? targets;
       for (const atom of new Set(refreshTargets.map(issueListAtom))) {
         appAtomRegistry.refresh(atom);
@@ -248,7 +250,7 @@ const issueRepositories = Atom.family((key: string) =>
     const failures: IssueRepositoriesFailure[] = [];
     let isPending = false;
     for (const environmentId of environmentIds) {
-      const result = get(issueEnvironment.repositories({ environmentId, input: {} }));
+      const result = get(repositoryIssueEnvironment.repositories({ environmentId, input: {} }));
       isPending ||= result.waiting;
       const value = Option.getOrNull(AsyncResult.value(result));
       if (value !== null) answers.push({ environmentId, result: value });
@@ -272,7 +274,9 @@ export function useIssueRepositories(environmentIds: ReadonlyArray<EnvironmentId
   );
   const refresh = useCallback(() => {
     for (const environmentId of JSON.parse(key) as ReadonlyArray<EnvironmentId>) {
-      appAtomRegistry.refresh(issueEnvironment.repositories({ environmentId, input: {} }));
+      appAtomRegistry.refresh(
+        repositoryIssueEnvironment.repositories({ environmentId, input: {} }),
+      );
     }
   }, [key]);
   return { ...view, refresh };

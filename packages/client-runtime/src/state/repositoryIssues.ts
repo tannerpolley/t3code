@@ -3,7 +3,7 @@ import {
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
   type IssueDetailInput,
-  type IssueListInput,
+  type RepositoryIssueListInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -25,15 +25,15 @@ import {
 const DETAIL_POLL_MS = 5 * 60_000;
 
 /** Issue reads run on the environment whose GitHub credential the user selected. */
-export function createIssueEnvironmentAtoms<R, E>(
+export function createRepositoryIssueEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
   refreshes = createPullRequestRefreshAtomFamily(runtime),
 ) {
   const liveQuery = <
     TTag extends
-      | typeof WS_METHODS.issuesList
-      | typeof WS_METHODS.issuesDetail
+      | typeof WS_METHODS.issueWorkRoadmap
+      | typeof WS_METHODS.issueWorkDetail
       | typeof WS_METHODS.issuesStatusBatch,
   >(
     options: Parameters<typeof createEnvironmentRpcQueryAtomFamily<R, E, TTag>>[1] & {
@@ -118,8 +118,8 @@ export function createIssueEnvironmentAtoms<R, E>(
   // below refresh sooner, at most once a minute.
   const detail = liveQuery({
     label: "environment-data:issues:detail",
-    tag: WS_METHODS.issuesDetail,
-    execute: (input) => request(WS_METHODS.issuesDetail, input),
+    tag: WS_METHODS.issueWorkDetail,
+    execute: (input) => request(WS_METHODS.issueWorkDetail, input),
     staleTimeMs: 60_000,
     refreshIntervalMs: DETAIL_POLL_MS,
     refreshTrigger: linkRefreshTrigger,
@@ -187,8 +187,8 @@ export function createIssueEnvironmentAtoms<R, E>(
   });
   const listQuery = liveQuery({
     label: "environment-data:issues:list",
-    tag: WS_METHODS.issuesList,
-    execute: (input) => request(WS_METHODS.issuesList, input),
+    tag: WS_METHODS.issueWorkRoadmap,
+    execute: (input) => request(WS_METHODS.issueWorkRoadmap, input),
     staleTimeMs: LIVE_ISSUE_REFRESH_MS,
     refreshTrigger: linkRefreshTrigger,
   });
@@ -197,7 +197,7 @@ export function createIssueEnvironmentAtoms<R, E>(
     input,
   }: {
     readonly environmentId: EnvironmentId;
-    readonly input: IssueListInput;
+    readonly input: RepositoryIssueListInput;
   }) => ({
     environmentId,
     input: {
@@ -265,7 +265,7 @@ export function createIssueEnvironmentAtoms<R, E>(
     }),
     setState: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:set-state",
-      tag: WS_METHODS.issuesSetState,
+      tag: WS_METHODS.issueWorkSetState,
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
     }),

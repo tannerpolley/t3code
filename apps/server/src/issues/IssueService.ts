@@ -16,11 +16,11 @@ import {
   IssueReadError,
   type IssueDetailResult as IssueDetailResultType,
   type IssueStatusBatchResult,
-  type IssueListInput as IssueListInputType,
-  type IssueListResult as IssueListResultType,
-  type IssueListState,
+  type RepositoryIssueListInput as IssueListInputType,
+  type RepositoryIssueListResult as IssueListResultType,
+  type RepositoryIssueListState,
   type IssueHostCapabilities,
-  type IssueRef,
+  type RepositoryIssueRef,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -36,11 +36,15 @@ import {
   type PageResponse,
   type ListMetadata,
 } from "./IssueHost.ts";
-import { LIVE_ISSUE_REFRESH_MS, IssueListResult, TrimmedNonEmptyString } from "@t3tools/contracts";
+import {
+  LIVE_ISSUE_REFRESH_MS,
+  RepositoryIssueListResult,
+  TrimmedNonEmptyString,
+} from "@t3tools/contracts";
 const MAX_PAGE = 1_000_000;
 const CURSOR_MAX_LENGTH = 4_096;
 const Page = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_PAGE }));
-const sameIssueList = Schema.toEquivalence(IssueListResult);
+const sameIssueList = Schema.toEquivalence(RepositoryIssueListResult);
 type IssueOperation = IssueReadError["operation"];
 const IssueCursorSchema = Schema.Struct({
   v: Schema.Literal(2),
@@ -54,12 +58,15 @@ const IssueCursorSchema = Schema.Struct({
 type IssueCursor = Schema.Schema.Type<typeof IssueCursorSchema>;
 const issueListEndpoint = (
   _scope: IssueRepositoryScope,
-  state: IssueListState,
+  state: RepositoryIssueListState,
   page: number,
   milestoneNumber?: number,
 ) => `${state}:${page}:${milestoneNumber ?? ""}`;
-const milestoneListEndpoint = (_scope: IssueRepositoryScope, state: IssueListState, page: number) =>
-  `${state}:${page}`;
+const milestoneListEndpoint = (
+  _scope: IssueRepositoryScope,
+  state: RepositoryIssueListState,
+  page: number,
+) => `${state}:${page}`;
 function readError(
   operation: IssueOperation,
   code: IssueReadError["code"],
@@ -140,13 +147,15 @@ export class IssueService extends Context.Service<
     | "pullRequest"
   > & {
     /** Closes the issues a merged pull request's body names where its host does not. */
-    readonly closeIssuesFixedBy: (pullRequest: IssueRef) => Effect.Effect<void, IssueReadError>;
+    readonly closeIssuesFixedBy: (
+      pullRequest: RepositoryIssueRef,
+    ) => Effect.Effect<void, IssueReadError>;
     readonly canonicalHost: (host: string) => Effect.Effect<string>;
     /** What the issue host serving `host` supports. */
     readonly capabilities: (host: string) => Effect.Effect<IssueHostCapabilities>;
     /** Null where the host's adapter cannot read pull request merge facts. */
     readonly pullRequest: (
-      input: IssueRef & { readonly cwd: string },
+      input: RepositoryIssueRef & { readonly cwd: string },
     ) => Effect.Effect<IssuePullRequestFacts | null, IssueReadError>;
     readonly milestoneIssues: (input: {
       readonly host: string;
@@ -154,7 +163,7 @@ export class IssueService extends Context.Service<
       readonly milestoneNumber: number;
     }) => Effect.Effect<
       {
-        readonly issues: ReadonlyArray<import("@t3tools/contracts").IssueSummary>;
+        readonly issues: ReadonlyArray<import("@t3tools/contracts").RepositoryIssueSummary>;
         readonly complete: boolean;
         readonly missing?: true;
       },
@@ -223,7 +232,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
   );
 
   const liveStatuses =
-    makeLiveReadCache<ReadonlyArray<IssueStatusBatchResult[number] & IssueRef>>();
+    makeLiveReadCache<ReadonlyArray<IssueStatusBatchResult[number] & RepositoryIssueRef>>();
   const liveDetails = makeLiveReadCache<IssueDetailResultType>();
 
   const resolveScope = Effect.fn("IssueService.resolveScope")(function* (
@@ -262,7 +271,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
   const readIssuePage = Effect.fn("IssueService.readIssuePage")(function* (
     scope: IssueRepositoryScope,
     pages: ReturnType<typeof makePageCaches>,
-    state: IssueListState,
+    state: RepositoryIssueListState,
     page: number,
     milestoneNumber?: number,
   ): Effect.fn.Return<IssuePageResult & { readonly missing?: true }, IssueReadError> {
@@ -274,7 +283,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
   const readMilestonePage = Effect.fn("IssueService.readMilestonePage")(function* (
     scope: IssueRepositoryScope,
     pages: ReturnType<typeof makePageCaches>,
-    state: IssueListState,
+    state: RepositoryIssueListState,
     page: number,
   ): Effect.fn.Return<PageResult<IssueMilestone>, IssueReadError> {
     const host = github;
@@ -293,7 +302,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
       Effect.gen(function* () {
         const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
         const generation = repositoryGeneration(scope);
-        const issues: Array<import("@t3tools/contracts").IssueSummary> = [];
+        const issues: Array<import("@t3tools/contracts").RepositoryIssueSummary> = [];
         let page: number | null = 1;
         for (let count = 0; count < 10 && page !== null; count++) {
           const result: IssuePageResult & { readonly missing?: true } = yield* readIssuePage(
@@ -512,7 +521,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
         if (ids === undefined) byHost.set(host, (ids = new Set()));
         ids.add(issue.nodeId);
       }
-      const result: Array<IssueStatusBatchResult[number] & IssueRef> = [];
+      const result: Array<IssueStatusBatchResult[number] & RepositoryIssueRef> = [];
       for (const [host, nodeIds] of byHost) {
         yield* github
           .withIdentity({ cwd: homeDirectory, host, repository: "" }, "detail", (identity) =>

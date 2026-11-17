@@ -1,8 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
-  IssueComment,
-  IssueSummary,
+  RepositoryIssueComment,
+  RepositoryIssueSummary,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -41,7 +41,7 @@ export function issueImplementDestination(input: {
 
 /** Only ordinary associations can be removed; managed work and PR references keep their owners. */
 export function canUnlinkIssue(
-  issue: Pick<IssueSummary, "liveWork">,
+  issue: Pick<RepositoryIssueSummary, "liveWork">,
   environmentId: string,
   threadRef: ScopedThreadRef | null,
 ) {
@@ -70,7 +70,7 @@ export function issueMenuAvailability(input: {
 
 export function issueComposerPrompt(
   action: IssueComposerAction,
-  issue: Pick<IssueSummary, "number" | "title" | "url">,
+  issue: Pick<RepositoryIssueSummary, "number" | "title" | "url">,
 ) {
   const reference = `#${issue.number}: ${issue.title || "Untitled issue"}\n\n${issue.url}`;
   switch (action) {
@@ -84,7 +84,10 @@ export function issueComposerPrompt(
 }
 
 /** Issue comments have no review-resolution state; GitHub bot logins retain their suffix. */
-export function filterIssueComments(comments: ReadonlyArray<IssueComment>, showBots: boolean) {
+export function filterIssueComments(
+  comments: ReadonlyArray<RepositoryIssueComment>,
+  showBots: boolean,
+) {
   return showBots
     ? comments
     : comments.filter((comment) => !comment.author?.login.endsWith("[bot]"));

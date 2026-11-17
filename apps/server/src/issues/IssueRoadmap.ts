@@ -9,8 +9,8 @@ import {
   type IssueDetailResult,
   type IssueReadError,
   IssueWorkError,
-  type IssueListInput,
-  type IssueListResult,
+  type RepositoryIssueListInput,
+  type RepositoryIssueListResult,
   type IssueStatusBatchInput,
   type IssueStatusBatchResult,
 } from "@t3tools/contracts";
@@ -28,7 +28,9 @@ export class IssueRoadmap extends Context.Service<
   IssueRoadmap,
   {
     readonly linkRefreshes: Stream.Stream<number, IssueWorkError>;
-    readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueReadError>;
+    readonly list: (
+      input: RepositoryIssueListInput,
+    ) => Effect.Effect<RepositoryIssueListResult, IssueReadError>;
     /** The issue with the same local work its list row carries. */
     readonly detail: (input: IssueDetailInput) => Effect.Effect<IssueDetailResult, IssueReadError>;
     readonly statusBatch: (

@@ -3,8 +3,8 @@ import * as Schema from "effect/Schema";
 
 import type {
   IssueRepositoryRef,
-  IssueSummary,
-  IssueRef,
+  RepositoryIssueSummary,
+  RepositoryIssueRef,
   IssuePullRequest,
 } from "@t3tools/contracts";
 import * as GitHubApi from "./IssueGitHubApi.ts";
@@ -89,9 +89,9 @@ const Response = Schema.Struct({
 });
 const decodeResponse = Schema.decodeEffect(Schema.fromJsonString(Response));
 
-type IssueProject = NonNullable<IssueSummary["projects"]>[number];
+type IssueProject = NonNullable<RepositoryIssueSummary["projects"]>[number];
 type ListMetadata = Pick<
-  IssueSummary,
+  RepositoryIssueSummary,
   "projects" | "blockedBy" | "parent" | "relationshipsComplete" | "pullRequestRefs" | "pullRequests"
 >;
 type MetadataPage = {
@@ -121,7 +121,10 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
     const projects = new Map<number, Map<string, IssueProject>>();
     const metadata = new Map<number, ListMetadata>();
     const pullRequests = new Map<number, Map<string, IssuePullRequest>>();
-    const blockers = new Map<number, Map<string, NonNullable<IssueSummary["blockedBy"]>[number]>>();
+    const blockers = new Map<
+      number,
+      Map<string, NonNullable<RepositoryIssueSummary["blockedBy"]>[number]>
+    >();
     const unavailable = new Set<number>();
     const pending: MetadataPage[] = numbers.map((number) => ({
       number,
@@ -224,7 +227,7 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
         }
         const connection = unavailable.has(page.number) ? null : node?.projectItems;
         const blocked = node?.blockedBy;
-        const ref = (number: number, repository: string): IssueRef => ({
+        const ref = (number: number, repository: string): RepositoryIssueRef => ({
           host: scope.host,
           repository,
           number,

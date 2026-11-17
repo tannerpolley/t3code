@@ -6,9 +6,9 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import type {
   EnvironmentId,
-  IssueComment,
-  IssueLinkedPullRequest,
-  IssueRef,
+  RepositoryIssueComment,
+  RepositoryIssueLinkedPullRequest,
+  RepositoryIssueRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
@@ -53,7 +53,7 @@ import {
 } from "../pullRequest/PullRequestMarkdown";
 import { PullRequestCommentBody } from "../pullRequest/PullRequestCommentBody";
 import { Menu, MenuTrigger, MenuPopup, MenuCheckboxItem } from "../ui/menu";
-import { useOpenIssueLink } from "~/lib/openIssueLink";
+import { useOpenIssueLink } from "~/lib/openRepositoryIssueLink";
 import { filterIssueComments } from "./issueDetailActions.logic";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { IssueDetailActions } from "./IssueDetailActions";
@@ -74,7 +74,7 @@ import { rememberIssueOrigin } from "./issuePullRequestOrigin";
 import { useOpenChangeRequestLink, useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
-import { issueEnvironment, useLiveIssueSummary } from "~/state/issues";
+import { repositoryIssueEnvironment, useLiveIssueSummary } from "~/state/repositoryIssues";
 import { useEnvironmentQuery } from "~/state/query";
 import { IssueQueueAction, useIssueQueued } from "./IssueQueueAction";
 import { IssueStartAction } from "./IssueStartAction";
@@ -82,7 +82,7 @@ import { IssueChangeCards } from "./IssueChangeCards";
 
 export interface IssueDetailPanelProps {
   readonly environmentId: EnvironmentId;
-  readonly reference: IssueRef;
+  readonly reference: RepositoryIssueRef;
   readonly threadRef?: ScopedThreadRef | null;
   readonly refreshToken?: number;
   readonly onOpenBesideThread?: () => void;
@@ -179,7 +179,7 @@ function LinkedPullRequests({
   issue,
   threadRef,
 }: {
-  readonly pullRequests: ReadonlyArray<IssueLinkedPullRequest>;
+  readonly pullRequests: ReadonlyArray<RepositoryIssueLinkedPullRequest>;
   /** The issue showing them, which back on an opened pull request returns to. */
   readonly issue: Parameters<typeof issueSurface>[0];
   readonly threadRef: ScopedThreadRef | null;
@@ -249,7 +249,7 @@ function IssueComments({
   cwd,
 }: {
   readonly cwd: string | undefined;
-  readonly comments: ReadonlyArray<IssueComment>;
+  readonly comments: ReadonlyArray<RepositoryIssueComment>;
   readonly totalCount: number;
   readonly issueUrl: string | null;
   readonly environmentId: EnvironmentId;
@@ -457,7 +457,7 @@ export function IssueDetailPanel({
   onOpenBesideThread,
   onBack,
 }: IssueDetailPanelProps) {
-  const atom = issueEnvironment.detail({ environmentId, input: reference });
+  const atom = repositoryIssueEnvironment.detail({ environmentId, input: reference });
   const projects = useProjects();
   const thread = useThreadShell(threadRef);
   const project = findIssueProject(

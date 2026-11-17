@@ -3,7 +3,7 @@ import {
   type IssueHostCapabilities,
   type EnvironmentId,
   type IssueRepositorySummary,
-  type IssueSummary,
+  type RepositoryIssueSummary,
   type RepositoryOrchestration,
   type RepositoryWorkResult,
   type RepositoryIdentity,
@@ -83,7 +83,7 @@ export interface IssueWorkspaceFilters {
   readonly sort: IssueSort;
 }
 
-function searchableText(issue: IssueSummary): string {
+function searchableText(issue: RepositoryIssueSummary): string {
   return [
     issue.number,
     issue.title,
@@ -97,7 +97,10 @@ function searchableText(issue: IssueSummary): string {
 }
 
 /** Project Priority comes first; the chosen sort breaks ties and orders missing priorities. */
-function sortIssues(issues: readonly IssueSummary[], sort: IssueSort): IssueSummary[] {
+function sortIssues(
+  issues: readonly RepositoryIssueSummary[],
+  sort: IssueSort,
+): RepositoryIssueSummary[] {
   const priorityRanks = new Map(issues.map((issue) => [issue.number, issuePriorityRank(issue)]));
   return issues.toSorted((left, right) => {
     const priorityOrder = priorityRanks.get(left.number)! - priorityRanks.get(right.number)!;
@@ -117,9 +120,9 @@ function sortIssues(issues: readonly IssueSummary[], sort: IssueSort): IssueSumm
 
 /** Search only issue details; repository scope comes from the project or tab. */
 export function filterAndSortIssues(
-  issues: readonly IssueSummary[],
+  issues: readonly RepositoryIssueSummary[],
   filters: IssueWorkspaceFilters,
-): IssueSummary[] {
+): RepositoryIssueSummary[] {
   const terms = filters.query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const filtered = issues.filter((issue) => {
     if (filters.state !== "all" && issue.state !== filters.state) return false;

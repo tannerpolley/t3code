@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { EnvironmentId, ThreadId, type IssueSummary } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type RepositoryIssueSummary } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
@@ -15,7 +15,7 @@ it("keeps issue, PR and live-agent navigation separate as the issue's live state
   const environmentId = EnvironmentId.make("environment");
   const threadId = ThreadId.make("implementor");
   const prUrl = "https://github.com/acme/repo/pull/12";
-  const issue: IssueSummary = {
+  const issue: RepositoryIssueSummary = {
     number: 11,
     title: "A long issue title with room to read",
     url: "https://github.com/acme/repo/issues/11",
@@ -54,7 +54,7 @@ it("keeps issue, PR and live-agent navigation separate as the issue's live state
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
-  const render = (value: IssueSummary) =>
+  const render = (value: RepositoryIssueSummary) =>
     root.render(
       <IssueRow issue={value} environmentId={environmentId} selected={false} onSelect={onSelect} />,
     );
