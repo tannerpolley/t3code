@@ -7,7 +7,6 @@ import {
   sidebarSeparatorStyle,
   type SidebarFamilySeparator,
 } from "./SidebarFamilySeparators.logic";
-import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSidebarTextSizes } from "./ForkSidebarTextSizes";
 import { sectionTarget, useProjectSectionPlacementReady } from "../../projectSectionPlacement";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
@@ -62,8 +61,14 @@ import {
   SidebarProjectThreadName,
   ThreadIssueBadge,
   ThreadPullRequestBadge,
-  SidebarProjectThreadTooltip,
 } from "./SidebarProjectThreadTooltip";
+import { SidebarThreadRow, type SidebarProviderEntry } from "./SidebarThreadRow";
+import {
+  sameSidebarThreadRowState,
+  sidebarThreadRowProps,
+  type SidebarThreadRowAssembly,
+  type SidebarThreadRowState,
+} from "./sidebarThreadRowAssembly";
 import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { SidebarBackgroundWorkRows, type NestedWork } from "./SidebarBackgroundWorkRows";
@@ -95,6 +100,7 @@ import {
   sidebarEffortGlyph,
   sameSidebarSubagentTree,
   sidebarRoleLabel,
+  sidebarThreadProvider,
 } from "./SidebarBackgroundWork.logic";
 import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
@@ -118,7 +124,6 @@ import { openCommandPalette } from "../../commandPaletteBus";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { SidebarThreadSummary } from "../../types";
-import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -127,6 +132,7 @@ import {
   resolveLocationLeads,
   resolveSidebarThreadStatus,
   type SidebarThreadStatus,
+  useSidebarRowSubscriptionLease,
   withChildNeeds,
 } from "../Sidebar.logic";
 import { ThreadStatusMark } from "../ThreadStatusMark";
@@ -264,17 +270,13 @@ interface SidebarProjectSectionsProps {
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   readonly isProjectExpanded: (projectKey: string) => boolean;
   readonly onToggleProject: (projectKey: string, expanded: boolean) => void;
-  readonly activeThreadKey: string | null;
-  readonly onThreadClick: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
-  readonly onThreadContextMenu: (
-    thread: SidebarThreadSummary,
-    position: { x: number; y: number },
-  ) => void;
+  /** Thread rows share Activity's row and its handlers. */
+  readonly threadRowAssembly: SidebarThreadRowAssembly;
+  readonly threadRowState: SidebarThreadRowState;
 }
 
 function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const {
-    activeThreadKey,
     isProjectExpanded,
     onAddProject,
     onNewSection,
@@ -285,13 +287,13 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     onProjectContextMenu,
     onRemoveProject,
     onSelectProject,
-    onThreadClick,
-    onThreadContextMenu,
     onToggleProject,
     projects,
     sections,
     selectedProjectKey,
     runningSubagentsByParentKey,
+    threadRowAssembly,
+    threadRowState,
     threadsByProjectKey,
   } = props;
   // Off restores the original Projects view: heading, action row, All projects, chevrons and grips.
@@ -645,10 +647,9 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                   onOpenRename={openRenameDialog}
                   onSelectProject={onSelectProject}
                   onSetExpanded={setSectionExpanded}
-                  activeThreadKey={activeThreadKey}
+                  threadRowAssembly={threadRowAssembly}
+                  threadRowState={threadRowState}
                   isProjectExpanded={isProjectExpanded}
-                  onThreadClick={onThreadClick}
-                  onThreadContextMenu={onThreadContextMenu}
                   onToggleProject={onToggleProject}
                   projectByKey={projectByKey}
                   section={section}
@@ -703,14 +704,10 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly onDelete: (sectionId: string) => void;
   readonly onSetExpanded: (sectionId: string, expanded: boolean) => void;
   readonly onMoveProject: (projectKey: string, sectionId: string | null) => void;
-  readonly activeThreadKey: string | null;
+  readonly threadRowAssembly: SidebarThreadRowAssembly;
+  readonly threadRowState: SidebarThreadRowState;
   readonly isProjectExpanded: (projectKey: string) => boolean;
   readonly onToggleProject: (projectKey: string, expanded: boolean) => void;
-  readonly onThreadClick: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
-  readonly onThreadContextMenu: (
-    thread: SidebarThreadSummary,
-    position: { x: number; y: number },
-  ) => void;
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
@@ -794,10 +791,9 @@ const ProjectSection = memo(function ProjectSection(props: {
                     onOpenProjectSettings={props.onOpenProjectSettings}
                     onRemoveProject={props.onRemoveProject}
                     onSelectProject={props.onSelectProject}
-                    activeThreadKey={props.activeThreadKey}
+                    threadRowAssembly={props.threadRowAssembly}
+                    threadRowState={props.threadRowState}
                     isProjectExpanded={props.isProjectExpanded(project.projectKey)}
-                    onThreadClick={props.onThreadClick}
-                    onThreadContextMenu={props.onThreadContextMenu}
                     onToggleProject={props.onToggleProject}
                     project={project}
                     sectionId={props.section.custom ? props.section.id : null}
@@ -1080,12 +1076,8 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly onMoveProject: (projectKey: string, sectionId: string | null) => void;
   readonly isProjectExpanded: boolean;
   readonly onToggleProject: (projectKey: string, expanded: boolean) => void;
-  readonly activeThreadKey: string | null;
-  readonly onThreadClick: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
-  readonly onThreadContextMenu: (
-    thread: SidebarThreadSummary,
-    position: { x: number; y: number },
-  ) => void;
+  readonly threadRowAssembly: SidebarThreadRowAssembly;
+  readonly threadRowState: SidebarThreadRowState;
   readonly threads: readonly SidebarThreadSummary[];
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
 }) {
@@ -1118,10 +1110,6 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
         ])
       : "",
   );
-  const familySeparatorEntries: Array<[string, SidebarFamilySeparator]> =
-    familySeparatorsText === "" ? [] : JSON.parse(familySeparatorsText);
-  const familySeparators =
-    familySeparatorsText === "" ? undefined : new Map(familySeparatorEntries);
   // Only the displayed lead keys subscribe this project to expansion changes.
   const leadKeyList = useUiStateStore((state) => {
     if (!codexStyle || !props.isProjectExpanded) return "";
@@ -1137,7 +1125,6 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
       .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
       .join("\n");
   });
-  const locationLeadKeys = codexStyle ? new Set(leadKeyList.split("\n")) : undefined;
   const toggle = () => {
     if (canWrite) props.onToggleProject(project.projectKey, !props.isProjectExpanded);
   };
@@ -1300,14 +1287,12 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             <SidebarProjectThreadRow
               key={`${thread.environmentId}:${thread.id}`}
               codexStyle={codexStyle}
-              activeThreadKey={props.activeThreadKey}
-              onClick={props.onThreadClick}
-              onContextMenu={props.onThreadContextMenu}
+              assembly={props.threadRowAssembly}
+              rowState={props.threadRowState}
               thread={thread}
               navigationParent={sidebarFolderRowId(project.projectKey)}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
-              locationLeadKeys={locationLeadKeys}
-              familySeparators={familySeparators}
+              locationLeadText={codexStyle ? leadKeyList : undefined}
               familySeparatorsText={familySeparatorsText}
             />
           ))}
@@ -1356,6 +1341,17 @@ const THREAD_STATUS_DOT_CLASS = {
   working: "bg-info",
 } as const;
 
+/** Parses the project's separators, sent as text so equal text means an equal map. */
+function parseFamilySeparators(text: string) {
+  if (text === "") return undefined;
+  const entries: Array<[string, SidebarFamilySeparator]> = JSON.parse(text);
+  return new Map(entries);
+}
+
+/**
+ * A top-level Projects thread: the shared sidebar row, drawing the compact columns and the
+ * thread's work under it. One lease gates the row's own reads and its process query.
+ */
 const SidebarProjectThreadRow = memo(
   function SidebarProjectThreadRow(props: {
     readonly thread: SidebarThreadSummary;
@@ -1363,205 +1359,150 @@ const SidebarProjectThreadRow = memo(
     readonly navigationParent: string;
     /** Codex style marks status on the right; otherwise a dot leads the row. */
     readonly codexStyle: boolean;
-    readonly activeThreadKey: string | null;
-    readonly onClick: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
-    readonly onContextMenu: (
-      thread: SidebarThreadSummary,
-      position: { x: number; y: number },
-    ) => void;
+    readonly assembly: SidebarThreadRowAssembly;
+    readonly rowState: SidebarThreadRowState;
     readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-    /** Threads that carry their location's icon; see `resolveLocationLeads`. */
-    readonly locationLeadKeys?: ReadonlySet<string> | undefined;
-    readonly familySeparators?: ReadonlyMap<string, SidebarFamilySeparator> | undefined;
+    /** Keys, one per line, of threads that carry their location's icon; see `resolveLocationLeads`. */
+    readonly locationLeadText: string | undefined;
     /** The project's separators as JSON; equal text means an equal map. */
-    readonly familySeparatorsText?: string | undefined;
+    readonly familySeparatorsText: string;
   }) {
-    const activeThreadKey = scopedThreadKey(
-      scopeThreadRef(props.thread.environmentId, props.thread.id),
-    );
-    const runningSubagents = props.runningSubagentsByParentKey.get(activeThreadKey) ?? NO_THREADS;
-    const threadStatus = withChildNeeds(resolveSidebarThreadStatus(props.thread), runningSubagents);
-    const active = props.activeThreadKey === activeThreadKey;
-    const selected = useThreadSelectionStore((store) =>
-      store.selectedThreadKeys.has(activeThreadKey),
-    );
-    const localLastVisitedAt = useUiStateStore(
-      (state) => state.threadLastVisitedAtById[activeThreadKey],
-    );
+    const { assembly, codexStyle, thread } = props;
+    const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+    const threadKey = scopedThreadKey(threadRef);
+    const runningSubagents = props.runningSubagentsByParentKey.get(threadKey) ?? NO_THREADS;
+    const threadStatus = withChildNeeds(resolveSidebarThreadStatus(thread), runningSubagents);
+    const rowProps = sidebarThreadRowProps(assembly, props.rowState, thread, runningSubagents);
+    const lease = useSidebarRowSubscriptionLease(rowProps.isActive);
     const {
       status: workStatus,
-      watchRow,
       workRows,
       workCount,
       processRows,
     } = useSidebarThreadProcesses(
-      props.thread,
+      thread,
       threadStatus,
       describeSidebarBackgroundWork(
-        props.thread.pendingBackgroundTasks,
-        props.codexStyle
+        thread.pendingBackgroundTasks,
+        codexStyle
           ? runningSubagents
           : flattenRunningSubagents(runningSubagents, props.runningSubagentsByParentKey),
         undefined,
-        props.thread.worktreePath,
+        thread.worktreePath,
       ),
+      lease.leaseLiveStatus,
     );
-    // Finished while you were away and not opened since: a green dot where the spinner was.
-    const status = props.codexStyle ? workStatus : threadStatus;
-    const statusMark = resolveSidebarProjectStatusMark(
-      props.thread,
-      localLastVisitedAt,
-      threadStatus,
-      status,
-    );
+    const status = codexStyle ? workStatus : threadStatus;
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
     const hasWork = workCount > 0;
     const { open: workOpen, onToggle: toggleWork } = useSidebarWorkExpansion(
-      activeThreadKey,
-      props.codexStyle ? workRows.some((row) => row.kind === "subagent") : hasWork,
+      threadKey,
+      codexStyle ? workRows.some((row) => row.kind === "subagent") : hasWork,
     );
     const familyStyle = useClientSettings((settings) => settings.sidebarFamilyStyle);
     const locationStyle = useClientSettings((settings) => settings.sidebarLocationIconStyle);
     const contextDrag = useThreadContextPointerDrag(() => ({
-      threads: [scopeThreadRef(props.thread.environmentId, props.thread.id)],
-      title: props.thread.title,
+      threads: [threadRef],
+      title: thread.title,
     }));
-    const provider = useEnvironmentProviders()
-      .get(props.thread.environmentId)
-      ?.find((entry) => entry.instanceId === props.thread.providerInstanceId);
-    return (
-      <li
-        className="fork-sidebar-thread-item relative list-none"
-        data-family-separator={sidebarSeparatorStyle(props.familySeparators?.get(activeThreadKey))}
-        data-separator-reason={props.familySeparators?.get(activeThreadKey)}
-        // A family of threads shares one hue, from its root: a thread with listed descendants, and a
-        // subagent listed with its own location away from its parent.
-        style={
-          props.codexStyle &&
-          familyStyle !== "lines" &&
-          (workRows.some((row) => row.kind === "subagent") ||
-            props.thread.lineage.relationshipToParent === "subagent")
-            ? ({
-                "--sidebar-group-hue": threadGroupHue(props.thread.lineage.rootThreadId),
-              } as CSSProperties)
-            : undefined
-        }
-        data-thread-item={activeThreadKey}
-        data-sidebar-thread-key={activeThreadKey}
-        ref={watchRow}
-      >
-        <SidebarProjectThreadTooltip
-          thread={props.thread}
-          provider={provider}
-          render={
-            <button
-              type="button"
-              data-sidebar-row={activeThreadKey}
-              data-sidebar-parent={props.navigationParent}
-              aria-current={active ? "page" : undefined}
-              aria-label={sidebarProjectThreadAccessibleName({
-                role: props.codexStyle ? sidebarRoleLabel(props.thread.source) : undefined,
-                title: props.thread.title,
-                issueNumber: props.thread.source.linkedIssue?.number,
-                status,
-                links: props.thread.pullRequests,
-              })}
-              className={cn(
-                "fork-sidebar-thread sidebar-caret-row group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors",
-                PROJECTS_WORK_ROW_HEIGHT,
-                props.codexStyle ? "sidebar-thread-tint text-xs" : "text-sm",
-                active
-                  ? "bg-sidebar-row-active text-sidebar-foreground"
-                  : selected
-                    ? "bg-sidebar-row-selected text-sidebar-foreground"
-                    : cn(
-                        // Codex style: the same white as subagent and shell rows, not only when selected.
-                        props.codexStyle
-                          ? "text-foreground/85"
-                          : "text-sidebar-muted-foreground/80",
-                        "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-                      ),
-              )}
-              onClick={(event) => props.onClick(event, props.thread)}
-              // Drag the row onto a chat composer to add the thread as context.
-              onPointerDown={contextDrag.onPointerDown}
-              onClickCapture={contextDrag.onClickCapture}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                props.onContextMenu(props.thread, { x: event.clientX, y: event.clientY });
-              }}
-            >
-              {props.codexStyle ? (
-                <SidebarThreadColumns
-                  location={
-                    props.locationLeadKeys?.has(activeThreadKey) === false ? undefined : (
-                      <ThreadLocationIcon
-                        thread={props.thread}
-                        tooltip={false}
-                        worktreeStyle={locationStyle}
-                      />
-                    )
-                  }
-                  role={<ThreadRoleIcon thread={props.thread.source} />}
-                  provider={
-                    <ThreadRelationshipIcon
-                      driver={provider?.driver}
-                      provider={provider}
-                      fallbackIcon={CornerDownRightIcon}
-                    />
-                  }
-                  model={resolveSidebarThreadModelLabel(props.thread, provider, true, false)}
-                  effort={sidebarEffortGlyph(provider, props.thread.modelSelection)}
-                  name={
-                    <SidebarProjectThreadName thread={props.thread} badges={false}>
-                      <SidebarThreadTitle
-                        role={sidebarRoleLabel(props.thread.source)}
-                        title={props.thread.title}
-                      />
-                    </SidebarProjectThreadName>
-                  }
-                  badgeKind={sidebarBadgeKind(
-                    sidebarRoleLabel(props.thread.source),
-                    !!props.thread.source.linkedIssue,
-                    props.thread.pullRequests.length > 0,
-                  )}
-                  issue={
-                    <ThreadIssueBadge
-                      environmentId={props.thread.environmentId}
-                      issue={props.thread.source.linkedIssue}
-                    />
-                  }
-                  pr={<ThreadPullRequestBadge thread={props.thread} />}
-                  time={<SidebarThreadTime thread={props.thread} status={status} />}
-                  status={<ThreadStatusMark status={statusMark} />}
-                />
-              ) : (
-                <>
-                  <span
-                    aria-hidden
-                    className={cn(
-                      "size-1.5 shrink-0 rounded-full",
-                      THREAD_STATUS_DOT_CLASS[status],
-                    )}
-                  />
-                  <ThreadLocationIcon thread={props.thread} tooltip={false} />
-                  <ThreadRoleIcon thread={props.thread.source} />
-                  <span className="min-w-0 flex-1">
-                    <SidebarProjectThreadName thread={props.thread}>
-                      {props.thread.title}
-                    </SidebarProjectThreadName>
-                  </span>
-                  {workCount > 0 ? (
-                    <span aria-hidden className="w-8 shrink-0" />
-                  ) : (
-                    <SidebarThreadTime thread={props.thread} status={status} />
-                  )}
-                </>
-              )}
-            </button>
+    const providerEntries = assembly.providerEntriesByEnvironment.get(thread.environmentId);
+    const provider = sidebarThreadProvider(providerEntries, thread.providerInstanceId);
+    const familySeparators = parseFamilySeparators(props.familySeparatorsText);
+    const locationLeadKeys =
+      props.locationLeadText === undefined
+        ? undefined
+        : new Set(props.locationLeadText.split("\n"));
+    const role = sidebarRoleLabel(thread.source);
+    const onChildClick = (event: ReactMouseEvent, child: SidebarThreadSummary) =>
+      assembly.onThreadClick(event, scopeThreadRef(child.environmentId, child.id));
+    const onChildContextMenu = (
+      child: SidebarThreadSummary,
+      position: { readonly x: number; readonly y: number },
+    ) => assembly.onContextMenu(scopeThreadRef(child.environmentId, child.id), position, "mouse");
+    const renderColumns = (parts: {
+      readonly pin: ReactNode;
+      readonly lastVisitedAt: string | undefined;
+    }) => {
+      // Finished while you were away and not opened since: a green dot where the spinner was.
+      const statusMark = resolveSidebarProjectStatusMark(
+        thread,
+        parts.lastVisitedAt,
+        threadStatus,
+        status,
+      );
+      if (!codexStyle) {
+        return (
+          <>
+            <span
+              aria-hidden
+              className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
+            />
+            <ThreadLocationIcon thread={thread} tooltip={false} />
+            <ThreadRoleIcon thread={thread.source} />
+            <span className="min-w-0 flex-1">
+              <SidebarProjectThreadName thread={thread}>{thread.title}</SidebarProjectThreadName>
+            </span>
+            {parts.pin}
+            {workCount > 0 ? (
+              <span aria-hidden className="w-8 shrink-0" />
+            ) : (
+              <SidebarThreadTime thread={thread} status={status} />
+            )}
+          </>
+        );
+      }
+      const name = (
+        <SidebarProjectThreadName thread={thread} badges={false}>
+          <SidebarThreadTitle role={role} title={thread.title} />
+        </SidebarProjectThreadName>
+      );
+      return (
+        <SidebarThreadColumns
+          location={
+            locationLeadKeys?.has(threadKey) === false ? undefined : (
+              <ThreadLocationIcon thread={thread} tooltip={false} worktreeStyle={locationStyle} />
+            )
           }
+          role={<ThreadRoleIcon thread={thread.source} />}
+          provider={
+            <ThreadRelationshipIcon
+              driver={provider?.driver}
+              provider={provider}
+              fallbackIcon={CornerDownRightIcon}
+            />
+          }
+          model={resolveSidebarThreadModelLabel(thread, provider, true, false)}
+          effort={sidebarEffortGlyph(provider, thread.modelSelection)}
+          name={
+            parts.pin === null ? (
+              name
+            ) : (
+              <span className="flex min-w-0 items-center gap-1">
+                {name}
+                {parts.pin}
+              </span>
+            )
+          }
+          badgeKind={sidebarBadgeKind(
+            role,
+            !!thread.source.linkedIssue,
+            thread.pullRequests.length > 0,
+          )}
+          issue={
+            <ThreadIssueBadge
+              environmentId={thread.environmentId}
+              issue={thread.source.linkedIssue}
+            />
+          }
+          pr={<ThreadPullRequestBadge thread={thread} />}
+          time={<SidebarThreadTime thread={thread} status={status} />}
+          status={<ThreadStatusMark status={statusMark} />}
         />
-        {hasWork && props.codexStyle ? (
+      );
+    };
+    const after = (
+      <>
+        {hasWork && codexStyle ? (
           <SidebarCaretToggle
             open={workOpen}
             count={workCount}
@@ -1585,37 +1526,91 @@ const SidebarProjectThreadRow = memo(
             )}
           </button>
         ) : null}
-        {hasWork && workOpen && props.codexStyle ? (
+        {hasWork && workOpen && codexStyle ? (
           <div>
             <SidebarSubagentTree
-              environmentId={props.thread.environmentId}
-              threadId={props.thread.id}
-              familySeparators={props.familySeparators}
+              environmentId={thread.environmentId}
+              threadId={thread.id}
+              familySeparators={familySeparators}
               rows={workRows}
               processRows={processRows}
-              parentTasks={props.thread.pendingBackgroundTasks}
+              parentTasks={thread.pendingBackgroundTasks}
               runningChildren={runningSubagents}
-              onChildClick={props.onClick}
-              onChildContextMenu={props.onContextMenu}
+              providerEntries={providerEntries}
+              onChildClick={onChildClick}
+              onChildContextMenu={onChildContextMenu}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
-              locationLeadKeys={props.locationLeadKeys}
+              locationLeadKeys={locationLeadKeys}
             />
           </div>
         ) : hasWork && workOpen ? (
           <div className="ms-3 border-s border-sidebar-border/60 ps-1">
             <SidebarBackgroundWorkRows
               compact
-              environmentId={props.thread.environmentId}
-              threadId={props.thread.id}
+              environmentId={thread.environmentId}
+              threadId={thread.id}
               rows={workRows}
+              providerEntries={providerEntries}
               processCount={processRows.count}
               afterTasks={<SidebarProcessGroupRows columns={false} {...processRows} />}
-              onChildClick={props.onClick}
-              onChildContextMenu={props.onContextMenu}
+              onChildClick={onChildClick}
+              onChildContextMenu={onChildContextMenu}
             />
           </div>
         ) : null}
-      </li>
+      </>
+    );
+    return (
+      <SidebarThreadRow
+        {...rowProps}
+        variant="columns"
+        liveLookups={false}
+        navigationParent={props.navigationParent}
+        variantAction="settle"
+        dropVerb={null}
+        dragOverPinned={false}
+        sweepAction={null}
+        snoozeWakeLabelText={null}
+        jumpLabel={null}
+        columns={{
+          render: renderColumns,
+          after,
+          lease,
+          label: sidebarProjectThreadAccessibleName({
+            role: codexStyle ? role : undefined,
+            title: thread.title,
+            issueNumber: thread.source.linkedIssue?.number,
+            status,
+            links: thread.pullRequests,
+          }),
+          className: cn(
+            "fork-sidebar-thread sidebar-caret-row group/project-thread @container/thread-row flex min-w-0 items-center gap-2 px-2",
+            PROJECTS_WORK_ROW_HEIGHT,
+            codexStyle ? "sidebar-thread-tint text-xs" : "text-sm",
+          ),
+          rowProps: {
+            // Drag the row onto a chat composer to add the thread as context.
+            onPointerDown: contextDrag.onPointerDown,
+            onClickCapture: contextDrag.onClickCapture,
+          },
+          itemProps: {
+            className: "fork-sidebar-thread-item relative list-none",
+            "data-family-separator": sidebarSeparatorStyle(familySeparators?.get(threadKey)),
+            "data-separator-reason": familySeparators?.get(threadKey),
+            // A family of threads shares one hue, from its root: a thread with listed
+            // descendants, and a subagent listed with its own location away from its parent.
+            style:
+              codexStyle &&
+              familyStyle !== "lines" &&
+              (workRows.some((row) => row.kind === "subagent") ||
+                thread.lineage.relationshipToParent === "subagent")
+                ? ({
+                    "--sidebar-group-hue": threadGroupHue(thread.lineage.rootThreadId),
+                  } as CSSProperties)
+                : undefined,
+          },
+        }}
+      />
     );
   },
   (previous, next) => {
@@ -1624,10 +1619,9 @@ const SidebarProjectThreadRow = memo(
       previous.thread === next.thread &&
       previous.navigationParent === next.navigationParent &&
       previous.codexStyle === next.codexStyle &&
-      (previous.activeThreadKey === key) === (next.activeThreadKey === key) &&
-      previous.onClick === next.onClick &&
-      previous.onContextMenu === next.onContextMenu &&
-      previous.locationLeadKeys === next.locationLeadKeys &&
+      previous.assembly === next.assembly &&
+      sameSidebarThreadRowState(next.thread, previous.rowState, next.rowState) &&
+      previous.locationLeadText === next.locationLeadText &&
       previous.familySeparatorsText === next.familySeparatorsText &&
       sameSidebarSubagentTree(
         key,
@@ -1652,6 +1646,7 @@ function SidebarSubagentTree(props: {
     position: { x: number; y: number },
   ) => void;
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  readonly providerEntries: ReadonlyMap<string, SidebarProviderEntry> | undefined;
   readonly locationLeadKeys?: ReadonlySet<string> | undefined;
   readonly depth?: number;
   /** This level's process groups. */
@@ -1690,6 +1685,7 @@ function SidebarSubagentTree(props: {
       locationLeadKeys={props.locationLeadKeys}
       environmentId={props.environmentId}
       threadId={props.threadId}
+      providerEntries={props.providerEntries}
       onChildClick={props.onChildClick}
       onChildContextMenu={props.onChildContextMenu}
       rows={props.rows}
@@ -1709,6 +1705,7 @@ function SidebarSubagentTree(props: {
             rows={rows}
             parentTasks={child.pendingBackgroundTasks}
             runningChildren={grandchildren}
+            providerEntries={props.providerEntries}
             onChildClick={props.onChildClick}
             onChildContextMenu={props.onChildContextMenu}
             runningSubagentsByParentKey={props.runningSubagentsByParentKey}
@@ -1723,7 +1720,8 @@ function SidebarSubagentTree(props: {
 /**
  * A subagent's row with its work: its tasks, the commands it is running and the processes they
  * spawned (see `useSidebarThreadProcesses`), and its own subagents. The row holds the work's
- * queries, so its caret and count know all of it even while collapsed.
+ * queries, so its caret and count know all of it even while collapsed; its lease runs them only
+ * near the viewport.
  */
 function SidebarSubagentRow(
   props: Omit<ComponentProps<typeof SidebarSubagentTree>, "processRows"> & {
@@ -1733,10 +1731,12 @@ function SidebarSubagentRow(
   },
 ) {
   const { thread, status: rowStatus, rows, render, ...tree } = props;
-  const { status, watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
+  const lease = useSidebarRowSubscriptionLease(false);
+  const { status, workRows, workCount, processRows } = useSidebarThreadProcesses(
     thread,
     rowStatus,
     rows,
+    lease.leaseLiveStatus,
   );
   const { open, onToggle } = useSidebarWorkExpansion(
     scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
@@ -1744,7 +1744,7 @@ function SidebarSubagentRow(
   );
   return render({
     status,
-    ref: watchRow,
+    ref: lease.rowRef,
     toggle: workCount > 0 ? { count: workCount, open, onToggle } : null,
     children:
       workCount > 0 ? (

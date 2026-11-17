@@ -64,6 +64,7 @@ import {
   memo,
   useRef,
   useState,
+  type HTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -523,11 +524,43 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
   return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
 }
 
-type SidebarThreadRowProps = {
+/** A caller-drawn one-line row on the shared row's surface, handlers and tooltip. */
+export type SidebarThreadRowColumns = {
+  readonly render: (parts: {
+    /** The shared pin mark, or its unpin button. */
+    readonly pin: ReactNode;
+    readonly lastVisitedAt: string | undefined;
+  }) => ReactNode;
+  /** Inside the list item, after the row: a work toggle and child rows. */
+  readonly after?: ReactNode;
+  readonly label: string;
+  readonly className?: string | undefined;
+  readonly rowProps?: HTMLAttributes<HTMLDivElement> | undefined;
+  readonly itemProps?:
+    | (HTMLAttributes<HTMLLIElement> & { readonly [data: `data-${string}`]: string | undefined })
+    | undefined;
+  /** The caller's lease, which also gates the caller's own queries. */
+  readonly lease: ReturnType<typeof useSidebarRowSubscriptionLease>;
+};
+
+// Selection and hover restyle only the row's surface, so its columns keep their render.
+const SidebarThreadRowColumnsContent = memo(function SidebarThreadRowColumnsContent(props: {
+  render: SidebarThreadRowColumns["render"];
+  pin: ReactNode;
+  lastVisitedAt: string | undefined;
+}) {
+  return props.render({ pin: props.pin, lastVisitedAt: props.lastVisitedAt });
+});
+
+export type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
-  // "folder-multiline" adds the card's branch and PR line under it.
-  variant: "card" | "slim" | "folder" | "folder-multiline";
+  // "folder-multiline" adds the card's branch and PR line under it;
+  // "columns" draws `columns` instead of the row's own content.
+  variant: "card" | "slim" | "folder" | "folder-multiline" | "columns";
+  columns?: SidebarThreadRowColumns | undefined;
+  /** False skips the branch and pull request lookups, for rows that show neither. */
+  liveLookups?: boolean | undefined;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -628,7 +661,7 @@ function ThreadRenameInput(props: {
   );
 }
 
-const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
+export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
     isRenaming,
     onCancelRename,
@@ -656,7 +689,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadKey = scopedThreadKey(threadRef);
   const projectFolderAppearance = useProjectFolderAppearance(props.projectKey);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
-  const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
+  const ownLease = useSidebarRowSubscriptionLease(props.isActive);
+  const { leaseLiveStatus, rowRef: leaseRowRef } = props.columns?.lease ?? ownLease;
+  const lookupsLive = leaseLiveStatus && props.liveLookups !== false;
   const { revealRef } = props;
   const rowRef = (row: HTMLElement | null) => {
     const stopReveal = row === null ? undefined : revealRef?.(row, threadKey);
@@ -689,12 +724,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const linkedPullRequestStatus = useLinkedThreadPullRequest(
     thread.environmentId,
     thread.linkedPullRequest,
-    leaseLiveStatus,
+    lookupsLive,
     thread.pullRequests,
     thread.branchPullRequest,
   );
   const branchTarget =
-    leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
+    lookupsLive && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
       ? { environmentId: thread.environmentId, cwd: gitCwd }
       : null;
   const gitStatus = useEnvironmentQuery(
@@ -1140,6 +1175,58 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       />
     )
   ) : null;
+
+  if (variant === "columns" && props.columns) {
+    const columns = props.columns;
+    return (
+      <li
+        data-thread-item={threadKey}
+        data-sidebar-thread-key={threadKey}
+        {...columns.itemProps}
+        {...(fileDropHandlers ?? {})}
+      >
+        <Tooltip disabled={isRenaming}>
+          <TooltipTrigger
+            render={
+              <div
+                {...columns.rowProps}
+                ref={rowRef}
+                role="button"
+                tabIndex={0}
+                data-sidebar-row={threadKey}
+                data-sidebar-parent={props.navigationParent}
+                aria-label={columns.label}
+                aria-current={accessibility.current}
+                aria-busy={isRegeneratingTitle || undefined}
+                className={cn(rowSurfaceClassName, columns.className)}
+                onClick={handleClick}
+                onDoubleClick={handleDoubleClick}
+                onKeyDown={handleKeyDown}
+                onContextMenu={handleContextMenu}
+              />
+            }
+          >
+            {isRenaming ? (
+              title
+            ) : (
+              <SidebarThreadRowColumnsContent
+                render={columns.render}
+                pin={pinIndicator}
+                lastVisitedAt={localLastVisitedAt}
+              />
+            )}
+            {isRegeneratingTitle ? (
+              <span role="status" className="sr-only">
+                Regenerating title
+              </span>
+            ) : null}
+          </TooltipTrigger>
+          {detailsTooltip}
+        </Tooltip>
+        {columns.after}
+      </li>
+    );
+  }
 
   if (variant === "slim") {
     return (
