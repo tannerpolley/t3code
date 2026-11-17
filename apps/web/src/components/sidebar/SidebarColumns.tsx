@@ -199,15 +199,17 @@ export function SidebarThreadColumns(props: {
         </span>
       ))}
       <span className="sidebar-thread-main">
-        {modelName || version || effort ? (
-          <span className="sidebar-thread-model">
-            {modelName ? (
-              <SidebarModelPiece label={props.model!}>{modelName}</SidebarModelPiece>
-            ) : null}
-            {version ? <SidebarModelPiece label={props.model!}>{version}</SidebarModelPiece> : null}
-            {effort ? <SidebarEffortMeter effort={effort} /> : null}
-          </span>
+        {modelName ? (
+          <SidebarModelPiece className="sidebar-thread-model-name" label={props.model!}>
+            {modelName}
+          </SidebarModelPiece>
         ) : null}
+        {version ? (
+          <SidebarModelPiece className="sidebar-thread-model-version" label={props.model!}>
+            {version}
+          </SidebarModelPiece>
+        ) : null}
+        {effort ? <SidebarEffortMeter effort={effort} /> : null}
         <span className="sidebar-thread-name">{props.name}</span>
       </span>
       <span className={cn("sidebar-thread-trailing", props.trailingClassName)}>
@@ -243,10 +245,14 @@ export function SidebarThreadTitle(props: { readonly role: string; readonly titl
 }
 
 /** A model name or version, with the whole label on hover. */
-function SidebarModelPiece(props: { readonly label: string; readonly children: string }) {
+function SidebarModelPiece(props: {
+  readonly className: string;
+  readonly label: string;
+  readonly children: string;
+}) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<span className="min-w-0 truncate" />}>
+      <TooltipTrigger render={<span className={props.className} />}>
         {props.children}
       </TooltipTrigger>
       <TooltipPopup side="top">{props.label}</TooltipPopup>
