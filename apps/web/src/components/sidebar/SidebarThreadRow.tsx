@@ -535,6 +535,8 @@ export type SidebarThreadRowColumns = {
   readonly after?: ReactNode;
   readonly label: string;
   readonly className?: string | undefined;
+  /** The surface when the row is neither active nor selected, in place of the receding and draft looks. */
+  readonly idleClassName: string;
   readonly rowProps?: HTMLAttributes<HTMLDivElement> | undefined;
   readonly itemProps?:
     | (HTMLAttributes<HTMLLIElement> & { readonly [data: `data-${string}`]: string | undefined })
@@ -1006,12 +1008,15 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       ? "bg-sidebar-row-active text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
       : isSelected || props.sweepAction !== null
         ? "bg-sidebar-row-selected text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
-        : hasUnsentDraft
-          ? cn(draftSurfaceClassName, "text-sidebar-foreground")
-          : shouldRecede
-            ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-            : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
+        : props.columns
+          ? props.columns.idleClassName
+          : hasUnsentDraft
+            ? cn(draftSurfaceClassName, "text-sidebar-foreground")
+            : shouldRecede
+              ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+              : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
     shouldRecede &&
+      !props.columns &&
       (status === "preparing" || status === "working") &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",

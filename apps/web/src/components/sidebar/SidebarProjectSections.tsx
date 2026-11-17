@@ -1588,6 +1588,11 @@ const SidebarProjectThreadRow = memo(
             PROJECTS_WORK_ROW_HEIGHT,
             codexStyle ? "sidebar-thread-tint text-xs" : "text-sm",
           ),
+          // Codex style: the same white as subagent and shell rows.
+          idleClassName: cn(
+            codexStyle ? "text-foreground/85" : "text-sidebar-muted-foreground/80",
+            "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+          ),
           rowProps: {
             // Drag the row onto a chat composer to add the thread as context.
             onPointerDown: contextDrag.onPointerDown,
