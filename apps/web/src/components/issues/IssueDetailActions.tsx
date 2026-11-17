@@ -1,12 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
   RepositoryIssueRef,
   RepositoryIssueSummary,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
 import {
   BookOpenIcon,
   CircleSlashIcon,
@@ -24,28 +22,16 @@ import { useState } from "react";
 
 import { shortcutLabelForCommand } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
-import { useComposerDraftStore } from "~/composerDraftStore";
-import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
 import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
-import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
+import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { handoffPrompt } from "./issueDetailActions.logic";
 import { useInlineActionConfirm } from "../pullRequest/useInlineActionConfirm";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger, MenuShortcut } from "../ui/menu";
 import { toastManager } from "../ui/toast";
-import {
-  canUnlinkIssue,
-  issueComposerPrompt,
-  issueImplementDestination,
-  issueMenuAvailability,
-  type IssueComposerAction,
-} from "./issueDetailActions.logic";
-import { findIssueProject } from "./issueWorktree.logic";
-
-const lastHandoffByDraft = new Map<string, string>();
+import { canUnlinkIssue, issueMenuAvailability } from "./issueDetailActions.logic";
+import { useIssueComposerHandoff } from "./useIssueComposerHandoff";
 
 /** The issue-specific actions use the PR's menu controls, confirmation and composer handoff. */
 export function IssueDetailActions({
@@ -63,40 +49,18 @@ export function IssueDetailActions({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
-  const projects = useProjects();
-  const thread = useThreadShell(threadRef);
-  const navigate = useNavigate();
-  const configs = useServerConfigs();
-  const capabilities = configs.get(environmentId)?.environment.capabilities;
-  const { data: repositoryWork } = useEnvironmentQuery(
-    capabilities?.issueMilestones === true
-      ? repositoryIssueEnvironment.repositoryStatus({
-          environmentId,
-          input: { host: reference.host, repository: reference.repository },
-        })
-      : null,
-  );
-  const implementation = issueImplementDestination({
-    environmentId,
-    rootThreadId: repositoryWork?.rootThreadId,
-    hasParent: issue.parent != null,
-    paused: repositoryWork?.orchestration?.paused === true,
-  });
-  const project = findIssueProject(
-    projects,
-    { environmentId, ...reference },
-    thread?.projectId ?? null,
-  );
-  const handleNewThread = useNewThreadHandler();
+  const handoff = useIssueComposerHandoff({ environmentId, reference, issue, threadRef });
+  const { implementation, paste } = handoff;
   const setState = useAtomCommand(repositoryIssueEnvironment.setState, { reportFailure: false });
   const unlink = useAtomCommand(repositoryIssueEnvironment.unlink, { reportFailure: false });
   const canWrite = useAtomValue(repositoryIssueEnvironment.setState.permissionAtom(environmentId));
   const canUnlink = useAtomValue(repositoryIssueEnvironment.unlink.permissionAtom(environmentId));
-  const [pending, setPending] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const pending = writing || handoff.pending;
   const confirm = useInlineActionConfirm(`${environmentId}:${issue.url}`);
   const availability = issueMenuAvailability({
     linked: canUnlinkIssue(issue, environmentId, threadRef),
-    hasComposer: threadRef !== null || project !== null,
+    hasComposer: handoff.hasComposer,
     state: issue.state,
     canWrite,
     canUnlink,
@@ -107,66 +71,9 @@ export function IssueDetailActions({
     onError: (error) => toastManager.add({ type: "error", title: error.message }),
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const paste = async (action: IssueComposerAction) => {
-    setPending(true);
-    try {
-      const opened =
-        action !== "implement" && threadRef === null && project !== null
-          ? await handleNewThread(scopeProjectRef(project.environmentId, project.id))
-          : null;
-      const target =
-        action === "implement" ? implementation.threadRef : (threadRef ?? opened?.draftId);
-      if (!target) {
-        toastManager.add({
-          type: "error",
-          title: "Could not prepare the composer",
-          description:
-            implementation.disabledReason && action === "implement"
-              ? implementation.disabledReason
-              : "Add a project for this repository to open a thread.",
-        });
-        setPending(false);
-        return;
-      }
-      const store = useComposerDraftStore.getState();
-      const key = typeof target === "string" ? `draft:${target}` : scopedThreadKey(target);
-      const prompt = issueComposerPrompt(action, issue);
-      store.setPrompt(
-        target,
-        handoffPrompt(
-          {
-            prompt: store.getComposerDraft(target)?.prompt ?? "",
-            lastHandoffPrompt: lastHandoffByDraft.get(key),
-          },
-          prompt,
-        ),
-      );
-      lastHandoffByDraft.set(key, prompt);
-      if (
-        action === "implement" &&
-        typeof target !== "string" &&
-        (target.environmentId !== threadRef?.environmentId ||
-          target.threadId !== threadRef?.threadId)
-      ) {
-        await navigate({ to: "/$environmentId/$threadId", params: target });
-      }
-      toastManager.add({
-        type: "success",
-        title: "Added to the composer",
-        description: "Read it over, then send.",
-      });
-    } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Could not prepare the composer",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
-    setPending(false);
-  };
   const write = async (action: "unlink" | "close" | "reopen") => {
     if (action === "unlink" && threadRef === null) return;
-    setPending(true);
+    setWriting(true);
     const result =
       action === "unlink" && threadRef !== null
         ? await unlink({ environmentId, input: { ...reference, threadId: threadRef.threadId } })
@@ -174,7 +81,7 @@ export function IssueDetailActions({
             environmentId,
             input: { ...reference, state: action === "close" ? "closed" : "open" },
           });
-    setPending(false);
+    setWriting(false);
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
