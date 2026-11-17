@@ -157,6 +157,8 @@ import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { NewSectionProjectDialog, type NewSectionProjectTarget } from "./NewSectionProjectDialog";
+import { SidebarProjectFolderHeader, sidebarFolderRowId } from "./SidebarProjectFolderHeader";
+import { attachSidebarTree } from "../../lib/sidebarTree";
 import {
   resolveProjectDrop,
   resolveSubsectionDrop,
@@ -207,6 +209,13 @@ function sectionContainerId(sectionId: string): string {
   return `sidebar-project-section-container:${sectionId}`;
 }
 
+type ProjectContextMenuHandler = ComponentProps<typeof SidebarProjectFolderHeader>["onContextMenu"];
+
+/** A section header's tree row; its projects and subsections name it as their parent. */
+function sidebarSectionRowId(sectionId: string): string {
+  return `section:${sectionId}`;
+}
+
 function sectionDragId(sectionId: string): string {
   return `sidebar-project-section-header:${sectionId}`;
 }
@@ -247,6 +256,8 @@ interface SidebarProjectSectionsProps {
   readonly onRenameSection: (section: { readonly id: string; readonly name: string }) => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
+  /** The shared project context menu, as Activity folders open it. */
+  readonly onProjectContextMenu: ProjectContextMenuHandler;
   readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
@@ -271,6 +282,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     onRenameSection,
     onNewThreadInProject,
     onOpenProjectSettings,
+    onProjectContextMenu,
     onRemoveProject,
     onSelectProject,
     onThreadClick,
@@ -591,7 +603,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         onDragStart={handleDragStart}
         sensors={sensors}
       >
-        <ul className="flex min-w-0 flex-col gap-px">
+        <ul ref={attachSidebarTree} className="flex min-w-0 flex-col gap-px">
           {codexStyle ? null : (
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -627,6 +639,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                   onDelete={deleteSection}
                   onMoveProject={moveProject}
                   onNewThreadInProject={onNewThreadInProject}
+                  onProjectContextMenu={onProjectContextMenu}
                   onOpenProjectSettings={onOpenProjectSettings}
                   onRemoveProject={onRemoveProject}
                   onOpenRename={openRenameDialog}
@@ -684,6 +697,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly onSelectProject: (projectKey: string | null) => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
+  readonly onProjectContextMenu: ProjectContextMenuHandler;
   readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
   readonly onOpenRename: (section: SidebarProjectSectionRender) => void;
   readonly onDelete: (sectionId: string) => void;
@@ -776,6 +790,7 @@ const ProjectSection = memo(function ProjectSection(props: {
                     codexStyle={props.codexStyle}
                     onMoveProject={props.onMoveProject}
                     onNewThreadInProject={props.onNewThreadInProject}
+                    onProjectContextMenu={props.onProjectContextMenu}
                     onOpenProjectSettings={props.onOpenProjectSettings}
                     onRemoveProject={props.onRemoveProject}
                     onSelectProject={props.onSelectProject}
@@ -872,6 +887,10 @@ function SortableSectionHeader(props: {
         ref={draggable && codexStyle ? setActivatorNodeRef : undefined}
         {...(draggable && codexStyle ? { ...attributes, ...listeners } : {})}
         disabled={!canWrite}
+        data-sidebar-row={sidebarSectionRowId(section.id)}
+        data-sidebar-parent={
+          section.parentId === undefined ? undefined : sidebarSectionRowId(section.parentId)
+        }
         aria-expanded={expanded}
         className={cn(
           "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
@@ -1056,6 +1075,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly onSelectProject: (projectKey: string | null) => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
+  readonly onProjectContextMenu: ProjectContextMenuHandler;
   readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
   readonly onMoveProject: (projectKey: string, sectionId: string | null) => void;
   readonly isProjectExpanded: boolean;
@@ -1118,155 +1138,157 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
       .join("\n");
   });
   const locationLeadKeys = codexStyle ? new Set(leadKeyList.split("\n")) : undefined;
+  const toggle = () => {
+    if (canWrite) props.onToggleProject(project.projectKey, !props.isProjectExpanded);
+  };
+  const count =
+    props.threads.length > 0
+      ? props.threads.length
+      : project.groupedProjectCount > 1
+        ? project.groupedProjectCount
+        : undefined;
 
   return (
     // Rows stay put while dragging; the drop line shows where this one lands.
     <li ref={setNodeRef} className={cn("relative rounded-md", isDragging && "opacity-40")}>
-      <div className="group/project-row relative">
-        {/* Codex style drags the whole row; otherwise the grip button is the handle. */}
-        <button
-          type="button"
-          {...(codexStyle ? { ...attributes, ...listeners } : {})}
-          ref={codexStyle ? setActivatorNodeRef : undefined}
-          disabled={!canWrite}
-          aria-expanded={props.isProjectExpanded}
-          className={cn(
-            "fork-sidebar-project flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-            // Codex style makes room for the actions menu only while it shows.
-            codexStyle
-              ? "group-hover/project-row:pe-8 group-focus-within/project-row:pe-8"
-              : "pe-12",
-            props.selected && "bg-sidebar-row-selected text-sidebar-foreground",
-          )}
-          onClick={() => {
-            if (canWrite) props.onToggleProject(project.projectKey, !props.isProjectExpanded);
-          }}
-        >
-          {codexStyle ? null : (
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 text-icon-muted transition-transform",
-                props.isProjectExpanded && "rotate-90",
-              )}
-            />
-          )}
-          <ProjectFavicon
-            className="size-4"
-            folderColor={folderColor}
-            forceFolder={forceFolder}
-            project={project}
-            {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
-          />
-          <span className={cn("fork-sidebar-title min-w-0 truncate", !codexStyle && "flex-1")}>
-            {project.displayName}
-          </span>
-          {codexStyle ? (
-            <SidebarCaretSlot open={props.isProjectExpanded} className="text-icon-muted" />
-          ) : null}
-          {codexStyle ? (
-            <SidebarTrailingColumns
-              count={
-                props.isProjectExpanded
-                  ? undefined
-                  : props.threads.length > 0
-                    ? props.threads.length
-                    : project.groupedProjectCount > 1
-                      ? project.groupedProjectCount
-                      : undefined
-              }
-            />
-          ) : props.threads.length > 0 ? (
-            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
-              {props.threads.length}
-            </span>
-          ) : project.groupedProjectCount > 1 ? (
-            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
-              {project.groupedProjectCount}
-            </span>
-          ) : null}
-        </button>
-        <div className="pointer-events-none absolute inset-y-0 end-1 flex items-center gap-px">
-          {codexStyle ? null : (
-            <button
-              aria-label={`Reorder ${project.displayName}`}
-              className="pointer-events-auto inline-flex size-6 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
-              ref={setActivatorNodeRef}
-              type="button"
-              {...attributes}
-              {...listeners}
-            >
-              <GripVerticalIcon aria-hidden className="size-3.5" />
-            </button>
-          )}
-          <Menu>
-            <MenuTrigger
-              render={
-                <button
-                  aria-label={`Actions for ${project.displayName}`}
-                  className="pointer-events-auto inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-pointer group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
-                  type="button"
+      <SidebarProjectFolderHeader
+        group={project}
+        collapsed={!props.isProjectExpanded}
+        hiddenThreads={props.isProjectExpanded ? NO_THREADS : props.threads}
+        onToggle={toggle}
+        onNewThread={props.onNewThreadInProject}
+        onContextMenu={props.onProjectContextMenu}
+        placement={{
+          parentRow: sidebarSectionRowId(props.sectionId ?? UNGROUPED_SECTION_ID),
+          // Codex style drags the whole row; otherwise the grip button is the handle.
+          button: {
+            ...(codexStyle ? { ...attributes, ...listeners, ref: setActivatorNodeRef } : {}),
+            disabled: !canWrite,
+            className: cn(
+              "fork-sidebar-project flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              // Codex style makes room for the actions menu only while it shows.
+              codexStyle
+                ? "group-hover/project-folder:pe-8 group-focus-within/project-folder:pe-8"
+                : "pe-12",
+              props.selected && "bg-sidebar-row-selected text-sidebar-foreground",
+            ),
+          },
+          leading: (
+            <>
+              {codexStyle ? null : (
+                <ChevronRightIcon
+                  aria-hidden
+                  className={cn(
+                    "size-3 shrink-0 text-icon-muted transition-transform",
+                    props.isProjectExpanded && "rotate-90",
+                  )}
                 />
-              }
-            >
-              <EllipsisIcon aria-hidden className="size-3.5" />
-            </MenuTrigger>
-            <MenuPopup align="end" className="min-w-52">
-              <MenuItem onClick={() => props.onNewThreadInProject(project)}>
-                <SquarePenIcon />
-                New thread
-              </MenuItem>
-              <MenuItem
-                onClick={() => props.onSelectProject(props.selected ? null : project.projectKey)}
-              >
-                <FilterIcon />
-                {props.selected ? "Show all projects" : "Filter to this project"}
-              </MenuItem>
-              <MenuItem onClick={() => props.onOpenProjectSettings(project)}>
-                <SettingsIcon />
-                Project settings
-              </MenuItem>
-              {otherSections.length > 0 || props.sectionId !== null ? (
-                <MenuSub>
-                  <MenuSubTrigger>
-                    <FolderIcon />
-                    Move project to section
-                  </MenuSubTrigger>
-                  <MenuSubPopup>
-                    {otherSections.map((section) => (
-                      <MenuItem
-                        key={section.id}
-                        disabled={!canWrite}
-                        onClick={() => props.onMoveProject(project.projectKey, section.id)}
-                      >
-                        {section.parentId === undefined
-                          ? section.name
-                          : `${props.sections.find((parent) => parent.id === section.parentId)?.name ?? ""} / ${section.name}`}
-                      </MenuItem>
-                    ))}
-                    {props.sectionId !== null ? (
-                      <>
-                        <MenuSeparator />
-                        <MenuItem
-                          disabled={!canWrite}
-                          onClick={() => props.onMoveProject(project.projectKey, null)}
-                        >
-                          Other projects
-                        </MenuItem>
-                      </>
-                    ) : null}
-                  </MenuSubPopup>
-                </MenuSub>
-              ) : null}
-              <MenuSeparator />
-              <MenuItem onClick={() => props.onRemoveProject(project)} variant="destructive">
-                <Trash2Icon />
-                Remove project
-              </MenuItem>
-            </MenuPopup>
-          </Menu>
-        </div>
-      </div>
+              )}
+              <ProjectFavicon
+                className="size-4"
+                folderColor={folderColor}
+                forceFolder={forceFolder}
+                project={project}
+                {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
+              />
+            </>
+          ),
+          titleClassName: cn("fork-sidebar-title min-w-0 truncate", !codexStyle && "flex-1"),
+          trailing: codexStyle ? (
+            <>
+              <SidebarCaretSlot open={props.isProjectExpanded} className="text-icon-muted" />
+              {/* Counts show only while collapsed: they stand in for the hidden rows. */}
+              <SidebarTrailingColumns count={props.isProjectExpanded ? undefined : count} />
+            </>
+          ) : count === undefined ? null : (
+            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">{count}</span>
+          ),
+          controls: (
+            <div className="pointer-events-none absolute inset-y-0 end-1 flex items-center gap-px">
+              {codexStyle ? null : (
+                <button
+                  aria-label={`Reorder ${project.displayName}`}
+                  className="pointer-events-auto inline-flex size-6 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing group-hover/project-folder:opacity-100 group-focus-within/project-folder:opacity-100"
+                  ref={setActivatorNodeRef}
+                  type="button"
+                  {...attributes}
+                  {...listeners}
+                >
+                  <GripVerticalIcon aria-hidden className="size-3.5" />
+                </button>
+              )}
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <button
+                      aria-label={`Actions for ${project.displayName}`}
+                      className="pointer-events-auto inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-pointer group-hover/project-folder:opacity-100 group-focus-within/project-folder:opacity-100"
+                      type="button"
+                    />
+                  }
+                >
+                  <EllipsisIcon aria-hidden className="size-3.5" />
+                </MenuTrigger>
+                <MenuPopup align="end" className="min-w-52">
+                  <MenuItem onClick={() => props.onNewThreadInProject(project)}>
+                    <SquarePenIcon />
+                    New thread
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() =>
+                      props.onSelectProject(props.selected ? null : project.projectKey)
+                    }
+                  >
+                    <FilterIcon />
+                    {props.selected ? "Show all projects" : "Filter to this project"}
+                  </MenuItem>
+                  <MenuItem onClick={() => props.onOpenProjectSettings(project)}>
+                    <SettingsIcon />
+                    Project settings
+                  </MenuItem>
+                  {otherSections.length > 0 || props.sectionId !== null ? (
+                    <MenuSub>
+                      <MenuSubTrigger>
+                        <FolderIcon />
+                        Move project to section
+                      </MenuSubTrigger>
+                      <MenuSubPopup>
+                        {otherSections.map((section) => (
+                          <MenuItem
+                            key={section.id}
+                            disabled={!canWrite}
+                            onClick={() => props.onMoveProject(project.projectKey, section.id)}
+                          >
+                            {section.parentId === undefined
+                              ? section.name
+                              : `${props.sections.find((parent) => parent.id === section.parentId)?.name ?? ""} / ${section.name}`}
+                          </MenuItem>
+                        ))}
+                        {props.sectionId !== null ? (
+                          <>
+                            <MenuSeparator />
+                            <MenuItem
+                              disabled={!canWrite}
+                              onClick={() => props.onMoveProject(project.projectKey, null)}
+                            >
+                              Other projects
+                            </MenuItem>
+                          </>
+                        ) : null}
+                      </MenuSubPopup>
+                    </MenuSub>
+                  ) : null}
+                  <MenuSeparator />
+                  <MenuItem onClick={() => props.onRemoveProject(project)} variant="destructive">
+                    <Trash2Icon />
+                    Remove project
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            </div>
+          ),
+        }}
+      />
       {props.isProjectExpanded ? (
         <ul
           className={cn(
@@ -1282,6 +1304,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               onClick={props.onThreadClick}
               onContextMenu={props.onThreadContextMenu}
               thread={thread}
+              navigationParent={sidebarFolderRowId(project.projectKey)}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
               locationLeadKeys={locationLeadKeys}
               familySeparators={familySeparators}
@@ -1336,6 +1359,8 @@ const THREAD_STATUS_DOT_CLASS = {
 const SidebarProjectThreadRow = memo(
   function SidebarProjectThreadRow(props: {
     readonly thread: SidebarThreadSummary;
+    /** The project header's tree row. */
+    readonly navigationParent: string;
     /** Codex style marks status on the right; otherwise a dot leads the row. */
     readonly codexStyle: boolean;
     readonly activeThreadKey: string | null;
@@ -1431,6 +1456,8 @@ const SidebarProjectThreadRow = memo(
           render={
             <button
               type="button"
+              data-sidebar-row={activeThreadKey}
+              data-sidebar-parent={props.navigationParent}
               aria-current={active ? "page" : undefined}
               aria-label={sidebarProjectThreadAccessibleName({
                 role: props.codexStyle ? sidebarRoleLabel(props.thread.source) : undefined,
@@ -1595,6 +1622,7 @@ const SidebarProjectThreadRow = memo(
     const key = scopedThreadKey(scopeThreadRef(previous.thread.environmentId, previous.thread.id));
     return (
       previous.thread === next.thread &&
+      previous.navigationParent === next.navigationParent &&
       previous.codexStyle === next.codexStyle &&
       (previous.activeThreadKey === key) === (next.activeThreadKey === key) &&
       previous.onClick === next.onClick &&

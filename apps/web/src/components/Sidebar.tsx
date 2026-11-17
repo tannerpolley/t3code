@@ -1058,11 +1058,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       hasOtherMembers: false,
       members: projectGroup.memberProjects,
     });
-  const handleNewThreadInProject = newThreadContext.handleNewThread;
-  const newThreadInSidebarProject = (projectGroup: SidebarProjectSnapshot) => {
-    if (isMobile) setOpenMobile(false);
-    void handleNewThreadInProject(scopeProjectRef(projectGroup.environmentId, projectGroup.id));
-  };
 
   // Safari may click after Ctrl+click opens settings; suppress that selection until the picker reopens.
   const suppressNextScopeChangeRef = useRef(false);
@@ -3460,7 +3455,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             onNewSection={openCreateSectionDialog}
             onRenameSection={openRenameSectionDialog}
             onNewSubsection={openCreateSubsectionDialog}
-            onNewThreadInProject={newThreadInSidebarProject}
+            onNewThreadInProject={startThreadInProjectFolder}
+            onProjectContextMenu={handleProjectFolderContextMenu}
             onOpenProjectSettings={openProjectSettings}
             onRemoveProject={removeSidebarProject}
             onSelectProject={(key) => {

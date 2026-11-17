@@ -105,6 +105,8 @@ export function installSidebarTree(root: HTMLElement) {
     )
       return;
     if (!(row instanceof HTMLElement) || !row.matches(ROW)) return;
+    // A row picked up by a keyboard drag (dnd-kit marks it pressed) moves with the arrows itself.
+    if (row.getAttribute("aria-pressed") === "true") return;
     const rows = visibleRows();
     const index = rows.indexOf(row);
     if (index < 0) return;
