@@ -46,7 +46,16 @@ export function resolveProjectFolderAppearance(
 
 /** {@link resolveProjectFolderAppearance}, read live off the sidebar's own section state. */
 export function useProjectFolderAppearance(projectKey: string | null): ProjectFolderAppearance {
-  const sections = useUiStateStore((store) => store.sidebarProjectSections);
   const folderColorsEnabled = useClientSettings((settings) => settings.sectionFolderColors);
-  return resolveProjectFolderAppearance(projectKey, sections, folderColorsEnabled);
+  // Primitive reads: every layout projection replaces the sections array, and a sidebar row must not re-render for that.
+  const folderColor = useUiStateStore(
+    (store) =>
+      resolveProjectFolderAppearance(projectKey, store.sidebarProjectSections, folderColorsEnabled)
+        .folderColor,
+  );
+  const forceFolder = useUiStateStore(
+    (store) =>
+      resolveProjectFolderAppearance(projectKey, store.sidebarProjectSections, false).forceFolder,
+  );
+  return { folderColor, forceFolder };
 }
