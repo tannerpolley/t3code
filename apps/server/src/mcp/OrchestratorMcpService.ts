@@ -103,7 +103,14 @@ import {
   pendingUserRequests,
 } from "@t3tools/provider-core/server/subagentProjection";
 import { delegatedRequestWaitingOnUser } from "../orchestration-v2/DelegatedRequestRouting.ts";
-import { advertisedModel, checkDelegateTarget, modelRoleStatuses } from "./delegateTaskTarget.ts";
+import {
+  advertisedModel,
+  checkDelegateTarget,
+  LISTED_MODEL_LIMIT,
+  modelRoleStatuses,
+  unavailableModelMessage,
+} from "./delegateTaskTarget.ts";
+import { isReadOnlyIssueRole } from "../issues/IssueEligibility.ts";
 import { lineageUsageSprint, usageSprintRefusal } from "../issues/usageSprint.ts";
 import {
   DispatchModeLimit,
@@ -325,7 +332,6 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
  * small official catalogs, so all their current models are listed.
  */
 const FULL_CATALOG_DRIVERS: ReadonlySet<string> = new Set(["codex", "claudeAgent", "muse", "grok"]);
-const LISTED_MODEL_LIMIT = 8;
 
 /**
  * Lists visible models, keeping pinned models and limiting large catalogs by default.
@@ -376,26 +382,6 @@ function listCapabilityModels(input: {
   return { listed, omitted: visible.length - listed.length };
 }
 
-/** Names advertised slugs to retry with: same last `/` segment first, else a short list. */
-function advertisedModelsHint(models: ReadonlyArray<ServerProviderModel>, requested: string) {
-  const lastSegment = (slug: string) => slug.slice(slug.lastIndexOf("/") + 1).toLowerCase();
-  const wanted = lastSegment(requested);
-  const close = models.filter((model) => lastSegment(model.slug) === wanted);
-  if (close.length > 0) {
-    return `Did you mean ${close
-      .slice(0, LISTED_MODEL_LIMIT)
-      .map((model) => model.slug)
-      .join(", ")}?`;
-  }
-  const listed = models
-    .toSorted((a, b) => Number(a.isLegacy ?? false) - Number(b.isLegacy ?? false))
-    .slice(0, LISTED_MODEL_LIMIT);
-  const omitted = models.length - listed.length;
-  return `Advertised models: ${listed.map((model) => model.slug).join(", ")}${
-    omitted > 0 ? ` and ${omitted} more; orchestrator_capabilities with search finds them` : ""
-  }.`;
-}
-
 /** Option ids and allowed values are all a delegating agent needs; labels are UI copy. */
 function capabilityModelOption(descriptor: ProviderOptionDescriptor): OrchestratorMcpModelOption {
   const defaultValue = getProviderOptionCurrentValue(descriptor);
@@ -407,25 +393,12 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
   };
 }
 
-const withV = (version: string) => (version.startsWith("v") ? version : `v${version}`);
-
 /** A provider that lists no models accepts any slug. */
 export const requireAdvertisedModel = (provider: ServerProvider, model: string) => {
   if (provider.models.length === 0 || advertisedModel(provider, model) !== undefined) {
     return Effect.void;
   }
-  const updateRequired = provider.updateRequiredModels?.find(
-    (candidate) => candidate.slug === model,
-  );
-  const detectedVersion = provider.installedVersion ?? provider.version;
-  return Effect.fail(
-    failure(
-      "model_unavailable",
-      updateRequired === undefined
-        ? `Model ${model} is not advertised by provider ${provider.instanceId}. ${advertisedModelsHint(provider.models, model)}`
-        : `Model ${model} needs provider ${provider.instanceId} at ${withV(updateRequired.minVersion)} or newer, but the detected CLI is ${detectedVersion === null ? "an unknown version" : withV(detectedVersion)}. Ask the user to update it or point the provider's binary path at a newer install.`,
-    ),
-  );
+  return Effect.fail(failure("model_unavailable", unavailableModelMessage(provider, model)));
 };
 
 function providerConstraints(
@@ -2925,11 +2898,36 @@ const make = Effect.gen(function* () {
         });
       }
 
-      return withNote(
+      const taskResult = withNote(
         yield* input.mode === "wait"
           ? awaitTask(scope, taskId, key, input.timeoutMs)
           : readTask(scope, taskId, false, true),
       );
+      if (taskResult.status !== "queued" || Option.isNone(issueWork)) return taskResult;
+      const root =
+        parent.thread.repositoryOrchestration === undefined
+          ? yield* threadManagement.getThreadRecords(parent.thread.lineage.rootThreadId, []).pipe(
+              Effect.map((records) => records.thread),
+              Effect.mapError(threadManagementFailure),
+            )
+          : parent.thread;
+      const config = root?.repositoryOrchestration;
+      if (config === undefined) return taskResult;
+      const status = yield* issueWork.value
+        .repositoryStatus(config)
+        .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+      const readers = isReadOnlyIssueRole(taskCommand.role);
+      if (!readers && linkedIssue === undefined) return taskResult;
+      const current = status.orchestration;
+      if (current === null) return taskResult;
+      const limit = readers ? current.readOnlyLimit : current.workerLimit;
+      const used = readers ? status.readOnlySlotsInUse : status.slotsInUse;
+      return used < limit
+        ? taskResult
+        : {
+            ...taskResult,
+            queueNote: `Queued on the ${readers ? "readers" : "workers"} pool: ${used} of ${limit} slots in use.`,
+          };
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");

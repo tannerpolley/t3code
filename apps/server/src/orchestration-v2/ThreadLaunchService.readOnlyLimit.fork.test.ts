@@ -411,7 +411,12 @@ it.effect(
           issue: { ...reference, number },
           clientRequestId: `mcp-read-only:${number}`,
         });
-        assert.equal(result.status, number === 5 ? "queued" : "running");
+        if (number === 5) assert.equal(result.status, "queued");
+        else assert.include(["starting", "running"], result.status);
+        assert.equal(
+          result.queueNote,
+          number === 5 ? "Queued on the readers pool: 4 of 4 slots in use." : undefined,
+        );
         assert.isUndefined((yield* threads.getThreadShell(result.childThreadId!))!.linkedIssue);
       }
       assert.equal(links.length, 5);

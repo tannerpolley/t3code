@@ -27,6 +27,40 @@ export const advertisedModel = (provider: ServerProvider, model: string) =>
     candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
   );
 
+export const LISTED_MODEL_LIMIT = 8;
+
+/** Names advertised slugs to retry with: same last `/` segment first, else a short list. */
+function advertisedModelsHint(models: ServerProvider["models"], requested: string) {
+  const lastSegment = (slug: string) => slug.slice(slug.lastIndexOf("/") + 1).toLowerCase();
+  const wanted = lastSegment(requested);
+  const close = models.filter((model) => lastSegment(model.slug) === wanted);
+  if (close.length > 0) {
+    return `Did you mean ${close
+      .slice(0, LISTED_MODEL_LIMIT)
+      .map((model) => model.slug)
+      .join(", ")}?`;
+  }
+  const listed = models
+    .toSorted((a, b) => Number(a.isLegacy ?? false) - Number(b.isLegacy ?? false))
+    .slice(0, LISTED_MODEL_LIMIT);
+  const omitted = models.length - listed.length;
+  return `Advertised models: ${listed.map((model) => model.slug).join(", ")}${
+    omitted > 0 ? ` and ${omitted} more; orchestrator_capabilities with search finds them` : ""
+  }.`;
+}
+
+const withV = (version: string) => (version.startsWith("v") ? version : `v${version}`);
+
+export function unavailableModelMessage(provider: ServerProvider, model: string) {
+  const updateRequired = provider.updateRequiredModels?.find(
+    (candidate) => candidate.slug === model,
+  );
+  const detectedVersion = provider.installedVersion ?? provider.version;
+  return updateRequired === undefined
+    ? `Model ${model} is not advertised by provider ${provider.instanceId}. ${advertisedModelsHint(provider.models, model)}`
+    : `Model ${model} needs provider ${provider.instanceId} at ${withV(updateRequired.minVersion)} or newer, but the detected CLI is ${detectedVersion === null ? "an unknown version" : withV(detectedVersion)}. Ask the user to update it or point the provider's binary path at a newer install.`;
+}
+
 function providerConstraints(
   provider: ServerProvider | undefined,
   supportsOrchestrationV2: boolean,
@@ -137,10 +171,7 @@ export function checkDelegateTarget(input: {
     provider.models.length > 0 &&
     advertisedModel(provider, requestedModel) === undefined
   ) {
-    return fail(
-      "model_unavailable",
-      `Model ${requestedModel} is not advertised by provider ${instanceId}.`,
-    );
+    return fail("model_unavailable", unavailableModelMessage(provider, requestedModel));
   }
   if (input.options !== undefined) {
     const descriptors = advertisedModel(provider, model)?.capabilities?.optionDescriptors;
