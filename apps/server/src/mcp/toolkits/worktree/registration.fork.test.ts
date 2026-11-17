@@ -54,6 +54,8 @@ import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
+import * as UpstreamIssueService from "../../../issue/IssueService.ts";
+import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 
 const layerStubServices = Layer.mergeAll(
   NodeCrypto.layer,
@@ -125,6 +127,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
+        Layer.provide(Layer.mock(UpstreamIssueService.IssueService)({})),
+        Layer.provide(Layer.mock(ThreadIssueService.ThreadIssueService)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
         Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
         Layer.provide(Layer.mock(ProjectArtifacts.ProjectArtifacts)({})),

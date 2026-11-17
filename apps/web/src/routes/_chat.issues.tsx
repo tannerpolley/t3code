@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { IssuesRoadmapPage, roadmapSearchFromUrl } from "../components/issues/IssuesRoadmapPage";
+import { IssuesPage } from "../components/issue/IssuesPage";
+import { issuesSearchFromUrl } from "../components/issue/issuesSearch.logic";
 
 export const Route = createFileRoute("/_chat/issues")({
-  validateSearch: roadmapSearchFromUrl,
-  component: IssuesRoadmapPage,
+  validateSearch: issuesSearchFromUrl,
+  component: IssuesPage,
 });

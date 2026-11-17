@@ -95,7 +95,6 @@ export function ThreadDetailsPrRow({
   project,
   label,
   referenceLabel: suppliedReferenceLabel,
-  openAriaLabel,
   onOpen,
   onActed,
   onStopWatching,
@@ -110,7 +109,6 @@ export function ThreadDetailsPrRow({
   label: string;
   /** How the tooltip names the pull request, from `threadPullRequestLabel`. */
   referenceLabel?: string;
-  openAriaLabel: string;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
@@ -268,6 +266,15 @@ export function ThreadDetailsPrRow({
   ) : (
     <PullRequestGlyph.pullRequest className={THREAD_DETAILS_PANEL_ICON_CLASS} />
   );
+
+  const stateLabel = (
+    statePresentation ??
+    (pr ? resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true }) : null)
+  )?.label.toLowerCase();
+  const title = (detail?.title ?? pr?.title)?.trim();
+  const openAriaLabel = `${capitalizeTerm(terminology.singular)} ${referenceLabel}${
+    stateLabel ? `, ${stateLabel}` : ""
+  }${title ? `: ${title}` : ""}`;
 
   const rowTooltip =
     detail === null || statePresentation === null ? (

@@ -46,6 +46,7 @@ export * from "./issueComment.ts";
 export * from "./issueInbox.ts";
 export * from "./issueHost.ts";
 export * from "./pullRequestReviewGuide.ts";
+export * from "./issue.ts";
 export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";

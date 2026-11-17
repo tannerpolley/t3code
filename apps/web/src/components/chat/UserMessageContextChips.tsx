@@ -1,6 +1,8 @@
 import { IssueContextChip } from "../issues/IssueContextChip";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
+import { useNativeFileDrag } from "../../useNativeFileDrag";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { useRenderedAppearance } from "../../hooks/useTheme";
@@ -71,11 +73,15 @@ function UserMessageMentionChip(props: {
   copyMarkdown: string;
 }) {
   const ctx = use(TimelineRowCtx);
+  const nativeDrag = useNativeFileDrag(ctx.activeThreadEnvironmentId, () =>
+    resolvePathLinkTarget(props.record.path, ctx.workspaceRoot ?? ""),
+  );
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <ContextChip
+            {...nativeDrag}
             kind={documentChipKindForFileName(props.record.path) ?? "mention"}
             render={<button type="button" />}
             aria-label={`Preview ${props.record.path}`}

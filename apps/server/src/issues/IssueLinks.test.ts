@@ -6,6 +6,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   DEFAULT_REPOSITORY_WORK_SETTINGS,
+  IssueTrackerKind,
   ProjectId,
   ThreadId,
   RuntimeRequestId,
@@ -162,6 +163,38 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect("counts an upstream thread.issues link as live work it cannot unlink", () => {
+  const linkedThread = {
+    ...liveThreadShell(threadId),
+    issues: [
+      {
+        tracker: IssueTrackerKind.make("github"),
+        host: "GitHub.com",
+        scope: "Owner/Repo",
+        key: "13",
+        projectId: ProjectId.make("project"),
+        url: "https://github.com/owner/repo/issues/13",
+        source: "agent" as const,
+        linkedAt: "2026-11-17T00:00:00.000Z",
+        displayKey: "#13",
+        title: "Roadmap",
+      },
+    ],
+  };
+  const other = {
+    ...liveThreadShell(ThreadId.make("other-repo")),
+    issues: [{ ...linkedThread.issues[0]!, scope: "owner/other" }],
+  };
+  const h = harness([linkedThread, other]);
+  return Effect.gen(function* () {
+    const enriched = yield* (yield* IssueLinks.IssueLinks).enrich(list());
+    assert.deepEqual(
+      enriched.issues[0]!.liveWork!.map(({ threadId, canUnlink }) => ({ threadId, canUnlink })),
+      [{ threadId, canUnlink: false }],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
 
 it.effect(
   "sidebar status includes ordinarily linked running work beside an idle managed thread",

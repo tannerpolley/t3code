@@ -51,6 +51,8 @@ export class IssueChangeService extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<IssueChange>, IssueChangeError>;
     readonly subscribe: (input: IssueChangesListInput) => Stream.Stream<number>;
     readonly execute: (id: string) => Effect.Effect<void, IssueChangeError>;
+    /** Whether `propose` would accept this thread for some repository. */
+    readonly isManagedCaller: (threadId: ThreadId) => Effect.Effect<boolean, IssueChangeError>;
   }
 >()("t3/issues/IssueChangeService") {}
 
@@ -197,17 +199,9 @@ const make = Effect.gen(function* () {
       Effect.mapError(storageError),
     );
 
-  const propose: IssueChangeService["Service"]["propose"] = Effect.fn("IssueChangeService.propose")(
-    function* (threadId, rawInput) {
-      const decoded = yield* decodeProposal(rawInput).pipe(
-        Effect.mapError((cause) => invalid(`Invalid issue change proposal: ${cause.message}`)),
-      );
-      const input = {
-        ...decoded,
-        host: decoded.host.toLowerCase(),
-        repository: decoded.repository.toLowerCase(),
-      };
-      const thread = yield* sql<{ host: string; repository: string }>`
+  /** The repositories whose orchestrator manages this thread: its root, or the owner of its claim. */
+  const managedRepositories = (threadId: ThreadId) =>
+    sql<{ host: string; repository: string }>`
       SELECT owner.host, json_extract(root.payload_json, '$.repositoryOrchestration.repository') AS repository
       FROM orchestration_v2_projection_threads thread
       JOIN orchestration_v2_projection_repository_orchestration owner
@@ -218,6 +212,18 @@ const make = Effect.gen(function* () {
         AND thread.default_provider IN ('codex', 'claudeAgent')
         AND root.deleted_at IS NULL AND root.archived_at IS NULL
     `.pipe(Effect.mapError(storageError));
+
+  const propose: IssueChangeService["Service"]["propose"] = Effect.fn("IssueChangeService.propose")(
+    function* (threadId, rawInput) {
+      const decoded = yield* decodeProposal(rawInput).pipe(
+        Effect.mapError((cause) => invalid(`Invalid issue change proposal: ${cause.message}`)),
+      );
+      const input = {
+        ...decoded,
+        host: decoded.host.toLowerCase(),
+        repository: decoded.repository.toLowerCase(),
+      };
+      const thread = yield* managedRepositories(threadId);
       if (
         !thread.some(
           (row) =>
@@ -615,6 +621,9 @@ const make = Effect.gen(function* () {
 
   return IssueChangeService.of({
     propose,
+    isManagedCaller: Effect.fn("IssueChangeService.isManagedCaller")(function* (threadId) {
+      return (yield* managedRepositories(threadId)).length > 0;
+    }),
     decide,
     execute,
     subscribe: (input) =>

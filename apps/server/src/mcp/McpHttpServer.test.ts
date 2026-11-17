@@ -66,6 +66,7 @@ import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import * as IssueChangeService from "../issues/IssueChangeService.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -1701,6 +1702,98 @@ it.effect("hides tools for links and refuses another environment while the beta 
         isError: true,
         content: [{ text: expect.stringContaining("cannot reach linked environments") }],
       });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("hides ungated issue writes from a thread that proposes issue changes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const managed = ThreadId.make("thread-managed");
+      const scopeFor = (threadId: ThreadId): McpInvocationContext.McpThreadInvocationScope => ({
+        environmentId,
+        requestNamespace: threadId,
+        thread: {
+          threadId,
+          providerSessionId: threadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      });
+      const WritesToolkit = Toolkit.make(
+        Tool.make("create_issue", {
+          description: "Files an issue.",
+          success: Schema.Struct({}),
+          failure: OrchestratorMcpFailure,
+          failureMode: "return",
+        }).annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromRepositoryManaged),
+        Tool.make("read_issue", {
+          description: "Reads an issue.",
+          success: Schema.Struct({}),
+          failure: OrchestratorMcpFailure,
+          failureMode: "return",
+        }),
+      );
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.toolkitRegistration(
+          WritesToolkit,
+          McpToolAccess.toLayer(WritesToolkit, {
+            create_issue: McpToolAccess.reads(() => Effect.succeed({})),
+            read_issue: McpToolAccess.reads(() => Effect.succeed({})),
+          }),
+        ),
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(IssueChangeService.IssueChangeService)({
+            isManagedCaller: (threadId) => Effect.succeed(threadId === managed),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (presented) => Effect.succeed(scopeFor(ThreadId.make(presented))),
+          }),
+        ),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const listed = (token: string) =>
+        Effect.gen(function* () {
+          const headers = {
+            accept: "application/json, text/event-stream",
+            authorization: `Bearer ${token}`,
+          };
+          const initialize = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+              "application/json",
+            ),
+          });
+          const response = yield* httpClient.post("/mcp", {
+            headers: {
+              ...headers,
+              "mcp-session-id": initialize.headers["mcp-session-id"]!,
+              "mcp-protocol-version": "2025-06-18",
+            },
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+              "application/json",
+            ),
+          });
+          const body = (yield* response.json) as {
+            result: { tools: ReadonlyArray<{ name: string }> };
+          };
+          return body.result.tools.map((tool) => tool.name);
+        });
+
+      expect(yield* listed(managed)).toEqual(["read_issue"]);
+      expect(yield* listed("thread-ordinary")).toEqual(["create_issue", "read_issue"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

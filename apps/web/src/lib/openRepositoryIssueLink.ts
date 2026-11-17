@@ -1,12 +1,5 @@
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { type MouseEvent } from "react";
-
-import { useRightPanelStore } from "../rightPanelStore";
-import { useProjects, useServerConfigs } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
 
 /**
  * An issue page, `https://<host>/<owner>/<repo>/issues/<n>`, on one of `issueHosts`, or
@@ -45,54 +38,4 @@ export function knownIssueHosts(
     if (host) hosts.add(host.toLowerCase());
   }
   return hosts;
-}
-
-/**
- * Opens an issue link in T3's issue detail and says whether it did: beside the thread when
- * there is one, else on the Issues page. A modifier click, or no environment that reads GitHub
- * issues, leaves it an ordinary link.
- */
-export function useOpenIssueLink(threadRef?: ScopedThreadRef) {
-  const navigate = useNavigate();
-  const serverConfigs = useServerConfigs();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projects = useProjects();
-  const issueHosts = knownIssueHosts(projects);
-  return (
-    event: Pick<
-      MouseEvent<HTMLElement>,
-      "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey"
-    >,
-    url: string,
-    environmentId?: EnvironmentId,
-  ): boolean => {
-    if (event.metaKey || event.ctrlKey) return false;
-    const issue = parseIssueUrl(url, issueHosts);
-    if (issue === null) return false;
-    const readsIssues = (id: EnvironmentId | null | undefined): id is EnvironmentId =>
-      id != null && serverConfigs.get(id)?.environment.capabilities.githubIssues === true;
-    if (threadRef) {
-      if (!readsIssues(threadRef.environmentId)) return false;
-      event.preventDefault();
-      event.stopPropagation();
-      useRightPanelStore
-        .getState()
-        .openIssue(threadRef, { environmentId: threadRef.environmentId, ...issue, url });
-      return true;
-    }
-    const target = [environmentId, primaryEnvironmentId, ...serverConfigs.keys()].find(readsIssues);
-    if (target === undefined) return false;
-    event.preventDefault();
-    event.stopPropagation();
-    void navigate({
-      to: "/issues",
-      search: {
-        selectedEnvironmentId: target,
-        selectedHost: issue.host,
-        selectedRepository: issue.repository,
-        selectedNumber: issue.number,
-      },
-    });
-    return true;
-  };
 }

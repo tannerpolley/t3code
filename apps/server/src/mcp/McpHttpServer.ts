@@ -84,6 +84,8 @@ import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import * as ToolSearchHandlers from "./toolkits/toolSearch/handlers.ts";
 import { ToolSearchToolkit } from "./toolkits/toolSearch/tools.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
+import * as IssuesHandlers from "./toolkits/issues/handlers.ts";
+import { IssuesToolkit } from "./toolkits/issues/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
   DeviceScreenshotTool,
@@ -96,6 +98,7 @@ import * as MessageHandlers from "./toolkits/message/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { MCP_HTTP_PATH } from "../httpCors.ts";
 import { requestUrl } from "../requestUrl.ts";
+import { makeRepositoryManagedMark } from "../issues/IssueToolPolicy.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   requestUrl(request).pipe(
@@ -242,6 +245,7 @@ const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
+  const markRepositoryManaged = yield* makeRepositoryManagedMark;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
   const linksEnabled = serverSettings.getSettings.pipe(
@@ -281,7 +285,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
-    return { ...limited, linkedEnvironments, origin };
+    return yield* markRepositoryManaged({ ...limited, linkedEnvironments, origin });
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
@@ -1298,6 +1302,8 @@ export const layerPullRequestsToolkit = toolkitRegistration(
   PullRequestsHandlers.layer,
 ).pipe(Layer.provide(PullRequestWatchService.layer));
 
+const layerIssuesToolkit = toolkitRegistration(IssuesToolkit, IssuesHandlers.layer);
+
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
   DeviceHandlers.layerStandard,
@@ -1357,6 +1363,7 @@ export const layerTools = Layer.mergeAll(
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,
+  layerIssuesToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
   layerMessageToolkit,

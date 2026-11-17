@@ -83,6 +83,7 @@ export function PullRequestsColumn({
   decisionsToggle,
   sortMenu,
   filtersMenu,
+  savedViewsMenu,
   rightPanelControl,
   titlebarControls,
   rightPanelOpen,
@@ -104,6 +105,7 @@ export function PullRequestsColumn({
   decisionsToggle: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
+  savedViewsMenu: ReactNode;
   rightPanelControl: ReactNode;
   titlebarControls: ReactNode;
   rightPanelOpen: boolean;
@@ -243,6 +245,7 @@ export function PullRequestsColumn({
               {decisionsToggle}
               {sortMenu}
               {filtersMenu}
+              {savedViewsMenu}
               <PullRequestCompactFilterMenu
                 label="Filter by provider"
                 outlined
