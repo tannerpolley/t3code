@@ -2,7 +2,7 @@ import { Fragment, useSyncExternalStore, type ReactNode } from "react";
 import { IssueInboxSection, useIssueInbox } from "./IssueInbox";
 import { IssueDoneDetails } from "./IssueDoneDetails";
 import { useIssueQueue } from "./IssueQueueAction";
-import type { EnvironmentId, IssueRepositoryRef, IssueSummary } from "@t3tools/contracts";
+import type { EnvironmentId, IssueRepositoryRef, RepositoryIssueSummary } from "@t3tools/contracts";
 import { CollapsibleSectionHeader } from "~/components/ui/collapsible-section-header";
 import { IssueSection } from "./IssueSection";
 import { IssueRow } from "./IssueRow";
@@ -22,9 +22,9 @@ export function IssueRoadmap({
 }: {
   scope: IssueRepositoryRef;
   environmentId: EnvironmentId;
-  issues: readonly IssueSummary[];
+  issues: readonly RepositoryIssueSummary[];
   visibleNumbers?: ReadonlySet<number>;
-  onSelect: (issue: IssueSummary) => void;
+  onSelect: (issue: RepositoryIssueSummary) => void;
   selectedIssueNumber?: number;
   limit?: number;
   /** Rendered between Blocked and Ready, where the owner triages new activity. */

@@ -1,4 +1,4 @@
-import { EnvironmentId, type IssueSummary } from "@t3tools/contracts";
+import { EnvironmentId, type RepositoryIssueSummary } from "@t3tools/contracts";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -13,7 +13,7 @@ vi.mock("./IssueInbox", () => ({
 }));
 vi.mock("./IssueRow", () => ({ IssueRow: () => null }));
 
-const issue: IssueSummary = {
+const issue: RepositoryIssueSummary = {
   number: 1,
   title: "Ready issue",
   url: "https://github.com/owner/repo/issues/1",

@@ -1,5 +1,9 @@
 import { useNavigate } from "@tanstack/react-router";
-import { THREAD_ROLE_LABELS, type EnvironmentId, type IssueSummary } from "@t3tools/contracts";
+import {
+  THREAD_ROLE_LABELS,
+  type EnvironmentId,
+  type RepositoryIssueSummary,
+} from "@t3tools/contracts";
 import { CirclePauseIcon, CirclePlayIcon, LinkIcon } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
@@ -17,7 +21,7 @@ export function IssueLiveWork({
   issue,
   environmentId,
 }: {
-  issue: IssueSummary;
+  issue: RepositoryIssueSummary;
   environmentId: EnvironmentId;
 }) {
   const navigate = useNavigate();

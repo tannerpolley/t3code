@@ -12,7 +12,7 @@ import { setAddProjectSection } from "../projectSectionPlacement";
 import { folderSubsectionInput } from "../sectionProjectPath";
 import { sectionFolderPath } from "../sectionProjectPath";
 import { ISSUES_PANEL_REF } from "../rightPanelIssueSurfaces";
-import { threadIssueRepository } from "./chat/ThreadDetailsIssueRows";
+import { threadIssueRepository } from "./chat/ThreadDetailsRepositoryIssueRows";
 import { useUiStateStore } from "../uiStateStore";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";

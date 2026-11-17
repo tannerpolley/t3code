@@ -6,7 +6,7 @@ import { CommandId, ProjectId, RunId, ThreadId, TrimmedNonEmptyString } from "./
 import { ModelRoleId } from "./threadRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
-import { IssueRef, IssueRepositoryRef } from "./issue.ts";
+import { RepositoryIssueRef, IssueRepositoryRef } from "./repositoryIssue.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const CLOSED_ISSUE_SUSPENSION_REASON =
@@ -309,7 +309,7 @@ export const RepositoryWorkRestored = Schema.Struct({
 });
 
 export const IssueQueueInput = Schema.Struct({
-  ...IssueRef.fields,
+  ...RepositoryIssueRef.fields,
   clientRequestId: CommandId,
 });
 export type IssueQueueInput = typeof IssueQueueInput.Type;
@@ -343,7 +343,7 @@ export const RepositoryWorkResult = Schema.Struct({
 export type RepositoryWorkResult = typeof RepositoryWorkResult.Type;
 
 export const IssueWorkStartInput = Schema.Struct({
-  ...IssueRef.fields,
+  ...RepositoryIssueRef.fields,
   projectId: ProjectId,
   modelRoleId: ModelRoleId,
   /** Selected existing lead; otherwise reuse the registered owner or explicitly create the first one. */
@@ -390,12 +390,12 @@ export const IssueWorkStartResult = Schema.Struct({
 export type IssueWorkStartResult = typeof IssueWorkStartResult.Type;
 
 export const IssueWorkStatusInput = Schema.Struct({
-  ...IssueRef.fields,
+  ...RepositoryIssueRef.fields,
 });
 export type IssueWorkStatusInput = typeof IssueWorkStatusInput.Type;
 
 export const IssueWorkStatusResult = Schema.Struct({
-  issue: IssueRef,
+  issue: RepositoryIssueRef,
   projectId: Schema.optional(Schema.NullOr(ProjectId)),
   rootThreadId: Schema.NullOr(ThreadId),
   threadId: Schema.NullOr(ThreadId),

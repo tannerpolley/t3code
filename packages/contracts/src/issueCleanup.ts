@@ -1,9 +1,9 @@
 import * as Schema from "effect/Schema";
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { IssueRef } from "./issue.ts";
+import { RepositoryIssueRef } from "./repositoryIssue.ts";
 
 const cleanupFields = {
-  ...IssueRef.fields,
+  ...RepositoryIssueRef.fields,
   threadId: ThreadId,
   expectedBranch: Schema.NullOr(TrimmedNonEmptyString),
   expectedWorktreePath: Schema.NullOr(TrimmedNonEmptyString),

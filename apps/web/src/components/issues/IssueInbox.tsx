@@ -6,7 +6,7 @@ import type {
   IssueInboxEvent,
   IssueRepositoryRef,
   ScopedThreadRef,
-  IssueSummary,
+  RepositoryIssueSummary,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { CheckCheckIcon, CheckIcon } from "lucide-react";
@@ -15,7 +15,7 @@ import type { ReactNode } from "react";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { useServerConfigs } from "~/state/entities";
-import { issueEnvironment } from "~/state/issues";
+import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { useEnvironmentQuery } from "~/state/query";
 import { environmentServerConfigsAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -42,7 +42,7 @@ const unreadByRoot = Atom.family((environmentId: EnvironmentId) =>
     const config = get(environmentServerConfigsAtom).get(environmentId);
     if (config?.environment.capabilities.issueInbox !== true) return EMPTY_COUNTS;
     const counts = Option.getOrNull(
-      AsyncResult.value(get(issueEnvironment.inboxUnread({ environmentId, input: {} }))),
+      AsyncResult.value(get(repositoryIssueEnvironment.inboxUnread({ environmentId, input: {} }))),
     );
     return counts === null
       ? EMPTY_COUNTS
@@ -97,7 +97,7 @@ export function useIssueInbox(environmentId: EnvironmentId, reference: IssueRepo
   const supported =
     useServerConfigs().get(environmentId)?.environment.capabilities.issueInbox === true;
   return useEnvironmentQuery(
-    supported ? issueEnvironment.inbox({ environmentId, input: reference }) : null,
+    supported ? repositoryIssueEnvironment.inbox({ environmentId, input: reference }) : null,
   );
 }
 
@@ -105,7 +105,7 @@ export function useIssueInbox(environmentId: EnvironmentId, reference: IssueRepo
 export function IssueInboxSection(props: {
   readonly environmentId: EnvironmentId;
   readonly reference: IssueRepositoryRef;
-  readonly issues?: readonly IssueSummary[] | undefined;
+  readonly issues?: readonly RepositoryIssueSummary[] | undefined;
 }) {
   const supported =
     useServerConfigs().get(props.environmentId)?.environment.capabilities.issueInbox === true;
@@ -119,11 +119,13 @@ function InboxList({
 }: {
   readonly environmentId: EnvironmentId;
   readonly reference: IssueRepositoryRef;
-  readonly issues?: readonly IssueSummary[] | undefined;
+  readonly issues?: readonly RepositoryIssueSummary[] | undefined;
 }) {
   const { data } = useIssueInbox(environmentId, reference);
-  const markRead = useAtomCommand(issueEnvironment.markInboxRead);
-  const canMark = useAtomValue(issueEnvironment.markInboxRead.permissionAtom(environmentId));
+  const markRead = useAtomCommand(repositoryIssueEnvironment.markInboxRead);
+  const canMark = useAtomValue(
+    repositoryIssueEnvironment.markInboxRead.permissionAtom(environmentId),
+  );
   const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
     { ...reference, environmentId },
     "inbox",

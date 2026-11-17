@@ -3,9 +3,9 @@ import {
   RunId,
   EnvironmentId,
   ThreadId,
-  type IssueListResult,
+  type RepositoryIssueListResult,
   type IssueStatusBatchResult,
-  type IssueSummary,
+  type RepositoryIssueSummary,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { makeThreadFixture } from "~/test-fixtures";
@@ -15,8 +15,10 @@ import { issueRoadmap } from "./issueRoadmap.logic";
 
 const overlay = createLiveIssueWorkOverlay();
 const environmentId = EnvironmentId.make("environment-test");
-const withLiveIssueWork = (list: IssueListResult, shells: Parameters<typeof indexIssueWork>[0]) =>
-  overlay.list(list, environmentId, indexIssueWork(shells));
+const withLiveIssueWork = (
+  list: RepositoryIssueListResult,
+  shells: Parameters<typeof indexIssueWork>[0],
+) => overlay.list(list, environmentId, indexIssueWork(shells));
 const scope = { host: "github.com", repository: "owner/repo" };
 const linkedIssue = {
   ...scope,
@@ -27,7 +29,7 @@ const linkedIssue = {
   title: "Fix",
   url: "https://github.com/owner/repo/issues/43",
 };
-const list: IssueListResult = {
+const list: RepositoryIssueListResult = {
   repository: scope,
   viewer: null,
   fetchedAt: "2026-10-15T00:00:00Z",
@@ -87,7 +89,7 @@ const pr: ThreadPullRequestLink = {
   },
 };
 
-const section = (value: IssueListResult) =>
+const section = (value: RepositoryIssueListResult) =>
   issueRoadmap(scope, value.issues).find((section) => section.rows.length > 0)?.id;
 
 it("follows a linked parent's sidebar status, including questions and approvals", () => {
@@ -388,7 +390,8 @@ it("overlays ordinary work from compact provenance when the managed thread is id
 });
 
 it("overlays compact sidebar status with the same live work and PR observations", () => {
-  const status: IssueStatusBatchResult[number] & Pick<IssueSummary, "number" | "liveWork"> = {
+  const status: IssueStatusBatchResult[number] &
+    Pick<RepositoryIssueSummary, "number" | "liveWork"> = {
     host: scope.host,
     nodeId: linkedIssue.nodeId,
     number: linkedIssue.number,

@@ -1,25 +1,29 @@
-import type { IssueListResult, IssueMilestone, IssueSummary } from "@t3tools/contracts";
+import type {
+  RepositoryIssueListResult,
+  IssueMilestone,
+  RepositoryIssueSummary,
+} from "@t3tools/contracts";
 
 export interface IssueListPage {
   readonly scopeKey: string;
   readonly generation: number;
   readonly cursor: string | null;
-  readonly result: IssueListResult;
+  readonly result: RepositoryIssueListResult;
 }
 
 export interface IssueListSnapshot {
   readonly scopeKey: string;
   readonly generation: number;
   readonly pageCount: number;
-  readonly repository: IssueListResult["repository"];
-  readonly viewer: IssueListResult["viewer"];
+  readonly repository: RepositoryIssueListResult["repository"];
+  readonly viewer: RepositoryIssueListResult["viewer"];
   readonly fetchedAt: string;
-  readonly issues: readonly IssueSummary[];
+  readonly issues: readonly RepositoryIssueSummary[];
   readonly milestones: readonly IssueMilestone[];
   readonly nextCursor: string | null;
   readonly issuesComplete: boolean;
   readonly milestonesComplete: boolean;
-  readonly pages: ReadonlyMap<string, IssueListResult>;
+  readonly pages: ReadonlyMap<string, RepositoryIssueListResult>;
 }
 
 /** A refreshed page replaces its rows even when GitHub's updatedAt is unchanged (local work,
@@ -52,7 +56,7 @@ export function acceptIssueListPage(
       if (key === cursor) after = true;
     }
   }
-  const issuesByNumber = new Map<number, IssueSummary>();
+  const issuesByNumber = new Map<number, RepositoryIssueSummary>();
   const milestonesByNumber = new Map<number, IssueMilestone>();
   for (const result of [...pages.values()].sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))) {
     for (const issue of result.issues) {

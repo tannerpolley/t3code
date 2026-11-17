@@ -6,8 +6,8 @@ import {
 
 export const ISSUE_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.issuesRepositories]: AuthOrchestrationReadScope,
-  [WS_METHODS.issuesList]: AuthOrchestrationReadScope,
-  [WS_METHODS.issuesDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.issueWorkRoadmap]: AuthOrchestrationReadScope,
+  [WS_METHODS.issueWorkDetail]: AuthOrchestrationReadScope,
   [WS_METHODS.issuesStatusBatch]: AuthOrchestrationReadScope,
   [WS_METHODS.issuesSubscribeLinkRefreshes]: AuthOrchestrationReadScope,
   [WS_METHODS.issuesStart]: AuthOrchestrationOperateScope,
@@ -35,10 +35,10 @@ export const ISSUE_RPC_REQUIRED_SCOPES = {
 
 export const ISSUE_RPC_AGGREGATES = {
   [WS_METHODS.issuesRepositories]: "issues",
-  [WS_METHODS.issuesList]: "issues",
-  [WS_METHODS.issuesDetail]: "issues",
+  [WS_METHODS.issueWorkRoadmap]: "issues",
+  [WS_METHODS.issueWorkDetail]: "issues",
   [WS_METHODS.issuesStatusBatch]: "issues",
-  [WS_METHODS.issuesSetState]: "issues",
+  [WS_METHODS.issueWorkSetState]: "issues",
   [WS_METHODS.issuesCleanup]: "issues",
   [WS_METHODS.issuesUnlink]: "issues",
   [WS_METHODS.issuesSubscribeLinkRefreshes]: "issues",

@@ -1,8 +1,8 @@
 import { MarkdownInlineCode } from "./chat/ForkMarkdownActions";
 import { markdownImageUnavailableLabel } from "./markdownImageState";
-import { knownIssueHosts } from "../lib/openIssueLink";
-import { parseIssueUrl } from "../lib/openIssueLink";
-import { useOpenIssueLink } from "../lib/openIssueLink";
+import { knownIssueHosts } from "../lib/openRepositoryIssueLink";
+import { parseIssueUrl } from "../lib/openRepositoryIssueLink";
+import { useOpenIssueLink } from "../lib/openRepositoryIssueLink";
 import { IssueLinkPreview } from "./issues/IssueLinkPreview";
 import { IssueLinkPreviewFallback } from "./issues/IssueLinkPreview";
 import { clientHostEnvironmentAtom } from "../state/clientHostEnvironment";

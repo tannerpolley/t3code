@@ -2,7 +2,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { threadIssueRepository } from "./ThreadDetailsIssueRows";
+import { threadIssueRepository } from "./ThreadDetailsRepositoryIssueRows";
 
 const identity = (overrides: Partial<RepositoryIdentity>): RepositoryIdentity => ({
   canonicalKey: "github.com/acme/frontend",

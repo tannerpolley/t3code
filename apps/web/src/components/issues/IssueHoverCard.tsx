@@ -1,10 +1,10 @@
-import type { EnvironmentId, IssueRef, IssueSummary } from "@t3tools/contracts";
+import type { EnvironmentId, RepositoryIssueRef, RepositoryIssueSummary } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { useState, type ReactElement } from "react";
 
-import { useOpenIssueLink } from "~/lib/openIssueLink";
+import { useOpenIssueLink } from "~/lib/openRepositoryIssueLink";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
-import { issueEnvironment, useLiveIssueSummary } from "~/state/issues";
+import { repositoryIssueEnvironment, useLiveIssueSummary } from "~/state/repositoryIssues";
 import { useEnvironmentQuery } from "~/state/query";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadPullRequestsMiniList } from "../ThreadStatusIndicators";
@@ -17,19 +17,19 @@ import { openIssueBlockers } from "./issueRoadmap.logic";
 
 export interface IssueHoverTarget {
   readonly environmentId: EnvironmentId;
-  readonly input: IssueRef;
+  readonly input: RepositoryIssueRef;
 }
 
 interface IssueHoverContentProps {
   readonly target: IssueHoverTarget;
-  readonly issue?: IssueSummary | undefined;
+  readonly issue?: RepositoryIssueSummary | undefined;
   readonly title?: string | undefined;
 }
 
 /** Mounted only in an open hover: the detail cache and streamed shell overlay stay shared. */
 export function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverContentProps) {
   const { environmentId, input } = target;
-  const query = useEnvironmentQuery(issueEnvironment.detail({ environmentId, input }));
+  const query = useEnvironmentQuery(repositoryIssueEnvironment.detail({ environmentId, input }));
   const issue = useLiveIssueSummary(query.data?.issue ?? fallback, input, environmentId);
   const queued = useIssueQueued(environmentId, input);
   const openPr = useOpenPrLink();

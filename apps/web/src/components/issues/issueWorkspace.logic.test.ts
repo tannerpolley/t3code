@@ -5,7 +5,7 @@ import {
   SourceControlProviderKind,
   ThreadId,
   type IssueRepositorySummary,
-  type IssueSummary,
+  type RepositoryIssueSummary,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -32,8 +32,8 @@ const decodePreferences = Schema.decodeUnknownSync(IssueFilterPreferences);
 const issue = (
   number: number,
   title: string,
-  overrides: Partial<IssueSummary> = {},
-): IssueSummary => ({
+  overrides: Partial<RepositoryIssueSummary> = {},
+): RepositoryIssueSummary => ({
   number,
   title,
   url: `https://github.com/acme/app/issues/${number}`,

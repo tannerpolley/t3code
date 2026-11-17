@@ -3,13 +3,13 @@ import type {
   EnvironmentId,
   IssueCleanupInput,
   IssueRepositoryRef,
-  IssueSummary,
+  RepositoryIssueSummary,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { useState } from "react";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
-import { issueEnvironment } from "~/state/issues";
+import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useInlineActionConfirm } from "../pullRequest/useInlineActionConfirm";
@@ -21,7 +21,7 @@ export function IssueDoneDetails({
   scope,
   environmentId,
 }: {
-  issue: IssueSummary;
+  issue: RepositoryIssueSummary;
   scope: IssueRepositoryRef;
   environmentId: EnvironmentId;
 }) {
@@ -67,13 +67,13 @@ function IssueWorkCleanup({
   reference,
   environmentId,
 }: {
-  work: NonNullable<IssueSummary["liveWork"]>[number];
+  work: NonNullable<RepositoryIssueSummary["liveWork"]>[number];
   reference: IssueRepositoryRef & { number: number };
   environmentId: EnvironmentId;
 }) {
   const navigate = useNavigate();
-  const cleanup = useAtomCommand(issueEnvironment.cleanup, { reportFailure: false });
-  const permitted = useAtomValue(issueEnvironment.cleanup.permissionAtom(environmentId));
+  const cleanup = useAtomCommand(repositoryIssueEnvironment.cleanup, { reportFailure: false });
+  const permitted = useAtomValue(repositoryIssueEnvironment.cleanup.permissionAtom(environmentId));
   const confirm = useInlineActionConfirm(
     `${environmentId}:${reference.repository}:${reference.number}:${work.threadId}:${work.branch}:${work.worktreePath}`,
   );

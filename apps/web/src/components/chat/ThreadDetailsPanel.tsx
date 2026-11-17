@@ -25,7 +25,7 @@ import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadLinkedIssueRow } from "./ThreadLinkedIssueRow";
 import { ThreadDetailsArtifactRows } from "./ThreadDetailsArtifactRows";
-import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
+import { ThreadDetailsRepositoryIssueRows } from "./ThreadDetailsRepositoryIssueRows";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
@@ -331,7 +331,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   />
                 ) : null}
                 {visible.issues ? (
-                  <ThreadDetailsIssueRows
+                  <ThreadDetailsRepositoryIssueRows
                     environmentId={props.environmentId}
                     threadId={props.threadId}
                     repositoryIdentity={props.activeProjectRepositoryIdentity}

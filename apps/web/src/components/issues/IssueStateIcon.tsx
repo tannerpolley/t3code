@@ -1,4 +1,4 @@
-import type { IssueSummary } from "@t3tools/contracts";
+import type { RepositoryIssueSummary } from "@t3tools/contracts";
 import {
   CircleAlertIcon,
   CircleHelpIcon,
@@ -13,18 +13,21 @@ import {
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-type IssueStateInput = Pick<IssueSummary, "state"> &
+type IssueStateInput = Pick<RepositoryIssueSummary, "state"> &
   Partial<
-    Pick<IssueSummary, "stateReason" | "projects" | "suspensionReason" | "relationshipsComplete">
+    Pick<
+      RepositoryIssueSummary,
+      "stateReason" | "projects" | "suspensionReason" | "relationshipsComplete"
+    >
   > & {
     readonly liveWork?:
-      | readonly Pick<NonNullable<IssueSummary["liveWork"]>[number], "status">[]
+      | readonly Pick<NonNullable<RepositoryIssueSummary["liveWork"]>[number], "status">[]
       | undefined;
     readonly blockedBy?:
-      | readonly Pick<NonNullable<IssueSummary["blockedBy"]>[number], "state">[]
+      | readonly Pick<NonNullable<RepositoryIssueSummary["blockedBy"]>[number], "state">[]
       | undefined;
     readonly pullRequests?:
-      | readonly Pick<NonNullable<IssueSummary["pullRequests"]>[number], "state">[]
+      | readonly Pick<NonNullable<RepositoryIssueSummary["pullRequests"]>[number], "state">[]
       | undefined;
     /** In the repository's issue queue, waiting for its orchestrator to start it. */
     readonly queued?: boolean | undefined;

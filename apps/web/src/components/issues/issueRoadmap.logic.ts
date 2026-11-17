@@ -1,8 +1,12 @@
-import { THREAD_ROLE_LABELS, type IssueRepositoryRef, type IssueSummary } from "@t3tools/contracts";
+import {
+  THREAD_ROLE_LABELS,
+  type IssueRepositoryRef,
+  type RepositoryIssueSummary,
+} from "@t3tools/contracts";
 import { issuePriorityRank } from "./issueProjects.logic";
 import { issueProgress } from "./IssueStateIcon";
 
-export function issueLiveStatus(issue: IssueSummary) {
+export function issueLiveStatus(issue: RepositoryIssueSummary) {
   const work = issue.liveWork ?? [];
   if (work.length > 0 && issue.suspensionReason !== undefined) return "suspended" as const;
   if (work.some((thread) => thread.status === "working")) return "working" as const;
@@ -18,7 +22,7 @@ export const LIVE_WORK_STATUS_LABELS = {
 } as const;
 
 /** The row names the first thread in the issue's status; the popup lists every thread. */
-export function issueLiveWorkSummary(issue: IssueSummary) {
+export function issueLiveWorkSummary(issue: RepositoryIssueSummary) {
   const status = issueLiveStatus(issue);
   if (status === null) return null;
   const work = [...(issue.liveWork ?? [])].sort(
@@ -38,7 +42,7 @@ export function issueLiveWorkSummary(issue: IssueSummary) {
     more: work.length - 1,
   };
 }
-export function openIssueBlockers(issue: IssueSummary) {
+export function openIssueBlockers(issue: RepositoryIssueSummary) {
   return (issue.blockedBy ?? []).filter((blocker) => blocker.state === "open");
 }
 
@@ -47,7 +51,7 @@ export function openIssueBlockers(issue: IssueSummary) {
  */
 export function issueRoadmap(
   scope: IssueRepositoryRef,
-  issues: readonly IssueSummary[],
+  issues: readonly RepositoryIssueSummary[],
   queuedNumbers: readonly number[] = [],
   now = Date.now(),
   pendingInboxNumbers: readonly number[] = [],
@@ -68,8 +72,7 @@ export function issueRoadmap(
   }
   const priorities = new Map(open.map((issue) => [issue.number, issuePriorityRank(issue)]));
   const compare = (left: number, right: number) =>
-    priorities.get(left)! - priorities.get(right)! ||
-    left - right;
+    priorities.get(left)! - priorities.get(right)! || left - right;
   const index = new Map<number, number>();
   const low = new Map<number, number>();
   const stack: number[] = [];
@@ -126,7 +129,7 @@ export function issueRoadmap(
   incoming.forEach((count, id) => {
     if (count === 0) insert(id);
   });
-  const ordered: Array<{ issue: IssueSummary; cycle: boolean }> = [];
+  const ordered: Array<{ issue: RepositoryIssueSummary; cycle: boolean }> = [];
   while (ready.length > 0) {
     const id = ready.shift()!;
     const component = components[id]!;
@@ -193,14 +196,14 @@ export function issueRoadmap(
 
 const RECENTLY_DONE_MS = 24 * 60 * 60 * 1000;
 
-function recentlyDone(issue: IssueSummary, now: number) {
+function recentlyDone(issue: RepositoryIssueSummary, now: number) {
   if (issue.state !== "closed" || issue.closedAt == null) return false;
   const elapsed = now - Date.parse(issue.closedAt);
   return elapsed >= 0 && elapsed < RECENTLY_DONE_MS;
 }
 
 // The snapshot changes only at closure or expiry; returning the wall clock would render forever.
-export function createIssueRoadmapClock(issues: readonly IssueSummary[]) {
+export function createIssueRoadmapClock(issues: readonly RepositoryIssueSummary[]) {
   const boundaries = issues
     .flatMap((issue) => {
       if (issue.state !== "closed" || issue.closedAt == null) return [];

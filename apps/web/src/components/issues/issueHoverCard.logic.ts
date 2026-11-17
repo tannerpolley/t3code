@@ -1,7 +1,7 @@
 import type {
   IssueDetailResult,
   IssuePullRequest,
-  IssueSummary,
+  RepositoryIssueSummary,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
@@ -32,7 +32,7 @@ function miniListLink(pr: IssuePullRequest, observedAt: string): ThreadPullReque
 }
 
 export function issueHoverPullRequests(
-  issue: IssueSummary,
+  issue: RepositoryIssueSummary,
   host: string,
   detail: IssueDetailResult | null,
 ) {

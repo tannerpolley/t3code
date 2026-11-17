@@ -1,4 +1,4 @@
-import type { IssueSummary } from "@t3tools/contracts";
+import type { RepositoryIssueSummary } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { issueProjectChips } from "./issueProjects.logic";
@@ -16,7 +16,7 @@ describe("issue Project chips", () => {
       "Status: Todo",
       "Priority: High",
     ]);
-    const projects: IssueSummary["projects"] = [
+    const projects: RepositoryIssueSummary["projects"] = [
       planning,
       { id: "two", title: "Delivery", status: null, priority: { name: "Low", rank: 2 } },
     ];

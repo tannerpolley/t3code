@@ -1,12 +1,12 @@
 import * as Schema from "effect/Schema";
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { IssueRef } from "./issue.ts";
+import { RepositoryIssueRef } from "./repositoryIssue.ts";
 
 const Text = TrimmedNonEmptyString.check(Schema.isMaxLength(2000));
 const Id = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 const OptionId = Id.check(Schema.isPattern(/^[a-zA-Z0-9_-]+$/u));
 export const OwnerDecisionRequest = Schema.Struct({
-  ...IssueRef.fields,
+  ...RepositoryIssueRef.fields,
   clientRequestId: Id,
   question: Text,
   options: Schema.Array(Schema.Struct({ id: OptionId, label: Text, consequence: Text })).check(
@@ -57,9 +57,9 @@ export type OwnerDecision = typeof OwnerDecision.Type;
 export const OwnerDecisionsListInput = Schema.Struct({
   projectId: Schema.optional(ProjectId),
   threadId: Schema.optional(ThreadId),
-  host: Schema.optional(IssueRef.fields.host),
-  repository: Schema.optional(IssueRef.fields.repository),
-  number: Schema.optional(IssueRef.fields.number),
+  host: Schema.optional(RepositoryIssueRef.fields.host),
+  repository: Schema.optional(RepositoryIssueRef.fields.repository),
+  number: Schema.optional(RepositoryIssueRef.fields.number),
 });
 export type OwnerDecisionsListInput = typeof OwnerDecisionsListInput.Type;
 export const OwnerDecisionChooseInput = Schema.Struct({ id: Id, optionId: OptionId });

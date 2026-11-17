@@ -1,6 +1,6 @@
-import type { EnvironmentId, IssueRepositoryRef, IssueSummary } from "@t3tools/contracts";
+import type { EnvironmentId, IssueRepositoryRef, RepositoryIssueSummary } from "@t3tools/contracts";
 
-import { useLiveIssueSummary } from "~/state/issues";
+import { useLiveIssueSummary } from "~/state/repositoryIssues";
 import { useIssueQueued } from "./IssueQueueAction";
 import { IssueStateIcon, issueStatePresentation } from "./IssueStateIcon";
 import { Badge } from "../ui/badge";
@@ -11,7 +11,7 @@ export function LiveIssueStateBadge({
   reference,
   environmentId,
 }: {
-  readonly issue: IssueSummary;
+  readonly issue: RepositoryIssueSummary;
   readonly reference: IssueRepositoryRef;
   readonly environmentId: EnvironmentId;
 }) {

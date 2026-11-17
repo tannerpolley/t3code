@@ -9,7 +9,7 @@ import {
 import { PencilIcon } from "lucide-react";
 import { useState } from "react";
 import { randomUUID } from "~/lib/utils";
-import { issueEnvironment } from "~/state/issues";
+import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
@@ -36,13 +36,17 @@ export function IssueWorkerLimitControl({
 }) {
   const currentLimit = pool === "worker" ? config.workerLimit : config.readOnlyLimit;
   const command =
-    pool === "worker" ? issueEnvironment.setWorkerLimit : issueEnvironment.setReadOnlyLimit;
+    pool === "worker"
+      ? repositoryIssueEnvironment.setWorkerLimit
+      : repositoryIssueEnvironment.setReadOnlyLimit;
   const label = pool === "worker" ? "worker" : "read-only";
   const [draft, setDraft] = useState(String(currentLimit));
   const [busy, setBusy] = useState(false);
   const canSetLimit = useAtomValue(command.permissionAtom(environmentId));
-  const setWorkerLimit = useAtomCommand(issueEnvironment.setWorkerLimit, { reportFailure: false });
-  const setReadOnlyLimit = useAtomCommand(issueEnvironment.setReadOnlyLimit, {
+  const setWorkerLimit = useAtomCommand(repositoryIssueEnvironment.setWorkerLimit, {
+    reportFailure: false,
+  });
+  const setReadOnlyLimit = useAtomCommand(repositoryIssueEnvironment.setReadOnlyLimit, {
     reportFailure: false,
   });
   const limit = Number(draft);

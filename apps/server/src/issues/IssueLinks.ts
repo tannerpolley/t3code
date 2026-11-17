@@ -2,12 +2,12 @@ import { repositoryPhaseSql } from "./RepositoryPhaseSql.ts";
 import {
   IssueLinkError,
   RepositoryOrchestration,
-  IssueRef,
+  RepositoryIssueRef,
   type IssueLinkInput,
   type IssueLinkResult,
   type IssueRepositoryRef,
   type IssuePullRequestStatus,
-  type IssueSummary,
+  type RepositoryIssueSummary,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -30,24 +30,24 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
-const key = (issue: IssueRef) =>
+const key = (issue: RepositoryIssueRef) =>
   `${issue.host.toLowerCase()}/${issue.repository.toLowerCase()}#${issue.number}`;
-const isIssueRef = Schema.is(IssueRef);
+const isIssueRef = Schema.is(RepositoryIssueRef);
 const encodeMemoKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const encodePrRefs = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(IssueRef)));
+const encodePrRefs = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(RepositoryIssueRef)));
 const decodeOrchestration = Schema.decodeEffect(Schema.fromJsonString(RepositoryOrchestration));
 const storageError = (cause: unknown) => new IssueLinkError({ code: "storage", cause });
 
 type WorkList = {
   readonly repository: IssueRepositoryRef;
-  readonly issues: readonly (Pick<IssueSummary, "number" | "pullRequestRefs"> & {
-    readonly state?: IssueSummary["state"];
+  readonly issues: readonly (Pick<RepositoryIssueSummary, "number" | "pullRequestRefs"> & {
+    readonly state?: RepositoryIssueSummary["state"];
     readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
     readonly closingPullRequests?: readonly IssuePullRequestStatus[] | undefined;
   })[];
 };
 
-function target(input: IssueLinkInput): IssueRef | null {
+function target(input: IssueLinkInput): RepositoryIssueRef | null {
   let ref = {
     host: input.host ?? "github.com",
     repository: input.repository,
@@ -91,7 +91,7 @@ export class IssueLinks extends Context.Service<
     ) => Effect.Effect<
       T & {
         readonly issues: readonly (T["issues"][number] &
-          Pick<IssueSummary, "liveWork" | "pullRequestCount" | "suspensionReason">)[];
+          Pick<RepositoryIssueSummary, "liveWork" | "pullRequestCount" | "suspensionReason">)[];
       },
       IssueLinkError
     >;
@@ -291,7 +291,7 @@ const make = Effect.gen(function* () {
           : [[thread.linkedIssue.number, reason] as const];
       }),
     );
-    const work = new Map<number, NonNullable<IssueSummary["liveWork"]>[number][]>();
+    const work = new Map<number, NonNullable<RepositoryIssueSummary["liveWork"]>[number][]>();
     for (const { thread, refs } of linked) {
       const state = workState(thread);
       const ownedPr = ownedPrByThread.get(thread.id);
@@ -358,7 +358,7 @@ const make = Effect.gen(function* () {
 
 function workState(
   thread: IssueWorkThread,
-): NonNullable<IssueSummary["liveWork"]>[number]["status"] {
+): NonNullable<RepositoryIssueSummary["liveWork"]>[number]["status"] {
   if (thread.archivedAt !== null) return "idle";
   if (
     thread.pendingRuntimeRequest !== null &&

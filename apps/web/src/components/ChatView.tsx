@@ -2,7 +2,7 @@ import NotebookCloseDialog from "./files/NotebookCloseDialog";
 import { ThreadIssueSurface } from "./issues/ThreadIssueSurface";
 import { InlineShellRunProvider } from "./chat/InlineShellRun";
 import { automaticProviderSwitchBannerItem } from "./chat/UsageLimitRecoveryBanner";
-import { threadIssueRepository } from "./chat/ThreadDetailsIssueRows";
+import { threadIssueRepository } from "./chat/ThreadDetailsRepositoryIssueRows";
 import { issueOriginFor } from "./issues/issuePullRequestOrigin";
 import { useIssueReferenceCopyTarget } from "./issues/useIssueReferenceCopyTarget";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";

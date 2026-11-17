@@ -1,9 +1,13 @@
 import { IssueHoverCard } from "./IssueHoverCard";
 import { IssueQueueAction, useIssueQueued } from "./IssueQueueAction";
-import { parseIssueUrl, knownIssueHosts } from "~/lib/openIssueLink";
+import { parseIssueUrl, knownIssueHosts } from "~/lib/openRepositoryIssueLink";
 import { useProjects } from "~/state/entities";
 import { startIssueDrag } from "./issueComposerContext";
-import type { EnvironmentId, IssueActor, IssueSummary } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  RepositoryIssueActor,
+  RepositoryIssueSummary,
+} from "@t3tools/contracts";
 import { ListChecksIcon, MessageSquareIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -27,7 +31,7 @@ import { IssueLiveWork } from "./IssueLiveWork";
 import { issueLiveStatus } from "./issueRoadmap.logic";
 
 /** Issue actors carry no display name; the pull request avatar and author pieces take one. */
-const actor = (value: IssueActor) => ({ ...value, name: null });
+const actor = (value: RepositoryIssueActor) => ({ ...value, name: null });
 
 /** A count with its glyph, named in full on hover. */
 function RowCount({
@@ -61,7 +65,7 @@ export function IssueRow({
   className,
   referenceLabel,
 }: {
-  readonly issue: IssueSummary;
+  readonly issue: RepositoryIssueSummary;
   readonly environmentId?: EnvironmentId | undefined;
   readonly selected: boolean;
   readonly onSelect: () => void;

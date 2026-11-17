@@ -2,14 +2,14 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
   type EnvironmentId,
-  type IssueRef,
+  type RepositoryIssueRef,
   type IssueRepositoryRef,
-  type IssueSummary,
+  type RepositoryIssueSummary,
 } from "@t3tools/contracts";
 import { ListPlusIcon, ListMinusIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { useServerConfigs } from "~/state/entities";
-import { issueEnvironment } from "~/state/issues";
+import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { useEnvironmentQuery, formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { randomUUID } from "~/lib/utils";
@@ -31,7 +31,7 @@ export function useIssueQueue(
     configs.get(environmentId)?.environment.capabilities.issueQueue === true;
   const query = useEnvironmentQuery(
     supported
-      ? issueEnvironment.repositoryStatus({
+      ? repositoryIssueEnvironment.repositoryStatus({
           environmentId,
           input: {
             host: reference.host.toLowerCase(),
@@ -46,7 +46,7 @@ export function useIssueQueue(
 /** Whether the issue waits in its repository's queue; state icons show it as queued. */
 export function useIssueQueued(
   environmentId: EnvironmentId | undefined,
-  reference: IssueRef | null,
+  reference: RepositoryIssueRef | null,
 ) {
   const status = useIssueQueue(environmentId, reference);
   return status.data?.queue?.some((entry) => entry.issue.number === reference?.number) === true;
@@ -58,14 +58,18 @@ export function IssueQueueAction({
   issue,
 }: {
   environmentId: EnvironmentId;
-  reference: IssueRef;
-  issue: IssueSummary;
+  reference: RepositoryIssueRef;
+  issue: RepositoryIssueSummary;
 }) {
   const status = useIssueQueue(environmentId, reference);
-  const enqueue = useAtomCommand(issueEnvironment.queueIssue, { reportFailure: false });
-  const dequeue = useAtomCommand(issueEnvironment.unqueueIssue, { reportFailure: false });
-  const canQueue = useAtomValue(issueEnvironment.queueIssue.permissionAtom(environmentId));
-  const canUnqueue = useAtomValue(issueEnvironment.unqueueIssue.permissionAtom(environmentId));
+  const enqueue = useAtomCommand(repositoryIssueEnvironment.queueIssue, { reportFailure: false });
+  const dequeue = useAtomCommand(repositoryIssueEnvironment.unqueueIssue, { reportFailure: false });
+  const canQueue = useAtomValue(
+    repositoryIssueEnvironment.queueIssue.permissionAtom(environmentId),
+  );
+  const canUnqueue = useAtomValue(
+    repositoryIssueEnvironment.unqueueIssue.permissionAtom(environmentId),
+  );
   const [busy, setBusy] = useState(false);
   const request = useRef<IssueQueueRequest | null>(null);
   const entry = status.data?.queue?.find((entry) => entry.issue.number === reference.number);

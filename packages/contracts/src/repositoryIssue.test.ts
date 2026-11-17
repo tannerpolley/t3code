@@ -2,16 +2,21 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import { IssueDetailResult, IssueListInput, IssueListResult, IssueRef } from "./issue.ts";
+import {
+  IssueDetailResult,
+  RepositoryIssueListInput,
+  RepositoryIssueListResult,
+  RepositoryIssueRef,
+} from "./repositoryIssue.ts";
 import { WS_METHODS, WsRpcGroup } from "./rpc.ts";
 
-const decodeRef = Schema.decodeUnknownSync(IssueRef);
-const decodeListInput = Schema.decodeUnknownSync(IssueListInput);
-const decodeListResult = Schema.decodeUnknownSync(IssueListResult);
+const decodeRef = Schema.decodeUnknownSync(RepositoryIssueRef);
+const decodeListInput = Schema.decodeUnknownSync(RepositoryIssueListInput);
+const decodeListResult = Schema.decodeUnknownSync(RepositoryIssueListResult);
 const decodeDetailResult = Schema.decodeUnknownSync(IssueDetailResult);
 
-const listRpc = WsRpcGroup.requests.get(WS_METHODS.issuesList)!;
-const detailRpc = WsRpcGroup.requests.get(WS_METHODS.issuesDetail)!;
+const listRpc = WsRpcGroup.requests.get(WS_METHODS.issueWorkRoadmap)!;
+const detailRpc = WsRpcGroup.requests.get(WS_METHODS.issueWorkDetail)!;
 const decodeListrpcPayloadschema = Schema.decodeSync(listRpc.payloadSchema);
 const decodeDetailrpcPayloadschema = Schema.decodeSync(detailRpc.payloadSchema);
 const decodeListrpcSuccessschema = Schema.decodeSync(listRpc.successSchema);
@@ -139,7 +144,7 @@ describe("GitHub issue contract boundaries", () => {
   });
 
   it("round-trips the list result through the JSON wire codec", () => {
-    const codec = Schema.toCodecJson(IssueListResult);
+    const codec = Schema.toCodecJson(RepositoryIssueListResult);
     const encoded = Schema.encodeUnknownSync(codec)(listResult);
 
     expect(Schema.decodeSync(codec)(encoded)).toStrictEqual(listResult);
@@ -151,7 +156,7 @@ describe("GitHub issue contract boundaries", () => {
       { id: "project", title: "Planning", status: "Todo", priority: { name: "High", rank: 0 } },
     ];
     const result = { ...listResult, issues: [{ ...issue, projects }] };
-    const codec = Schema.toCodecJson(IssueListResult);
+    const codec = Schema.toCodecJson(RepositoryIssueListResult);
     expect(Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(result))).toEqual(result);
     expect(() =>
       decodeListResult({

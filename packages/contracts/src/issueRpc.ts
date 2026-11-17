@@ -27,17 +27,17 @@ import {
 import { IssueCleanupInput, IssueCleanupError, IssueCleanupResult } from "./issueCleanup.ts";
 import { IssueLinkInput, IssueLinkResult, IssueLinkError } from "./issueLinks.ts";
 import {
-  IssueRef,
+  RepositoryIssueRef,
   IssueRepositoryRef,
   IssueDetailInput,
   IssueDetailResult,
-  IssueListInput,
-  IssueListResult,
+  RepositoryIssueListInput,
+  RepositoryIssueListResult,
   IssueReadError,
   IssueRepositoriesResult,
   IssueStatusBatchInput,
   IssueStatusBatchResult,
-} from "./issue.ts";
+} from "./repositoryIssue.ts";
 import {
   IssueWorkError,
   IssueWorkStartInput,
@@ -62,10 +62,10 @@ import {
 
 export const ISSUE_WS_METHODS = {
   issuesRepositories: "issues.repositories",
-  issuesList: "issues.list",
-  issuesDetail: "issues.detail",
+  issueWorkRoadmap: "issueWork.roadmap",
+  issueWorkDetail: "issueWork.detail",
   issuesStatusBatch: "issues.statusBatch",
-  issuesSetState: "issues.setState",
+  issueWorkSetState: "issueWork.setState",
   issuesCleanup: "issues.cleanup",
   issuesUnlink: "issues.unlink",
   issuesSubscribeLinkRefreshes: "issues.subscribeLinkRefreshes",
@@ -116,13 +116,13 @@ const WsIssuesSubscribeLinkRefreshesRpc = Rpc.make(ISSUE_WS_METHODS.issuesSubscr
   error: IssueRpcError,
 });
 
-const WsIssuesListRpc = Rpc.make(ISSUE_WS_METHODS.issuesList, {
-  payload: IssueListInput,
-  success: IssueListResult,
+const WsIssuesListRpc = Rpc.make(ISSUE_WS_METHODS.issueWorkRoadmap, {
+  payload: RepositoryIssueListInput,
+  success: RepositoryIssueListResult,
   error: IssueRpcError,
 });
 
-const WsIssuesDetailRpc = Rpc.make(ISSUE_WS_METHODS.issuesDetail, {
+const WsIssuesDetailRpc = Rpc.make(ISSUE_WS_METHODS.issueWorkDetail, {
   payload: IssueDetailInput,
   success: IssueDetailResult,
   error: IssueRpcError,
@@ -134,8 +134,11 @@ const WsIssuesStatusBatchRpc = Rpc.make(ISSUE_WS_METHODS.issuesStatusBatch, {
   error: IssueRpcError,
 });
 
-const WsIssuesSetStateRpc = Rpc.make(ISSUE_WS_METHODS.issuesSetState, {
-  payload: Schema.Struct({ ...IssueRef.fields, state: Schema.Literals(["open", "closed"]) }),
+const WsIssuesSetStateRpc = Rpc.make(ISSUE_WS_METHODS.issueWorkSetState, {
+  payload: Schema.Struct({
+    ...RepositoryIssueRef.fields,
+    state: Schema.Literals(["open", "closed"]),
+  }),
   success: Schema.Void,
   error: IssueRpcError,
 });
@@ -321,7 +324,7 @@ export const issueRpcs = [
 
 export const ISSUE_CLIENT_GUARDED_RPC_SCOPES = {
   [ISSUE_WS_METHODS.issuesEndRepository]: AuthOrchestrationOperateScope,
-  [ISSUE_WS_METHODS.issuesSetState]: AuthSourceControlWriteScope,
+  [ISSUE_WS_METHODS.issueWorkSetState]: AuthSourceControlWriteScope,
   [ISSUE_WS_METHODS.issuesCleanup]: AuthSourceControlWriteScope,
   [ISSUE_WS_METHODS.issuesUnlink]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issuesCloseOut]: AuthOrchestrationOperateScope,

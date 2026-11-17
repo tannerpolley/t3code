@@ -1,4 +1,8 @@
-import type { IssueContextMetadata, IssueContextRecord, IssueSummary } from "@t3tools/contracts";
+import type {
+  IssueContextMetadata,
+  IssueContextRecord,
+  RepositoryIssueSummary,
+} from "@t3tools/contracts";
 import {
   sanitizeComposerContextLabel,
   toKindScopedComposerContextId,
@@ -7,9 +11,12 @@ import type { DragEvent } from "react";
 import { COMPOSER_ISSUE_DRAG_TYPE, encodeIssueDragPayload } from "./issueComposerDrag";
 
 export function issueContextMetadata(
-  issue: Pick<IssueSummary, "number" | "title" | "url"> &
+  issue: Pick<RepositoryIssueSummary, "number" | "title" | "url"> &
     Partial<
-      Pick<IssueSummary, "state" | "stateReason" | "blockedBy" | "liveWork" | "pullRequests">
+      Pick<
+        RepositoryIssueSummary,
+        "state" | "stateReason" | "blockedBy" | "liveWork" | "pullRequests"
+      >
     >,
 ): IssueContextMetadata {
   const url = new URL(issue.url);
@@ -53,7 +60,7 @@ export function startIssueDrag(
   );
 }
 
-export function filterComposerIssues<T extends Pick<IssueSummary, "number" | "title">>(
+export function filterComposerIssues<T extends Pick<RepositoryIssueSummary, "number" | "title">>(
   issues: readonly T[],
   query: string,
 ): T[] {

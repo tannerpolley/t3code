@@ -12,7 +12,7 @@ import {
   repositoryAdmitsWork,
   type IssueSuspensionKind,
   IssueWorkError,
-  type IssueRef,
+  type RepositoryIssueRef,
   type IssueWorkStartInput,
   type IssueWorkCancelInput,
   type IssueWorkCloseOutInput,
@@ -128,12 +128,14 @@ export class IssueWorkService extends Context.Service<
     readonly restoreRoot: (
       input: RepositoryWorkRestoreInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
-    readonly workStatus: (input: IssueRef) => Effect.Effect<IssueWorkStatusResult, IssueWorkError>;
+    readonly workStatus: (
+      input: RepositoryIssueRef,
+    ) => Effect.Effect<IssueWorkStatusResult, IssueWorkError>;
     readonly workMilestone: (
       input: RepositoryWorkInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly repositoryStatus: (
-      input: Pick<IssueRef, "host" | "repository">,
+      input: Pick<RepositoryIssueRef, "host" | "repository">,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly setWorkerLimit: (
       input: RepositoryWorkerLimitInput,
@@ -251,7 +253,7 @@ export const layer = Layer.effect(
     const assertProjectRepository = Effect.fn("IssueWorkService.assertProjectRepository")(
       function* (
         projectId: import("@t3tools/contracts").ProjectId,
-        repositoryRef: Pick<IssueRef, "host" | "repository">,
+        repositoryRef: Pick<RepositoryIssueRef, "host" | "repository">,
       ) {
         const project = yield* projects.getById(projectId).pipe(Effect.mapError(mapError));
         const identity = Option.isSome(project) ? project.value.repositoryIdentity : null;

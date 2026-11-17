@@ -12,7 +12,7 @@ import { AtomRegistry } from "effect/reactivity";
 
 import { useEnvironmentProviders } from "~/state/environments";
 import { useProjects, useServerConfigs } from "~/state/entities";
-import { issueEnvironment } from "~/state/issues";
+import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { randomUUID } from "~/lib/utils";
@@ -51,13 +51,15 @@ export function useRepositoryOrchestratorAction(
   const activeStatus = useEnvironmentQuery(
     activeTarget === null
       ? null
-      : issueEnvironment.repositoryStatus({
+      : repositoryIssueEnvironment.repositoryStatus({
           environmentId: activeTarget.thread.environmentId,
           input: activeTarget.repository,
         }),
   );
   useAtomValue(
-    issueEnvironment.assignOrchestrator.permissionAtom(activeThread?.environmentId ?? null),
+    repositoryIssueEnvironment.assignOrchestrator.permissionAtom(
+      activeThread?.environmentId ?? null,
+    ),
   );
   const actionFor = (
     target: NonNullable<ReturnType<typeof targetFor>>,
@@ -72,13 +74,13 @@ export function useRepositoryOrchestratorAction(
         current ||
         status === null ||
         !appAtomRegistry.get(
-          issueEnvironment.assignOrchestrator.permissionAtom(thread.environmentId),
+          repositoryIssueEnvironment.assignOrchestrator.permissionAtom(thread.environmentId),
         ),
     };
     return {
       item,
       run: async () => {
-        const result = await issueEnvironment.assignOrchestrator.run(appAtomRegistry, {
+        const result = await repositoryIssueEnvironment.assignOrchestrator.run(appAtomRegistry, {
           environmentId: thread.environmentId,
           input: {
             ...repository,
@@ -110,7 +112,7 @@ export function useRepositoryOrchestratorAction(
     forThread: async (thread: EnvironmentThreadShell) => {
       const target = targetFor(thread);
       if (target === null) return null;
-      const atom = issueEnvironment.repositoryStatus({
+      const atom = repositoryIssueEnvironment.repositoryStatus({
         environmentId: thread.environmentId,
         input: target.repository,
       });

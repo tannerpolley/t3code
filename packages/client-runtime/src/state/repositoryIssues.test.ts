@@ -9,8 +9,8 @@ import {
   WS_METHODS,
   type IssueStatusBatchInput,
   type IssueDetailInput,
-  type IssueListInput,
-  type IssueListResult,
+  type RepositoryIssueListInput,
+  type RepositoryIssueListResult,
   type IssueDetailResult,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -32,7 +32,7 @@ import {
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { createIssueEnvironmentAtoms } from "./issues.ts";
+import { createRepositoryIssueEnvironmentAtoms } from "./repositoryIssues.ts";
 
 it.effect("keeps a late issue response on its own issue and environment", () =>
   Effect.scoped(
@@ -77,7 +77,7 @@ it.effect("keeps a late issue response on its own issue and environment", () =>
           wsBaseUrl: `wss://${name}.example.test`,
         });
         const client = {
-          [WS_METHODS.issuesDetail]: (input: IssueDetailInput) =>
+          [WS_METHODS.issueWorkDetail]: (input: IssueDetailInput) =>
             Effect.gen(function* () {
               calls.push(`${name}:${input.number}`);
               if (name === "first" && input.number === 1) {
@@ -122,7 +122,7 @@ it.effect("keeps a late issue response on its own issue and environment", () =>
         followStream: (id, stream) =>
           Stream.provideService(stream, EnvironmentSupervisor, supervisors.get(id)!),
       } as EnvironmentRegistry["Service"]);
-      const queries = createIssueEnvironmentAtoms(
+      const queries = createRepositoryIssueEnvironmentAtoms(
         Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
         () => Atom.make(null),
       );
@@ -207,7 +207,7 @@ it.effect("filters issue turns and throttles bursts with a trailing refresh", ()
         wsBaseUrl: "wss://local.example.test",
       });
       const client = {
-        [WS_METHODS.issuesDetail]: (input: IssueDetailInput) =>
+        [WS_METHODS.issueWorkDetail]: (input: IssueDetailInput) =>
           Effect.gen(function* () {
             reads.push(input.number);
             if (reads.length === 2) yield* Deferred.succeed(secondRead, undefined);
@@ -275,7 +275,7 @@ it.effect("filters issue turns and throttles bursts with a trailing refresh", ()
         followStream: (_id, stream) =>
           Stream.provideService(stream, EnvironmentSupervisor, supervisor),
       } as EnvironmentRegistry["Service"]);
-      const queries = createIssueEnvironmentAtoms(
+      const queries = createRepositoryIssueEnvironmentAtoms(
         Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
         () => shells,
       );
@@ -364,13 +364,13 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
       const client = {
         [WS_METHODS.issuesSubscribeLinkRefreshes]: () => SubscriptionRef.changes(linkChanges),
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => SubscriptionRef.changes(turnFinished),
-        [WS_METHODS.issuesDetail]: (input: IssueDetailInput) =>
+        [WS_METHODS.issueWorkDetail]: (input: IssueDetailInput) =>
           Effect.gen(function* () {
             refreshModes.push(input.refresh!);
             if (++detailReads === 2) yield* Deferred.succeed(linkDetailRead, undefined);
             return {} as IssueDetailResult;
           }),
-        [WS_METHODS.issuesList]: (input: IssueListInput) =>
+        [WS_METHODS.issueWorkRoadmap]: (input: RepositoryIssueListInput) =>
           Effect.gen(function* () {
             reads.push(input.roadmap ? "roadmap" : input.repository);
             refreshModes.push(input.refresh!);
@@ -384,7 +384,7 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
               nextCursor: null,
               issuesComplete: true,
               milestonesComplete: true,
-            } satisfies IssueListResult;
+            } satisfies RepositoryIssueListResult;
           }),
       } as unknown as WsRpcProtocolClient;
       const session: RpcSession = {
@@ -417,7 +417,7 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
         followStream: (_id, stream) =>
           Stream.provideService(stream, EnvironmentSupervisor, supervisor),
       } as EnvironmentRegistry["Service"]);
-      const queries = createIssueEnvironmentAtoms(
+      const queries = createRepositoryIssueEnvironmentAtoms(
         Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
         () => Atom.make(null),
       );
@@ -494,10 +494,10 @@ it.effect("coalesces repository consumers and refreshes once on a link change", 
         wsBaseUrl: "wss://local.example.test",
       });
       const client = {
-        [WS_METHODS.issuesList]: () =>
+        [WS_METHODS.issueWorkRoadmap]: () =>
           Effect.sync(() => {
             listReads++;
-            return {} as IssueListResult;
+            return {} as RepositoryIssueListResult;
           }),
         [WS_METHODS.issuesStatusBatch]: (input: IssueStatusBatchInput) =>
           Effect.gen(function* () {
@@ -545,7 +545,7 @@ it.effect("coalesces repository consumers and refreshes once on a link change", 
         followStream: (_id, stream) =>
           Stream.provideService(stream, EnvironmentSupervisor, supervisor),
       } as EnvironmentRegistry["Service"]);
-      const queries = createIssueEnvironmentAtoms(
+      const queries = createRepositoryIssueEnvironmentAtoms(
         Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
         () => Atom.make(null),
       );

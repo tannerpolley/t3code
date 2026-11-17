@@ -13,17 +13,17 @@ import {
   NonNegativeInt,
   TrimmedNonEmptyString,
   type IssueDetailResult as IssueDetailResultType,
-  type IssueLinkedPullRequest,
+  type RepositoryIssueLinkedPullRequest,
   type IssueStatusBatchResult,
-  type IssueListState,
+  type RepositoryIssueListState,
   type IssueRepositoriesResult as IssueRepositoriesResultType,
   type IssueRepositorySummary,
-  type IssueSummary as IssueSummaryType,
+  type RepositoryIssueSummary as IssueSummaryType,
   ThreadLinkedIssue,
   type IssueWorkRead,
   type IssueChangeBaseline,
   type IssueRepositoryRef,
-  type IssueRef,
+  type RepositoryIssueRef,
   type ThreadLinkedIssue as ThreadLinkedIssueType,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -360,12 +360,16 @@ interface ApiResponse {
 
 const issueListEndpoint = (
   scope: IssueRepositoryScope,
-  state: IssueListState,
+  state: RepositoryIssueListState,
   page: number,
   milestoneNumber?: number,
 ) =>
   `repos/${encodeRepositoryPath(scope.repository)}/issues?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}${milestoneNumber === undefined ? "" : `&milestone=${milestoneNumber}`}`;
-const milestoneListEndpoint = (scope: IssueRepositoryScope, state: IssueListState, page: number) =>
+const milestoneListEndpoint = (
+  scope: IssueRepositoryScope,
+  state: RepositoryIssueListState,
+  page: number,
+) =>
   `repos/${encodeRepositoryPath(scope.repository)}/milestones?state=${state}&per_page=100&page=${page}`;
 
 function readError(
@@ -520,7 +524,7 @@ function normalizeGraphQlIssue(
 }
 
 /** Closing pull requests first, then ones that only mention the issue, each listed once. */
-function linkedPullRequests(issue: GraphQlIssue): IssueLinkedPullRequest[] {
+function linkedPullRequests(issue: GraphQlIssue): RepositoryIssueLinkedPullRequest[] {
   const referencing = presentNodes(issue.timelineItems ?? null).flatMap(({ source }) =>
     source != null && "number" in source ? [source] : [],
   );
@@ -528,7 +532,7 @@ function linkedPullRequests(issue: GraphQlIssue): IssueLinkedPullRequest[] {
     ...presentNodes(issue.closedByPullRequestsReferences ?? null).map((pr) => [pr, true] as const),
     ...referencing.map((pr) => [pr, false] as const),
   ];
-  const linked = new Map<string, IssueLinkedPullRequest>();
+  const linked = new Map<string, RepositoryIssueLinkedPullRequest>();
   for (const [pr, closesIssue] of candidates) {
     const key = `${pr.repository.nameWithOwner.toLowerCase()}#${pr.number}`;
     if (linked.has(key)) continue;
@@ -898,7 +902,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
 
   const statuses: IssueHost["statuses"] = Effect.fn("IssueService.statuses")(
     function* (host, nodeIds) {
-      const statuses: Array<IssueStatusBatchResult[number] & IssueRef> = [];
+      const statuses: Array<IssueStatusBatchResult[number] & RepositoryIssueRef> = [];
       const ids = [...nodeIds];
       for (let offset = 0; offset < ids.length; offset += 100) {
         const batch = ids.slice(offset, offset + 100);
@@ -1237,7 +1241,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
   const listIssuePage = Effect.fn("IssueService.listIssuePage")(
     function* (
       scope: IssueRepositoryScope,
-      state: IssueListState,
+      state: RepositoryIssueListState,
       page: number,
       milestoneNumber?: number,
       etag?: string,
@@ -1312,7 +1316,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
 
   const listMilestonePage = Effect.fn("IssueService.listMilestonePage")(function* (
     scope: IssueRepositoryScope,
-    state: IssueListState,
+    state: RepositoryIssueListState,
     page: number,
     etag?: string,
   ) {
@@ -1677,7 +1681,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     },
   );
   const patchIssue = Effect.fn("IssueService.patchIssue")(function* (
-    input: import("@t3tools/contracts").IssueRef,
+    input: import("@t3tools/contracts").RepositoryIssueRef,
     payload: Readonly<Record<string, string | number | null>>,
   ) {
     const scope = yield* resolveScope("detail", input);

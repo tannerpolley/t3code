@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState, type ReactElement } from "react";
 
-import { knownIssueHosts, parseIssueUrl } from "~/lib/openIssueLink";
+import { knownIssueHosts, parseIssueUrl } from "~/lib/openRepositoryIssueLink";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";

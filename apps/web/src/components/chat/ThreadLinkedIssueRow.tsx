@@ -7,7 +7,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useThreadShell } from "~/state/entities";
-import { issueEnvironment, useLiveIssueSummary } from "~/state/issues";
+import { repositoryIssueEnvironment, useLiveIssueSummary } from "~/state/repositoryIssues";
 import { IssueHoverCard } from "../issues/IssueHoverCard";
 import { IssueRow } from "../issues/IssueRow";
 import {
@@ -52,7 +52,7 @@ function LinkedIssueContent({
   readonly onSelect: () => void;
 }) {
   const detail = useAtomValue(
-    issueEnvironment.detail({
+    repositoryIssueEnvironment.detail({
       environmentId,
       input: { host: issue.host, repository: issue.repository, number: issue.number },
     }),

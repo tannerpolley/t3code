@@ -9,7 +9,7 @@ import {
   EnvironmentAuthorizationError as EnvironmentAuthorizationErrorClass,
   IssueReadError as IssueReadErrorClass,
   type EnvironmentId,
-  type IssueSummary,
+  type RepositoryIssueSummary,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
@@ -29,8 +29,8 @@ import {
   useLiveIssueWork,
   useIssueLists,
   useIssueRepositories,
-  type IssueListTarget,
-} from "~/state/issues";
+  type RepositoryIssueListTarget,
+} from "~/state/repositoryIssues";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
@@ -127,7 +127,7 @@ function retryDeadline(retryAt: number): string {
   return Number.isNaN(date.getTime()) ? String(retryAt) : date.toLocaleString();
 }
 
-function issueListScopeKey(target: IssueListTarget): string {
+function issueListScopeKey(target: RepositoryIssueListTarget): string {
   return JSON.stringify([
     target.environmentId,
     repositoryKey(target.input.host, target.input.repository),
@@ -397,7 +397,7 @@ export function IssueBrowser({
     });
   };
   const selectIssue = (
-    issue: IssueSummary,
+    issue: RepositoryIssueSummary,
     target: IssueRepositoryTarget,
     snapshot: IssueListSnapshot | null,
   ) =>

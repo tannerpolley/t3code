@@ -2,7 +2,7 @@ import { expect, it } from "vite-plus/test";
 
 import { SourceControlProviderKind, type RepositoryIdentity } from "@t3tools/contracts";
 
-import { knownIssueHosts, parseIssueUrl } from "./openIssueLink";
+import { knownIssueHosts, parseIssueUrl } from "./openRepositoryIssueLink";
 
 const hosts = new Set([
   "github.com",

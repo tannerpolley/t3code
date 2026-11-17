@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, IssueRef, IssueSummary, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  RepositoryIssueRef,
+  RepositoryIssueSummary,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
   BookOpenIcon,
@@ -23,7 +28,7 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
-import { issueEnvironment } from "~/state/issues";
+import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { handoffPrompt } from "./issueDetailActions.logic";
@@ -52,8 +57,8 @@ export function IssueDetailActions({
   onRefresh,
 }: {
   environmentId: EnvironmentId;
-  reference: IssueRef;
-  issue: IssueSummary;
+  reference: RepositoryIssueRef;
+  issue: RepositoryIssueSummary;
   threadRef: ScopedThreadRef | null;
   refreshing: boolean;
   onRefresh: () => void;
@@ -65,7 +70,7 @@ export function IssueDetailActions({
   const capabilities = configs.get(environmentId)?.environment.capabilities;
   const { data: repositoryWork } = useEnvironmentQuery(
     capabilities?.issueMilestones === true
-      ? issueEnvironment.repositoryStatus({
+      ? repositoryIssueEnvironment.repositoryStatus({
           environmentId,
           input: { host: reference.host, repository: reference.repository },
         })
@@ -83,10 +88,10 @@ export function IssueDetailActions({
     thread?.projectId ?? null,
   );
   const handleNewThread = useNewThreadHandler();
-  const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
-  const unlink = useAtomCommand(issueEnvironment.unlink, { reportFailure: false });
-  const canWrite = useAtomValue(issueEnvironment.setState.permissionAtom(environmentId));
-  const canUnlink = useAtomValue(issueEnvironment.unlink.permissionAtom(environmentId));
+  const setState = useAtomCommand(repositoryIssueEnvironment.setState, { reportFailure: false });
+  const unlink = useAtomCommand(repositoryIssueEnvironment.unlink, { reportFailure: false });
+  const canWrite = useAtomValue(repositoryIssueEnvironment.setState.permissionAtom(environmentId));
+  const canUnlink = useAtomValue(repositoryIssueEnvironment.unlink.permissionAtom(environmentId));
   const [pending, setPending] = useState(false);
   const confirm = useInlineActionConfirm(`${environmentId}:${issue.url}`);
   const availability = issueMenuAvailability({

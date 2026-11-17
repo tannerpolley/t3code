@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { IssueRef, IssueRepositoryRef } from "./issue.ts";
+import { RepositoryIssueRef, IssueRepositoryRef } from "./repositoryIssue.ts";
 
 /**
  * New Inbox events are marked cross-project openings and comments. Other kinds remain
@@ -82,10 +82,10 @@ export const IssueInboxToolResult = Schema.Struct({
 export type IssueInboxToolResult = typeof IssueInboxToolResult.Type;
 
 export const IssuePostInput = Schema.Struct({
-  host: Schema.optional(IssueRef.fields.host),
-  repository: IssueRef.fields.repository,
+  host: Schema.optional(RepositoryIssueRef.fields.host),
+  repository: RepositoryIssueRef.fields.repository,
   /** Comment on this issue; omit to create an issue. */
-  issueNumber: Schema.optional(IssueRef.fields.number),
+  issueNumber: Schema.optional(RepositoryIssueRef.fields.number),
   title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
   body: TrimmedNonEmptyString.check(Schema.isMaxLength(60_000)),
 });
@@ -93,7 +93,7 @@ export type IssuePostInput = typeof IssuePostInput.Type;
 
 export const IssuePostResult = Schema.Struct({
   url: Schema.String,
-  issueNumber: IssueRef.fields.number,
+  issueNumber: RepositoryIssueRef.fields.number,
   commentId: Schema.NullOr(Schema.String),
   crossProject: Schema.Boolean,
   labels: Schema.Array(Schema.String),

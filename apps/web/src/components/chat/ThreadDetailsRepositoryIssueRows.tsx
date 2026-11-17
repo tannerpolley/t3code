@@ -18,7 +18,7 @@ import { type ReactNode, useState } from "react";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironment } from "~/state/environments";
-import { issueEnvironment, useLiveIssueWork } from "~/state/issues";
+import { repositoryIssueEnvironment, useLiveIssueWork } from "~/state/repositoryIssues";
 import { useIssueSectionCollapsed } from "../issues/useIssueSectionCollapsed";
 
 import { IssueRoadmap } from "../issues/IssueRoadmap";
@@ -42,7 +42,7 @@ export { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work"
  * Control section. Its collapse state is remembered per repository, and its Filter menu shares
  * the Issues page's saved choices.
  */
-export function ThreadDetailsIssueRows({
+export function ThreadDetailsRepositoryIssueRows({
   environmentId,
   threadId,
   repositoryIdentity,
@@ -89,7 +89,7 @@ function IssueRows({
   const open = !collapsed;
   const state = issueStateFilter(preferences);
   const result = useAtomValue(
-    issueEnvironment.liveList({
+    repositoryIssueEnvironment.liveList({
       environmentId,
       input: {
         host,

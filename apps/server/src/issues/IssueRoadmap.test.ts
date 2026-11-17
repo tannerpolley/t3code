@@ -23,7 +23,7 @@ import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.test
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as Stream from "effect/Stream";
 import { assert, it } from "@effect/vitest";
-import { IssueLinkError, IssueReadError, type IssueListResult } from "@t3tools/contracts";
+import { IssueLinkError, IssueReadError, type RepositoryIssueListResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as IssueService from "./IssueService.ts";
@@ -36,7 +36,7 @@ const roadmapLayer = IssueRoadmap.layer.pipe(
 );
 
 const input = { host: "github.com", repository: "owner/repo" };
-const list: IssueListResult = {
+const list: RepositoryIssueListResult = {
   repository: input,
   viewer: null,
   fetchedAt: "2026-10-13T00:00:00Z",
@@ -159,7 +159,7 @@ it.effect("gives an issue's detail the live work its row has, matched by closing
       },
     ],
   };
-  let enrichedRefs: IssueListResult["issues"][number]["pullRequestRefs"];
+  let enrichedRefs: RepositoryIssueListResult["issues"][number]["pullRequestRefs"];
   const layer = roadmapLayer.pipe(
     Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
     Layer.provide(

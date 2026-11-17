@@ -1,9 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
   EnvironmentId,
-  IssueListResult,
+  RepositoryIssueListResult,
   IssueRepositoryRef,
-  IssueSummary,
+  RepositoryIssueSummary,
   IssuePullRequestStatus,
 } from "@t3tools/contracts";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
@@ -32,14 +32,14 @@ export function indexIssueWork(shells: readonly EnvironmentThreadShell[]) {
   return { threads, issues };
 }
 type IssueWorkIndex = ReturnType<typeof indexIssueWork>;
-type WorkSummary = Pick<IssueSummary, "number"> & {
-  readonly state?: IssueSummary["state"];
+type WorkSummary = Pick<RepositoryIssueSummary, "number"> & {
+  readonly state?: RepositoryIssueSummary["state"];
   readonly liveWork?:
     | readonly (Pick<
-        NonNullable<IssueSummary["liveWork"]>[number],
+        NonNullable<RepositoryIssueSummary["liveWork"]>[number],
         "threadId" | "inherited" | "status" | "worktreeExists"
       > &
-        Partial<Pick<NonNullable<IssueSummary["liveWork"]>[number], "worktreePath">>)[]
+        Partial<Pick<NonNullable<RepositoryIssueSummary["liveWork"]>[number], "worktreePath">>)[]
     | undefined;
   readonly closingPullRequests?: readonly IssuePullRequestStatus[] | undefined;
   readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
@@ -58,11 +58,11 @@ export function createLiveIssueWorkOverlay() {
     >
   >();
   const lists = new WeakMap<
-    IssueListResult,
+    RepositoryIssueListResult,
     Map<
       EnvironmentId,
       {
-        result: IssueListResult;
+        result: RepositoryIssueListResult;
         associated: Set<number>;
         positions: Map<number, number>;
       }
@@ -133,7 +133,7 @@ export function createLiveIssueWorkOverlay() {
     return stable as T;
   };
 
-  const list = <T extends IssueListResult>(
+  const list = <T extends RepositoryIssueListResult>(
     source: T,
     environmentId: EnvironmentId,
     index: IssueWorkIndex,
@@ -157,7 +157,7 @@ export function createLiveIssueWorkOverlay() {
       []) {
       if (previous.positions.has(number)) previous.associated.add(number);
     }
-    let issues: IssueSummary[] | undefined;
+    let issues: RepositoryIssueSummary[] | undefined;
     for (const number of previous.associated) {
       const position = previous.positions.get(number)!;
       const next = summary(source.issues[position]!, source.repository, environmentId, index);
