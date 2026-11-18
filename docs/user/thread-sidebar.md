@@ -66,9 +66,11 @@ and worktree while you stay in the new thread composer. This requires a Git proj
 
 On web and desktop, use the folder button beside search to switch between
 **Projects** and **Activity**. Projects keeps sections, projects, and their
-threads together. Expanding a project leaves other projects available. Activity
-keeps the pinned, active, Working, snoozed, and settled lists; its project menu
-explicitly filters the list, with **All projects** as the default. In Projects, each
+threads together. Expanding a project leaves other projects available. In Activity,
+**Needs you** surfaces threads with a pending question, an approval, or a failed run.
+**Ready for review** shows threads with an open linked pull request once the agent
+finishes working. Pinned, snoozed, and settled threads keep their own sections. Use
+the project menu to filter Activity, which defaults to **All projects**. In Projects, each
 project's orchestrators come first; its other threads follow **Settings → General →
 Thread order**: last user message or creation time.
 

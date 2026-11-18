@@ -1,4 +1,11 @@
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
+import { T } from "gt-react";
+import {
+  isSidebarActivityGroup,
+  resolveSidebarActivityGroup,
+  SIDEBAR_ACTIVITY_GROUPS,
+  type SidebarActivityGroup,
+} from "./sidebar/sidebarActivityGroups.logic";
 import { useRepositoryOrchestratorAction } from "~/hooks/useRepositoryOrchestratorAction";
 import { sortThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { groupRunningSubagentsByParent } from "./Sidebar.logic";
@@ -371,6 +378,7 @@ interface SidebarThreadPartitionInput {
   readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly workingShelfEnabled: boolean;
+  readonly activityGroupsEnabled: boolean;
   /** Boring mode: folders list active threads by the user's latest message. */
   readonly sortActiveBySend: boolean;
   // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
@@ -440,6 +448,7 @@ function useSidebarThreads(input: {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly routeRowThreadKey: string | null;
+  readonly activityGroupsEnabled: boolean;
   // Set in boring mode: the project groups to fold active threads into, in order.
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
   // Keeps folders with no active threads, so a project the user filtered to or pinned can start one.
@@ -454,6 +463,7 @@ function useSidebarThreads(input: {
     threads,
     delegatedUnderParent,
     routeRowThreadKey,
+    activityGroupsEnabled,
     folderGroups,
     keepEmptyFolders: keepEmpty,
   } = input;
@@ -498,6 +508,9 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
+  const [collapsedActivityGroups, setCollapsedActivityGroups] = useState<
+    Partial<Record<SidebarActivityGroup, boolean>>
+  >({});
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -519,12 +532,23 @@ function useSidebarThreads(input: {
     connectedEnvironmentIds,
     optimisticDrop,
     workingShelfEnabled,
+    activityGroupsEnabled,
     sortActiveBySend: folderGroups !== null,
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
-  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
-    partition;
+  const {
+    pinnedThreads,
+    activityGroups,
+    activeThreads,
+    workingThreads,
+    snoozedThreads,
+    settledThreads,
+  } = partition;
+  const visibleActivityGroup = (group: SidebarActivityGroup) =>
+    collapsedActivityGroups[group]
+      ? routeThreadOnly(activityGroups[group], routeRowThreadKey)
+      : activityGroups[group];
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
@@ -579,6 +603,7 @@ function useSidebarThreads(input: {
         });
   const orderedThreads = [
     ...pinnedThreads,
+    ...SIDEBAR_ACTIVITY_GROUPS.flatMap(visibleActivityGroup),
     ...(projectFolders === null
       ? activeThreads
       : projectFolders.flatMap((folder) => folder.threads)),
@@ -589,6 +614,8 @@ function useSidebarThreads(input: {
   const sectionByThreadKey = new Map<string, SidebarSection>();
   for (const [list, section] of [
     [pinnedThreads, "pinned"],
+    [activityGroups["needs-you"], "needs-you"],
+    [activityGroups["ready-for-review"], "ready-for-review"],
     [activeThreads, "active"],
     [workingThreads, "working"],
     [snoozedThreads, "snoozed"],
@@ -603,6 +630,7 @@ function useSidebarThreads(input: {
     workingShelfEnabled,
     searchableThreads: [
       ...pinnedThreads,
+      ...SIDEBAR_ACTIVITY_GROUPS.flatMap((group) => activityGroups[group]),
       ...activeThreads,
       ...workingThreads,
       ...snoozedThreads,
@@ -623,6 +651,10 @@ function useSidebarThreads(input: {
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
+    collapsedActivityGroups,
+    toggleActivityGroup: (group: SidebarActivityGroup) =>
+      setCollapsedActivityGroups((current) => ({ ...current, [group]: !current[group] })),
+    visibleActivityGroup,
     projectFolders,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
@@ -655,6 +687,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
+    activityGroupsEnabled,
     sortActiveBySend,
   } = input;
   const preciseNow = new Date().toISOString();
@@ -663,11 +696,18 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
-  const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
-    workingShelfEnabled &&
-    (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
+  const activityGroups: Record<SidebarActivityGroup, EnvironmentThreadShell[]> = {
+    "needs-you": [],
+    "ready-for-review": [],
+  };
+  const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) => {
+    const group = activityGroupsEnabled ? resolveSidebarActivityGroup(thread) : null;
+    if (group !== null) return activityGroups[group];
+    return workingShelfEnabled &&
+      (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
       ? working
       : active;
+  };
   const snoozed: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const { draggableThreadKeys, activeReorderableThreadKeys } = resolveSidebarReorderableThreadKeys({
@@ -713,12 +753,18 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   }
   // Availability gates dragging only; sorting must stay consistent across clients.
   const sortedPinned = sortPinnedThreadsForSidebar(pinned);
-  const sortedActive = sortActiveBySend
-    ? sortWorkingThreadsBySend(active)
-    : workingShelfEnabled
-      ? sortInboxThreadsByReturn(active, inboxObservation.returnedAt)
-      : sortThreadsForSidebar(active);
+  const sortActive = (list: EnvironmentThreadShell[]) =>
+    sortActiveBySend
+      ? sortWorkingThreadsBySend(list)
+      : workingShelfEnabled
+        ? sortInboxThreadsByReturn(list, inboxObservation.returnedAt)
+        : sortThreadsForSidebar(list);
+  const sortedActive = sortActive(active);
   return {
+    activityGroups: {
+      "needs-you": sortActive(activityGroups["needs-you"]),
+      "ready-for-review": sortActive(activityGroups["ready-for-review"]),
+    },
     pinnedThreads:
       optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
         ? sortedPinned
@@ -1374,6 +1420,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     runningSubagentsByParentKey,
     workingShelfEnabled,
     pinnedThreads,
+    activityGroups,
     draggableThreadKeys,
     activeReorderableThreadKeys,
     activeThreads,
@@ -1393,6 +1440,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     toggleSnoozedShelf,
     workingShelfExpanded,
     toggleWorkingShelf,
+    collapsedActivityGroups,
+    toggleActivityGroup,
+    visibleActivityGroup,
     projectFolders,
     toggleProjectFolder,
     renderedSettledThreads,
@@ -1416,6 +1466,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threads: listedThreads,
     delegatedUnderParent,
     routeRowThreadKey,
+    activityGroupsEnabled: sidebarMode === "activity",
     folderGroups: boringSidebarEnabled
       ? scopedProjectGroups.length === 0
         ? // An archived project keeps a folder for its active threads, below the rest.
@@ -2063,6 +2114,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
   const hasProjectFolders = projectFolders !== null && projectFolders.length > 0;
+  const unparkedThreadCount =
+    pinnedThreads.length +
+    activityGroups["needs-you"].length +
+    activityGroups["ready-for-review"].length +
+    activeThreads.length +
+    workingThreads.length +
+    snoozedThreads.length;
   const sidebarListItemsFresh = ((): readonly SidebarListItem[] => {
     const rowsOf = (
       list: readonly EnvironmentThreadShell[],
@@ -2073,20 +2131,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         return { kind: "thread", key, section };
       });
     // Boring mode keeps a pinned open project or one the user filtered to, so it can start a thread.
-    if (
-      !hasProjectFolders &&
-      pinnedThreads.length +
-        activeThreads.length +
-        workingThreads.length +
-        snoozedThreads.length +
-        settledCount ===
-        0
-    ) {
+    if (!hasProjectFolders && unparkedThreadCount + settledCount === 0) {
       return [];
     }
     const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
     const pinnedRows = rowsOf(pinnedThreads, "pinned");
     items.push(...pinnedRows);
+    for (const group of SIDEBAR_ACTIVITY_GROUPS) {
+      if (activityGroups[group].length === 0) continue;
+      items.push({ kind: "marker", marker: `${group}-header` });
+      items.push(...rowsOf(visibleActivityGroup(group), group));
+    }
     items.push({ kind: "marker", marker: "pinned-divider" });
     const activeRows = rowsOf(activeThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
@@ -2140,9 +2195,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     dragState === null && sidebarListItems.length + visibleDraftSessionCount > 0;
   // Cache on both fields so layout-key changes trigger the effect even when animate is unchanged.
   const listMotionPass = { layoutKey: listMotionLayoutKey, animate: listMotionAnimate };
-  const shelfExpansionKey = [workingShelfExpanded, snoozedShelfExpanded, settledShelfExpanded].join(
-    ":",
-  );
+  const shelfExpansionKey = [
+    workingShelfExpanded,
+    snoozedShelfExpanded,
+    settledShelfExpanded,
+    ...SIDEBAR_ACTIVITY_GROUPS.map((group) => Boolean(collapsedActivityGroups[group])),
+  ].join(":");
   const previousShelfExpansionKeyRef = useRef(shelfExpansionKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records moved rows and updates list motion after each layout-affecting commit
   useLayoutEffect(() => {
@@ -3517,11 +3575,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           sidebarMode === "activity" &&
           !hasProjectFolders &&
           visibleDraftSessionCount === 0 &&
-          pinnedThreads.length +
-            activeThreads.length +
-            workingThreads.length +
-            snoozedThreads.length ===
-            0 &&
+          unparkedThreadCount === 0 &&
           (settledCount === 0 || scopedProjectGroups.length > 0) ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
@@ -3600,8 +3654,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
-                        const isCard =
-                          section === "active" || section === "pinned" || section === "working";
+                        const isCard = section !== "snoozed" && section !== "settled";
                         const rowVariant = folderRow
                           ? folderRowsMultiline
                             ? "folder-multiline"
@@ -3630,7 +3683,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               folderRow ??
                               (section === "working" ||
                               section === "snoozed" ||
-                              section === "settled"
+                              section === "settled" ||
+                              isSidebarActivityGroup(section)
                                 ? `shelf:${section}`
                                 : undefined)
                             }
@@ -3711,6 +3765,26 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           continue;
                         }
                         switch (item.marker) {
+                          case "needs-you-header":
+                          case "ready-for-review-header": {
+                            const group =
+                              item.marker === "needs-you-header" ? "needs-you" : "ready-for-review";
+                            items.push(
+                              <SidebarSectionHeader
+                                key={item.marker}
+                                marker={item.marker}
+                                label={
+                                  group === "needs-you" ? <T>Needs you</T> : <T>Ready for review</T>
+                                }
+                                count={activityGroups[group].length}
+                                toggle={{
+                                  expanded: !collapsedActivityGroups[group],
+                                  onToggle: () => toggleActivityGroup(group),
+                                }}
+                              />,
+                            );
+                            break;
+                          }
                           case "pinned-header":
                             items.push(
                               <SidebarDragBoundary

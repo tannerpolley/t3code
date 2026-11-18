@@ -1118,6 +1118,10 @@ describe("Working shelf (beta)", () => {
     const items: readonly SidebarListItem[] = [
       marker("pinned-header"),
       row("p1", "pinned"),
+      marker("needs-you-header"),
+      row("n1", "needs-you"),
+      marker("ready-for-review-header"),
+      row("r1", "ready-for-review"),
       marker("pinned-divider"),
       row("a1", "active"),
       row("a2", "active"),
@@ -1135,6 +1139,16 @@ describe("Working shelf (beta)", () => {
         activeOrder: ["a1", "a2", "p1"],
       });
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
+    });
+
+    it("keeps automatic Activity groups out of drop targets and saved order", () => {
+      expect(resolveSidebarDropTarget(items, "a1", "n1")).toBeNull();
+      expect(resolveSidebarDropTarget(items, "a1", "r1")).toBeNull();
+      expect(resolveSidebarDropTarget(items, "n1", "p1")).toEqual({
+        section: "pinned",
+        pinnedOrder: ["n1", "p1"],
+        activeOrder: ["a1", "a2"],
+      });
     });
 
     it.each([

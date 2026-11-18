@@ -8,6 +8,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
+import { SIDEBAR_ACTIVITY_GROUPS } from "./sidebar/sidebarActivityGroups.logic";
 
 const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 const hidden = { ...stationary, scaleY: 0 };
@@ -120,6 +121,8 @@ export function createSidebarSortingStrategy(input: {
       working: [],
       snoozed: [],
       settled: [],
+      "needs-you": [],
+      "ready-for-review": [],
     };
     let cardHeight = input.cardHeight;
     let slimHeight = input.slimHeight;
@@ -132,9 +135,9 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
-      if (item.section === "pinned" || item.section === "active" || item.section === "working")
-        cardHeight ??= rects[index]?.height;
-      else slimHeight ??= rects[index]?.height;
+      if (item.section === "settled" || item.section === "snoozed")
+        slimHeight ??= rects[index]?.height;
+      else cardHeight ??= rects[index]?.height;
       if (item.key !== active.key) groups[item.section].push(item);
     }
     const scale =
@@ -174,6 +177,12 @@ export function createSidebarSortingStrategy(input: {
     };
     marker("pinned-header");
     projected.push(...groups.pinned);
+    for (const group of SIDEBAR_ACTIVITY_GROUPS) {
+      const header = `${group}-header` as const;
+      if (!indices.has(sidebarMarkerId(header))) continue;
+      marker(header);
+      projected.push(...groups[group]);
+    }
     marker("pinned-divider");
     section("active");
     if (items.some((item) => item.kind === "marker" && item.marker === "working-header")) {
@@ -194,8 +203,7 @@ export function createSidebarSortingStrategy(input: {
       const index = indices.get(sidebarListItemId(item));
       const rect = index === undefined ? undefined : rects[index];
       const fallback =
-        item.kind === "thread" &&
-        (item.section === "pinned" || item.section === "active" || item.section === "working")
+        item.kind === "thread" && item.section !== "settled" && item.section !== "snoozed"
           ? cardHeight
           : slimHeight;
       const moved = item.kind === "thread" && item.key === active.key;
