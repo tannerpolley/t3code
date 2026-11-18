@@ -25,7 +25,6 @@ import {
 } from "./issueInbox.ts";
 import { IssueCleanupInput, IssueCleanupError, IssueCleanupResult } from "./issueCleanup.ts";
 import {
-  RepositoryIssueRef,
   IssueRepositoryRef,
   IssueDetailInput,
   IssueDetailResult,
@@ -63,7 +62,6 @@ export const ISSUE_WS_METHODS = {
   issueWorkRoadmap: "issueWork.roadmap",
   issueWorkDetail: "issueWork.detail",
   issuesStatusBatch: "issues.statusBatch",
-  issueWorkSetState: "issueWork.setState",
   issuesCleanup: "issues.cleanup",
   issuesStart: "issues.start",
   issuesQueue: "issues.queue",
@@ -123,14 +121,6 @@ const WsIssuesStatusBatchRpc = Rpc.make(ISSUE_WS_METHODS.issuesStatusBatch, {
   error: IssueRpcError,
 });
 
-const WsIssuesSetStateRpc = Rpc.make(ISSUE_WS_METHODS.issueWorkSetState, {
-  payload: Schema.Struct({
-    ...RepositoryIssueRef.fields,
-    state: Schema.Literals(["open", "closed"]),
-  }),
-  success: Schema.Void,
-  error: IssueRpcError,
-});
 const WsIssuesCleanupRpc = Rpc.make(ISSUE_WS_METHODS.issuesCleanup, {
   payload: IssueCleanupInput,
   success: IssueCleanupResult,
@@ -275,7 +265,6 @@ export const issueRpcs = [
   WsIssuesListRpc,
   WsIssuesDetailRpc,
   WsIssuesStatusBatchRpc,
-  WsIssuesSetStateRpc,
   WsIssuesCleanupRpc,
   WsIssuesStartRpc,
   WsIssuesQueueRpc,
@@ -306,7 +295,6 @@ export const issueRpcs = [
 
 export const ISSUE_CLIENT_GUARDED_RPC_SCOPES = {
   [ISSUE_WS_METHODS.issuesEndRepository]: AuthOrchestrationOperateScope,
-  [ISSUE_WS_METHODS.issueWorkSetState]: AuthSourceControlWriteScope,
   [ISSUE_WS_METHODS.issuesCleanup]: AuthSourceControlWriteScope,
   [ISSUE_WS_METHODS.issuesCloseOut]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issuesSetUsageSprint]: AuthOrchestrationOperateScope,

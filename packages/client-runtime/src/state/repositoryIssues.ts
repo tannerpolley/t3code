@@ -203,12 +203,6 @@ export function createRepositoryIssueEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: (target) => changeRefreshes(target),
     }),
-    setState: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:issues:set-state",
-      tag: WS_METHODS.issueWorkSetState,
-      onSuccess: ({ environmentId }, registry) =>
-        Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
-    }),
     cleanup: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:cleanup",
       tag: WS_METHODS.issuesCleanup,

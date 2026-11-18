@@ -1,8 +1,6 @@
-import type { IssueHost, IssueHostContext, IssueRepositoryScope, PageResult } from "./IssueHost.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Result from "effect/Result";
+import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -19,6 +17,8 @@ import {
   type RepositoryIssueSummary as IssueSummaryType,
   ThreadLinkedIssue,
   type IssueWorkRead,
+  type IssueDetailInput as IssueDetailInputType,
+  type IssueHostCapabilities,
   type IssueChangeBaseline,
   type IssueRepositoryRef,
   type RepositoryIssueRef,
@@ -27,7 +27,260 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
-import { readIssueListMetadata } from "./IssueProjects.ts";
+import { readIssueListMetadata, type ProjectAccess } from "./IssueProjects.ts";
+
+export interface IssueRepositoryScope {
+  readonly cwd: string;
+  readonly host: string;
+  readonly repository: string;
+}
+
+export interface PageResult<A> {
+  readonly items: ReadonlyArray<A>;
+  readonly nextPage: number | null;
+  readonly etag?: string | undefined;
+  readonly generation?: number;
+}
+
+export type ListMetadata = Map<
+  number,
+  Partial<
+    Pick<
+      IssueSummaryType,
+      | "projects"
+      | "parent"
+      | "blockedBy"
+      | "subIssues"
+      | "relationshipsComplete"
+      | "pullRequestRefs"
+      | "pullRequests"
+      | "milestone"
+      | "subIssues"
+    >
+  >
+>;
+export type PageResponse<A> =
+  | PageResult<A>
+  | {
+      readonly notModified: true;
+      readonly nextPage: number | null | undefined;
+      readonly etag: string | undefined;
+    };
+
+export type IssuePageResult = PageResult<IssueSummaryType>;
+
+export interface IssueHostIdentity {
+  readonly accountId: string;
+  readonly viewer: string;
+  readonly credentialFingerprint: string;
+}
+interface InboxActor {
+  readonly login: string;
+  readonly type?: string | undefined;
+}
+interface InboxIssue {
+  readonly number: number;
+  readonly title: string;
+  readonly state?: "open" | "closed" | undefined;
+  readonly body?: string | null | undefined;
+  readonly user?: InboxActor | null | undefined;
+  readonly labels?: ReadonlyArray<{ readonly name: string }> | null | undefined;
+  readonly milestone?: { readonly number: number } | null | undefined;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly html_url: string;
+  readonly pull_request?: unknown | undefined;
+}
+interface InboxComment {
+  readonly id: number;
+  readonly body?: string | null | undefined;
+  readonly user?: InboxActor | null | undefined;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly html_url: string;
+  readonly issue_url: string;
+}
+interface InboxEvent {
+  readonly id: number;
+  readonly event: string;
+  readonly created_at: string;
+  readonly issue?: { readonly number: number; readonly pull_request?: unknown } | null | undefined;
+}
+interface InboxPosted {
+  readonly id: number;
+  readonly number?: number | undefined;
+  readonly html_url: string;
+}
+interface InboxListedComment {
+  readonly id: number;
+  readonly body: string | null;
+  readonly html_url: string;
+}
+interface ActivityCursors {
+  readonly issuesSince: string;
+  readonly commentsSince: string;
+  readonly eventsAfter: number;
+  readonly issuesEtag: string | null;
+  readonly commentsEtag: string | null;
+  readonly eventsEtag: string | null;
+  readonly initial?: boolean;
+}
+interface ActivityPage<A> {
+  readonly items: ReadonlyArray<A>;
+  readonly etag: string | null;
+  readonly complete: boolean;
+}
+
+export interface IssuePullRequestFacts {
+  readonly state: "open" | "closed" | "merged";
+  readonly baseBranch: string;
+  readonly headBranch: string;
+  readonly headSha?: string | null | undefined;
+}
+
+/** The GitHub facts and writes upstream's IssueService has no operation for. */
+export interface IssueGitHubExtension {
+  readonly capabilities: IssueHostCapabilities;
+  readonly readChangeState: (
+    input: import("@t3tools/contracts").RepositoryIssueRef,
+  ) => Effect.Effect<IssueChangeBaseline, IssueReadError>;
+  /**
+   * The issue an earlier create made, found by the marker its body carries. Null when none has
+   * it; fails when the search cannot finish, so a create is never repeated on a partial read.
+   */
+  readonly findCreatedIssue: (
+    input: IssueRepositoryRef & { readonly marker: string },
+  ) => Effect.Effect<IssueChangeBaseline | null, IssueReadError>;
+  readonly setMilestone: (
+    input: import("@t3tools/contracts").RepositoryIssueRef & {
+      readonly milestoneNumber: number | null;
+    },
+  ) => Effect.Effect<void, IssueReadError>;
+  readonly setParent: (input: {
+    readonly parent: ThreadLinkedIssueType;
+    readonly child: ThreadLinkedIssueType;
+    readonly action: "add" | "remove";
+  }) => Effect.Effect<void, IssueReadError>;
+  readonly setBlockedBy: (input: {
+    readonly issue: ThreadLinkedIssueType;
+    readonly blocker: ThreadLinkedIssueType;
+    readonly action: "add" | "remove";
+  }) => Effect.Effect<void, IssueReadError>;
+  readonly pullRequest: (
+    input: RepositoryIssueRef & { readonly cwd: string },
+  ) => Effect.Effect<IssuePullRequestFacts, IssueReadError>;
+  readonly repositories: () => Effect.Effect<IssueRepositoriesResultType, IssueReadError>;
+
+  readonly withIdentity: <A, R>(
+    scope: IssueRepositoryScope,
+    operation: IssueReadError["operation"],
+    read: (identity: IssueHostIdentity) => Effect.Effect<A, IssueReadError, R>,
+  ) => Effect.Effect<A, IssueReadError, R>;
+  readonly listIssuePage: (
+    scope: IssueRepositoryScope,
+    state: RepositoryIssueListState,
+    page: number,
+    milestoneNumber?: number,
+    etag?: string,
+  ) => Effect.Effect<PageResponse<IssueSummaryType> & { readonly missing?: true }, IssueReadError>;
+  readonly listMilestonePage: (
+    scope: IssueRepositoryScope,
+    state: RepositoryIssueListState,
+    page: number,
+    etag?: string,
+  ) => Effect.Effect<PageResponse<IssueMilestone>, IssueReadError>;
+  readonly listMetadata: (
+    scope: IssueRepositoryScope,
+    numbers: ReadonlyArray<number>,
+    projectAccess: ProjectAccess,
+  ) => Effect.Effect<Option.Option<ListMetadata>>;
+  readonly statuses: (
+    host: string,
+    nodeIds: ReadonlyArray<string>,
+  ) => Effect.Effect<
+    ReadonlyArray<IssueStatusBatchResult[number] & RepositoryIssueRef>,
+    IssueReadError
+  >;
+  readonly workRead: (input: IssueDetailInputType) => Effect.Effect<IssueWorkRead, IssueReadError>;
+  readonly repositoryIdentity: (input: {
+    readonly host: string;
+    readonly repository: string;
+  }) => Effect.Effect<
+    Pick<ThreadLinkedIssueType, "host" | "repository" | "repositoryId">,
+    IssueReadError
+  >;
+  readonly resolveLinkedIssue: (input: {
+    readonly host: string;
+    readonly repository: string;
+    readonly number: number;
+  }) => Effect.Effect<ThreadLinkedIssueType, IssueReadError>;
+  /** The id of the issue's comment carrying `marker`, or null when none does. */
+  readonly findManagedComment: (input: {
+    readonly issue: ThreadLinkedIssueType;
+    readonly marker: string;
+  }) => Effect.Effect<string | null, IssueReadError>;
+  /** Rewrites a comment T3 wrote; upstream can only add comments. */
+  readonly updateManagedComment: (input: {
+    readonly issue: ThreadLinkedIssueType;
+    readonly commentId: string;
+    readonly body: string;
+  }) => Effect.Effect<void, IssueReadError>;
+  readonly activitySince: (
+    scope: IssueRepositoryRef,
+    cursors: ActivityCursors,
+  ) => Effect.Effect<
+    {
+      readonly issues: ActivityPage<InboxIssue>;
+      readonly comments: ActivityPage<InboxComment>;
+      readonly stateChanges: ActivityPage<InboxEvent>;
+      readonly eventsAfter: number;
+    },
+    IssueReadError
+  >;
+  readonly listComments: (
+    ref: RepositoryIssueRef,
+    options?: {
+      readonly maxPages?: number;
+      /** Stops reading further pages once the comments read so far satisfy it. */
+      readonly until?: (comments: ReadonlyArray<InboxListedComment>) => boolean;
+    },
+  ) => Effect.Effect<
+    {
+      readonly comments: ReadonlyArray<InboxListedComment>;
+      readonly complete: boolean;
+    },
+    IssueReadError
+  >;
+  readonly postComment: (
+    ref: RepositoryIssueRef,
+    body: string,
+  ) => Effect.Effect<InboxPosted, IssueReadError>;
+  readonly postIssue: (
+    scope: IssueRepositoryRef,
+    input: {
+      readonly title: string;
+      readonly body: string;
+      readonly labels: ReadonlyArray<string>;
+    },
+  ) => Effect.Effect<InboxPosted, IssueReadError>;
+  readonly ensureLabels: (
+    scope: IssueRepositoryRef,
+    labels: ReadonlyArray<{ readonly name: string; readonly color: string }>,
+  ) => Effect.Effect<void, IssueReadError>;
+  readonly setLabels: (
+    ref: RepositoryIssueRef,
+    add: ReadonlyArray<string>,
+    remove: ReadonlyArray<string>,
+  ) => Effect.Effect<void, IssueReadError>;
+}
+
+export interface IssueGitHubExtensionContext {
+  readonly safeRepository: (host: string, value: string) => string | null;
+  readonly resolveScope: (
+    operation: IssueReadError["operation"],
+    input: IssueRepositoryRef,
+  ) => Effect.Effect<IssueRepositoryScope, IssueReadError>;
+}
 
 const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const COMMENT_MAX_PAGES = 1_000;
@@ -110,9 +363,6 @@ const RawIssueIdentitySchema = Schema.Struct({
   html_url: GraphQlUrl,
   pull_request: Schema.optional(Schema.Unknown),
 });
-const decodeCreatedIssueIdentity = Schema.decodeEffect(
-  Schema.fromJsonString(RawIssueIdentitySchema),
-);
 const RawGitHubCommentSchema = Schema.Struct({
   id: Schema.Int.check(Schema.isGreaterThan(0)),
   body: Schema.NullOr(Schema.String),
@@ -245,14 +495,12 @@ function readError(
   code: IssueReadError["code"],
   message: string,
   retryAt?: number,
-  createOutcome?: IssueReadError["createOutcome"],
 ): IssueReadError {
   return new IssueReadError({
     code,
     operation,
     message,
     ...(retryAt === undefined ? {} : { retryAt }),
-    ...(createOutcome === undefined ? {} : { createOutcome }),
   });
 }
 
@@ -268,7 +516,7 @@ function milestoneUrl(host: string, repository: string, number: number): string 
   return `https://${host}/${encodeRepositoryPath(repository)}/milestone/${number}`;
 }
 
-function ensureCommentMarker(body: string, marker: string): string {
+export function ensureCommentMarker(body: string, marker: string): string {
   const markedBody = body.includes(marker) ? body : `${body.trimEnd()}\n\n${marker}`;
   if (markedBody.length <= COMMENT_MAX_BODY_LENGTH) return markedBody;
   const suffix = `\n\n[Comment truncated by T3 Code.]\n\n${marker}`;
@@ -367,53 +615,32 @@ function nextPageFromHeaders(
   }
 }
 
-/**
- * What a GitHub failure means for an issue read or write. A write that tracks its create outcome
- * reports a refusal, or a request never sent, as `rejected` and a server error as `uncertain`;
- * a transport failure carries no outcome, since GitHub may have applied it.
- */
+/** What a GitHub failure means for an issue read or write. */
 function mapGitHubError(
   operation: IssueOperation,
   error: GitHubPullRequestApi.GitHubPullRequestApiError,
-  write?: { readonly tracksOutcome: boolean },
+  write?: boolean,
 ): IssueReadError {
-  const outcome = (value: "rejected" | "uncertain") =>
-    write?.tracksOutcome === true ? value : undefined;
   const inaccessible = (status: 403 | 404) =>
     new IssueResponseError({
       operation,
       code: "inaccessible",
-      message:
-        write === undefined
-          ? "The GitHub repository is not accessible."
-          : "GitHub issue write denied. Check repository access and Issues write permission.",
-      createOutcome: outcome("rejected"),
+      message: !write
+        ? "The GitHub repository is not accessible."
+        : "GitHub issue write denied. Check repository access and Issues write permission.",
       status,
     });
-  const failed =
-    write === undefined
-      ? "GitHub could not complete the read."
-      : "GitHub could not complete the issue write.";
+  const failed = !write
+    ? "GitHub could not complete the read."
+    : "GitHub could not complete the issue write.";
   switch (error._tag) {
     case "GitHubCliMissingError":
-      return readError(
-        operation,
-        "missing-tool",
-        "No GitHub credential is available.",
-        undefined,
-        outcome("rejected"),
-      );
+      return readError(operation, "missing-tool", "No GitHub credential is available.");
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
     case "GitHubCliFailedError":
     case "GitHubApiAuthenticationError":
-      return readError(
-        operation,
-        "unauthenticated",
-        "GitHub authentication is unavailable.",
-        undefined,
-        outcome("rejected"),
-      );
+      return readError(operation, "unauthenticated", "GitHub authentication is unavailable.");
     case "GitHubApiRateLimitError":
     case "SourceControlRateLimitPausedError":
       return readError(
@@ -421,7 +648,6 @@ function mapGitHubError(
         "rate-limited",
         "GitHub API rate limit is active.",
         error.retryAt,
-        outcome("rejected"),
       );
     case "GitHubViewerLoginUnavailableError":
       return readError(
@@ -447,7 +673,6 @@ function mapGitHubError(
         operation,
         code: "upstream",
         message: failed,
-        createOutcome: outcome(error.status < 500 ? "rejected" : "uncertain"),
         status: error.status,
       });
     case "GitHubPullRequestReadError":
@@ -471,7 +696,7 @@ function selectIssueRepositories(
   host: string,
   viewerLogin: string,
   repositories: ReadonlyArray<RawRepository>,
-  safeRepository: IssueHostContext["safeRepository"],
+  safeRepository: IssueGitHubExtensionContext["safeRepository"],
 ): IssueRepositorySummary[] {
   const viewer = viewerLogin.toLowerCase();
   const seen = new Set<string>();
@@ -566,7 +791,9 @@ interface RepositoryRequest {
   readonly ifNoneMatch?: string;
 }
 
-export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueHostContext) {
+export const make = Effect.fn("IssueGitHubHost.make")(function* (
+  context: IssueGitHubExtensionContext,
+) {
   const api = yield* GitHubApi.GitHubApi;
   const githubPullRequests = yield* GitHubPullRequestApi.GitHubPullRequestApi;
   const homeDirectory = yield* HostProcess.HomeDirectory;
@@ -583,7 +810,6 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       /** Read instead when GitHub refuses part of `query`. */
       readonly fallbackQuery?: string;
     };
-    readonly onRequest?: () => void;
     readonly requestMethod?: "POST" | "PATCH" | "DELETE";
     readonly requestBody?: Readonly<Record<string, string | number | null>>;
   }): Effect.fn.Return<ApiResponse, IssueReadError> {
@@ -625,16 +851,9 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
               () => query(graphql.fallbackQuery!, graphql.variables),
             ),
           );
-    input.onRequest?.();
     const response = yield* send.pipe(
       Effect.mapError((error) =>
-        mapGitHubError(
-          input.operation,
-          error,
-          input.requestMethod === undefined
-            ? undefined
-            : { tracksOutcome: input.onRequest !== undefined },
-        ),
+        mapGitHubError(input.operation, error, input.requestMethod !== undefined),
       ),
     );
     if (response === null) {
@@ -657,7 +876,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       Effect.mapError(() => readError(operation, "invalid-response", message)),
     );
 
-  const findManagedComment = Effect.fn("IssueService.findManagedComment")(function* (
+  const findMarkedComment = Effect.fn("IssueService.findMarkedComment")(function* (
     scope: IssueRepositoryScope,
     issueNumber: number,
     marker: string,
@@ -700,7 +919,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     return null;
   });
 
-  const statuses: IssueHost["statuses"] = Effect.fn("IssueService.statuses")(
+  const statuses: IssueGitHubExtension["statuses"] = Effect.fn("IssueService.statuses")(
     function* (host, nodeIds) {
       const statuses: Array<IssueStatusBatchResult[number] & RepositoryIssueRef> = [];
       const ids = [...nodeIds];
@@ -762,117 +981,123 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     },
   );
 
-  const workRead: IssueHost["workRead"] = Effect.fn("IssueService.workRead")(function* (input) {
-    const scope = yield* resolveScope("detail", input);
-    return yield* githubPullRequests
-      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
-        Effect.gen(function* () {
-          const [owner, name] = scope.repository.split("/");
-          const linked = (node: typeof WorkIssueNode.Type): ThreadLinkedIssueType => ({
-            host: scope.host,
-            repository: node.repository.nameWithOwner,
-            repositoryId: String(node.repository.databaseId),
-            id: String(node.databaseId),
-            nodeId: node.id,
-            number: node.number,
-            title: node.title,
-            url: node.url,
-          });
-          const children = new Map<string, ThreadLinkedIssueType>();
-          const blockers = new Map<string, IssueWorkRead["blockedBy"][number]>();
-          let subCursor: string | undefined;
-          let blockerCursor: string | undefined;
-          let result: IssueWorkRead | undefined;
-          // Bounded reads fail closed if GitHub changes connections during pagination.
-          for (let page = 0; page < 10; page++) {
-            const response = yield* executeApi({
-              operation: "detail",
-              scope,
-              endpoint: "graphql",
-              maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-              graphql: {
-                query: `query($owner: String!, $name: String!, $number: Int!, $sub: String, $block: String) {
+  const workRead: IssueGitHubExtension["workRead"] = Effect.fn("IssueService.workRead")(
+    function* (input) {
+      const scope = yield* resolveScope("detail", input);
+      return yield* githubPullRequests
+        .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
+          Effect.gen(function* () {
+            const [owner, name] = scope.repository.split("/");
+            const linked = (node: typeof WorkIssueNode.Type): ThreadLinkedIssueType => ({
+              host: scope.host,
+              repository: node.repository.nameWithOwner,
+              repositoryId: String(node.repository.databaseId),
+              id: String(node.databaseId),
+              nodeId: node.id,
+              number: node.number,
+              title: node.title,
+              url: node.url,
+            });
+            const children = new Map<string, ThreadLinkedIssueType>();
+            const blockers = new Map<string, IssueWorkRead["blockedBy"][number]>();
+            let subCursor: string | undefined;
+            let blockerCursor: string | undefined;
+            let result: IssueWorkRead | undefined;
+            // Bounded reads fail closed if GitHub changes connections during pagination.
+            for (let page = 0; page < 10; page++) {
+              const response = yield* executeApi({
+                operation: "detail",
+                scope,
+                endpoint: "graphql",
+                maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+                graphql: {
+                  query: `query($owner: String!, $name: String!, $number: Int!, $sub: String, $block: String) {
               repository(owner: $owner, name: $name) { issue(number: $number) {
                 ${WORK_ISSUE_FIELDS} milestone { number } parent { ${WORK_ISSUE_FIELDS} }
                 subIssues(first: 100, after: $sub) { totalCount nodes { ${WORK_ISSUE_FIELDS} } pageInfo { hasNextPage endCursor } }
                 blockedBy(first: 100, after: $block) { totalCount nodes { ${WORK_ISSUE_FIELDS} } pageInfo { hasNextPage endCursor } }
               } }
             }`,
-                variables: {
-                  owner: owner!,
-                  name: name!,
-                  number: input.number,
-                  ...(subCursor === undefined ? {} : { sub: subCursor }),
-                  ...(blockerCursor === undefined ? {} : { block: blockerCursor }),
+                  variables: {
+                    owner: owner!,
+                    name: name!,
+                    number: input.number,
+                    ...(subCursor === undefined ? {} : { sub: subCursor }),
+                    ...(blockerCursor === undefined ? {} : { block: blockerCursor }),
+                  },
                 },
-              },
-            });
-            const decoded = yield* decodeApiResponse(
-              "detail",
-              WorkIssueResponse,
-              response,
-              "Issue hierarchy or dependencies could not be read.",
-            );
-            const node = decoded.data.repository?.issue;
-            if ((decoded.errors?.length ?? 0) > 0)
-              return yield* readError(
+              });
+              const decoded = yield* decodeApiResponse(
                 "detail",
-                "invalid-response",
-                "Issue hierarchy or dependencies could not be read completely.",
+                WorkIssueResponse,
+                response,
+                "Issue hierarchy or dependencies could not be read.",
               );
-            if (node == null)
-              return yield* readError(
-                "detail",
-                "inaccessible",
-                "Issue hierarchy or dependencies could not be read completely.",
-              );
-            for (const child of node.subIssues.nodes)
-              if (child !== null) children.set(child.id, linked(child));
-            for (const blocker of node.blockedBy.nodes)
-              if (blocker !== null)
-                blockers.set(blocker.id, {
-                  issue: linked(blocker),
-                  state: blocker.state === "OPEN" ? "open" : "closed",
-                });
-            result = {
-              issue: linked(node),
-              state: node.state === "OPEN" ? "open" : "closed",
-              milestoneNumber: node.milestone?.number ?? null,
-              parent: node.parent === null ? null : linked(node.parent),
-              parentComplete: true,
-              subIssues: [...children.values()],
-              blockedBy: [...blockers.values()],
-              subIssuesComplete:
-                !node.subIssues.pageInfo.hasNextPage && children.size === node.subIssues.totalCount,
-              blockersComplete:
-                !node.blockedBy.pageInfo.hasNextPage && blockers.size === node.blockedBy.totalCount,
-            };
-            if (result.subIssuesComplete && result.blockersComplete) break;
-            if (!node.subIssues.pageInfo.hasNextPage && !node.blockedBy.pageInfo.hasNextPage) break;
-            const nextSub = node.subIssues.pageInfo.hasNextPage
-              ? node.subIssues.pageInfo.endCursor
-              : subCursor;
-            const nextBlock = node.blockedBy.pageInfo.hasNextPage
-              ? node.blockedBy.pageInfo.endCursor
-              : blockerCursor;
-            if (
-              (node.subIssues.pageInfo.hasNextPage && (nextSub == null || nextSub === subCursor)) ||
-              (node.blockedBy.pageInfo.hasNextPage &&
-                (nextBlock == null || nextBlock === blockerCursor))
-            )
-              break;
-            subCursor = nextSub ?? undefined;
-            blockerCursor = nextBlock ?? undefined;
-          }
-          return result!;
-        }),
-      )
-      .pipe(
-        Effect.mapError((error) =>
-          isIssueReadError(error) ? error : mapGitHubError("detail", error),
-        ),
-      );
-  });
+              const node = decoded.data.repository?.issue;
+              if ((decoded.errors?.length ?? 0) > 0)
+                return yield* readError(
+                  "detail",
+                  "invalid-response",
+                  "Issue hierarchy or dependencies could not be read completely.",
+                );
+              if (node == null)
+                return yield* readError(
+                  "detail",
+                  "inaccessible",
+                  "Issue hierarchy or dependencies could not be read completely.",
+                );
+              for (const child of node.subIssues.nodes)
+                if (child !== null) children.set(child.id, linked(child));
+              for (const blocker of node.blockedBy.nodes)
+                if (blocker !== null)
+                  blockers.set(blocker.id, {
+                    issue: linked(blocker),
+                    state: blocker.state === "OPEN" ? "open" : "closed",
+                  });
+              result = {
+                issue: linked(node),
+                state: node.state === "OPEN" ? "open" : "closed",
+                milestoneNumber: node.milestone?.number ?? null,
+                parent: node.parent === null ? null : linked(node.parent),
+                parentComplete: true,
+                subIssues: [...children.values()],
+                blockedBy: [...blockers.values()],
+                subIssuesComplete:
+                  !node.subIssues.pageInfo.hasNextPage &&
+                  children.size === node.subIssues.totalCount,
+                blockersComplete:
+                  !node.blockedBy.pageInfo.hasNextPage &&
+                  blockers.size === node.blockedBy.totalCount,
+              };
+              if (result.subIssuesComplete && result.blockersComplete) break;
+              if (!node.subIssues.pageInfo.hasNextPage && !node.blockedBy.pageInfo.hasNextPage)
+                break;
+              const nextSub = node.subIssues.pageInfo.hasNextPage
+                ? node.subIssues.pageInfo.endCursor
+                : subCursor;
+              const nextBlock = node.blockedBy.pageInfo.hasNextPage
+                ? node.blockedBy.pageInfo.endCursor
+                : blockerCursor;
+              if (
+                (node.subIssues.pageInfo.hasNextPage &&
+                  (nextSub == null || nextSub === subCursor)) ||
+                (node.blockedBy.pageInfo.hasNextPage &&
+                  (nextBlock == null || nextBlock === blockerCursor))
+              )
+                break;
+              subCursor = nextSub ?? undefined;
+              blockerCursor = nextBlock ?? undefined;
+            }
+            return result!;
+          }),
+        )
+        .pipe(
+          Effect.mapError((error) =>
+            isIssueReadError(error) ? error : mapGitHubError("detail", error),
+          ),
+        );
+    },
+  );
 
   const readRepositoryIdentity = Effect.fn("IssueService.readRepositoryIdentity")(function* (
     scope: IssueRepositoryScope,
@@ -897,7 +1122,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       repositoryId: String(repository.id),
     };
   });
-  const repositoryIdentity: IssueHost["repositoryIdentity"] = Effect.fn(
+  const repositoryIdentity: IssueGitHubExtension["repositoryIdentity"] = Effect.fn(
     "IssueService.repositoryIdentity",
   )(function* (input) {
     const scope = yield* resolveScope("detail", input);
@@ -912,7 +1137,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       );
   });
 
-  const resolveLinkedIssue: IssueHost["resolveLinkedIssue"] = Effect.fn(
+  const resolveLinkedIssue: IssueGitHubExtension["resolveLinkedIssue"] = Effect.fn(
     "IssueService.resolveLinkedIssue",
   )(function* (input) {
     const scope = yield* resolveScope("detail", input);
@@ -963,79 +1188,35 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       );
   });
 
-  const writeManagedComment: IssueHost["writeManagedComment"] = Effect.fn(
-    "IssueService.writeManagedComment",
+  const findManagedComment: IssueGitHubExtension["findManagedComment"] = Effect.fn(
+    "IssueService.findManagedComment",
   )(function* (input) {
     const scope = yield* resolveScope("detail", input.issue);
-    const body = ensureCommentMarker(input.body, input.marker);
-    return yield* githubPullRequests
-      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
-        Effect.gen(function* () {
-          const issueCommentsEndpoint = `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.issue.number}/comments`;
-          const writeComment = (commentId?: string) =>
-            executeApi({
-              operation: "detail",
-              scope,
-              endpoint:
-                commentId === undefined
-                  ? issueCommentsEndpoint
-                  : `repos/${encodeRepositoryPath(scope.repository)}/issues/comments/${commentId}`,
-              maxOutputBytes: 256 * 1024,
-              requestMethod: commentId === undefined ? "POST" : "PATCH",
-              requestBody: { body },
-            }).pipe(
-              Effect.flatMap((response) =>
-                decodeApiResponse(
-                  "detail",
-                  RawGitHubCommentSchema,
-                  response,
-                  "GitHub returned an invalid issue comment.",
-                ),
-              ),
-              Effect.map((comment) => String(comment.id)),
-            );
-          const findByMarker = () => findManagedComment(scope, input.issue.number, input.marker);
+    return yield* verified(
+      scope,
+      findMarkedComment(scope, input.issue.number, input.marker).pipe(
+        Effect.map((comment) => (comment === null ? null : String(comment.id))),
+      ),
+    );
+  });
 
-          if (input.operation === "status_sync" && input.commentId !== undefined) {
-            if (!/^\d+$/u.test(input.commentId)) {
-              return yield* readError(
-                "detail",
-                "invalid-response",
-                "The stored comment ID is invalid.",
-              );
-            }
-            const currentComment = yield* Effect.result(writeComment(input.commentId));
-            let updated: string;
-            if (Result.isSuccess(currentComment)) {
-              updated = currentComment.success;
-            } else {
-              if (currentComment.failure.code !== "inaccessible") {
-                return yield* currentComment.failure;
-              }
-              const existing = yield* findByMarker();
-              updated =
-                existing === null
-                  ? yield* writeComment()
-                  : yield* writeComment(String(existing.id));
-            }
-            return { commentId: updated };
-          }
-
-          const existing = yield* findByMarker();
-          const commentId =
-            input.operation === "status_sync" && existing !== null
-              ? yield* writeComment(String(existing.id))
-              : existing === null
-                ? yield* writeComment()
-                : String(existing.id);
-          return { commentId };
-        }),
-      )
-      .pipe(
-        Effect.mapError((error) =>
-          isIssueReadError(error) ? error : mapGitHubError("detail", error),
-        ),
-      );
+  const updateManagedComment: IssueGitHubExtension["updateManagedComment"] = Effect.fn(
+    "IssueService.updateManagedComment",
+  )(function* (input) {
+    if (!/^\d+$/u.test(input.commentId))
+      return yield* readError("detail", "invalid-response", "The stored comment ID is invalid.");
+    const scope = yield* resolveScope("detail", input.issue);
+    yield* verified(
+      scope,
+      executeApi({
+        operation: "detail",
+        scope,
+        endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/comments/${input.commentId}`,
+        maxOutputBytes: 256 * 1024,
+        requestMethod: "PATCH",
+        requestBody: { body: input.body },
+      }),
+    );
   });
 
   const listIssuePage = Effect.fn("IssueService.listIssuePage")(
@@ -1188,7 +1369,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     return { items, nextPage };
   });
 
-  const repositories: IssueHost["repositories"] = Effect.fn("IssueService.repositories")(
+  const repositories: IssueGitHubExtension["repositories"] = Effect.fn("IssueService.repositories")(
     function* () {
       const scope: IssueRepositoryScope = {
         cwd: homeDirectory,
@@ -1268,153 +1449,72 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
           isIssueReadError(error) ? error : mapGitHubError("detail", error),
         ),
       );
-  const readChangeState: IssueHost["readChangeState"] = Effect.fn("IssueService.readChangeState")(
-    function* (input) {
-      const scope = yield* resolveScope("detail", input);
-      return yield* verified(
-        scope,
-        Effect.gen(function* () {
-          const repository = yield* readRepositoryIdentity(scope);
-          const response = yield* executeApi({
-            operation: "detail",
-            scope,
-            endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.number}`,
-            maxOutputBytes: 256 * 1024,
-          });
-          const raw = yield* decodeApiResponse(
+  const readChangeState: IssueGitHubExtension["readChangeState"] = Effect.fn(
+    "IssueService.readChangeState",
+  )(function* (input) {
+    const scope = yield* resolveScope("detail", input);
+    return yield* verified(
+      scope,
+      Effect.gen(function* () {
+        const repository = yield* readRepositoryIdentity(scope);
+        const response = yield* executeApi({
+          operation: "detail",
+          scope,
+          endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.number}`,
+          maxOutputBytes: 256 * 1024,
+        });
+        const raw = yield* decodeApiResponse(
+          "detail",
+          ChangeIssue,
+          response,
+          "GitHub returned an invalid issue.",
+        );
+        if (Object.hasOwn(raw, "pull_request") || raw.number !== input.number)
+          return yield* readError(
             "detail",
-            ChangeIssue,
-            response,
-            "GitHub returned an invalid issue.",
+            "unsupported",
+            "The target is not the requested GitHub issue.",
           );
-          if (Object.hasOwn(raw, "pull_request") || raw.number !== input.number)
-            return yield* readError(
-              "detail",
-              "unsupported",
-              "The target is not the requested GitHub issue.",
-            );
-          return baseline(scope, repository.repositoryId, raw);
-        }),
-      );
-    },
-  );
-  const createIssue: IssueHost["createIssue"] = Effect.fn("IssueService.createIssue")(
-    function* (input) {
-      let attempted = false;
-      const scope = yield* resolveScope("detail", input).pipe(
-        Effect.mapError((error) =>
-          readError(
-            error.operation,
-            error.code,
-            error.message,
-            error.retryAt,
-            input.recover !== false ? "uncertain" : "rejected",
-          ),
-        ),
-      );
-      return yield* verified(
-        scope,
-        Effect.gen(function* () {
-          const repository = yield* readRepositoryIdentity(scope);
-          const endpoint = `repos/${encodeRepositoryPath(scope.repository)}/issues`;
-          const marker = `<!-- t3-issue-change:${input.writeKey} -->`;
-          // Recover an accepted create whose response or local receipt was lost. Never infer ownership from author login.
-          for (let page = 1; input.recover !== false && page <= COMMENT_MAX_PAGES; page++) {
-            const response = yield* executeApi({
-              operation: "detail",
-              scope,
-              endpoint: `${endpoint}?state=all&per_page=100&page=${page}`,
-              maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-            });
-            const rows = yield* decodeApiResponse(
-              "detail",
-              Schema.Array(ChangeIssue),
-              response,
-              "GitHub returned an incomplete issue recovery page.",
-            );
-            const existing = rows.find(
-              (row) => !Object.hasOwn(row, "pull_request") && row.body?.includes(marker),
-            );
-            if (existing !== undefined) return baseline(scope, repository.repositoryId, existing);
-            if (rows.length < 100) break;
-            if (page === COMMENT_MAX_PAGES)
-              return yield* readError(
-                "detail",
-                "invalid-response",
-                "Issue recovery pagination is incomplete; creation was not retried.",
-              );
-          }
-          if (input.recover !== false)
-            return yield* readError(
-              "detail",
-              "upstream",
-              "The earlier create may have succeeded, but its marker was not found. Check GitHub and mark this change resolved; submit a new proposal only if another create is intended.",
-              undefined,
-              "unresolved",
-            );
+        return baseline(scope, repository.repositoryId, raw);
+      }),
+    );
+  });
+  const findCreatedIssue: IssueGitHubExtension["findCreatedIssue"] = Effect.fn(
+    "IssueService.findCreatedIssue",
+  )(function* (input) {
+    const scope = yield* resolveScope("detail", input);
+    return yield* verified(
+      scope,
+      Effect.gen(function* () {
+        const repository = yield* readRepositoryIdentity(scope);
+        // Never infer ownership from the author login: only the marker proves T3 made it.
+        for (let page = 1; page <= COMMENT_MAX_PAGES; page++) {
           const response = yield* executeApi({
             operation: "detail",
             scope,
-            endpoint,
-            onRequest: () => {
-              attempted = true;
-            },
-            requestMethod: "POST",
-            requestBody: {
-              title: input.title,
-              body: `${input.body}\n\n${marker}`,
-              milestone: input.milestoneNumber,
-            },
-            maxOutputBytes: 256 * 1024,
+            endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues?state=all&per_page=100&page=${page}`,
+            maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
           });
-          // Persist the identity before decoding mutable issue fields: a malformed body
-          // or state must not discard a successful create receipt.
-          const identity = yield* decodeCreatedIssueIdentity(response.body).pipe(Effect.option);
-          if (Option.isSome(identity) && !Object.hasOwn(identity.value, "pull_request")) {
-            const raw = identity.value;
-            yield* (
-              input.onCreated?.({
-                host: scope.host,
-                repository: scope.repository,
-                repositoryId: repository.repositoryId,
-                id: String(raw.id),
-                nodeId: raw.node_id,
-                number: raw.number,
-                title: raw.title,
-                url: raw.html_url,
-              }) ?? Effect.void
-            );
-          }
-          return baseline(
-            scope,
-            repository.repositoryId,
-            yield* decodeApiResponse(
-              "detail",
-              ChangeIssue,
-              response,
-              "GitHub returned an invalid created issue.",
-            ),
+          const rows = yield* decodeApiResponse(
+            "detail",
+            Schema.Array(ChangeIssue),
+            response,
+            "GitHub returned an incomplete issue recovery page.",
           );
-        }),
-      ).pipe(
-        Effect.mapError((error) =>
-          readError(
-            error.operation,
-            error.code,
-            error.message,
-            error.retryAt,
-            input.recover !== false
-              ? error.createOutcome === "unresolved"
-                ? "unresolved"
-                : "uncertain"
-              : attempted
-                ? (error.createOutcome ?? "uncertain")
-                : "rejected",
-          ),
-        ),
-      );
-    },
-  );
+          const existing = rows.find(
+            (row) => !Object.hasOwn(row, "pull_request") && row.body?.includes(input.marker),
+          );
+          if (existing !== undefined) return baseline(scope, repository.repositoryId, existing);
+          if (rows.length < 100) return null;
+        }
+        return yield* readError(
+          "detail",
+          "invalid-response",
+          "Issue recovery pagination is incomplete; creation was not retried.",
+        );
+      }),
+    );
+  });
   const patchIssue = Effect.fn("IssueService.patchIssue")(function* (
     input: import("@t3tools/contracts").RepositoryIssueRef,
     payload: Readonly<Record<string, string | number | null>>,
@@ -1432,33 +1532,35 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       }),
     );
   });
-  const setParent: IssueHost["setParent"] = Effect.fn("IssueService.setParent")(function* (input) {
-    const scope = yield* resolveScope("detail", input.parent);
-    const childId = Number(input.child.id);
-    if (
-      input.child.host !== input.parent.host ||
-      input.child.repositoryId !== input.parent.repositoryId ||
-      !Number.isSafeInteger(childId) ||
-      childId < 1
-    )
-      return yield* readError(
-        "detail",
-        "unsupported",
-        "Sub-issues must belong to this repository and have a valid GitHub ID.",
-      );
-    yield* verified(
-      scope,
-      executeApi({
-        operation: "detail",
+  const setParent: IssueGitHubExtension["setParent"] = Effect.fn("IssueService.setParent")(
+    function* (input) {
+      const scope = yield* resolveScope("detail", input.parent);
+      const childId = Number(input.child.id);
+      if (
+        input.child.host !== input.parent.host ||
+        input.child.repositoryId !== input.parent.repositoryId ||
+        !Number.isSafeInteger(childId) ||
+        childId < 1
+      )
+        return yield* readError(
+          "detail",
+          "unsupported",
+          "Sub-issues must belong to this repository and have a valid GitHub ID.",
+        );
+      yield* verified(
         scope,
-        endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.parent.number}/${input.action === "add" ? "sub_issues" : "sub_issue"}`,
-        requestMethod: input.action === "add" ? "POST" : "DELETE",
-        requestBody: { sub_issue_id: childId },
-        maxOutputBytes: 256 * 1024,
-      }),
-    );
-  });
-  const setBlockedBy: IssueHost["setBlockedBy"] = Effect.fn("IssueService.setBlockedBy")(
+        executeApi({
+          operation: "detail",
+          scope,
+          endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.parent.number}/${input.action === "add" ? "sub_issues" : "sub_issue"}`,
+          requestMethod: input.action === "add" ? "POST" : "DELETE",
+          requestBody: { sub_issue_id: childId },
+          maxOutputBytes: 256 * 1024,
+        }),
+      );
+    },
+  );
+  const setBlockedBy: IssueGitHubExtension["setBlockedBy"] = Effect.fn("IssueService.setBlockedBy")(
     function* ({ issue, blocker, action }) {
       if (
         issue.host !== blocker.host ||
@@ -1502,13 +1604,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
           maxResponseBytes: LIST_MAX_OUTPUT_BYTES,
         })
         .pipe(
-          Effect.mapError((error) =>
-            mapGitHubError(
-              "detail",
-              error,
-              input.method === undefined ? undefined : { tracksOutcome: false },
-            ),
-          ),
+          Effect.mapError((error) => mapGitHubError("detail", error, input.method !== undefined)),
         ),
     );
     if (response.truncated)
@@ -1566,49 +1662,49 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     }
     return { items, etag: first.etag, complete: true };
   });
-  const activitySince: IssueHost["activitySince"] = Effect.fn("IssueService.activitySince")(
-    function* (scope, cursors) {
-      if (cursors.initial) {
-        const response = yield* inboxRequest({
-          ...scope,
-          path: "issues/events?per_page=100&page=1",
-        });
-        const events = yield* decodeInbox(Schema.Array(InboxEvent), response.body);
-        return {
-          issues: { items: [], etag: null, complete: true },
-          comments: { items: [], etag: null, complete: true },
-          stateChanges: { items: [], etag: response.etag, complete: true },
-          eventsAfter: Math.max(0, ...events.map((event) => event.id)),
-        };
-      }
-      const issues = yield* readActivityPages(
-        scope,
-        `issues?state=all&sort=updated&direction=desc&per_page=100&since=${encodeURIComponent(cursors.issuesSince)}`,
-        InboxIssue,
-        cursors.issuesEtag,
-      );
-      const comments = yield* readActivityPages(
-        scope,
-        `issues/comments?sort=updated&direction=desc&per_page=100&since=${encodeURIComponent(cursors.commentsSince)}`,
-        InboxComment,
-        cursors.commentsEtag,
-      );
-      const stateChanges = yield* readActivityPages(
-        scope,
-        "issues/events?per_page=100",
-        InboxEvent,
-        cursors.eventsEtag,
-        (events) => events.some((event) => event.id <= cursors.eventsAfter),
-      );
+  const activitySince: IssueGitHubExtension["activitySince"] = Effect.fn(
+    "IssueService.activitySince",
+  )(function* (scope, cursors) {
+    if (cursors.initial) {
+      const response = yield* inboxRequest({
+        ...scope,
+        path: "issues/events?per_page=100&page=1",
+      });
+      const events = yield* decodeInbox(Schema.Array(InboxEvent), response.body);
       return {
-        issues,
-        comments,
-        stateChanges,
-        eventsAfter: Math.max(cursors.eventsAfter, ...stateChanges.items.map((event) => event.id)),
+        issues: { items: [], etag: null, complete: true },
+        comments: { items: [], etag: null, complete: true },
+        stateChanges: { items: [], etag: response.etag, complete: true },
+        eventsAfter: Math.max(0, ...events.map((event) => event.id)),
       };
-    },
-  );
-  const listComments: IssueHost["listComments"] = Effect.fn("IssueService.listComments")(
+    }
+    const issues = yield* readActivityPages(
+      scope,
+      `issues?state=all&sort=updated&direction=desc&per_page=100&since=${encodeURIComponent(cursors.issuesSince)}`,
+      InboxIssue,
+      cursors.issuesEtag,
+    );
+    const comments = yield* readActivityPages(
+      scope,
+      `issues/comments?sort=updated&direction=desc&per_page=100&since=${encodeURIComponent(cursors.commentsSince)}`,
+      InboxComment,
+      cursors.commentsEtag,
+    );
+    const stateChanges = yield* readActivityPages(
+      scope,
+      "issues/events?per_page=100",
+      InboxEvent,
+      cursors.eventsEtag,
+      (events) => events.some((event) => event.id <= cursors.eventsAfter),
+    );
+    return {
+      issues,
+      comments,
+      stateChanges,
+      eventsAfter: Math.max(cursors.eventsAfter, ...stateChanges.items.map((event) => event.id)),
+    };
+  });
+  const listComments: IssueGitHubExtension["listComments"] = Effect.fn("IssueService.listComments")(
     function* (ref, options) {
       const result = yield* readActivityPages(
         ref,
@@ -1621,7 +1717,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       return { comments: result.items, complete: result.complete };
     },
   );
-  const postComment: IssueHost["postComment"] = Effect.fn("IssueService.postComment")(
+  const postComment: IssueGitHubExtension["postComment"] = Effect.fn("IssueService.postComment")(
     function* (ref, body) {
       const response = yield* inboxRequest({
         ...ref,
@@ -1636,7 +1732,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       );
     },
   );
-  const postIssue: IssueHost["postIssue"] = Effect.fn("IssueService.postIssue")(
+  const postIssue: IssueGitHubExtension["postIssue"] = Effect.fn("IssueService.postIssue")(
     function* (scope, input) {
       const response = yield* inboxRequest({
         ...scope,
@@ -1655,7 +1751,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
       );
     },
   );
-  const ensureLabels: IssueHost["ensureLabels"] = Effect.fn("IssueService.ensureLabels")(
+  const ensureLabels: IssueGitHubExtension["ensureLabels"] = Effect.fn("IssueService.ensureLabels")(
     function* (scope, labels) {
       const response = yield* inboxRequest({ ...scope, path: "labels?per_page=100" });
       const existing = new Set(
@@ -1671,7 +1767,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
           );
     },
   );
-  const setLabels: IssueHost["setLabels"] = Effect.fn("IssueService.setLabels")(
+  const setLabels: IssueGitHubExtension["setLabels"] = Effect.fn("IssueService.setLabels")(
     function* (ref, add, remove) {
       if (add.length > 0)
         yield* inboxRequest({
@@ -1711,23 +1807,19 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     ensureLabels,
     setLabels,
     readChangeState,
-    createIssue,
-    updateBody: Effect.fn("IssueService.updateBody")((input) =>
-      patchIssue(input, { body: input.body }),
-    ),
+    findCreatedIssue,
     setMilestone: Effect.fn("IssueService.setMilestone")((input) =>
       patchIssue(input, { milestone: input.milestoneNumber }),
-    ),
-    setState: Effect.fn("IssueService.setState")((input) =>
-      patchIssue(input, { state: input.state }),
     ),
     setParent,
     setBlockedBy,
     repositories,
     listIssuePage,
     listMilestonePage,
-    listMetadata: (scope, numbers) =>
-      readIssueListMetadata(scope, numbers).pipe(Effect.provideService(GitHubApi.GitHubApi, api)),
+    listMetadata: (scope, numbers, projectAccess) =>
+      readIssueListMetadata(scope, numbers, projectAccess).pipe(
+        Effect.provideService(GitHubApi.GitHubApi, api),
+      ),
     withIdentity: (scope, operation, read) =>
       githubPullRequests
         .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, read)
@@ -1740,8 +1832,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     statuses,
     repositoryIdentity,
     resolveLinkedIssue,
-    writeManagedComment,
-  } satisfies IssueHost;
+    findManagedComment,
+    updateManagedComment,
+  } satisfies IssueGitHubExtension;
 });
-
-export const apiLayer = GitHubApi.layer;

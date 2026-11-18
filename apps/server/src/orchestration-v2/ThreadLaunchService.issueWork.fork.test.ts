@@ -1,4 +1,9 @@
-import { ISSUE_HOSTS, SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  ISSUE_HOSTS,
+  IssueTrackerKind,
+  ProjectId,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -14,6 +19,7 @@ import { EventId, effectiveThreadRole } from "@t3tools/contracts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as IssueService from "../issues/IssueService.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { assert, describe, it, vi } from "@effect/vitest";
@@ -128,23 +134,43 @@ describe("managed issue work", () => {
       },
     });
     const store = IssueWorkStore.layer.pipe(Layer.provide(harness.layer));
+    // GitHub's comments by marker: upstream adds them, the extension finds and rewrites them.
     const published = new Map<string, { commentId: string; body: string }>();
-    const writeCalls: Array<
-      Parameters<IssueService.IssueService["Service"]["writeManagedComment"]>[0]
-    > = [];
-    const issueReads = Layer.mock(IssueService.IssueService)({
-      repositoryIdentity: () => Effect.succeed(issue),
-      workRead,
-      writeManagedComment: (request) =>
-        Effect.sync(() => {
-          writeCalls.push(request);
-          const commentId =
-            published.get(request.marker)?.commentId ?? `comment-${published.size + 1}`;
-          published.set(request.marker, { commentId, body: request.body });
-          return { commentId };
-        }),
-      resolveLinkedIssue: () => Effect.succeed(issue),
-    });
+    const writeCalls: Array<{
+      readonly operation: "status_sync" | "closeout_create";
+      readonly body: string;
+    }> = [];
+    const publish = (body: string, commentId?: string) =>
+      Effect.sync(() => {
+        const marker = /<!-- t3-issue-(?:status|closeout):[^>]*-->/u.exec(body)![0];
+        writeCalls.push({
+          operation: marker.includes("closeout") ? "closeout_create" : "status_sync",
+          body,
+        });
+        published.set(marker, { commentId: commentId ?? `comment-${published.size + 1}`, body });
+      });
+    const issueReads = Layer.mergeAll(
+      Layer.mock(IssueService.IssueService)({
+        repositoryIdentity: () => Effect.succeed(issue),
+        workRead,
+        findManagedComment: ({ marker }) =>
+          Effect.sync(() => published.get(marker)?.commentId ?? null),
+        updateManagedComment: ({ commentId, body }) => publish(body, commentId),
+        resolveLinkedIssue: () => Effect.succeed(issue),
+      }),
+      Layer.mock(TrackerIssueService.IssueService)({
+        resolveUrl: () =>
+          Effect.succeed({
+            projectId: ProjectId.make("project-issue-comments"),
+            tracker: IssueTrackerKind.make("github"),
+            host: issue.host,
+            scope: issue.repository,
+            key: String(issue.number),
+            writable: true,
+          }),
+        comment: ({ body }) => publish(body),
+      }),
+    );
     const dependencies = Layer.mergeAll(
       harness.layer,
       store,

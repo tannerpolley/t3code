@@ -137,9 +137,15 @@ const ITEM_FIELDS = `project { id title }
     }
   }`;
 
+/** Whether to ask for Project fields; `revoke` records that the credential lacks `read:project`. */
+export interface ProjectAccess {
+  readonly granted: boolean;
+  readonly revoke: () => void;
+}
+
 /** Optional metadata read inside IssueService's verified credential, batched across each list page. */
 export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetadata")(
-  function* (scope: IssueRepositoryRef, numbers: readonly number[]) {
+  function* (scope: IssueRepositoryRef, numbers: readonly number[], projectAccess: ProjectAccess) {
     const api = yield* GitHubApi.GitHubApi;
     const projects = new Map<number, Map<string, IssueProject>>();
     const metadata = new Map<number, ListMetadata>();
@@ -156,7 +162,7 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
       pullRequestCursor: null,
     }));
     const [owner, name] = scope.repository.split("/");
-    let includeProjects = true;
+    let includeProjects = projectAccess.granted;
     while (pending.length > 0) {
       const batch = pending
         .splice(0, 100)
@@ -229,6 +235,7 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
               )
                 return Effect.fail(error);
               includeProjects = false;
+              projectAccess.revoke();
               pending.unshift(...batch);
               return Effect.succeed(null);
             },

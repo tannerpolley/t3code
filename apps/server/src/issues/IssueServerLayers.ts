@@ -14,16 +14,15 @@ import * as ProjectionStoreV2 from "../orchestration-v2/ProjectionStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as TrackerIssueService from "../issue/IssueService.ts";
 import * as IssueCleanup from "./IssueCleanup.ts";
-import * as IssueGitHubHost from "./IssueGitHubHost.ts";
+import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as IssueLinks from "./IssueLinks.ts";
-import * as IssueMergeClosing from "./IssueMergeClosing.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
 import * as IssueService from "./IssueService.ts";
 
 // Issue reads verify the GitHub credential the same way pull request reads do, and share the
 // GitHub quota and rate-limit pause (the built-in drivers' layer, memoized by reference) with them.
 export const layerIssueService = IssueService.layer.pipe(
-  Layer.provide(IssueGitHubHost.apiLayer),
+  Layer.provide(GitHubApi.layer),
   Layer.provide(gitHubServices),
 );
 
@@ -69,10 +68,6 @@ export const withRoadmapRevision = <E, R>(
       });
     }),
   ).pipe(Layer.provide(Layer.merge(tracker, layerIssueService)));
-
-export const layerIssueMergeClosing = IssueMergeClosing.layer.pipe(
-  Layer.provide(layerIssueService),
-);
 
 const layerIssueRoadmap = IssueRoadmap.layer.pipe(
   Layer.provideMerge(IssueLinks.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),

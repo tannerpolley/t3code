@@ -1,6 +1,8 @@
 import {
   CommandId,
   IssueChangeError,
+  IssueReadError,
+  type ThreadLinkedIssue,
   legacyIssueSuspensionKind,
   MessageId,
 } from "@t3tools/contracts";
@@ -18,7 +20,10 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as IssueChangeService from "./IssueChangeService.ts";
 import { isAutomaticIssueSuspension } from "./IssueEligibility.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
+import { ensureCommentMarker } from "./IssueGitHubExtension.ts";
 import * as IssueService from "./IssueService.ts";
+import { fromTrackerError, trackerIssueRef } from "./trackerIssueRef.ts";
 import { readIssueCommentReceipt, readIssueWorkCommentState } from "./IssueWorkProjection.ts";
 
 const ISSUE_EFFECT_TYPES = [
@@ -49,11 +54,55 @@ const isIssueChangeError = Schema.is(IssueChangeError);
 export const retryAtOf = (cause: unknown) =>
   isIssueChangeError(cause) ? cause.retryAt : undefined;
 
+/**
+ * Writes T3's marked comment on a managed issue. A new comment goes through upstream; the marker
+ * finds it again for its id, and for a retry whose earlier write landed, so none is duplicated.
+ * Upstream cannot edit a comment, so a status update rewrites it through the GitHub extension.
+ */
+const writeManagedComment = Effect.fn("IssueEffects.writeManagedComment")(function* (
+  issues: IssueService.IssueService["Service"],
+  tracker: TrackerIssueService.IssueService["Service"],
+  input: {
+    readonly issue: ThreadLinkedIssue;
+    readonly operation: "status_sync" | "closeout_create";
+    readonly commentId?: string;
+    readonly marker: string;
+    readonly body: string;
+  },
+) {
+  const body = ensureCommentMarker(input.body, input.marker);
+  const update = (commentId: string) =>
+    issues.updateManagedComment({ issue: input.issue, commentId, body }).pipe(Effect.as(commentId));
+  if (input.operation === "status_sync" && input.commentId !== undefined) {
+    const updated = yield* update(input.commentId).pipe(
+      Effect.catchIf(
+        (error) => error.code === "inaccessible",
+        () => Effect.succeed(null),
+      ),
+    );
+    if (updated !== null) return updated;
+  }
+  const existing = yield* issues.findManagedComment(input);
+  if (existing !== null)
+    return input.operation === "status_sync" ? yield* update(existing) : existing;
+  const ref = yield* trackerIssueRef(tracker, "detail", input.issue);
+  yield* tracker.comment({ ...ref, body }).pipe(Effect.mapError(fromTrackerError("detail")));
+  const posted = yield* issues.findManagedComment(input);
+  if (posted === null)
+    return yield* new IssueReadError({
+      code: "invalid-response",
+      operation: "detail",
+      message: "GitHub did not list the comment just written; the next attempt finds it.",
+    });
+  return posted;
+});
+
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
   const issues = yield* Effect.serviceOption(IssueService.IssueService);
+  const tracker = yield* Effect.serviceOption(TrackerIssueService.IssueService);
   const issueChanges = yield* Effect.serviceOption(IssueChangeService.IssueChangeService);
   const eventSink = yield* Effect.serviceOption(EventSink.EventSinkV2);
   const idAllocator = yield* Effect.serviceOption(IdAllocator.IdAllocatorV2);
@@ -84,6 +133,7 @@ export const make = Effect.gen(function* () {
   ) {
     if (
       Option.isNone(issues) ||
+      Option.isNone(tracker) ||
       Option.isNone(sql) ||
       Option.isNone(eventSink) ||
       Option.isNone(idAllocator)
@@ -112,7 +162,7 @@ export const make = Effect.gen(function* () {
       if (receipt?.commentId != null) return;
     }
 
-    const write = yield* issues.value.writeManagedComment({
+    const writtenCommentId = yield* writeManagedComment(issues.value, tracker.value, {
       issue: request.issue,
       operation: request.operation,
       ...(commentId === undefined ? {} : { commentId }),
@@ -145,7 +195,7 @@ export const make = Effect.gen(function* () {
             ...(request.resultEventId === undefined
               ? {}
               : { resultEventId: request.resultEventId }),
-            commentId: write.commentId,
+            commentId: writtenCommentId,
             marker: request.marker,
           },
         },

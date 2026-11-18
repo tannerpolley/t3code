@@ -624,6 +624,8 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(IssueServerLayers.layerIssueService),
+  // Issue changes and status comments write through upstream's service, advancing the roadmap.
+  Layer.provide(layerIssueService.pipe(Layer.provide(RuntimeLayer.layerProjectService))),
   Layer.provide(UsageLimitSources.layerResetFallback),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderUsageAnalytics.layer),
@@ -723,7 +725,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerThreadPullRequestWorker,
   KeepAwake.layer,
   DelegatedTaskAnalytics.layer,
-  IssueServerLayers.layerIssueMergeClosing,
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;

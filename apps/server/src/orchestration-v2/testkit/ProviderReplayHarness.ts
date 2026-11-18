@@ -562,10 +562,7 @@ export function layerWithRegistry<Error>(
         layerStores,
         layerEventSinkProvided,
         IdAllocator.layer,
-        Layer.mock(IssueService.IssueService)({
-          writeManagedComment: () =>
-            Effect.die("Issue comments are unused in provider replay tests"),
-        }),
+        Layer.mock(IssueService.IssueService)({}),
         layerRunFinalizationServiceProvided,
         layerCheckpointRollbackServiceProvided,
         layerProviderSessionManagerProvided,

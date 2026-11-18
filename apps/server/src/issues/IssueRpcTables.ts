@@ -37,7 +37,6 @@ export const ISSUE_RPC_AGGREGATES = {
   [WS_METHODS.issueWorkRoadmap]: "issues",
   [WS_METHODS.issueWorkDetail]: "issues",
   [WS_METHODS.issuesStatusBatch]: "issues",
-  [WS_METHODS.issueWorkSetState]: "issues",
   [WS_METHODS.issuesCleanup]: "issues",
   [WS_METHODS.issuesStart]: "issues",
   [WS_METHODS.issuesQueue]: "issues",

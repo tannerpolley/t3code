@@ -162,9 +162,7 @@ function layerExecutorFor(input: {
         layerDependencies,
         Layer.mock(EffectOutbox.EffectOutboxV2)({}),
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
-        Layer.mock(IssueService.IssueService)({
-          writeManagedComment: () => Effect.die("Issue comments are unused in this test"),
-        }),
+        Layer.mock(IssueService.IssueService)({}),
         Layer.mock(IssueChangeService.IssueChangeService)(input.changes ?? {}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
         Layer.mock(EventSink.EventSinkV2)({

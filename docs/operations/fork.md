@@ -34,8 +34,11 @@ content: its `/issues` page, its detail panel and its agent tools (`list_issues`
 
 The fork adds the work on top: the roadmap at `/roadmap` and in the per-repository Issues panel
 beside a thread, with Ready / Paused / Queued / In progress / Done, and a work section inside
-upstream's issue panel. Until #451 is finished, the roadmap still lists issues through the fork's
-own GitHub reads. Thread links live only in upstream's `thread.issues[]`: a managed claim
+upstream's issue panel. Its issue rows, and the issues, edits, state changes and comments that
+`propose_issue_change` and status comments write, go through upstream's service. A fork-owned
+GitHub extension (`apps/server/src/issues/IssueGitHubExtension.ts`) adds only what upstream has no
+operation for: relationships, milestones, Project fields, rewriting T3's marked comments, finding
+a create whose answer was lost, and the activity the inbox polls. Thread links live only in upstream's `thread.issues[]`: a managed claim
 (`linkedIssue`) writes its link in the same event, and a claim still counts as live work after
 its link is removed. At each start, a backfill moves the retired `issue_thread_links` rows and
 older GitHub claims onto `thread.issues[]`, until the table is empty and every GitHub claim is
