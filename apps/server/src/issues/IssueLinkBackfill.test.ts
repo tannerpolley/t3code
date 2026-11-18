@@ -57,9 +57,16 @@ function setup() {
     Layer.mock(TrackerIssueService.IssueService)({
       detail: (ref) => {
         reads.push(ref.key);
+        if (ref.key === "17")
+          return Effect.fail(
+            new IssueOperationError({ operation: "detail", detail: "gone", reason: "not-found" }),
+          );
         return ref.key === "14" && titleReadsFail
           ? Effect.fail(new IssueOperationError({ operation: "detail", detail: "offline" }))
-          : Effect.succeed({ title: `Issue ${ref.key}` } as never);
+          : Effect.succeed({
+              title: `Issue ${ref.key}`,
+              url: `https://github.com/${ref.scope}/issues/${ref.key}`,
+            } as never);
       },
     }),
   ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
@@ -90,6 +97,15 @@ const create = (id: string, linkedIssue?: ReturnType<typeof claim>) =>
       creationSource: "web",
     }),
   );
+// A claim from before claims carried links: its projection has one, its history never did.
+const oldClaim = (id: string, linkedIssue: ReturnType<typeof claim>) =>
+  Effect.gen(function* () {
+    yield* create(id);
+    yield* (yield* SqlClient.SqlClient)`UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.linkedIssue', json(${JSON.stringify(linkedIssue)}))
+      WHERE thread_id = ${id}`;
+  });
+const forgejo = "tnnrpolley21-ms-7c95.taila72856.ts.net:3000";
 const links = (id: string) =>
   Effect.flatMap(Orchestrator.OrchestratorV2, (orchestrator) =>
     orchestrator
@@ -98,7 +114,7 @@ const links = (id: string) =>
   );
 
 it.effect(
-  "moves table rows and old claims onto thread links once, and keeps a row whose title read failed",
+  "moves GitHub table rows and old claims onto thread links, keeping only rows worth retrying",
   () => {
     const h = setup();
     return Effect.gen(function* () {
@@ -106,13 +122,10 @@ it.effect(
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sink = yield* EventSink.EventSinkV2;
       yield* create("ordinary");
-      yield* create("old-claim", claim(15, "Claimed title"));
-      yield* create("removed-claim", claim(16, "Removed"));
       yield* create("deleted");
-      // A claim made now carries its link; an old claim's projection has none.
-      assert.deepEqual(yield* links("old-claim"), [["15", "Claimed title"]]);
-      yield* sql`UPDATE orchestration_v2_projection_threads
-        SET payload_json = json_remove(payload_json, '$.issues') WHERE thread_id = 'old-claim'`;
+      // A claim made now carries its link from creation, so a later unlink stays.
+      yield* create("removed-claim", claim(16, "Removed"));
+      assert.deepEqual(yield* links("removed-claim"), [["16", "Removed"]]);
       yield* orchestrator.dispatch({
         type: "thread.issue.unlink",
         commandId: CommandId.make("user-unlinks-claim"),
@@ -122,29 +135,63 @@ it.effect(
         scope: "owner/repo",
         key: "16",
       });
+      // An old claim on #15 whose thread later linked #99 still gets its own link.
+      yield* oldClaim("old-claim", claim(15, "Claimed title"));
+      yield* orchestrator.dispatch({
+        type: "thread.issue.link",
+        commandId: CommandId.make("upstream-links-99"),
+        threadId: ThreadId.make("old-claim"),
+        tracker: IssueTrackerKind.make("github"),
+        host: "github.com",
+        scope: "owner/repo",
+        key: "99",
+        projectId,
+        url: "https://github.com/owner/repo/issues/99",
+        displayKey: "#99",
+        title: "Issue 99",
+        source: "agent",
+      });
+      yield* oldClaim("forgejo-claim", { ...claim(5, "Archived"), host: forgejo });
       yield* sql`UPDATE orchestration_v2_projection_threads
         SET deleted_at = '2026-11-17T00:00:00.000Z' WHERE thread_id = 'deleted'`;
-      for (const [number, thread] of [
-        [13, "ordinary"],
-        [14, "ordinary"],
-        [15, "old-claim"],
-        [13, "deleted"],
-        [13, "missing"],
+      for (const [host, number, thread] of [
+        ["github.com", 13, "ordinary"],
+        ["github.com", 14, "ordinary"],
+        ["github.com", 17, "ordinary"],
+        ["github.com", 15, "old-claim"],
+        ["github.com", 13, "deleted"],
+        ["github.com", 13, "missing"],
+        [forgejo, 5, "ordinary"],
       ] as const)
         yield* sql`INSERT INTO issue_thread_links(host, repository, issue_number, thread_id)
-          VALUES ('github.com', 'owner/repo', ${number}, ${thread})`;
+          VALUES (${host}, 'owner/repo', ${number}, ${thread})`;
       const rows = sql<{
         thread_id: string;
         issue_number: number;
       }>`SELECT thread_id, issue_number FROM issue_thread_links ORDER BY thread_id, issue_number`;
 
-      yield* IssueLinkBackfill.run();
+      assert.deepEqual(yield* IssueLinkBackfill.run(), {
+        linked: 2,
+        rowsDone: 2,
+        rowsDropped: 3,
+        rowsKept: 1,
+        otherHostRows: 1,
+        otherHostClaims: 1,
+      });
       assert.deepEqual(yield* links("ordinary"), [["13", "Issue 13"]]);
-      assert.deepEqual(yield* links("old-claim"), [["15", "Claimed title"]]);
+      assert.deepEqual(yield* links("old-claim"), [
+        ["99", "Issue 99"],
+        ["15", "Claimed title"],
+      ]);
       assert.deepEqual(yield* links("removed-claim"), []);
-      // A claim's own title names it; each other issue is read once.
-      assert.deepEqual(h.reads, ["13", "14"]);
+      assert.deepEqual(yield* links("forgejo-claim"), []);
+      // A claim's own title names it; each other GitHub issue is read once.
+      assert.sameMembers(h.reads, ["13", "14", "17"]);
+      // Only the transient failure is retried; the missing issue and other hosts are dropped.
       assert.deepEqual(yield* rows, [{ thread_id: "ordinary", issue_number: 14 }]);
+      const oldClaimLink = (yield* orchestrator.getThreadShell(ThreadId.make("old-claim")))
+        ?.issues?.[1];
+      assert.equal(oldClaimLink?.url, "https://github.com/Owner/Repo/issues/15");
       const shell = yield* orchestrator.getThreadShell(ThreadId.make("ordinary"));
       assert.deepEqual(
         shell?.issues?.map(({ tracker, host, scope, projectId, url, displayKey, source }) => ({
