@@ -735,7 +735,7 @@ export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) 
       return <WorktreesDirectoryRow />;
     case "/settings/source-control":
       return (
-        <CustomizationsGroup title="Version control & issues" section="versionControl">
+        <CustomizationsGroup title="Issue work & branch picker" section="versionControl">
           <ServerSwitchRow
             settingKey="issueUpkeepRequiresApproval"
             searchId="issue-upkeep-requires-approval"
