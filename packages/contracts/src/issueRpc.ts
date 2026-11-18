@@ -5,7 +5,6 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
 } from "./auth.ts";
-import { ThreadId } from "./baseSchemas.ts";
 import {
   OwnerDecision,
   OwnerDecisionsListInput,
@@ -25,7 +24,6 @@ import {
   IssueInboxUnread,
 } from "./issueInbox.ts";
 import { IssueCleanupInput, IssueCleanupError, IssueCleanupResult } from "./issueCleanup.ts";
-import { IssueLinkInput, IssueLinkResult, IssueLinkError } from "./issueLinks.ts";
 import {
   RepositoryIssueRef,
   IssueRepositoryRef,
@@ -67,7 +65,6 @@ export const ISSUE_WS_METHODS = {
   issuesStatusBatch: "issues.statusBatch",
   issueWorkSetState: "issueWork.setState",
   issuesCleanup: "issues.cleanup",
-  issuesUnlink: "issues.unlink",
   issuesSubscribeLinkRefreshes: "issues.subscribeLinkRefreshes",
   issuesStart: "issues.start",
   issuesQueue: "issues.queue",
@@ -146,11 +143,6 @@ const WsIssuesCleanupRpc = Rpc.make(ISSUE_WS_METHODS.issuesCleanup, {
   payload: IssueCleanupInput,
   success: IssueCleanupResult,
   error: Schema.Union([IssueCleanupError, EnvironmentAuthorizationError]),
-});
-const WsIssuesUnlinkRpc = Rpc.make(ISSUE_WS_METHODS.issuesUnlink, {
-  payload: Schema.Struct({ ...IssueLinkInput.fields, threadId: ThreadId }),
-  success: IssueLinkResult,
-  error: Schema.Union([IssueLinkError, EnvironmentAuthorizationError]),
 });
 
 const WsIssuesQueueRpc = Rpc.make(ISSUE_WS_METHODS.issuesQueue, {
@@ -293,7 +285,6 @@ export const issueRpcs = [
   WsIssuesStatusBatchRpc,
   WsIssuesSetStateRpc,
   WsIssuesCleanupRpc,
-  WsIssuesUnlinkRpc,
   WsIssuesSubscribeLinkRefreshesRpc,
   WsIssuesStartRpc,
   WsIssuesQueueRpc,
@@ -326,7 +317,6 @@ export const ISSUE_CLIENT_GUARDED_RPC_SCOPES = {
   [ISSUE_WS_METHODS.issuesEndRepository]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issueWorkSetState]: AuthSourceControlWriteScope,
   [ISSUE_WS_METHODS.issuesCleanup]: AuthSourceControlWriteScope,
-  [ISSUE_WS_METHODS.issuesUnlink]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issuesCloseOut]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issuesSetUsageSprint]: AuthOrchestrationOperateScope,
   [ISSUE_WS_METHODS.issuesCancelRequest]: AuthOrchestrationOperateScope,

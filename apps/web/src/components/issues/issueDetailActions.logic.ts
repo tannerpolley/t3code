@@ -3,7 +3,6 @@ import type {
   EnvironmentId,
   RepositoryIssueComment,
   RepositoryIssueSummary,
-  ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -37,20 +36,6 @@ export function issueImplementDestination(input: {
     threadRef: scopeThreadRef(input.environmentId, input.rootThreadId),
     disabledReason: null,
   };
-}
-
-/** Only ordinary associations can be removed; managed work and PR references keep their owners. */
-export function canUnlinkIssue(
-  issue: Pick<RepositoryIssueSummary, "liveWork">,
-  environmentId: string,
-  threadRef: ScopedThreadRef | null,
-) {
-  return (
-    threadRef?.environmentId === environmentId &&
-    issue.liveWork?.some(
-      (work) => work.threadId === threadRef.threadId && work.canUnlink === true,
-    ) === true
-  );
 }
 
 export function issueComposerPrompt(

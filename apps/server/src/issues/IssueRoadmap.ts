@@ -47,83 +47,79 @@ export const layer = Layer.effect(
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const sql = yield* SqlClient.SqlClient;
     return IssueRoadmap.of({
-      linkRefreshes: Stream.merge(
-        links.refreshes.pipe(Stream.drop(1)),
-        Stream.suspend(() => {
-          const workStates = new Map<string, string>();
-          return orchestrator.streamDomainEvents.pipe(
-            Stream.filter((event) => {
-              const state: readonly [string, string] | undefined =
-                event.type === "provider-thread.updated"
+      linkRefreshes: Stream.suspend(() => {
+        const workStates = new Map<string, string>();
+        return orchestrator.streamDomainEvents.pipe(
+          Stream.filter((event) => {
+            const state: readonly [string, string] | undefined =
+              event.type === "provider-thread.updated"
+                ? [
+                    `provider:${event.payload.id}`,
+                    String(
+                      backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? []),
+                    ),
+                  ]
+                : event.type === "subagent.updated"
                   ? [
-                      `provider:${event.payload.id}`,
-                      String(
-                        backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? []),
-                      ),
+                      `subagent:${event.payload.id}`,
+                      `${event.payload.status}:${event.payload.childThreadId ?? ""}`,
                     ]
-                  : event.type === "subagent.updated"
+                  : event.type === "runtime-request.updated"
                     ? [
-                        `subagent:${event.payload.id}`,
-                        `${event.payload.status}:${event.payload.childThreadId ?? ""}`,
+                        `request:${event.payload.id}`,
+                        `${event.payload.kind}:${event.payload.status}:${event.payload.responseCapability.type}`,
                       ]
-                    : event.type === "runtime-request.updated"
+                    : event.type === "run.created" || event.type === "run.updated"
                       ? [
-                          `request:${event.payload.id}`,
-                          `${event.payload.kind}:${event.payload.status}:${event.payload.responseCapability.type}`,
+                          `run:${event.payload.id}`,
+                          `${event.payload.status}:${event.payload.queueHeld === true}`,
                         ]
-                      : event.type === "run.created" || event.type === "run.updated"
+                      : event.type === "turn-item.updated" &&
+                          isBackgroundTurnItemType(event.payload.type)
                         ? [
-                            `run:${event.payload.id}`,
-                            `${event.payload.status}:${event.payload.queueHeld === true}`,
+                            `item:${event.payload.id}`,
+                            String(
+                              pendingBackgroundTurnItems({ turnItems: [event.payload] }).length > 0,
+                            ),
                           ]
-                        : event.type === "turn-item.updated" &&
-                            isBackgroundTurnItemType(event.payload.type)
-                          ? [
-                              `item:${event.payload.id}`,
-                              String(
-                                pendingBackgroundTurnItems({ turnItems: [event.payload] }).length >
-                                  0,
-                              ),
-                            ]
-                          : undefined;
-              if (state !== undefined) {
-                const [key, value] = state;
-                if (workStates.get(key) === value) return false;
-                workStates.set(key, value);
-              }
-              return (
-                event.type === "thread.created" ||
-                event.type === "thread.metadata-updated" ||
-                event.type === "thread.archived" ||
-                event.type === "thread.unarchived" ||
-                event.type === "thread.deleted" ||
-                event.type === "thread.pull-request-synced" ||
-                event.type === "thread.issue-synced" ||
-                event.type === "thread.pull-request-link-updated" ||
-                event.type === "issue.work.requested" ||
-                event.type === "issue.work.cancelled" ||
-                event.type === "issue.queue.updated" ||
-                event.type === "repository.work.restored" ||
-                event.type === "runtime-request.updated" ||
-                event.type === "provider-thread.updated" ||
-                event.type === "subagent.updated" ||
-                (event.type === "turn-item.updated" &&
-                  (event.payload.type === "secret_request" ||
-                    isBackgroundTurnItemType(event.payload.type))) ||
-                event.type === "run.created" ||
-                event.type === "run.updated"
-              );
-            }),
-            Stream.mapError(
-              () =>
-                new IssueWorkError({
-                  code: "orchestration-error",
-                  message: "Could not follow issue work changes.",
-                }),
-            ),
-          );
-        }),
-      ).pipe(
+                        : undefined;
+            if (state !== undefined) {
+              const [key, value] = state;
+              if (workStates.get(key) === value) return false;
+              workStates.set(key, value);
+            }
+            return (
+              event.type === "thread.created" ||
+              event.type === "thread.metadata-updated" ||
+              event.type === "thread.archived" ||
+              event.type === "thread.unarchived" ||
+              event.type === "thread.deleted" ||
+              event.type === "thread.pull-request-synced" ||
+              event.type === "thread.issue-synced" ||
+              event.type === "thread.pull-request-link-updated" ||
+              event.type === "issue.work.requested" ||
+              event.type === "issue.work.cancelled" ||
+              event.type === "issue.queue.updated" ||
+              event.type === "repository.work.restored" ||
+              event.type === "runtime-request.updated" ||
+              event.type === "provider-thread.updated" ||
+              event.type === "subagent.updated" ||
+              (event.type === "turn-item.updated" &&
+                (event.payload.type === "secret_request" ||
+                  isBackgroundTurnItemType(event.payload.type))) ||
+              event.type === "run.created" ||
+              event.type === "run.updated"
+            );
+          }),
+          Stream.mapError(
+            () =>
+              new IssueWorkError({
+                code: "orchestration-error",
+                message: "Could not follow issue work changes.",
+              }),
+          ),
+        );
+      }).pipe(
         Stream.merge(issues.refreshes.pipe(Stream.drop(1))),
         // One command often commits ownership, thread and run events together.
         Stream.groupedWithin(128, "250 millis"),

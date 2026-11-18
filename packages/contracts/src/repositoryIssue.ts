@@ -126,8 +126,6 @@ export const RepositoryIssueSummary = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         ...IssueWorkStatus.fields,
-        /** An ordinary issue link, removable without altering managed work or PRs. */
-        canUnlink: Schema.optional(Schema.Boolean),
         title: Schema.String,
         /** Absent from older servers and threads without an assigned role. */
         role: Schema.optional(ThreadRole),

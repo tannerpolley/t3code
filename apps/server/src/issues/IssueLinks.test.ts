@@ -16,8 +16,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
@@ -32,6 +30,22 @@ import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const ref = { host: "github.com", repository: "owner/repo", number: 13 };
 const threadId = ThreadId.make("ordinary-builder");
+const issueLink = {
+  tracker: IssueTrackerKind.make("github"),
+  host: "github.com",
+  scope: "owner/repo",
+  key: "13",
+  projectId: ProjectId.make("project"),
+  url: "https://github.com/owner/repo/issues/13",
+  source: "agent" as const,
+  linkedAt: "2026-11-17T00:00:00.000Z",
+  displayKey: "#13",
+  title: "Roadmap",
+};
+const linked = <T extends object>(shell: T) => ({
+  ...shell,
+  issues: [issueLink],
+});
 function harness(initial: OrchestrationV2ThreadShell[]) {
   let shells = initial;
   let revision = 0;
@@ -123,75 +137,21 @@ function list(): RepositoryIssueListResult {
   };
 }
 
-it.effect(
-  "ordinary threads link multiple issues durably and idempotently, without a repository owner; unlink is scoped",
-  () => {
-    const h = harness([liveThreadShell(threadId), liveThreadShell(ThreadId.make("another"))]);
-    return Effect.gen(function* () {
-      const links = yield* IssueLinks.IssueLinks;
-      const sql = yield* SqlClient.SqlClient;
-      assert.equal(
-        (yield* links.link({ url: "https://github.com/Owner/Repo/issues/13" }, threadId)).changed,
-        true,
-      );
-      assert.equal((yield* links.link(ref, threadId)).changed, false);
-      assert.equal((yield* links.link({ ...ref, number: 14 }, threadId)).changed, true);
-      assert.equal(
-        (yield* links.link({ ...ref, threadId: ThreadId.make("another") }, threadId)).changed,
-        true,
-      );
-      assert.equal((yield* sql`SELECT * FROM issue_thread_links`).length, 3);
-      assert.isTrue(
-        (yield* links.enrich(list())).issues[0]?.liveWork?.find(
-          (work) => work.threadId === threadId,
-        )?.canUnlink,
-      );
-      assert.equal((yield* links.link(ref, threadId, true)).changed, true);
-      assert.equal((yield* links.link(ref, threadId, true)).changed, false);
-      assert.equal(yield* Stream.runHead(links.refreshes).pipe(Effect.map(Option.getOrThrow)), 4);
-      assert.deepEqual(
-        (yield* links.enrich(list())).issues[0]?.liveWork?.map((work) => work.threadId),
-        ["another"],
-      );
-      assert.deepEqual(
-        yield* sql`SELECT issue_number, thread_id FROM issue_thread_links ORDER BY issue_number`,
-        [
-          { issue_number: 13, thread_id: "another" },
-          { issue_number: 14, thread_id: threadId },
-        ],
-      );
-    }).pipe(Effect.provide(h.layer));
-  },
-);
-
-it.effect("counts an upstream thread.issues link as live work it cannot unlink", () => {
+it.effect("counts an upstream thread.issues link as live work, matching host and scope", () => {
   const linkedThread = {
     ...liveThreadShell(threadId),
-    issues: [
-      {
-        tracker: IssueTrackerKind.make("github"),
-        host: "GitHub.com",
-        scope: "Owner/Repo",
-        key: "13",
-        projectId: ProjectId.make("project"),
-        url: "https://github.com/owner/repo/issues/13",
-        source: "agent" as const,
-        linkedAt: "2026-11-17T00:00:00.000Z",
-        displayKey: "#13",
-        title: "Roadmap",
-      },
-    ],
+    issues: [{ ...issueLink, host: "GitHub.com", scope: "Owner/Repo" }],
   };
   const other = {
     ...liveThreadShell(ThreadId.make("other-repo")),
-    issues: [{ ...linkedThread.issues[0]!, scope: "owner/other" }],
+    issues: [{ ...issueLink, scope: "owner/other" }],
   };
   const h = harness([linkedThread, other]);
   return Effect.gen(function* () {
     const enriched = yield* (yield* IssueLinks.IssueLinks).enrich(list());
     assert.deepEqual(
-      enriched.issues[0]!.liveWork!.map(({ threadId, canUnlink }) => ({ threadId, canUnlink })),
-      [{ threadId, canUnlink: false }],
+      enriched.issues[0]!.liveWork!.map((work) => work.threadId),
+      [threadId],
     );
   }).pipe(Effect.provide(h.layer));
 });
@@ -211,7 +171,7 @@ it.effect(
         url: "https://github.com/owner/repo/issues/13",
       },
     };
-    const ordinary = liveThreadShell(threadId);
+    const ordinary = linked(liveThreadShell(threadId));
     const h = harness([managed, ordinary]);
     const layer = IssueRoadmap.layer.pipe(
       Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
@@ -235,7 +195,6 @@ it.effect(
       ),
     );
     return Effect.gen(function* () {
-      yield* (yield* IssueLinks.IssueLinks).link(ref, ordinary.id);
       const roadmap = yield* IssueRoadmap.IssueRoadmap;
       const pane = yield* roadmap.list({ ...ref, roadmap: true });
       const badge = yield* roadmap.statusBatch({ issues: [{ host: ref.host, nodeId: "I_13" }] });
@@ -333,38 +292,12 @@ it.effect("acquires the reader once for a multi-repository status batch", () =>
 );
 
 it.effect(
-  "rejects malformed or conflicting targets and unavailable threads before saving a link",
-  () => {
-    const h = harness([liveThreadShell(threadId)]);
-    return Effect.gen(function* () {
-      const links = yield* IssueLinks.IssueLinks;
-      for (const input of [
-        {},
-        { repository: "owner/repo", number: 0 },
-        { url: "https://github.com/owner/repo/pull/13" },
-        { url: "https://github.com/owner/repo/issues/13", number: 14 },
-        { url: "http://github.com/owner/repo/issues/13" },
-      ]) {
-        const result = yield* links.link(input, threadId).pipe(Effect.result);
-        assert.isTrue(Result.isFailure(result));
-        if (Result.isFailure(result)) assert.equal(result.failure.code, "invalid-request");
-      }
-      const missing = yield* links.link(ref, ThreadId.make("missing")).pipe(Effect.result);
-      assert.isTrue(Result.isFailure(missing));
-      if (Result.isFailure(missing)) assert.equal(missing.failure.code, "thread-not-found");
-      const sql = yield* SqlClient.SqlClient;
-      assert.deepEqual(yield* sql`SELECT * FROM issue_thread_links`, []);
-    }).pipe(Effect.provide(h.layer));
-  },
-);
-
-it.effect(
   "loads only explicitly linked, managed, closing-PR and descendant work, and refreshes live state",
   () => {
-    const root = {
+    const root = linked({
       ...liveThreadShell(threadId, { activeRunId: null }),
       status: "completed" as const,
-    };
+    });
     const child = {
       ...liveThreadShell(ThreadId.make("delegated")),
       role: "investigator" as const,
@@ -376,8 +309,9 @@ it.effect(
         relationshipToParent: "subagent" as const,
       },
     };
+    // A claim and its own link for one thread must not duplicate its indicator.
     const managed = {
-      ...liveThreadShell(ThreadId.make("managed")),
+      ...linked(liveThreadShell(ThreadId.make("managed"))),
       linkedIssue: {
         ...ref,
         repositoryId: "repo-id",
@@ -435,6 +369,7 @@ it.effect(
       ...managed,
       id: ThreadId.make("other-repo"),
       linkedIssue: { ...managed.linkedIssue, repository: "other/repo" },
+      issues: [],
     };
     const modern = {
       ...pr,
@@ -488,8 +423,6 @@ it.effect(
     ]);
     return Effect.gen(function* () {
       const links = yield* IssueLinks.IssueLinks;
-      yield* links.link(ref, threadId);
-      yield* links.link(ref, managed.id); // Two sources for one thread must not duplicate its indicator.
       const input = list();
       const withPr = {
         ...input,
@@ -524,10 +457,6 @@ it.effect(
         ],
       );
       const work = first.issues[0]!.liveWork!;
-      assert.deepEqual(
-        work.filter((item) => item.canUnlink).map((item) => item.threadId),
-        [managed.id, threadId],
-      );
       assert.deepEqual(
         work.map((item) => [item.threadId, item.status]),
         [
@@ -571,7 +500,11 @@ it.effect(
         (yield* links.enrich(withPr)).issues[0]!.liveWork?.map((item) => item.status),
         ["idle", "idle"],
       );
-      yield* links.link(ref, threadId, true);
+      const { issues: _issues, ...unlinked } = root;
+      yield* (yield* SqlClient.SqlClient)`
+        UPDATE orchestration_v2_projection_threads SET payload_json = ${JSON.stringify(unlinked)}
+        WHERE thread_id = ${root.id}`;
+      h.setShells([unlinked, { ...child, status: "completed", activeRunId: null }]);
       assert.deepEqual((yield* links.enrich(withPr)).issues[0]!.liveWork, []);
     }).pipe(Effect.provide(h.layer));
   },
@@ -580,7 +513,7 @@ it.effect(
 it.effect("bounds cyclic descendant lineage without loading unrelated threads", () => {
   const childId = ThreadId.make("cycle-child");
   const root = {
-    ...liveThreadShell(threadId),
+    ...linked(liveThreadShell(threadId)),
     lineage: {
       rootThreadId: threadId,
       parentThreadId: childId,
@@ -598,7 +531,6 @@ it.effect("bounds cyclic descendant lineage without loading unrelated threads", 
   const h = harness([root, child, liveThreadShell(ThreadId.make("unrelated"))]);
   return Effect.gen(function* () {
     const links = yield* IssueLinks.IssueLinks;
-    yield* links.link(ref, threadId);
     h.lookups.length = 0;
     const result = yield* links.enrich(list());
     assert.deepEqual(h.lookups, [childId, threadId]);
@@ -754,7 +686,7 @@ it.effect("returns closing and linked-thread PRs with state, deduplicating the s
     },
   };
   const thread = {
-    ...liveThreadShell(threadId),
+    ...linked(liveThreadShell(threadId)),
     pullRequests: [
       pr,
       {
@@ -769,7 +701,6 @@ it.effect("returns closing and linked-thread PRs with state, deduplicating the s
   const h = harness([thread]);
   return Effect.gen(function* () {
     const links = yield* IssueLinks.IssueLinks;
-    yield* links.link(ref, threadId);
     const input = list();
     const result = yield* links.enrich({
       ...input,
@@ -866,17 +797,15 @@ it.effect(
         const links = yield* IssueLinks.IssueLinks;
         yield* sql`CREATE TABLE contention_probe (value INTEGER)`;
         for (let index = 0; index < 100; index++) {
-          const thread = idleThreadProjection(
-            liveThreadShell(ThreadId.make(`batch-${index}`)),
-          ).thread;
+          const thread = linked(
+            idleThreadProjection(liveThreadShell(ThreadId.make(`batch-${index}`))).thread,
+          );
           yield* sql`
         INSERT INTO orchestration_v2_projection_threads(
           thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
           created_at, updated_at, archived_at, deleted_at, payload_json
         ) VALUES (${thread.id}, ${thread.projectId}, ${thread.title}, 'codex', 'full-access', 'default',
           '2026-10-13', '2026-10-13', NULL, NULL, ${JSON.stringify(thread)})`;
-          yield* sql`INSERT INTO issue_thread_links(host, repository, issue_number, thread_id)
-        VALUES (${ref.host}, ${ref.repository}, ${ref.number}, ${thread.id})`;
         }
         const other = yield* Effect.acquireRelease(
           Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
@@ -956,11 +885,10 @@ it.effect(
 );
 
 it.effect("memoizes unchanged work and invalidates it on the next projected thread change", () => {
-  const thread = liveThreadShell(threadId);
+  const thread = linked(liveThreadShell(threadId));
   const h = harness([thread]);
   return Effect.gen(function* () {
     const links = yield* IssueLinks.IssueLinks;
-    yield* links.link(ref, threadId);
     h.lookups.length = 0;
     const first = yield* links.enrich(list());
     const reads = h.lookups.length;

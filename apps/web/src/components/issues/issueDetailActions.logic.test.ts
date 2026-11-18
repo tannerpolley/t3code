@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
-  canUnlinkIssue,
   issueReferenceCopyTarget,
   filterIssueComments,
   issueComposerPrompt,
@@ -17,39 +16,6 @@ const issue = {
 };
 
 describe("issue menu", () => {
-  it("unlinks only ordinary links belonging to this thread on this environment", () => {
-    const summary = {
-      liveWork: [
-        {
-          threadId: threadRef.threadId,
-          title: "Thread",
-          branch: null,
-          worktreePath: null,
-          pullRequests: [],
-          status: "idle" as const,
-          canUnlink: true,
-        },
-      ],
-    };
-    expect(canUnlinkIssue(summary, "host", threadRef)).toBe(true);
-    expect(canUnlinkIssue(summary, "another-host", threadRef)).toBe(false);
-    expect(canUnlinkIssue(summary, "host", null)).toBe(false);
-    expect(
-      canUnlinkIssue(
-        { ...summary, liveWork: [{ ...summary.liveWork![0]!, canUnlink: false }] },
-        "host",
-        threadRef,
-      ),
-    ).toBe(false);
-    expect(
-      canUnlinkIssue(
-        { ...summary, liveWork: [{ ...summary.liveWork![0]!, threadId: ThreadId.make("other") }] },
-        "host",
-        threadRef,
-      ),
-    ).toBe(false);
-  });
-
   it("adds issue context for a question and preserves existing composer text", () => {
     const prompt = issueComposerPrompt("ask", issue);
     expect(prompt).toBe("#44: Match PR panes\n\nhttps://github.com/owner/repo/issues/44");

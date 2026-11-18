@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
+  IssueTrackerKind,
   MessageId,
   NodeId,
   RunId,
@@ -90,6 +91,24 @@ it.effect(
                 },
               }),
           ...(name === "archived" ? { archivedAt: now } : {}),
+          ...(name === "explicit"
+            ? {
+                issues: [
+                  {
+                    tracker: IssueTrackerKind.make("github"),
+                    host: "github.com",
+                    scope: "owner/repo",
+                    key: "13",
+                    projectId: liveThreadShell(id).projectId,
+                    url: "https://github.com/owner/repo/issues/13",
+                    source: "agent" as const,
+                    linkedAt: "2026-10-20T00:00:00Z",
+                    displayKey: "#13",
+                    title: "Issue",
+                  },
+                ],
+              }
+            : {}),
           ...(name === "inherited"
             ? {
                 lineage: {
@@ -277,7 +296,6 @@ it.effect(
           });
       }
       const links = yield* IssueLinks.IssueLinks;
-      yield* links.link(reference, ThreadId.make("explicit"));
       const input = {
         repository: reference,
         issues: [
@@ -310,7 +328,7 @@ it.effect(
       assert.deepEqual(first, expected);
       const work = first.issues[0]!.liveWork!;
       assert.equal(work.find((item) => item.threadId === "inherited")?.inherited, true);
-      assert.equal(work.find((item) => item.threadId === "explicit")?.canUnlink, true);
+      assert.equal(work.find((item) => item.threadId === "explicit")?.inherited, false);
       assert.equal(work.find((item) => item.threadId === "archived")?.status, "idle");
       assert.deepEqual(work.find((item) => item.threadId === "legacy")?.pullRequests, [pr.url]);
       assert.equal(first.issues[0]!.pullRequestCount, 1);

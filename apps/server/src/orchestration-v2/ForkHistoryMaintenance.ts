@@ -85,7 +85,6 @@ export const maintainForkHistory = Effect.fn("ForkHistoryMaintenance.run")(funct
     ["projection_threads", "thread_id"],
     ["projection_thread_pull_requests", "thread_id"],
     ["projection_thread_sessions", "thread_id"],
-    ["issue_thread_links", "thread_id"],
   ] as const;
 
   const drainBatches =

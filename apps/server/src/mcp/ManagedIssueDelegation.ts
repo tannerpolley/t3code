@@ -1,4 +1,5 @@
 import {
+  IssueTrackerKind,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpDelegateTaskResult,
@@ -9,7 +10,8 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
-import * as IssueLinks from "../issues/IssueLinks.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
+import * as ThreadIssueService from "../orchestration-v2/ThreadIssueService.ts";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import {
@@ -20,7 +22,8 @@ import {
 
 export const makeManagedIssueDelegation = Effect.gen(function* () {
   const issueWork = yield* Effect.serviceOption(IssueWorkService.IssueWorkService);
-  const issueLinks = yield* Effect.serviceOption(IssueLinks.IssueLinks);
+  const trackerIssues = yield* Effect.serviceOption(TrackerIssueService.IssueService);
+  const threadIssues = yield* Effect.serviceOption(ThreadIssueService.ThreadIssueService);
   const issueService = yield* Effect.serviceOption(IssueService.IssueService);
   const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const failure = (code: OrchestratorMcpFailure["code"], message: string) =>
@@ -37,7 +40,11 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
         ? parent.thread
         : yield* loadRoot(parent.thread.lineage.rootThreadId);
     const managed = requiresManagedIssueAdmission(input.role, parent.thread, root);
-    if (unmanaged && input.issue !== undefined && Option.isNone(issueLinks))
+    if (
+      unmanaged &&
+      input.issue !== undefined &&
+      (Option.isNone(trackerIssues) || Option.isNone(threadIssues))
+    )
       return yield* failure("orchestration_error", "Issue linking is unavailable on this server.");
     if (managed && input.issue === undefined)
       return yield* failure(
@@ -101,18 +108,42 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
         ),
       );
   });
-  // Linking happens after the task projection is committed, as in the caller.
-  const linkUnmanaged = Effect.fnUntraced(function* (
-    unmanaged: boolean,
-    issue: OrchestratorMcpDelegateTaskInput["issue"],
-    childThreadId: ThreadId | null,
-    parentThreadId: ThreadId,
-  ) {
-    if (unmanaged && issue !== undefined && childThreadId !== null && Option.isSome(issueLinks))
-      yield* issueLinks.value
-        .link({ ...issue, threadId: childThreadId }, parentThreadId)
-        .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
-  });
+  // Linking happens after the task projection is committed, as in the caller. Reading the issue
+  // names it for the thread's row, as upstream's link_issue does.
+  const linkUnmanaged = Effect.fnUntraced(
+    function* (
+      unmanaged: boolean,
+      issue: OrchestratorMcpDelegateTaskInput["issue"],
+      childThreadId: ThreadId | null,
+      parent: OrchestrationV2AppThread,
+    ) {
+      if (
+        !unmanaged ||
+        issue === undefined ||
+        childThreadId === null ||
+        Option.isNone(trackerIssues) ||
+        Option.isNone(threadIssues)
+      )
+        return;
+      const ref = {
+        projectId: parent.projectId,
+        tracker: IssueTrackerKind.make("github"),
+        host: (issue.host ?? "github.com").toLowerCase(),
+        scope: issue.repository,
+        key: String(issue.number),
+      };
+      const detail = yield* trackerIssues.value.detail(ref);
+      yield* threadIssues.value.link({
+        threadId: childThreadId,
+        ref,
+        url: detail.url,
+        displayKey: detail.displayKey,
+        title: detail.title,
+        source: "agent",
+      });
+    },
+    Effect.mapError((error) => failure("orchestration_error", error.message)),
+  );
   // The delegateTask span owns the response; pool policy belongs with admission.
   const withQueueNote = Effect.fnUntraced(function* (
     taskResult: OrchestratorMcpDelegateTaskResult,

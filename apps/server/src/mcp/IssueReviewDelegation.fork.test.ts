@@ -14,9 +14,8 @@ import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/sql/SqlClient";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import * as IssueLinks from "../issues/IssueLinks.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
+import * as ThreadIssueService from "../orchestration-v2/ThreadIssueService.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -52,15 +51,15 @@ function setup() {
   const dependencies = Layer.mergeAll(
     harness.layer,
     Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
-    IssueLinks.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          harness.layer,
-          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
-          ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
-        ),
-      ),
-    ),
+    ThreadIssueService.layer.pipe(Layer.provide(Layer.mergeAll(harness.layer, NodeCrypto.layer))),
+    Layer.mock(TrackerIssueService.IssueService)({
+      detail: (ref) =>
+        Effect.succeed({
+          url: `https://github.com/${ref.scope}/issues/${ref.key}`,
+          displayKey: `#${ref.key}`,
+          title: `Issue ${ref.key}`,
+        } as never),
+    }),
     Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
     Layer.mock(SecretRequests.SecretRequests)({}),
     Layer.mock(GitVcsDriver.GitVcsDriver)({
@@ -107,7 +106,6 @@ it.effect(
       const work = yield* IssueWorkService.IssueWorkService;
       const store = yield* IssueWorkStore.IssueWorkStore;
       const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
-      const sql = yield* SqlClient.SqlClient;
       const root = yield* createReviewRoot();
       const repository = { host: "github.com", repository: "tannerpolley/t3code" };
       yield* work.setWorkerLimit({
@@ -116,7 +114,33 @@ it.effect(
         expectedRevision: 1,
         clientRequestId: CommandId.make("limit"),
       });
-      yield* delegateReviewIssue(root, reviewIssue(1), "occupy-slot");
+      const claimed = yield* delegateReviewIssue(root, reviewIssue(1), "occupy-slot");
+      // The claim and its thread link commit in the one event that creates the worker.
+      const created = claimed.storedEvents.find((stored) => stored.event.type === "thread.created");
+      assert.equal(created?.event.type, "thread.created");
+      if (created?.event.type === "thread.created") {
+        assert.equal(created.event.payload.linkedIssue?.number, 1);
+        assert.deepEqual(
+          created.event.payload.issues?.map(({ tracker, host, scope, key, title, source }) => ({
+            tracker,
+            host,
+            scope,
+            key,
+            title,
+            source,
+          })),
+          [
+            {
+              tracker: "github",
+              host: "github.com",
+              scope: "tannerpolley/t3code",
+              key: "1",
+              title: "Issue 1",
+              source: "agent",
+            },
+          ],
+        );
+      }
       assert.equal(yield* store.slotsInUse(root), 1);
       const originalOwner = yield* store.issueOwner(reviewIssue(1));
       const scope = scopeFor(root);
@@ -142,9 +166,10 @@ it.effect(
           assert.isUndefined(child.runs[0]!.workspacePreparation);
           assert.equal(yield* store.slotsInUse(root), 1);
           assert.equal(yield* store.issueOwner(reviewIssue(1)), originalOwner);
-          const links =
-            yield* sql`SELECT thread_id FROM issue_thread_links WHERE thread_id = ${result.childThreadId}`;
-          assert.lengthOf(links, issue === undefined ? 0 : 1);
+          assert.deepEqual(
+            child.thread.issues?.map((link) => link.key) ?? [],
+            issue === undefined ? [] : ["1"],
+          );
         }
       }
       for (const issue of [undefined, reviewIssue(1)]) {
@@ -171,9 +196,10 @@ it.effect(
         assert.equal(yield* store.slotsInUse(root), 1);
         assert.equal(yield* store.readOnlySlotsInUse(root), 4);
         assert.equal(yield* store.issueOwner(reviewIssue(1)), originalOwner);
-        const links =
-          yield* sql`SELECT thread_id FROM issue_thread_links WHERE thread_id = ${result.childThreadId}`;
-        assert.lengthOf(links, issue === undefined ? 0 : 1);
+        assert.deepEqual(
+          child.thread.issues?.map((link) => link.key) ?? [],
+          issue === undefined ? [] : ["1"],
+        );
       }
       yield* work.queueIssue({
         ...repository,

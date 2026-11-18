@@ -177,7 +177,11 @@ import {
   makeIssueWorkDispatch,
 } from "./IssueWorkDispatch.ts";
 import { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
-import { makeIssueWorkCommands, type DelegatedTaskRequest } from "./IssueWorkCommands.ts";
+import {
+  claimFields,
+  makeIssueWorkCommands,
+  type DelegatedTaskRequest,
+} from "./IssueWorkCommands.ts";
 import { makeRepositoryWorkCommands } from "./RepositoryWorkCommands.ts";
 import {
   DispatchModeLimit,
@@ -3937,7 +3941,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projectId: command.projectId,
       title:
         command.linkedIssue === undefined ? command.title : issueThreadTitle(command.linkedIssue),
-      ...(command.linkedIssue === undefined ? {} : { linkedIssue: command.linkedIssue }),
+      ...claimFields(command.linkedIssue, command.projectId, now),
       ...(command.repositoryOrchestration === undefined
         ? {}
         : { repositoryOrchestration: command.repositoryOrchestration }),
@@ -9965,7 +9969,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           createdBy: request.createdBy,
           creationSource: request.creationSource,
         }),
-        ...issueWork.childIssueFields(request),
+        ...issueWork.childIssueFields(request, parentProjection.thread.projectId, now),
         runtimeMode: request.runtimeMode,
         interactionMode: request.interactionMode,
         ...issueWork.childWorkspaceFields(request),
