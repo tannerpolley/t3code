@@ -77,8 +77,6 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (legacyPr = true
     repository: input,
     viewer: null,
     fetchedAt: "2026-10-20T12:00:00Z",
-    body: "",
-    comments: [],
     linkedPullRequests: [],
     issue: {
       number: 1,

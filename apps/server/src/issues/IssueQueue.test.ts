@@ -76,11 +76,8 @@ const read = (number: number) => ({
 });
 const reads = Layer.mock(IssueService.IssueService)({
   resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-  detail: (input) =>
-    Effect.succeed({
-      issue: { ...issue(input.number), state: input.number === 99 ? "closed" : "open" },
-    } as never),
-  workRead: (input) => Effect.succeed(read(input.number)),
+  workRead: (input) =>
+    Effect.succeed({ ...read(input.number), state: input.number === 99 ? "closed" : "open" }),
   repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
 });
 const projectRepositoryIdentity = {
@@ -849,8 +846,6 @@ it.effect(
     const closed = new Set<number>();
     const refreshed = Layer.mock(IssueService.IssueService)({
       resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-      detail: (input) =>
-        Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
       workRead: (input) =>
         Effect.succeed({
           ...read(input.number),
@@ -913,8 +908,6 @@ it.effect.each([false, true])(
     const completedReads: number[] = [];
     const refreshed = Layer.mock(IssueService.IssueService)({
       resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-      detail: (input) =>
-        Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
       workRead: (input) =>
         Effect.sync(() => {
           if (closed) completedReads.push(input.number);
@@ -985,8 +978,6 @@ it.effect("an open notice completion is read once and stays in attention", () =>
     const completedReads: number[] = [];
     const issueReads = Layer.mock(IssueService.IssueService)({
       resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-      detail: (input) =>
-        Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
       workRead: (input) =>
         Effect.gen(function* () {
           if (finishing) {
@@ -1247,8 +1238,6 @@ it.effect("periodic reconciliation delivers on an idle repository despite refres
   const scheduler = Layer.succeed(Scheduler.Scheduler, { register });
   const issueReads = Layer.mock(IssueService.IssueService)({
     resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-    detail: (input) =>
-      Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
     workRead: (input) =>
       unavailable
         ? Effect.fail(
@@ -1353,8 +1342,6 @@ it.effect.each(["external", "bot", "listing"] as const)(
     const github = inboxService(
       {
         resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-        detail: (input) =>
-          Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
         workRead: (input) => Effect.succeed(read(input.number)),
       },
       (input) =>
@@ -1470,11 +1457,12 @@ it.effect.each([false, true])(
     let claimFirst: Effect.Effect<void> = Effect.void;
     const racingReads = Layer.mock(IssueService.IssueService)({
       resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-      detail: (input) =>
-        Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
       workRead: (input) =>
         Effect.gen(function* () {
           refreshed.push(input.number);
+          // Each issue's first read is queueIssue's open check; the race is the refresh after it.
+          const queued = refreshed.filter((number) => number === input.number).length === 1;
+          if (queued) return read(input.number);
           if (input.number === 1) {
             yield* claimFirst;
             if (failedRefresh)
@@ -1725,8 +1713,6 @@ it.effect.each([false, true])(
     const github = inboxService(
       {
         resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-        detail: (input) =>
-          Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
         workRead: (input) => Effect.succeed(read(input.number)),
         repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
       },

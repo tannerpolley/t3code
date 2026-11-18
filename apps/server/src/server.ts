@@ -881,7 +881,7 @@ const layerRouterServices = Layer.mergeAll(
     Layer.provide(ServerSecretStore.layer),
   ),
   ThreadWorkspaceService.layer,
-  IssueServerLayers.layerIssueRouterServices,
+  IssueServerLayers.layerIssueRouterServices.pipe(Layer.provide(layerIssueService)),
 );
 const layerRouterRequestContext = Layer.effectContext(
   Effect.context<Layer.Success<typeof layerRouterServices>>(),

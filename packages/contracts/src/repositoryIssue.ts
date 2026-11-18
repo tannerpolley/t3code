@@ -196,7 +196,6 @@ export const RepositoryIssueListInput = Schema.Struct({
   ...IssueReadOptions,
   ...IssueRepositoryRef.fields,
   state: Schema.optional(RepositoryIssueListState),
-  roadmap: Schema.optional(Schema.Boolean),
   cursor: Schema.optional(Cursor),
 });
 export type RepositoryIssueListInput = typeof RepositoryIssueListInput.Type;
@@ -243,7 +242,6 @@ export type IssueRepositoriesResult = typeof IssueRepositoriesResult.Type;
 export const IssueDetailInput = Schema.Struct({
   ...IssueReadOptions,
   ...RepositoryIssueRef.fields,
-  expectedAccountId: Schema.optional(TrimmedNonEmptyString),
 });
 export type IssueDetailInput = typeof IssueDetailInput.Type;
 
@@ -262,14 +260,6 @@ export const IssueWorkRead = Schema.Struct({
 });
 export type IssueWorkRead = typeof IssueWorkRead.Type;
 
-export const RepositoryIssueComment = Schema.Struct({
-  author: Schema.NullOr(RepositoryIssueActor),
-  body: Schema.String,
-  createdAt: IsoDateTime,
-  url: IssueUrl,
-});
-export type RepositoryIssueComment = typeof RepositoryIssueComment.Type;
-
 /** A pull request that closes the issue or mentions it in its timeline. */
 export const RepositoryIssueLinkedPullRequest = Schema.Struct({
   /** `owner/name`, which can differ from the issue's repository. */
@@ -286,14 +276,6 @@ export type RepositoryIssueLinkedPullRequest = typeof RepositoryIssueLinkedPullR
 export const IssueDetailResult = Schema.Struct({
   ...IssueContext,
   issue: RepositoryIssueSummary,
-  body: Schema.String,
-  /**
-   * The most recent comments, oldest first. Fewer than `issue.commentCount` means older ones
-   * were left out.
-   */
-  comments: Schema.Array(RepositoryIssueComment).pipe(
-    Schema.withDecodingDefaultKey(Effect.succeed([])),
-  ),
   linkedPullRequests: Schema.Array(RepositoryIssueLinkedPullRequest).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),

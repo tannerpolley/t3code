@@ -65,7 +65,6 @@ export const ISSUE_WS_METHODS = {
   issuesStatusBatch: "issues.statusBatch",
   issueWorkSetState: "issueWork.setState",
   issuesCleanup: "issues.cleanup",
-  issuesSubscribeLinkRefreshes: "issues.subscribeLinkRefreshes",
   issuesStart: "issues.start",
   issuesQueue: "issues.queue",
   issuesUnqueue: "issues.unqueue",
@@ -103,13 +102,6 @@ const IssueRpcError = Schema.Union([
 const WsIssuesRepositoriesRpc = Rpc.make(ISSUE_WS_METHODS.issuesRepositories, {
   payload: Schema.Struct({}),
   success: IssueRepositoriesResult,
-  error: IssueRpcError,
-});
-
-const WsIssuesSubscribeLinkRefreshesRpc = Rpc.make(ISSUE_WS_METHODS.issuesSubscribeLinkRefreshes, {
-  payload: Schema.Struct({}),
-  success: Schema.Number,
-  stream: true,
   error: IssueRpcError,
 });
 
@@ -285,7 +277,6 @@ export const issueRpcs = [
   WsIssuesStatusBatchRpc,
   WsIssuesSetStateRpc,
   WsIssuesCleanupRpc,
-  WsIssuesSubscribeLinkRefreshesRpc,
   WsIssuesStartRpc,
   WsIssuesQueueRpc,
   WsIssuesUnqueueRpc,

@@ -1,29 +1,19 @@
-import * as Clock from "effect/Clock";
 import * as Exit from "effect/Exit";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Stream from "effect/Stream";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as RcMap from "effect/RcMap";
-import * as Schema from "effect/Schema";
 
 import {
   IssueMilestone,
   IssueReadError,
-  type IssueDetailResult as IssueDetailResultType,
   type IssueStatusBatchResult,
-  type RepositoryIssueListInput as IssueListInputType,
-  type RepositoryIssueListResult as IssueListResultType,
+  type IssueRepositoryRef,
   type RepositoryIssueListState,
   type IssueHostCapabilities,
   type RepositoryIssueRef,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { IssueListPageCache } from "./IssueListPageCache.ts";
 import * as IssueGitHubHost from "./IssueGitHubHost.ts";
@@ -36,26 +26,8 @@ import {
   type PageResponse,
   type ListMetadata,
 } from "./IssueHost.ts";
-import {
-  LIVE_ISSUE_REFRESH_MS,
-  RepositoryIssueListResult,
-  TrimmedNonEmptyString,
-} from "@t3tools/contracts";
-const MAX_PAGE = 1_000_000;
-const CURSOR_MAX_LENGTH = 4_096;
-const Page = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_PAGE }));
-const sameIssueList = Schema.toEquivalence(RepositoryIssueListResult);
+import { LIVE_ISSUE_REFRESH_MS } from "@t3tools/contracts";
 type IssueOperation = IssueReadError["operation"];
-const IssueCursorSchema = Schema.Struct({
-  v: Schema.Literal(2),
-  state: Schema.Literals(["open", "all"]),
-  host: TrimmedNonEmptyString,
-  repository: TrimmedNonEmptyString,
-  accountId: TrimmedNonEmptyString,
-  issuePage: Schema.NullOr(Page),
-  milestonePage: Schema.NullOr(Page),
-});
-type IssueCursor = Schema.Schema.Type<typeof IssueCursorSchema>;
 const issueListEndpoint = (
   _scope: IssueRepositoryScope,
   state: RepositoryIssueListState,
@@ -117,21 +89,6 @@ function safeRepository(host: string, value: string): string | null {
   return repository !== null && repository.split("/").length === 2 ? repository : null;
 }
 
-const decodeIssueCursor = Schema.decodeUnknownOption(IssueCursorSchema);
-function decodeCursor(raw: string): IssueCursor | null {
-  if (raw.length === 0 || raw.length > CURSOR_MAX_LENGTH) return null;
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    return Option.getOrNull(decodeIssueCursor(parsed));
-  } catch {
-    return null;
-  }
-}
-
-function encodeCursor(cursor: IssueCursor): string {
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
-}
-
 export class IssueService extends Context.Service<
   IssueService,
   Omit<
@@ -140,7 +97,6 @@ export class IssueService extends Context.Service<
     | "listIssuePage"
     | "listMilestonePage"
     | "listMetadata"
-    | "detail"
     | "statuses"
     | "closeIssuesFixedBy"
     | "capabilities"
@@ -172,13 +128,19 @@ export class IssueService extends Context.Service<
     readonly statusBatch: (
       input: import("@t3tools/contracts").IssueStatusBatchInput,
     ) => ReturnType<IssueHost["statuses"]>;
-    readonly detail: (
-      input: import("@t3tools/contracts").IssueDetailInput,
-    ) => Effect.Effect<IssueDetailResultType, IssueReadError>;
-    readonly refreshes: Stream.Stream<number>;
-    readonly list: (
-      input: IssueListInputType,
-    ) => Effect.Effect<IssueListResultType, IssueReadError>;
+    /** One page of the repository's milestones, a conditional read that is free when unchanged. */
+    readonly milestones: (
+      input: IssueRepositoryRef & {
+        readonly state: RepositoryIssueListState;
+        readonly page: number;
+      },
+    ) => Effect.Effect<PageResult<IssueMilestone>, IssueReadError>;
+    /** The roadmap facts upstream's issue rows lack, for the given issues. Never fails. */
+    readonly overlay: (
+      input: IssueRepositoryRef & { readonly numbers: ReadonlyArray<number> },
+    ) => Effect.Effect<ListMetadata>;
+    /** Advances after a write through this service or new activity read for the repository. */
+    readonly revision: (input: IssueRepositoryRef) => Effect.Effect<number>;
   }
 >()("t3/issues/IssueService") {}
 /** Per-key reads kept for `ttlMs` after a success; failures are not kept. */
@@ -201,8 +163,6 @@ export const makeLiveReadCache = <A>(ttlMs = LIVE_ISSUE_REFRESH_MS) => {
 };
 export const make = Effect.fn("IssueService.make")(function* () {
   const homeDirectory = yield* HostProcess.HomeDirectory;
-  const serviceScope = yield* Effect.scope;
-  const refreshes = yield* SubscriptionRef.make(0);
   const repositoryGenerations = new Map<string, number>();
   const repositoryKey = (scope: IssueRepositoryScope) =>
     JSON.stringify([scope.host, scope.repository]);
@@ -213,7 +173,6 @@ export const make = Effect.fn("IssueService.make")(function* () {
   };
   const makePageCaches = () => ({
     issues: new IssueListPageCache<IssuePageResult>(),
-    refreshing: new Set<string>(),
     milestones: new IssueListPageCache<PageResult<IssueMilestone>>(),
   });
   // List subscriptions have no server-side lifetime signal. Release a repository after five
@@ -233,7 +192,6 @@ export const make = Effect.fn("IssueService.make")(function* () {
 
   const liveStatuses =
     makeLiveReadCache<ReadonlyArray<IssueStatusBatchResult[number] & RepositoryIssueRef>>();
-  const liveDetails = makeLiveReadCache<IssueDetailResultType>();
 
   const resolveScope = Effect.fn("IssueService.resolveScope")(function* (
     operation: IssueOperation,
@@ -326,6 +284,23 @@ export const make = Effect.fn("IssueService.make")(function* () {
       }).pipe(Effect.scoped),
     );
   });
+  const milestones: IssueService["Service"]["milestones"] = Effect.fn("IssueService.milestones")(
+    function* (input) {
+      const scope = yield* resolveScope("list", input);
+      return yield* github.withIdentity(scope, "list", (identity) =>
+        Effect.gen(function* () {
+          const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
+          const result = yield* readMilestonePage(scope, pages, input.state, input.page);
+          pages.milestones.set(
+            milestoneListEndpoint(scope, input.state, input.page),
+            result.etag,
+            result,
+          );
+          return result;
+        }).pipe(Effect.scoped),
+      );
+    },
+  );
   const afterWrite = Effect.fn("IssueService.afterWrite")(function* <A>(
     input: { readonly host: string; readonly repository: string },
     write: Effect.Effect<A, IssueReadError>,
@@ -335,177 +310,6 @@ export const make = Effect.fn("IssueService.make")(function* () {
     advanceRepositoryGeneration(scope);
     return result;
   });
-  const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
-    const scope = yield* resolveScope("list", input);
-    const state = input.state ?? "open";
-    const cursor = input.cursor === undefined ? null : decodeCursor(input.cursor);
-    if (
-      input.cursor !== undefined &&
-      (cursor === null ||
-        cursor.state !== state ||
-        cursor.host !== scope.host ||
-        cursor.repository !== scope.repository)
-    ) {
-      return yield* readError(
-        "list",
-        "invalid-cursor",
-        "The issue cursor is invalid for this repository.",
-      );
-    }
-    return yield* github.withIdentity(
-      scope,
-      "list",
-      (identity): Effect.Effect<IssueListResultType, IssueReadError> =>
-        Effect.gen(function* () {
-          if (cursor !== null && cursor.accountId !== identity.accountId) {
-            return yield* readError(
-              "list",
-              "invalid-cursor",
-              "The issue cursor is invalid for this account.",
-            );
-          }
-          const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
-          if (input.refresh === true) advanceRepositoryGeneration(scope);
-          const generation = repositoryGeneration(scope);
-          const issuePage = cursor === null ? 1 : cursor.issuePage;
-          const milestonePage = cursor === null ? 1 : cursor.milestonePage;
-          const issueEndpoint =
-            issuePage === null ? null : issueListEndpoint(scope, state, issuePage);
-          const milestoneEndpoint =
-            milestonePage === null ? null : milestoneListEndpoint(scope, state, milestonePage);
-          const mode = input.roadmap === true ? "roadmap" : "projects";
-          const cachedIssues =
-            issueEndpoint === null ? undefined : pages.issues.get(issueEndpoint)?.page;
-          const cachedMilestones =
-            milestoneEndpoint === null ? undefined : pages.milestones.get(milestoneEndpoint)?.page;
-          const cachedMetadata = issuePage === null ? new Map() : cachedIssues?.metadata?.[mode];
-          const assemble = Effect.fn("IssueService.assembleList")(function* (
-            issueResult: IssuePageResult,
-            milestoneResult: PageResult<IssueMilestone>,
-            projects: ListMetadata,
-            fetchedAt?: string,
-          ) {
-            const nextCursor =
-              issueResult.nextPage === null && milestoneResult.nextPage === null
-                ? null
-                : encodeCursor({
-                    v: 2,
-                    state,
-                    host: scope.host,
-                    repository: scope.repository,
-                    accountId: identity.accountId,
-                    issuePage: issueResult.nextPage,
-                    milestonePage: milestoneResult.nextPage,
-                  });
-            return {
-              repository: { host: scope.host, repository: scope.repository },
-              viewer: { accountId: identity.accountId, login: identity.viewer },
-              fetchedAt: fetchedAt ?? DateTime.formatIso(yield* DateTime.now),
-              issues: issueResult.items.map((issue) => ({
-                ...issue,
-                ...projects.get(issue.number),
-                projects: projects.get(issue.number)?.projects ?? [],
-              })),
-              milestones: milestoneResult.items,
-              nextCursor,
-              issuesComplete: issueResult.nextPage === null,
-              milestonesComplete: milestoneResult.nextPage === null,
-            } satisfies IssueListResultType;
-          });
-          const read = Effect.gen(function* () {
-            const issueRead = yield* (
-              issuePage === null
-                ? Effect.succeed<IssuePageResult>({ items: [], nextPage: null })
-                : readIssuePage(scope, pages, state, issuePage)
-            ).pipe(Effect.forkChild);
-            const milestoneRead = yield* (
-              milestonePage === null
-                ? Effect.succeed<PageResult<IssueMilestone>>({ items: [], nextPage: null })
-                : readMilestonePage(scope, pages, state, milestonePage)
-            ).pipe(Effect.forkChild);
-            const issueResult = yield* Fiber.join(issueRead);
-            const [milestoneResult, projects] = yield* Effect.all(
-              [
-                Fiber.join(milestoneRead),
-                github.listMetadata(
-                  scope,
-                  issueResult.items.map((issue) => issue.number),
-                  input.roadmap === true,
-                ),
-              ],
-              { concurrency: "unbounded" },
-            );
-            const result = yield* assemble(issueResult, milestoneResult, projects);
-            // Commit only a complete read, so a failed refresh keeps the last good page.
-            if (generation !== repositoryGeneration(scope)) return result;
-            if (issueEndpoint !== null)
-              pages.issues.set(issueEndpoint, issueResult.etag, {
-                ...issueResult,
-                generation,
-                fetchedAt: result.fetchedAt,
-                metadata: {
-                  ...(pages.issues.get(issueEndpoint)?.page.generation === generation
-                    ? pages.issues.get(issueEndpoint)?.page.metadata
-                    : undefined),
-                  [mode]: projects,
-                },
-              });
-            if (milestoneEndpoint !== null)
-              pages.milestones.set(milestoneEndpoint, milestoneResult.etag, {
-                ...milestoneResult,
-                generation,
-                fetchedAt: result.fetchedAt,
-              });
-            return result;
-          });
-          if (
-            (issuePage !== null && cachedIssues?.generation !== generation) ||
-            (milestonePage !== null && cachedMilestones?.generation !== generation) ||
-            cachedMetadata === undefined
-          ) {
-            return yield* read;
-          }
-          const cached = yield* assemble(
-            cachedIssues ?? { items: [], nextPage: null },
-            cachedMilestones ?? { items: [], nextPage: null },
-            cachedMetadata,
-            cachedIssues?.fetchedAt ?? cachedMilestones?.fetchedAt,
-          );
-          if (
-            input.refresh === false &&
-            (yield* Clock.currentTimeMillis) -
-              DateTime.toEpochMillis(DateTime.makeUnsafe(cached.fetchedAt)) <
-              LIVE_ISSUE_REFRESH_MS
-          )
-            return cached;
-          const refreshKey = `${generation}:${state}:${issuePage}:${milestonePage}:${mode}`;
-          if (!pages.refreshing.has(refreshKey)) {
-            pages.refreshing.add(refreshKey);
-            yield* Effect.gen(function* () {
-              // Hold the repository lease until refresh completes, beyond this RPC's scope.
-              yield* repositoryPages(scope, identity.credentialFingerprint);
-              const fresh = yield* read;
-              if (
-                generation === repositoryGeneration(scope) &&
-                !sameIssueList(cached, { ...fresh, fetchedAt: cached.fetchedAt })
-              ) {
-                yield* SubscriptionRef.update(refreshes, (revision) => revision + 1);
-              }
-            }).pipe(
-              Effect.scoped,
-              Effect.provideService(SourceControlRateLimit.Interactive, false),
-              Effect.catch((error) =>
-                Effect.logWarning("Could not refresh cached issue list", error),
-              ),
-              Effect.ensuring(Effect.sync(() => pages.refreshing.delete(refreshKey))),
-              Effect.forkIn(serviceScope),
-            );
-          }
-          return cached;
-        }).pipe(Effect.scoped),
-    );
-  });
-
   const statusBatch: IssueService["Service"]["statusBatch"] = Effect.fn("IssueService.statusBatch")(
     function* (input) {
       const byHost = new Map<string, Set<string>>();
@@ -554,30 +358,6 @@ export const make = Effect.fn("IssueService.make")(function* () {
     },
   );
 
-  const detail: IssueService["Service"]["detail"] = Effect.fn("IssueService.detail")(
-    function* (input) {
-      const scope = yield* resolveScope("detail", input);
-      return yield* github.withIdentity(scope, "detail", (identity) =>
-        github
-          .detail(input, identity)
-          .pipe((read) =>
-            liveDetails(
-              JSON.stringify([
-                scope.host,
-                scope.repository,
-                input.number,
-                input.expectedAccountId,
-                identity.accountId,
-                identity.credentialFingerprint,
-                repositoryGeneration(scope),
-              ]),
-              read,
-              input.refresh,
-            ),
-          ),
-      );
-    },
-  );
   return IssueService.of({
     canonicalHost: Effect.fn("IssueService.canonicalHost")((host) => Effect.succeed(host)),
     capabilities: Effect.fn("IssueService.capabilities")((_host) =>
@@ -587,8 +367,16 @@ export const make = Effect.fn("IssueService.make")(function* () {
       const read = github.pullRequest;
       return read === undefined ? null : yield* read(input);
     }),
-    refreshes: SubscriptionRef.changes(refreshes),
-    list,
+    milestones,
+    overlay: Effect.fn("IssueService.overlay")(function* (input) {
+      const scope = yield* resolveScope("list", input).pipe(Effect.option);
+      if (scope._tag === "None") return new Map();
+      return yield* github.listMetadata(scope.value, input.numbers);
+    }),
+    revision: Effect.fn("IssueService.revision")(function* (input) {
+      const scope = yield* resolveScope("list", input).pipe(Effect.option);
+      return scope._tag === "None" ? 0 : repositoryGeneration(scope.value);
+    }),
     readChangeState: Effect.fn("IssueService.readChangeState")((input) =>
       github.readChangeState(input),
     ),
@@ -611,7 +399,6 @@ export const make = Effect.fn("IssueService.make")(function* () {
         : undefined;
       return close === undefined ? Effect.void : afterWrite(pullRequest, close(pullRequest));
     }),
-    detail,
     workRead: Effect.fn("IssueService.workRead")((input) => github.workRead(input)),
     milestoneIssues,
     repositoryIdentity: Effect.fn("IssueService.repositoryIdentity")((input) =>
@@ -620,9 +407,18 @@ export const make = Effect.fn("IssueService.make")(function* () {
     resolveLinkedIssue: Effect.fn("IssueService.resolveLinkedIssue")((input) =>
       github.resolveLinkedIssue(input),
     ),
-    activitySince: Effect.fn("IssueService.activitySince")((input, ...args) =>
-      github.activitySince(input, ...args),
-    ),
+    activitySince: Effect.fn("IssueService.activitySince")(function* (input, cursors) {
+      const activity = yield* github.activitySince(input, cursors);
+      if (
+        activity.issues.items.length > 0 ||
+        activity.comments.items.length > 0 ||
+        activity.stateChanges.items.some((event) => event.id > cursors.eventsAfter)
+      ) {
+        const scope = yield* resolveScope("list", input);
+        advanceRepositoryGeneration(scope);
+      }
+      return activity;
+    }),
     listComments: Effect.fn("IssueService.listComments")((input, ...args) =>
       github.listComments(input, ...args),
     ),

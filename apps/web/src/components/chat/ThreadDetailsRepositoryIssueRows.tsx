@@ -90,13 +90,12 @@ function IssueRows({
   const open = !collapsed;
   const state = issueStateFilter(preferences);
   const result = useAtomValue(
-    repositoryIssueEnvironment.liveList({
+    repositoryIssueEnvironment.list({
       environmentId,
       input: {
         host,
         repository,
         state: state === "all" || state === "closed" ? "all" : "open",
-        roadmap: true,
       },
     }),
   );

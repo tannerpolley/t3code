@@ -277,7 +277,6 @@ export function IssueBrowser({
           host: target.host,
           repository: target.repository,
           state: stateFilter === "open" ? ("open" as const) : ("all" as const),
-          roadmap: true,
         },
       })))();
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});

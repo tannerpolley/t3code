@@ -1,37 +1,138 @@
 import {
-  backgroundWorkHoldsCompletion,
-  isBackgroundTurnItemType,
-  pendingBackgroundTurnItems,
-} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import {
+  IssueReadError,
+  TrimmedNonEmptyString,
+  type IssueActor,
   type IssueDetailInput,
   type IssueDetailResult,
-  type IssueReadError,
-  IssueWorkError,
-  type RepositoryIssueListInput,
-  type RepositoryIssueListResult,
+  type IssueError,
+  type IssueMilestone,
+  type IssueRepositoryRef,
   type IssueStatusBatchInput,
   type IssueStatusBatchResult,
+  type IssueSummary,
+  type RepositoryIssueListInput,
+  type RepositoryIssueListResult,
+  type RepositoryIssueSummary,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import * as IssueService from "./IssueService.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
+import type { ListMetadata } from "./IssueHost.ts";
 import * as IssueLinks from "./IssueLinks.ts";
+import * as IssueService from "./IssueService.ts";
 
-/** Combines the GitHub list and local work in one existing RPC and refresh cadence. */
+/** Rows per upstream list slice; GitHub search answers at most 100. */
+const PAGE_ROWS = 100;
+/**
+ * Upstream's list is a paid search, so rows are reused until a write or inbox activity advances
+ * the repository's revision. ponytail: the age bound covers repositories the inbox does not watch.
+ */
+const ROWS_MAX_AGE_MS = 5 * 60_000;
+
+const Position = Schema.Struct({
+  issues: Schema.NullOr(TrimmedNonEmptyString),
+  milestones: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+type Position = typeof Position.Type;
+const decodePosition = Schema.decodeUnknownOption(Schema.fromJsonString(Position));
+const encodeCursor = (position: Position) =>
+  Buffer.from(JSON.stringify(position), "utf8").toString("base64url");
+
+const readError = (
+  operation: IssueReadError["operation"],
+  code: IssueReadError["code"],
+  message: string,
+  retryAt?: number,
+) =>
+  new IssueReadError({
+    code,
+    operation,
+    message,
+    ...(retryAt === undefined ? {} : { retryAt }),
+  });
+
+const fromTrackerError =
+  (operation: IssueReadError["operation"]) =>
+  (error: IssueError): IssueReadError => {
+    if (error._tag === "IssueUnavailableError")
+      return readError(
+        operation,
+        error.reason === "tool-missing"
+          ? "missing-tool"
+          : error.reason === "unauthenticated"
+            ? "unauthenticated"
+            : "unsupported",
+        error.message,
+      );
+    return readError(
+      operation,
+      error.reason === "rate-limited"
+        ? "rate-limited"
+        : error.reason === "not-found"
+          ? "inaccessible"
+          : "upstream",
+      error.detail,
+      error.retryAt,
+    );
+  };
+
+const actor = (value: IssueActor) => ({
+  login: value.login,
+  avatarUrl:
+    value.avatarUrl !== null && /^https?:\/\/\S+$/iu.test(value.avatarUrl) ? value.avatarUrl : null,
+});
+
+/** One upstream row with the fork's facts for it: relationships, milestone, projects. */
+const roadmapRow = (
+  issue: IssueSummary,
+  number: number,
+  facts: ReturnType<ListMetadata["get"]>,
+  milestones: ReadonlyMap<number, IssueMilestone>,
+): RepositoryIssueSummary => {
+  const { milestone, ...overlay } = facts ?? {};
+  return {
+    number,
+    title: issue.title,
+    url: issue.url,
+    state: issue.state.category,
+    // GitHub's REST spelling, which the work states and the done details read.
+    stateReason: issue.state.closeReason?.replaceAll("-", "_") ?? null,
+    author: issue.author === null ? null : actor(issue.author),
+    assignees: issue.assignees.map(actor),
+    labels: issue.labels.map((label) => ({
+      name: label.name,
+      color: label.color !== null && /^[0-9a-f]{6}$/iu.test(label.color) ? label.color : null,
+    })),
+    milestone: milestone == null ? null : (milestones.get(milestone.number) ?? milestone),
+    createdAt: issue.createdAt,
+    updatedAt: issue.updatedAt,
+    closedAt: issue.closedAt,
+    commentCount: issue.commentCount,
+    projects: [],
+    ...overlay,
+  };
+};
+
+const issueNumber = (key: string) => {
+  const number = Number(key);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+};
+
+/** Upstream's issue rows with the fork's overlay: relationships, milestones and live work. */
 export class IssueRoadmap extends Context.Service<
   IssueRoadmap,
   {
-    readonly linkRefreshes: Stream.Stream<number, IssueWorkError>;
     readonly list: (
       input: RepositoryIssueListInput,
     ) => Effect.Effect<RepositoryIssueListResult, IssueReadError>;
-    /** The issue with the same local work its list row carries. */
+    /** The issue with the same overlay its list row carries. */
     readonly detail: (input: IssueDetailInput) => Effect.Effect<IssueDetailResult, IssueReadError>;
     readonly statusBatch: (
       input: IssueStatusBatchInput,
@@ -42,92 +143,147 @@ export class IssueRoadmap extends Context.Service<
 export const layer = Layer.effect(
   IssueRoadmap,
   Effect.gen(function* () {
+    const trackerIssues = yield* TrackerIssueService.IssueService;
     const issues = yield* IssueService.IssueService;
     const links = yield* IssueLinks.IssueLinks;
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
     const sql = yield* SqlClient.SqlClient;
-    return IssueRoadmap.of({
-      linkRefreshes: Stream.suspend(() => {
-        const workStates = new Map<string, string>();
-        return orchestrator.streamDomainEvents.pipe(
-          Stream.filter((event) => {
-            const state: readonly [string, string] | undefined =
-              event.type === "provider-thread.updated"
-                ? [
-                    `provider:${event.payload.id}`,
-                    String(
-                      backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? []),
-                    ),
-                  ]
-                : event.type === "subagent.updated"
-                  ? [
-                      `subagent:${event.payload.id}`,
-                      `${event.payload.status}:${event.payload.childThreadId ?? ""}`,
-                    ]
-                  : event.type === "runtime-request.updated"
-                    ? [
-                        `request:${event.payload.id}`,
-                        `${event.payload.kind}:${event.payload.status}:${event.payload.responseCapability.type}`,
-                      ]
-                    : event.type === "run.created" || event.type === "run.updated"
-                      ? [
-                          `run:${event.payload.id}`,
-                          `${event.payload.status}:${event.payload.queueHeld === true}`,
-                        ]
-                      : event.type === "turn-item.updated" &&
-                          isBackgroundTurnItemType(event.payload.type)
-                        ? [
-                            `item:${event.payload.id}`,
-                            String(
-                              pendingBackgroundTurnItems({ turnItems: [event.payload] }).length > 0,
-                            ),
-                          ]
-                        : undefined;
-            if (state !== undefined) {
-              const [key, value] = state;
-              if (workStates.get(key) === value) return false;
-              workStates.set(key, value);
-            }
-            return (
-              event.type === "thread.created" ||
-              event.type === "thread.metadata-updated" ||
-              event.type === "thread.archived" ||
-              event.type === "thread.unarchived" ||
-              event.type === "thread.deleted" ||
-              event.type === "thread.pull-request-synced" ||
-              event.type === "thread.issue-synced" ||
-              event.type === "thread.pull-request-link-updated" ||
-              event.type === "issue.work.requested" ||
-              event.type === "issue.work.cancelled" ||
-              event.type === "issue.queue.updated" ||
-              event.type === "repository.work.restored" ||
-              event.type === "runtime-request.updated" ||
-              event.type === "provider-thread.updated" ||
-              event.type === "subagent.updated" ||
-              (event.type === "turn-item.updated" &&
-                (event.payload.type === "secret_request" ||
-                  isBackgroundTurnItemType(event.payload.type))) ||
-              event.type === "run.created" ||
-              event.type === "run.updated"
-            );
-          }),
-          Stream.mapError(
-            () =>
-              new IssueWorkError({
-                code: "orchestration-error",
-                message: "Could not follow issue work changes.",
-              }),
-          ),
+    const rowsCache = new Map<
+      string,
+      { readonly revision: number; readonly at: number; readonly list: RepositoryIssueListResult }
+    >();
+
+    const withLiveWork = (list: RepositoryIssueListResult) =>
+      links.enrich(list).pipe(
+        Effect.orElseSucceed(() => ({
+          ...list,
+          issues: list.issues.map(({ pullRequestRefs: _refs, ...issue }) => ({
+            ...issue,
+            liveWork: [],
+          })),
+        })),
+      );
+
+    const readRows = Effect.fn("IssueRoadmap.readRows")(function* (
+      input: IssueRepositoryRef & { readonly state: "open" | "all" },
+      position: Position | null,
+    ) {
+      const url = `https://${input.host}/${input.repository}/issues/1`;
+      // Upstream reads only a project's own scope; a repository without a project has no rows.
+      const scope = yield* trackerIssues
+        .resolveUrl(url)
+        .pipe(Effect.mapError(fromTrackerError("list")));
+      if (!scope.writable)
+        return yield* readError(
+          "list",
+          "scope-unavailable",
+          "Add this repository as a project to see its issues.",
         );
-      }).pipe(
-        Stream.merge(issues.refreshes.pipe(Stream.drop(1))),
-        // One command often commits ownership, thread and run events together.
-        Stream.groupedWithin(128, "250 millis"),
-        Stream.scan(
-          () => 0,
-          (revision) => revision + 1,
+      const cursorKey = `${scope.host} ${scope.scope.toLowerCase()}`;
+      const issuesFrom = position === null ? undefined : position.issues;
+      const milestonePage = position === null ? 1 : position.milestones;
+      const [page, milestones] = yield* Effect.all(
+        [
+          issuesFrom === null
+            ? Effect.succeed(null)
+            : trackerIssues
+                .list({
+                  projectId: scope.projectId,
+                  host: scope.host,
+                  state: input.state,
+                  limit: PAGE_ROWS,
+                  ...(issuesFrom === undefined ? {} : { cursors: { [cursorKey]: issuesFrom } }),
+                })
+                .pipe(Effect.mapError(fromTrackerError("list"))),
+          milestonePage === null
+            ? Effect.succeed({ items: [], nextPage: null })
+            : issues.milestones({ ...input, state: input.state, page: milestonePage }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const entries = (page?.entries ?? []).flatMap((entry) => {
+        const number = issueNumber(entry.key);
+        return entry.tracker === "github" &&
+          entry.scope.toLowerCase() === scope.scope.toLowerCase() &&
+          number !== null
+          ? [{ entry, number }]
+          : [];
+      });
+      const failure = page?.errors.find((error) => error.projectId === scope.projectId);
+      if (failure !== undefined && entries.length === 0) {
+        const tracker = page?.trackers.find((candidate) => candidate.host === scope.host);
+        return yield* readError(
+          "list",
+          tracker?.configured === false ? "unauthenticated" : "upstream",
+          tracker?.detail ?? failure.message,
+        );
+      }
+      const overlay = yield* issues.overlay({
+        ...input,
+        numbers: entries.map(({ number }) => number),
+      });
+      const milestonesByNumber = new Map(
+        milestones.items.map((milestone) => [milestone.number, milestone]),
+      );
+      const next: Position = {
+        issues: page === null ? null : (page.nextCursors[cursorKey] ?? null),
+        milestones: milestones.nextPage,
+      };
+      return {
+        repository: { host: input.host, repository: input.repository },
+        viewer: null,
+        fetchedAt: DateTime.formatIso(yield* DateTime.now),
+        issues: entries.map(({ entry, number }) =>
+          roadmapRow(entry, number, overlay.get(number), milestonesByNumber),
         ),
-      ),
+        milestones: milestones.items,
+        nextCursor: next.issues === null && next.milestones === null ? null : encodeCursor(next),
+        issuesComplete: next.issues === null,
+        milestonesComplete: next.milestones === null,
+      } satisfies RepositoryIssueListResult;
+    });
+
+    const readDetail = Effect.fn("IssueRoadmap.readDetail")(function* (input: IssueDetailInput) {
+      const ref = yield* trackerIssues
+        .resolveUrl(`https://${input.host}/${input.repository}/issues/${input.number}`)
+        .pipe(Effect.mapError(fromTrackerError("detail")));
+      const detail = yield* trackerIssues
+        .detail(ref)
+        .pipe(Effect.mapError(fromTrackerError("detail")));
+      const overlay = yield* issues.overlay({ ...input, numbers: [input.number] });
+      return {
+        list: {
+          repository: { host: input.host, repository: input.repository },
+          viewer: null,
+          fetchedAt: DateTime.formatIso(yield* DateTime.now),
+          issues: [roadmapRow(detail, input.number, overlay.get(input.number), new Map())],
+          milestones: [],
+          nextCursor: null,
+          issuesComplete: true,
+          milestonesComplete: true,
+        } satisfies RepositoryIssueListResult,
+        linkedPullRequests: detail.linkedPullRequests.map(
+          ({ repository, number, title, state, isDraft, url, closesIssue }) => ({
+            repository,
+            number,
+            title,
+            state,
+            isDraft,
+            url,
+            closesIssue,
+          }),
+        ),
+      };
+    });
+    const detailCache = new Map<
+      string,
+      {
+        readonly revision: number;
+        readonly at: number;
+        readonly read: Effect.Success<ReturnType<typeof readDetail>>;
+      }
+    >();
+
+    return IssueRoadmap.of({
       statusBatch: Effect.fn("IssueRoadmap.statusBatch")(function* (input) {
         const statuses = yield* issues.statusBatch(input);
         const repositories = new Map<string, (typeof statuses)[number][]>();
@@ -188,57 +344,63 @@ export const layer = Layer.effect(
         }
         return result;
       }),
-      list: Effect.fn("IssueRoadmap.list")((input) =>
-        issues.list(input).pipe(
-          Effect.filterOrElse(
-            () => input.roadmap !== true,
-            (list) =>
-              links.enrich(list).pipe(
-                Effect.orElseSucceed(() => ({
-                  ...list,
-                  issues: list.issues.map(({ pullRequestRefs: _refs, ...issue }) => ({
-                    ...issue,
-                    liveWork: [],
-                  })),
-                })),
-              ),
-          ),
-        ),
-      ),
-      detail: Effect.fn("IssueRoadmap.detail")((input) =>
-        issues.detail(input).pipe(
-          Effect.flatMap((detail) =>
-            links
-              .enrich({
-                ...detail,
-                milestones: [],
-                nextCursor: null,
-                issuesComplete: true,
-                milestonesComplete: true,
-                issues: [
-                  {
-                    ...detail.issue,
-                    pullRequests: detail.linkedPullRequests
-                      .filter((pr) => pr.closesIssue)
-                      .map((pr) => ({ ...pr, host: detail.repository.host })),
-                    // The list associates threads through closing pull requests; so does this.
-                    pullRequestRefs: detail.linkedPullRequests
-                      .filter((pr) => pr.closesIssue)
-                      .map((pr) => ({
-                        host: detail.repository.host,
-                        repository: pr.repository,
-                        number: pr.number,
-                      })),
-                  },
-                ],
-              })
-              .pipe(
-                Effect.map((list) => ({ ...detail, issue: list.issues[0] ?? detail.issue })),
-                Effect.orElseSucceed(() => detail),
-              ),
-          ),
-        ),
-      ),
+      list: Effect.fn("IssueRoadmap.list")(function* (input) {
+        const state = input.state ?? "open";
+        const position =
+          input.cursor === undefined
+            ? null
+            : Option.getOrNull(
+                decodePosition(Buffer.from(input.cursor, "base64url").toString("utf8")),
+              );
+        if (input.cursor !== undefined && position === null)
+          return yield* readError(
+            "list",
+            "invalid-cursor",
+            "The issue cursor is invalid for this repository.",
+          );
+        const key = `${input.host.toLowerCase()} ${input.repository.toLowerCase()} ${state} ${input.cursor ?? ""}`;
+        const revision = yield* issues.revision(input);
+        const now = yield* Clock.currentTimeMillis;
+        const cached = rowsCache.get(key);
+        if (
+          input.refresh !== true &&
+          cached !== undefined &&
+          cached.revision === revision &&
+          now - cached.at < ROWS_MAX_AGE_MS
+        )
+          return yield* withLiveWork(cached.list);
+        const list = yield* readRows({ ...input, state }, position);
+        rowsCache.delete(key);
+        rowsCache.set(key, { revision, at: now, list });
+        if (rowsCache.size > 64) rowsCache.delete(rowsCache.keys().next().value!);
+        return yield* withLiveWork(list);
+      }),
+      detail: Effect.fn("IssueRoadmap.detail")(function* (input) {
+        const key = `${input.host.toLowerCase()} ${input.repository.toLowerCase()} ${input.number}`;
+        const revision = yield* issues.revision(input);
+        const now = yield* Clock.currentTimeMillis;
+        const cached = detailCache.get(key);
+        const read =
+          input.refresh !== true &&
+          cached !== undefined &&
+          cached.revision === revision &&
+          now - cached.at < ROWS_MAX_AGE_MS
+            ? cached.read
+            : yield* readDetail(input);
+        if (read !== cached?.read) {
+          detailCache.delete(key);
+          detailCache.set(key, { revision, at: now, read });
+          if (detailCache.size > 64) detailCache.delete(detailCache.keys().next().value!);
+        }
+        const enriched = yield* links.enrich(read.list).pipe(Effect.orElseSucceed(() => read.list));
+        return {
+          repository: read.list.repository,
+          viewer: null,
+          fetchedAt: read.list.fetchedAt,
+          issue: enriched.issues[0]!,
+          linkedPullRequests: read.linkedPullRequests,
+        };
+      }),
     });
   }),
 );
