@@ -476,29 +476,6 @@ function reviewHarness(
   const reads = Layer.mock(IssueService.IssueService)({
     workRead,
     resolveLinkedIssue: (input) => Effect.succeed(reviewIssue(input.number, input.repository)),
-    detail: (input) =>
-      Effect.succeed({
-        repository: { host: input.host ?? "github.com", repository: input.repository },
-        viewer: null,
-        fetchedAt: "2026-10-05T00:00:00Z",
-        body: "Finish issue",
-        comments: [],
-        linkedPullRequests: [],
-        issue: {
-          number: input.number,
-          title: `Issue ${input.number}`,
-          url: reviewIssue(input.number, input.repository).url,
-          state: "open",
-          stateReason: null,
-          author: null,
-          assignees: [],
-          labels: [],
-          milestone: null,
-          createdAt: "2026-10-05T00:00:00Z",
-          updatedAt: "2026-10-05T00:00:00Z",
-          commentCount: 0,
-        },
-      }),
     capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
     milestoneIssues: () => Effect.succeed({ issues: [], complete: true }),
   });

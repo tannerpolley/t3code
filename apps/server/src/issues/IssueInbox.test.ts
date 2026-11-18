@@ -5,12 +5,15 @@ import {
   ThreadId,
   type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -845,6 +848,27 @@ it.effect("t3_issue_inbox serves only a repository orchestrator and its descenda
     const allowed = yield* inbox.forCaller(ThreadId.make("child-of-b"), { action: "list" });
     assert.deepEqual(allowed, { repository: "acme/b", unread: 0, events: [] });
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a revision advance re-sends unread counts, which clients re-read issues on", () =>
+  Effect.gen(function* () {
+    yield* seedRepository;
+    const context = yield* Layer.build(
+      Layer.mergeAll(fakeGitHub().service, fakeThreads().service, projects),
+    );
+    const inbox = yield* IssueInbox.make.pipe(Effect.provideContext(context));
+    const sent = yield* Queue.unbounded<unknown>();
+    yield* inbox.unread.pipe(
+      Stream.runForEach((counts) => Queue.offer(sent, counts)),
+      Effect.forkScoped,
+    );
+    yield* Queue.take(sent);
+    yield* Context.get(context, IssueService.IssueService).markChanged({
+      host: "github.com",
+      repository: "acme/b",
+    });
+    yield* Queue.take(sent);
+  }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("reading is not acknowledgment; mark_read releases only the acknowledged opening", () =>

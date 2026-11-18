@@ -368,7 +368,7 @@ const layerIssueWorkProvided = IssueWorkService.layer.pipe(
 );
 const layerIssueInboxProvided = IssueInbox.layer.pipe(
   Layer.provide(
-    Layer.mergeAll(layerThreadManagementProvided, layerIssueWorkProvided).pipe(
+    Layer.mergeAll(layerThreadManagementProvided, layerIssueWorkProvided, layerEventSink).pipe(
       Layer.provideMerge(layerProjectService),
     ),
   ),

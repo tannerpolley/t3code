@@ -25,6 +25,7 @@ import { assert, it } from "@effect/vitest";
 import { IssueLinkError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as TrackerIssueService from "../issue/IssueService.ts";
 import * as IssueService from "./IssueService.ts";
 import * as IssueLinks from "./IssueLinks.ts";
@@ -93,7 +94,7 @@ function tracker(lists: ReadonlyArray<ReturnType<typeof upstreamList>>, calls: u
   });
 }
 
-function forkIssues(revision: { value: number }) {
+function forkIssues(revision: { value: number }, overlayFails = { value: false }) {
   return Layer.mock(IssueService.IssueService)({
     revision: () => Effect.sync(() => revision.value),
     milestones: (request) =>
@@ -101,20 +102,24 @@ function forkIssues(revision: { value: number }) {
         request.page === 1 ? { items: [milestone], nextPage: 2 } : { items: [], nextPage: null },
       ),
     overlay: (request) =>
-      Effect.succeed(
-        new Map(
-          request.numbers.map((number) => [
-            number,
-            {
-              milestone: { ...milestone, openCount: 0, closedCount: 0 },
-              blockedBy: [{ ...input, number: 2, state: "open" as const }],
-              parent: null,
-              relationshipsComplete: true,
-              subIssues: { total: 2, completed: 1 },
-              pullRequestRefs: [{ ...input, number: 42 }],
-            },
-          ]),
-        ),
+      Effect.sync(() =>
+        overlayFails.value
+          ? Option.none()
+          : Option.some(
+              new Map(
+                request.numbers.map((number) => [
+                  number,
+                  {
+                    milestone: { ...milestone, openCount: 0, closedCount: 0 },
+                    blockedBy: [{ ...input, number: 2, state: "open" as const }],
+                    parent: null,
+                    relationshipsComplete: true,
+                    subIssues: { total: 2, completed: 1 },
+                    pullRequestRefs: [{ ...input, number: 42 }],
+                  },
+                ]),
+              ),
+            ),
       ),
   });
 }
@@ -128,6 +133,7 @@ it.effect(
   () => {
     const calls: unknown[] = [];
     const revision = { value: 0 };
+    const overlayFails = { value: false };
     const layer = roadmapLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -152,10 +158,11 @@ it.effect(
               upstreamList([entry("15")]),
               upstreamList([entry("16")]),
               upstreamList([entry("17")]),
+              ...Array.from({ length: 3 }, () => upstreamList([entry("18")])),
             ],
             calls,
           ),
-          forkIssues(revision),
+          forkIssues(revision, overlayFails),
           failingLinks,
         ),
       ),
@@ -208,6 +215,15 @@ it.effect(
       assert.equal((yield* roadmap.list({ ...input, state: "all" })).issues[0]?.number, 17);
       yield* roadmap.list({ ...input, state: "all", refresh: true });
       assert.equal(calls.length, 5);
+
+      // Rows built while GitHub's relationships failed are not kept.
+      overlayFails.value = true;
+      revision.value++;
+      for (let index = 0; index < 2; index++)
+        assert.isFalse(
+          (yield* roadmap.list({ ...input, state: "all" })).issues[0]?.relationshipsComplete,
+        );
+      assert.equal(calls.length, 7);
     }).pipe(Effect.provide(layer));
   },
 );

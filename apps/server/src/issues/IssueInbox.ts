@@ -39,6 +39,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -132,6 +133,14 @@ export class IssueInbox extends Context.Service<
   }
 >()("t3/issues/IssueInbox") {}
 
+const ISSUE_WORK_EVENTS = new Set<string>([
+  "issue.queue.updated",
+  "issue.work.requested",
+  "issue.work.cancelled",
+  "repository.work.restored",
+  "thread.metadata-updated",
+]);
+
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const threads = yield* ThreadManagementService;
@@ -139,6 +148,7 @@ export const make = Effect.gen(function* () {
   const issueWork = yield* IssueWorkService;
   const issues = yield* IssueService;
   const changes = yield* PubSub.sliding<void>(1);
+  const sink = yield* Effect.serviceOption(EventSink.EventSinkV2);
   const deliveries = yield* KeyedLock.make<string>();
   const changed = PubSub.publish(changes, undefined);
   const watcher = yield* Watcher.make;
@@ -350,12 +360,7 @@ export const make = Effect.gen(function* () {
       lastPolledAt.set(key, now);
       const can = yield* issues.capabilities(repo.host);
       yield* Effect.gen(function* () {
-        if (can.liveChanges) {
-          const before = yield* issues.revision(repo);
-          const inserted = yield* watcher.poll(repo);
-          // New GitHub activity also re-reads open roadmaps, which follow this feed.
-          if (inserted > 0 || (yield* issues.revision(repo)) !== before) yield* changed;
-        }
+        if (can.liveChanges && (yield* watcher.poll(repo)) > 0) yield* changed;
         if (repo.rootThreadId === null) {
           const [pending] = yield* sql`SELECT event_id FROM issue_inbox_events
             WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId} AND tagged = 1 AND read_at IS NULL LIMIT 1`;
@@ -568,9 +573,33 @@ export const make = Effect.gen(function* () {
     unread: Stream.unwrap(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changes);
+        const revisions = yield* issues.subscribeRevisions;
+        // Clients re-read issue rows on each element, so issue writes, new GitHub activity and
+        // queue or ownership changes that thread shells don't carry are sent here too.
+        const work = Option.match(sink, {
+          onNone: () => Stream.empty,
+          onSome: (events) =>
+            Stream.unwrap(
+              events.latestSequence().pipe(
+                Effect.map((afterSequence) =>
+                  events.stream({ afterSequence }).pipe(
+                    Stream.filter(({ event }) => ISSUE_WORK_EVENTS.has(event.type)),
+                    // One command often commits several of these together.
+                    Stream.groupedWithin(128, "250 millis"),
+                    Stream.as(undefined),
+                  ),
+                ),
+              ),
+            ).pipe(Stream.catchCause(() => Stream.empty)),
+        });
         return Stream.concat(
           Stream.fromEffect(unreadCounts),
-          Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => unreadCounts)),
+          Stream.mergeAll(
+            [Stream.fromSubscription(subscription), Stream.fromSubscription(revisions), work],
+            {
+              concurrency: "unbounded",
+            },
+          ).pipe(Stream.mapEffect(() => unreadCounts)),
         );
       }),
     ),
