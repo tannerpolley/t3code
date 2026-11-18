@@ -8,7 +8,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as IssueChangeService from "../issues/IssueChangeService.ts";
 import type * as IssueWorkService from "../issues/IssueWorkService.ts";
-import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
+import {
+  threadLinkFor,
+  type McpInvocationScope,
+  type McpThreadInvocationScope,
+} from "./McpInvocationContext.ts";
 import { resolveRuntimeMode, resolveInteractionMode } from "./delegatedTaskModes.ts";
 export interface RepositoryMcpMethods {
   readonly proposeIssueChange: (
@@ -31,6 +35,9 @@ export interface RepositoryMcpMethods {
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").IssueQueueInput,
   ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
+  readonly repositoryChildrenStatus: (
+    scope: McpInvocationScope,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryChildrenStatus, OrchestratorMcpFailure>;
   readonly repositoryStatus: (
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").IssueRepositoryRef,
@@ -166,6 +173,28 @@ export function makeRepositoryMcpMethods({
         .unqueueIssue(input)
         .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
     }),
+    repositoryChildrenStatus: Effect.fn("OrchestratorMcpService.repositoryChildrenStatus")(
+      function* (scope) {
+        yield* requireCapability(scope);
+        if (scope.thread === undefined || Option.isNone(issueWork))
+          return yield* failure(
+            "invalid_request",
+            "Child status requires a repository orchestrator.",
+          );
+        return yield* issueWork.value
+          .childrenStatus(scope.thread.threadId, (threadId, title) =>
+            threadLinkFor(scope, threadId, title),
+          )
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                error.code === "invalid-request" ? "invalid_request" : "orchestration_error",
+                error.message,
+              ),
+            ),
+          );
+      },
+    ),
     repositoryStatus: Effect.fn("OrchestratorMcpService.repositoryStatus")(
       function* (scope, input) {
         yield* loadCaller(scope);

@@ -49,6 +49,7 @@ import {
   RepositoryConcurrencyLimitInput,
   RepositoryHandoffRequestInput,
   RepositoryWorkResult,
+  RepositoryChildrenStatus,
   IssueRepositoryRef,
   IssueWorkCancelInput,
   IssueWorkCloseOutInput,
@@ -440,6 +441,16 @@ export const OrchestratorToolkit = Toolkit.make(
     failureMode: "return",
     dependencies,
   }).annotate(Tool.Destructive, true),
+  Tool.make("repository_status", {
+    description:
+      "Read your repository orchestrator thread's children grouped as working, needs you, or ready for review. Includes issue and PR links, last result summary, and elapsed time.",
+    success: RepositoryChildrenStatus,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  })
+    .annotate(Tool.Readonly, true)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("get_repository_orchestration", {
     description:
       "The phase, rather than paused alone, identifies repository admission state; draining admits already queued work, and handoff_awaiting_approval keeps the existing pause state. Read repository ownership, worker and read-only limits, slots in use for each pool, pause state, milestone progress and the ordered issue queue, including noticeRunId, notifiedAt and needs_attention entries where the orchestrator completed without claiming a worker.",

@@ -342,6 +342,29 @@ export const RepositoryWorkResult = Schema.Struct({
 });
 export type RepositoryWorkResult = typeof RepositoryWorkResult.Type;
 
+const RepositoryChildStatus = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  link: Schema.String,
+  issue: Schema.NullOr(
+    Schema.Struct({
+      displayKey: Schema.String,
+      title: Schema.String,
+      url: Schema.String,
+    }),
+  ),
+  pullRequestUrl: Schema.NullOr(Schema.String),
+  lastSummary: Schema.NullOr(Schema.String),
+  elapsedMs: Schema.Number,
+});
+
+export const RepositoryChildrenStatus = Schema.Struct({
+  working: Schema.Array(RepositoryChildStatus),
+  "needs-you": Schema.Array(RepositoryChildStatus),
+  "ready-for-review": Schema.Array(RepositoryChildStatus),
+});
+export type RepositoryChildrenStatus = typeof RepositoryChildrenStatus.Type;
+
 export const IssueWorkStartInput = Schema.Struct({
   ...RepositoryIssueRef.fields,
   projectId: ProjectId,

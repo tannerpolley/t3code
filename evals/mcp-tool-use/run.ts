@@ -321,7 +321,7 @@ export const McpToolUseCase = Schema.Struct({
     silentWakeFollowup: Schema.optional(Schema.Boolean),
     context: Schema.optional(Schema.String),
     issueGuidance: Schema.optional(
-      Schema.Literals(["queued-issue", "open-blocker", "managed-worker"]),
+      Schema.Literals(["queued-issue", "open-blocker", "managed-worker", "managed-root"]),
     ),
     priorTurns: Schema.optional(
       Schema.Array(
@@ -1066,7 +1066,9 @@ export const buildMessages = (sample: Sample) => {
     context,
     testCase.setup.issueGuidance === "managed-worker"
       ? t3OrchestrationBaseInstructions("worker")
-      : undefined,
+      : testCase.setup.issueGuidance === "managed-root"
+        ? t3OrchestrationBaseInstructions("root")
+        : undefined,
     testCase.setup.issueGuidance === "open-blocker"
       ? openBlockerSuspensionReason
       : testCase.setup.issueGuidance === "queued-issue"

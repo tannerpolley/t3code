@@ -121,6 +121,33 @@ it.effect(
     }).pipe(Effect.provide(dependencies)),
 );
 
+it.effect("reads the latest handed-back result once per direct child", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const report = "Open the PR. ".repeat(40).trim();
+    for (const [id, parent, child, origin, completedAt, result] of [
+      ["older", "root", "child", "app_owned", "2026-11-16", "First report"],
+      ["latest", "root", "child", "app_owned", "2026-11-17", report],
+      ["resumed", "root", "child", "app_owned", null, null],
+      ["grandchild", "child", "grandchild", "app_owned", "2026-11-18", "Nested report"],
+      ["native", "root", "native", "provider_native", "2026-11-18", "Native report"],
+    ] as const) {
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_subagents(
+          subagent_id, thread_id, child_thread_id, parent_node_id, provider, origin,
+          status, completed_at, updated_at, payload_json
+        ) VALUES (${id}, ${parent}, ${child}, 'node', 'codex', ${origin},
+          ${completedAt === null ? "running" : "completed"}, ${completedAt}, '2026-11-18',
+          ${JSON.stringify({ result })})
+      `;
+    }
+    assert.deepEqual(yield* store.childTaskSummaries(ThreadId.make("root")), [
+      { threadId: ThreadId.make("child"), lastSummary: report.slice(0, 320).trim() },
+    ]);
+  }).pipe(Effect.provide(dependencies)),
+);
+
 it.effect("keeps roots with persisted blocker suspensions eligible for automatic recovery", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

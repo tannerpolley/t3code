@@ -652,6 +652,16 @@ it.effect(
         creationSource: "mcp",
       });
       yield* worker.drain();
+      const workerId = (yield* store.issueOwner(issue(4)))!;
+      const childStatus = yield* service.childrenStatus(rootId, (id) => `thread:${id}`);
+      assert.deepEqual(
+        childStatus.working.map(({ threadId, issue }) => [threadId, issue?.url]),
+        [[workerId, issue(4).url]],
+      );
+      assert.equal(
+        (yield* service.childrenStatus(workerId, () => "").pipe(Effect.flip)).code,
+        "invalid-request",
+      );
       assert.equal(yield* store.slotsInUse(rootId), 1);
       assert.deepEqual(
         (yield* store.queue(reference)).map((entry) => entry.issue.number),

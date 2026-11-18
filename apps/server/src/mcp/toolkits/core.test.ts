@@ -1446,6 +1446,7 @@ it("keeps fork tools in their toolkits with presentation labels", () => {
     "cancel_issue_request",
     "close_out_issue_attempt",
     "get_repository_orchestration",
+    "repository_status",
     "list_owner_decisions",
     "propose_issue_change",
     "queue_issue",
