@@ -245,7 +245,6 @@ it.effect(
               Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty }),
               SqlitePersistence.layerMemory,
               Layer.mock(IssueLinks.IssueLinks)({
-                refreshes: Stream.empty,
                 enrich: (list) =>
                   Effect.sync(() => {
                     enrichments++;

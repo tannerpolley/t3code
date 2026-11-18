@@ -275,10 +275,6 @@ export function createRepositoryIssueEnvironmentAtoms<R, E>(
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
     }),
-    unlink: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:issues:unlink",
-      tag: WS_METHODS.issuesUnlink,
-    }),
     decideChange: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:decide-change",
       tag: WS_METHODS.issueChangesDecide,

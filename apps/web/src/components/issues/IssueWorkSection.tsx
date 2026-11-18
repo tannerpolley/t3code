@@ -221,10 +221,7 @@ function IssueWorkSection({
             threadRef={threadRef}
           />
           <IssueDetailActions
-            environmentId={environmentId}
-            reference={reference}
             issue={issue}
-            threadRef={threadRef}
             refreshing={query.isPending}
             onRefresh={query.refresh}
           />

@@ -22,7 +22,6 @@ import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as OwnerDecisions from "./issues/OwnerDecisions.ts";
 import * as IssueCleanup from "./issues/IssueCleanup.ts";
 import * as IssueChangeService from "./issues/IssueChangeService.ts";
-import * as IssueLinks from "./issues/IssueLinks.ts";
 import * as IssueInbox from "./issues/IssueInbox.ts";
 import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
 import * as IssueService from "./issues/IssueService.ts";
@@ -50,7 +49,6 @@ const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const inlineShell = yield* InlineShellRuns;
       const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
       const issues = yield* IssueService.IssueService;
-      const issueLinks = yield* IssueLinks.IssueLinks;
       const cleanup = yield* IssueCleanup.IssueCleanup;
       const roadmap = yield* IssueRoadmap.IssueRoadmap;
       const issueWork = yield* IssueWorkService.IssueWorkService;
@@ -134,7 +132,6 @@ const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         [WS_METHODS.issueWorkRoadmap]: (input) => roadmap.list(input),
         [WS_METHODS.issuesCleanup]: (input) => cleanup.cleanup(input),
         [WS_METHODS.issueWorkSetState]: (input) => issues.setState(input),
-        [WS_METHODS.issuesUnlink]: (input) => issueLinks.link(input, undefined, true),
         [WS_METHODS.issueWorkDetail]: (input) => roadmap.detail(input),
         [WS_METHODS.issuesStatusBatch]: (input) => roadmap.statusBatch(input),
         [WS_METHODS.issuesSubscribeLinkRefreshes]: () => roadmap.linkRefreshes,

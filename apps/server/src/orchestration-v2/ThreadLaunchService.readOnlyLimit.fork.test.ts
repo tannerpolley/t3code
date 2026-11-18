@@ -3,7 +3,8 @@ import * as OrchestratorMcp from "../mcp/OrchestratorMcpService.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as IssueLinks from "../issues/IssueLinks.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
+import * as ThreadIssueService from "./ThreadIssueService.ts";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CommandId,
@@ -458,15 +459,19 @@ it.effect(
               Layer.mock(GitVcsDriver.GitVcsDriver)({}),
               Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
               Layer.mock(SecretRequests.SecretRequests)({}),
-              Layer.mock(IssueLinks.IssueLinks)({
+              Layer.mock(TrackerIssueService.IssueService)({
+                detail: (ref) =>
+                  Effect.succeed({
+                    url: `https://github.com/${ref.scope}/issues/${ref.key}`,
+                    displayKey: `#${ref.key}`,
+                    title: "Issue",
+                  } as never),
+              }),
+              Layer.mock(ThreadIssueService.ThreadIssueService)({
                 link: (input) =>
                   Effect.sync(() => {
-                    links.push(input.threadId!);
-                    return {
-                      issue: { ...reference, number: input.number! },
-                      threadId: input.threadId!,
-                      changed: true,
-                    };
+                    links.push(input.threadId);
+                    return { alreadyLinked: false };
                   }),
               }),
             ),

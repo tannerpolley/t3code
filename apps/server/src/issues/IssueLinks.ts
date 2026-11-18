@@ -3,8 +3,6 @@ import {
   IssueLinkError,
   RepositoryOrchestration,
   RepositoryIssueRef,
-  type IssueLinkInput,
-  type IssueLinkResult,
   type IssueRepositoryRef,
   type IssuePullRequestStatus,
   type RepositoryIssueSummary,
@@ -26,13 +24,10 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import * as Stream from "effect/Stream";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const key = (issue: RepositoryIssueRef) =>
   `${issue.host.toLowerCase()}/${issue.repository.toLowerCase()}#${issue.number}`;
-const isIssueRef = Schema.is(RepositoryIssueRef);
 const encodeMemoKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodePrRefs = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(RepositoryIssueRef)));
 const decodeOrchestration = Schema.decodeEffect(Schema.fromJsonString(RepositoryOrchestration));
@@ -47,45 +42,10 @@ type WorkList = {
   })[];
 };
 
-function target(input: IssueLinkInput): RepositoryIssueRef | null {
-  let ref = {
-    host: input.host ?? "github.com",
-    repository: input.repository,
-    number: input.number,
-  };
-  if (input.url !== undefined) {
-    try {
-      const url = new URL(input.url);
-      const match = /^\/([^/]+\/[^/]+)\/issues\/(\d+)\/?$/.exec(url.pathname);
-      if (url.protocol !== "https:" || url.username || url.password || url.port || match === null)
-        return null;
-      ref = { host: url.hostname, repository: match[1], number: Number(match[2]) };
-      if (
-        (input.host !== undefined && input.host.toLowerCase() !== ref.host.toLowerCase()) ||
-        (input.repository !== undefined &&
-          input.repository.toLowerCase() !== ref.repository?.toLowerCase()) ||
-        (input.number !== undefined && input.number !== ref.number)
-      )
-        return null;
-    } catch {
-      return null;
-    }
-  }
-  return isIssueRef(ref)
-    ? { ...ref, host: ref.host.toLowerCase(), repository: ref.repository.toLowerCase() }
-    : null;
-}
-
-/** Ordinary thread associations, independent of repository orchestration ownership. */
+/** Live work per issue: claims, `thread.issues[]` links, owned pull requests and descendants. */
 export class IssueLinks extends Context.Service<
   IssueLinks,
   {
-    readonly link: (
-      input: IssueLinkInput,
-      callerThreadId?: ThreadId,
-      remove?: boolean,
-    ) => Effect.Effect<IssueLinkResult, IssueLinkError>;
-    readonly refreshes: Stream.Stream<number>;
     readonly enrich: <T extends WorkList>(
       list: T,
     ) => Effect.Effect<
@@ -104,7 +64,6 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const fs = yield* FileSystem.FileSystem;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const refreshes = yield* SubscriptionRef.make(0);
   const workByRepository = new Map<
     string,
     {
@@ -113,38 +72,11 @@ const make = Effect.gen(function* () {
       threadLinks: Effect.Effect<ReadonlyArray<LinkRow>, IssueLinkError>;
     }
   >();
-  const link: IssueLinks["Service"]["link"] = Effect.fn("IssueLinks.link")(function* (
-    input,
-    callerThreadId,
-    remove = false,
-  ) {
-    const issue = target(input);
-    const threadId = input.threadId ?? callerThreadId;
-    if (issue === null || threadId === undefined)
-      return yield* new IssueLinkError({ code: "invalid-request" });
-    const thread = yield* projections.getThreadShell(threadId).pipe(Effect.mapError(storageError));
-    if (thread === null || thread.deletedAt !== null)
-      return yield* new IssueLinkError({ code: "thread-not-found" });
-    const rows = yield* (
-      remove
-        ? sql`DELETE FROM issue_thread_links WHERE host = ${issue.host} AND repository = ${issue.repository}
-          AND issue_number = ${issue.number} AND thread_id = ${threadId} RETURNING thread_id`
-        : sql`INSERT INTO issue_thread_links(host, repository, issue_number, thread_id)
-          VALUES (${issue.host}, ${issue.repository}, ${issue.number}, ${threadId})
-          ON CONFLICT DO NOTHING RETURNING thread_id`
-    ).pipe(Effect.mapError(storageError));
-    if (rows.length > 0) yield* SubscriptionRef.update(refreshes, (revision) => revision + 1);
-    return { issue, threadId, changed: rows.length > 0 };
-  });
   const enrich: IssueLinks["Service"]["enrich"] = Effect.fn("IssueLinks.enrich")(function* <
     T extends WorkList,
   >(list: T) {
     const host = list.repository.host.toLowerCase();
     const repository = list.repository.repository.toLowerCase();
-    const tableRows = yield* sql<LinkRow>`
-      SELECT issue_number, thread_id FROM issue_thread_links
-      WHERE host = ${host} AND repository = ${repository}
-    `.pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError));
     const issueNumbers = list.issues.map((issue) => issue.number);
     const prRefs = list.issues.flatMap((issue) => issue.pullRequestRefs ?? []);
     const prRefsJson = yield* encodePrRefs(prRefs).pipe(Effect.mapError(storageError));
@@ -155,8 +87,8 @@ const make = Effect.gen(function* () {
       memo = {
         revision,
         queries: new Map(),
-        // ponytail: scans every thread's links once per event revision; read links per issue
-        // once the old table is retired.
+        // ponytail: scans every thread's links once per event revision, shared by every page;
+        // a projected link table indexed by issue if this shows up in profiles.
         threadLinks: yield* Effect.cached(
           sql<LinkRow>`
             SELECT CAST(json_extract(link.value, '$.key') AS INTEGER) AS issue_number, thread.thread_id
@@ -171,15 +103,13 @@ const make = Effect.gen(function* () {
       };
       workByRepository.set(repositoryKey, memo);
     }
-    // Upstream's thread.issues[] links sit beside the old table until the table is retired.
-    const rows = [...tableRows, ...(yield* memo.threadLinks)];
-    // Link rows are outside the event projection. Include them and the GitHub candidate set so
-    // explicit unlinking, paging and newly discovered closing PRs invalidate their own reads.
+    const rows = yield* memo.threadLinks;
+    // The GitHub candidate set is outside the event projection, so paging and newly discovered
+    // closing PRs invalidate their own reads.
     const queryKey = encodeMemoKey([
       issueNumbers,
       prRefsJson,
       list.issues.some((issue) => issue.state === "closed"),
-      rows,
     ]);
     const queries = memo.queries;
     let read = queries.get(queryKey);
@@ -222,7 +152,6 @@ const make = Effect.gen(function* () {
       refs.add(number);
       refsByThread.set(threadId, refs);
     };
-    const removableLinks = new Set(tableRows.map((row) => `${row.thread_id}:${row.issue_number}`));
     for (const row of rows) add(row.thread_id, row.issue_number);
     const issuesByPr = new Map<string, Set<number>>();
     for (const issue of list.issues)
@@ -332,7 +261,6 @@ const make = Effect.gen(function* () {
         linked.push({
           ...item,
           inherited,
-          canUnlink: removableLinks.has(`${thread.id}:${number}`),
           status: inherited && state === "working" ? "idle" : state,
         });
         work.set(number, linked);
@@ -374,7 +302,7 @@ const make = Effect.gen(function* () {
       }),
     };
   });
-  return IssueLinks.of({ link, enrich, refreshes: SubscriptionRef.changes(refreshes) });
+  return IssueLinks.of({ enrich });
 });
 
 function workState(

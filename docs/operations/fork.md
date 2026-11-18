@@ -35,8 +35,10 @@ content: its `/issues` page, its detail panel and its agent tools (`list_issues`
 The fork adds the work on top: the roadmap at `/roadmap` and in the per-repository Issues panel
 beside a thread, with Ready / Paused / Queued / In progress / Done, and a work section inside
 upstream's issue panel. Until #451 is finished, the roadmap still lists issues through the fork's
-own GitHub reads, and live work reads both upstream's thread links and the old
-`issue_thread_links` table.
+own GitHub reads. Thread links live only in upstream's `thread.issues[]`: a managed claim
+(`linkedIssue`) writes its link in the same event, and a claim still counts as live work after
+its link is removed. A one-time backfill at server start moves the retired `issue_thread_links`
+rows onto `thread.issues[]`.
 
 ## Branches and worktrees
 

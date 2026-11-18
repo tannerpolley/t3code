@@ -1,7 +1,8 @@
 import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
-import { MessageId } from "@t3tools/contracts";
+import { IssueTrackerKind, MessageId } from "@t3tools/contracts";
 import type {
   NodeId,
+  ProjectId,
   ProviderDriverKind,
   OrchestrationV2AppThread,
   OrchestrationV2Command,
@@ -10,6 +11,7 @@ import type {
   OrchestrationV2StoredEvent,
   RunId,
   ThreadId,
+  ThreadIssueLink,
   ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
@@ -78,6 +80,35 @@ interface IssueWorkCommandHooks extends ForkCommandHooks {
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<void, OrchestratorV2Error>;
 }
+
+/**
+ * The claim and its `thread.issues[]` link, written by the one event that creates the claimed
+ * thread, so screens and tools see the claim like any other link.
+ */
+export const claimFields = (
+  issue: ThreadLinkedIssue | undefined,
+  projectId: ProjectId,
+  now: DateTime.Utc,
+): { linkedIssue?: ThreadLinkedIssue; issues?: ThreadIssueLink[] } =>
+  issue === undefined
+    ? {}
+    : {
+        linkedIssue: issue,
+        issues: [
+          {
+            tracker: IssueTrackerKind.make("github"),
+            host: issue.host.toLowerCase(),
+            scope: issue.repository,
+            key: String(issue.number),
+            projectId,
+            url: issue.url,
+            source: "agent",
+            linkedAt: DateTime.formatIso(now),
+            displayKey: `#${issue.number}`,
+            title: issue.title.trim() || "Untitled issue",
+          },
+        ],
+      };
 
 // Decisions use the supplied committed reads and collector; dispatch owns locks and commit.
 export function makeIssueWorkCommands({
@@ -515,10 +546,15 @@ export function makeIssueWorkCommands({
       });
   });
 
-  const childIssueFields = (request: DelegatedTaskRequest) => ({
+  // The claim's link replaces links the child inherited from its parent's thread.
+  const childIssueFields = (
+    request: DelegatedTaskRequest,
+    projectId: ProjectId,
+    now: DateTime.Utc,
+  ) => ({
     ...(request.issue === undefined || isUnmanagedIssueRole(request.role)
       ? {}
-      : { linkedIssue: request.issue, titleSource: "generated" as const }),
+      : { ...claimFields(request.issue, projectId, now), titleSource: "generated" as const }),
     ...(request.role === undefined ? {} : { role: request.role }),
   });
 

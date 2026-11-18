@@ -77,12 +77,11 @@ it.effect(
 );
 
 describe("RPC authorization scopes", () => {
-  it("guards issue state writes and unlink separately", () => {
+  it("guards issue state writes and repository limits", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.issuesCleanup)).toBe(AuthSourceControlWriteScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.issueWorkSetState)).toBe(
       AuthSourceControlWriteScope,
     );
-    expect(requiredScopeForRpcMethod(WS_METHODS.issuesUnlink)).toBe(AuthOrchestrationOperateScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.issuesSetReadOnlyLimit)).toBe(
       AuthOrchestrationOperateScope,
     );

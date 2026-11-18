@@ -203,7 +203,7 @@ it.effect(
               Layer.provide(
                 Layer.mergeAll(
                   Layer.mock(IssueService.IssueService)({ refreshes: Stream.empty }),
-                  Layer.mock(IssueLinks.IssueLinks)({ refreshes: Stream.make(0) }),
+                  Layer.mock(IssueLinks.IssueLinks)({}),
                   Layer.mock(Orchestrator.OrchestratorV2)({
                     streamDomainEvents: Stream.fromQueue(changes),
                   }),
@@ -512,7 +512,7 @@ it.effect(
                 Layer.mock(IssueService.IssueService)({
                   refreshes: SubscriptionRef.changes(revisions),
                 }),
-                Layer.mock(IssueLinks.IssueLinks)({ refreshes: Stream.make(0) }),
+                Layer.mock(IssueLinks.IssueLinks)({}),
                 Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty }),
               ),
             ),

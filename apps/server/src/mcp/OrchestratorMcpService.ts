@@ -2948,7 +2948,7 @@ const make = Effect.gen(function* () {
         unmanaged,
         input.issue,
         childThreadId,
-        parent.thread.id,
+        parent.thread,
       );
       const childRunEvent = result.storedEvents.find(
         (stored) => stored.event.type === "run.created" && stored.event.threadId === childThreadId,

@@ -385,6 +385,15 @@ def finished_runs(spec):
             for n in range(1, run_count(spec) + 1)]
 
 
+def claim_link(spec, linked_at):
+    """A claim's thread.issues[] entry, as the server writes it with the claim."""
+    issue = spec["linked_issue"]
+    return {"tracker": "github", "host": issue["host"], "scope": issue["repository"],
+            "key": str(issue["number"]), "projectId": PID[spec["project"]], "url": issue["url"],
+            "source": "agent", "linkedAt": linked_at, "displayKey": f"#{issue['number']}",
+            "title": issue["title"] or "Untitled issue"}
+
+
 def thread_row(spec):
     tid = thread_id(spec)
     if "gh_issue" in spec:
@@ -410,7 +419,8 @@ def thread_row(spec):
         "providerInstanceId": spec["provider"], "modelSelection": model_selection(spec),
         "runtimeMode": "full-access", "interactionMode": "plan" if spec.get("plan") else "default",
         "branch": spec.get("branch", "main"), "worktreePath": spec.get("worktree"),
-        **({"linkedIssue": spec["linked_issue"]} if "linked_issue" in spec else {}),
+        **({"linkedIssue": spec["linked_issue"], "issues": [claim_link(spec, created)]}
+           if "linked_issue" in spec else {}),
         **({"repositoryOrchestration": repository_orchestration()} if spec.get("orchestrates") else {}),
         "linkedPullRequest": None, "pullRequests": spec.get("prs", []),
         "activeProviderThreadId": None,
@@ -1143,11 +1153,6 @@ def base(db):
     db.executemany(RUN_SQL, [row for spec in THREADS for row in finished_runs(spec)])
     write_timelines(db, phase_live=False)
     write_checkpoints(db)
-    db.executemany(
-        "INSERT INTO issue_thread_links (host, repository, issue_number, thread_id) VALUES (?, ?, ?, ?)",
-        [("github.com", SANDBOX_REPO.lower(), spec["gh_issue"], thread_id(spec))
-         for spec in THREADS if "gh_issue" in spec],
-    )
     owner = repository_orchestration()
     db.execute(
         "INSERT INTO orchestration_v2_projection_repository_orchestration VALUES "
