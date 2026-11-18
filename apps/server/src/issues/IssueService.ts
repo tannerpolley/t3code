@@ -135,7 +135,10 @@ export class IssueService extends Context.Service<
     ) => Effect.Effect<PageResult<IssueMilestone>, IssueReadError>;
     /** The roadmap facts upstream's issue rows lack, for the given issues; None when GitHub failed. */
     readonly overlay: (
-      input: IssueRepositoryRef & { readonly numbers: ReadonlyArray<number> },
+      input: IssueRepositoryRef & {
+        readonly numbers: ReadonlyArray<number>;
+        readonly refresh?: boolean | undefined;
+      },
     ) => Effect.Effect<Option.Option<ListMetadata>>;
     /** Advances after a write through this service or new activity read for the repository. */
     readonly revision: (input: IssueRepositoryRef) => Effect.Effect<number>;
@@ -386,6 +389,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
       return yield* github
         .withIdentity(scope.value, "list", ({ credentialFingerprint }) => {
           const key = JSON.stringify([scope.value.host, credentialFingerprint]);
+          if (input.refresh === true) withoutProjectScope.delete(key);
           return github.listMetadata(scope.value, input.numbers, {
             granted: !withoutProjectScope.has(key),
             revoke: () => withoutProjectScope.add(key),
@@ -402,6 +406,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
       if (scope._tag === "Some") yield* advanceRepositoryGeneration(scope.value);
     }),
     subscribeRevisions: PubSub.subscribe(revisionChanges),
+    withRepositoryCredential: github.withRepositoryCredential,
     readChangeState: Effect.fn("IssueService.readChangeState")((input) =>
       github.readChangeState(input),
     ),

@@ -54,11 +54,7 @@ const isIssueChangeError = Schema.is(IssueChangeError);
 export const retryAtOf = (cause: unknown) =>
   isIssueChangeError(cause) ? cause.retryAt : undefined;
 
-/**
- * Writes T3's marked comment on a managed issue. A new comment goes through upstream; the marker
- * finds it again for its id, and for a retry whose earlier write landed, so none is duplicated.
- * Upstream cannot edit a comment, so a status update rewrites it through the GitHub extension.
- */
+/** The marker recovers a POST whose receipt was lost. */
 const writeManagedComment = Effect.fn("IssueEffects.writeManagedComment")(function* (
   issues: IssueService.IssueService["Service"],
   tracker: TrackerIssueService.IssueService["Service"],
@@ -68,6 +64,7 @@ const writeManagedComment = Effect.fn("IssueEffects.writeManagedComment")(functi
     readonly commentId?: string;
     readonly marker: string;
     readonly body: string;
+    readonly retry: boolean;
   },
 ) {
   const body = ensureCommentMarker(input.body, input.marker);
@@ -83,16 +80,21 @@ const writeManagedComment = Effect.fn("IssueEffects.writeManagedComment")(functi
     if (updated !== null) return updated;
   }
   const existing = yield* issues.findManagedComment(input);
-  if (existing !== null)
-    return input.operation === "status_sync" ? yield* update(existing) : existing;
+  if (existing !== null) {
+    if (input.operation === "status_sync" && existing.body !== body)
+      return yield* update(existing.id);
+    if (input.retry) yield* issues.markChanged(input.issue);
+    return existing.id;
+  }
   const ref = yield* trackerIssueRef(tracker, "detail", input.issue);
-  yield* tracker.comment({ ...ref, body }).pipe(Effect.mapError(fromTrackerError("detail")));
-  const posted = yield* issues.findManagedComment(input);
-  if (posted === null)
+  const posted = yield* tracker
+    .comment({ ...ref, body })
+    .pipe(Effect.mapError(fromTrackerError("detail")));
+  if (posted === undefined)
     return yield* new IssueReadError({
       code: "invalid-response",
       operation: "detail",
-      message: "GitHub did not list the comment just written; the next attempt finds it.",
+      message: "GitHub did not return the comment ID.",
     });
   return posted;
 });
@@ -162,13 +164,17 @@ export const make = Effect.gen(function* () {
       if (receipt?.commentId != null) return;
     }
 
-    const writtenCommentId = yield* writeManagedComment(issues.value, tracker.value, {
-      issue: request.issue,
-      operation: request.operation,
-      ...(commentId === undefined ? {} : { commentId }),
-      marker: request.marker,
-      body: request.body,
-    });
+    const writtenCommentId = yield* issues.value.withRepositoryCredential(
+      request.issue,
+      writeManagedComment(issues.value, tracker.value, {
+        issue: request.issue,
+        operation: request.operation,
+        ...(commentId === undefined ? {} : { commentId }),
+        marker: request.marker,
+        body: request.body,
+        retry: effect.attemptCount > 1,
+      }),
+    );
     const commandId = CommandId.make(`command:issue-comment-receipt:${effect.id}`);
     const now = yield* DateTime.now;
     const eventId = yield* idAllocator.value.allocate.event({

@@ -104,6 +104,7 @@ function makeHarness(input: {
   const calls: Array<ApiCall> = [];
   const rateLimitRecords: Array<unknown> = [];
   const invalidatedHosts: Array<string> = [];
+  const verifiedRepositories: Array<string | undefined> = [];
   const http = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
@@ -163,18 +164,20 @@ function makeHarness(input: {
     Layer.provide(GitHubQuota.layer),
   );
   const verifier = Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-    withVerifiedCredential: (request, use) =>
-      input.verificationError !== undefined &&
-      (input.verificationErrorHost === undefined || input.verificationErrorHost === request.host)
+    withVerifiedCredential: (request, use) => {
+      verifiedRepositories.push(request.repository);
+      return input.verificationError !== undefined &&
+        (input.verificationErrorHost === undefined || input.verificationErrorHost === request.host)
         ? Effect.fail(input.verificationError)
         : use({
             accountId: input.accountId ?? ACCOUNT_ID,
             viewer: "octocat",
             credentialFingerprint: input.credentialFingerprint?.() ?? "credential-fingerprint",
-          }),
+          });
+    },
   });
   const layer = Layer.mergeAll(api, verifier);
-  return { layer, calls, rateLimitRecords, invalidatedHosts };
+  return { layer, calls, rateLimitRecords, invalidatedHosts, verifiedRepositories };
 }
 
 function service(harness: ReturnType<typeof makeHarness>) {
@@ -686,9 +689,13 @@ it.effect("finds T3's comment by its marker and rewrites it in place", () =>
       url: `https://${HOST}/${REPOSITORY}/issues/7`,
       title: "Stable identity",
     };
-    const commentId = yield* issues.findManagedComment({ issue, marker });
-    assert.equal(commentId, "789");
-    yield* issues.updateManagedComment({ issue, commentId: commentId!, body: `Done\n\n${marker}` });
+    const comment = yield* issues.findManagedComment({ issue, marker });
+    assert.equal(comment?.id, "789");
+    yield* issues.updateManagedComment({
+      issue,
+      commentId: comment!.id,
+      body: `Done\n\n${marker}`,
+    });
     assert.equal(harness.calls[1]!.method, "PATCH");
     assert.isTrue(harness.calls[1]!.url.endsWith("/repos/acme/web/issues/comments/789"));
     assert.deepEqual(yield* decodeJson(harness.calls[1]!.body!), { body: `Done\n\n${marker}` });
@@ -712,8 +719,11 @@ it.effect("finds an earlier create by the marker in its body, skipping pull requ
         httpResponse([pullRequest, created]),
       ],
     });
-    const found = yield* (yield* service(harness)).findCreatedIssue({ ...listInput, marker });
+    const issues = yield* service(harness);
+    yield* issues.withRepositoryCredential(listInput, Effect.void);
+    const found = yield* issues.findCreatedIssue({ ...listInput, marker });
     assert.equal(found?.issue.id, "456");
+    assert.deepEqual(harness.verifiedRepositories, [REPOSITORY, REPOSITORY]);
     assert.isTrue(harness.calls.every((call) => call.method === "GET"));
   }),
 );
@@ -1338,6 +1348,7 @@ it.effect("loads roadmap relationships without Project scope, and stops asking f
         }),
         httpResponse({ data: { p0: { issue: { parent: null } } } }),
         httpResponse({ data: { p0: { issue: { parent: null, projectItems: null } } } }),
+        httpResponse({ data: { p0: { issue: { parent: null, projectItems: null } } } }),
       ],
     });
     const issues = yield* service(harness);
@@ -1369,16 +1380,18 @@ it.effect("loads roadmap relationships without Project scope, and stops asking f
     }
     assert.equal(harness.calls.length, 3);
 
-    // The next read leaves Projects out from the start, until the credential changes.
+    // A manual refresh probes the same token again. A new credential also gets its own probe.
     yield* issues.overlay({ ...listInput, numbers: [948] });
+    yield* issues.overlay({ ...listInput, numbers: [948], refresh: true });
     credential = "another-credential";
     yield* issues.overlay({ ...listInput, numbers: [948] });
-    const [remembered, renewed] = yield* Effect.forEach(harness.calls.slice(3), (call) =>
+    const [remembered, refreshed, renewed] = yield* Effect.forEach(harness.calls.slice(3), (call) =>
       decodeProjectRequest(call.body!),
     );
     assert.notInclude(remembered!.query, "projectItems(");
+    assert.include(refreshed!.query, "projectItems(");
     assert.include(renewed!.query, "projectItems(");
-    assert.equal(harness.calls.length, 5);
+    assert.equal(harness.calls.length, 6);
   }),
 );
 

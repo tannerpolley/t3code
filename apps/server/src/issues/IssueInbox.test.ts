@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   IssueReadError,
+  IssueTrackerKind,
   ProjectId,
   ThreadId,
   type OrchestrationV2ServerCommand,
@@ -26,6 +27,8 @@ import * as IssueInboxWatcher from "./IssueInboxWatcher.ts";
 import { isoSeconds } from "./IssueInboxWatcher.ts";
 import * as IssueWorkService from "./IssueWorkService.ts";
 import * as IssueService from "./IssueService.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
+import { withRoadmapRevision } from "./IssueServerLayers.ts";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 
@@ -850,11 +853,16 @@ it.effect("t3_issue_inbox serves only a repository orchestrator and its descenda
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("a revision advance re-sends unread counts, which clients re-read issues on", () =>
+it.effect("a wrapped issue write re-sends unread counts so clients re-read issues", () =>
   Effect.gen(function* () {
     yield* seedRepository;
+    const tracker = Layer.mock(TrackerIssueService.IssueService)({
+      comment: () => Effect.succeed("17"),
+    });
     const context = yield* Layer.build(
-      Layer.mergeAll(fakeGitHub().service, fakeThreads().service, projects),
+      Layer.mergeAll(withRoadmapRevision(tracker), fakeThreads().service, projects).pipe(
+        Layer.provideMerge(fakeGitHub().service),
+      ),
     );
     const inbox = yield* IssueInbox.make.pipe(Effect.provideContext(context));
     const sent = yield* Queue.unbounded<unknown>();
@@ -863,10 +871,17 @@ it.effect("a revision advance re-sends unread counts, which clients re-read issu
       Effect.forkScoped,
     );
     yield* Queue.take(sent);
-    yield* Context.get(context, IssueService.IssueService).markChanged({
-      host: "github.com",
-      repository: "acme/b",
-    });
+    assert.equal(
+      yield* Context.get(context, TrackerIssueService.IssueService).comment({
+        projectId: ProjectId.make("project-b"),
+        tracker: IssueTrackerKind.make("github"),
+        host: repo.host,
+        scope: repo.repository,
+        key: "5",
+        body: "Fixture comment",
+      }),
+      "17",
+    );
     yield* Queue.take(sent);
   }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
 );

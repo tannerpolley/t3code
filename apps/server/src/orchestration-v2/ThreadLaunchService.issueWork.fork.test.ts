@@ -147,15 +147,21 @@ describe("managed issue work", () => {
           operation: marker.includes("closeout") ? "closeout_create" : "status_sync",
           body,
         });
-        published.set(marker, { commentId: commentId ?? `comment-${published.size + 1}`, body });
+        const id = commentId ?? `comment-${published.size + 1}`;
+        published.set(marker, { commentId: id, body });
+        return id;
       });
     const issueReads = Layer.mergeAll(
       Layer.mock(IssueService.IssueService)({
+        withRepositoryCredential: (_input, use) => use,
         repositoryIdentity: () => Effect.succeed(issue),
         workRead,
         findManagedComment: ({ marker }) =>
-          Effect.sync(() => published.get(marker)?.commentId ?? null),
-        updateManagedComment: ({ commentId, body }) => publish(body, commentId),
+          Effect.sync(() => {
+            const found = published.get(marker);
+            return found === undefined ? null : { id: found.commentId, body: found.body };
+          }),
+        updateManagedComment: ({ commentId, body }) => publish(body, commentId).pipe(Effect.asVoid),
         resolveLinkedIssue: () => Effect.succeed(issue),
       }),
       Layer.mock(TrackerIssueService.IssueService)({

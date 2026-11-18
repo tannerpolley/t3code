@@ -350,7 +350,12 @@ export function toIssueTemplates(
 }
 
 const decodeCreatedIssue = decodeJsonResult(
-  Schema.Struct({ number: Schema.Int, html_url: TrimmedNonEmptyString }),
+  Schema.Struct({
+    number: Schema.Int,
+    html_url: TrimmedNonEmptyString,
+    id: Schema.optionalKey(Schema.Int),
+    node_id: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
 );
 
 const decodeIssueMetadata = decodeJsonResult(
@@ -370,9 +375,14 @@ export function decodeIssueMetadataJson(raw: string) {
   }));
 }
 
+export const decodeCreatedComment = decodeJsonResult(Schema.Struct({ id: Schema.Int }));
+
 export function decodeCreatedIssueJson(raw: string) {
   return Result.map(decodeCreatedIssue(raw), (issue) => ({
     number: issue.number,
     url: issue.html_url,
+    ...(issue.id === undefined || issue.node_id === undefined
+      ? {}
+      : { githubIdentity: { id: String(issue.id), nodeId: issue.node_id } }),
   }));
 }

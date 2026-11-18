@@ -15,7 +15,6 @@ import {
   type IssueCommentsPage,
   type IssueCommentsPageInput,
   type IssueCreateInput,
-  type IssueCreateResult,
   type IssueDetail,
   type IssueError,
   type IssueListEntry,
@@ -38,6 +37,7 @@ import {
   isStandaloneIssueTracker,
   type IssueTrackerApi,
   type StandaloneIssueTrackerApi,
+  type TrackerIssueCreateResult,
 } from "@t3tools/source-control-core/server/IssueTracker";
 import { parseUrl } from "@t3tools/shared/url";
 
@@ -124,7 +124,9 @@ function toIssueError(operation: string): (error: IssueTrackerError) => IssueErr
       : new IssueOperationError({
           operation,
           detail: trackerDetail(error),
-          ...(error.reason === "not-found" || error.reason === "rate-limited"
+          ...(error.reason === "not-found" ||
+          error.reason === "rate-limited" ||
+          error.reason === "rejected"
             ? { reason: error.reason }
             : {}),
           ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
@@ -153,8 +155,10 @@ export class IssueService extends Context.Service<
     ) => Effect.Effect<IssueCommentsPage, IssueError>;
     readonly templates: (input: IssueScopeRef) => Effect.Effect<IssueTemplateList, IssueError>;
     readonly candidates: (input: IssueScopeRef) => Effect.Effect<IssueCandidates, IssueError>;
-    readonly create: (input: IssueCreateInput) => Effect.Effect<IssueCreateResult, IssueError>;
-    readonly comment: (input: IssueCommentInput) => Effect.Effect<void, IssueError>;
+    readonly create: (
+      input: IssueCreateInput & { readonly milestoneNumber?: number | undefined },
+    ) => Effect.Effect<TrackerIssueCreateResult, IssueError>;
+    readonly comment: (input: IssueCommentInput) => Effect.Effect<string | void, IssueError>;
     readonly update: (input: IssueUpdateInput) => Effect.Effect<void, IssueError>;
     readonly setState: (input: IssueSetStateInput) => Effect.Effect<void, IssueError>;
     readonly react: (input: IssueReactionInput) => Effect.Effect<void, IssueError>;
@@ -535,6 +539,9 @@ const make = Effect.gen(function* () {
                 body: input.body,
                 labels: input.labels,
                 assignees: input.assignees,
+                ...(input.milestoneNumber === undefined
+                  ? {}
+                  : { milestoneNumber: input.milestoneNumber }),
               })
               .pipe(Effect.mapError(toIssueError("create"))),
       ),

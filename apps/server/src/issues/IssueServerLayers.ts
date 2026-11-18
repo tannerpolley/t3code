@@ -54,8 +54,9 @@ export const withRoadmapRevision = <E, R>(
           return created;
         }),
         comment: Effect.fn("RoadmapRevision.comment")(function* (input: IssueCommentInput) {
-          yield* upstream.comment(input);
+          const commentId = yield* upstream.comment(input);
           yield* changed(input);
+          return commentId;
         }),
         update: Effect.fn("RoadmapRevision.update")(function* (input: IssueUpdateInput) {
           yield* upstream.update(input);
@@ -67,7 +68,7 @@ export const withRoadmapRevision = <E, R>(
         }),
       });
     }),
-  ).pipe(Layer.provide(Layer.merge(tracker, layerIssueService)));
+  ).pipe(Layer.provide(tracker));
 
 const layerIssueRoadmap = IssueRoadmap.layer.pipe(
   Layer.provideMerge(IssueLinks.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),

@@ -461,7 +461,6 @@ const make = Effect.gen(function* () {
       (error: { readonly message: string; readonly retryAt?: number | undefined }) =>
         githubError({ message: error.message, retryAt: error.retryAt, createOutcome });
     const uncertain = outcome("uncertain");
-    let created: IssueChangeBaseline;
     if (input.recover) {
       const found = yield* issues
         .findCreatedIssue({ ...repository, marker: input.marker })
@@ -472,45 +471,67 @@ const make = Effect.gen(function* () {
             "The earlier create may have succeeded, but its marker was not found. Check GitHub and mark this change resolved; submit a new proposal only if another create is intended.",
           createOutcome: "unresolved",
         });
-      created = found;
-    } else {
-      const ref = yield* trackerIssueRef(tracker, "detail", repository).pipe(
-        Effect.mapError(outcome("rejected")),
+      yield* issues.markChanged(repository);
+      return found;
+    }
+    return yield* issues
+      .withRepositoryCredential(
+        repository,
+        Effect.gen(function* () {
+          const ref = yield* trackerIssueRef(tracker, "detail", repository).pipe(
+            Effect.mapError(outcome("rejected")),
+          );
+          const identity = yield* issues
+            .repositoryIdentity(repository)
+            .pipe(Effect.mapError(outcome("rejected")));
+          const body = `${input.body}\n\n${input.marker}`;
+          const created = yield* tracker
+            .create({
+              projectId: ref.projectId,
+              tracker: ref.tracker,
+              host: ref.host,
+              scope: ref.scope,
+              title: input.title,
+              body,
+              labels: [],
+              assignees: [],
+              ...(input.milestoneNumber === null ? {} : { milestoneNumber: input.milestoneNumber }),
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                outcome(
+                  error._tag === "IssueUnavailableError" ||
+                    error.reason === "read-only" ||
+                    error.reason === "rate-limited" ||
+                    error.reason === "not-found" ||
+                    error.reason === "rejected"
+                    ? "rejected"
+                    : "uncertain",
+                )(fromTrackerError("detail")(error)),
+              ),
+            );
+          const number = Number(created.key);
+          if (created.githubIdentity === undefined)
+            return yield* issues
+              .readChangeState({ ...repository, number })
+              .pipe(Effect.mapError(uncertain));
+          return {
+            issue: {
+              ...identity,
+              ...created.githubIdentity,
+              number,
+              url: created.url,
+              title: input.title,
+            },
+            body,
+            state: "open" as const,
+            milestoneNumber: input.milestoneNumber,
+          };
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) => (isChangeError(error) ? error : outcome("rejected")(error))),
       );
-      const { key } = yield* tracker
-        .create({
-          projectId: ref.projectId,
-          tracker: ref.tracker,
-          host: ref.host,
-          scope: ref.scope,
-          title: input.title,
-          body: `${input.body}\n\n${input.marker}`,
-          labels: [],
-          assignees: [],
-        })
-        .pipe(
-          // A rate-limit refusal or an unusable tracker has not created an issue.
-          Effect.mapError((error) =>
-            outcome(
-              error._tag === "IssueUnavailableError" ||
-                error.reason === "read-only" ||
-                error.reason === "rate-limited"
-                ? "rejected"
-                : "uncertain",
-            )(fromTrackerError("detail")(error)),
-          ),
-        );
-      created = yield* issues
-        .readChangeState({ ...repository, number: Number(key) })
-        .pipe(Effect.mapError(uncertain));
-    }
-    if (input.milestoneNumber !== created.milestoneNumber) {
-      yield* issues
-        .setMilestone({ ...created.issue, milestoneNumber: input.milestoneNumber })
-        .pipe(Effect.mapError(uncertain));
-      created = { ...created, milestoneNumber: input.milestoneNumber };
-    }
-    return created;
   });
 
   const execute: IssueChangeService["Service"]["execute"] = (id) =>
@@ -672,7 +693,7 @@ const make = Effect.gen(function* () {
             }
           } else {
             yield* startStep("write");
-            if (op.type === "body" || op.type === "state") {
+            if (op.type === "body" || (op.type === "state" && op.state !== baseline.state)) {
               const ref = yield* trackerIssueRef(tracker, "detail", baseline.issue).pipe(
                 Effect.mapError(githubError),
               );
