@@ -146,7 +146,10 @@ export class IssueService extends Context.Service<
     readonly revision: (input: IssueRepositoryRef) => Effect.Effect<number>;
     /** Advances the revision for an issue write made outside this service. */
     readonly markChanged: (input: IssueRepositoryRef) => Effect.Effect<void>;
-    /** One element per revision advance, for clients that re-read issues on it. */
+    /**
+     * One element per revision advance from a write, for clients that re-read issues on it. An
+     * activity read advances silently; the inbox poll that made it notifies once it commits.
+     */
     readonly subscribeRevisions: Effect.Effect<PubSub.Subscription<void>, never, Scope.Scope>;
   }
 >()("t3/issues/IssueService") {}
@@ -176,9 +179,11 @@ export const make = Effect.fn("IssueService.make")(function* () {
   const repositoryGeneration = (scope: IssueRepositoryScope) =>
     repositoryGenerations.get(repositoryKey(scope)) ?? 0;
   const revisionChanges = yield* PubSub.sliding<void>(1);
+  const bumpRepositoryGeneration = (scope: IssueRepositoryScope) =>
+    repositoryGenerations.set(repositoryKey(scope), repositoryGeneration(scope) + 1);
   const advanceRepositoryGeneration = (scope: IssueRepositoryScope) =>
     Effect.suspend(() => {
-      repositoryGenerations.set(repositoryKey(scope), repositoryGeneration(scope) + 1);
+      bumpRepositoryGeneration(scope);
       return PubSub.publish(revisionChanges, undefined);
     });
   const makePageCaches = () => ({
@@ -429,8 +434,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
         activity.comments.items.length > 0 ||
         activity.stateChanges.items.some((event) => event.id > cursors.eventsAfter)
       ) {
-        const scope = yield* resolveScope("list", input);
-        yield* advanceRepositoryGeneration(scope);
+        bumpRepositoryGeneration(yield* resolveScope("list", input));
       }
       return activity;
     }),

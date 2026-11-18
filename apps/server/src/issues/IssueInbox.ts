@@ -138,7 +138,6 @@ const ISSUE_WORK_EVENTS = new Set<string>([
   "issue.work.requested",
   "issue.work.cancelled",
   "repository.work.restored",
-  "thread.metadata-updated",
 ]);
 
 export const make = Effect.gen(function* () {
@@ -151,6 +150,36 @@ export const make = Effect.gen(function* () {
   const sink = yield* Effect.serviceOption(EventSink.EventSinkV2);
   const deliveries = yield* KeyedLock.make<string>();
   const changed = PubSub.publish(changes, undefined);
+  // Clients re-read issue rows on each unread emission, so issue writes and the queue or
+  // ownership changes that thread shells don't carry reach them here: one subscription each.
+  const revisions = yield* issues.subscribeRevisions;
+  const work = Option.match(sink, {
+    onNone: () => Stream.empty,
+    onSome: (events) =>
+      Stream.unwrap(
+        events.latestSequence().pipe(
+          Effect.map((afterSequence) =>
+            events.stream({ afterSequence }).pipe(
+              Stream.filter(
+                ({ event }) =>
+                  ISSUE_WORK_EVENTS.has(event.type) ||
+                  (event.type === "thread.metadata-updated" &&
+                    event.payload.repositoryOrchestration !== undefined),
+              ),
+              // One command often commits several of these together.
+              Stream.groupedWithin(128, "250 millis"),
+            ),
+          ),
+        ),
+      ),
+  });
+  yield* Stream.merge(Stream.fromSubscription(revisions), work).pipe(
+    Stream.runForEach(() => changed),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Issue changes stopped reaching clients", { cause }),
+    ),
+    Effect.forkScoped,
+  );
   const watcher = yield* Watcher.make;
   const nowIso = Clock.currentTimeMillis.pipe(Effect.map(Watcher.isoSeconds));
 
@@ -360,7 +389,12 @@ export const make = Effect.gen(function* () {
       lastPolledAt.set(key, now);
       const can = yield* issues.capabilities(repo.host);
       yield* Effect.gen(function* () {
-        if (can.liveChanges && (yield* watcher.poll(repo)) > 0) yield* changed;
+        if (can.liveChanges) {
+          const before = yield* issues.revision(repo);
+          const inserted = yield* watcher.poll(repo);
+          // One push per poll, after its events commit, for new activity and the rows it changes.
+          if (inserted > 0 || (yield* issues.revision(repo)) !== before) yield* changed;
+        }
         if (repo.rootThreadId === null) {
           const [pending] = yield* sql`SELECT event_id FROM issue_inbox_events
             WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId} AND tagged = 1 AND read_at IS NULL LIMIT 1`;
@@ -573,33 +607,9 @@ export const make = Effect.gen(function* () {
     unread: Stream.unwrap(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changes);
-        const revisions = yield* issues.subscribeRevisions;
-        // Clients re-read issue rows on each element, so issue writes, new GitHub activity and
-        // queue or ownership changes that thread shells don't carry are sent here too.
-        const work = Option.match(sink, {
-          onNone: () => Stream.empty,
-          onSome: (events) =>
-            Stream.unwrap(
-              events.latestSequence().pipe(
-                Effect.map((afterSequence) =>
-                  events.stream({ afterSequence }).pipe(
-                    Stream.filter(({ event }) => ISSUE_WORK_EVENTS.has(event.type)),
-                    // One command often commits several of these together.
-                    Stream.groupedWithin(128, "250 millis"),
-                    Stream.as(undefined),
-                  ),
-                ),
-              ),
-            ).pipe(Stream.catchCause(() => Stream.empty)),
-        });
         return Stream.concat(
           Stream.fromEffect(unreadCounts),
-          Stream.mergeAll(
-            [Stream.fromSubscription(subscription), Stream.fromSubscription(revisions), work],
-            {
-              concurrency: "unbounded",
-            },
-          ).pipe(Stream.mapEffect(() => unreadCounts)),
+          Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => unreadCounts)),
         );
       }),
     ),
