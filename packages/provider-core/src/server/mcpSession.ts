@@ -1,12 +1,17 @@
-import type {
-  EnvironmentId,
-  OrchestratorMcpModelRole,
-  ProviderInstanceId,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type * as Effect from "effect/Effect";
 
 export type ManagedIssueRole = "root" | "worker";
-import type * as Effect from "effect/Effect";
+
+/** Composed outside the adapters by `t3OrchestrationPolicy`; adapters only translate it. */
+export interface McpOrchestrationPolicy {
+  /** Instruction sections in order, each within Codex's per-entry context cap. */
+  readonly sections: ReadonlyArray<string>;
+  /** The user's model roles block, refreshed before each turn; empty when there are none. */
+  readonly modelRoles: string;
+  /** False for issue workers, which must delegate through T3. */
+  readonly nativeSubagents: boolean;
+}
 /**
  * Sent by MCP clients that cannot defer tools themselves. The T3 MCP server then
  * lists only a core set plus `tool_search`, which lists the rest on demand.
@@ -24,17 +29,8 @@ export interface McpProviderSessionConfig {
   readonly browserToolsAvailable: boolean;
   readonly capabilities?: ReadonlySet<string>;
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
-  /**
-   * The user's model roles with their current availability, refreshed when
-   * the session is prepared and before each turn. Adapters render them into
-   * the orchestration instructions.
-   */
-  readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
-  /**
-   * Issue workers must delegate through T3. The repository root keeps native
-   * subagents for its own work between orchestration runs.
-   */
-  readonly managedIssue?: ManagedIssueRole | undefined;
+  /** Refreshed when the session is prepared and before each turn. */
+  readonly orchestration?: McpOrchestrationPolicy;
   /** True while a delegated task this thread started will wake it with its result. */
   readonly hasPendingWake?: Effect.Effect<boolean>;
 }

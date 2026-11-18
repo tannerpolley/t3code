@@ -1,12 +1,10 @@
-import type { OrchestratorMcpModelRole } from "@t3tools/contracts";
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
-import type { ManagedIssueRole } from "@t3tools/provider-core/server/mcpSession";
+import type { McpOrchestrationPolicy } from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
   t3OrchestrationSections,
-  t3ModelRolesInstructions,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 
@@ -44,12 +42,11 @@ export interface CodexRuntimeInfo {
 export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   toolsAvailable: boolean | T3CodeToolAvailability = true,
-  modelRoles: ReadonlyArray<OrchestratorMcpModelRole> = [],
-  managedIssue?: ManagedIssueRole,
+  orchestration?: McpOrchestrationPolicy,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
-  const roles = t3ModelRolesInstructions(modelRoles).trim();
-  const orchestrationSections = t3OrchestrationSections(managedIssue);
+  const roles = orchestration?.modelRoles.trim();
+  const orchestrationSections = orchestration?.sections ?? t3OrchestrationSections();
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(

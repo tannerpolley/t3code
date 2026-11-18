@@ -17,7 +17,8 @@ import {
   MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
   t3ModelRolesInstructions,
-  t3OrchestrationInstructions,
+  t3OrchestrationPolicy,
+  t3OrchestrationText,
 } from "./orchestrationInstructions.ts";
 
 const decodeModelRoles = Schema.decodeUnknownSync(ModelRoles);
@@ -87,8 +88,11 @@ describe("T3 orchestration provider instructions", () => {
       DEFAULT_MODEL_ROLES.length,
     );
     assert.isAtMost(text.length, MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH);
-    assert.equal(t3OrchestrationInstructions(roles), T3_CODE_ORCHESTRATION_INSTRUCTIONS + text);
-    assert.equal(t3OrchestrationInstructions([]), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
+    assert.equal(
+      t3OrchestrationText(t3OrchestrationPolicy(undefined, text)),
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS + text,
+    );
+    assert.equal(t3OrchestrationText(undefined), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
   });
 
   it("keeps an available alternative when an earlier choice is unavailable", () => {

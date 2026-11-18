@@ -192,10 +192,6 @@ type TerminalTaskStatus = Extract<
 >;
 
 export interface OrchestratorMcpServiceShape extends RepositoryMcpMethods {
-  readonly proposeIssueChange: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").IssueChangeProposeInput,
-  ) => Effect.Effect<import("@t3tools/contracts").IssueChange, OrchestratorMcpFailure>;
   readonly capabilities: (
     scope: McpInvocationScope,
     input?: OrchestratorMcpCapabilitiesInput,
@@ -1266,7 +1262,12 @@ const make = Effect.gen(function* () {
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const managedIssueDelegation = yield* makeManagedIssueDelegation;
+  const loadThreadRow = (threadId: ThreadId) =>
+    threadManagement.getThreadRecords(threadId, []).pipe(
+      Effect.map((records) => records.thread),
+      Effect.mapError(threadManagementFailure),
+    );
+  const managedIssueDelegation = yield* makeManagedIssueDelegation(loadThreadRow);
   const issueWork = yield* Effect.serviceOption(IssueWorkService.IssueWorkService);
   const issueChanges = yield* Effect.serviceOption(IssueChangeService.IssueChangeService);
   const remoteDelegation = yield* Effect.serviceOption(RemoteDelegation.RemoteDelegation);
@@ -1518,12 +1519,7 @@ const make = Effect.gen(function* () {
 
   const loadProviders = providerRegistry.getProviders;
   const loadUsageSprint = (thread: OrchestrationV2ThreadProjection["thread"]) =>
-    lineageUsageSprint(thread, (threadId) =>
-      threadManagement.getThreadRecords(threadId, []).pipe(
-        Effect.map((records) => records.thread),
-        Effect.mapError(threadManagementFailure),
-      ),
-    );
+    lineageUsageSprint(thread, loadThreadRow);
 
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
@@ -2286,27 +2282,14 @@ const make = Effect.gen(function* () {
 
   const repositoryMcp = makeRepositoryMcpMethods({
     issueWork,
+    issueChanges,
+    requireCapability,
     loadCaller: (scope) => loadCaller(scope, ["runs"]),
     loadThreadCaller,
   });
   const { assertCurrentRepositoryCaller } = repositoryMcp;
 
   return OrchestratorMcpService.of({
-    proposeIssueChange: Effect.fn("OrchestratorMcpService.proposeIssueChange")(
-      function* (scope, input) {
-        yield* requireCapability(scope);
-        if (scope.thread === undefined || Option.isNone(issueChanges))
-          return yield* failure("invalid_request", "Issue proposals require a managed thread.");
-        // A retired root's subtree may finish its work but not plan new issue changes.
-        if (Option.isSome(issueWork))
-          yield* issueWork.value
-            .assertCurrentCaller(scope.thread.threadId)
-            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-        return yield* issueChanges.value
-          .propose(scope.thread.threadId, input)
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-      },
-    ),
     ...repositoryMcp.methods,
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       yield* assertCurrentRepositoryCaller(scope);
@@ -2759,10 +2742,7 @@ const make = Effect.gen(function* () {
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
-        const caller = yield* threadManagement.getThreadRecords(scope.thread.threadId, []).pipe(
-          Effect.map((records) => records.thread),
-          Effect.mapError(threadManagementFailure),
-        );
+        const caller = yield* loadThreadRow(scope.thread.threadId);
         // The sprint cannot stop a child that runs on another environment.
         const sprint = yield* loadUsageSprint(caller);
         if (sprint !== undefined)
@@ -2782,10 +2762,7 @@ const make = Effect.gen(function* () {
           : readTask(scope, taskId, false, true);
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
-      if (Option.isSome(issueWork))
-        yield* issueWork.value
-          .assertCurrentCaller(parent.thread.id)
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      yield* assertCurrentRepositoryCaller(scope);
       if (
         input.target?.projectId !== undefined &&
         input.target.projectId !== parent.thread.projectId
@@ -2808,15 +2785,7 @@ const make = Effect.gen(function* () {
           "Delegated tasks require an active run owned by this MCP provider session.",
         );
       }
-      const { unmanaged, linkedIssue } = yield* managedIssueDelegation.resolveIssue(
-        input,
-        parent,
-        (id) =>
-          threadManagement.getThreadRecords(id, []).pipe(
-            Effect.map((records) => records.thread),
-            Effect.mapError(threadManagementFailure),
-          ),
-      );
+      const { unmanaged, linkedIssue } = yield* managedIssueDelegation.resolveIssue(input, parent);
       const providers = yield* loadProviders;
       const key = yield* requestKey(input.clientRequestId);
       const commandId = stableCommandId({
@@ -2971,16 +2940,7 @@ const make = Effect.gen(function* () {
           ? awaitTask(scope, taskId, key, input.timeoutMs)
           : readTask(scope, taskId, false, true),
       );
-      return yield* managedIssueDelegation.withQueueNote(
-        taskResult,
-        parent.thread,
-        taskCommand,
-        (id) =>
-          threadManagement.getThreadRecords(id, []).pipe(
-            Effect.map((records) => records.thread),
-            Effect.mapError(threadManagementFailure),
-          ),
-      );
+      return yield* managedIssueDelegation.withQueueNote(taskResult, parent.thread, taskCommand);
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");

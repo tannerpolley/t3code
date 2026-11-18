@@ -1,6 +1,6 @@
 import type { OrchestratorMcpModelRole, ProviderInteractionMode } from "@t3tools/contracts";
 
-import type { ManagedIssueRole } from "./mcpSession.ts";
+import type { ManagedIssueRole, McpOrchestrationPolicy } from "./mcpSession.ts";
 
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
 const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
@@ -98,12 +98,24 @@ export function t3ModelRolesInstructions(roles: ReadonlyArray<OrchestratorMcpMod
   return `${MODEL_ROLES_HEADER}${lines.join("\n")}\n`;
 }
 
-/** Orchestration instructions followed by the user's model roles. */
-export function t3OrchestrationInstructions(
-  roles: ReadonlyArray<OrchestratorMcpModelRole> = [],
-  managedIssue?: ManagedIssueRole,
-): string {
-  return `${t3OrchestrationBaseInstructions(managedIssue)}${t3ModelRolesInstructions(roles)}`;
+/** The one place a managed role decides a session's instructions and native subagents. */
+export function t3OrchestrationPolicy(
+  managedIssue: ManagedIssueRole | undefined,
+  modelRoles: string,
+): McpOrchestrationPolicy {
+  return {
+    sections: t3OrchestrationSections(managedIssue),
+    modelRoles,
+    // The repository root keeps native subagents for its own work between orchestration runs.
+    nativeSubagents: managedIssue !== "worker",
+  };
+}
+
+/** Orchestration instructions as one block, followed by the user's model roles. */
+export function t3OrchestrationText(policy: McpOrchestrationPolicy | undefined): string {
+  return policy === undefined
+    ? T3_CODE_ORCHESTRATION_INSTRUCTIONS
+    : `\n\n${policy.sections.join("\n\n")}\n${policy.modelRoles}`;
 }
 
 /** Managed issue work has one durable delegation path, including same-provider children. */

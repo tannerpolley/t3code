@@ -1564,6 +1564,56 @@ it.effect.each([0, 1] as const)(
     }),
 );
 
+it.effect.each(["worker", "ordinary"] as const)(
+  "ProviderSessionManagerV2 gives a %s thread's MCP session its orchestration policy",
+  (kind) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      yield* Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const allocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make(`thread-orchestration-policy-${kind}`);
+        const providerSessionId = yield* allocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const created = yield* makeThreadCreatedEvent({
+          idAllocator: allocator,
+          threadId,
+          now: yield* DateTime.now,
+        });
+        const linkedIssue = {
+          host: "github.com",
+          repository: "acme/app",
+          repositoryId: "repo",
+          id: "13",
+          nodeId: "I_13",
+          number: 13,
+          title: "Managed",
+          url: "https://github.com/acme/app/issues/13",
+        };
+        yield* sink.write({
+          events: [
+            kind === "worker"
+              ? { ...created, payload: { ...created.payload, linkedIssue } }
+              : created,
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const orchestration = (yield* Ref.get(mcpConfigs)).at(-1)?.orchestration;
+        assert.equal(orchestration?.nativeSubagents, kind !== "worker");
+        assert.equal(
+          orchestration?.sections[0]?.startsWith("Keep issues current"),
+          kind === "worker",
+        );
+      }).pipe(Effect.provide(layerTest({ state, mcpConfigs })));
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 unloads only old finished native children once", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);

@@ -18,7 +18,9 @@ import {
   requiresManagedIssueAdmission,
 } from "../issues/IssueEligibility.ts";
 
-export const makeManagedIssueDelegation = Effect.gen(function* () {
+export const makeManagedIssueDelegation = Effect.fn("ManagedIssueDelegation.make")(function* (
+  loadThread: (id: ThreadId) => Effect.Effect<OrchestrationV2AppThread, OrchestratorMcpFailure>,
+) {
   const issueWork = yield* Effect.serviceOption(IssueWorkService.IssueWorkService);
   const issueLinks = yield* Effect.serviceOption(IssueLinks.IssueLinks);
   const issueService = yield* Effect.serviceOption(IssueService.IssueService);
@@ -29,13 +31,12 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
   const resolveIssue = Effect.fnUntraced(function* (
     input: OrchestratorMcpDelegateTaskInput,
     parent: { readonly thread: OrchestrationV2AppThread },
-    loadRoot: (id: ThreadId) => Effect.Effect<OrchestrationV2AppThread, OrchestratorMcpFailure>,
   ) {
     const unmanaged = isUnmanagedIssueRole(input.role);
     const root =
       unmanaged || parent.thread.lineage.rootThreadId === parent.thread.id
         ? parent.thread
-        : yield* loadRoot(parent.thread.lineage.rootThreadId);
+        : yield* loadThread(parent.thread.lineage.rootThreadId);
     const managed = requiresManagedIssueAdmission(input.role, parent.thread, root);
     if (unmanaged && input.issue !== undefined && Option.isNone(issueLinks))
       return yield* failure("orchestration_error", "Issue linking is unavailable on this server.");
@@ -118,12 +119,11 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
     taskResult: OrchestratorMcpDelegateTaskResult,
     parent: OrchestrationV2AppThread,
     taskCommand: Extract<OrchestrationV2ServerCommand, { type: "delegated_task.request" }>,
-    loadRoot: (id: ThreadId) => Effect.Effect<OrchestrationV2AppThread, OrchestratorMcpFailure>,
   ) {
     if (taskResult.status !== "queued" || Option.isNone(issueWork)) return taskResult;
     const root =
       parent.repositoryOrchestration === undefined
-        ? yield* loadRoot(parent.lineage.rootThreadId)
+        ? yield* loadThread(parent.lineage.rootThreadId)
         : parent;
     const config = root?.repositoryOrchestration;
     if (config === undefined) return taskResult;

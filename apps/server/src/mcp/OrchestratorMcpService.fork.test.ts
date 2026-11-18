@@ -9,6 +9,7 @@ import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  IssueWorkError,
   NodeId,
   OrchestratorMcpTarget,
   ProjectId,
@@ -34,6 +35,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 
+import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -1716,6 +1718,77 @@ describe("OrchestratorMcpService provider resolution", () => {
         .pipe(Effect.flip);
       assert.equal(cancelled.code, "runtime_mode_escalation_denied");
       assert.equal(restored.code, "runtime_mode_escalation_denied");
+    }),
+  );
+
+  it.effect("refuses issue proposals from an outside client and a retired root's subtree", () =>
+    Effect.gen(function* () {
+      const retiredThreadId = ThreadId.make("thread:retired-worker");
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+        Effect.provide(
+          layerOrchestratorService.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                ServerSettings.layerTest(),
+                Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+                Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                  list: () => Effect.succeed([]),
+                }),
+                Layer.mock(ProjectService.ProjectService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+                Layer.mock(IssueWorkService.IssueWorkService)({
+                  assertCurrentCaller: (threadId) =>
+                    threadId === retiredThreadId
+                      ? Effect.fail(
+                          new IssueWorkError({ code: "retired-root", message: "Root retired." }),
+                        )
+                      : Effect.void,
+                }),
+                Layer.mock(IssueChangeService.IssueChangeService)({
+                  propose: () => Effect.die("A refused caller reached the issue proposal."),
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      const input = {
+        host: "github.com",
+        repository: "acme/app",
+        clientRequestId: "proposal",
+        operation: { type: "state", number: 13, state: "closed" },
+      } as const;
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:proposal"),
+        requestNamespace: "client:proposal",
+        thread: undefined,
+        client: { sessionId: "proposal", label: "Claude Code", access: "full-access" },
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+      const outside = yield* mcp.proposeIssueChange(scope, input).pipe(Effect.flip);
+      const retired = yield* mcp
+        .proposeIssueChange(
+          {
+            ...scope,
+            client: undefined,
+            thread: {
+              threadId: retiredThreadId,
+              providerSessionId: "retired-session",
+              providerInstanceId: codexInstanceId,
+            },
+          },
+          input,
+        )
+        .pipe(Effect.flip);
+      assert.deepEqual(
+        [outside.code, outside.message],
+        ["invalid_request", "Issue proposals require a managed thread."],
+      );
+      assert.deepEqual([retired.code, retired.message], ["invalid_request", "Root retired."]);
     }),
   );
 });

@@ -6,10 +6,15 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type * as IssueChangeService from "../issues/IssueChangeService.ts";
 import type * as IssueWorkService from "../issues/IssueWorkService.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
 import { resolveRuntimeMode, resolveInteractionMode } from "./delegatedTaskModes.ts";
 export interface RepositoryMcpMethods {
+  readonly proposeIssueChange: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").IssueChangeProposeInput,
+  ) => Effect.Effect<import("@t3tools/contracts").IssueChange, OrchestratorMcpFailure>;
   readonly requestRepositoryHandoff: (
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").RepositoryHandoffRequestInput,
@@ -62,6 +67,10 @@ export interface RepositoryMcpMethods {
 
 interface RepositoryMcpHooks {
   readonly issueWork: Option.Option<IssueWorkService.IssueWorkService["Service"]>;
+  readonly issueChanges: Option.Option<IssueChangeService.IssueChangeService["Service"]>;
+  readonly requireCapability: (
+    scope: McpInvocationScope,
+  ) => Effect.Effect<void, OrchestratorMcpFailure>;
   readonly loadCaller: (scope: McpInvocationScope) => Effect.Effect<
     {
       readonly limits: {
@@ -85,6 +94,8 @@ interface RepositoryMcpHooks {
 
 export function makeRepositoryMcpMethods({
   issueWork,
+  issueChanges,
+  requireCapability,
   loadCaller,
   loadThreadCaller,
 }: RepositoryMcpHooks) {
@@ -109,6 +120,18 @@ export function makeRepositoryMcpMethods({
   });
 
   const methods: RepositoryMcpMethods = {
+    proposeIssueChange: Effect.fn("OrchestratorMcpService.proposeIssueChange")(
+      function* (scope, input) {
+        yield* requireCapability(scope);
+        if (scope.thread === undefined || Option.isNone(issueChanges))
+          return yield* failure("invalid_request", "Issue proposals require a managed thread.");
+        // A retired root's subtree may finish its work but not plan new issue changes.
+        yield* assertCurrentRepositoryCaller(scope);
+        return yield* issueChanges.value
+          .propose(scope.thread.threadId, input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      },
+    ),
     requestRepositoryHandoff: Effect.fn("OrchestratorMcpService.requestRepositoryHandoff")(
       function* (scope, input) {
         const caller = yield* loadThreadCaller(scope, "request_repository_handoff");
