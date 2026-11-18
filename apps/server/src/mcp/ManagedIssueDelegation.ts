@@ -108,42 +108,61 @@ export const makeManagedIssueDelegation = Effect.gen(function* () {
         ),
       );
   });
-  // Linking happens after the task projection is committed, as in the caller. Reading the issue
-  // names it for the thread's row, as upstream's link_issue does.
-  const linkUnmanaged = Effect.fnUntraced(
-    function* (
-      unmanaged: boolean,
-      issue: OrchestratorMcpDelegateTaskInput["issue"],
-      childThreadId: ThreadId | null,
-      parent: OrchestrationV2AppThread,
-    ) {
-      if (
-        !unmanaged ||
-        issue === undefined ||
-        childThreadId === null ||
-        Option.isNone(trackerIssues) ||
-        Option.isNone(threadIssues)
-      )
-        return;
-      const ref = {
-        projectId: parent.projectId,
-        tracker: IssueTrackerKind.make("github"),
-        host: (issue.host ?? "github.com").toLowerCase(),
-        scope: issue.repository,
-        key: String(issue.number),
-      };
-      const detail = yield* trackerIssues.value.detail(ref);
-      yield* threadIssues.value.link({
+  // The child already exists and runs, so a failure here must not fail the delegation: a retry
+  // would start a second child. A failed read names the link by its number.
+  const linkUnmanaged = Effect.fnUntraced(function* (
+    unmanaged: boolean,
+    issue: OrchestratorMcpDelegateTaskInput["issue"],
+    childThreadId: ThreadId | null,
+    parent: OrchestrationV2AppThread,
+  ) {
+    if (
+      !unmanaged ||
+      issue === undefined ||
+      childThreadId === null ||
+      Option.isNone(trackerIssues) ||
+      Option.isNone(threadIssues)
+    )
+      return;
+    const host = (issue.host ?? "github.com").toLowerCase();
+    const ref = {
+      projectId: parent.projectId,
+      tracker: IssueTrackerKind.make("github"),
+      host,
+      scope: issue.repository,
+      key: String(issue.number),
+    };
+    const detail = yield* trackerIssues.value.detail(ref).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("delegated child linked without reading its issue", {
+          thread: childThreadId,
+          reason: error.message,
+        }),
+      ),
+      Effect.orElseSucceed(() => ({
+        url: `https://${host}/${issue.repository}/issues/${issue.number}`,
+        displayKey: `#${issue.number}`,
+        title: `#${issue.number}`,
+      })),
+    );
+    yield* threadIssues.value
+      .link({
         threadId: childThreadId,
         ref,
         url: detail.url,
         displayKey: detail.displayKey,
         title: detail.title,
         source: "agent",
-      });
-    },
-    Effect.mapError((error) => failure("orchestration_error", error.message)),
-  );
+      })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("delegated child could not be linked to its issue", {
+            thread: childThreadId,
+            reason: error.message,
+          }),
+        ),
+      );
+  });
   // The delegateTask span owns the response; pool policy belongs with admission.
   const withQueueNote = Effect.fnUntraced(function* (
     taskResult: OrchestratorMcpDelegateTaskResult,

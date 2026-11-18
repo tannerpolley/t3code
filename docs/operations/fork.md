@@ -37,8 +37,10 @@ beside a thread, with Ready / Paused / Queued / In progress / Done, and a work s
 upstream's issue panel. Until #451 is finished, the roadmap still lists issues through the fork's
 own GitHub reads. Thread links live only in upstream's `thread.issues[]`: a managed claim
 (`linkedIssue`) writes its link in the same event, and a claim still counts as live work after
-its link is removed. A one-time backfill at server start moves the retired `issue_thread_links`
-rows onto `thread.issues[]`.
+its link is removed. At each start, a backfill moves the retired `issue_thread_links` rows and
+older GitHub claims onto `thread.issues[]`, until the table is empty and every GitHub claim is
+linked; after that it finds nothing to do. Rows and claims on other hosts, such as the archived
+Forgejo, are not linked: their rows are dropped and their claims stay claims.
 
 ## Branches and worktrees
 

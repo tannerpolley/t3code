@@ -4,6 +4,7 @@ import { assert, it, vi } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  IssueOperationError,
   EventId,
   ProviderSessionId,
   resolveThreadRole,
@@ -54,11 +55,13 @@ function setup() {
     ThreadIssueService.layer.pipe(Layer.provide(Layer.mergeAll(harness.layer, NodeCrypto.layer))),
     Layer.mock(TrackerIssueService.IssueService)({
       detail: (ref) =>
-        Effect.succeed({
-          url: `https://github.com/${ref.scope}/issues/${ref.key}`,
-          displayKey: `#${ref.key}`,
-          title: `Issue ${ref.key}`,
-        } as never),
+        ref.key === "3"
+          ? Effect.fail(new IssueOperationError({ operation: "detail", detail: "offline" }))
+          : Effect.succeed({
+              url: `https://github.com/${ref.scope}/issues/${ref.key}`,
+              displayKey: `#${ref.key}`,
+              title: `Issue ${ref.key}`,
+            } as never),
     }),
     Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
     Layer.mock(SecretRequests.SecretRequests)({}),
@@ -66,10 +69,8 @@ function setup() {
       resolveCommit: () => Effect.succeed({ commitSha: "abc" } as never),
     }),
   );
-  const launch = Layer.mock(ThreadLaunch.ThreadLaunchService)({
-    readDefaultBranch,
-    prepareRun: () => Effect.void,
-  });
+  const prepareRun = vi.fn((_input: { readonly threadId: ThreadId }) => Effect.void);
+  const launch = Layer.mock(ThreadLaunch.ThreadLaunchService)({ readDefaultBranch, prepareRun });
   const services = Layer.mergeAll(
     dependencies,
     IssueWorkService.layer.pipe(Layer.provide(Layer.mergeAll(dependencies, launch))),
@@ -78,6 +79,7 @@ function setup() {
   return {
     ...harness,
     readDefaultBranch,
+    prepareRun,
     close: () => {
       closed = true;
     },
@@ -215,6 +217,15 @@ it.effect(
       });
       const separate = yield* threads.getThreadRecords(isolated.childThreadId!, ["runs"]);
       assert.equal(separate.runs[0]!.workspacePreparation?.type, "worktree");
+      // Issue #3's read fails after the child started: the delegation still succeeds, names the
+      // link by number, and prepares the child's worktree.
+      assert.deepEqual(
+        separate.thread.issues?.map(({ key, title }) => [key, title]),
+        [["3", "#3"]],
+      );
+      assert.isTrue(
+        harness.prepareRun.mock.calls.some(([input]) => input.threadId === isolated.childThreadId),
+      );
       assert.isNull(yield* store.issueOwner(reviewIssue(3)));
       assert.equal((yield* store.queue(repository))[0]!.issue.id, reviewIssue(3).id);
       assert.equal(yield* store.slotsInUse(root), 1);
