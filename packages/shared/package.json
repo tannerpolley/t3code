@@ -275,6 +275,10 @@
       "types": "./src/paletteSearch.ts",
       "import": "./src/paletteSearch.ts"
     },
+    "./threadActivity": {
+      "types": "./src/threadActivity.ts",
+      "import": "./src/threadActivity.ts"
+    },
     "./threadPullRequests": {
       "types": "./src/threadPullRequests.ts",
       "import": "./src/threadPullRequests.ts"

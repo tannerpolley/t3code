@@ -32,11 +32,17 @@ import {
   isRepositoryOrchestratorEligible,
   type RepositoryHandoffRequestInput,
   type RepositoryWorkResult,
+  type RepositoryChildrenStatus,
   type RepositoryOrchestration,
   type ProjectId,
   type IssueWorkRead,
   type ThreadLinkedIssue,
 } from "@t3tools/contracts";
+import {
+  resolveThreadActivityGroup,
+  threadActivityFromShell,
+  visibleOpenPullRequest,
+} from "@t3tools/shared/threadActivity";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -134,6 +140,10 @@ export class IssueWorkService extends Context.Service<
     readonly workMilestone: (
       input: RepositoryWorkInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
+    readonly childrenStatus: (
+      rootThreadId: ThreadId,
+      threadLink: (threadId: ThreadId, title: string) => string,
+    ) => Effect.Effect<RepositoryChildrenStatus, IssueWorkError>;
     readonly repositoryStatus: (
       input: Pick<RepositoryIssueRef, "host" | "repository">,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
@@ -749,6 +759,78 @@ export const layer = Layer.effect(
           }
         : status;
     });
+    const childrenStatus: IssueWorkService["Service"]["childrenStatus"] = Effect.fn(
+      "IssueWorkService.childrenStatus",
+    )(function* (rootThreadId, threadLink) {
+      const { summaries, readShells } = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            if (!(yield* store.isRepositoryOrchestrator(rootThreadId))) {
+              return yield* new IssueWorkError({
+                code: "invalid-request",
+                message: "Only the registered repository orchestrator can read its child status.",
+              });
+            }
+            const summaries = yield* store.childTaskSummaries(rootThreadId);
+            const readShells =
+              summaries.length === 0
+                ? null
+                : yield* threads.readShellSnapshot({
+                    location: "active",
+                    threadIds: summaries.map(({ threadId }) => threadId),
+                  });
+            return { summaries, readShells };
+          }),
+        )
+        .pipe(NodeSqliteClient.readOnly);
+
+      const groups: {
+        [Group in keyof RepositoryChildrenStatus]: RepositoryChildrenStatus[Group][number][];
+      } = { working: [], "needs-you": [], "ready-for-review": [] };
+      if (readShells === null) return groups;
+
+      const { threads: children } = yield* readShells;
+      const summariesById = new Map(
+        summaries.map(({ threadId, lastSummary }) => [threadId, lastSummary]),
+      );
+      const now = yield* Clock.currentTimeMillis;
+      for (const child of children) {
+        const activity = threadActivityFromShell(child);
+        const pullRequests = child.pullRequests ?? [];
+        const group = resolveThreadActivityGroup({ ...activity, pullRequests });
+        if (group === null) continue;
+        const { latestRun } = activity;
+        const start = Date.parse(
+          latestRun?.startedAt ?? latestRun?.requestedAt ?? DateTime.formatIso(child.createdAt),
+        );
+        const end =
+          group === "working" || latestRun?.completedAt == null
+            ? now
+            : Date.parse(latestRun.completedAt);
+        const issue =
+          child.linkedIssue === undefined
+            ? (child.issues?.[0] ?? null)
+            : {
+                displayKey: `#${child.linkedIssue.number}`,
+                title: child.linkedIssue.title,
+                url: child.linkedIssue.url,
+              };
+        groups[group].push({
+          threadId: child.id,
+          title: child.title,
+          link: threadLink(child.id, child.title),
+          issue,
+          pullRequestUrl:
+            (
+              visibleOpenPullRequest(pullRequests) ??
+              pullRequests.find((pr) => pr.source !== "stack-dismissed")
+            )?.url ?? null,
+          lastSummary: summariesById.get(child.id) ?? child.lastError ?? null,
+          elapsedMs: Math.max(0, end - start),
+        });
+      }
+      return groups;
+    }, Effect.mapError(mapError));
     const deliverQueuedIssue = (rootThreadId: ThreadId, key: string) =>
       threads
         .dispatch({
@@ -2081,6 +2163,7 @@ export const layer = Layer.effect(
       cancelRequest,
       restoreRoot,
       workMilestone,
+      childrenStatus,
       repositoryStatus,
       endRepository,
       setPaused,

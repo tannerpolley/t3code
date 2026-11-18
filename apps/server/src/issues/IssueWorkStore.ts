@@ -72,6 +72,12 @@ export class IssueWorkStore extends Context.Service<
     readonly configuration: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<RepositoryOrchestration | null, IssueWorkError>;
+    readonly childTaskSummaries: (
+      rootThreadId: ThreadId,
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly threadId: ThreadId; readonly lastSummary: string | null }>,
+      IssueWorkError
+    >;
     readonly isRepositoryOrchestrator: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<boolean, IssueWorkError>;
@@ -478,6 +484,30 @@ export const layer = Layer.effect(
                   ),
                 );
           }),
+          Effect.mapError(mapError),
+        ),
+      ),
+      childTaskSummaries: Effect.fn("IssueWorkStore.childTaskSummaries")((rootThreadId) =>
+        sql<{ child_thread_id: string; summary: string | null }>`
+          SELECT child_thread_id, summary FROM (
+            SELECT child_thread_id,
+              substr(trim(json_extract(payload_json, '$.result')), 1, 320) AS summary,
+              row_number() OVER (
+                PARTITION BY child_thread_id
+                ORDER BY (json_extract(payload_json, '$.result') IS NULL),
+                  completed_at DESC, rowid DESC
+              ) AS rank
+            FROM orchestration_v2_projection_subagents
+            WHERE thread_id = ${rootThreadId} AND origin = 'app_owned' AND child_thread_id IS NOT NULL
+          )
+          WHERE rank = 1
+        `.pipe(
+          Effect.map((rows) =>
+            rows.map((row) => ({
+              threadId: ThreadId.make(row.child_thread_id),
+              lastSummary: row.summary?.trim() || null,
+            })),
+          ),
           Effect.mapError(mapError),
         ),
       ),

@@ -26,6 +26,9 @@ describe("buildCodexAdditionalContext", () => {
 
     NodeAssert.match(first, /^Keep issues current through propose_issue_change/);
     NodeAssert.match(orchestration, native);
+    const statusInstruction = /Answer status questions with `repository_status`/;
+    if (role === "root") NodeAssert.match(orchestration, statusInstruction);
+    else NodeAssert.doesNotMatch(orchestration, statusInstruction);
     for (const [key, entry] of Object.entries(context)) {
       NodeAssert.ok(
         Buffer.byteLength(entry.value, "utf8") <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,

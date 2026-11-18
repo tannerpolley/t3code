@@ -53,6 +53,13 @@ const handlers = {
       return yield* service.unqueueIssue(scope, input);
     }),
   ),
+  repository_status: McpToolAccess.actsAsCaller(() =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.repositoryChildrenStatus(scope);
+    }),
+  ),
   get_repository_orchestration: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

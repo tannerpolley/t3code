@@ -1,6 +1,4 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { resolveThreadActivity } from "@t3tools/client-runtime/state/thread-activity";
-import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
+import { resolveThreadActivityGroup } from "@t3tools/shared/threadActivity";
 
 export const SIDEBAR_ACTIVITY_GROUPS = ["needs-you", "ready-for-review"] as const;
 export type SidebarActivityGroup = (typeof SIDEBAR_ACTIVITY_GROUPS)[number];
@@ -10,24 +8,8 @@ export function isSidebarActivityGroup(section: string): section is SidebarActiv
 }
 
 export function resolveSidebarActivityGroup(
-  thread: Parameters<typeof isThreadWorking>[0] & Pick<EnvironmentThreadShell, "pullRequests">,
+  thread: Parameters<typeof resolveThreadActivityGroup>[0],
 ): SidebarActivityGroup | null {
-  const activity = resolveThreadActivity(thread);
-  if (
-    activity === "approval" ||
-    activity === "input" ||
-    activity === "failed" ||
-    activity === "limited"
-  ) {
-    return "needs-you";
-  }
-  if (
-    thread.pullRequests.some(
-      (pr) => pr.source !== "stack-dismissed" && pr.snapshot?.state === "open",
-    ) &&
-    !isThreadWorking(thread)
-  ) {
-    return "ready-for-review";
-  }
-  return null;
+  const group = resolveThreadActivityGroup(thread);
+  return group === "working" ? null : group;
 }

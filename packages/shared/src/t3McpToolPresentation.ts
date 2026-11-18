@@ -188,6 +188,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   queue_issue: tool(["Queue", "Queuing", "Queued", "an issue"], "issue-work"),
   unqueue_issue: tool(["Remove", "Removing", "Removed", "an issue from the queue"], "issue-work"),
   work_through_milestone: tool(["Start", "Starting", "Started", "milestone work"], "issue-work"),
+  repository_status: tool(["Check", "Checking", "Checked", "child status"], "issue-work"),
   get_repository_orchestration: tool(
     ["Check", "Checking", "Checked", "repository orchestration"],
     "issue-work",

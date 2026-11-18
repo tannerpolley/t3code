@@ -1,36 +1,10 @@
-import {
-  resolveThreadActivity,
-  threadActivityIsSettledRun,
-  type ThreadActivityInput,
-} from "./forkThreadActivity.ts";
+import { isThreadWorking } from "@t3tools/shared/threadActivity";
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
 import type { EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
 import { effectiveSnoozed } from "./threadSettled.ts";
 
-type WorkingThreadInput = ThreadActivityInput &
-  Pick<
-    EnvironmentThreadShell,
-    | "hasActionableProposedPlan"
-    | "hasPendingApprovals"
-    | "hasPendingUserInput"
-    | "pendingSubagentRequest"
-    | "interactionMode"
-    | "latestRun"
-    | "runtime"
-  >;
-
-export function isThreadWorking(thread: WorkingThreadInput): boolean {
-  const activity = resolveThreadActivity(thread);
-  return (
-    ["connecting", "working", "waiting"].includes(activity) &&
-    !(
-      thread.interactionMode === "plan" &&
-      thread.hasActionableProposedPlan &&
-      threadActivityIsSettledRun(thread.latestRun, thread.runtime)
-    )
-  );
-}
+export { isThreadWorking };
 
 /**
  * A thread its own client is launching reads as preparing until its first run lands.
@@ -108,6 +82,8 @@ function sortNewestFirst<T extends Pick<EnvironmentThreadShell, "id" | "environm
       left.environmentId.localeCompare(right.environmentId),
   );
 }
+
+type WorkingThreadInput = Parameters<typeof isThreadWorking>[0];
 
 type TrackedInboxThread = WorkingThreadInput &
   InboxThreadInput &

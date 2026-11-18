@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, type ThreadPullRequestLink } from "@t3tools/contracts";
-import { resolveSidebarActivityGroup } from "./sidebarActivityGroups.logic";
+import { resolveThreadActivityGroup } from "./threadActivity.ts";
 
 const at = "2026-11-18T12:00:00.000Z";
 const openPullRequest: ThreadPullRequestLink = {
@@ -21,7 +21,7 @@ const openPullRequest: ThreadPullRequestLink = {
   },
   stack: null,
 };
-type Thread = Parameters<typeof resolveSidebarActivityGroup>[0];
+type Thread = Parameters<typeof resolveThreadActivityGroup>[0];
 const thread: Thread = {
   interactionMode: "default",
   hasActionableProposedPlan: false,
@@ -42,17 +42,17 @@ const runtime = (status: NonNullable<Thread["runtime"]>["status"]) => ({
 
 describe("Activity groups", () => {
   it.each([
-    { hasPendingApprovals: true },
+    { hasPendingApprovals: true, runtime: runtime("running") },
     { hasPendingUserInput: true },
     { runtime: runtime("failed") },
   ])("puts owner attention ahead of an open pull request (%j)", (state) => {
-    expect(resolveSidebarActivityGroup({ ...thread, ...state })).toBe("needs-you");
+    expect(resolveThreadActivityGroup({ ...thread, ...state })).toBe("needs-you");
   });
 
   it.each(["preparing", "queued", "running", "waiting"] as const)(
-    "keeps an open pull request out of review while the thread is %s",
+    "puts a %s thread with an open pull request in working",
     (status) => {
-      expect(resolveSidebarActivityGroup({ ...thread, runtime: runtime(status) })).toBeNull();
+      expect(resolveThreadActivityGroup({ ...thread, runtime: runtime(status) })).toBe("working");
     },
   );
 
@@ -62,11 +62,11 @@ describe("Activity groups", () => {
       number: 41,
       snapshot: { ...openPullRequest.snapshot!, state: "merged" },
     };
+    expect(resolveThreadActivityGroup({ ...thread, pullRequests: [merged, openPullRequest] })).toBe(
+      "ready-for-review",
+    );
     expect(
-      resolveSidebarActivityGroup({ ...thread, pullRequests: [merged, openPullRequest] }),
-    ).toBe("ready-for-review");
-    expect(
-      resolveSidebarActivityGroup({
+      resolveThreadActivityGroup({
         ...thread,
         pullRequests: [
           merged,
