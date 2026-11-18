@@ -489,10 +489,12 @@ const make = Effect.gen(function* () {
           assignees: [],
         })
         .pipe(
-          // Upstream refuses an unusable tracker or a read-only scope before sending.
+          // A rate-limit refusal or an unusable tracker has not created an issue.
           Effect.mapError((error) =>
             outcome(
-              error._tag === "IssueUnavailableError" || error.reason === "read-only"
+              error._tag === "IssueUnavailableError" ||
+                error.reason === "read-only" ||
+                error.reason === "rate-limited"
                 ? "rejected"
                 : "uncertain",
             )(fromTrackerError("detail")(error)),

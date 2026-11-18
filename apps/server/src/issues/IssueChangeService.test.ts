@@ -5,7 +5,6 @@ import {
   IssueOperationError,
   IssueReadError,
   IssueTrackerKind,
-  IssueUnavailableError,
   DEFAULT_SERVER_SETTINGS,
   ISSUE_HOSTS,
   ProjectId,
@@ -75,7 +74,7 @@ const setup = Effect.gen(function* () {
   const allowFailureSettlement = yield* Deferred.make<void>();
   const comments: string[] = [];
   const commentCompleted = yield* Deferred.make<void>();
-  let failCreate: "rejected" | "uncertain" | undefined;
+  let failCreate: "rate-limited" | "uncertain" | undefined;
   let reportIdentity = false;
   let failLink = false;
   let loseBodyResponse = false;
@@ -100,8 +99,12 @@ const setup = Effect.gen(function* () {
         const outcome = failCreate;
         failCreate = undefined;
         calls.create++;
-        if (outcome === "rejected")
-          return yield* new IssueUnavailableError({ reason: "unauthenticated" });
+        if (outcome === "rate-limited")
+          return yield* new IssueOperationError({
+            operation: "create",
+            reason: "rate-limited",
+            detail: "GitHub rejected the request because of a rate limit.",
+          });
         if (outcome !== undefined) return yield* lostResponse("Create outcome");
         const created = issue(20 + calls.create);
         snapshots.set(created.number, {
@@ -269,7 +272,7 @@ const setup = Effect.gen(function* () {
     requireApproval: (value: boolean) => {
       requireApproval = value;
     },
-    failNextCreate: (outcome: "rejected" | "uncertain") => {
+    failNextCreate: (outcome: "rate-limited" | "uncertain") => {
       failCreate = outcome;
     },
     loseCreateFields: () => {
@@ -715,12 +718,12 @@ it.effect("uncertain split creation needs user attention and cannot create anoth
 );
 
 it.effect(
-  "definite create rejection retries safely, and a create whose response was lost is found, not repeated",
+  "a rate-limited create retries, and a create whose response was lost is found by its marker",
   () =>
     inDatabase((h) =>
       Effect.gen(function* () {
         const service = yield* IssueChangeService.IssueChangeService;
-        h.failNextCreate("rejected");
+        h.failNextCreate("rate-limited");
         yield* propose({ type: "create", title: "Task", body: "Task", milestoneNumber: null });
         yield* drain;
         yield* TestClock.adjust(100);
