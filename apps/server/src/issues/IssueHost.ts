@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
 import {
   IssueMilestone,
   IssueReadError,
@@ -190,7 +191,7 @@ export interface IssueHost {
   readonly listMetadata: (
     scope: IssueRepositoryScope,
     numbers: ReadonlyArray<number>,
-  ) => Effect.Effect<ListMetadata>;
+  ) => Effect.Effect<Option.Option<ListMetadata>>;
   readonly statuses: (
     host: string,
     nodeIds: ReadonlyArray<string>,

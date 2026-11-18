@@ -2,7 +2,10 @@ import * as Exit from "effect/Exit";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as RcMap from "effect/RcMap";
+import type * as Scope from "effect/Scope";
 
 import {
   IssueMilestone,
@@ -135,12 +138,16 @@ export class IssueService extends Context.Service<
         readonly page: number;
       },
     ) => Effect.Effect<PageResult<IssueMilestone>, IssueReadError>;
-    /** The roadmap facts upstream's issue rows lack, for the given issues. Never fails. */
+    /** The roadmap facts upstream's issue rows lack, for the given issues; None when GitHub failed. */
     readonly overlay: (
       input: IssueRepositoryRef & { readonly numbers: ReadonlyArray<number> },
-    ) => Effect.Effect<ListMetadata>;
+    ) => Effect.Effect<Option.Option<ListMetadata>>;
     /** Advances after a write through this service or new activity read for the repository. */
     readonly revision: (input: IssueRepositoryRef) => Effect.Effect<number>;
+    /** Advances the revision for an issue write made outside this service. */
+    readonly markChanged: (input: IssueRepositoryRef) => Effect.Effect<void>;
+    /** One element per revision advance, for clients that re-read issues on it. */
+    readonly subscribeRevisions: Effect.Effect<PubSub.Subscription<void>, never, Scope.Scope>;
   }
 >()("t3/issues/IssueService") {}
 /** Per-key reads kept for `ttlMs` after a success; failures are not kept. */
@@ -168,9 +175,12 @@ export const make = Effect.fn("IssueService.make")(function* () {
     JSON.stringify([scope.host, scope.repository]);
   const repositoryGeneration = (scope: IssueRepositoryScope) =>
     repositoryGenerations.get(repositoryKey(scope)) ?? 0;
-  const advanceRepositoryGeneration = (scope: IssueRepositoryScope) => {
-    repositoryGenerations.set(repositoryKey(scope), repositoryGeneration(scope) + 1);
-  };
+  const revisionChanges = yield* PubSub.sliding<void>(1);
+  const advanceRepositoryGeneration = (scope: IssueRepositoryScope) =>
+    Effect.suspend(() => {
+      repositoryGenerations.set(repositoryKey(scope), repositoryGeneration(scope) + 1);
+      return PubSub.publish(revisionChanges, undefined);
+    });
   const makePageCaches = () => ({
     issues: new IssueListPageCache<IssuePageResult>(),
     milestones: new IssueListPageCache<PageResult<IssueMilestone>>(),
@@ -307,7 +317,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
   ) {
     const scope = yield* resolveScope("detail", input);
     const result = yield* write;
-    advanceRepositoryGeneration(scope);
+    yield* advanceRepositoryGeneration(scope);
     return result;
   });
   const statusBatch: IssueService["Service"]["statusBatch"] = Effect.fn("IssueService.statusBatch")(
@@ -370,13 +380,18 @@ export const make = Effect.fn("IssueService.make")(function* () {
     milestones,
     overlay: Effect.fn("IssueService.overlay")(function* (input) {
       const scope = yield* resolveScope("list", input).pipe(Effect.option);
-      if (scope._tag === "None") return new Map();
+      if (scope._tag === "None") return Option.some(new Map());
       return yield* github.listMetadata(scope.value, input.numbers);
     }),
     revision: Effect.fn("IssueService.revision")(function* (input) {
       const scope = yield* resolveScope("list", input).pipe(Effect.option);
       return scope._tag === "None" ? 0 : repositoryGeneration(scope.value);
     }),
+    markChanged: Effect.fn("IssueService.markChanged")(function* (input) {
+      const scope = yield* resolveScope("list", input).pipe(Effect.option);
+      if (scope._tag === "Some") yield* advanceRepositoryGeneration(scope.value);
+    }),
+    subscribeRevisions: PubSub.subscribe(revisionChanges),
     readChangeState: Effect.fn("IssueService.readChangeState")((input) =>
       github.readChangeState(input),
     ),
@@ -415,7 +430,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
         activity.stateChanges.items.some((event) => event.id > cursors.eventsAfter)
       ) {
         const scope = yield* resolveScope("list", input);
-        advanceRepositoryGeneration(scope);
+        yield* advanceRepositoryGeneration(scope);
       }
       return activity;
     }),

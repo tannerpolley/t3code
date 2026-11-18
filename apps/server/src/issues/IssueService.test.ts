@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -967,7 +968,9 @@ it.effect("batches named Project fields, skips archived items and retains option
         }),
       ],
     });
-    const result = yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7, 8] });
+    const result = Option.getOrThrow(
+      yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7, 8] }),
+    );
     assert.deepEqual(result.get(7)?.projects, [
       {
         id: "one",
@@ -1020,7 +1023,9 @@ it.effect("paginates Project items without field-value follow-up reads", () =>
         }),
       ],
     });
-    const result = yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7] });
+    const result = Option.getOrThrow(
+      yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7] }),
+    );
     assert.deepEqual(result.get(7)?.projects, [
       { id: "one", title: "Planning", status: "Todo", priority: { name: "Custom", rank: null } },
       { id: "two", title: "Delivery", status: null, priority: null },
@@ -1066,7 +1071,9 @@ it.effect("keeps other issues' Project chips when an aliased issue fails", () =>
           }),
         ],
       });
-      const result = yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7, 8] });
+      const result = Option.getOrThrow(
+        yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7, 8] }),
+      );
       assert.deepEqual(result.get(7)?.projects, []);
       assert.deepEqual(result.get(8)?.projects, [
         {
@@ -1106,8 +1113,10 @@ it.effect("keeps the issue list usable without Project scope or access", () =>
         responses: [response, httpResponse({ message: "Forbidden" }, {}, 403)],
       });
       const result = yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7] });
-      assert.deepEqual(result.get(7)?.projects ?? [], []);
-      assert.equal(result.get(7)?.relationshipsComplete, false);
+      // A failed read is None, which the roadmap shows as unknown relationships and doesn't keep.
+      const facts = Option.getOrUndefined(result)?.get(7);
+      assert.deepEqual(facts?.projects ?? [], []);
+      assert.notEqual(facts?.relationshipsComplete, true);
     }
   }),
 );
@@ -1394,12 +1403,20 @@ it.effect(
           httpResponse({
             data: {
               p0: {
-                issue: node(
-                  projectConnection([related(1), related(2, "CLOSED")], "next-blocker"),
-                  related(9),
-                ),
+                issue: {
+                  ...node(
+                    projectConnection([related(1), related(2, "CLOSED")], "next-blocker"),
+                    related(9),
+                  ),
+                  subIssuesSummary: { total: 3, completed: 1 },
+                },
               },
-              p1: { issue: node(projectConnection([])) },
+              p1: {
+                issue: {
+                  ...node(projectConnection([])),
+                  subIssuesSummary: { total: 0, completed: 0 },
+                },
+              },
             },
           }),
           httpResponse({
@@ -1411,7 +1428,9 @@ it.effect(
           }),
         ],
       });
-      const result = yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7, 8] });
+      const result = Option.getOrThrow(
+        yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7, 8] }),
+      );
       assert.deepEqual(result.get(7)?.parent, { ...listInput, number: 9 });
       assert.deepEqual(result.get(7)?.blockedBy, [
         { ...listInput, number: 1, state: "open" },
@@ -1419,6 +1438,8 @@ it.effect(
         { ...listInput, repository: "other/repo", number: 3, state: "open" },
       ]);
       assert.equal(result.get(7)?.relationshipsComplete, true);
+      assert.deepEqual(result.get(7)?.subIssues, { total: 3, completed: 1 });
+      assert.notProperty(result.get(8), "subIssues");
       assert.deepEqual(result.get(7)?.pullRequestRefs, [{ ...listInput, number: 20 }]);
       assert.deepEqual(result.get(7)?.pullRequests, [
         {
@@ -1481,10 +1502,12 @@ it.effect("loads roadmap relationships without Project scope across blocker page
         }),
       ],
     });
-    const result = yield* (yield* service(harness)).overlay({
-      ...listInput,
-      numbers: [948, 868, 860],
-    });
+    const result = Option.getOrThrow(
+      yield* (yield* service(harness)).overlay({
+        ...listInput,
+        numbers: [948, 868, 860],
+      }),
+    );
     assert.deepEqual(
       [948, 868, 860].map((number) => result.get(number)?.relationshipsComplete),
       [true, true, true],
@@ -1527,7 +1550,9 @@ it.effect(
           }),
         ],
       });
-      const result = yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7, 8] });
+      const result = Option.getOrThrow(
+        yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7, 8] }),
+      );
       assert.equal(result.get(7)?.relationshipsComplete, true);
       assert.deepEqual(result.get(7)?.projects, []);
       assert.equal(result.get(8)?.relationshipsComplete, false);
@@ -1566,7 +1591,9 @@ it.effect(
           }),
         ],
       });
-      const result = yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7] });
+      const result = Option.getOrThrow(
+        yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7] }),
+      );
       assert.equal(harness.calls.length, 3);
       assert.deepEqual(
         result.get(7)?.blockedBy?.map((issue) => issue.number),
@@ -1610,7 +1637,9 @@ it.effect("paginates closing PR references without restarting completed metadata
         }),
       ],
     });
-    const result = yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7] });
+    const result = Option.getOrThrow(
+      yield* (yield* service(harness)).overlay({ ...listInput, numbers: [7] }),
+    );
     assert.deepEqual(
       result.get(7)?.pullRequestRefs?.map((pr) => pr.number),
       [1, 3],

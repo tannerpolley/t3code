@@ -64,10 +64,10 @@ export const makeManagedIssueDelegation = Effect.fn("ManagedIssueDelegation.make
           "orchestration_error",
           "Issue-managed delegation is unavailable on this server.",
         );
-      const detail = yield* issueService.value
-        .detail(input.issue)
+      const read = yield* issueService.value
+        .workRead({ ...input.issue, host: input.issue.host ?? "github.com" })
         .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-      if (detail.issue.state !== "open")
+      if (read.state !== "open")
         return yield* failure("invalid_request", "Only open issues can be delegated.");
       linkedIssue = yield* issueService.value
         .resolveLinkedIssue({ ...input.issue, host: input.issue.host ?? "github.com" })

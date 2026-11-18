@@ -458,9 +458,10 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 
 // Both read the one registry, so a standalone tracker connected in Settings is the same
 // instance the listing reads through.
-const layerIssueService = Layer.merge(IssueService.layer, IssueTrackerConnections.layer).pipe(
-  Layer.provide(Layer.merge(IssueTrackerRegistry.layer, IssueTrackerBindings.layer)),
-);
+const layerIssueService = Layer.merge(
+  IssueServerLayers.withRoadmapRevision(IssueService.layer),
+  IssueTrackerConnections.layer,
+).pipe(Layer.provide(Layer.merge(IssueTrackerRegistry.layer, IssueTrackerBindings.layer)));
 
 // One instance serves MCP link calls and refreshes snapshots on thread events.
 const layerThreadIssueService = ThreadIssueService.layer;

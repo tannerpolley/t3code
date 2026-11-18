@@ -24,7 +24,7 @@ import {
  * The thread facts the server's live work per issue reads: links, claims, runs, requests,
  * background work, pull requests and worktrees. A change re-reads the roadmap's work overlay.
  */
-export function issueWorkSignal(snapshot: OrchestrationV2ShellSnapshot | null): string {
+function issueWorkSignal(snapshot: OrchestrationV2ShellSnapshot | null): string {
   if (snapshot === null) return "";
   return snapshot.threads
     .map((thread) =>
@@ -114,8 +114,8 @@ export function createRepositoryIssueEnvironmentAtoms<R, E>(
     label: "environment-data:issues:inbox-unread",
     tag: WS_METHODS.issuesInboxSubscribeUnread,
   });
-  // The inbox re-sends its counts whenever a poll reads GitHub activity, even unchanged counts.
-  // Its first value is the subscription starting, not activity.
+  // The server re-sends unread counts, even unchanged, on issue writes, new GitHub activity and
+  // queue or ownership changes. Its first value is the subscription starting, not activity.
   const inboxActivity = Atom.family((environmentId: EnvironmentId) => {
     let revision = -1;
     return Atom.make((get) => {
@@ -126,7 +126,7 @@ export function createRepositoryIssueEnvironmentAtoms<R, E>(
   const workSignals = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => issueWorkSignal(get(snapshotAtom(environmentId)))),
   );
-  // Orchestration events re-read local work; GitHub changes arrive through the inbox's polls.
+  // Thread shells carry runs and links; everything else arrives through the unread feed.
   const linkSignals = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) =>
       [

@@ -226,29 +226,6 @@ it.effect(
             },
           ],
         }),
-      detail: () =>
-        Effect.succeed({
-          repository: issue,
-          viewer: null,
-          fetchedAt: "2026-10-05T00:00:00Z",
-          body: "Implement the issue",
-          comments: [],
-          linkedPullRequests: [],
-          issue: {
-            number: 1,
-            title: issue.title,
-            url: issue.url,
-            state: "open",
-            stateReason: null,
-            author: null,
-            assignees: [],
-            labels: [],
-            milestone: null,
-            createdAt: "2026-10-05T00:00:00Z",
-            updatedAt: "2026-10-05T00:00:00Z",
-            commentCount: 0,
-          },
-        }),
       resolveLinkedIssue: () => Effect.succeed(issue),
     });
     const dependencies = Layer.mergeAll(

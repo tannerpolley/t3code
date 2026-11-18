@@ -31,7 +31,7 @@ import {
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { createRepositoryIssueEnvironmentAtoms, issueWorkSignal } from "./repositoryIssues.ts";
+import { createRepositoryIssueEnvironmentAtoms } from "./repositoryIssues.ts";
 
 it.effect("keeps a late issue response on its own issue and environment", () =>
   Effect.scoped(
@@ -176,26 +176,6 @@ const shellSnapshot = (threads: OrchestrationV2ThreadShell[]) =>
     archivedThreads: [],
     threads,
   }) satisfies OrchestrationV2ShellSnapshot;
-
-it("issue work signals change with live work, not with progress", () => {
-  const base = issueWorkSignal(shellSnapshot([workThread()]));
-  expect(issueWorkSignal(shellSnapshot([workThread({ updatedAt: "2026-10-21T00:00:00Z" })]))).toBe(
-    base,
-  );
-  for (const change of [
-    { status: "running" },
-    { activeRunId: RunId.make("run-2") },
-    { latestRunId: RunId.make("run-2") },
-    { pendingRuntimeRequest: { id: "request-1" } },
-    { pendingBackgroundTasks: [{}] },
-    { linkedIssue: { host: "github.com", repository: "owner/repo", number: 1 } },
-    { issues: [{ tracker: "github", host: "github.com", scope: "owner/repo", key: "1" }] },
-    { pullRequests: [{ url: "https://github.com/owner/repo/pull/2" }] },
-    { branch: "feature" },
-    { worktreePath: "/work/tree" },
-  ])
-    expect(issueWorkSignal(shellSnapshot([workThread(change)]))).not.toBe(base);
-});
 
 it.effect(
   "issue reads follow live work and inbox activity, not turn-finished refreshes or a timer",

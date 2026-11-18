@@ -156,16 +156,6 @@ describe("fresh-thread repository handoff", () => {
     const reads = Layer.mock(IssueService.IssueService)({
       repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: config.repositoryId }),
       resolveLinkedIssue: (input) => Effect.succeed(linked(input.number)),
-      detail: (input) =>
-        Effect.succeed({
-          repository: reference,
-          viewer: null,
-          fetchedAt: "2026-10-12T00:00:00Z",
-          issue: summary(input.number),
-          body: "Authorized issue",
-          comments: [],
-          linkedPullRequests: [],
-        }),
       workRead: (input) =>
         Effect.succeed({
           issue: linked(input.number),

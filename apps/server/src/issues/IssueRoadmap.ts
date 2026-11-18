@@ -163,6 +163,18 @@ export const layer = Layer.effect(
         })),
       );
 
+    const overlayOf = (input: IssueRepositoryRef, numbers: ReadonlyArray<number>) =>
+      issues.overlay({ ...input, numbers }).pipe(
+        Effect.map((read) => ({
+          complete: Option.isSome(read),
+          facts: Option.getOrElse(
+            read,
+            (): ListMetadata =>
+              new Map(numbers.map((number) => [number, { relationshipsComplete: false }])),
+          ),
+        })),
+      );
+
     const readRows = Effect.fn("IssueRoadmap.readRows")(function* (
       input: IssueRepositoryRef & { readonly state: "open" | "all" },
       position: Position | null,
@@ -217,10 +229,10 @@ export const layer = Layer.effect(
           tracker?.detail ?? failure.message,
         );
       }
-      const overlay = yield* issues.overlay({
-        ...input,
-        numbers: entries.map(({ number }) => number),
-      });
+      const overlay = yield* overlayOf(
+        input,
+        entries.map(({ number }) => number),
+      );
       const milestonesByNumber = new Map(
         milestones.items.map((milestone) => [milestone.number, milestone]),
       );
@@ -229,17 +241,20 @@ export const layer = Layer.effect(
         milestones: milestones.nextPage,
       };
       return {
-        repository: { host: input.host, repository: input.repository },
-        viewer: null,
-        fetchedAt: DateTime.formatIso(yield* DateTime.now),
-        issues: entries.map(({ entry, number }) =>
-          roadmapRow(entry, number, overlay.get(number), milestonesByNumber),
-        ),
-        milestones: milestones.items,
-        nextCursor: next.issues === null && next.milestones === null ? null : encodeCursor(next),
-        issuesComplete: next.issues === null,
-        milestonesComplete: next.milestones === null,
-      } satisfies RepositoryIssueListResult;
+        complete: overlay.complete,
+        list: {
+          repository: { host: input.host, repository: input.repository },
+          viewer: null,
+          fetchedAt: DateTime.formatIso(yield* DateTime.now),
+          issues: entries.map(({ entry, number }) =>
+            roadmapRow(entry, number, overlay.facts.get(number), milestonesByNumber),
+          ),
+          milestones: milestones.items,
+          nextCursor: next.issues === null && next.milestones === null ? null : encodeCursor(next),
+          issuesComplete: next.issues === null,
+          milestonesComplete: next.milestones === null,
+        } satisfies RepositoryIssueListResult,
+      };
     });
 
     const readDetail = Effect.fn("IssueRoadmap.readDetail")(function* (input: IssueDetailInput) {
@@ -249,13 +264,14 @@ export const layer = Layer.effect(
       const detail = yield* trackerIssues
         .detail(ref)
         .pipe(Effect.mapError(fromTrackerError("detail")));
-      const overlay = yield* issues.overlay({ ...input, numbers: [input.number] });
+      const overlay = yield* overlayOf(input, [input.number]);
       return {
+        complete: overlay.complete,
         list: {
           repository: { host: input.host, repository: input.repository },
           viewer: null,
           fetchedAt: DateTime.formatIso(yield* DateTime.now),
-          issues: [roadmapRow(detail, input.number, overlay.get(input.number), new Map())],
+          issues: [roadmapRow(detail, input.number, overlay.facts.get(input.number), new Map())],
           milestones: [],
           nextCursor: null,
           issuesComplete: true,
@@ -369,11 +385,12 @@ export const layer = Layer.effect(
           now - cached.at < ROWS_MAX_AGE_MS
         )
           return yield* withLiveWork(cached.list);
-        const list = yield* readRows({ ...input, state }, position);
+        const read = yield* readRows({ ...input, state }, position);
         rowsCache.delete(key);
-        rowsCache.set(key, { revision, at: now, list });
+        // Rows built without GitHub's relationships show them unknown; the next read retries.
+        if (read.complete) rowsCache.set(key, { revision, at: now, list: read.list });
         if (rowsCache.size > 64) rowsCache.delete(rowsCache.keys().next().value!);
-        return yield* withLiveWork(list);
+        return yield* withLiveWork(read.list);
       }),
       detail: Effect.fn("IssueRoadmap.detail")(function* (input) {
         const key = `${input.host.toLowerCase()} ${input.repository.toLowerCase()} ${input.number}`;
@@ -389,7 +406,7 @@ export const layer = Layer.effect(
             : yield* readDetail(input);
         if (read !== cached?.read) {
           detailCache.delete(key);
-          detailCache.set(key, { revision, at: now, read });
+          if (read.complete) detailCache.set(key, { revision, at: now, read });
           if (detailCache.size > 64) detailCache.delete(detailCache.keys().next().value!);
         }
         const enriched = yield* links.enrich(read.list).pipe(Effect.orElseSucceed(() => read.list));

@@ -144,29 +144,6 @@ describe("managed issue work", () => {
           return { commentId };
         }),
       resolveLinkedIssue: () => Effect.succeed(issue),
-      detail: () =>
-        Effect.succeed({
-          repository: { host: issue.host, repository: issue.repository },
-          viewer: null,
-          fetchedAt: "2026-10-05T00:00:00Z",
-          issue: {
-            number: issue.number,
-            title: issue.title,
-            url: issue.url,
-            state: "open",
-            stateReason: null,
-            author: null,
-            assignees: [],
-            labels: [],
-            milestone: null,
-            createdAt: "2026-10-05T00:00:00Z",
-            updatedAt: "2026-10-05T00:00:00Z",
-            commentCount: 0,
-          },
-          body: "Finish this issue",
-          comments: [],
-          linkedPullRequests: [],
-        }),
     });
     const dependencies = Layer.mergeAll(
       harness.layer,
@@ -1306,16 +1283,6 @@ it.effect(
             .map(summary)
             .filter((issue) => issue.milestone.number === input.milestoneNumber),
           complete: true,
-        }),
-      detail: (input) =>
-        Effect.succeed({
-          repository: { host: "github.com", repository: "tannerpolley/t3code" },
-          viewer: null,
-          fetchedAt: "2026-10-05T00:00:00Z",
-          issue: summary(input.number),
-          body: "Finish this issue",
-          comments: [],
-          linkedPullRequests: [],
         }),
       resolveLinkedIssue: (input) => Effect.succeed(linked(input.number)),
     });
@@ -2500,13 +2467,17 @@ it.effect.each(["closed", "re-parented"] as const)(
         (yield* store.configuration(root))!.suspendedIssues,
         result.orchestration!.suspendedIssues,
       );
-      // An unchanged GitHub restriction is restored by the reconcile after Resume.
+      // Resume refuses a still-closed issue; any unchanged restriction is restored by reconcile.
       changed = true;
-      yield* service.queueIssue({
+      const resume = service.queueIssue({
         ...input,
         number: 2,
         clientRequestId: CommandId.make("resume-still-closed"),
       });
+      if (reason === "closed") {
+        assert.equal((yield* Effect.flip(resume)).message, "Only open issues can be queued.");
+        yield* service.reconcile(root);
+      } else yield* resume;
       assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 2);
       changed = false;
       yield* service.setPaused({
