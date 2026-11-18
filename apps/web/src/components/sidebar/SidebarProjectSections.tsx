@@ -162,6 +162,7 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
+import { useRemoveSidebarProject } from "../../hooks/useRemoveSidebarProject";
 import { NewSectionProjectDialog, type NewSectionProjectTarget } from "./NewSectionProjectDialog";
 import { SidebarProjectFolderHeader, sidebarFolderRowId } from "./SidebarProjectFolderHeader";
 import { attachSidebarTree } from "../../lib/sidebarTree";
@@ -256,15 +257,12 @@ interface SidebarProjectSectionsProps {
   readonly selectedProjectKey: string | null;
   readonly onSelectProject: (projectKey: string | null) => void;
   readonly onAddProject: () => void;
-  /** Opens the section name dialog, which the sidebar owns so its header can create sections. */
-  readonly onNewSection: () => void;
-  readonly onNewSubsection: (parent: { readonly id: string; readonly name: string }) => void;
-  readonly onRenameSection: (section: { readonly id: string; readonly name: string }) => void;
+  /** From `useProjectSectionDialog`, which the sidebar mounts so its header can create sections. */
+  readonly onOpenSectionDialog: (target: ProjectSectionDialogTarget) => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
   /** The shared project context menu, as Activity folders open it. */
   readonly onProjectContextMenu: ProjectContextMenuHandler;
-  readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
@@ -279,13 +277,10 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const {
     isProjectExpanded,
     onAddProject,
-    onNewSection,
-    onNewSubsection,
-    onRenameSection,
+    onOpenSectionDialog,
     onNewThreadInProject,
     onOpenProjectSettings,
     onProjectContextMenu,
-    onRemoveProject,
     onSelectProject,
     onToggleProject,
     projects,
@@ -314,6 +309,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   );
   const reorderChildren = useUiStateStore((store) => store.reorderSidebarSectionChildren);
   const reorderSections = useUiStateStore((store) => store.reorderSidebarProjectSections);
+  const removeProject = useRemoveSidebarProject();
   const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
   const [projectDrop, setProjectDrop] = useState<ProjectDrop | null>(null);
   // `id` remounts the dialog per opening so its form starts empty.
@@ -479,8 +475,10 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   }) satisfies CollisionDetection;
 
   const openRenameDialog = (section: SidebarProjectSectionRender) => {
-    if (section.custom) onRenameSection(section);
+    if (section.custom) onOpenSectionDialog({ kind: "rename", id: section.id, name: section.name });
   };
+  const openSubsectionDialog = (parent: { readonly id: string; readonly name: string }) =>
+    onOpenSectionDialog({ kind: "create", parent: { id: parent.id, name: parent.name } });
 
   const handleDragStart = (event: DragStartEvent) => {
     const activeData = event.active.data.current as SidebarProjectDragData | undefined;
@@ -587,7 +585,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
               className="justify-start"
               disabled={!canWrite}
               data-testid="sidebar-create-project-section"
-              onClick={onNewSection}
+              onClick={() => onOpenSectionDialog({ kind: "create" })}
               size="xs"
               variant="ghost-muted"
             >
@@ -635,7 +633,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                   subsections={renderedSections.filter(
                     (candidate) => candidate.parentId === section.id,
                   )}
-                  onNewSubsection={onNewSubsection}
+                  onNewSubsection={openSubsectionDialog}
                   onNewProjectInSection={openNewProjectDialog}
                   onResetIcons={resetSectionIcons}
                   onDelete={deleteSection}
@@ -643,7 +641,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                   onNewThreadInProject={onNewThreadInProject}
                   onProjectContextMenu={onProjectContextMenu}
                   onOpenProjectSettings={onOpenProjectSettings}
-                  onRemoveProject={onRemoveProject}
+                  onRemoveProject={removeProject}
                   onOpenRename={openRenameDialog}
                   onSelectProject={onSelectProject}
                   onSetExpanded={setSectionExpanded}
@@ -699,7 +697,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
   readonly onProjectContextMenu: ProjectContextMenuHandler;
-  readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
+  readonly onRemoveProject: (project: SidebarProjectSnapshot) => Promise<void>;
   readonly onOpenRename: (section: SidebarProjectSectionRender) => void;
   readonly onDelete: (sectionId: string) => void;
   readonly onSetExpanded: (sectionId: string, expanded: boolean) => void;
@@ -1072,7 +1070,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
   readonly onProjectContextMenu: ProjectContextMenuHandler;
-  readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
+  readonly onRemoveProject: (project: SidebarProjectSnapshot) => Promise<void>;
   readonly onMoveProject: (projectKey: string, sectionId: string | null) => void;
   readonly isProjectExpanded: boolean;
   readonly onToggleProject: (projectKey: string, expanded: boolean) => void;
@@ -1268,7 +1266,10 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                     </MenuSub>
                   ) : null}
                   <MenuSeparator />
-                  <MenuItem onClick={() => props.onRemoveProject(project)} variant="destructive">
+                  <MenuItem
+                    onClick={() => void props.onRemoveProject(project)}
+                    variant="destructive"
+                  >
                     <Trash2Icon />
                     Remove project
                   </MenuItem>
@@ -1764,15 +1765,36 @@ function SidebarSubagentRow(
 }
 
 /** What the section name dialog is doing: creating a section or renaming one. */
-export type ProjectSectionDialogTarget =
+type ProjectSectionDialogTarget =
   | { readonly kind: "create"; readonly parent?: { readonly id: string; readonly name: string } }
   | { readonly kind: "rename"; readonly id: string; readonly name: string };
 
-/**
- * Creates or renames a sidebar section. Mount it with a fresh `key` for each opening so the name
- * field starts from the target's current name.
- */
-export function ProjectSectionDialog(props: {
+/** The section name dialog to mount, and its opener for the sidebar header and section menus. */
+export function useProjectSectionDialog() {
+  // `id` remounts the dialog per opening so its name field starts fresh; `open` stays separate so
+  // the dialog keeps its content while it animates closed.
+  const [state, setState] = useState<{
+    readonly target: ProjectSectionDialogTarget;
+    readonly open: boolean;
+    readonly id: number;
+  } | null>(null);
+  const openSectionDialog = (target: ProjectSectionDialogTarget) => {
+    if (useUiStateStore.getState().sidebarDisplaySnapshot !== null) return;
+    setState((current) => ({ target, open: true, id: (current?.id ?? 0) + 1 }));
+  };
+  const sectionDialog = state ? (
+    <ProjectSectionDialog
+      key={state.id}
+      target={state.target}
+      open={state.open}
+      onOpenChange={(open) => setState((current) => (current ? { ...current, open } : current))}
+    />
+  ) : null;
+  return { sectionDialog, openSectionDialog };
+}
+
+/** Creates or renames a sidebar section; `useProjectSectionDialog` mounts it once per opening. */
+function ProjectSectionDialog(props: {
   readonly target: ProjectSectionDialogTarget;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;

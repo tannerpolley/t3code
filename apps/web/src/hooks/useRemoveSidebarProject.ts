@@ -1,0 +1,126 @@
+import {
+  isAtomCommandInterrupted,
+  mapAtomCommandResult,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
+
+import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { useComposerDraftStore } from "../composerDraftStore";
+import { releaseProjectDraftUploads } from "../lib/composerDraftUploads";
+import { readLocalApi } from "../localApi";
+import type { SidebarProjectGroupMember, SidebarProjectSnapshot } from "../sidebarProjectGrouping";
+import { readThreadShells, waitForProjectRemoval } from "../state/entities";
+import { projectEnvironment } from "../state/projects";
+import { readEnvironmentScope } from "../state/session";
+import { useOrchestrationCommand } from "../state/use-orchestration-command";
+
+/** Confirms, then removes every checkout of a grouped project and their threads. */
+export function useRemoveSidebarProject(): (group: SidebarProjectSnapshot) => Promise<void> {
+  const navigate = useNavigate();
+  const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
+    reportFailure: false,
+  });
+
+  return async (group: SidebarProjectSnapshot) => {
+    const members = group.memberProjects;
+    if (deniedProjectAccess(members)) return;
+    const api = readLocalApi();
+    if (!api) return;
+
+    const memberKeys = new Set(members.map((member) => `${member.environmentId}:${member.id}`));
+    // Read at removal time: a list subscription would re-render the sidebar on every thread change.
+    const projectThreads = readThreadShells().filter((thread) =>
+      memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
+    );
+    const singleMember = members.length === 1 ? members[0]! : null;
+    const targetLabel = singleMember?.title ?? group.displayName;
+    const confirmed = await settlePromise(() =>
+      api.dialogs.confirm(
+        [
+          projectThreads.length > 0
+            ? `Remove project "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`
+            : `Remove project "${targetLabel}"?`,
+          ...(singleMember
+            ? [
+                `Path: ${singleMember.workspaceRoot}`,
+                ...(singleMember.environmentLabel
+                  ? [`Environment: ${singleMember.environmentLabel}`]
+                  : []),
+              ]
+            : [`This removes ${members.length} grouped project entries.`]),
+          ...(projectThreads.length > 0
+            ? [
+                "This permanently clears conversation history for those threads and any archived threads.",
+              ]
+            : ["This permanently clears any archived conversation history."]),
+          "This removes only the project entries, not the files on disk.",
+          "This action cannot be undone.",
+        ].join("\n"),
+        { variant: "destructive" },
+      ),
+    );
+    if (confirmed._tag === "Failure" || !confirmed.value) return;
+    if (deniedProjectAccess(members)) return;
+
+    const draftStore = useComposerDraftStore.getState();
+    for (const member of members) {
+      if (deniedProjectAccess([member])) return;
+      const memberThreads = projectThreads.filter(
+        (thread) => thread.environmentId === member.environmentId && thread.projectId === member.id,
+      );
+      const result = mapAtomCommandResult(
+        await deleteProject({
+          environmentId: member.environmentId,
+          input: { projectId: member.id, force: true },
+        }),
+        () => undefined,
+      );
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `Failed to remove "${member.title}"`,
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+      const projectRef = scopeProjectRef(member.environmentId, member.id);
+      await waitForProjectRemoval(projectRef);
+      releaseProjectDraftUploads(
+        projectRef,
+        memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+      );
+      const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
+      if (projectDraftThread) {
+        draftStore.clearDraftThread(projectDraftThread.draftId);
+      }
+      draftStore.clearProjectDraftThreadId(projectRef);
+    }
+
+    void navigate({ to: "/", replace: true });
+  };
+}
+
+/** Reports and returns true when this connection cannot change one of the projects. */
+function deniedProjectAccess(members: ReadonlyArray<SidebarProjectGroupMember>): boolean {
+  const denied = members.find(
+    (member) => !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
+  );
+  if (!denied) return false;
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title: "Failed to remove project",
+      description: `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
+    }),
+  );
+  return true;
+}

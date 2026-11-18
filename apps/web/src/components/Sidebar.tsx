@@ -1,12 +1,9 @@
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import { useRepositoryOrchestratorAction } from "~/hooks/useRepositoryOrchestratorAction";
-import { resolveProjectExpanded } from "../uiStateStore";
-import { useRemoveProjectMembers } from "../hooks/useRemoveProjectMembers";
 import { sortThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { groupRunningSubagentsByParent } from "./Sidebar.logic";
 import { useProjectFolderAppearance } from "../projectFolderAppearance";
-import { ProjectSectionDialog } from "./sidebar/SidebarProjectSections";
-import { SidebarProjectSections } from "./sidebar/SidebarProjectSections";
+import { SidebarProjectSections, useProjectSectionDialog } from "./sidebar/SidebarProjectSections";
 import {
   sidebarThreadRowProps,
   type SidebarThreadRowAssembly,
@@ -14,8 +11,7 @@ import {
 } from "./sidebar/sidebarThreadRowAssembly";
 import { collectVisibleProjectThreadOrder } from "./sidebar/SidebarProjectSections.logic";
 import { orchestratorsFirst } from "./sidebar/SidebarProjectSections.logic";
-import { resolveSidebarReveal } from "./sidebar/SidebarReveal.logic";
-import { useSidebarProjectsView } from "./sidebar/useSidebarProjectsView";
+import { useProjectsRouteReveal, useSidebarProjectsView } from "./sidebar/useSidebarProjectsView";
 import { SidebarHeaderLabeledButton } from "./sidebar/SidebarThreadHeader";
 
 import { attachSidebarTree } from "../lib/sidebarTree";
@@ -81,7 +77,14 @@ import {
   type OlderSettledScope,
 } from "@t3tools/client-runtime/state/threads";
 
-import { CheckIcon, ChevronDownIcon, FolderIcon, ListFilterIcon, SettingsIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  FolderIcon,
+  ListFilterIcon,
+  PlusIcon,
+  SettingsIcon,
+} from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -125,7 +128,7 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { useUiStateStore } from "../uiStateStore";
+import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
@@ -974,15 +977,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setSidebarMode,
     sidebarProjectSections,
     sidebarOtherProjectsExpanded,
-    sectionDialog,
-    setSectionDialogOpen,
-    openCreateSectionDialog,
-    openCreateSubsectionDialog,
-    openRenameSectionDialog,
     projectExpansionKeys,
     isProjectExpanded,
     toggleProjectExpanded,
   } = useSidebarProjectsView(projectGroupByScopeKey);
+  const { sectionDialog, openSectionDialog } = useProjectSectionDialog();
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1078,14 +1077,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectScopeFilter = useComboboxFilter();
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
-  const removeProjectMembers = useRemoveProjectMembers();
-  const removeSidebarProject = (projectGroup: SidebarProjectSnapshot) =>
-    void removeProjectMembers({
-      group: projectGroup,
-      hasOtherMembers: false,
-      members: projectGroup.memberProjects,
-    });
-
   // Safari may click after Ctrl+click opens settings; suppress that selection until the picker reopens.
   const suppressNextScopeChangeRef = useRef(false);
   const highlightedProjectScopeKeyRef = useRef<string | null>(null);
@@ -1614,91 +1605,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setThreadSearchQuery("");
     setSearchHighlightKey(null);
   };
-  // Reveals the thread the route moved to, whichever way it got there (link, search, palette,
-  // notification, shortcut, Back). Runs once per change of the open thread, so a project the user
-  // collapses afterwards stays collapsed until they open a thread again. The thread may not have
-  // loaded yet, in which case the effect tries again when the thread list changes.
-  const revealOpenThread = useClientSettings((s) => s.revealOpenThreadInSidebar);
-  const revealedThreadKeyRef = useRef<string | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reveal and scroll the sidebar DOM row when navigation changes the active thread.
-  useEffect(() => {
-    if (routeThreadKey === null || !revealOpenThread) {
-      // Turning the switch on later must not reveal a thread that was opened while it was off.
-      revealedThreadKeyRef.current = routeThreadKey;
-      return;
-    }
-    if (revealedThreadKeyRef.current === routeThreadKey) return;
-    const threadByKey = new Map(
-      threads.map((thread) => [
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-        thread,
-      ]),
-    );
-    const uiState = useUiStateStore.getState();
-    const reveal = resolveSidebarReveal({
-      threadKey: routeThreadKey,
-      getThread: (key) => {
-        const thread = threadByKey.get(key);
-        if (thread === undefined) return undefined;
-        const { parentThreadId, relationshipToParent } = thread.lineage;
-        return {
-          parentKey:
-            relationshipToParent === "subagent" && parentThreadId !== null
-              ? scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId))
-              : null,
-          projectKey:
-            logicalProjectKeyByScopedProjectRef.get(
-              `${thread.environmentId}:${thread.projectId}`,
-            ) ?? null,
-          archived: thread.archivedAt !== null,
-        };
-      },
-      sections: uiState.sidebarProjectSections,
-      otherProjectsExpanded: uiState.sidebarOtherProjectsExpanded,
-      isProjectExpanded: (projectKey) =>
-        resolveProjectExpanded(uiState.projectExpandedById, projectExpansionKeys(projectKey)),
-    });
-    if (reveal === null) return;
-    revealedThreadKeyRef.current = routeThreadKey;
-    if (sidebarMode === "projects") {
-      for (const sectionId of reveal.expandSectionIds) {
-        uiState.setSidebarProjectSectionExpanded(sectionId, true);
-      }
-      if (reveal.expandOtherProjects) uiState.setSidebarOtherProjectsExpanded(true);
-      if (reveal.expandProject) toggleProjectExpanded(reveal.projectKey, true);
-    } else if (projectScopeKey !== null && projectScopeKey !== reveal.projectKey) {
-      // The Activity list only shows the scoped project; a search result list only its matches.
-      setProjectScopeKeys([]);
-    }
-    // The rows render after the expansions above; nearest keeps a visible row still.
-    let tries = 0;
-    const scrollToRow = () => {
-      const row = document.querySelector(
-        `[data-sidebar-thread-key="${globalThis.CSS.escape(reveal.rowKey)}"]`,
-      );
-      if (row !== null) row.scrollIntoView({ block: "nearest" });
-      else {
-        tries += 1;
-        if (tries < 5) requestAnimationFrame(scrollToRow);
-      }
-    };
-    requestAnimationFrame(() => {
-      clearThreadSearch();
-      scrollToRow();
-    });
-  }, [
-    clearThreadSearch,
-    revealedThreadKeyRef,
-    logicalProjectKeyByScopedProjectRef,
-    projectScopeKey,
-    revealOpenThread,
+  useProjectsRouteReveal({
     routeThreadKey,
-    setProjectScopeKeys,
-    sidebarMode,
     threads,
+    logicalProjectKeyByScopedProjectRef,
+    sidebarMode,
     projectExpansionKeys,
     toggleProjectExpanded,
-  ]);
+    onReveal: clearThreadSearch,
+  });
   const selectThreadSearchResult = (thread: EnvironmentThreadShell) => {
     const ref = scopeThreadRef(thread.environmentId, thread.id);
     // A row listed for a message match opens find on it, as the palette does.
@@ -3226,14 +3141,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   return (
     <SidebarFolderDrop>
       <ThreadContextDragGhost />
-      {sectionDialog ? (
-        <ProjectSectionDialog
-          key={sectionDialog.id}
-          target={sectionDialog.target}
-          open={sectionDialog.open}
-          onOpenChange={setSectionDialogOpen}
-        />
-      ) : null}
+      {sectionDialog}
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         ref={sidebarContentRef}
@@ -3466,7 +3374,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 </Combobox>
               }
               onNewProject={openAddProjectCommandPalette}
-              onNewSection={openCreateSectionDialog}
+              onNewSection={() => openSectionDialog({ kind: "create" })}
               onNewThread={handleNewThreadClick}
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
@@ -3499,13 +3407,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             threadRowState={threadRowState}
             isProjectExpanded={isProjectExpanded}
             onAddProject={openAddProjectCommandPalette}
-            onNewSection={openCreateSectionDialog}
-            onRenameSection={openRenameSectionDialog}
-            onNewSubsection={openCreateSubsectionDialog}
+            onOpenSectionDialog={openSectionDialog}
             onNewThreadInProject={startThreadInProjectFolder}
             onProjectContextMenu={handleProjectFolderContextMenu}
             onOpenProjectSettings={openProjectSettings}
-            onRemoveProject={removeSidebarProject}
             onSelectProject={(key) => {
               setProjectScopeKeys(key === null ? [] : [key]);
               setSidebarMode("activity");
@@ -3605,6 +3510,52 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     : "No threads found"}
               </p>
             )
+          ) : null}
+          {/* A scope can hide every active thread; say so even when its project still has settled ones. */}
+          {!isSearchingThreads &&
+          sidebarMode === "activity" &&
+          !hasProjectFolders &&
+          visibleDraftSessionCount === 0 &&
+          pinnedThreads.length +
+            activeThreads.length +
+            workingThreads.length +
+            snoozedThreads.length ===
+            0 &&
+          (settledCount === 0 || scopedProjectGroups.length > 0) ? (
+            <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
+              {projects.length === 0 ? (
+                <>
+                  <span>No projects yet</span>
+                  <button
+                    type="button"
+                    onClick={openAddProjectCommandPalette}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                  >
+                    <PlusIcon className="-mx-0.5 size-3" />
+                    Add project
+                  </button>
+                </>
+              ) : scopedProjectGroups.length > 0 ? (
+                <>
+                  <span>
+                    {`No ${settledCount > 0 ? "active threads" : "threads"} in ${
+                      scopedProjectGroups.length > 1
+                        ? "these projects"
+                        : scopedProjectGroups[0]!.displayName
+                    }${settledCount > 0 ? "" : " yet"}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setProjectScopeKeys([])}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                  >
+                    Show all projects
+                  </button>
+                </>
+              ) : (
+                "No threads yet"
+              )}
+            </div>
           ) : null}
           {!isSearchingThreads && sidebarMode === "activity" ? (
             <TooltipProvider

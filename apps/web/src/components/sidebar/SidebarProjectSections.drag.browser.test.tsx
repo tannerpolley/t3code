@@ -18,6 +18,7 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => commands.update }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
+vi.mock("../../hooks/useRemoveSidebarProject", () => ({ useRemoveSidebarProject: () => vi.fn() }));
 vi.mock("./NewSectionProjectDialog", () => ({ NewSectionProjectDialog: () => null }));
 
 const environmentId = EnvironmentId.make("local");
@@ -138,13 +139,10 @@ function view(sections: Sections = [section, emptySection]) {
       threadsByProjectKey={new Map()}
       runningSubagentsByParentKey={new Map()}
       onAddProject={noop}
-      onNewSection={noop}
-      onNewSubsection={noop}
-      onRenameSection={noop}
+      onOpenSectionDialog={noop}
       onNewThreadInProject={noop}
       onProjectContextMenu={noop}
       onOpenProjectSettings={noop}
-      onRemoveProject={noop}
       onSelectProject={noop}
       onToggleProject={(key, expanded) =>
         useUiStateStore.getState().setProjectExpanded(key, expanded)
