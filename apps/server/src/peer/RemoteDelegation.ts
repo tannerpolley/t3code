@@ -27,6 +27,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -50,6 +51,8 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+
+const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 
 /** How long one follow of a remote task waits on its thread there before checking again. */
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
@@ -311,7 +314,7 @@ const make = Effect.gen(function* () {
           target,
           (id) => providers.find((provider) => provider.providerInstanceId === id)?.driverKind,
         );
-        if (choice instanceof OrchestratorMcpFailure) return yield* choice;
+        if (isOrchestratorMcpFailure(choice)) return yield* choice;
         if (choice !== undefined) target = { ...target, ...choice };
       }
       // Outside a configured role, the provider and model inherit. Another
