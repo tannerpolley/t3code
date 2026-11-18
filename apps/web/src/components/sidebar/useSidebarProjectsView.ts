@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useEffect, useRef } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
-import { resolveProjectExpanded, useUiStateStore } from "../../uiStateStore";
+import type { SidebarThreadSummary } from "../../types";
+import { resolveProjectExpanded, type SidebarMode, useUiStateStore } from "../../uiStateStore";
 import { sidebarFolderExpansionKeys } from "../Sidebar.logic";
-import type { ProjectSectionDialogTarget } from "./SidebarProjectSections";
+import { resolveSidebarReveal } from "./SidebarReveal.logic";
 
-/** The Projects sidebar view's mode, sections, project expansion, and section dialog state. */
+/** The Projects sidebar view's mode, sections, and project expansion. */
 export function useSidebarProjectsView(
   projectGroupByKey: ReadonlyMap<string, SidebarProjectSnapshot>,
 ) {
@@ -19,25 +21,6 @@ export function useSidebarProjectsView(
   const sidebarOtherProjectsExpanded = useUiStateStore(
     (store) => store.sidebarOtherProjectsExpanded,
   );
-  // `id` remounts the dialog per opening so its name field starts fresh; `open` stays separate so
-  // the dialog keeps its content while it animates closed.
-  const [sectionDialog, setSectionDialog] = useState<{
-    readonly target: ProjectSectionDialogTarget;
-    readonly open: boolean;
-    readonly id: number;
-  } | null>(null);
-  const openSectionDialog = (target: ProjectSectionDialogTarget) => {
-    if (useUiStateStore.getState().sidebarDisplaySnapshot !== null) return;
-    setSectionDialog((current) => ({ target, open: true, id: (current?.id ?? 0) + 1 }));
-  };
-  const setSectionDialogOpen = (open: boolean) => {
-    setSectionDialog((current) => (current ? { ...current, open } : current));
-  };
-  const openCreateSectionDialog = () => openSectionDialog({ kind: "create" });
-  const openCreateSubsectionDialog = (parent: { readonly id: string; readonly name: string }) =>
-    openSectionDialog({ kind: "create", parent: { id: parent.id, name: parent.name } });
-  const openRenameSectionDialog = (section: { readonly id: string; readonly name: string }) =>
-    openSectionDialog({ kind: "rename", id: section.id, name: section.name });
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
   // Same keys as Activity's folders, so both views open and close one project together.
@@ -55,13 +38,94 @@ export function useSidebarProjectsView(
     setSidebarMode,
     sidebarProjectSections,
     sidebarOtherProjectsExpanded,
-    sectionDialog,
-    setSectionDialogOpen,
-    openCreateSectionDialog,
-    openCreateSubsectionDialog,
-    openRenameSectionDialog,
     projectExpansionKeys,
     isProjectExpanded,
     toggleProjectExpanded,
   };
+}
+
+/**
+ * Opens the sections and project that hold the thread the route moved to, however it got there
+ * (link, search, palette, notification, shortcut, Back). Runs once per change of the open thread,
+ * so a project collapsed afterwards stays collapsed. The active row's reveal ref scrolls to it and
+ * route reveal widens the Activity scope; this only opens what hides the row in Projects.
+ */
+export function useProjectsRouteReveal(input: {
+  readonly routeThreadKey: string | null;
+  readonly threads: readonly SidebarThreadSummary[];
+  readonly logicalProjectKeyByScopedProjectRef: ReadonlyMap<string, string>;
+  readonly sidebarMode: SidebarMode;
+  readonly projectExpansionKeys: (projectKey: string) => readonly string[];
+  readonly toggleProjectExpanded: (projectKey: string, expanded: boolean) => void;
+  /** Search results replace the list, so a reveal clears the search. */
+  readonly onReveal: () => void;
+}) {
+  const {
+    routeThreadKey,
+    threads,
+    logicalProjectKeyByScopedProjectRef,
+    sidebarMode,
+    projectExpansionKeys,
+    toggleProjectExpanded,
+    onReveal,
+  } = input;
+  const revealOpenThread = useClientSettings((s) => s.revealOpenThreadInSidebar);
+  const revealedThreadKeyRef = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Opens the layout around the thread a navigation made active; the thread may load after the route, so it retries as threads arrive.
+  useEffect(() => {
+    if (routeThreadKey === null || !revealOpenThread) {
+      // Turning the switch on later must not reveal a thread that was opened while it was off.
+      revealedThreadKeyRef.current = routeThreadKey;
+      return;
+    }
+    if (revealedThreadKeyRef.current === routeThreadKey) return;
+    const threadByKey = new Map(
+      threads.map((thread) => [
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        thread,
+      ]),
+    );
+    const uiState = useUiStateStore.getState();
+    const reveal = resolveSidebarReveal({
+      threadKey: routeThreadKey,
+      getThread: (key) => {
+        const thread = threadByKey.get(key);
+        if (thread === undefined) return undefined;
+        const { parentThreadId, relationshipToParent } = thread.lineage;
+        return {
+          parentKey:
+            relationshipToParent === "subagent" && parentThreadId !== null
+              ? scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId))
+              : null,
+          projectKey:
+            logicalProjectKeyByScopedProjectRef.get(
+              `${thread.environmentId}:${thread.projectId}`,
+            ) ?? null,
+          archived: thread.archivedAt !== null,
+        };
+      },
+      sections: uiState.sidebarProjectSections,
+      otherProjectsExpanded: uiState.sidebarOtherProjectsExpanded,
+      isProjectExpanded: (projectKey) =>
+        resolveProjectExpanded(uiState.projectExpandedById, projectExpansionKeys(projectKey)),
+    });
+    if (reveal === null) return;
+    revealedThreadKeyRef.current = routeThreadKey;
+    onReveal();
+    if (sidebarMode !== "projects") return;
+    for (const sectionId of reveal.expandSectionIds) {
+      uiState.setSidebarProjectSectionExpanded(sectionId, true);
+    }
+    if (reveal.expandOtherProjects) uiState.setSidebarOtherProjectsExpanded(true);
+    if (reveal.expandProject) toggleProjectExpanded(reveal.projectKey, true);
+  }, [
+    logicalProjectKeyByScopedProjectRef,
+    onReveal,
+    projectExpansionKeys,
+    revealOpenThread,
+    routeThreadKey,
+    sidebarMode,
+    threads,
+    toggleProjectExpanded,
+  ]);
 }
