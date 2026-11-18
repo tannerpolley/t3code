@@ -173,7 +173,14 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
       "Required for managed implementors. Starts or claims an eligible GitHub issue; an existing worker is reused. For writer, designer, checker, reviewer and investigator, this is only a visibility link: no claim, slot or issue worktree.",
   }),
   task: OrchestratorMcpPrompt,
-  target: Schema.optional(OrchestratorMcpTarget),
+  target: Schema.optional(
+    Schema.Struct({
+      ...OrchestratorMcpTarget.fields,
+      override: Schema.optional(Schema.Boolean).annotate({
+        description: "Set true after the owner approves a target outside the role's choices.",
+      }),
+    }),
+  ),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole).annotate({
     description:

@@ -1541,6 +1541,7 @@ const make = Effect.gen(function* () {
   const loadRoleDefaultTarget = Effect.fn("OrchestratorMcpService.loadRoleDefaultTarget")(
     function* (
       requestedRole: string,
+      target: OrchestratorMcpDelegateTaskInput["target"],
       providers: ReadonlyArray<ServerProvider>,
       usageSprint: RepositoryUsageSprint | undefined,
     ) {
@@ -1555,7 +1556,12 @@ const make = Effect.gen(function* () {
         settings.workerProvider,
         usageSprint,
       );
-      return roleDefaultTarget(roles, requestedRole);
+      return roleDefaultTarget(
+        roles,
+        requestedRole,
+        target,
+        (id) => providers.find((provider) => provider.instanceId === id)?.driver,
+      );
     },
   );
 
@@ -2796,20 +2802,16 @@ const make = Effect.gen(function* () {
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       const usageSprint = yield* loadUsageSprint(parent.thread);
       const roleDefault =
+        isRetryOfAcceptedDelegation ||
         input.role === undefined ||
         input.role === "general" ||
-        input.target?.providerInstanceId !== undefined ||
-        input.target?.driverKind !== undefined ||
-        input.target?.model !== undefined ||
-        input.target?.options !== undefined
+        input.target?.override === true
           ? undefined
-          : yield* loadRoleDefaultTarget(input.role, providers, usageSprint);
+          : yield* loadRoleDefaultTarget(input.role, input.target, providers, usageSprint);
+      if (roleDefault instanceof OrchestratorMcpFailure) return yield* roleDefault;
       const target = yield* resolveTargetRechecking({
         parent,
-        target:
-          roleDefault === undefined || typeof roleDefault === "string"
-            ? input.target
-            : { ...input.target, ...roleDefault },
+        target: roleDefault === undefined ? input.target : { ...input.target, ...roleDefault },
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
@@ -2856,7 +2858,6 @@ const make = Effect.gen(function* () {
       const withNote = (result: OrchestratorMcpDelegateTaskResult) => ({
         ...result,
         ...(workspace.note === undefined ? {} : { workspaceNote: workspace.note }),
-        ...(typeof roleDefault === "string" ? { modelNote: roleDefault } : {}),
       });
       const taskCommand = {
         type: "delegated_task.request",

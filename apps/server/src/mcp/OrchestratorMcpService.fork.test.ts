@@ -11,6 +11,7 @@ import {
   EnvironmentId,
   IssueWorkError,
   NodeId,
+  OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpTarget,
   ProjectId,
   ProviderDriverKind,
@@ -48,6 +49,7 @@ import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
+const decodeDelegateTask = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskInput);
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -1009,7 +1011,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           const result = yield* service.delegateTask(scope, {
             task: "Summarize the diff.",
             role,
-            target: { driverKind: ProviderDriverKind.make("codex") },
+            target: { driverKind: ProviderDriverKind.make("codex"), override: true },
             mode: "async",
             clientRequestId: "delegate-driver-skip-disabled-1",
           });
@@ -1042,10 +1044,26 @@ describe("OrchestratorMcpService provider resolution", () => {
     ["role without a target uses the role's first available choice", "designer", {}, "gpt-5.5"],
     ["implementor uses the Implementor role, not Sprinter", "implementor", {}, "gpt-5.5"],
     ["sprinter uses the Sprinter role", "sprinter", {}, "gpt-5.4"],
-    ["explicit target wins", "designer", { model: "gpt-5.4" }, "gpt-5.4"],
+    ["a listed choice works", "designer", { model: "gpt-5.4" }, "gpt-5.4"],
+    ["a stale target is refused", "implementor", { model: "gpt-5.4" }, null, /gpt-5\.5/],
+    [
+      "stale options are refused",
+      "implementor",
+      { options: { reasoningEffort: "low" } },
+      null,
+      /gpt-5\.5/,
+    ],
+    ["an explicit override works", "implementor", { model: "gpt-5.4", override: true }, "gpt-5.4"],
     ["unconfigured role copies the parent", "checker", {}, "gpt-5.4"],
-    ["no available choice copies the parent and says so", "reviewer", {}, "gpt-5.4"],
-  ] as const)("delegate_task model role default: %s", ([, role, target, expectedModel]) =>
+    ["no available choice asks the owner", "reviewer", {}, null, /Ask the owner.*question tool/],
+    [
+      "exhausted usage asks the owner",
+      "investigator",
+      {},
+      null,
+      /Weekly usage is exhausted.*Ask the owner/,
+    ],
+  ] as const)("delegate_task model role default: %s", ([, role, target, expectedModel, error]) =>
     Effect.gen(function* () {
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const choice = (model: string) => ({ providerInstanceId: codexInstanceId, model });
@@ -1062,10 +1080,11 @@ describe("OrchestratorMcpService provider resolution", () => {
         targets,
       });
       const modelRoles = [
-        modelRole("designer", [choice("gpt-0"), choice("gpt-5.5")]),
+        modelRole("designer", [choice("gpt-0"), choice("gpt-5.5"), choice("gpt-5.4")]),
         modelRole("sprinter", [choice("gpt-5.4")], "fast"),
         modelRole("implementor", [choice("gpt-5.5")], "thorough"),
         modelRole("reviewer", [choice("gpt-0")]),
+        modelRole("investigator", [choice("gpt-5.5")]),
       ];
       const task = {
         id: taskId,
@@ -1132,6 +1151,16 @@ describe("OrchestratorMcpService provider resolution", () => {
               isCustom: false,
               capabilities: null,
             })),
+            ...(role === "investigator"
+              ? {
+                  usageLimits: {
+                    checkedAt: modelRoleStatusCheckedAt,
+                    windows: [
+                      { id: "weekly", label: "Weekly", kind: "weekly" as const, usedPercent: 100 },
+                    ],
+                  },
+                }
+              : {}),
           },
         ]),
         adapterRegistryLayer([codexInstanceId]),
@@ -1145,7 +1174,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const result = yield* service.delegateTask(scope, {
+        const input = yield* decodeDelegateTask({
           task: "Summarize the diff.",
           role,
           target,
@@ -1153,16 +1182,18 @@ describe("OrchestratorMcpService provider resolution", () => {
           mode: "async",
           clientRequestId: `delegate-role-default-${role}`,
         });
+        const delegate = service.delegateTask(scope, input);
+        if (error !== undefined) {
+          const failure = yield* Effect.flip(delegate);
+          assert.match(failure.message, error);
+          assert.deepEqual(yield* Ref.get(dispatched), []);
+          return;
+        }
+        yield* delegate;
         const [request] = (yield* Ref.get(dispatched)) as ReadonlyArray<{
           modelSelection: { model: string };
         }>;
         assert.equal(request!.modelSelection.model, expectedModel);
-        assert.equal(
-          result.modelNote,
-          role === "reviewer"
-            ? "No reviewer model role choice is available, so the child uses this thread's model. First choice: Model gpt-0 is not advertised by provider codex. Advertised models: gpt-5.4, gpt-5.5."
-            : undefined,
-        );
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
@@ -1604,7 +1635,19 @@ describe("OrchestratorMcpService provider resolution", () => {
               } as never;
             }),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({
+          modelRoles: [
+            {
+              id: "reviewer",
+              name: "Reviewer",
+              description: "",
+              targets: [codexInstanceId, peerId].map((providerInstanceId) => ({
+                providerInstanceId,
+                model: "gpt-5.4",
+              })),
+            },
+          ],
+        }),
         providerRegistryLayer([
           providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
           providerSnapshot({ instanceId: peerId, driver, model: "gpt-5.4" }),

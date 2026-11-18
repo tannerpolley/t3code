@@ -151,6 +151,7 @@ it.effect(
         for (const issue of [undefined, reviewIssue(1)]) {
           const result = yield* mcp.delegateTask(scope, {
             role,
+            target: { override: true },
             task: "Read the diff",
             issue,
             clientRequestId: `${role}:${issue?.id ?? "no-issue"}`,
@@ -177,6 +178,7 @@ it.effect(
       for (const issue of [undefined, reviewIssue(1)]) {
         const result = yield* mcp.delegateTask(scope, {
           role: "writer",
+          target: { override: true },
           task: "Write the document with the owner",
           issue,
           clientRequestId: `writer:${issue?.id ?? "no-issue"}`,
@@ -184,6 +186,7 @@ it.effect(
         const child = yield* threads.getThreadRecords(result.childThreadId!, ["runs"]);
         const reused = yield* mcp.delegateTask(scope, {
           role: "writer",
+          target: { override: true },
           task: "Write the document with the owner",
           issue,
           clientRequestId: `writer:${issue?.id ?? "no-issue"}`,
@@ -569,6 +572,7 @@ it.effect("read-only descendants cannot bypass managed admission for implementor
     for (const role of ["checker", "reviewer", "investigator", "designer"] as const) {
       const child = yield* mcp.delegateTask(scopeFor(parent), {
         role,
+        target: { override: true },
         task: "Read only",
         clientRequestId: `descendant-${role}`,
       });

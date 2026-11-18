@@ -237,13 +237,13 @@ const boxToolkitLayer = (thread: BoxThread) => {
         ...(linkOrigin === null ? {} : { linkOrigin }),
       };
     });
-  const runOf = (status: OrchestrationV2Run["status"]) =>
+  const runOf = (status: OrchestrationV2Run["status"], requestedModel = modelSelection) =>
     ({
       id: runId,
       threadId: ThreadId.make("thread:box"),
       ordinal: 1,
       status,
-      modelSelection,
+      modelSelection: requestedModel,
       activeAttemptId: "attempt:box",
       requestedAt: DateTime.makeUnsafe(0),
       startedAt: DateTime.makeUnsafe(0),
@@ -255,11 +255,12 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const status = yield* Ref.get(thread.status);
       const runless = yield* Ref.get(thread.runless);
       const model = yield* Ref.get(thread.executedModel);
+      const launch = yield* Ref.get(thread.launchedWith);
       return shell === null
         ? (null as never)
         : {
             ...idleThreadProjection(shell),
-            runs: runless ? [] : [runOf(status)],
+            runs: runless ? [] : [runOf(status, launch?.modelSelection)],
             providerTurns: (model === null
               ? []
               : [{ runAttemptId: "attempt:box", ordinal: 1, model }]) as never,
@@ -591,7 +592,19 @@ const boxToolkitLayer = (thread: BoxThread) => {
     ),
     Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
     Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      ServerSettings.layerTest({
+        modelRoles: [
+          {
+            id: "reviewer",
+            name: "Reviewer",
+            description: "",
+            role: "reviewer",
+            targets: [{ providerInstanceId: boxClaude.instanceId, model: "claude-sonnet-4-6" }],
+          },
+        ],
+      }),
+    ),
     Layer.provide(NodeServices.layer),
   );
 };
@@ -1425,6 +1438,7 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
         clientRequestId: "review-on-box",
       });
       expect(result.isError, JSON.stringify(result.content)).toBe(false);
+      expect((yield* Ref.get(thread.launchedWith))?.modelSelection.model).toBe("claude-sonnet-4-6");
       const { taskId } = result.structuredContent as { taskId: NodeId };
       // The role reaches the thread there, as it does a child here.
       expect(yield* Ref.get(thread.message)).toBe(
@@ -1441,7 +1455,7 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       const task = yield* taskResult(a, taskId);
       expect(task?.status).toBe("completed");
       expect(task?.result).toBe(
-        `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`,
+        `Requested model claude-sonnet-4-6; the provider reported running gpt-5.4-mini.\n\n${long}`,
       );
       const status = yield* a.call("task_status", { taskId });
       expect(status.structuredContent).toMatchObject({
