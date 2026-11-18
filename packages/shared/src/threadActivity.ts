@@ -94,7 +94,7 @@ export function resolveThreadActivity(thread: ThreadActivityInput): ThreadActivi
   return "ready";
 }
 
-function threadActivityIsSettledRun(
+export function threadActivityIsSettledRun(
   run: Pick<ThreadRunSummary, "runId" | "status"> | null,
   runtime: Pick<ThreadRuntimeSummary, "activeRunId"> | null,
 ): boolean {
