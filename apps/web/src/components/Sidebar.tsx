@@ -1192,7 +1192,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // already lists the row; the active row's ref callback scrolls to it.
   const { widensScope: revealWidensScope } = resolveSidebarRouteReveal({
     reveal: routeReveal,
-    routeKey: routeRowThreadKey,
+    routeThreadKey,
+    routeRowKey: routeRowThreadKey,
     routeKeyInPlace,
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
@@ -1217,7 +1218,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     clearSelection();
     setPersistedProjectScopeKeys([]);
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
-  const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey, routeKeyInPlace);
+  const revealActiveRow = useActiveRowReveal(routeReveal, routeThreadKey);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,

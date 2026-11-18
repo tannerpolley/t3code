@@ -434,7 +434,7 @@ export function AppSidebarLayout({
 }) {
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
-    observedKey: null,
+    observedRoute: null,
     pendingKey: null,
   }));
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =

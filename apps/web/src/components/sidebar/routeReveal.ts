@@ -9,7 +9,7 @@ import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 // Leaving Settings commits the router's location before its matches, briefly hiding thread params.
 // Ignore null keys so the same thread does not look new during that gap.
 export interface SidebarRouteReveal {
-  observedKey: string | null;
+  observedRoute: { readonly threadKey: string; readonly rowKey: string | null } | null;
   pendingKey: string | null;
   // A draft's first send names its thread without navigating; the user is not looking for it.
   pendingInPlace?: boolean;
@@ -17,13 +17,15 @@ export interface SidebarRouteReveal {
 
 export function pendingSidebarRouteReveal(
   reveal: SidebarRouteReveal,
-  routeKey: string | null,
+  threadKey: string | null,
+  rowKey = threadKey,
   inPlace = false,
 ): string | null {
-  if (routeKey === null) return null;
-  if (reveal.observedKey !== routeKey) {
-    reveal.observedKey = routeKey;
-    reveal.pendingKey = routeKey;
+  if (threadKey === null) return null;
+  const observed = reveal.observedRoute;
+  if (observed?.threadKey !== threadKey || observed.rowKey !== rowKey) {
+    reveal.observedRoute = { threadKey, rowKey };
+    reveal.pendingKey = rowKey;
     reveal.pendingInPlace = inPlace;
   }
   return reveal.pendingKey;
@@ -36,16 +38,17 @@ export function completeSidebarRouteReveal(reveal: SidebarRouteReveal): void {
 // Each route change and each mount scroll to the open thread once. Render records
 // the route, so a thread left before its row mounted still counts as a change.
 // The row can mount after the route, once its shells arrive, so its ref scrolls.
-export function useActiveRowReveal(
-  reveal: SidebarRouteReveal,
-  routeKey: string | null,
-  inPlace = false,
-) {
+export function useActiveRowReveal(reveal: SidebarRouteReveal, routeThreadKey: string | null) {
   const mountRevealOwed = useRef(true);
-  pendingSidebarRouteReveal(reveal, routeKey, inPlace);
   // Returns a ref cleanup while it waits on a hidden row, so an unmount releases the wait.
   const revealRow = (row: HTMLElement | null, rowKey: string): (() => void) | undefined => {
-    if (row === null) return undefined;
+    if (
+      row === null ||
+      reveal.observedRoute?.threadKey !== routeThreadKey ||
+      reveal.observedRoute.rowKey !== rowKey
+    ) {
+      return undefined;
+    }
     if (reveal.pendingKey !== rowKey && !mountRevealOwed.current) return undefined;
     // The closed narrow sheet keeps rows mounted but hidden, and opening it does not
     // re-render them, so wait for the row to get a box before spending the reveal.
@@ -76,16 +79,29 @@ type RevealableThread = Parameters<typeof filterSidebarV2VisibleThreads>[0][numb
 // scroll never changes a scope the user chose.
 export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   readonly reveal: SidebarRouteReveal;
-  readonly routeKey: string | null;
+  readonly routeThreadKey: string | null;
+  readonly routeRowKey: string | null;
   readonly routeKeyInPlace: boolean;
   readonly isSearching: boolean;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly findThread: (key: string) => T | undefined;
 }): { readonly pendingKey: string | null; readonly widensScope: boolean } {
-  const { reveal, routeKey, isSearching, scopedProjectKeys, delegatedUnderParent, findThread } =
-    input;
-  const pendingKey = pendingSidebarRouteReveal(reveal, routeKey, input.routeKeyInPlace);
+  const {
+    reveal,
+    routeThreadKey,
+    routeRowKey,
+    isSearching,
+    scopedProjectKeys,
+    delegatedUnderParent,
+    findThread,
+  } = input;
+  const pendingKey = pendingSidebarRouteReveal(
+    reveal,
+    routeThreadKey,
+    routeRowKey,
+    input.routeKeyInPlace,
+  );
   // Search results replace the thread list; the reveal waits for it to return.
   const thread = pendingKey === null || isSearching ? undefined : findThread(pendingKey);
   const widensScope =

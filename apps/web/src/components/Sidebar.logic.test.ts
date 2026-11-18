@@ -1479,7 +1479,7 @@ describe("Working shelf (beta)", () => {
 
 describe("pendingSidebarRouteReveal", () => {
   it("keeps a revealed thread settled across a mount that reads no route params", () => {
-    const reveal = { observedKey: null, pendingKey: null };
+    const reveal = { observedRoute: null, pendingKey: null };
     expect(pendingSidebarRouteReveal(reveal, "env:a1")).toBe("env:a1");
     completeSidebarRouteReveal(reveal);
 
@@ -1491,7 +1491,7 @@ describe("pendingSidebarRouteReveal", () => {
   });
 
   it("keeps a pending reveal through a render without route params", () => {
-    const reveal = { observedKey: null, pendingKey: null };
+    const reveal = { observedRoute: null, pendingKey: null };
     pendingSidebarRouteReveal(reveal, "env:a1");
     expect(pendingSidebarRouteReveal(reveal, null)).toBeNull();
     expect(pendingSidebarRouteReveal(reveal, "env:a1")).toBe("env:a1");
@@ -1507,8 +1507,12 @@ describe("resolveSidebarRouteReveal", () => {
   it("widens the scope for a newly opened thread the scope hides", () => {
     expect(
       resolveSidebarRouteReveal({
-        reveal: { observedKey: "environment-test:other", pendingKey: null },
-        routeKey: hiddenKey,
+        reveal: {
+          observedRoute: { threadKey: "environment-test:other", rowKey: "environment-test:other" },
+          pendingKey: null,
+        },
+        routeThreadKey: hiddenKey,
+        routeRowKey: hiddenKey,
         routeKeyInPlace: false,
         isSearching: false,
         scopedProjectKeys,
@@ -1522,8 +1526,9 @@ describe("resolveSidebarRouteReveal", () => {
     // A remount's once-per-mount scroll must keep the scope the user chose.
     expect(
       resolveSidebarRouteReveal({
-        reveal: { observedKey: hiddenKey, pendingKey: null },
-        routeKey: hiddenKey,
+        reveal: { observedRoute: { threadKey: hiddenKey, rowKey: hiddenKey }, pendingKey: null },
+        routeThreadKey: hiddenKey,
+        routeRowKey: hiddenKey,
         routeKeyInPlace: false,
         isSearching: false,
         scopedProjectKeys,
@@ -1536,11 +1541,12 @@ describe("resolveSidebarRouteReveal", () => {
   it("widens again for a thread reopened before the thread between them listed its row", () => {
     // The user scoped away from the open thread, then went to a thread whose row
     // never mounted, then came back.
-    const reveal = { observedKey: hiddenKey, pendingKey: null };
+    const reveal = { observedRoute: { threadKey: hiddenKey, rowKey: hiddenKey }, pendingKey: null };
     const resolve = (routeKey: string) =>
       resolveSidebarRouteReveal({
         reveal,
-        routeKey,
+        routeThreadKey: routeKey,
+        routeRowKey: routeKey,
         routeKeyInPlace: false,
         isSearching: false,
         scopedProjectKeys,
@@ -1554,8 +1560,12 @@ describe("resolveSidebarRouteReveal", () => {
   it("holds a pending reveal without widening while searching", () => {
     expect(
       resolveSidebarRouteReveal({
-        reveal: { observedKey: hiddenKey, pendingKey: hiddenKey },
-        routeKey: hiddenKey,
+        reveal: {
+          observedRoute: { threadKey: hiddenKey, rowKey: hiddenKey },
+          pendingKey: hiddenKey,
+        },
+        routeThreadKey: hiddenKey,
+        routeRowKey: hiddenKey,
         routeKeyInPlace: false,
         isSearching: true,
         scopedProjectKeys,
