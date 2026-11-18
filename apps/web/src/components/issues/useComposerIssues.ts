@@ -28,7 +28,6 @@ const repositoryIssues = Atom.family((key: string) =>
           input: {
             ...scope,
             state: "all",
-            roadmap: true,
             ...(cursor === undefined ? {} : { cursor }),
           },
         }),

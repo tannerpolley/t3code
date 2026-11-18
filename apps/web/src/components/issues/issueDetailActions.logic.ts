@@ -1,10 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type {
-  EnvironmentId,
-  RepositoryIssueComment,
-  RepositoryIssueSummary,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, RepositoryIssueSummary, ThreadId } from "@t3tools/contracts";
 
 export type IssueComposerAction = "ask" | "explain" | "implement";
 
@@ -51,16 +46,6 @@ export function issueComposerPrompt(
     case "implement":
       return `Implement this issue: ${reference}\n\nRead the issue and its latest comments, then delegate it with delegate_task using the issue argument, following the repository's model roles.`;
   }
-}
-
-/** Issue comments have no review-resolution state; GitHub bot logins retain their suffix. */
-export function filterIssueComments(
-  comments: ReadonlyArray<RepositoryIssueComment>,
-  showBots: boolean,
-) {
-  return showBots
-    ? comments
-    : comments.filter((comment) => !comment.author?.login.endsWith("[bot]"));
 }
 
 /** An issue tab's link: the one it was opened from, else its GitHub page; other trackers need a URL. */

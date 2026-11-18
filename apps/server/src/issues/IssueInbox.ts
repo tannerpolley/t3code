@@ -350,7 +350,12 @@ export const make = Effect.gen(function* () {
       lastPolledAt.set(key, now);
       const can = yield* issues.capabilities(repo.host);
       yield* Effect.gen(function* () {
-        if (can.liveChanges && (yield* watcher.poll(repo)) > 0) yield* changed;
+        if (can.liveChanges) {
+          const before = yield* issues.revision(repo);
+          const inserted = yield* watcher.poll(repo);
+          // New GitHub activity also re-reads open roadmaps, which follow this feed.
+          if (inserted > 0 || (yield* issues.revision(repo)) !== before) yield* changed;
+        }
         if (repo.rootThreadId === null) {
           const [pending] = yield* sql`SELECT event_id FROM issue_inbox_events
             WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId} AND tagged = 1 AND read_at IS NULL LIMIT 1`;

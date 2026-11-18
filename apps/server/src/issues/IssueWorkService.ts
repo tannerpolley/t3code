@@ -659,8 +659,8 @@ export const layer = Layer.effect(
           createdRoot: false,
         };
       }
-      const detail = yield* issues.detail(input).pipe(Effect.mapError(mapError));
-      if (detail.issue.state !== "open")
+      const read = yield* issues.workRead(input).pipe(Effect.mapError(mapError));
+      if (read.state !== "open")
         return yield* new IssueWorkError({
           code: "invalid-request",
           message: "Only open issues can start work.",
@@ -766,8 +766,8 @@ export const layer = Layer.effect(
         .pipe(Effect.mapError(mapError));
       const issue = yield* issues.resolveLinkedIssue(input).pipe(Effect.mapError(mapError));
       if (queued && Option.isNone(receipt)) {
-        const detail = yield* issues.detail(input).pipe(Effect.mapError(mapError));
-        if (detail.issue.state !== "open")
+        const read = yield* issues.workRead(input).pipe(Effect.mapError(mapError));
+        if (read.state !== "open")
           return yield* new IssueWorkError({
             code: "invalid-request",
             message: "Only open issues can be queued.",

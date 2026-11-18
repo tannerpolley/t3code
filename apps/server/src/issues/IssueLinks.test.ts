@@ -1,4 +1,4 @@
-import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as NodeSqlite from "node:sqlite";
@@ -22,7 +22,6 @@ import * as Statement from "effect/sql/Statement";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
-import * as Stream from "effect/Stream";
 import * as IssueLinks from "./IssueLinks.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
 import * as IssueService from "./IssueService.ts";
@@ -174,12 +173,10 @@ it.effect(
     const ordinary = linked(liveThreadShell(threadId));
     const h = harness([managed, ordinary]);
     const layer = IssueRoadmap.layer.pipe(
-      Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
+      Layer.provide(Layer.mock(TrackerIssueService.IssueService)({})),
       Layer.provideMerge(h.layer),
       Layer.provide(
         Layer.mock(IssueService.IssueService)({
-          refreshes: Stream.empty,
-          list: () => Effect.succeed(list()),
           statusBatch: () =>
             Effect.succeed([
               {
@@ -196,7 +193,7 @@ it.effect(
     );
     return Effect.gen(function* () {
       const roadmap = yield* IssueRoadmap.IssueRoadmap;
-      const pane = yield* roadmap.list({ ...ref, roadmap: true });
+      const pane = yield* (yield* IssueLinks.IssueLinks).enrich(list());
       const badge = yield* roadmap.statusBatch({ issues: [{ host: ref.host, nodeId: "I_13" }] });
       const compact = pane.issues[0]!.liveWork!.map(({ threadId, inherited, status }) => ({
         threadId,
@@ -232,11 +229,10 @@ it.effect("acquires the reader once for a multi-repository status batch", () =>
       Layer.provideMerge(IssueLinks.layer.pipe(Layer.provide(ProjectionStore.layer))),
       Layer.provide(
         Layer.mock(IssueService.IssueService)({
-          refreshes: Stream.empty,
           statusBatch: () => Effect.succeed(statuses),
         }),
       ),
-      Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
+      Layer.provide(Layer.mock(TrackerIssueService.IssueService)({})),
       Layer.provideMerge(database),
     );
     yield* Effect.gen(function* () {

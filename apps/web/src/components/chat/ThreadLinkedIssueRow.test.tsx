@@ -74,8 +74,6 @@ it("updates the linked row and detail glyph from the shell stream while cached d
     repository: linkedIssue,
     viewer: null,
     fetchedAt: thread.updatedAt,
-    body: "",
-    comments: [],
     linkedPullRequests: [],
     issue: {
       ...linkedIssue,
@@ -104,6 +102,7 @@ it("updates the linked row and detail glyph from the shell stream while cached d
   appAtomRegistry.set(state.shells!, [thread]);
   const cached = AsyncResult.success(detail);
   appAtomRegistry.set(state.detail!, cached);
+  // oxlint-disable-next-line t3code/require-disposable-render -- react-test-renderer, not a browser render
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let renderer: ReactTestRenderer | undefined;
   try {
@@ -166,6 +165,7 @@ it("keeps linked issues reachable without claiming an Open state before detail l
   });
   appAtomRegistry.set(state.shells!, [thread]);
   appAtomRegistry.set(state.detail!, AsyncResult.initial());
+  // oxlint-disable-next-line t3code/require-disposable-render -- react-test-renderer, not a browser render
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let renderer: ReactTestRenderer | undefined;
   try {

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   issueReferenceCopyTarget,
-  filterIssueComments,
   issueComposerPrompt,
   issueImplementDestination,
 } from "./issueDetailActions.logic";
@@ -76,25 +75,6 @@ describe("implementation composer routing", () => {
       handoffPrompt({ prompt: "Existing instructions", lastHandoffPrompt: undefined }, prompt),
     ).toBe(`Existing instructions\n\n${prompt}`);
   });
-});
-
-it("filters bot reports without hiding deleted authors or changing comment order", () => {
-  const comments = [
-    {
-      author: { login: "review[bot]", avatarUrl: null },
-      body: "Report",
-      createdAt: "2026-10-15T00:00:00Z",
-      url: "https://github.com/owner/repo/issues/44#issuecomment-1",
-    },
-    {
-      author: null,
-      body: "Deleted author",
-      createdAt: "2026-10-15T01:00:00Z",
-      url: "https://github.com/owner/repo/issues/44#issuecomment-2",
-    },
-  ];
-  expect(filterIssueComments(comments, false)).toEqual([comments[1]]);
-  expect(filterIssueComments(comments, true)).toBe(comments);
 });
 
 it("copies the selected issue URL with issue-specific feedback, and releases the generic command when no issue is open", () => {

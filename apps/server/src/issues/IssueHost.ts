@@ -3,7 +3,6 @@ import {
   IssueMilestone,
   IssueReadError,
   type IssueDetailInput as IssueDetailInputType,
-  type IssueDetailResult as IssueDetailResultType,
   type IssueStatusBatchResult,
   type RepositoryIssueListState,
   type IssueRepositoriesResult as IssueRepositoriesResultType,
@@ -25,7 +24,6 @@ export interface PageResult<A> {
   readonly items: ReadonlyArray<A>;
   readonly nextPage: number | null;
   readonly etag?: string | undefined;
-  readonly fetchedAt?: string;
   readonly generation?: number;
 }
 
@@ -41,6 +39,8 @@ export type ListMetadata = Map<
       | "relationshipsComplete"
       | "pullRequestRefs"
       | "pullRequests"
+      | "milestone"
+      | "subIssues"
     >
   >
 >;
@@ -52,9 +52,7 @@ export type PageResponse<A> =
       readonly etag: string | undefined;
     };
 
-export interface IssuePageResult extends PageResult<IssueSummaryType> {
-  readonly metadata?: Partial<Record<"projects" | "roadmap", ListMetadata>> | undefined;
-}
+export type IssuePageResult = PageResult<IssueSummaryType>;
 
 export interface IssueHostIdentity {
   readonly accountId: string;
@@ -192,7 +190,6 @@ export interface IssueHost {
   readonly listMetadata: (
     scope: IssueRepositoryScope,
     numbers: ReadonlyArray<number>,
-    roadmap: boolean,
   ) => Effect.Effect<ListMetadata>;
   readonly statuses: (
     host: string,
@@ -201,10 +198,6 @@ export interface IssueHost {
     ReadonlyArray<IssueStatusBatchResult[number] & RepositoryIssueRef>,
     IssueReadError
   >;
-  readonly detail: (
-    input: IssueDetailInputType,
-    identity: IssueHostIdentity,
-  ) => Effect.Effect<IssueDetailResultType, IssueReadError>;
   readonly workRead: (input: IssueDetailInputType) => Effect.Effect<IssueWorkRead, IssueReadError>;
   readonly repositoryIdentity: (input: {
     readonly host: string;

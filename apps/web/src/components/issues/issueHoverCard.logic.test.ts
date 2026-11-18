@@ -38,8 +38,6 @@ const detail = (summary: RepositoryIssueSummary, refs: IssuePullRequest[]): Issu
   issue: summary,
   viewer: null,
   fetchedAt: summary.updatedAt,
-  body: "",
-  comments: [],
   linkedPullRequests: refs.map((ref) => ({
     ...ref,
     state: ref.state ?? "open",

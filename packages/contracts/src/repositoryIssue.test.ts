@@ -69,7 +69,7 @@ const listResult = {
   milestonesComplete: true,
 };
 
-const detailResult = { ...listResult, issue, body: "" };
+const detailResult = { ...listResult, issue };
 
 describe("GitHub issue contract boundaries", () => {
   it("rejects invalid issue numbers, repository references, and cursors", () => {
@@ -113,17 +113,16 @@ describe("GitHub issue contract boundaries", () => {
     ).toThrow();
   });
 
-  it("accepts nullable author, milestone, and viewer fields plus an empty body", () => {
+  it("accepts nullable author, milestone, and viewer fields", () => {
     expect(decodeListResult(listResult)).toMatchObject({
       viewer: null,
       issues: [{ author: null, milestone: null }],
     });
-    expect(decodeDetailResult(detailResult)).toMatchObject({ issue, body: "" });
+    expect(decodeDetailResult(detailResult)).toMatchObject({ issue });
   });
 
-  it("decodes a detail result from a server that predates comments and linked pull requests", () => {
+  it("decodes a detail result from a server that predates linked pull requests", () => {
     const decoded = decodeDetailResult(detailResult);
-    expect(decoded.comments).toEqual([]);
     expect(decoded.linkedPullRequests).toEqual([]);
     expect(() =>
       decodeDetailResult({

@@ -12,8 +12,6 @@ import {
   IssueReadError,
   NonNegativeInt,
   TrimmedNonEmptyString,
-  type IssueDetailResult as IssueDetailResultType,
-  type RepositoryIssueLinkedPullRequest,
   type IssueStatusBatchResult,
   type RepositoryIssueListState,
   type IssueRepositoriesResult as IssueRepositoriesResultType,
@@ -32,9 +30,6 @@ import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/Git
 import { readIssueListMetadata } from "./IssueProjects.ts";
 
 const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-// A detail read carries up to DETAIL_COMMENT_LIMIT comment bodies of up to 64 KiB each.
-const DETAIL_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-const DETAIL_COMMENT_LIMIT = 100;
 const COMMENT_MAX_PAGES = 1_000;
 /** Pages per listing per inbox poll; longer catch-ups skip ahead. */
 const INBOX_MAX_PAGES = 50;
@@ -99,48 +94,6 @@ const RawRepositorySchema = Schema.Struct({
 });
 type RawRepository = Schema.Schema.Type<typeof RawRepositorySchema>;
 
-const GRAPHQL_PULL_REQUEST_FIELDS = "number title state isDraft url repository { nameWithOwner }";
-const ISSUE_LINK_FIELDS = `closedByPullRequestsReferences(first: 25, includeClosedPrs: true) {
-          nodes { ${GRAPHQL_PULL_REQUEST_FIELDS} }
-        }
-        timelineItems(last: 100, itemTypes: [CROSS_REFERENCED_EVENT]) {
-          nodes {
-            ... on CrossReferencedEvent {
-              source { __typename ... on PullRequest { ${GRAPHQL_PULL_REQUEST_FIELDS} } }
-            }
-          }
-        }`;
-/**
- * The issue with its linked pull requests. Without links it is the fallback read for an issue
- * whose cross-references GitHub partly refuses (an organization's SSO hides one), which fails
- * the whole GraphQL answer.
- */
-const issueDetailQuery = (
-  links: boolean,
-) => `query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    issueOrPullRequest(number: $number) {
-      __typename
-      ... on Issue {
-        number title body state stateReason createdAt updatedAt closedAt
-        author { login avatarUrl }
-        assignees(first: 100) { nodes { login avatarUrl } }
-        labels(first: 100) { nodes { name color } }
-        milestone {
-          number title state dueOn
-          openIssues: issues(states: OPEN) { totalCount }
-          closedIssues: issues(states: CLOSED) { totalCount }
-        }
-        comments(last: ${DETAIL_COMMENT_LIMIT}) {
-          totalCount
-          nodes { author { login avatarUrl } body createdAt url }
-        }
-        ${links ? ISSUE_LINK_FIELDS : ""}
-      }
-    }
-  }
-}`;
-
 /** A connection whose nodes GitHub may null out, e.g. when an organization's SSO hides one. */
 const graphQlNodes = <S extends Schema.Top>(node: S) =>
   Schema.Struct({ nodes: Schema.NullOr(Schema.Array(Schema.NullOr(node))) });
@@ -199,10 +152,6 @@ const WorkIssueResponse = Schema.Struct({
 });
 const WORK_ISSUE_FIELDS =
   "id databaseId number title url state repository { databaseId nameWithOwner }";
-const GraphQlActorSchema = Schema.Struct({
-  login: TrimmedNonEmptyString,
-  avatarUrl: Schema.optional(Schema.NullOr(Schema.String)),
-});
 const GraphQlPullRequestSchema = Schema.Struct({
   __typename: Schema.optional(Schema.Literal("PullRequest")),
   number: IssueNumber,
@@ -211,64 +160,6 @@ const GraphQlPullRequestSchema = Schema.Struct({
   isDraft: Schema.Boolean,
   url: GraphQlUrl,
   repository: Schema.Struct({ nameWithOwner: TrimmedNonEmptyString }),
-});
-type GraphQlPullRequest = Schema.Schema.Type<typeof GraphQlPullRequestSchema>;
-const GraphQlIssueSchema = Schema.Struct({
-  __typename: Schema.Literal("Issue"),
-  number: IssueNumber,
-  title: Schema.String,
-  body: Schema.NullOr(Schema.String),
-  state: Schema.Literals(["OPEN", "CLOSED"]),
-  stateReason: Schema.NullOr(Schema.String),
-  createdAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-  closedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
-  author: Schema.NullOr(GraphQlActorSchema),
-  assignees: graphQlNodes(GraphQlActorSchema),
-  labels: Schema.NullOr(
-    graphQlNodes(
-      Schema.Struct({
-        name: TrimmedNonEmptyString,
-        color: Schema.NullOr(Schema.String.check(Schema.isPattern(/^[0-9a-f]{6}$/iu))),
-      }),
-    ),
-  ),
-  milestone: Schema.NullOr(
-    Schema.Struct({
-      number: IssueNumber,
-      title: TrimmedNonEmptyString,
-      state: Schema.Literals(["OPEN", "CLOSED"]),
-      dueOn: Schema.NullOr(IsoDateTime),
-      openIssues: Schema.Struct({ totalCount: NonNegativeInt }),
-      closedIssues: Schema.Struct({ totalCount: NonNegativeInt }),
-    }),
-  ),
-  comments: Schema.Struct({
-    totalCount: NonNegativeInt,
-    ...graphQlNodes(
-      Schema.Struct({
-        author: Schema.NullOr(GraphQlActorSchema),
-        body: Schema.String,
-        createdAt: IsoDateTime,
-        url: GraphQlUrl,
-      }),
-    ).fields,
-  }),
-  closedByPullRequestsReferences: Schema.optional(
-    Schema.NullOr(graphQlNodes(GraphQlPullRequestSchema)),
-  ),
-  timelineItems: Schema.optional(
-    graphQlNodes(
-      Schema.Struct({
-        // Other sources (issues) carry only their __typename.
-        source: Schema.optional(
-          Schema.NullOr(
-            Schema.Union([GraphQlPullRequestSchema, Schema.Struct({ __typename: Schema.String })]),
-          ),
-        ),
-      }),
-    ),
-  ),
 });
 const StatusConnection = <S extends Schema.Top>(node: S) =>
   Schema.Struct({
@@ -281,7 +172,7 @@ const StatusIssueNode = Schema.Struct({
   number: WorkIssueNode.fields.number,
   repository: GraphQlPullRequestSchema.fields.repository,
   state: WorkIssueNode.fields.state,
-  stateReason: GraphQlIssueSchema.fields.stateReason,
+  stateReason: Schema.NullOr(Schema.String),
   blockedBy: StatusConnection(Schema.Struct({ state: WorkIssueNode.fields.state })),
   closedByPullRequestsReferences: StatusConnection(
     Schema.Struct({
@@ -319,29 +210,6 @@ const STATUS_BATCH_QUERY = `query($ids: [ID!]!) {
     }
   }
 }`;
-
-type GraphQlIssue = Schema.Schema.Type<typeof GraphQlIssueSchema>;
-const GraphQlIssueDetailResponseSchema = Schema.Struct({
-  data: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        repository: Schema.NullOr(
-          Schema.Struct({
-            issueOrPullRequest: Schema.NullOr(
-              Schema.Union([
-                GraphQlIssueSchema,
-                Schema.Struct({ __typename: Schema.Literal("PullRequest") }),
-              ]),
-            ),
-          }),
-        ),
-      }),
-    ),
-  ),
-});
-const decodeGraphQlIssueDetail = Schema.decodeEffect(
-  Schema.fromJsonString(GraphQlIssueDetailResponseSchema),
-);
 
 type RawIssue = Schema.Schema.Type<typeof RawIssueSchema>;
 
@@ -479,74 +347,6 @@ function presentNodes<A>(
   connection: { readonly nodes: ReadonlyArray<A | null> | null } | null,
 ): A[] {
   return connection?.nodes?.filter((node): node is A => node !== null) ?? [];
-}
-
-function normalizeGraphQlActor(actor: Schema.Schema.Type<typeof GraphQlActorSchema>): {
-  readonly login: string;
-  readonly avatarUrl: string | null;
-} {
-  return { login: actor.login, avatarUrl: normalizeAvatarUrl(actor.avatarUrl) };
-}
-
-function normalizeGraphQlIssue(
-  host: string,
-  repository: string,
-  issue: GraphQlIssue,
-): IssueSummaryType {
-  const milestone = issue.milestone;
-  return {
-    number: issue.number,
-    title: issue.title,
-    url: issueUrl(host, repository, issue.number),
-    state: issue.state === "OPEN" ? "open" : "closed",
-    // GraphQL spells REST's `not_planned` as NOT_PLANNED.
-    stateReason: issue.stateReason?.toLowerCase() ?? null,
-    author: issue.author === null ? null : normalizeGraphQlActor(issue.author),
-    assignees: presentNodes(issue.assignees).map(normalizeGraphQlActor),
-    labels: presentNodes(issue.labels).map((label) => ({ name: label.name, color: label.color })),
-    milestone:
-      milestone === null
-        ? null
-        : {
-            number: milestone.number,
-            title: milestone.title,
-            state: milestone.state === "OPEN" ? "open" : "closed",
-            dueAt: milestone.dueOn,
-            url: milestoneUrl(host, repository, milestone.number),
-            openCount: milestone.openIssues.totalCount,
-            closedCount: milestone.closedIssues.totalCount,
-          },
-    createdAt: issue.createdAt,
-    updatedAt: issue.updatedAt,
-    closedAt: issue.closedAt ?? null,
-    commentCount: issue.comments.totalCount,
-  };
-}
-
-/** Closing pull requests first, then ones that only mention the issue, each listed once. */
-function linkedPullRequests(issue: GraphQlIssue): RepositoryIssueLinkedPullRequest[] {
-  const referencing = presentNodes(issue.timelineItems ?? null).flatMap(({ source }) =>
-    source != null && "number" in source ? [source] : [],
-  );
-  const candidates: Array<readonly [GraphQlPullRequest, boolean]> = [
-    ...presentNodes(issue.closedByPullRequestsReferences ?? null).map((pr) => [pr, true] as const),
-    ...referencing.map((pr) => [pr, false] as const),
-  ];
-  const linked = new Map<string, RepositoryIssueLinkedPullRequest>();
-  for (const [pr, closesIssue] of candidates) {
-    const key = `${pr.repository.nameWithOwner.toLowerCase()}#${pr.number}`;
-    if (linked.has(key)) continue;
-    linked.set(key, {
-      repository: pr.repository.nameWithOwner,
-      number: pr.number,
-      title: pr.title,
-      state: pr.state === "OPEN" ? "open" : pr.state === "MERGED" ? "merged" : "closed",
-      isDraft: pr.isDraft,
-      url: pr.url,
-      closesIssue,
-    });
-  }
-  return [...linked.values()];
 }
 
 function nextPageFromHeaders(
@@ -1358,71 +1158,6 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     return pageResult;
   });
 
-  const detail: IssueHost["detail"] = Effect.fn("IssueService.detailRead")(
-    function* (input, identity) {
-      const scope = yield* resolveScope("detail", input);
-      if (input.expectedAccountId !== undefined && input.expectedAccountId !== identity.accountId) {
-        return yield* readError(
-          "detail",
-          "inaccessible",
-          "The issue is not accessible to this account.",
-        );
-      }
-      const [owner, name] = scope.repository.split("/");
-      const response = yield* executeApi({
-        operation: "detail",
-        scope,
-        endpoint: "graphql",
-        maxOutputBytes: DETAIL_MAX_OUTPUT_BYTES,
-        graphql: {
-          query: issueDetailQuery(true),
-          variables: { owner: owner!, name: name!, number: input.number },
-          fallbackQuery: issueDetailQuery(false),
-        },
-      });
-      const decoded = yield* decodeGraphQlIssueDetail(response.body).pipe(
-        Effect.mapError(() =>
-          readError("detail", "invalid-response", "GitHub returned an invalid issue."),
-        ),
-      );
-      // GitHubApi fails a NOT_FOUND answer; null data without one reads the same way.
-      const raw = decoded.data?.repository?.issueOrPullRequest ?? null;
-      if (raw === null) {
-        return yield* readError(
-          "detail",
-          "inaccessible",
-          "The issue is not accessible to this account.",
-        );
-      }
-      if (raw.__typename !== "Issue") {
-        return yield* readError("detail", "unsupported", "Pull requests are not GitHub issues.");
-      }
-      // The list's own metadata read for this one issue, so the detail can say blocked or
-      // in progress as its row does. It never fails the detail.
-      const metadata = yield* readIssueListMetadata(scope, [raw.number], true).pipe(
-        Effect.provideService(GitHubApi.GitHubApi, api),
-      );
-      const { pullRequestRefs: _refs, ...relationships } = metadata.get(raw.number) ?? {};
-      return {
-        repository: { host: scope.host, repository: scope.repository },
-        viewer: { accountId: identity.accountId, login: identity.viewer },
-        fetchedAt: DateTime.formatIso(yield* DateTime.now),
-        issue: {
-          ...normalizeGraphQlIssue(scope.host, scope.repository, raw),
-          ...relationships,
-        },
-        body: raw.body ?? "",
-        comments: presentNodes(raw.comments).map((comment) => ({
-          author: comment.author === null ? null : normalizeGraphQlActor(comment.author),
-          body: comment.body,
-          createdAt: comment.createdAt,
-          url: comment.url,
-        })),
-        linkedPullRequests: linkedPullRequests(raw),
-      } satisfies IssueDetailResultType;
-    },
-  );
-
   const listRepositoryPage = Effect.fn("IssueService.listRepositoryPage")(function* (
     scope: IssueRepositoryScope,
     page: number,
@@ -1991,10 +1726,8 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
     repositories,
     listIssuePage,
     listMilestonePage,
-    listMetadata: (scope, numbers, roadmap) =>
-      readIssueListMetadata(scope, numbers, roadmap).pipe(
-        Effect.provideService(GitHubApi.GitHubApi, api),
-      ),
+    listMetadata: (scope, numbers) =>
+      readIssueListMetadata(scope, numbers).pipe(Effect.provideService(GitHubApi.GitHubApi, api)),
     withIdentity: (scope, operation, read) =>
       githubPullRequests
         .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, read)
@@ -2003,7 +1736,6 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (context: IssueH
             isIssueReadError(error) ? error : mapGitHubError(operation, error),
           ),
         ),
-    detail,
     workRead,
     statuses,
     repositoryIdentity,

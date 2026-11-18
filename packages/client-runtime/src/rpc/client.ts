@@ -75,7 +75,6 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
   | typeof WS_METHODS.ownerDecisionsSubscribe
   | typeof WS_METHODS.issueChangesSubscribe
-  | typeof WS_METHODS.issuesSubscribeLinkRefreshes
   | typeof WS_METHODS.issuesInboxSubscribeUnread
   | typeof WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes
   | typeof WS_METHODS.subscribeVcsStatus

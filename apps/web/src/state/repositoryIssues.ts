@@ -14,7 +14,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useMemo } from "react";
+import { useState } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -133,15 +133,10 @@ export function useSidebarIssuePresentation(
 /** Apply streamed work after GitHub paging, whose freshness is keyed by fetchedAt. */
 export function useLiveIssueWork() {
   const index = useAtomValue(issueWorkIndexAtom);
-  const overlay = useMemo(() => createLiveIssueWorkOverlay(), []);
+  const [overlay] = useState(createLiveIssueWorkOverlay);
   const ready = useAllEnvironmentShellsBootstrapped();
-  return useCallback(
-    <T extends RepositoryIssueListResult>(list: T, environmentId: EnvironmentId): T => {
-      if (!ready) return list;
-      return overlay.list(list, environmentId, index);
-    },
-    [ready, index, overlay],
-  );
+  return <T extends RepositoryIssueListResult>(list: T, environmentId: EnvironmentId): T =>
+    ready ? overlay.list(list, environmentId, index) : list;
 }
 
 /** The durable Linked issue row uses the same shell overlay as repository issue rows. */
@@ -152,7 +147,7 @@ export function useLiveIssueSummary(
 ) {
   const index = useAtomValue(issueWorkIndexAtom);
   const ready = useAllEnvironmentShellsBootstrapped();
-  const overlay = useMemo(() => createLiveIssueWorkOverlay(), []);
+  const [overlay] = useState(createLiveIssueWorkOverlay);
   return !ready || issue === undefined
     ? issue
     : overlay.summary(issue, scope, environmentId, index);
@@ -161,7 +156,7 @@ export function useLiveIssueSummary(
 export interface RepositoryIssueListTarget {
   readonly environmentId: EnvironmentId;
   readonly input: RepositoryIssueListInput;
-  /** A pane scoped to this one repository, whose first page stays live like a thread's list. */
+  /** A pane scoped to this one repository, which keeps its first page subscribed while paging. */
   readonly live?: boolean;
 }
 
@@ -182,11 +177,8 @@ interface IssueListsView {
   readonly isPending: boolean;
 }
 
-// Only a one-repository pane's first page is polled; all pages also re-read when issue links change.
 const issueListAtom = (target: RepositoryIssueListTarget) =>
-  (target.input.cursor === undefined && target.live
-    ? repositoryIssueEnvironment.liveList
-    : repositoryIssueEnvironment.list)(target);
+  repositoryIssueEnvironment.list(target);
 
 const issueLists = Atom.family((key: string) =>
   Atom.make((get): IssueListsView => {
@@ -215,15 +207,11 @@ const EMPTY_ISSUE_LISTS = Atom.make<IssueListsView>({
 export function useIssueLists(targets: ReadonlyArray<RepositoryIssueListTarget>) {
   const key = JSON.stringify(targets);
   const view = useAtomValue(targets.length === 0 ? EMPTY_ISSUE_LISTS : issueLists(key));
-  const refresh = useCallback(
-    (override?: ReadonlyArray<RepositoryIssueListTarget>) => {
-      const refreshTargets = override ?? targets;
-      for (const atom of new Set(refreshTargets.map(issueListAtom))) {
-        appAtomRegistry.refresh(atom);
-      }
-    },
-    [targets],
-  );
+  const refresh = (override?: ReadonlyArray<RepositoryIssueListTarget>) => {
+    for (const atom of new Set((override ?? targets).map(issueListAtom))) {
+      appAtomRegistry.refresh(atom);
+    }
+  };
   return { ...view, refresh };
 }
 
@@ -272,12 +260,12 @@ export function useIssueRepositories(environmentIds: ReadonlyArray<EnvironmentId
   const view = useAtomValue(
     environmentIds.length === 0 ? EMPTY_ISSUE_REPOSITORIES : issueRepositories(key),
   );
-  const refresh = useCallback(() => {
-    for (const environmentId of JSON.parse(key) as ReadonlyArray<EnvironmentId>) {
+  const refresh = () => {
+    for (const environmentId of environmentIds) {
       appAtomRegistry.refresh(
         repositoryIssueEnvironment.repositories({ environmentId, input: {} }),
       );
     }
-  }, [key]);
+  };
   return { ...view, refresh };
 }

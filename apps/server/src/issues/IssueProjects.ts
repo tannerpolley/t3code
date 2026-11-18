@@ -63,6 +63,20 @@ const Response = Schema.Struct({
       Schema.Struct({
         issue: Schema.NullOr(
           Schema.Struct({
+            milestone: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  number: Schema.Int,
+                  title: Schema.String,
+                  state: Schema.Literals(["OPEN", "CLOSED"]),
+                  dueOn: Schema.NullOr(Schema.String),
+                  url: Schema.String,
+                }),
+              ),
+            ),
+            subIssuesSummary: Schema.optional(
+              Schema.NullOr(Schema.Struct({ total: Schema.Int, completed: Schema.Int })),
+            ),
             parent: Schema.optional(Schema.NullOr(RelatedIssue)),
             blockedBy: Schema.optional(Schema.NullOr(Blockers)),
             closedByPullRequestsReferences: Schema.optional(
@@ -90,9 +104,18 @@ const Response = Schema.Struct({
 const decodeResponse = Schema.decodeEffect(Schema.fromJsonString(Response));
 
 type IssueProject = NonNullable<RepositoryIssueSummary["projects"]>[number];
-type ListMetadata = Pick<
-  RepositoryIssueSummary,
-  "projects" | "blockedBy" | "parent" | "relationshipsComplete" | "pullRequestRefs" | "pullRequests"
+type ListMetadata = Partial<
+  Pick<
+    RepositoryIssueSummary,
+    | "projects"
+    | "blockedBy"
+    | "parent"
+    | "relationshipsComplete"
+    | "pullRequestRefs"
+    | "pullRequests"
+    | "milestone"
+    | "subIssues"
+  >
 >;
 type MetadataPage = {
   readonly number: number;
@@ -116,7 +139,7 @@ const ITEM_FIELDS = `project { id title }
 
 /** Optional metadata read inside IssueService's verified credential, batched across each list page. */
 export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetadata")(
-  function* (scope: IssueRepositoryRef, numbers: readonly number[], roadmap = false) {
+  function* (scope: IssueRepositoryRef, numbers: readonly number[]) {
     const api = yield* GitHubApi.GitHubApi;
     const projects = new Map<number, Map<string, IssueProject>>();
     const metadata = new Map<number, ListMetadata>();
@@ -129,8 +152,8 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
     const pending: MetadataPage[] = numbers.map((number) => ({
       number,
       cursor: null,
-      blockerCursor: roadmap ? null : undefined,
-      pullRequestCursor: roadmap ? null : undefined,
+      blockerCursor: null,
+      pullRequestCursor: null,
     }));
     const [owner, name] = scope.repository.split("/");
     let includeProjects = true;
@@ -157,7 +180,9 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
         variables[`number${index}`] = page.number;
         return `p${index}: repository(owner: $owner, name: $name) {
         issue(number: $number${index}) {
-          ${roadmap ? "parent { number state repository { nameWithOwner } }" : ""}
+          parent { number state repository { nameWithOwner } }
+          milestone { number title state dueOn url }
+          subIssuesSummary { total completed }
           ${
             page.blockerCursor === undefined
               ? ""
@@ -199,7 +224,6 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
             GitHubApiResponseError: (error) => {
               // Missing Project scope rejects the entire query before GitHub reads relationships.
               if (
-                !roadmap ||
                 !includeProjects ||
                 !error.githubErrors?.some((message) => message.includes("read:project"))
               )
@@ -264,27 +288,41 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
         }
         pullRequests.set(page.number, prs);
         const previous = metadata.get(page.number);
-        if (roadmap)
-          metadata.set(page.number, {
-            blockedBy: [...issueBlockers.values()],
-            parent:
-              node?.parent == null
-                ? null
-                : ref(node.parent.number, node.parent.repository.nameWithOwner),
-            relationshipsComplete:
-              previous?.relationshipsComplete !== false &&
-              node?.parent !== undefined &&
-              (page.blockerCursor === undefined ||
-                (blocked != null && blocked.nodes.every((node) => node !== null))) &&
-              !failedFields(alias, "blockedBy") &&
-              !failedFields(alias, "parent"),
-            pullRequestRefs: [...prs.values()].map(({ host, repository, number }) => ({
-              host,
-              repository,
-              number,
-            })),
-            pullRequests: [...prs.values()],
-          });
+        const subIssues = node?.subIssuesSummary ?? previous?.subIssues;
+        metadata.set(page.number, {
+          milestone:
+            node?.milestone == null
+              ? (previous?.milestone ?? null)
+              : {
+                  number: node.milestone.number,
+                  title: node.milestone.title,
+                  state: node.milestone.state === "OPEN" ? "open" : "closed",
+                  dueAt: node.milestone.dueOn,
+                  url: node.milestone.url,
+                  // Counts come from the repository's milestone list where the roadmap has it.
+                  openCount: 0,
+                  closedCount: 0,
+                },
+          ...(subIssues == null || subIssues.total === 0 ? {} : { subIssues }),
+          blockedBy: [...issueBlockers.values()],
+          parent:
+            node?.parent == null
+              ? null
+              : ref(node.parent.number, node.parent.repository.nameWithOwner),
+          relationshipsComplete:
+            previous?.relationshipsComplete !== false &&
+            node?.parent !== undefined &&
+            (page.blockerCursor === undefined ||
+              (blocked != null && blocked.nodes.every((node) => node !== null))) &&
+            !failedFields(alias, "blockedBy") &&
+            !failedFields(alias, "parent"),
+          pullRequestRefs: [...prs.values()].map(({ host, repository, number }) => ({
+            host,
+            repository,
+            number,
+          })),
+          pullRequests: [...prs.values()],
+        });
         const nextProject = connection?.pageInfo.hasNextPage
           ? connection.pageInfo.endCursor
           : undefined;
@@ -302,11 +340,10 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
           (blocked?.pageInfo.hasNextPage &&
             (nextBlocker === null || nextBlocker === page.blockerCursor))
         ) {
-          if (roadmap)
-            metadata.set(page.number, {
-              ...metadata.get(page.number),
-              relationshipsComplete: false,
-            });
+          metadata.set(page.number, {
+            ...metadata.get(page.number),
+            relationshipsComplete: false,
+          });
           continue;
         }
         if (
@@ -352,12 +389,12 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
     );
   },
   // Optional metadata must never prevent the underlying issue list from loading.
-  (effect, _scope, numbers, roadmap) =>
+  (effect, _scope, numbers) =>
     effect.pipe(
       Effect.orElseSucceed(
         () =>
           new Map<number, ListMetadata>(
-            roadmap ? numbers.map((number) => [number, { relationshipsComplete: false }]) : [],
+            numbers.map((number) => [number, { relationshipsComplete: false }]),
           ),
       ),
     ),

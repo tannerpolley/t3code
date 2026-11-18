@@ -134,7 +134,6 @@ const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         [WS_METHODS.issueWorkSetState]: (input) => issues.setState(input),
         [WS_METHODS.issueWorkDetail]: (input) => roadmap.detail(input),
         [WS_METHODS.issuesStatusBatch]: (input) => roadmap.statusBatch(input),
-        [WS_METHODS.issuesSubscribeLinkRefreshes]: () => roadmap.linkRefreshes,
         [WS_METHODS.issuesInboxList]: (input) => inbox.list(input),
         [WS_METHODS.issuesInboxMarkRead]: (input) => inbox.markRead(input),
         [WS_METHODS.issuesInboxSubscribeUnread]: () => inbox.unread,
