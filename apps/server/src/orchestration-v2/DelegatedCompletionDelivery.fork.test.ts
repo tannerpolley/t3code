@@ -496,9 +496,9 @@ it.layer(layerTest)("workspace preparation failure for both cohort owners", (it)
           parentRunEnded: true,
         });
         const worker = finishedWorkerEvents(parent, "worker", "unused");
-        const [created, taskEvent] = worker.events;
-        const childThreadId = created.threadId;
-        yield* sink.write({ events: [created, taskEvent] });
+        const childThreadId = worker.task.childThreadId;
+        // The worker's thread and task exist; its run has not started.
+        yield* sink.write({ events: worker.events.slice(0, 2) });
         yield* engine.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make(`${parent.key}-worker-start`),
