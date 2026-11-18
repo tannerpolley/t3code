@@ -2,7 +2,7 @@ import type { EnvironmentId, RepositoryIssueRef, RepositoryIssueSummary } from "
 import { Link } from "@tanstack/react-router";
 import { useState, type ReactElement } from "react";
 
-import { useOpenIssueLink } from "~/lib/openRepositoryIssueLink";
+import { useOpenIssueLink } from "~/lib/openIssueLink";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { repositoryIssueEnvironment, useLiveIssueSummary } from "~/state/repositoryIssues";
 import { useEnvironmentQuery } from "~/state/query";

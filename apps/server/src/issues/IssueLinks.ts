@@ -98,6 +98,8 @@ export class IssueLinks extends Context.Service<
   }
 >()("t3/issues/IssueLinks") {}
 
+type LinkRow = { issue_number: number; thread_id: string };
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const fs = yield* FileSystem.FileSystem;
@@ -108,6 +110,7 @@ const make = Effect.gen(function* () {
     {
       revision: number;
       queries: Map<string, Effect.Effect<ReadonlyArray<IssueWorkThread>, IssueLinkError>>;
+      threadLinks: Effect.Effect<ReadonlyArray<LinkRow>, IssueLinkError>;
     }
   >();
   const link: IssueLinks["Service"]["link"] = Effect.fn("IssueLinks.link")(function* (
@@ -138,7 +141,7 @@ const make = Effect.gen(function* () {
   >(list: T) {
     const host = list.repository.host.toLowerCase();
     const repository = list.repository.repository.toLowerCase();
-    const rows = yield* sql<{ issue_number: number; thread_id: string }>`
+    const tableRows = yield* sql<LinkRow>`
       SELECT issue_number, thread_id FROM issue_thread_links
       WHERE host = ${host} AND repository = ${repository}
     `.pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError));
@@ -149,9 +152,27 @@ const make = Effect.gen(function* () {
     const repositoryKey = `${host}/${repository}`;
     let memo = workByRepository.get(repositoryKey);
     if (memo === undefined || memo.revision !== revision) {
-      memo = { revision, queries: new Map() };
+      memo = {
+        revision,
+        queries: new Map(),
+        // ponytail: scans every thread's links once per event revision; read links per issue
+        // once the old table is retired.
+        threadLinks: yield* Effect.cached(
+          sql<LinkRow>`
+            SELECT CAST(json_extract(link.value, '$.key') AS INTEGER) AS issue_number, thread.thread_id
+            FROM orchestration_v2_projection_threads thread,
+              json_each(CASE WHEN json_valid(thread.payload_json) THEN thread.payload_json ELSE '{}' END, '$.issues') link
+            WHERE thread.deleted_at IS NULL
+              AND json_extract(link.value, '$.tracker') = 'github'
+              AND lower(json_extract(link.value, '$.host')) = ${host}
+              AND lower(json_extract(link.value, '$.scope')) = ${repository}
+          `.pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError)),
+        ),
+      };
       workByRepository.set(repositoryKey, memo);
     }
+    // Upstream's thread.issues[] links sit beside the old table until the table is retired.
+    const rows = [...tableRows, ...(yield* memo.threadLinks)];
     // Link rows are outside the event projection. Include them and the GitHub candidate set so
     // explicit unlinking, paging and newly discovered closing PRs invalidate their own reads.
     const queryKey = encodeMemoKey([
@@ -201,7 +222,7 @@ const make = Effect.gen(function* () {
       refs.add(number);
       refsByThread.set(threadId, refs);
     };
-    const removableLinks = new Set(rows.map((row) => `${row.thread_id}:${row.issue_number}`));
+    const removableLinks = new Set(tableRows.map((row) => `${row.thread_id}:${row.issue_number}`));
     for (const row of rows) add(row.thread_id, row.issue_number);
     const issuesByPr = new Map<string, Set<number>>();
     for (const issue of list.issues)

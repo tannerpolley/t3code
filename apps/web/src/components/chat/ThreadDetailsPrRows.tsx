@@ -77,7 +77,6 @@ function ThreadDetailsPrLinkRow({
       project={project}
       label={`${referenceLabel}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
       referenceLabel={referenceLabel}
-      openAriaLabel={link.url}
       onOpen={onOpen}
       onStopWatching={onStopWatching}
       composerTarget={composerTarget}
@@ -219,7 +218,6 @@ export function ThreadDetailsThreadPrRows({
       project={rowProject}
       referenceLabel={referenceLabel}
       label={`${referenceLabel}${pr?.title.trim() ? `: ${pr.title}` : ""}`}
-      openAriaLabel={url}
       onOpen={(event) => openPrLink(event, url)}
       composerTarget={composerTarget}
       {...(onActed ? { onActed } : {})}

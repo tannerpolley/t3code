@@ -6,7 +6,6 @@ import {
   filterIssueComments,
   issueComposerPrompt,
   issueImplementDestination,
-  issueMenuAvailability,
 } from "./issueDetailActions.logic";
 import { handoffPrompt } from "./issueDetailActions.logic";
 
@@ -18,36 +17,6 @@ const issue = {
 };
 
 describe("issue menu", () => {
-  it("offers writes only with grants and the matching issue state, and needs a composer destination", () => {
-    expect(
-      issueMenuAvailability({
-        linked: true,
-        hasComposer: true,
-        state: "open",
-        canWrite: true,
-        canUnlink: true,
-      }),
-    ).toEqual({ unlink: true, composer: true, close: true, reopen: false });
-    expect(
-      issueMenuAvailability({
-        linked: false,
-        hasComposer: false,
-        state: "closed",
-        canWrite: true,
-        canUnlink: true,
-      }),
-    ).toEqual({ unlink: false, composer: false, close: false, reopen: true });
-    expect(
-      issueMenuAvailability({
-        linked: true,
-        hasComposer: true,
-        state: "open",
-        canWrite: false,
-        canUnlink: false,
-      }),
-    ).toEqual({ unlink: false, composer: true, close: false, reopen: false });
-  });
-
   it("unlinks only ordinary links belonging to this thread on this environment", () => {
     const summary = {
       liveWork: [
@@ -164,7 +133,12 @@ it("filters bot reports without hiding deleted authors or changing comment order
 
 it("copies the selected issue URL with issue-specific feedback, and releases the generic command when no issue is open", () => {
   expect(
-    issueReferenceCopyTarget({ host: "github.example.com", repository: "owner/repo", number: 44 }),
+    issueReferenceCopyTarget({
+      tracker: "github",
+      host: "github.example.com",
+      scope: "owner/repo",
+      key: "44",
+    }),
   ).toEqual({
     kind: "issue",
     value: "https://github.example.com/owner/repo/issues/44",
@@ -173,4 +147,5 @@ it("copies the selected issue URL with issue-specific feedback, and releases the
     failureTitle: "Failed to copy issue link",
   });
   expect(issueReferenceCopyTarget(null)).toBeNull();
+  expect(issueReferenceCopyTarget({ tracker: "linear", scope: "ENG", key: "ENG-1" })).toBeNull();
 });

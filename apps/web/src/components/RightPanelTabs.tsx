@@ -17,6 +17,7 @@ import {
 import type {
   ContextMenuItem,
   EnvironmentId,
+  IssueTrackerKind,
   PreviewSessionSnapshot,
   ProjectId,
   PullRequestState,
@@ -36,7 +37,7 @@ import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dn
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  CircleDot,
+  CircleDotIcon,
   Smartphone,
   ChevronDown,
   ChevronLeft,
@@ -66,6 +67,8 @@ import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
+import { issueStatePresentation } from "~/components/issue/issuePresentation";
+import { issueEnvironment } from "~/state/issues";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -144,7 +147,7 @@ export interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
-  onAddIssues: () => void;
+  onAddIssues?: () => void;
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
@@ -154,7 +157,7 @@ export interface RightPanelTabsProps {
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
-  issuesAvailable: boolean;
+  issuesAvailable?: boolean;
   deviceAvailable: boolean;
   sideChatAvailable?: boolean;
   /** Overrides the default reason while side chats are available but cannot start. */
@@ -329,7 +332,7 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
-  onAddIssues: () => void;
+  onAddIssues?: () => void;
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
@@ -339,7 +342,7 @@ function RightPanelEmptyState(props: {
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
-  issuesAvailable: boolean;
+  issuesAvailable?: boolean;
   deviceAvailable: boolean;
   sideChatAvailable: boolean;
   sideChatDisabledReason: string | null;
@@ -399,9 +402,9 @@ function RightPanelEmptyState(props: {
       label: "Issues",
       icon: List,
       shortcut: "I",
-      available: props.issuesAvailable,
+      available: props.issuesAvailable === true,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.issues,
-      onClick: props.onAddIssues,
+      onClick: props.onAddIssues ?? (() => undefined),
     },
     {
       label: "Device",
@@ -606,12 +609,13 @@ function surfaceTitle(
       );
     case "pull-request":
       return `#${surface.number}`;
-    case "issue":
-      return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
     case "issues":
       return "Issues";
+    case "issue":
+      // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
+      return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "side-chat":
@@ -702,12 +706,12 @@ function SurfaceIcon({
           seed={pullRequestStatusSeed}
         />
       );
-    case "issue":
-      return <CircleDot className="size-3 shrink-0" />;
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "issues":
       return <List className="size-3 shrink-0" />;
+    case "issue":
+      return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "device":
@@ -778,6 +782,41 @@ export function resolvePullRequestTabLink(
     }
   }
   return newest;
+}
+
+/** The issue's own state mark, from the detail its panel already reads; a plain dot until then. */
+function IssueSurfaceIcon({
+  surface,
+  environmentId,
+}: {
+  surface: Extract<RightPanelSurface, { kind: "issue" }>;
+  environmentId: EnvironmentId | null;
+}) {
+  const resolvedEnvironmentId =
+    (surface.environmentId as EnvironmentId | undefined) ?? environmentId;
+  const detail = useEnvironmentQuery(
+    resolvedEnvironmentId === null
+      ? null
+      : issueEnvironment.detail({
+          environmentId: resolvedEnvironmentId,
+          input: {
+            projectId: surface.projectId as ProjectId,
+            tracker: surface.tracker as IssueTrackerKind,
+            ...(surface.host ? { host: surface.host } : {}),
+            scope: surface.scope,
+            key: surface.key,
+          },
+        }),
+  ).data;
+  if (detail === null) return <CircleDotIcon className="size-3 shrink-0" />;
+  const presentation = issueStatePresentation(detail.state);
+  return (
+    <presentation.Icon
+      role="img"
+      aria-label={presentation.label}
+      className={cn("size-3 shrink-0", presentation.toneClassName)}
+    />
+  );
 }
 
 function PullRequestSurfaceIcon({
@@ -1169,9 +1208,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       label: "Issues",
       icon: List,
       shortcut: "I",
-      available: props.issuesAvailable,
+      available: props.issuesAvailable === true,
       disabledReason: SURFACE_DISABLED_REASONS.issues,
-      onClick: props.onAddIssues,
+      onClick: props.onAddIssues ?? (() => undefined),
     },
     {
       label: "Device",
@@ -1577,7 +1616,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
-            onAddIssues={props.onAddIssues}
+            {...(props.onAddIssues ? { onAddIssues: props.onAddIssues } : {})}
             onAddDevice={props.onAddDevice}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
@@ -1586,7 +1625,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
-            issuesAvailable={props.issuesAvailable}
+            issuesAvailable={props.issuesAvailable === true}
             deviceAvailable={props.deviceAvailable}
             sideChatAvailable={props.sideChatAvailable === true}
             sideChatDisabledReason={props.sideChatDisabledReason ?? null}

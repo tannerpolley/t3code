@@ -105,7 +105,6 @@ it("keeps workspace controls through expanding and collapsing PRs beside another
               status={null}
               project={null}
               label="#1"
-              openAriaLabel="Open pull request"
               onOpen={() => {}}
             />
             {density === "full" ? (

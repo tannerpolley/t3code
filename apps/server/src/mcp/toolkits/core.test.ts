@@ -704,7 +704,7 @@ const clientScope = (
   thread: undefined,
   client: { sessionId: "session-1", label: "Claude Code", access },
   issuedAt: 0,
-  capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
+  capabilities: new Set(["orchestration", "worktree", "pull-requests", "issues"]),
 });
 
 it.effect("a client caller targets any thread within its ceiling and cannot act as a thread", () =>
@@ -1343,6 +1343,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
             getProjectThreadRecords: () =>
               Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell)),
+            getRunCount: () => Effect.succeed(1),
             getTimelinePage: () =>
               Effect.succeed({ items: [row], totalItems: 1, hasMore: false, hasEarlier: false }),
             stopWorkflow: (input) =>
@@ -1445,7 +1446,6 @@ it("keeps fork tools in their toolkits with presentation labels", () => {
     "cancel_issue_request",
     "close_out_issue_attempt",
     "get_repository_orchestration",
-    "link_issue",
     "list_owner_decisions",
     "propose_issue_change",
     "queue_issue",
@@ -1465,7 +1465,6 @@ it("keeps fork tools in their toolkits with presentation labels", () => {
     "t3_project_artifacts_update",
     "t3_request_user_input",
     "t3_worktree_return_to_root",
-    "unlink_issue",
     "unqueue_issue",
     "withdraw_owner_decision",
     "work_through_milestone",
@@ -1475,6 +1474,100 @@ it("keeps fork tools in their toolkits with presentation labels", () => {
     expect(resolveT3McpToolDefinition(name), name).not.toBeNull();
   }
 });
+const sendTargetId = ThreadId.make("send-target-thread");
+const sendCommand = {
+  commandId: CommandId.make("mcp-core-send"),
+  commandType: "message.dispatch",
+};
+
+it.effect.each([
+  {
+    outcome: "says that the missing workspace could not be recreated",
+    refusal: new ThreadManagement.ThreadManagementWorktreeRestoreError({
+      threadId: sendTargetId,
+      cause: new Error("The branch no longer exists."),
+    }),
+    reply: {
+      _tag: "OrchestratorMcpFailure",
+      code: "thread_not_sendable",
+      message:
+        "Couldn't recreate the missing workspace of thread send-target-thread, so the message was not sent. The branch no longer exists.",
+    },
+  },
+  {
+    outcome: "passes on the text reason of an orchestrator rejection",
+    refusal: new OrchestratorCommandRejectedError({
+      ...sendCommand,
+      cause: "Thread send-target-thread is deleted.",
+    }),
+    reply: {
+      _tag: "OrchestratorMcpFailure",
+      code: "orchestration_error",
+      message: "Thread send-target-thread is deleted.",
+    },
+  },
+  {
+    outcome: "keeps an internal dispatch cause private",
+    refusal: new OrchestratorDispatchError({
+      ...sendCommand,
+      cause: new Error("private-storage-path"),
+    }),
+    reply: {
+      _tag: "OrchestratorMcpFailure",
+      code: "orchestration_error",
+      message: "The operation could not be completed.",
+    },
+  },
+])("t3_thread_send_attachments $outcome", ({ refusal, reply }) => {
+  const stored = ChatImageAttachment.make({
+    type: "image",
+    id: "owned-image",
+    name: "original.png",
+    mimeType: "image/png",
+    sizeBytes: 12,
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "t3_thread_send_attachments",
+        arguments: { threadId: sendTargetId, message: "See the file.", attachments: [stored] },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(declaredFailure(result)).toEqual(reply);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerAttachmentToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                ...McpToolAccessTestkit.idleThreadProjection(
+                  McpToolAccessTestkit.liveThreadShell(sendTargetId),
+                ),
+                messages: [{ attachments: [stored] }],
+              } as never),
+            sendToThread: () => Effect.fail(refusal),
+          }),
+        ),
+        Layer.provide(AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer))),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
+        Layer.provide(
+          DocumentText.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+        Layer.provide(NodeCrypto.layer),
+      ),
+    ),
+  );
+});
+
 it.effect(
   "t3_thread_list settled:false with an empty statuses list lists the unsettled threads",
   () => {

@@ -1,14 +1,22 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type EnvironmentId, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type IssueTrackerKind,
+  type ProjectId,
+  type ScopedThreadRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 import { IssueBrowser, useIssueRepositoryTargets } from "./IssueBrowser";
 import { useIssuePageCopyShortcut } from "./useIssueReferenceCopyTarget";
-import { IssueDetailPanel } from "./IssueDetailPanel";
+import { IssueDetailPanel } from "../issue/IssueDetailPanel";
+import { issueTabTarget, repositoryIssueOf, type RepositoryIssueTarget } from "./issueTabs";
 import { sameRepository } from "./issueWorkspace.logic";
 import { RightPanelTabs } from "../RightPanelTabs";
+import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -19,10 +27,12 @@ import {
   selectThreadRightPanelState,
   selectActiveRightPanelSurface,
   useRightPanelStore,
+  ISSUES_PANEL_REF,
+  issueSurface,
+  type IssueSurface,
   type RightPanelSurface,
 } from "../../rightPanelStore";
-import { ISSUES_PANEL_REF, issueSurface, type IssueSurface } from "../../rightPanelIssueSurfaces";
-import { useThreadShell } from "../../state/entities";
+import { useProjects, useThreadShell } from "../../state/entities";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 
 export interface RoadmapSearch {
@@ -98,60 +108,50 @@ export const roadmapSearchFromUrl = (raw: Record<string, unknown>): RoadmapSearc
 };
 
 export function IssuesRoadmapPage() {
-  const search = useSearch({ from: "/_chat/issues" });
-  const navigate = useNavigate({ from: "/issues" });
+  const search = useSearch({ from: "/_chat/roadmap" });
+  const navigate = useNavigate({ from: "/roadmap" });
   const isNarrow = useMediaQuery("max-md");
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   useIssuePageCopyShortcut();
   const repositories = useIssueRepositoryTargets(search.environmentId);
+  const projects = useProjects();
   const { repositoryTargets } = repositories;
-  const originThreadRef = useMemo<ScopedThreadRef | null>(
-    () =>
-      search.environmentId !== undefined && search.originThreadId !== undefined
-        ? scopeThreadRef(search.environmentId, search.originThreadId)
-        : null,
-    [search.environmentId, search.originThreadId],
-  );
+  const originThreadRef: ScopedThreadRef | null =
+    search.environmentId !== undefined && search.originThreadId !== undefined
+      ? scopeThreadRef(search.environmentId, search.originThreadId)
+      : null;
   const originThread = useThreadShell(originThreadRef);
-  const urlRepository = useMemo(
-    () =>
-      search.repository === undefined
-        ? null
-        : (repositoryTargets.find((target) =>
-            sameRepository(target, {
-              host: search.host ?? target.host,
-              repository: search.repository!,
-            }),
-          ) ?? null),
-    [repositoryTargets, search.host, search.repository],
-  );
-  const [detailRefreshToken, setDetailRefreshToken] = useState(0);
-  const refreshDetail = useCallback(() => setDetailRefreshToken((token) => token + 1), []);
+  const urlRepository =
+    search.repository === undefined
+      ? null
+      : (repositoryTargets.find((target) =>
+          sameRepository(target, {
+            host: search.host ?? target.host,
+            repository: search.repository!,
+          }),
+        ) ?? null);
 
-  const updateSearch = useCallback(
-    (patch: IssuesSearchPatch) =>
-      void navigate({
-        replace: true,
-        search: (previous: RoadmapSearch): RoadmapSearch => {
-          const next = { ...previous, ...patch };
-          return {
-            ...(next.environmentId ? { environmentId: next.environmentId } : {}),
-            ...(next.host ? { host: next.host } : {}),
-            ...(next.repository ? { repository: next.repository } : {}),
-            ...(next.number ? { number: next.number } : {}),
-            ...(next.issueQuery ? { issueQuery: next.issueQuery } : {}),
-            ...(next.selectedEnvironmentId
-              ? { selectedEnvironmentId: next.selectedEnvironmentId }
-              : {}),
-            ...(next.selectedHost ? { selectedHost: next.selectedHost } : {}),
-            ...(next.selectedRepository ? { selectedRepository: next.selectedRepository } : {}),
-            ...(next.selectedNumber ? { selectedNumber: next.selectedNumber } : {}),
-            ...(next.originThreadId ? { originThreadId: next.originThreadId } : {}),
-          };
-        },
-      }),
-    [navigate],
-  );
+  const updateSearch = (patch: IssuesSearchPatch) =>
+    void navigate({
+      replace: true,
+      search: (previous: RoadmapSearch): RoadmapSearch => {
+        const next = { ...previous, ...patch };
+        return {
+          ...(next.environmentId ? { environmentId: next.environmentId } : {}),
+          ...(next.host ? { host: next.host } : {}),
+          ...(next.repository ? { repository: next.repository } : {}),
+          ...(next.number ? { number: next.number } : {}),
+          ...(next.issueQuery ? { issueQuery: next.issueQuery } : {}),
+          ...(next.selectedEnvironmentId
+            ? { selectedEnvironmentId: next.selectedEnvironmentId }
+            : {}),
+          ...(next.selectedHost ? { selectedHost: next.selectedHost } : {}),
+          ...(next.selectedRepository ? { selectedRepository: next.selectedRepository } : {}),
+          ...(next.selectedNumber ? { selectedNumber: next.selectedNumber } : {}),
+          ...(next.originThreadId ? { originThreadId: next.originThreadId } : {}),
+        };
+      },
+    });
 
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, ISSUES_PANEL_REF),
@@ -174,83 +174,78 @@ export function IssuesRoadmapPage() {
   );
   const renderedSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedIssueSurface = renderedSurface?.kind === "issue" ? renderedSurface : null;
-  const renderedSurfaces = rightPanelPresence.value?.surfaces ?? EMPTY_SURFACES;
-  const resolveSurfaceEnvironmentId = useCallback(
-    (surface: IssueSurface): EnvironmentId | null => {
-      if (surface.environmentId !== undefined) return surface.environmentId as EnvironmentId;
-      return (
-        repositoryTargets.find((target) => sameRepository(target, surface))?.environmentId ?? null
-      );
-    },
-    [repositoryTargets],
+  // The panel is shared with upstream's Issues page, whose pull request tabs are not ours to show.
+  const renderedSurfaces = (rightPanelPresence.value?.surfaces ?? EMPTY_SURFACES).filter(
+    (surface) => surface.kind === "issue",
   );
+  const resolveSurfaceEnvironmentId = (surface: IssueSurface): EnvironmentId | null => {
+    if (surface.environmentId !== undefined) return surface.environmentId as EnvironmentId;
+    const issue = repositoryIssueOf(surface);
+    return (
+      (issue && repositoryTargets.find((target) => sameRepository(target, issue))?.environmentId) ??
+      null
+    );
+  };
   const panelEnvironmentId = renderedIssueSurface
     ? resolveSurfaceEnvironmentId(renderedIssueSurface)
     : null;
-  const syncSelectedSurface = useCallback(
-    (surface: IssueSurface | null) =>
-      updateSearch(
-        surface === null
-          ? {
-              selectedEnvironmentId: undefined,
-              selectedHost: undefined,
-              selectedRepository: undefined,
-              selectedNumber: undefined,
-            }
-          : {
-              selectedEnvironmentId: surface.environmentId as EnvironmentId | undefined,
-              selectedHost: surface.host,
-              selectedRepository: surface.repository,
-              selectedNumber: surface.number,
-            },
-      ),
-    [updateSearch],
-  );
-  const activateSurface = useCallback(
-    (surface: IssueSurface) => {
-      useRightPanelStore.getState().activateSurface(ISSUES_PANEL_REF, surface.id);
-      syncSelectedSurface(surface);
-    },
-    [syncSelectedSurface],
-  );
-  const closeSurface = useCallback(
-    (surface: IssueSurface) => {
-      useRightPanelStore.getState().closeSurface(ISSUES_PANEL_REF, surface.id);
-      const next = selectActiveRightPanelSurface(
-        useRightPanelStore.getState().byThreadKey,
-        ISSUES_PANEL_REF,
-      );
-      syncSelectedSurface(next?.kind === "issue" ? next : null);
-    },
-    [syncSelectedSurface],
-  );
-  const closeOtherSurfaces = useCallback(
-    (surface: IssueSurface) => {
-      useRightPanelStore.getState().closeOtherSurfaces(ISSUES_PANEL_REF, surface.id);
-      syncSelectedSurface(surface);
-    },
-    [syncSelectedSurface],
-  );
-  const closeSurfacesToRight = useCallback(
-    (surface: IssueSurface) => {
-      useRightPanelStore.getState().closeSurfacesToRight(ISSUES_PANEL_REF, surface.id);
-      syncSelectedSurface(surface);
-    },
-    [syncSelectedSurface],
-  );
-  const closeAllSurfaces = useCallback(() => {
+  const syncSelectedSurface = (surface: IssueSurface | null) => {
+    const issue = surface === null ? null : repositoryIssueOf(surface);
+    updateSearch(
+      surface === null || issue === null
+        ? {
+            selectedEnvironmentId: undefined,
+            selectedHost: undefined,
+            selectedRepository: undefined,
+            selectedNumber: undefined,
+          }
+        : {
+            selectedEnvironmentId: surface.environmentId as EnvironmentId | undefined,
+            selectedHost: issue.host,
+            selectedRepository: issue.repository,
+            selectedNumber: issue.number,
+          },
+    );
+  };
+  const activateSurface = (surface: IssueSurface) => {
+    useRightPanelStore.getState().activateSurface(ISSUES_PANEL_REF, surface.id);
+    syncSelectedSurface(surface);
+  };
+  const closeSurface = (surface: IssueSurface) => {
+    useRightPanelStore.getState().closeSurface(ISSUES_PANEL_REF, surface.id);
+    const next = selectActiveRightPanelSurface(
+      useRightPanelStore.getState().byThreadKey,
+      ISSUES_PANEL_REF,
+    );
+    syncSelectedSurface(next?.kind === "issue" ? next : null);
+  };
+  const closeOtherSurfaces = (surface: IssueSurface) => {
+    useRightPanelStore.getState().closeOtherSurfaces(ISSUES_PANEL_REF, surface.id);
+    syncSelectedSurface(surface);
+  };
+  const closeSurfacesToRight = (surface: IssueSurface) => {
+    useRightPanelStore.getState().closeSurfacesToRight(ISSUES_PANEL_REF, surface.id);
+    syncSelectedSurface(surface);
+  };
+  const closeAllSurfaces = () => {
     useRightPanelStore.getState().closeAllSurfaces(ISSUES_PANEL_REF);
     syncSelectedSurface(null);
-  }, [syncSelectedSurface]);
-  const selectIssue = useCallback(
-    (target: Omit<IssueSurface, "id" | "kind">) => {
-      useRightPanelStore.getState().openIssue(ISSUES_PANEL_REF, target);
-      syncSelectedSurface(issueSurface(target));
-    },
-    [syncSelectedSurface],
-  );
+  };
+  const selectIssue = (target: RepositoryIssueTarget) => {
+    const environmentId = target.environmentId ?? search.environmentId;
+    const tab =
+      environmentId === undefined
+        ? null
+        : issueTabTarget(projects, { ...target, environmentId }, originThread?.projectId ?? null);
+    if (tab === null) {
+      if (target.url) window.open(target.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    useRightPanelStore.getState().openIssue(ISSUES_PANEL_REF, tab);
+    syncSelectedSurface(issueSurface(tab));
+  };
 
-  const selectedUrlTarget = useMemo(() => {
+  const selectedUrlTarget = (() => {
     if (search.selectedNumber === undefined || search.selectedRepository === undefined) return null;
     const host = search.selectedHost ?? "github.com";
     const environmentId =
@@ -265,30 +260,22 @@ export function IssuesRoadmapPage() {
       repository: search.selectedRepository,
       number: search.selectedNumber,
     };
-  }, [
-    repositoryTargets,
-    search.selectedEnvironmentId,
-    search.selectedHost,
-    search.selectedNumber,
-    search.selectedRepository,
-  ]);
-  const listUrlTarget = useMemo(
-    () =>
-      search.number === undefined || urlRepository === null
-        ? null
-        : {
-            environmentId: urlRepository.environmentId,
-            host: urlRepository.host,
-            repository: urlRepository.repository,
-            number: search.number,
-          },
-    [search.number, urlRepository],
-  );
+  })();
+  const listUrlTarget =
+    search.number === undefined || urlRepository === null
+      ? null
+      : {
+          environmentId: urlRepository.environmentId,
+          host: urlRepository.host,
+          repository: urlRepository.repository,
+          number: search.number,
+        };
   const urlTarget = selectedUrlTarget ?? listUrlTarget;
   const openedUrlTargetKey = urlTarget
     ? `${urlTarget.environmentId}:${urlTarget.host}:${urlTarget.repository}:${urlTarget.number}`
     : null;
   const openedUrlTargetRef = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the URL's issue tab in the right-panel store once its project loads
   useEffect(() => {
     if (
       urlTarget === null ||
@@ -296,9 +283,12 @@ export function IssuesRoadmapPage() {
       openedUrlTargetRef.current === openedUrlTargetKey
     )
       return;
+    const tab = issueTabTarget(projects, urlTarget);
+    // Projects arrive after the first render; try again once they name this repository.
+    if (tab === null) return;
     openedUrlTargetRef.current = openedUrlTargetKey;
-    useRightPanelStore.getState().openIssue(ISSUES_PANEL_REF, urlTarget);
-  }, [openedUrlTargetKey, urlTarget]);
+    useRightPanelStore.getState().openIssue(ISSUES_PANEL_REF, tab);
+  }, [openedUrlTargetKey, projects, urlTarget]);
 
   const originThreadForSurface =
     activeIssueSurface &&
@@ -308,14 +298,12 @@ export function IssuesRoadmapPage() {
       (activeIssueSurface.environmentId ?? originThreadRef.environmentId)
       ? originThreadRef
       : null;
-  const openBesideThread = useCallback(() => {
+  const openBesideThread = () => {
     if (activeIssueSurface === null || originThreadForSurface === null) return;
+    const { id: _id, kind: _kind, ...target } = activeIssueSurface;
     useRightPanelStore.getState().openIssue(originThreadForSurface, {
+      ...target,
       environmentId: activeIssueSurface.environmentId ?? originThreadForSurface.environmentId,
-      host: activeIssueSurface.host,
-      repository: activeIssueSurface.repository,
-      number: activeIssueSurface.number,
-      ...(activeIssueSurface.url ? { url: activeIssueSurface.url } : {}),
     });
     void navigate({
       to: "/$environmentId/$threadId",
@@ -324,33 +312,38 @@ export function IssuesRoadmapPage() {
         threadId: originThreadForSurface.threadId,
       },
     });
-  }, [activeIssueSurface, navigate, originThreadForSurface]);
+  };
 
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
-  const narrowDetailRef = useRef<HTMLDivElement>(null);
   const showNarrowDetail =
     isNarrow &&
     rightPanelState.isOpen &&
     renderedIssueSurface !== null &&
     panelEnvironmentId !== null;
-  useEffect(() => {
-    if (showNarrowDetail) narrowDetailRef.current?.focus();
-  }, [renderedIssueSurface?.id, showNarrowDetail]);
-  const closeNarrowDetail = useCallback(() => {
+  const closeNarrowDetail = () => {
     useRightPanelStore.getState().close(ISSUES_PANEL_REF);
     syncSelectedSurface(null);
     window.requestAnimationFrame(() => listHeadingRef.current?.focus());
-  }, [syncSelectedSurface]);
+  };
 
+  const activeRepositoryIssue = activeIssueSurface ? repositoryIssueOf(activeIssueSurface) : null;
+  const selectedRepositoryIssue =
+    activeIssueSurface === null || activeRepositoryIssue === null
+      ? null
+      : {
+          ...activeRepositoryIssue,
+          ...(activeIssueSurface.environmentId === undefined
+            ? {}
+            : { environmentId: activeIssueSurface.environmentId }),
+        };
   const listColumn = (
     <IssueBrowser
       variant="page"
       repositories={repositories}
       search={search}
       onSearchChange={updateSearch}
-      selectedIssue={activeIssueSurface}
+      selectedIssue={selectedRepositoryIssue}
       onSelectIssue={selectIssue}
-      onRefresh={refreshDetail}
       headingRef={listHeadingRef}
       className={showNarrowDetail ? "hidden md:flex" : undefined}
     />
@@ -407,16 +400,11 @@ export function IssuesRoadmapPage() {
         terminalLabelsById={new Map()}
         widthStorageKey="t3code:issues-panel-width"
       >
-        <IssueDetailPanel
+        <RoadmapIssueDetail
+          surface={renderedIssueSurface}
           environmentId={panelEnvironmentId}
-          {...(originThreadForSurface === null ? {} : { onOpenBesideThread: openBesideThread })}
-          refreshToken={detailRefreshToken}
-          reference={{
-            host: renderedIssueSurface.host,
-            repository: renderedIssueSurface.repository,
-            number: renderedIssueSurface.number,
-          }}
           threadRef={originThreadForSurface}
+          onOpenBesideThread={openBesideThread}
         />
       </RightPanelTabs>
     ) : null;
@@ -424,21 +412,17 @@ export function IssuesRoadmapPage() {
   const narrowDetail =
     showNarrowDetail && renderedIssueSurface !== null && panelEnvironmentId !== null ? (
       <div
-        ref={narrowDetailRef}
+        key={renderedIssueSurface.id}
+        ref={focusOnMount}
         tabIndex={-1}
         className="flex min-h-0 flex-1 flex-col outline-none md:hidden"
       >
-        <IssueDetailPanel
+        <RoadmapIssueDetail
+          surface={renderedIssueSurface}
           environmentId={panelEnvironmentId}
-          onBack={closeNarrowDetail}
-          {...(originThreadForSurface === null ? {} : { onOpenBesideThread: openBesideThread })}
-          refreshToken={detailRefreshToken}
-          reference={{
-            host: renderedIssueSurface.host,
-            repository: renderedIssueSurface.repository,
-            number: renderedIssueSurface.number,
-          }}
           threadRef={originThreadForSurface}
+          onOpenBesideThread={openBesideThread}
+          onBack={closeNarrowDetail}
         />
       </div>
     ) : null;
@@ -451,5 +435,49 @@ export function IssuesRoadmapPage() {
         {narrowDetail}
       </div>
     </SidebarInset>
+  );
+}
+
+function focusOnMount(node: HTMLElement | null) {
+  node?.focus();
+}
+
+function RoadmapIssueDetail(props: {
+  readonly surface: IssueSurface;
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef | null;
+  readonly onOpenBesideThread: () => void;
+  readonly onBack?: () => void;
+}) {
+  const { surface } = props;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {props.onBack || props.threadRef !== null ? (
+        <div className="flex shrink-0 items-center gap-2 px-4 pt-2">
+          {props.onBack ? (
+            <Button size="xs" variant="ghost" onClick={props.onBack}>
+              Back to issues
+            </Button>
+          ) : null}
+          {props.threadRef !== null ? (
+            <Button size="xs" variant="outline" onClick={props.onOpenBesideThread}>
+              Open beside thread
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      <IssueDetailPanel
+        key={surface.id}
+        environmentId={props.environmentId}
+        reference={{
+          projectId: surface.projectId as ProjectId,
+          tracker: surface.tracker as IssueTrackerKind,
+          ...(surface.host ? { host: surface.host } : {}),
+          scope: surface.scope,
+          key: surface.key,
+        }}
+        threadRef={props.threadRef}
+      />
+    </div>
   );
 }

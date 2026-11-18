@@ -1,6 +1,6 @@
 import type { IssueContextRecord, ScopedThreadRef } from "@t3tools/contracts";
 import { CircleDashedIcon } from "lucide-react";
-import { useOpenIssueLink } from "~/lib/openRepositoryIssueLink";
+import { useOpenIssueLink } from "~/lib/openIssueLink";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { IssueLinkPreview, useIssuePreviewTarget } from "./IssueLinkPreview";
 import { ContextChipPopover } from "../contextChipParts";

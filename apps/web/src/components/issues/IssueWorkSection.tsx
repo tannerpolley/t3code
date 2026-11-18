@@ -6,17 +6,22 @@ import type {
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { agentWorktreeName } from "@t3tools/shared/forkAgentWorktreeName";
+import type { IssueRef } from "@t3tools/contracts";
 import {
   BookOpenIcon,
+  CircleAlertIcon,
+  FolderKanbanIcon,
   GitBranchPlusIcon,
   HammerIcon,
+  ListTreeIcon,
   MessageCircleQuestionIcon,
 } from "lucide-react";
 import { useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { useProjects, useThreadShell } from "~/state/entities";
+import { useOpenIssueLink } from "~/lib/openIssueLink";
+import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { sanitizeNewRefName } from "../BranchToolbar.logic";
@@ -24,7 +29,11 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
+import { PullRequestMetaRow } from "../pullRequest/PullRequestSummaryTab";
 import { IssueChangeCards } from "./IssueChangeCards";
+import { IssueDetailActions } from "./IssueDetailActions";
+import { LiveIssueStateBadge } from "./LiveIssueStateBadge";
+import { repositoryIssueOf } from "./issueTabs";
 import { IssueQueueAction } from "./IssueQueueAction";
 import { IssueStartAction } from "./IssueStartAction";
 import { OwnerDecisionCards } from "./OwnerDecisionCards";
@@ -172,7 +181,7 @@ function IssueComposerMenu({
  * worktree actions, and composer hand-offs. Reads the issue itself, so any detail panel can mount
  * it from an issue reference.
  */
-export function IssueWorkSection({
+function IssueWorkSection({
   environmentId,
   reference,
   threadRef = null,
@@ -181,9 +190,10 @@ export function IssueWorkSection({
   readonly reference: RepositoryIssueRef;
   readonly threadRef?: ScopedThreadRef | null;
 }) {
-  const issue = useEnvironmentQuery(
+  const query = useEnvironmentQuery(
     repositoryIssueEnvironment.detail({ environmentId, input: reference }),
-  ).data?.issue;
+  );
+  const issue = query.data?.issue;
   const issueKey = `${environmentId}:${reference.host}/${reference.repository}#${reference.number}`;
   return (
     <>
@@ -210,10 +220,110 @@ export function IssueWorkSection({
             issue={issue}
             threadRef={threadRef}
           />
+          <IssueDetailActions
+            environmentId={environmentId}
+            reference={reference}
+            issue={issue}
+            threadRef={threadRef}
+            refreshing={query.isPending}
+            onRefresh={query.refresh}
+          />
         </div>
+      ) : null}
+      {issue ? (
+        <IssueWorkFacts
+          environmentId={environmentId}
+          reference={reference}
+          issue={issue}
+          threadRef={threadRef}
+        />
       ) : null}
       <OwnerDecisionCards environmentId={environmentId} input={reference} />
       <IssueChangeCards environmentId={environmentId} input={reference} />
     </>
+  );
+}
+
+/** What GitHub knows that upstream's issue rows have no field for: work state, projects, sub-issues, blockers. */
+function IssueWorkFacts({
+  environmentId,
+  reference,
+  issue,
+  threadRef,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly reference: RepositoryIssueRef;
+  readonly issue: RepositoryIssueSummary;
+  readonly threadRef: ScopedThreadRef | null;
+}) {
+  const openIssue = useOpenIssueLink(threadRef ?? undefined);
+  return (
+    <div className="space-y-1.5 px-4 pb-3 text-xs">
+      <LiveIssueStateBadge issue={issue} reference={reference} environmentId={environmentId} />
+      {issue.projects?.length ? (
+        <PullRequestMetaRow icon={<FolderKanbanIcon className="size-3.5" />} label="Projects">
+          <span className="flex flex-wrap gap-x-3 gap-y-1">
+            {issue.projects.map((project) => (
+              <span key={project.id}>
+                {project.title}
+                {project.status ? ` · ${project.status}` : ""}
+                {project.priority ? ` · ${project.priority.name}` : ""}
+              </span>
+            ))}
+          </span>
+        </PullRequestMetaRow>
+      ) : null}
+      {issue.subIssues && issue.subIssues.total > 0 ? (
+        <PullRequestMetaRow icon={<ListTreeIcon className="size-3.5" />} label="Sub-issues">
+          {issue.subIssues.completed} / {issue.subIssues.total} completed
+        </PullRequestMetaRow>
+      ) : null}
+      {issue.blockedBy?.length ? (
+        <PullRequestMetaRow icon={<CircleAlertIcon className="size-3.5" />} label="Blocked by">
+          <span className="flex flex-wrap gap-2">
+            {issue.blockedBy.map((blocker) => {
+              const url = `https://${blocker.host}/${blocker.repository}/issues/${blocker.number}`;
+              return (
+                <a
+                  key={url}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(event) => openIssue(event, url, environmentId)}
+                  className="hover:underline"
+                >
+                  {blocker.repository} #{blocker.number}
+                  {blocker.state === "closed" ? " (closed)" : ""}
+                </a>
+              );
+            })}
+          </span>
+        </PullRequestMetaRow>
+      ) : null}
+    </div>
+  );
+}
+
+/** The fork's work block inside upstream's issue panel, for GitHub issues on a fork server. */
+export function IssueWorkSlot({
+  environmentId,
+  reference,
+  threadRef = null,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly reference: IssueRef;
+  readonly threadRef?: ScopedThreadRef | null;
+}) {
+  const supported =
+    useServerConfigs().get(environmentId)?.environment.capabilities.issueWork === true;
+  const issue = repositoryIssueOf(reference);
+  if (!supported || issue === null) return null;
+  return (
+    <IssueWorkSection
+      key={`${environmentId}:${issue.host}/${issue.repository}#${issue.number}`}
+      environmentId={environmentId}
+      reference={issue}
+      threadRef={threadRef}
+    />
   );
 }

@@ -98,6 +98,7 @@ export const layer = Layer.effect(
                 event.type === "thread.unarchived" ||
                 event.type === "thread.deleted" ||
                 event.type === "thread.pull-request-synced" ||
+                event.type === "thread.issue-synced" ||
                 event.type === "thread.pull-request-link-updated" ||
                 event.type === "issue.work.requested" ||
                 event.type === "issue.work.cancelled" ||

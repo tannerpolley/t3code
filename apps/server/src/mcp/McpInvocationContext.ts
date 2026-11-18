@@ -21,6 +21,7 @@ const ALL_MCP_CAPABILITIES = [
   "worktree",
   "device",
   "pull-requests",
+  "issues",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
@@ -146,6 +147,8 @@ export interface McpInvocationScope {
    * see the URL they were configured with, so links they must fetch carry it. Unset in-process.
    */
   readonly origin?: string | undefined;
+  /** The caller thread may propose issue changes, so ungated issue writes are hidden from it. */
+  readonly repositoryManaged?: boolean;
 }
 
 /**
@@ -189,6 +192,13 @@ export const hiddenFromOutsideClients = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope === undefined || scope.thread !== undefined;
+};
+
+/** `McpSchema.EnabledWhen` for issue writes a repository-managed thread makes through `propose_issue_change`. */
+export const hiddenFromRepositoryManaged = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.repositoryManaged !== true;
 };
 
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */

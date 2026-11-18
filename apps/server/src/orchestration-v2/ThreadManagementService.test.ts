@@ -123,6 +123,17 @@ it.effect("a workflow Stop waiting on its provider leaves sibling dispatch avail
               relationshipToParent: "subagent",
             },
           } as never),
+        findThread: (id) =>
+          Effect.succeed({
+            id,
+            role: "reviewer",
+            deletedAt: null,
+            lineage: {
+              rootThreadId,
+              parentThreadId: rootThreadId,
+              relationshipToParent: "subagent",
+            },
+          } as never),
         getThreadShell: (id) =>
           Effect.succeed({
             id,

@@ -27,7 +27,6 @@ import {
 import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
-import { useRightPanelStore } from "~/rightPanelStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { randomUUID } from "~/lib/utils";
 import { ThreadWorktreeIndicator } from "../ThreadStatusIndicators";
@@ -35,6 +34,7 @@ import { Button } from "../ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { findIssueProject } from "./issueWorktree.logic";
+import { useOpenIssueTab } from "./issueTabs";
 
 interface IssueStartActionProps {
   readonly environmentId: EnvironmentId;
@@ -81,6 +81,7 @@ function IssueStartControls({
   closed,
 }: IssueStartActionProps) {
   const navigate = useNavigate();
+  const openIssueTab = useOpenIssueTab();
   const [accepted, setAccepted] = useState<{
     result: IssueWorkStartResult;
     previousStatusAt: number;
@@ -141,8 +142,7 @@ function IssueStartControls({
   );
   const openWorkThread = () => {
     if (openThreadId === null) return;
-    const target = scopeThreadRef(environmentId, openThreadId);
-    useRightPanelStore.getState().openIssue(target, { environmentId, ...reference });
+    openIssueTab(scopeThreadRef(environmentId, openThreadId), { environmentId, ...reference });
     void navigate({
       to: "/$environmentId/$threadId",
       params: { environmentId, threadId: openThreadId },

@@ -31,6 +31,7 @@ import {
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { useOpenIssueTab } from "../issues/issueTabs";
 
 /** Issue rows shown before "Show all issues", matching the pull request rows. */
 const VISIBLE_ISSUE_COUNT = 5;
@@ -103,6 +104,7 @@ function IssueRows({
   const liveIssueWork = useLiveIssueWork();
   const list = cachedList === null ? null : liveIssueWork(cachedList, environmentId);
   const [showAll, setShowAll] = useState(false);
+  const openIssueTab = useOpenIssueTab();
   const shown =
     list === null || state === null
       ? []
@@ -194,7 +196,7 @@ function IssueRows({
               visibleNumbers={new Set(shown.map((issue) => issue.number))}
               limit={showAll ? Infinity : VISIBLE_ISSUE_COUNT}
               onSelect={(issue) =>
-                useRightPanelStore.getState().openIssue(scopeThreadRef(environmentId, threadId), {
+                openIssueTab(scopeThreadRef(environmentId, threadId), {
                   environmentId,
                   host,
                   repository,

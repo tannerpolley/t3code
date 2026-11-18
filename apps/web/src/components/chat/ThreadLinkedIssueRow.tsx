@@ -5,7 +5,6 @@ import type { EnvironmentId, ThreadId, ThreadLinkedIssue } from "@t3tools/contra
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
-import { useRightPanelStore } from "~/rightPanelStore";
 import { useThreadShell } from "~/state/entities";
 import { repositoryIssueEnvironment, useLiveIssueSummary } from "~/state/repositoryIssues";
 import { IssueHoverCard } from "../issues/IssueHoverCard";
@@ -16,6 +15,7 @@ import {
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { useOpenIssueTab } from "../issues/issueTabs";
 
 /** The durable issue link remains reachable even when repository browsing is hidden or unavailable. */
 export function ThreadLinkedIssueRow({
@@ -26,7 +26,9 @@ export function ThreadLinkedIssueRow({
   readonly threadId: ThreadId;
 }) {
   const threadRef = scopeThreadRef(environmentId, threadId);
-  const issue = useThreadShell(threadRef)?.linkedIssue;
+  const thread = useThreadShell(threadRef);
+  const openIssueTab = useOpenIssueTab();
+  const issue = thread?.linkedIssue;
   if (!issue) return null;
   return (
     <ThreadDetailsSection headingId="thread-details-linked-issue-heading" title="Linked issue">
@@ -34,7 +36,7 @@ export function ThreadLinkedIssueRow({
         environmentId={environmentId}
         issue={issue}
         onSelect={() =>
-          useRightPanelStore.getState().openIssue(threadRef, { environmentId, ...issue })
+          openIssueTab(threadRef, { environmentId, ...issue }, thread?.projectId ?? null)
         }
       />
     </ThreadDetailsSection>

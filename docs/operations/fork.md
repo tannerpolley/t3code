@@ -10,8 +10,8 @@ The fork lives on GitHub at `https://github.com/tannerpolley/t3code`: code, issu
 requests. `origin` points there (the older remote `github` is the same URL). Use `gh` and T3's
 issue tools. Issue #1 is the roadmap and maintenance tracker. Every task starts from an issue:
 the orchestrator creates one before delegating, and links each worker thread to it
-(`link_issue`), so the Issues pane shows it In progress. Close an issue when its fix lands on
-`main`.
+(`link_issue` with the issue URL), so the roadmap shows it In progress. Close an issue when its
+fix lands on `main`.
 
 This section owns the hosting rules. Scheduled task prompts and the owner's skills point here
 instead of naming a host, because the 2026-11-10 move missed copies in both (#382). When the
@@ -26,9 +26,17 @@ fork's.
 
 ## Issue host
 
-GitHub is the only active issue host. Forgejo, GitLab and git-bug issue adapters and login
-discovery are no longer supported. Historical issue records and links remain readable;
-T3 does not fetch or write issues on those retired hosts.
+GitHub is the only issue host the fork's own issue work uses. Upstream's Issues service owns issue
+content: its `/issues` page, its detail panel and its agent tools (`list_issues`, `read_issue`,
+`comment_on_issue`, `link_issue`, `unlink_issue`, `list_thread_issues`, and `create_issue` and
+`set_issue_state`, which repository-managed threads and every thread below them don't see because
+`propose_issue_change` is their gated path). Upstream's other trackers come along unchanged.
+
+The fork adds the work on top: the roadmap at `/roadmap` and in the per-repository Issues panel
+beside a thread, with Ready / Paused / Queued / In progress / Done, and a work section inside
+upstream's issue panel. Until #451 is finished, the roadmap still lists issues through the fork's
+own GitHub reads, and live work reads both upstream's thread links and the old
+`issue_thread_links` table.
 
 ## Branches and worktrees
 
@@ -105,7 +113,7 @@ It checks for staged builds shortly after startup and every four minutes while r
 
 ## Upstream syncs
 
-- Syncs are manual; no daily scheduled task is configured. The last completed sync was 2026-11-12. Merge the selected upstream nightly tag from `pingdotgg/main` on a short-lived `sync/upstream-<date>` branch, preserving the upstream parent in a real merge. Merge the sync PR without rebasing or squashing, then delete the branch. `git rerere` replays repeated conflict resolutions.
+- Syncs are manual; no daily scheduled task is configured. The last completed sync was 2026-11-17 (`v0.1.11-nightly.20261117.4851`). Merge the selected upstream nightly tag from `pingdotgg/main` on a short-lived `sync/upstream-<date>` branch, preserving the upstream parent in a real merge. Merge the sync PR without rebasing or squashing, then delete the branch. `git rerere` replays repeated conflict resolutions.
 - Upstream's version wins by default. Drop fork code once upstream covers the same thing.
 - Keep fork code modular so syncs conflict less (issue #24):
   - fork logic lives in fork-owned files, joined to upstream files by small hook points;

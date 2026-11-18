@@ -66,6 +66,8 @@ import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import * as IssueChangeService from "../issues/IssueChangeService.ts";
+import { IssuesToolkit } from "./toolkits/issues/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -1701,6 +1703,105 @@ it.effect("hides tools for links and refuses another environment while the beta 
         isError: true,
         content: [{ text: expect.stringContaining("cannot reach linked environments") }],
       });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("hides ungated issue writes from managed threads and their descendants", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const managed = new Set(["thread-managed", "thread-managed-child"]);
+      const scopeFor = (threadId: ThreadId): McpInvocationContext.McpThreadInvocationScope => ({
+        environmentId,
+        requestNamespace: threadId,
+        thread: {
+          threadId,
+          providerSessionId: threadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      });
+      const unused = McpToolAccess.reads(() => Effect.die("not called"));
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.toolkitRegistration(
+          IssuesToolkit,
+          McpToolAccess.toLayer(IssuesToolkit, {
+            list_issues: unused,
+            read_issue: unused,
+            create_issue: unused,
+            comment_on_issue: unused,
+            set_issue_state: unused,
+            link_issue: unused,
+            unlink_issue: unused,
+            list_thread_issues: unused,
+          }),
+        ),
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(IssueChangeService.IssueChangeService)({
+            isManagedCaller: (threadId) => Effect.succeed(managed.has(threadId)),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (presented) => Effect.succeed(scopeFor(ThreadId.make(presented))),
+          }),
+        ),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const listed = (token: string) =>
+        Effect.gen(function* () {
+          const headers = {
+            accept: "application/json, text/event-stream",
+            authorization: `Bearer ${token}`,
+          };
+          const initialize = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+              "application/json",
+            ),
+          });
+          const response = yield* httpClient.post("/mcp", {
+            headers: {
+              ...headers,
+              "mcp-session-id": initialize.headers["mcp-session-id"]!,
+              "mcp-protocol-version": "2025-06-18",
+            },
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+              "application/json",
+            ),
+          });
+          const body = (yield* response.json) as {
+            result: { tools: ReadonlyArray<{ name: string }> };
+          };
+          return body.result.tools.map((tool) => tool.name);
+        });
+
+      const everyIssueTool = [
+        "list_issues",
+        "read_issue",
+        "create_issue",
+        "comment_on_issue",
+        "set_issue_state",
+        "link_issue",
+        "unlink_issue",
+        "list_thread_issues",
+      ];
+      const managedTools = everyIssueTool.filter(
+        (name) => name !== "create_issue" && name !== "set_issue_state",
+      );
+      expect(yield* listed("thread-managed")).toEqual(managedTools);
+      expect(yield* listed("thread-managed-child")).toEqual(managedTools);
+      expect(yield* listed("thread-ordinary")).toEqual(everyIssueTool);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

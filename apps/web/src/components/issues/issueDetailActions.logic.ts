@@ -53,21 +53,6 @@ export function canUnlinkIssue(
   );
 }
 
-export function issueMenuAvailability(input: {
-  linked: boolean;
-  hasComposer: boolean;
-  state: "open" | "closed";
-  canWrite: boolean;
-  canUnlink: boolean;
-}) {
-  return {
-    unlink: input.linked && input.canUnlink,
-    composer: input.hasComposer,
-    close: input.state === "open" && input.canWrite,
-    reopen: input.state === "closed" && input.canWrite,
-  };
-}
-
 export function issueComposerPrompt(
   action: IssueComposerAction,
   issue: Pick<RepositoryIssueSummary, "number" | "title" | "url">,
@@ -93,14 +78,20 @@ export function filterIssueComments(
     : comments.filter((comment) => !comment.author?.login.endsWith("[bot]"));
 }
 
+/** An issue tab's link: the one it was opened from, else its GitHub page; other trackers need a URL. */
 export function issueReferenceCopyTarget(
-  issue: { host: string; repository: string; number: number } | null,
+  issue: { tracker: string; host?: string; scope: string; key: string; url?: string } | null,
 ) {
-  return issue === null
+  const value =
+    issue?.url ??
+    (issue?.tracker === "github"
+      ? `https://${issue.host ?? "github.com"}/${issue.scope}/issues/${issue.key}`
+      : null);
+  return value === null
     ? null
     : {
         kind: "issue" as const,
-        value: `https://${issue.host}/${issue.repository}/issues/${issue.number}`,
+        value,
         clipboardTarget: "issue link",
         successTitle: "Issue link copied",
         failureTitle: "Failed to copy issue link",

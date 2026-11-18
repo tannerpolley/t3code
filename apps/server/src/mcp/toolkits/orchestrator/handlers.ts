@@ -13,11 +13,9 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 
-import { issueLinkHandlers } from "../../../issues/IssueMcpTools.ts";
 import { issueInboxHandlers } from "../../../issues/IssueInboxMcpTools.ts";
 
 const handlers = {
-  ...issueLinkHandlers,
   ...issueInboxHandlers,
   ...ownerDecisionHandlers,
   propose_issue_change: McpToolAccess.actsAsCaller((input) =>

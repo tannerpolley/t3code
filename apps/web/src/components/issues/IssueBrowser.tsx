@@ -22,7 +22,7 @@ import {
 } from "@t3tools/client-runtime/state/issue-work";
 import { cn } from "~/lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
-import type { IssueSurface } from "~/rightPanelIssueSurfaces";
+import { issueTabTarget, repositoryIssueOf, type RepositoryIssueTarget } from "./issueTabs";
 import { useAllEnvironmentShellsBootstrapped, useThreadShell, useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import {
@@ -63,7 +63,7 @@ type IssueError = {
   readonly scopeUnavailable?: boolean;
 };
 
-type IssueTarget = Omit<IssueSurface, "id" | "kind">;
+type IssueTarget = RepositoryIssueTarget;
 
 const isIssueReadError = Schema.is(IssueReadErrorClass);
 const isEnvironmentAuthorizationError = Schema.is(EnvironmentAuthorizationErrorClass);
@@ -884,14 +884,27 @@ export function IssueListPanel({ threadRef }: { readonly threadRef: ScopedThread
         (surface) => surface.kind === "issue",
       ) ?? null,
   );
+  const selectedIssue = lastIssue?.kind === "issue" ? repositoryIssueOf(lastIssue) : null;
   return (
     <IssueBrowser
       variant="panel"
       repositories={repositories}
       search={{ ...search, ...(scope ?? projectScope) }}
       onSearchChange={(patch) => setSearch((current) => ({ ...current, ...patch }))}
-      selectedIssue={lastIssue?.kind === "issue" ? lastIssue : null}
-      onSelectIssue={(target) => useRightPanelStore.getState().openIssue(threadRef, target)}
+      selectedIssue={
+        selectedIssue === null || lastIssue?.kind !== "issue"
+          ? null
+          : { ...selectedIssue, environmentId: lastIssue.environmentId ?? threadRef.environmentId }
+      }
+      onSelectIssue={(target) => {
+        const tab = issueTabTarget(
+          projects,
+          { ...target, environmentId: target.environmentId ?? threadRef.environmentId },
+          thread?.projectId ?? null,
+        );
+        if (tab !== null) useRightPanelStore.getState().openIssue(threadRef, tab);
+        else if (target.url) window.open(target.url, "_blank", "noopener,noreferrer");
+      }}
     />
   );
 }

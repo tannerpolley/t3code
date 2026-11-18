@@ -1,5 +1,5 @@
 import NotebookCloseDialog from "./files/NotebookCloseDialog";
-import { ThreadIssueSurface } from "./issues/ThreadIssueSurface";
+import { IssueListPanel } from "./issues/IssueBrowser";
 import { InlineShellRunProvider } from "./chat/InlineShellRun";
 import { automaticProviderSwitchBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import { threadIssueRepository } from "./chat/ThreadDetailsRepositoryIssueRows";
@@ -2218,7 +2218,7 @@ export default function ChatView(props: ChatViewProps) {
           if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
           if (
             !isInSideChatPane(document.activeElement) &&
-            shouldRefocusComposerOnWindowFocus(document.activeElement)
+            shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())
           ) {
             focusComposerStable();
           }
@@ -3289,12 +3289,8 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   const rightPanelContent = activeThreadRef ? (
-    renderedRightPanelSurface?.kind === "issue" || renderedRightPanelSurface?.kind === "issues" ? (
-      <ThreadIssueSurface
-        threadRef={activeThreadRef}
-        surface={renderedRightPanelSurface}
-        surfaces={rightPanelState.surfaces}
-      />
+    renderedRightPanelSurface?.kind === "issues" ? (
+      <IssueListPanel threadRef={activeThreadRef} />
     ) : (
       <RightPanelSurfaceContent
         surface={renderedRightPanelSurface}
@@ -3341,8 +3337,9 @@ export default function ChatView(props: ChatViewProps) {
                 ? addPullRequestsSurfaceStable
                 : undefined,
           backLabel:
-            pullRequestIssueOrigin === null ? undefined : `issue #${pullRequestIssueOrigin.number}`,
+            pullRequestIssueOrigin === null ? undefined : `issue #${pullRequestIssueOrigin.key}`,
         }}
+        issuesSupported={serverConfig?.environment.capabilities.issues === true}
         files={{
           projectId: activeThread.projectId,
           projectName: activeProject?.title ?? null,

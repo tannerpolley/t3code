@@ -18,7 +18,9 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
 
-const encodeCacheKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+// A Gitea list page can hold 50 pull request bodies; tea's output is otherwise capped at 1 MB.
+const API_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+
 const encodeApiBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export class ForgejoCliError extends Schema.TaggedError<ForgejoCliError>()("ForgejoCliError", {
@@ -262,36 +264,7 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  let cachedKeys: { signature: string; keys: typeof ForgejoKeysSchema.Type } | undefined;
-  const targets = new Map<string, ForgejoRepository>();
-  const invalidate = () => {
-    cachedKeys = undefined;
-    targets.clear();
-    authenticated.clear();
-  };
-  const readKeysFile = Effect.fn("ForgejoCli.readKeys")(function* (cwd: string, path: string) {
-    const raw = yield* fileSystem.readFileString(path).pipe(
-      Effect.mapError(
-        () =>
-          new ForgejoCliError({
-            command: "fj",
-            cwd,
-            reason: "authentication",
-            detail: "Could not read fj authentication storage.",
-          }),
-      ),
-    );
-    const decoded = parseForgejoKeys(raw);
-    if (Result.isFailure(decoded))
-      return yield* new ForgejoCliError({
-        command: "fj",
-        cwd,
-        reason: "authentication",
-        detail: "fj authentication storage is invalid. Authenticate again with fj.",
-      });
-    return decoded.success;
-  });
-  const readKeys = Effect.fnUntraced(function* (cwd: string) {
+  const readKeys = Effect.fn("ForgejoCli.readKeys")(function* (cwd: string) {
     for (const path of forgejoKeysPaths({
       platform: yield* HostProcess.Platform,
       home: yield* HostProcess.HomeDirectory,
@@ -310,23 +283,27 @@ export const make = Effect.gen(function* () {
         ),
       );
       if (!exists) continue;
-      const info = yield* fileSystem.stat(path).pipe(Effect.orElseSucceed(() => null));
-      const signature = info
-        ? encodeCacheKey([
-            path,
-            Option.getOrNull(info.mtime)?.getTime(),
-            info.size.toString(),
-            Option.getOrNull(info.ino)?.toString(),
-          ])
-        : undefined;
-      if (signature && cachedKeys?.signature === signature) return cachedKeys.keys;
-      if (cachedKeys) invalidate();
-      else if (!signature) targets.clear();
-      const keys = yield* readKeysFile(cwd, path);
-      if (signature) cachedKeys = { signature, keys };
-      return keys;
+      const raw = yield* fileSystem.readFileString(path).pipe(
+        Effect.mapError(
+          () =>
+            new ForgejoCliError({
+              command: "fj",
+              cwd,
+              reason: "authentication",
+              detail: "Could not read fj authentication storage.",
+            }),
+        ),
+      );
+      const decoded = parseForgejoKeys(raw);
+      if (Result.isFailure(decoded))
+        return yield* new ForgejoCliError({
+          command: "fj",
+          cwd,
+          reason: "authentication",
+          detail: "fj authentication storage is invalid. Authenticate again with fj.",
+        });
+      return decoded.success;
     }
-    if (cachedKeys) invalidate();
     const empty: typeof ForgejoKeysSchema.Type = { hosts: {}, aliases: {} };
     return empty;
   });
@@ -489,40 +466,29 @@ export const make = Effect.gen(function* () {
     cwd: string,
     login: typeof ForgejoLoginSchema.Type,
   ) {
-    const initialKeys = yield* readKeys(cwd);
+    const keys = yield* readKeys(cwd);
+    const token = keys.hosts[login.name]?.token;
     const now = yield* Clock.currentTimeMillis;
     const cached = authenticated.get(login.url);
-    if (
-      cached &&
-      initialKeys.hosts[login.name]?.token === cached.token &&
-      now - cached.time < 30_000
-    )
-      return cached.token;
-    return yield* Effect.gen(function* () {
-      const keys = yield* readKeys(cwd);
-      const token = keys.hosts[login.name]?.token;
-      const now = yield* Clock.currentTimeMillis;
-      const cached = authenticated.get(login.url);
-      if (token && cached?.token === token && now - cached.time < 30_000) return token;
-      // fj reads the cwd repository even with --host and fails on an unborn branch.
-      yield* execute({
+    if (token && cached?.token === token && now - cached.time < 30_000) return token;
+    // fj reads the cwd repository even with --host and fails on an unborn branch.
+    yield* execute({
+      command: "fj",
+      cwd: yield* HostProcess.HomeDirectory,
+      args: ["--host", login.url, "whoami"],
+    });
+    // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
+    const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
+    if (!refreshed)
+      return yield* new ForgejoCliError({
         command: "fj",
-        cwd: yield* HostProcess.HomeDirectory,
-        args: ["--host", login.url, "whoami"],
+        cwd,
+        reason: "authentication",
+        detail: "fj has no credentials for this server. Authenticate again with fj.",
       });
-      // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
-      const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
-      if (!refreshed)
-        return yield* new ForgejoCliError({
-          command: "fj",
-          cwd,
-          reason: "authentication",
-          detail: "fj has no credentials for this server. Authenticate again with fj.",
-        });
-      authenticated.set(login.url, { token: refreshed, time: now });
-      return refreshed;
-    }).pipe(authLock.withPermits(1));
-  });
+    authenticated.set(login.url, { token: refreshed, time: now });
+    return refreshed;
+  }, authLock.withPermits(1));
 
   const getAccount: NonNullable<ForgejoCli["Service"]["getAccount"]> = Effect.fn(
     "ForgejoCli.getAccount",
@@ -708,28 +674,9 @@ export const make = Effect.gen(function* () {
       });
     return { command, login: login.name, repository, baseUrl: login.url.replace(/\/+$/, "") };
   });
-  const cachedTarget = Effect.fnUntraced(function* (
-    input: ForgejoRepositoryInput,
-    hostOnly = false,
-  ) {
-    yield* readKeys(input.cwd);
-    const key = encodeCacheKey([
-      input.cwd,
-      input.context,
-      input.repository,
-      input.reference,
-      input.host,
-      hostOnly,
-    ]);
-    const cached = targets.get(key);
-    if (cached) return cached;
-    const target = yield* resolveTarget(input, hostOnly);
-    targets.set(key, target);
-    return target;
-  });
-  const resolveRepository = (input: ForgejoRepositoryInput) => cachedTarget(input);
+  const resolveRepository = (input: ForgejoRepositoryInput) => resolveTarget(input);
   const api = Effect.fn("ForgejoCli.api")(function* (input: ForgejoApiInput) {
-    const repository = yield* cachedTarget(
+    const repository = yield* resolveTarget(
       input,
       input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET"),
     );
@@ -756,18 +703,7 @@ export const make = Effect.gen(function* () {
       }
     }
     if (repository.command === "fj") {
-      const token = yield* authenticateFj(input.cwd, {
-        name: repository.login,
-        url: repository.baseUrl,
-        user: "",
-        default: "false",
-      }).pipe(
-        Effect.tapError((error) =>
-          Effect.sync(() => {
-            if (error.reason === "authentication") invalidate();
-          }),
-        ),
-      );
+      const token = (yield* readKeys(input.cwd)).hosts[repository.login]?.token;
       if (!token)
         return yield* new ForgejoCliError({
           command: "fj",
@@ -782,13 +718,7 @@ export const make = Effect.gen(function* () {
         path,
         ...(input.method === undefined ? {} : { method: input.method }),
         ...(stdin === undefined ? {} : { body: stdin }),
-      }).pipe(
-        Effect.tapError((error) =>
-          Effect.sync(() => {
-            if (error.reason === "authentication") invalidate();
-          }),
-        ),
-      );
+      });
     }
     const result = yield* execute({
       cwd: input.cwd,
@@ -804,6 +734,7 @@ export const make = Effect.gen(function* () {
         `${repository.baseUrl}/api/v1/${path}`,
       ],
       ...(stdin === undefined ? {} : { stdin }),
+      maxOutputBytes: API_MAX_OUTPUT_BYTES,
     });
     // tea reports HTTP failures with exit code zero; use its response status.
     const status = Number(/^HTTP\/\S+ (\d{3})/m.exec(result.stderr)?.[1]);
@@ -836,6 +767,13 @@ export const make = Effect.gen(function* () {
                     : `Forgejo API request failed (HTTP ${status}).`,
       });
     }
+    if (result.stdoutTruncated)
+      return yield* new ForgejoCliError({
+        command: "tea",
+        cwd: input.cwd,
+        reason: "invalid-response",
+        detail: "Forgejo API response exceeded the output size limit.",
+      });
     return result;
   });
   return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });

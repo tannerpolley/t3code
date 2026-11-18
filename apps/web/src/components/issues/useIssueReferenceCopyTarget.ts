@@ -6,9 +6,9 @@ import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { toastManager } from "../ui/toast";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useMemo, useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent } from "react";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
-import { ISSUES_PANEL_REF } from "~/rightPanelIssueSurfaces";
+import { ISSUES_PANEL_REF } from "~/rightPanelStore";
 import { issueReferenceCopyTarget } from "./issueDetailActions.logic";
 
 /** The generic Copy reference command follows the issue currently open beside the thread. */
@@ -16,10 +16,7 @@ export function useIssueReferenceCopyTarget(threadRef: ScopedThreadRef | null) {
   const surface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, threadRef),
   );
-  return useMemo(
-    () => issueReferenceCopyTarget(surface?.kind === "issue" ? surface : null),
-    [surface],
-  );
+  return issueReferenceCopyTarget(surface?.kind === "issue" ? surface : null);
 }
 
 /** The Issues page owns one shortcut listener, even when both responsive panes are mounted. */
@@ -43,6 +40,7 @@ export function useIssuePageCopyShortcut() {
     event.stopPropagation();
     if (!event.repeat) copyToClipboard(target.value);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener for the page's copy shortcut
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => onShortcut(event);
     window.addEventListener("keydown", onKeyDown, true);

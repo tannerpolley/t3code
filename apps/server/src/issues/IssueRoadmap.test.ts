@@ -219,7 +219,7 @@ it.effect(
               observed.push(revision);
             }),
           ),
-          Stream.take(4),
+          Stream.take(5),
           Stream.runCollect,
           Effect.forkChild,
         );
@@ -282,7 +282,17 @@ it.effect(
           payload: { ...subagent, status: "completed" },
         });
         yield* TestClock.adjust("250 millis");
-        assert.deepEqual(yield* Fiber.join(result), [0, 1, 2, 3]);
+        assert.deepEqual(observed, [0, 1, 2, 3]);
+        yield* Queue.offer(changes, {
+          id: EventId.make("issue-linked"),
+          type: "thread.issue-synced",
+          threadId: thread.id,
+          occurredAt: thread.updatedAt,
+          payload: thread,
+        });
+        yield* TestClock.adjust("250 millis");
+        assert.deepEqual(observed, [0, 1, 2, 3, 4]);
+        assert.deepEqual(yield* Fiber.join(result), [0, 1, 2, 3, 4]);
       }),
     ),
 );

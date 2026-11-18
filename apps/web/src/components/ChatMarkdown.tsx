@@ -2,9 +2,9 @@ import { MarkdownInlineCode } from "./chat/ForkMarkdownActions";
 import { markdownImageUnavailableLabel } from "./markdownImageState";
 import { knownIssueHosts } from "../lib/openRepositoryIssueLink";
 import { parseIssueUrl } from "../lib/openRepositoryIssueLink";
-import { useOpenIssueLink } from "../lib/openRepositoryIssueLink";
 import { IssueLinkPreview } from "./issues/IssueLinkPreview";
 import { IssueLinkPreviewFallback } from "./issues/IssueLinkPreview";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { clientHostEnvironmentAtom } from "../state/clientHostEnvironment";
 import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
 import {
@@ -166,6 +166,7 @@ import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
+import { useOpenIssueLink } from "../lib/openIssueLink";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -274,14 +275,6 @@ interface ChatMarkdownProps {
   sourceControlMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
 }
-
-/** A plain click for opening a link outside a real click handler. */
-const NO_MODIFIER_CLICK = {
-  metaKey: false,
-  ctrlKey: false,
-  preventDefault: () => undefined,
-  stopPropagation: () => undefined,
-};
 
 export interface ChatMarkdownContextReference {
   kind: string;
@@ -716,12 +709,8 @@ function useChatMarkdownState({
         : payload.html,
     );
   };
-  const openPullRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
-  const openIssueLink = useOpenIssueLink(threadRef);
-  // A GitHub issue link opens in T3's issue detail the way a change request opens in its pane.
-  const openChangeRequestLink = ((event, url, targetThreadRef, targetEnvironmentId) =>
-    openPullRequestLink(event, url, targetThreadRef, targetEnvironmentId) ||
-    openIssueLink(event, url, targetEnvironmentId)) satisfies typeof openPullRequestLink;
+  const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
+  const openIssueLink = useOpenIssueLink(threadRef, pullRequestPanelRef);
   const openDeferredMarkdownLink = useOpenLink(threadRef);
   // Subscribe so hydrated settings apply before the anchor synchronously decides whether to intercept _blank.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
@@ -966,6 +955,9 @@ function useChatMarkdownState({
                   )
               : undefined
         }
+        resolveDragPath={async () =>
+          resolvePathLinkTarget((await resolveHostPath()).absolutePath, cwd ?? "")
+        }
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
         }
@@ -1020,6 +1012,7 @@ function useChatMarkdownState({
     onOpenInlineTerminal,
     shellMessageId,
     openChangeRequestLink,
+    openIssueLink,
     openDeferredMarkdownLink,
     openExternalLinkInPreview,
     openMarkdownMedia,
@@ -1189,6 +1182,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       threadRef,
       openMarkdownMedia,
       openChangeRequestLink,
+      openIssueLink,
       openDeferredMarkdownLink,
       linkTargetPreference,
       openExternalLinkInPreview,
@@ -1310,7 +1304,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
             }
             if (
               !href ||
-              openChangeRequestLink(event, href, undefined, environmentId ?? undefined)
+              openChangeRequestLink(event, href, undefined, environmentId ?? undefined) ||
+              openIssueLink(event, href, environmentId ?? undefined)
             ) {
               return;
             }
@@ -1440,17 +1435,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 environmentId ?? undefined,
               )
             }
-            // A `#n` that is not a pull request is usually an issue.
+            // A reference that is not a pull request may still be an issue this app can show.
             onOpenFallback={async (url) => {
-              if (
-                !openChangeRequestLink(
-                  NO_MODIFIER_CLICK,
-                  url,
-                  undefined,
-                  environmentId ?? undefined,
-                )
-              )
-                await openDeferredMarkdownLink(url);
+              const opened = openIssueLink(
+                {
+                  metaKey: false,
+                  ctrlKey: false,
+                  preventDefault: () => undefined,
+                  stopPropagation: () => undefined,
+                },
+                url,
+                environmentId ?? undefined,
+              );
+              if (!opened) await openDeferredMarkdownLink(url);
             }}
           />
         );

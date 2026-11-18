@@ -264,6 +264,7 @@ const dependencies = Layer.mergeAll(
     isShown: (key) => desktopRenders(key.tabId),
     turn: () => Effect.void,
     awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+    awaitShown: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {

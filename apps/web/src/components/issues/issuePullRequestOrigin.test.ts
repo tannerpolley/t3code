@@ -1,12 +1,18 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
-import { issueSurface } from "~/rightPanelIssueSurfaces";
+import { issueSurface } from "~/rightPanelStore";
 import { issueOriginFor, rememberIssueOrigin } from "./issuePullRequestOrigin";
 
 it("returns to the opening issue only for the same pull request on the same host and server", () => {
   const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("t") };
-  const issue = issueSurface({ host: "github.com", repository: "acme/web", number: 7 });
+  const issue = issueSurface({
+    projectId: "project",
+    tracker: "github",
+    host: "github.com",
+    scope: "acme/web",
+    key: "7",
+  });
   const pr = { environmentId: "env", repository: "acme/web", number: 12 };
   rememberIssueOrigin(threadRef, { ...pr, host: "github.com" }, issue);
 
