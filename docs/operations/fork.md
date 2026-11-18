@@ -9,9 +9,10 @@ Only Codex and Claude matter here; mobile is out of scope.
 The fork lives on GitHub at `https://github.com/tannerpolley/t3code`: code, issues and pull
 requests. `origin` points there (the older remote `github` is the same URL). Use `gh` and T3's
 issue tools. Issue #1 is the roadmap and maintenance tracker. Every task starts from an issue:
-the orchestrator creates one before delegating, and links each worker thread to it
-(`link_issue` with the issue URL), so the roadmap shows it In progress. Close an issue when its
-fix lands on `main`.
+the orchestrator creates one before delegating, and each worker thread is linked to it, so the
+roadmap shows it In progress. Starting or delegating work on the issue links the worker by
+itself; link any other thread with `link_issue` and the issue URL. Close an issue when its fix
+lands on `main`.
 
 This section owns the hosting rules. Scheduled task prompts and the owner's skills point here
 instead of naming a host, because the 2026-11-10 move missed copies in both (#382). When the
@@ -127,6 +128,10 @@ It checks for staged builds shortly after startup and every four minutes while r
 - Keep fork code modular so syncs conflict less (issue #24):
   - fork logic lives in fork-owned files, joined to upstream files by small hook points;
   - fork migrations use their own ledger (`ForkMigrations.ts`), and fork RPCs their own group (`ForkWsRpc.ts`).
+- The fork edits upstream's own issue code in seven files, and a sync that changes Issues will conflict there. Keep these edits:
+  - `apps/web/src/components/issue/IssueDetailPanel.tsx`: the slot for the fork's work section.
+  - `apps/server/src/mcp/toolkits/issues/tools.ts`: `create_issue` and `set_issue_state` hidden from repository-managed threads.
+  - `apps/server/src/issue/IssueService.ts`, `packages/contracts/src/issue.ts`, `packages/source-control-core/src/server/IssueTracker.ts`, and `GitHubIssueTracker.ts` and `gitHubIssueJson.ts` in `packages/source-control-github/src/server/`: a milestone on create, the GitHub ids a create returns, the comment id a comment returns, and the `rejected` error reason. Managed issue writes need these to retry safely.
 - Measure conflicts before a sync with `git merge-tree --write-tree --name-only --no-messages main pingdotgg/main`.
 - Conflict resolution can drop fork code without a conflict marker or a failing test: the 2026-10-20 sync lost 23 fork behaviors that its review missed. Before merging a sync into `main`, run `scripts/fork-sync/lost-fork-code.py main <upstream commit merged> <sync branch>`. It lists fork-added lines the merge no longer has and fork files nothing imports any more. Judge every flagged hunk: restyled (keep), replaced by upstream's own version (drop the fork code, citing upstream's), or dropped (restore it). The sync review checks those judgments.
 
