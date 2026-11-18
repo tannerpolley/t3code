@@ -433,7 +433,9 @@ export function makeIssueWorkCommands({
             parent === null || parent === undefined
               ? undefined
               : (yield* projectionStore
-                  .getThreadRecords(parent, ["subagents"])
+                  .getThreadRecords(parent, ["subagents"], {
+                    subagentChildThreadIds: [currentOwner],
+                  })
                   .pipe(mapDispatchError(command))).subagents.findLast(
                   (task) => task.childThreadId === currentOwner,
                 );

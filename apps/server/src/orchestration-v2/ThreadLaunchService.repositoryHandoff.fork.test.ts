@@ -769,10 +769,11 @@ describe("fresh-thread repository handoff", () => {
           taskId: notifiedRoot.subagents[0]!.id,
           observedByRunId: null,
         });
+        // No root run saw that read, so the result stays in the root's wake.
         assert.deepEqual(
           (yield* threads.getThreadRecords(rootId, [])).thread.delegatedCompletion!.delivery!
             .taskIds,
-          [],
+          [notifiedRoot.subagents[0]!.id],
         );
         yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
       }).pipe(
