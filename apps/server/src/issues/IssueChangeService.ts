@@ -66,6 +66,8 @@ type Row = {
   in_flight_step: string | null;
   result: string | null;
 };
+// Bounds the parent walk; also stops a corrupt cycle in stored lineage.
+const MAX_MANAGED_LINEAGE_DEPTH = 32;
 const decodeChange = Schema.decodeEffect(Schema.fromJsonString(IssueChange));
 const encodeChange = Schema.encodeEffect(Schema.fromJsonString(IssueChange));
 const decodeSteps = Schema.decodeEffect(Schema.fromJsonString(IssueChange.fields.completedSteps));
@@ -211,7 +213,37 @@ const make = Effect.gen(function* () {
       WHERE thread.thread_id = ${threadId} AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
         AND thread.default_provider IN ('codex', 'claudeAgent')
         AND root.deleted_at IS NULL AND root.archived_at IS NULL
-    `.pipe(Effect.mapError(storageError));
+    `.pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError));
+
+  /** Whether this thread or any ancestor, through stored parent links, is managed (see above). */
+  const managedLineage = (threadId: ThreadId) =>
+    sql<{ managed: number }>`
+      WITH RECURSIVE lineage(thread_id, payload_json, depth) AS (
+        SELECT thread_id, payload_json, 0
+        FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${threadId} AND deleted_at IS NULL AND archived_at IS NULL
+          AND default_provider IN ('codex', 'claudeAgent')
+        UNION ALL
+        SELECT parent.thread_id, parent.payload_json, lineage.depth + 1
+        FROM lineage
+        JOIN orchestration_v2_projection_threads parent
+          ON parent.thread_id = json_extract(lineage.payload_json, '$.lineage.parentThreadId')
+        WHERE lineage.depth < ${MAX_MANAGED_LINEAGE_DEPTH}
+      )
+      SELECT EXISTS (
+        SELECT 1
+        FROM lineage thread
+        JOIN orchestration_v2_projection_repository_orchestration owner
+          ON owner.root_thread_id = thread.thread_id OR
+            (owner.host = json_extract(thread.payload_json, '$.linkedIssue.host') AND owner.repository_id = json_extract(thread.payload_json, '$.linkedIssue.repositoryId'))
+        JOIN orchestration_v2_projection_threads root ON root.thread_id = owner.root_thread_id
+        WHERE root.deleted_at IS NULL AND root.archived_at IS NULL
+      ) AS managed
+    `.pipe(
+      NodeSqliteClient.readOnly,
+      Effect.map(([row]) => row?.managed === 1),
+      Effect.mapError(storageError),
+    );
 
   const propose: IssueChangeService["Service"]["propose"] = Effect.fn("IssueChangeService.propose")(
     function* (threadId, rawInput) {
@@ -621,9 +653,7 @@ const make = Effect.gen(function* () {
 
   return IssueChangeService.of({
     propose,
-    isManagedCaller: Effect.fn("IssueChangeService.isManagedCaller")(function* (threadId) {
-      return (yield* managedRepositories(threadId)).length > 0;
-    }),
+    isManagedCaller: Effect.fn("IssueChangeService.isManagedCaller")(managedLineage),
     decide,
     execute,
     subscribe: (input) =>

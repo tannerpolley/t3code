@@ -485,6 +485,29 @@ it.effect("an unmanaged agent cannot propose and a retry cannot replace a propos
       };
       assert.equal((yield* service.propose(threadId, spoofed)).decision, "pending");
       const sql = yield* SqlClient.SqlClient;
+      const insertThread = (id: string, parentThreadId: string | null, claim = false) =>
+        Effect.gen(function* () {
+          const json = yield* encodeJson({
+            lineage: { parentThreadId },
+            ...(claim ? { linkedIssue: issue(10) } : {}),
+          });
+          yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+            VALUES (${id}, 'project', ${id}, 'codex', 'approval-required', 'default', '2026-01-01', '2026-01-01', ${json})`;
+        });
+      yield* insertThread("child", "root");
+      yield* insertThread("grandchild", "child");
+      yield* insertThread("worker", null, true);
+      yield* insertThread("worker-child", "worker");
+      yield* insertThread("stranger", null);
+      yield* insertThread("stranger-child", "stranger");
+      // Hiding create_issue and set_issue_state follows every descendant of a managed thread.
+      assert.deepEqual(
+        yield* Effect.forEach(
+          ["root", "child", "grandchild", "worker", "worker-child", "stranger", "stranger-child"],
+          (id) => service.isManagedCaller(ThreadId.make(id)),
+        ),
+        [true, true, true, true, true, false, false],
+      );
       yield* sql`UPDATE orchestration_v2_projection_threads SET default_provider = 'cursor' WHERE thread_id = 'root'`;
       assert.isTrue(
         Result.isFailure(

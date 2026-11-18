@@ -29,8 +29,8 @@ fork's.
 GitHub is the only issue host the fork's own issue work uses. Upstream's Issues service owns issue
 content: its `/issues` page, its detail panel and its agent tools (`list_issues`, `read_issue`,
 `comment_on_issue`, `link_issue`, `unlink_issue`, `list_thread_issues`, and `create_issue` and
-`set_issue_state`, which repository-managed threads don't see because `propose_issue_change` is
-their gated path). Upstream's other trackers come along unchanged.
+`set_issue_state`, which repository-managed threads and every thread below them don't see because
+`propose_issue_change` is their gated path). Upstream's other trackers come along unchanged.
 
 The fork adds the work on top: the roadmap at `/roadmap` and in the per-repository Issues panel
 beside a thread, with Ready / Paused / Queued / In progress / Done, and a work section inside
