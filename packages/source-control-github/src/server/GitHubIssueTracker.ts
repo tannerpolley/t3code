@@ -21,6 +21,7 @@ import { AddReaction, RemoveReaction } from "./pullRequestMutations.graphql.ts";
 import { gitHubReactionContent } from "./gitHubPullRequestJson.ts";
 import {
   ISSUE_STATES,
+  decodeCreatedComment,
   decodeCreatedIssueJson,
   decodeIssueMetadataJson,
   toIssueCandidates,
@@ -113,6 +114,7 @@ const FAILURE_DETAIL: Record<IssueTrackerError["reason"], string> = {
   unauthenticated: "GitHub authentication is unavailable. Sign in and retry.",
   "rate-limited": "GitHub API rate limit exceeded.",
   "not-found": "GitHub could not find the requested issue.",
+  rejected: "GitHub refused the issue write.",
   failed: "The GitHub issue request failed.",
 };
 
@@ -127,20 +129,35 @@ export const make = Effect.gen(function* () {
 
   const fail =
     (operation: string) =>
-    (error: GitHubRequestPolicy.GitHubApiError | GraphQLClientError.GraphQLClientError) =>
-      new IssueTrackerError({
+    (error: GitHubRequestPolicy.GitHubApiError | GraphQLClientError.GraphQLClientError) => {
+      const reason =
+        operation === "create" &&
+        error._tag === "GitHubApiResponseError" &&
+        error.status >= 400 &&
+        error.status < 500 &&
+        error.status !== 408 &&
+        error.status !== 499
+          ? "rejected"
+          : reasonFor(error);
+      return new IssueTrackerError({
         tracker: KIND,
         operation,
-        reason: reasonFor(error),
+        reason,
         detail: GraphQLClientError.isGraphQLClientError(error)
           ? `GitHub returned an unreadable ${operation} response.`
-          : FAILURE_DETAIL[reasonFor(error)],
+          : reason === "rejected"
+            ? error.message
+            : FAILURE_DETAIL[reason],
         ...("retryAt" in error && error.retryAt !== undefined ? { retryAt: error.retryAt } : {}),
         cause: error,
       });
+    };
 
-  const invalid = (operation: string, detail: string, reason: "failed" | "not-found" = "failed") =>
-    new IssueTrackerError({ tracker: KIND, operation, reason, detail });
+  const invalid = (
+    operation: string,
+    detail: string,
+    reason: "failed" | "not-found" | "rejected" = "failed",
+  ) => new IssueTrackerError({ tracker: KIND, operation, reason, detail });
 
   const notFound = (operation: string) =>
     invalid(operation, "GitHub could not find the requested issue.", "not-found");
@@ -150,7 +167,11 @@ export const make = Effect.gen(function* () {
     operation: string,
   ) {
     if (!REPOSITORY.test(scope) || scope.endsWith("/.") || scope.endsWith("/..")) {
-      return yield* invalid(operation, "A repository was named that GitHub cannot address.");
+      return yield* invalid(
+        operation,
+        "A repository was named that GitHub cannot address.",
+        operation === "create" ? "rejected" : "failed",
+      );
     }
     const [owner = "", name = ""] = scope.split("/");
     return { owner, name };
@@ -310,6 +331,9 @@ export const make = Effect.gen(function* () {
                 body: input.body,
                 labels: input.labels,
                 assignees: input.assignees,
+                ...(input.milestoneNumber === undefined
+                  ? {}
+                  : { milestone: input.milestoneNumber }),
               },
             })
             .pipe(Effect.mapError(fail("create"))),
@@ -321,6 +345,9 @@ export const make = Effect.gen(function* () {
                 key: String(decoded.success.number),
                 displayKey: `#${decoded.success.number}`,
                 url: decoded.success.url,
+                ...(decoded.success.githubIdentity === undefined
+                  ? {}
+                  : { githubIdentity: decoded.success.githubIdentity }),
               })
             : Effect.fail(
                 new IssueTrackerError({
@@ -345,7 +372,17 @@ export const make = Effect.gen(function* () {
               path: `${path}/comments`,
               body: { body: input.body },
             })
-            .pipe(Effect.asVoid, Effect.mapError(fail("comment"))),
+            .pipe(
+              Effect.mapError(fail("comment")),
+              Effect.flatMap((response) => {
+                const decoded = decodeCreatedComment(response.body);
+                return Result.isSuccess(decoded)
+                  ? Effect.succeed(String(decoded.success.id))
+                  : Effect.fail(
+                      invalid("comment", "GitHub returned an unreadable comment receipt."),
+                    );
+              }),
+            ),
         ),
       ),
 

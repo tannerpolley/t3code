@@ -138,7 +138,10 @@ export const layer = Layer.effect(
         })),
       );
 
-    const overlayOf = (input: IssueRepositoryRef, numbers: ReadonlyArray<number>) =>
+    const overlayOf = (
+      input: IssueRepositoryRef & { readonly refresh?: boolean | undefined },
+      numbers: ReadonlyArray<number>,
+    ) =>
       issues.overlay({ ...input, numbers }).pipe(
         Effect.map((read) => ({
           complete: Option.isSome(read),
@@ -151,7 +154,10 @@ export const layer = Layer.effect(
       );
 
     const readRows = Effect.fn("IssueRoadmap.readRows")(function* (
-      input: IssueRepositoryRef & { readonly state: "open" | "all" },
+      input: IssueRepositoryRef & {
+        readonly state: "open" | "all";
+        readonly refresh?: boolean | undefined;
+      },
       position: Position | null,
     ) {
       const scope = yield* trackerIssueRef(trackerIssues, "list", input);

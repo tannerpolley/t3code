@@ -141,6 +141,10 @@ export interface IssuePullRequestFacts {
 /** The GitHub facts and writes upstream's IssueService has no operation for. */
 export interface IssueGitHubExtension {
   readonly capabilities: IssueHostCapabilities;
+  readonly withRepositoryCredential: <A, E, R>(
+    input: IssueRepositoryRef,
+    use: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | IssueReadError, R>;
   readonly readChangeState: (
     input: import("@t3tools/contracts").RepositoryIssueRef,
   ) => Effect.Effect<IssueChangeBaseline, IssueReadError>;
@@ -214,11 +218,11 @@ export interface IssueGitHubExtension {
     readonly repository: string;
     readonly number: number;
   }) => Effect.Effect<ThreadLinkedIssueType, IssueReadError>;
-  /** The id of the issue's comment carrying `marker`, or null when none does. */
+  /** The issue's comment carrying `marker`, or null when none does. */
   readonly findManagedComment: (input: {
     readonly issue: ThreadLinkedIssueType;
     readonly marker: string;
-  }) => Effect.Effect<string | null, IssueReadError>;
+  }) => Effect.Effect<{ readonly id: string; readonly body: string | null } | null, IssueReadError>;
   /** Rewrites a comment T3 wrote; upstream can only add comments. */
   readonly updateManagedComment: (input: {
     readonly issue: ThreadLinkedIssueType;
@@ -1126,15 +1130,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
     "IssueService.repositoryIdentity",
   )(function* (input) {
     const scope = yield* resolveScope("detail", input);
-    return yield* githubPullRequests
-      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
-        readRepositoryIdentity(scope),
-      )
-      .pipe(
-        Effect.mapError((error) =>
-          isIssueReadError(error) ? error : mapGitHubError("detail", error),
-        ),
-      );
+    return yield* verified(scope, readRepositoryIdentity(scope));
   });
 
   const resolveLinkedIssue: IssueGitHubExtension["resolveLinkedIssue"] = Effect.fn(
@@ -1195,7 +1191,9 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
     return yield* verified(
       scope,
       findMarkedComment(scope, input.issue.number, input.marker).pipe(
-        Effect.map((comment) => (comment === null ? null : String(comment.id))),
+        Effect.map((comment) =>
+          comment === null ? null : { id: String(comment.id), body: comment.body ?? null },
+        ),
       ),
     );
   });
@@ -1441,14 +1439,23 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
     state: raw.state,
     milestoneNumber: raw.milestone?.number ?? null,
   });
-  const verified = <A>(scope: IssueRepositoryScope, effect: Effect.Effect<A, IssueReadError>) =>
+  const verified = <A, R>(
+    scope: IssueRepositoryScope,
+    effect: Effect.Effect<A, IssueReadError, R>,
+  ) =>
     githubPullRequests
-      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () => effect)
+      .withVerifiedCredential(scope, () => effect)
       .pipe(
         Effect.mapError((error) =>
           isIssueReadError(error) ? error : mapGitHubError("detail", error),
         ),
       );
+  const withRepositoryCredential: IssueGitHubExtension["withRepositoryCredential"] = Effect.fn(
+    "IssueService.withRepositoryCredential",
+  )(function* (input, use) {
+    const scope = yield* resolveScope("detail", input);
+    return yield* verified(scope, use.pipe(Effect.result)).pipe(Effect.flatMap(Effect.fromResult));
+  });
   const readChangeState: IssueGitHubExtension["readChangeState"] = Effect.fn(
     "IssueService.readChangeState",
   )(function* (input) {
@@ -1806,6 +1813,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
     postIssue,
     ensureLabels,
     setLabels,
+    withRepositoryCredential,
     readChangeState,
     findCreatedIssue,
     setMilestone: Effect.fn("IssueService.setMilestone")((input) =>

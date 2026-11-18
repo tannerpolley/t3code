@@ -470,7 +470,9 @@ export class IssueOperationError extends Schema.TaggedError<IssueOperationError>
   {
     operation: Schema.String,
     detail: TrimmedNonEmptyString,
-    reason: Schema.optional(Schema.Literals(["not-found", "read-only", "rate-limited"])),
+    reason: Schema.optional(
+      Schema.Literals(["not-found", "read-only", "rate-limited", "rejected"]),
+    ),
     retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },

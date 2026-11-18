@@ -2,6 +2,7 @@ import { assert, it, vi } from "@effect/vitest";
 import {
   CommandId,
   EventId,
+  IssueOperationError,
   IssueTrackerKind,
   ProjectId,
   ProviderInstanceId,
@@ -27,6 +28,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as IssueEffects from "./IssueEffects.ts";
 import * as IssueService from "./IssueService.ts";
 import * as TrackerIssueService from "../issue/IssueService.ts";
+import { withRoadmapRevision } from "./IssueServerLayers.ts";
 
 it.effect(
   "managed event commits read no thread history, coalesce refreshes, and skip unchanged status writes",
@@ -184,32 +186,53 @@ it.effect(
   "issue comment effects roll back a failed receipt, find the posted comment on retry, skip stale status and replay once",
   () => {
     // GitHub's comments: upstream posts them, the extension finds them by marker.
-    const comments = new Map<string, string>();
+    const comments = new Map<string, { id: string; body: string }>();
+    let loseResponse = false;
+    let revisions = 0;
+    let lookups = 0;
     const writes: Array<{ readonly marker: string; readonly commentId?: string }> = [];
     const markerOf = (body: string) => /<!-- t3-issue-[^>]*-->/u.exec(body)![0];
-    const issuesLayer = Layer.mergeAll(
-      Layer.mock(IssueService.IssueService)({
-        findManagedComment: ({ marker }) => Effect.sync(() => comments.get(marker) ?? null),
-        updateManagedComment: ({ commentId, body }) =>
-          Effect.sync(() => void writes.push({ marker: markerOf(body), commentId })),
-      }),
-      Layer.mock(TrackerIssueService.IssueService)({
-        resolveUrl: (url) =>
-          Effect.succeed({
-            projectId: ProjectId.make("project-issue-effects"),
-            tracker: IssueTrackerKind.make("github"),
-            host: "github.com",
-            scope: "owner/repo",
-            key: url.split("/").at(-1)!,
-            writable: true,
-          }),
-        comment: ({ body }) =>
-          Effect.sync(() => {
-            writes.push({ marker: markerOf(body) });
-            comments.set(markerOf(body), `comment:${comments.size + 1}`);
-          }),
-      }),
-    );
+    const forkIssues = Layer.mock(IssueService.IssueService)({
+      withRepositoryCredential: (_input, use) => use,
+      markChanged: () =>
+        Effect.sync(() => {
+          revisions++;
+        }),
+      findManagedComment: ({ marker }) =>
+        Effect.sync(() => {
+          lookups++;
+          return comments.get(marker) ?? null;
+        }),
+      updateManagedComment: ({ commentId, body }) =>
+        Effect.sync(() => void writes.push({ marker: markerOf(body), commentId })),
+    });
+    const upstream = Layer.mock(TrackerIssueService.IssueService)({
+      resolveUrl: (url) =>
+        Effect.succeed({
+          projectId: ProjectId.make("project-issue-effects"),
+          tracker: IssueTrackerKind.make("github"),
+          host: "github.com",
+          scope: "owner/repo",
+          key: url.split("/").at(-1)!,
+          writable: true,
+        }),
+      comment: ({ body }) =>
+        Effect.gen(function* () {
+          const marker = markerOf(body);
+          const id = `comment:${comments.size + 1}`;
+          writes.push({ marker });
+          comments.set(marker, { id, body });
+          if (loseResponse) {
+            loseResponse = false;
+            return yield* new IssueOperationError({
+              operation: "comment",
+              detail: "Response lost.",
+            });
+          }
+          return id;
+        }),
+    });
+    const issuesLayer = withRoadmapRevision(upstream).pipe(Layer.provideMerge(forkIssues));
     const dependencies = Layer.mergeAll(
       ProjectionStore.layer,
       CommandReceipts.layer,
@@ -299,6 +322,8 @@ it.effect(
       yield* sql`DROP TRIGGER fail_issue_receipt`;
       assert.equal(failed._tag, "Failure");
       assert.equal(writes.length, 1);
+      assert.equal(lookups, 1);
+      assert.equal(revisions, 1);
       assert.deepEqual(yield* receipts, []);
       assert.deepEqual(yield* recordedEvents, []);
 
@@ -328,8 +353,12 @@ it.effect(
       });
       yield* execute(stale);
       assert.equal(writes.length, 1);
-      yield* execute(current);
-      assert.deepEqual(writes.at(-1), { marker: statusMarker });
+      loseResponse = true;
+      assert.equal((yield* Effect.exit(execute({ ...current, attemptCount: 1 })))._tag, "Failure");
+      assert.equal(revisions, 1);
+      yield* execute({ ...current, attemptCount: 2 });
+      assert.deepEqual(writes, [{ marker: closeoutMarker }, { marker: statusMarker }]);
+      assert.equal(revisions, 2);
       const status = yield* sql<{ readonly status_comment_id: string }>`
         SELECT status_comment_id FROM orchestration_v2_projection_issue_work WHERE issue_id = '3'`;
       assert.deepEqual(status, [{ status_comment_id: "comment:2" }]);

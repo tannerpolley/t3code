@@ -461,7 +461,10 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 const layerIssueService = Layer.merge(
   IssueServerLayers.withRoadmapRevision(IssueService.layer),
   IssueTrackerConnections.layer,
-).pipe(Layer.provide(Layer.merge(IssueTrackerRegistry.layer, IssueTrackerBindings.layer)));
+).pipe(
+  Layer.provide(Layer.merge(IssueTrackerRegistry.layer, IssueTrackerBindings.layer)),
+  Layer.provide(IssueServerLayers.layerIssueService),
+);
 
 // One instance serves MCP link calls and refreshes snapshots on thread events.
 const layerThreadIssueService = ThreadIssueService.layer;

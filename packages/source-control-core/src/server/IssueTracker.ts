@@ -43,6 +43,7 @@ export class IssueTrackerError extends Schema.TaggedError<IssueTrackerError>()(
       "unauthenticated",
       "rate-limited",
       "not-found",
+      "rejected",
       "failed",
     ]),
     detail: Schema.String,
@@ -54,6 +55,10 @@ export class IssueTrackerError extends Schema.TaggedError<IssueTrackerError>()(
     return `${this.tracker} failed in ${this.operation}: ${this.detail}`;
   }
 }
+
+export type TrackerIssueCreateResult = IssueCreateResult & {
+  readonly githubIdentity?: { readonly id: string; readonly nodeId: string };
+};
 
 /**
  * Where a tracker's issues are addressed from. `cwd` is a checkout whose credentials serve the
@@ -137,13 +142,14 @@ export interface IssueTrackerApi {
       readonly body: string;
       readonly labels: ReadonlyArray<string>;
       readonly assignees: ReadonlyArray<string>;
+      readonly milestoneNumber?: number | undefined;
     },
-  ) => Effect.Effect<IssueCreateResult, IssueTrackerError>;
+  ) => Effect.Effect<TrackerIssueCreateResult, IssueTrackerError>;
 
-  /** Only called when `capabilities.comment` is true. */
+  /** Only called when `capabilities.comment` is true. Returns the native ID when available. */
   readonly comment?: (
     input: IssueTarget & { readonly body: string },
-  ) => Effect.Effect<void, IssueTrackerError>;
+  ) => Effect.Effect<string | void, IssueTrackerError>;
 
   /**
    * Rewrites the present fields. Only called with a field the tracker declared it can write

@@ -65,6 +65,8 @@ const setup = Effect.gen(function* () {
   const snapshots = new Map<number, IssueChangeBaseline>([
     [10, { issue: issue(10), body: "Original\n", state: "open", milestoneNumber: 1 }],
   ]);
+  const stateWrites: string[] = [];
+  const stateReasons = new Map<number, string>();
   const parents = new Map<number, ThreadLinkedIssue>();
   const blockers = new Map<number, ThreadLinkedIssue>();
   const calls = { create: 0, body: 0, milestone: 0, state: 0, link: 0 };
@@ -74,7 +76,7 @@ const setup = Effect.gen(function* () {
   const allowFailureSettlement = yield* Deferred.make<void>();
   const comments: string[] = [];
   const commentCompleted = yield* Deferred.make<void>();
-  let failCreate: "rate-limited" | "uncertain" | undefined;
+  let failCreate: "rate-limited" | "rejected" | "uncertain" | undefined;
   let reportIdentity = false;
   let failLink = false;
   let loseBodyResponse = false;
@@ -99,11 +101,11 @@ const setup = Effect.gen(function* () {
         const outcome = failCreate;
         failCreate = undefined;
         calls.create++;
-        if (outcome === "rate-limited")
+        if (outcome === "rate-limited" || outcome === "rejected")
           return yield* new IssueOperationError({
             operation: "create",
-            reason: "rate-limited",
-            detail: "GitHub rejected the request because of a rate limit.",
+            reason: outcome,
+            detail: "GitHub refused the create request.",
           });
         if (outcome !== undefined) return yield* lostResponse("Create outcome");
         const created = issue(20 + calls.create);
@@ -111,13 +113,18 @@ const setup = Effect.gen(function* () {
           issue: created,
           body: input.body,
           state: "open",
-          milestoneNumber: null,
+          milestoneNumber: input.milestoneNumber ?? null,
         });
         if (reportIdentity) {
           reportIdentity = false;
           return yield* lostResponse("Create response lost");
         }
-        return { key: String(created.number), displayKey: `#${created.number}`, url: created.url };
+        return {
+          key: String(created.number),
+          displayKey: `#${created.number}`,
+          url: created.url,
+          githubIdentity: { id: created.id, nodeId: created.nodeId },
+        };
       }),
     update: (input) =>
       Effect.gen(function* () {
@@ -131,15 +138,26 @@ const setup = Effect.gen(function* () {
       }),
     setState: (input) =>
       Effect.sync(() => {
+        assert.include(["Open", "Completed"], input.state);
+        stateWrites.push(input.state);
         calls.state++;
         const number = Number(input.key);
+        if (input.state === "Open") stateReasons.delete(number);
+        else stateReasons.set(number, "completed");
         snapshots.set(number, {
           ...snapshots.get(number)!,
           state: input.state === "Open" ? "open" : "closed",
         });
       }),
   });
+  let refreshes = 0;
   const github = Layer.mock(IssueService.IssueService)({
+    withRepositoryCredential: (_input, use) => use,
+    repositoryIdentity: () => Effect.succeed({ ...repository, repositoryId: "1" }),
+    markChanged: () =>
+      Effect.sync(() => {
+        refreshes++;
+      }),
     capabilities: () => Effect.sync(() => capabilities),
     readChangeState: (input) => Effect.sync(() => snapshots.get(input.number)!),
     findCreatedIssue: (input) =>
@@ -251,6 +269,9 @@ const setup = Effect.gen(function* () {
     changes,
     calls,
     snapshots,
+    stateWrites,
+    stateReasons,
+    refreshes: () => refreshes,
     setCapabilities: (value: typeof capabilities) => {
       capabilities = value;
     },
@@ -272,7 +293,7 @@ const setup = Effect.gen(function* () {
     requireApproval: (value: boolean) => {
       requireApproval = value;
     },
-    failNextCreate: (outcome: "rate-limited" | "uncertain") => {
+    failNextCreate: (outcome: "rate-limited" | "rejected" | "uncertain") => {
       failCreate = outcome;
     },
     loseCreateFields: () => {
@@ -326,8 +347,8 @@ it.effect("auto-approved create and milestone moves run once through the outbox"
       yield* service.execute(accepted.id);
       yield* propose({ type: "milestone", number: 10, milestoneNumber: 2 }, "milestone");
       assert.equal(yield* drain, 1);
-      // Upstream files the issue without a milestone; the extension sets it as a second write.
-      assert.deepStrictEqual(h.calls, { create: 1, body: 0, milestone: 2, state: 0, link: 0 });
+      assert.equal(h.snapshots.get(21)?.milestoneNumber, 1);
+      assert.deepStrictEqual(h.calls, { create: 1, body: 0, milestone: 1, state: 0, link: 0 });
       const rows = yield* service.list({ threadId });
       assert.isTrue(rows.every((row) => row.status === "succeeded"));
     }).pipe(Effect.provide(h.runtime)),
@@ -346,6 +367,19 @@ it.effect("full-access and auto threads edit and close issues without waiting fo
       yield* sql`UPDATE orchestration_v2_projection_threads SET runtime_mode = 'auto' WHERE thread_id = 'root'`;
       const close = yield* propose({ type: "state", number: 10, state: "closed" }, "close");
       assert.equal(close.decision, "auto_approved");
+      assert.equal(yield* drain, 1);
+      assert.equal(h.snapshots.get(10)?.state, "closed");
+
+      h.stateReasons.set(10, "not_planned");
+      yield* propose({ type: "state", number: 10, state: "closed" }, "already-closed");
+      assert.equal(yield* drain, 1);
+      assert.deepEqual(h.stateWrites, ["Completed"]);
+      assert.equal(h.stateReasons.get(10), "not_planned");
+
+      yield* propose({ type: "state", number: 10, state: "open" }, "reopen");
+      assert.equal(yield* drain, 1);
+      assert.equal(h.snapshots.get(10)?.state, "open");
+      assert.deepEqual(h.stateWrites, ["Completed", "Open"]);
     }).pipe(Effect.provide(h.runtime)),
   ),
 );
@@ -723,31 +757,40 @@ it.effect(
     inDatabase((h) =>
       Effect.gen(function* () {
         const service = yield* IssueChangeService.IssueChangeService;
-        h.failNextCreate("rate-limited");
-        yield* propose({ type: "create", title: "Task", body: "Task", milestoneNumber: null });
-        yield* drain;
-        yield* TestClock.adjust(100);
-        yield* drain;
-        assert.equal((yield* service.list({ threadId }))[0]?.status, "succeeded");
-        assert.equal(h.calls.create, 2);
+        for (const refusal of ["rate-limited", "rejected"] as const) {
+          h.failNextCreate(refusal);
+          yield* propose(
+            { type: "create", title: "Task", body: "Task", milestoneNumber: null },
+            refusal,
+          );
+          yield* drain;
+          yield* TestClock.adjust(100);
+          yield* drain;
+          assert.equal((yield* service.list({ threadId }))[0]?.status, "succeeded");
+        }
+        assert.equal(h.calls.create, 4);
         h.loseCreateFields();
         yield* propose(
           {
-            type: "split",
-            number: 10,
-            issues: [{ title: "Child", body: "Task", milestoneNumber: 1 }],
+            type: "create",
+            title: "Lost response",
+            body: "Task",
+            milestoneNumber: null,
           },
           "receipt",
         );
         yield* drain;
         assert.equal((yield* service.list({ threadId }))[0]?.status, "failed");
+        h.snapshots.set(25, { ...h.snapshots.get(25)!, milestoneNumber: 7 });
         yield* TestClock.adjust(100);
         yield* drain;
         const saved = (yield* service.list({ threadId }))[0]!;
         assert.equal(saved.status, "succeeded");
-        // The retry found issue 23 by the marker in its body instead of filing another.
-        assert.equal(saved.completedSteps["create:0"]?.issue?.number, 23);
-        assert.equal(h.calls.create, 3);
+        assert.equal(saved.completedSteps["create:0"]?.issue?.number, 25);
+        assert.equal(h.calls.create, 5);
+        assert.equal(h.snapshots.get(25)?.milestoneNumber, 7);
+        assert.equal(h.calls.milestone, 0);
+        assert.equal(h.refreshes(), 1);
       }).pipe(Effect.provide(h.runtime)),
     ),
 );

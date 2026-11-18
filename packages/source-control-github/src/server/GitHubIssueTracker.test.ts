@@ -219,6 +219,7 @@ describe("GitHubIssueTracker", () => {
   it.effect("writes an issue lifecycle without mutating pull requests or foreign comments", () =>
     Effect.gen(function* () {
       const writes: unknown[] = [];
+      let createRefusal: number | undefined;
       let issueState: { state: string; stateReason: string | null } = {
         state: "OPEN",
         stateReason: null,
@@ -268,7 +269,24 @@ describe("GitHubIssueTracker", () => {
             };
           }
           if (request.url.endsWith("/issues")) {
-            response = { number: 42, html_url: "https://github.com/acme/web/issues/42" };
+            if (createRefusal !== undefined) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(JSON.stringify({ message: "Create refused" }), {
+                    status: createRefusal,
+                  }),
+                ),
+              );
+            }
+            response = {
+              number: 42,
+              html_url: "https://github.com/acme/web/issues/42",
+              id: 42,
+              node_id: "I_42",
+            };
+          } else if (request.url.endsWith("/comments")) {
+            response = { id: 123 };
           } else if (request.method === "PATCH" && body["title"] === "Dropped") {
             // What GitHub answers a caller without triage access: success, metadata untouched.
             response = { labels: [{ name: "Bug" }], assignees: [] };
@@ -294,13 +312,31 @@ describe("GitHubIssueTracker", () => {
           body: "Body",
           labels: ["bug"],
           assignees: ["octocat"],
+          milestoneNumber: 7,
         }),
       ).toEqual({
         key: "42",
         displayKey: "#42",
         url: "https://github.com/acme/web/issues/42",
+        githubIdentity: { id: "42", nodeId: "I_42" },
       });
-      yield* api.comment({ ...target, body: "Comment" });
+      expect(yield* api.comment({ ...target, body: "Comment" })).toBe("123");
+      for (const status of [403, 422, 502]) {
+        createRefusal = status;
+        expect(
+          yield* Effect.flip(
+            api.create({
+              ...target,
+              title: "Refused",
+              body: "Body",
+              labels: [],
+              assignees: [],
+            }),
+          ),
+        ).toMatchObject({ operation: "create", reason: status === 502 ? "failed" : "rejected" });
+        writes.pop();
+      }
+      createRefusal = undefined;
       yield* api.update({ ...target, title: "Updated", body: "Edited", labels: [], assignees: [] });
       expect(
         yield* Effect.flip(api.update({ ...target, title: "Dropped", labels: ["bug", "p1"] })),
@@ -349,7 +385,7 @@ describe("GitHubIssueTracker", () => {
         [
           "POST",
           "https://api.github.com/repos/acme/web/issues",
-          { title: "Fixture", body: "Body", labels: ["bug"], assignees: ["octocat"] },
+          { title: "Fixture", body: "Body", labels: ["bug"], assignees: ["octocat"], milestone: 7 },
         ],
         ["POST", "https://api.github.com/repos/acme/web/issues/42/comments", { body: "Comment" }],
         [
