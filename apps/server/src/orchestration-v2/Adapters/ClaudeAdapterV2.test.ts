@@ -14743,6 +14743,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             description: "work on B",
             kind: "command",
             nativeItemId: "toolu-roster-b",
+            startedAt: DateTime.makeUnsafe(0),
           },
         ]);
         assert.isFalse(yield* hasPendingBackgroundWorkForThread(providerThreadA));

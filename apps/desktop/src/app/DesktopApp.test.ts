@@ -167,6 +167,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           quitting,
         } as DesktopState.DesktopState["Service"]),
         Effect.provideService(DesktopWindow.DesktopWindow, {
+          showConnectingSplash: () => Effect.void,
           ensureMain: stub
             .record("window")
             .pipe(Effect.andThen(Deferred.succeed(stub.windowStarted, undefined))),

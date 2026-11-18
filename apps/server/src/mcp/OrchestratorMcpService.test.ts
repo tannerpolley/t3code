@@ -566,6 +566,7 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection()),
+          getThreadShell: () => Effect.succeed(null),
           delegatedTaskResultPending: () => Effect.succeed(false),
           dispatch: () => Effect.succeed({} as never),
         }),
