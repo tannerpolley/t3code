@@ -126,12 +126,25 @@ it.effect("reads the latest handed-back result once per direct child", () =>
     const sql = yield* SqlClient.SqlClient;
     const store = yield* IssueWorkStore.IssueWorkStore;
     const report = "Open the PR. ".repeat(40).trim();
+    for (const [id, archivedAt, deletedAt] of [
+      ["child", null, null],
+      ["archived", "2026-11-18", null],
+      ["deleted", null, "2026-11-18"],
+    ] as const) {
+      yield* sql`INSERT INTO orchestration_v2_projection_threads(
+        thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+        created_at, updated_at, archived_at, deleted_at, payload_json
+      ) VALUES (${id}, 'project', 'Child', 'codex', 'full-access', 'default',
+        '2026-11-16', '2026-11-18', ${archivedAt}, ${deletedAt}, '{}')`;
+    }
     for (const [id, parent, child, origin, completedAt, result] of [
       ["older", "root", "child", "app_owned", "2026-11-16", "First report"],
       ["latest", "root", "child", "app_owned", "2026-11-17", report],
       ["resumed", "root", "child", "app_owned", null, null],
       ["grandchild", "child", "grandchild", "app_owned", "2026-11-18", "Nested report"],
-      ["native", "root", "native", "provider_native", "2026-11-18", "Native report"],
+      ["archived", "root", "archived", "app_owned", "2026-11-18", "Archived report"],
+      ["deleted", "root", "deleted", "app_owned", "2026-11-18", "Deleted report"],
+      ["native", "root", "child", "provider_native", "2026-11-18", "Native report"],
     ] as const) {
       yield* sql`
         INSERT INTO orchestration_v2_projection_subagents(

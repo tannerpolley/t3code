@@ -1,6 +1,8 @@
+import { pendingSubagentRequestsByThread } from "@t3tools/shared/pendingSubagentRequests";
 import { issueQueueMailbox } from "./IssueQueueStore.ts";
 import {
   CommandId,
+  type EnvironmentId,
   CLOSED_ISSUE_SUSPENSION_REASON,
   OrchestratorMcpFailure,
   type RepositoryUsageSprintInput,
@@ -142,7 +144,7 @@ export class IssueWorkService extends Context.Service<
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly childrenStatus: (
       rootThreadId: ThreadId,
-      threadLink: (threadId: ThreadId, title: string) => string,
+      threadLink: (threadId: ThreadId, title: string, environmentId?: EnvironmentId) => string,
     ) => Effect.Effect<RepositoryChildrenStatus, IssueWorkError>;
     readonly repositoryStatus: (
       input: Pick<RepositoryIssueRef, "host" | "repository">,
@@ -762,7 +764,7 @@ export const layer = Layer.effect(
     const childrenStatus: IssueWorkService["Service"]["childrenStatus"] = Effect.fn(
       "IssueWorkService.childrenStatus",
     )(function* (rootThreadId, threadLink) {
-      const { summaries, readShells } = yield* sql
+      const { summaries, remoteTasks, readShells } = yield* sql
         .withTransaction(
           Effect.gen(function* () {
             if (!(yield* store.isRepositoryOrchestrator(rootThreadId))) {
@@ -772,14 +774,15 @@ export const layer = Layer.effect(
               });
             }
             const summaries = yield* store.childTaskSummaries(rootThreadId);
+            const remoteTasks = yield* store.remoteChildTasks(rootThreadId);
             const readShells =
               summaries.length === 0
                 ? null
                 : yield* threads.readShellSnapshot({
                     location: "active",
-                    threadIds: summaries.map(({ threadId }) => threadId),
+                    familyOf: rootThreadId,
                   });
-            return { summaries, readShells };
+            return { summaries, remoteTasks, readShells };
           }),
         )
         .pipe(NodeSqliteClient.readOnly);
@@ -787,17 +790,47 @@ export const layer = Layer.effect(
       const groups: {
         [Group in keyof RepositoryChildrenStatus]: RepositoryChildrenStatus[Group][number][];
       } = { working: [], "needs-you": [], "ready-for-review": [] };
+      const now = yield* Clock.currentTimeMillis;
+      for (const task of remoteTasks) {
+        const group = resolveThreadActivityGroup({
+          interactionMode: "default",
+          hasActionableProposedPlan: false,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          latestRun: null,
+          runtime: { status: task.status === "pending" ? "queued" : task.status },
+          pullRequests: [],
+        });
+        if (group === null) continue;
+        const end = task.completedAt === null ? now : Date.parse(task.completedAt);
+        groups[group].push({
+          threadId: task.threadId,
+          title: task.title,
+          link: threadLink(task.threadId, task.title, task.environmentId),
+          issue: null,
+          pullRequestUrl: null,
+          lastSummary: task.lastSummary,
+          elapsedMs: task.startedAt === null ? 0 : Math.max(0, end - Date.parse(task.startedAt)),
+        });
+      }
       if (readShells === null) return groups;
 
-      const { threads: children } = yield* readShells;
+      const { threads: family } = yield* readShells;
+      const pendingRequests = pendingSubagentRequestsByThread(family);
       const summariesById = new Map(
         summaries.map(({ threadId, lastSummary }) => [threadId, lastSummary]),
       );
-      const now = yield* Clock.currentTimeMillis;
-      for (const child of children) {
+      for (const child of family) {
+        if (!summariesById.has(child.id)) continue;
         const activity = threadActivityFromShell(child);
         const pullRequests = child.pullRequests ?? [];
-        const group = resolveThreadActivityGroup({ ...activity, pullRequests });
+        const pendingRequest = pendingRequests.get(child.id);
+        const group = resolveThreadActivityGroup({
+          ...activity,
+          pullRequests,
+          pendingSubagentRequest:
+            pendingRequest === "user_only_input" ? "user_input" : (pendingRequest ?? null),
+        });
         if (group === null) continue;
         const { latestRun } = activity;
         const start = Date.parse(
