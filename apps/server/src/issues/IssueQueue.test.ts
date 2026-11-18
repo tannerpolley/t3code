@@ -1,8 +1,25 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import { McpSchema, McpServer } from "effect/ai";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as OwnerDecisions from "./OwnerDecisions.ts";
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  EnvironmentId,
+  RepositoryChildrenStatus,
+  RuntimeRequestId,
   EventId,
   IssueReadError,
   MessageId,
@@ -20,6 +37,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -756,6 +774,220 @@ const createRoot = (paused = true) =>
       },
     });
   });
+
+const statusToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+  Layer.provide(
+    Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.mock(OwnerDecisions.OwnerDecisions)({}),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(PeerForwarding.PeerForwarding)({}),
+      Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+      Layer.mock(PeerLinks.PeerLinks)({}),
+      Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+      Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    ),
+  ),
+  Layer.provideMerge(harness()),
+);
+
+const statusScope: McpInvocationContext.McpInvocationScope = {
+  environmentId: EnvironmentId.make("status-here"),
+  requestNamespace: "repository-status-test",
+  thread: {
+    threadId: rootId,
+    providerSessionId: "repository-status-test",
+    providerInstanceId: modelSelection.instanceId,
+  },
+  client: undefined,
+  capabilities: new Set(["orchestration"]),
+  issuedAt: 0,
+};
+const statusClient = McpSchema.McpServerClient.of({
+  clientId: 1,
+  protocolVersion: "2025-06-18",
+  clientCapabilities: {},
+  clientInfo: { name: "repository-status-test", version: "1" },
+  initializePayload: {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "repository-status-test", version: "1" },
+  },
+  getClient: Effect.die("unused"),
+});
+
+const decodeChildStatus = Schema.decodeUnknownEffect(RepositoryChildrenStatus);
+
+const readChildStatus = Effect.gen(function* () {
+  const server = yield* McpServer.McpServer;
+  const result = yield* server
+    .callTool({ name: "repository_status", arguments: {} })
+    .pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, statusScope),
+      Effect.provideService(McpSchema.McpServerClient, statusClient),
+    );
+  return yield* decodeChildStatus(result.structuredContent);
+});
+
+const startStatusRoot = Effect.gen(function* () {
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  yield* createRoot(false);
+  yield* threads.dispatch({
+    type: "message.dispatch",
+    commandId: CommandId.make("status-root-run"),
+    threadId: rootId,
+    messageId: MessageId.make("status-root-message"),
+    text: "Coordinate the work",
+    attachments: [],
+    modelSelection,
+    dispatchMode: { type: "start_immediately" },
+    createdBy: "user",
+    creationSource: "web",
+  });
+  return yield* markStatusRunRunning(rootId);
+});
+
+const markStatusRunRunning = Effect.fn("IssueQueue.test.markStatusRunRunning")(function* (
+  threadId: ThreadId,
+) {
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const sink = yield* EventSink.EventSinkV2;
+  const {
+    runs: [run],
+  } = yield* threads.getThreadRecords(threadId, ["runs"]);
+  const now = yield* DateTime.now;
+  const running = { ...run!, status: "running" as const, startedAt: now };
+  yield* sink.write({
+    events: [
+      {
+        id: EventId.make(`status-running:${threadId}`),
+        type: "run.updated",
+        threadId,
+        runId: running.id,
+        occurredAt: now,
+        payload: running,
+      },
+    ],
+  });
+  return running;
+});
+
+it.effect("repository_status includes linked children from the local task projection", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const run = yield* startStatusRoot;
+    const remoteChild = {
+      environmentId: EnvironmentId.make("status-other-machine"),
+      threadId: ThreadId.make("status-remote-child"),
+      label: "Other machine",
+      title: "Remote worker",
+    };
+    const started = yield* orchestrator.dispatch({
+      type: "delegated_task.remote.request",
+      commandId: CommandId.make("status-remote-delegate"),
+      parentThreadId: rootId,
+      parentRunId: run.id,
+      parentNodeId: run.rootNodeId!,
+      task: "Work on the linked machine",
+      driver: ProviderDriverKind.make("codex"),
+      modelSelection,
+      remoteChild,
+    });
+    const task = started.storedEvents.find(({ event }) => event.type === "subagent.updated")?.event;
+    assert.equal(task?.type, "subagent.updated");
+    if (task?.type !== "subagent.updated") return;
+    const link = formatThreadLink(remoteChild, remoteChild.title);
+    const running = yield* readChildStatus;
+    assert.deepEqual(
+      running.working.map(({ threadId, link }) => ({ threadId, link })),
+      [{ threadId: remoteChild.threadId, link }],
+    );
+    yield* orchestrator.dispatch({
+      type: "delegated_task.remote.complete",
+      commandId: CommandId.make("status-remote-failure"),
+      parentThreadId: rootId,
+      taskId: task.payload.id,
+      status: "failed",
+      result: "The linked worker failed.",
+      stoppedThere: "ran-out",
+    });
+    const failed = yield* readChildStatus;
+    assert.isEmpty(failed.working);
+    assert.deepEqual(
+      failed["needs-you"].map(({ link, lastSummary }) => ({ link, lastSummary })),
+      [{ link, lastSummary: "The linked worker failed." }],
+    );
+  }).pipe(Effect.provide(statusToolkit)),
+);
+
+it.effect("repository_status rolls a grandchild approval up to the direct child", () =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const sink = yield* EventSink.EventSinkV2;
+    const rootRun = yield* startStatusRoot;
+    const delegate = Effect.fn("IssueQueue.test.delegateStatusChild")(function* (
+      run: OrchestrationV2Run,
+      key: string,
+    ) {
+      const launched = yield* threads.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make(key),
+        parentThreadId: run.threadId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId!,
+        task: "Check the work",
+        role: "reviewer",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const task = launched.storedEvents.find(
+        ({ event }) => event.type === "subagent.updated",
+      )?.event;
+      if (task?.type !== "subagent.updated" || task.payload.childThreadId === null) {
+        return yield* Effect.die("Delegation did not launch a local child");
+      }
+      return yield* markStatusRunRunning(task.payload.childThreadId);
+    });
+    const child = yield* delegate(rootRun, "status-direct-child");
+    const grandchild = yield* delegate(child, "status-grandchild");
+    // A live direct child receives the request first. After it ends, the owner can answer.
+    yield* finish(child, "status-direct-child-finished");
+    const now = yield* DateTime.now;
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("status-grandchild-approval"),
+          type: "runtime-request.updated",
+          threadId: grandchild.threadId,
+          runId: grandchild.id,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make("status-grandchild-request"),
+            nodeId: grandchild.rootNodeId!,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "command",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        },
+      ],
+    });
+    const status = yield* readChildStatus;
+    assert.isEmpty(status.working);
+    assert.deepEqual(
+      status["needs-you"].map(({ threadId }) => threadId),
+      [child.threadId],
+    );
+  }).pipe(Effect.provide(statusToolkit)),
+);
 
 it.effect(
   "status names both repository IDs when the repository was recreated under the same name",

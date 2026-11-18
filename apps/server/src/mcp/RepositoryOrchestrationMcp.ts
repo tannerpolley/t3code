@@ -182,8 +182,10 @@ export function makeRepositoryMcpMethods({
             "Child status requires a repository orchestrator.",
           );
         return yield* issueWork.value
-          .childrenStatus(scope.thread.threadId, (threadId, title) =>
-            threadLinkFor(scope, threadId, title),
+          .childrenStatus(
+            scope.thread.threadId,
+            (threadId, title, environmentId = scope.environmentId) =>
+              threadLinkFor({ ...scope, environmentId }, threadId, title),
           )
           .pipe(
             Effect.mapError((error) =>

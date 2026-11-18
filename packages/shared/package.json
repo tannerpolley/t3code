@@ -275,6 +275,10 @@
       "types": "./src/paletteSearch.ts",
       "import": "./src/paletteSearch.ts"
     },
+    "./pendingSubagentRequests": {
+      "types": "./src/pendingSubagentRequests.ts",
+      "import": "./src/pendingSubagentRequests.ts"
+    },
     "./threadActivity": {
       "types": "./src/threadActivity.ts",
       "import": "./src/threadActivity.ts"

@@ -96,7 +96,7 @@ export function resolveThreadActivity(thread: ThreadActivityInput): ThreadActivi
 
 export function threadActivityIsSettledRun(
   run: Pick<ThreadRunSummary, "runId" | "status"> | null,
-  runtime: Pick<ThreadRuntimeSummary, "activeRunId"> | null,
+  runtime: Partial<Pick<ThreadRuntimeSummary, "activeRunId">> | null,
 ): boolean {
   return (
     run !== null &&
@@ -177,8 +177,11 @@ type WorkingThreadInput = ThreadActivityInput & {
   >;
   readonly interactionMode: OrchestrationV2ThreadShell["interactionMode"];
   readonly hasActionableProposedPlan: boolean;
-  readonly latestRun: ThreadRunSummary | null;
-  readonly runtime: ThreadRuntimeSummary | null;
+  readonly latestRun: Pick<ThreadRunSummary, "runId" | "status"> | null;
+  readonly runtime:
+    | (NonNullable<ThreadActivityInput["runtime"]> &
+        Partial<Pick<ThreadRuntimeSummary, "activeRunId">>)
+    | null;
 };
 
 function isWorkingActivity(thread: WorkingThreadInput, activity: ThreadActivity): boolean {
@@ -192,7 +195,12 @@ function isWorkingActivity(thread: WorkingThreadInput, activity: ThreadActivity)
   );
 }
 
-export function isThreadWorking(thread: WorkingThreadInput): boolean {
+export function isThreadWorking(
+  thread: WorkingThreadInput & {
+    readonly latestRun: ThreadRunSummary | null;
+    readonly runtime: ThreadRuntimeSummary | null;
+  },
+): boolean {
   return isWorkingActivity(thread, resolveThreadActivity(thread));
 }
 

@@ -2,6 +2,7 @@ import {
   DEFAULT_REPOSITORY_WORK_SETTINGS,
   IssueWorkError,
   IssueWorkRequested,
+  EnvironmentId,
   ProjectId,
   RunId,
   ThreadId,
@@ -49,6 +50,16 @@ const ownerFromRows = (rows: ReadonlyArray<RepositoryOwnerRow>): RepositoryOwner
         revision: rows[0].revision,
       };
 
+interface RemoteChildTask {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly title: string;
+  readonly status: "pending" | "running" | "waiting" | "failed";
+  readonly lastSummary: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+}
+
 /** Reads ownership projected by committed orchestration events. Never claims outside the event sink. */
 export class IssueWorkStore extends Context.Service<
   IssueWorkStore,
@@ -78,6 +89,9 @@ export class IssueWorkStore extends Context.Service<
       ReadonlyArray<{ readonly threadId: ThreadId; readonly lastSummary: string | null }>,
       IssueWorkError
     >;
+    readonly remoteChildTasks: (
+      rootThreadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<RemoteChildTask>, IssueWorkError>;
     readonly isRepositoryOrchestrator: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<boolean, IssueWorkError>;
@@ -490,15 +504,17 @@ export const layer = Layer.effect(
       childTaskSummaries: Effect.fn("IssueWorkStore.childTaskSummaries")((rootThreadId) =>
         sql<{ child_thread_id: string; summary: string | null }>`
           SELECT child_thread_id, summary FROM (
-            SELECT child_thread_id,
-              substr(trim(json_extract(payload_json, '$.result')), 1, 320) AS summary,
+            SELECT task.child_thread_id,
+              substr(trim(json_extract(task.payload_json, '$.result')), 1, 320) AS summary,
               row_number() OVER (
-                PARTITION BY child_thread_id
-                ORDER BY (json_extract(payload_json, '$.result') IS NULL),
-                  completed_at DESC, rowid DESC
+                PARTITION BY task.child_thread_id
+                ORDER BY (json_extract(task.payload_json, '$.result') IS NULL),
+                  task.completed_at DESC, task.rowid DESC
               ) AS rank
-            FROM orchestration_v2_projection_subagents
-            WHERE thread_id = ${rootThreadId} AND origin = 'app_owned' AND child_thread_id IS NOT NULL
+            FROM orchestration_v2_projection_subagents task
+            JOIN orchestration_v2_projection_threads child ON child.thread_id = task.child_thread_id
+            WHERE task.thread_id = ${rootThreadId} AND task.origin = 'app_owned'
+              AND child.archived_at IS NULL AND child.deleted_at IS NULL
           )
           WHERE rank = 1
         `.pipe(
@@ -506,6 +522,51 @@ export const layer = Layer.effect(
             rows.map((row) => ({
               threadId: ThreadId.make(row.child_thread_id),
               lastSummary: row.summary?.trim() || null,
+            })),
+          ),
+          Effect.mapError(mapError),
+        ),
+      ),
+      remoteChildTasks: Effect.fn("IssueWorkStore.remoteChildTasks")((rootThreadId) =>
+        sql<{
+          environment_id: string;
+          child_thread_id: string;
+          title: string;
+          summary: string | null;
+          status: RemoteChildTask["status"];
+          started_at: string | null;
+          completed_at: string | null;
+        }>`
+          SELECT environment_id, remote_thread_id AS child_thread_id, title, summary, status,
+            started_at, completed_at
+          FROM (
+            SELECT json_extract(payload_json, '$.remoteChild.environmentId') AS environment_id,
+              json_extract(payload_json, '$.remoteChild.threadId') AS remote_thread_id,
+              coalesce(json_extract(payload_json, '$.remoteChild.title'), json_extract(payload_json, '$.title'),
+                json_extract(payload_json, '$.remoteChild.label')) AS title,
+              substr(trim(json_extract(payload_json, '$.result')), 1, 320) AS summary,
+              status, started_at, completed_at, updated_at, subagent_id,
+              row_number() OVER (
+                PARTITION BY json_extract(payload_json, '$.remoteChild.environmentId'),
+                  json_extract(payload_json, '$.remoteChild.threadId')
+                ORDER BY started_at DESC, rowid DESC
+              ) AS rank
+            FROM orchestration_v2_projection_subagents
+            WHERE thread_id = ${rootThreadId} AND origin = 'app_owned' AND child_thread_id IS NULL
+              AND json_type(payload_json, '$.remoteChild') = 'object'
+          )
+          WHERE rank = 1 AND status IN ('pending', 'running', 'waiting', 'failed')
+          ORDER BY updated_at, subagent_id
+        `.pipe(
+          Effect.map((rows) =>
+            rows.map((row): RemoteChildTask => ({
+              environmentId: EnvironmentId.make(row.environment_id),
+              threadId: ThreadId.make(row.child_thread_id),
+              title: row.title,
+              status: row.status,
+              lastSummary: row.summary?.trim() || null,
+              startedAt: row.started_at,
+              completedAt: row.completed_at,
             })),
           ),
           Effect.mapError(mapError),
