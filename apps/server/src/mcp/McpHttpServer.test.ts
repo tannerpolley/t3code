@@ -1,6 +1,7 @@
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadIssueService from "../orchestration-v2/ThreadIssueService.ts";
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -66,6 +67,7 @@ import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import * as IssueService from "../issue/IssueService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import { IssuesToolkit } from "./toolkits/issues/tools.ts";
 
@@ -1741,6 +1743,14 @@ it.effect("hides ungated issue writes from managed threads and their descendants
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(IssueService.IssueService)({}),
+            Layer.mock(Orchestrator.OrchestratorV2)({}),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(ThreadIssueService.ThreadIssueService)({}),
+          ),
+        ),
         Layer.provide(
           Layer.mock(IssueChangeService.IssueChangeService)({
             isManagedCaller: (threadId) => Effect.succeed(managed.has(threadId)),
