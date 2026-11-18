@@ -3,7 +3,11 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { Sidebar, SidebarProvider, SidebarTrigger, useSidebar } from "../ui/sidebar";
-import { type SidebarRouteReveal, useActiveRowReveal } from "./routeReveal";
+import {
+  pendingSidebarRouteReveal,
+  type SidebarRouteReveal,
+  useActiveRowReveal,
+} from "./routeReveal";
 
 const ROW_HEIGHT_PX = 24;
 
@@ -13,7 +17,8 @@ function RevealList(props: {
   readonly activeKey: string | null;
   readonly inPlace?: boolean;
 }) {
-  const revealActiveRow = useActiveRowReveal(props.reveal, props.activeKey, props.inPlace);
+  pendingSidebarRouteReveal(props.reveal, props.activeKey, props.activeKey, props.inPlace);
+  const revealActiveRow = useActiveRowReveal(props.reveal, props.activeKey);
   return (
     <ul aria-label="Threads" style={{ height: ROW_HEIGHT_PX * 4, overflowY: "auto", margin: 0 }}>
       {props.rowKeys.map((key) => (
@@ -37,7 +42,7 @@ function SheetRevealList(props: Parameters<typeof RevealList>[0]) {
 }
 
 const rowKeys = (count: number) => Array.from({ length: count }, (_, index) => `thread-${index}`);
-const newReveal = (): SidebarRouteReveal => ({ observedKey: null, pendingKey: null });
+const newReveal = (): SidebarRouteReveal => ({ observedRoute: null, pendingKey: null });
 
 describe("useActiveRowReveal", () => {
   it("scrolls an off-screen row into view when the route opens its thread", async () => {

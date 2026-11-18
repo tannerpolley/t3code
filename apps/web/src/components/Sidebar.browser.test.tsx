@@ -111,7 +111,7 @@ describe("sidebar header new thread", () => {
     vi.mocked(openCommandPalette).mockClear();
     await using screen = await render(
       <SidebarProvider>
-        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
       </SidebarProvider>,
     );
 
@@ -175,7 +175,7 @@ describe("sidebar render isolation", () => {
     stack.defer(() => useTerminalUiStateStore.getState().setTerminalOpen(routeThreadRef, false));
     await using screen = await render(
       <SidebarProvider>
-        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
       </SidebarProvider>,
     );
     await expect.element(screen.getByText("Thread 4").first()).toBeInTheDocument();
@@ -246,7 +246,7 @@ describe("sidebar thread rename", () => {
       });
       const tree = () => (
         <SidebarProvider>
-          <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+          <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
         </SidebarProvider>
       );
       await using screen = await render(tree());
@@ -288,7 +288,7 @@ describe("sidebar thread menu", () => {
     });
     await using screen = await render(
       <SidebarProvider>
-        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
       </SidebarProvider>,
     );
     const row = screen.getByText("Thread 0").first();
@@ -367,7 +367,7 @@ describe("sidebar settled pagination", () => {
         {...workspaceAreaProps("sidebar", 0, "Threads")}
         style={{ height: 400, minHeight: 400 }}
       >
-        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
       </SidebarProvider>,
     );
     const shelf = screen.container.querySelector<HTMLElement>(
