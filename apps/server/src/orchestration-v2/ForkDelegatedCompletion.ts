@@ -14,18 +14,11 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import {
-  delegatedTaskProgress,
-  subagentResultForRun,
-} from "@t3tools/provider-core/server/subagentProjection";
+import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import { deriveIssueWorkStatus } from "../issues/IssueWorkStatus.ts";
-import { issueCloseoutEffect } from "../issues/IssueCommentEffects.ts";
 import { runOutcome } from "./RestartBackgroundNote.ts";
 import type { ProjectionStoreV2, ProjectionRecords } from "./ProjectionStore.ts";
-import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type {
   usageLimitSwitchMessageId,
   usageLimitSwitchResultRun,
@@ -40,15 +33,10 @@ type CompletionOptions = {
   readonly resultRun?: OrchestrationV2Run;
 };
 type Progress = ReturnType<typeof delegatedTaskProgress>;
-interface ForkDelegatedCompletionHooks<WriteError, RecoveryError> {
+interface ForkDelegatedCompletionHooks<RecoveryError> {
   readonly usageLimitSwitchMessageId: typeof usageLimitSwitchMessageId;
   readonly usageLimitSwitchResultRun: typeof usageLimitSwitchResultRun;
   readonly projectionStore: ProjectionStoreV2["Service"];
-  readonly writeSystemEvents: (
-    events: ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">>,
-    effects?: ReadonlyArray<PendingOrchestrationEffectV2>,
-    options?: { readonly updateDelegatedCompletionOnly?: boolean },
-  ) => Effect.Effect<void, WriteError>;
   readonly childAwaitsRecoveryContinuation: (
     thread: OrchestrationV2AppThread,
     runs: ReadonlyArray<OrchestrationV2Run>,
@@ -95,16 +83,15 @@ export const completionCohortEvent = (
       };
 
 // The orchestrator retains the upstream completion pipeline, reads, locks, and commits.
-export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
+export function makeForkDelegatedCompletion<RecoveryError>({
   projectionStore,
-  writeSystemEvents,
   childAwaitsRecoveryContinuation,
   delegatedTaskTerminalStatus,
   isTerminalDelegatedTaskStatus,
   isBlockingRun,
   usageLimitSwitchMessageId,
   usageLimitSwitchResultRun,
-}: ForkDelegatedCompletionHooks<WriteError, RecoveryError>) {
+}: ForkDelegatedCompletionHooks<RecoveryError>) {
   function delegatedTaskResultRun(
     projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
     taskId: NodeId,
@@ -139,76 +126,6 @@ export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
     );
   }
 
-  const publishIssueCloseout = Effect.fn("Orchestrator.publishIssueCloseout")(function* (
-    childControls: ProjectionRecords<
-      "runs" | "messages" | "subagents" | "providerThreads" | "providerTurns" | "attempts"
-    >,
-    childRun: OrchestrationV2Run,
-  ) {
-    const issue = childControls.thread.linkedIssue;
-    if (issue === undefined) return;
-    const root = yield* projectionStore
-      .getThread(childControls.thread.lineage.rootThreadId)
-      .pipe(Effect.option);
-    if (Option.isNone(root) || root.value.repositoryOrchestration?.publishCloseoutComments !== true)
-      return;
-    const childResult = yield* projectionStore.getThreadRecords(
-      childControls.thread.id,
-      ["messages", "turnItems"],
-      {
-        messageRoles: ["assistant"],
-        messageRunIds: [childRun.id],
-        turnItemRunId: childRun.id,
-        turnItemTypes: ["assistant_message", "error"],
-      },
-    );
-    yield* writeSystemEvents(
-      [],
-      [
-        issueCloseoutEffect({
-          issue,
-          thread: childControls.thread,
-          runId: childRun.id,
-          status: deriveIssueWorkStatus({
-            shell: yield* projectionStore.getThreadShell(childControls.thread.id),
-            paused: false,
-            waitingOnSubIssues: false,
-            resultAvailable: true,
-          }),
-          completedAt: yield* DateTime.now,
-          result: subagentResultForRun(
-            {
-              ...childControls,
-              messages: childResult.messages,
-              turnItems: childResult.turnItems,
-            },
-            childRun,
-          ).text,
-        }),
-      ],
-    );
-  });
-
-  // These hooks run inside the existing completion or recovery operation.
-  const publishUntaggedIssueCloseout = Effect.fnUntraced(function* (
-    childControls: ChildControls,
-    progress: Progress,
-    options?: CompletionOptions,
-  ) {
-    if (
-      progress.state === "result_available" &&
-      progress.resultRun !== undefined &&
-      progress.resultRun.delegatedTaskId === undefined &&
-      !(yield* childAwaitsRecoveryContinuation(
-        childControls.thread,
-        childControls.runs,
-        progress.resultRun,
-        options?.settledContinuationOf,
-      ))
-    ) {
-      yield* publishIssueCloseout(childControls, progress.resultRun);
-    }
-  });
   const closedChildResult = Effect.fnUntraced(function* (
     childControls: ChildControls,
     options: CompletionOptions,
@@ -223,6 +140,7 @@ export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
         : recordedRun;
     return { closed, childRun };
   });
+  // The one "is this result still owed work" decision behind task_status, wait and the parent wake.
   const taskResultPending = Effect.fnUntraced(function* (
     childThreadId: ThreadId,
     taskId: NodeId | undefined,
@@ -237,7 +155,9 @@ export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
       ) {
         const parentThreadId = child.thread.lineage.parentThreadId;
         if (parentThreadId === null) return true;
-        const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"]);
+        const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+          subagentIds: [taskId],
+        });
         return !parent.subagents.some(
           (task) =>
             task.id === taskId &&
@@ -254,6 +174,14 @@ export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
         return true;
       return yield* childAwaitsRecoveryContinuation(child.thread, child.runs, run);
     }
+    const shell = yield* projectionStore.getThreadShell(childThreadId);
+    const progress = delegatedTaskProgress({
+      ...child,
+      pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
+    });
+    if (progress.state !== "result_available") return true;
+    if (progress.resultRun === undefined) return false;
+    return yield* childAwaitsRecoveryContinuation(child.thread, child.runs, progress.resultRun);
   });
   const recoverDeletedChildren = Effect.fnUntraced(function* <FinalizeError, WithdrawError>(
     tasks: ReadonlyArray<OrchestrationV2Subagent>,
@@ -295,8 +223,6 @@ export function makeForkDelegatedCompletion<WriteError, RecoveryError>({
   const hasPublishedResult = (task: OrchestrationV2Subagent) => task.result !== null;
   return {
     delegatedTaskResultRun,
-    publishIssueCloseout,
-    publishUntaggedIssueCloseout,
     closedChildResult,
     taskResultPending,
     recoverDeletedChildren,

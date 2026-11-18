@@ -241,6 +241,7 @@ import {
   completionCohort,
   completionCohortEvent,
 } from "./ForkDelegatedCompletion.ts";
+import { makeIssueCloseout } from "../issues/IssueCommentEffects.ts";
 
 const isIssueQueueRefreshRequired = Schema.is(IssueQueueRefreshRequired);
 
@@ -3590,7 +3591,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       runIds: task.runId === null ? [] : [task.runId],
     });
     // A late wait can arrive after finalization held the result for its still-live spawning run.
-    if (isUnobservedAcknowledgement(command) && task.runId !== null) {
+    if (isUnobservedAcknowledgement(command)) {
       if (
         !isTerminalDelegatedTaskStatus(task.status) ||
         task.completionDelivery?.state !== "pending"
@@ -9834,13 +9835,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
       command: OrchestrationV2ServerCommand,
     ) {
-      // A run-less delegation (fork) has no run to scope the read to.
+      // A run-less (managed) delegation reads no parent run, so the thread row is all it uses.
       const parentProjection = yield* (
         request.parentRunId === null || request.parentNodeId === null
-          ? projectionStore.getThreadRecords(
-              request.parentThreadId,
-              ["runs", "nodes", "providerThreads", "providerTurns", "attempts"],
-              { omitSettledLeafNodes: true },
+          ? projectionStore.getThreadRecords(request.parentThreadId, []).pipe(
+              Effect.map(
+                ({
+                  thread,
+                }): ProjectionRecords<
+                  "runs" | "nodes" | "providerThreads" | "providerTurns" | "attempts"
+                > => ({
+                  thread,
+                  runs: [],
+                  nodes: [],
+                  providerThreads: [],
+                  providerTurns: [],
+                  attempts: [],
+                }),
+              ),
             )
           : projectionStore.getRunProviderRecords(
               request.parentThreadId,
@@ -15047,7 +15059,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const now = yield* DateTime.now;
       const settledRun = { ...childRun, status: outcome };
       const result = subagentResultForRun(childProjection, settledRun);
-      yield* forkDelegatedCompletion.publishIssueCloseout(childControls, settledRun);
+      yield* issueCloseout.publish(childControls, settledRun);
       const parentNode = parentTask.nodes.find((candidate) => candidate.id === task.id);
       const parentTurnItem = parentTask.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
@@ -15112,29 +15124,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: completionPlan.task,
         },
-        ...(completionPlan.cohort === undefined
-          ? []
-          : [
-              completionCohortEvent(parentProjection.thread, parentRun, completionPlan.cohort, now),
-            ]),
-        ...(completionPlan.message === undefined
-          ? []
-          : [
-              {
-                type: "message.updated" as const,
-                threadId: parentThreadId,
-                ...(completionPlan.message.runId === null
-                  ? {}
-                  : { runId: completionPlan.message.runId }),
-                ...(completionPlan.message.nodeId === null
-                  ? {}
-                  : { nodeId: completionPlan.message.nodeId }),
-                providerInstanceId:
-                  parentRun?.providerInstanceId ?? parentProjection.thread.providerInstanceId,
-                occurredAt: now,
-                payload: completionPlan.message,
-              },
-            ]),
+        ...delegatedCompletionPlanEvents(
+          parentProjection.thread,
+          completionPlan,
+          parentProjection.thread.providerInstanceId,
+          now,
+        ),
         ...(parentNode === undefined
           ? []
           : [
@@ -15220,7 +15215,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...childControls,
       pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
     });
-    yield* forkDelegatedCompletion.publishUntaggedIssueCloseout(childControls, progress, options);
+    yield* issueCloseout.publishUntagged(childControls, progress, options?.settledContinuationOf);
     // Each task of this child names it, so the parent's other tasks stay unread.
     const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
       subagentChildThreadIds: [childThreadId],
@@ -15645,7 +15640,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   };
   const forkDelegatedCompletion = makeForkDelegatedCompletion({
     projectionStore,
-    writeSystemEvents,
     childAwaitsRecoveryContinuation,
     delegatedTaskTerminalStatus,
     isTerminalDelegatedTaskStatus,
@@ -15654,6 +15648,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     usageLimitSwitchResultRun,
   });
   const { delegatedTaskResultRun } = forkDelegatedCompletion;
+  const issueCloseout = makeIssueCloseout({
+    projectionStore,
+    enqueue: (effects) => writeSystemEvents([], effects),
+    childAwaitsRecoveryContinuation,
+  });
 
   const appOwnedUserInput = makeAppOwnedUserInputCommands({
     ...forkCommandHooks,
@@ -16930,21 +16929,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
         { messageRoles: ["user"] },
       );
-      const pending = yield* forkDelegatedCompletion.taskResultPending(
-        childThreadId,
-        taskId,
-        child,
-      );
-      if (pending !== undefined) return pending;
-      const childShell = yield* projectionStore.getThreadShell(childThreadId);
-      const progress = delegatedTaskProgress({
-        ...child,
-        pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
-      });
-
-      if (progress.state !== "result_available") return true;
-      if (progress.resultRun === undefined) return false;
-      return yield* childAwaitsRecoveryContinuation(child.thread, child.runs, progress.resultRun);
+      return yield* forkDelegatedCompletion.taskResultPending(childThreadId, taskId, child);
     },
     (effect, childThreadId, _taskId?) =>
       effect.pipe(

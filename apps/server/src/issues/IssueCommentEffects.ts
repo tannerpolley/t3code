@@ -8,10 +8,12 @@ import {
   type IssueWorkStatus,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2AppThread,
+  type OrchestrationV2Run,
   type RunId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 
@@ -20,8 +22,14 @@ import {
   type PendingOrchestrationEffectV2,
   type EffectOutboxV2Shape,
 } from "../orchestration-v2/EffectOutbox.ts";
-import type { ProjectionStoreV2Shape } from "../orchestration-v2/ProjectionStore.ts";
-import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
+import type {
+  ProjectionRecords,
+  ProjectionStoreV2Shape,
+} from "../orchestration-v2/ProjectionStore.ts";
+import {
+  delegatedTaskProgress,
+  subagentResultForRun,
+} from "@t3tools/provider-core/server/subagentProjection";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 import { readIssueWorkCommentState } from "./IssueWorkProjection.ts";
 
@@ -30,7 +38,7 @@ const decodeCommentEffect = Schema.decodeEffect(
   Schema.fromJsonString(OrchestrationEffectRequestV2),
 );
 
-export function issueCloseoutEffect(input: {
+function issueCloseoutEffect(input: {
   readonly issue: ThreadLinkedIssue;
   readonly thread: Pick<OrchestrationV2AppThread, "id" | "branch" | "modelSelection">;
   readonly runId: RunId;
@@ -66,6 +74,86 @@ export function issueCloseoutEffect(input: {
       ].join("\n"),
     },
   };
+}
+
+type CloseoutChild = ProjectionRecords<
+  "runs" | "messages" | "subagents" | "providerThreads" | "providerTurns" | "attempts"
+>;
+
+/** Posts a linked child's finished result once, when its repository root opts in. */
+export function makeIssueCloseout<WriteError, RecoveryError>(hooks: {
+  readonly projectionStore: ProjectionStoreV2Shape;
+  readonly enqueue: (
+    effects: ReadonlyArray<PendingOrchestrationEffectV2>,
+  ) => Effect.Effect<void, WriteError>;
+  readonly childAwaitsRecoveryContinuation: (
+    thread: OrchestrationV2AppThread,
+    runs: ReadonlyArray<OrchestrationV2Run>,
+    resultRun: OrchestrationV2Run,
+    settledContinuationOf?: RunId,
+  ) => Effect.Effect<boolean, RecoveryError>;
+}) {
+  const { projectionStore } = hooks;
+  const publish = Effect.fn("Orchestrator.publishIssueCloseout")(function* (
+    child: CloseoutChild,
+    resultRun: OrchestrationV2Run,
+  ) {
+    const issue = child.thread.linkedIssue;
+    if (issue === undefined) return;
+    const root = yield* projectionStore
+      .getThread(child.thread.lineage.rootThreadId)
+      .pipe(Effect.option);
+    if (Option.isNone(root) || root.value.repositoryOrchestration?.publishCloseoutComments !== true)
+      return;
+    const result = yield* projectionStore.getThreadRecords(
+      child.thread.id,
+      ["messages", "turnItems"],
+      {
+        messageRoles: ["assistant"],
+        messageRunIds: [resultRun.id],
+        turnItemRunId: resultRun.id,
+        turnItemTypes: ["assistant_message", "error"],
+      },
+    );
+    yield* hooks.enqueue([
+      issueCloseoutEffect({
+        issue,
+        thread: child.thread,
+        runId: resultRun.id,
+        status: deriveIssueWorkStatus({
+          shell: yield* projectionStore.getThreadShell(child.thread.id),
+          paused: false,
+          waitingOnSubIssues: false,
+          resultAvailable: true,
+        }),
+        completedAt: yield* DateTime.now,
+        result: subagentResultForRun(
+          { ...child, messages: result.messages, turnItems: result.turnItems },
+          resultRun,
+        ).text,
+      }),
+    ]);
+  });
+  const publishUntagged = Effect.fnUntraced(function* (
+    child: CloseoutChild,
+    progress: ReturnType<typeof delegatedTaskProgress>,
+    settledContinuationOf?: RunId,
+  ) {
+    const { resultRun } = progress;
+    if (
+      progress.state === "result_available" &&
+      resultRun !== undefined &&
+      resultRun.delegatedTaskId === undefined &&
+      !(yield* hooks.childAwaitsRecoveryContinuation(
+        child.thread,
+        child.runs,
+        resultRun,
+        settledContinuationOf,
+      ))
+    )
+      yield* publish(child, resultRun);
+  });
+  return { publish, publishUntagged };
 }
 
 function statusCommentEffect(input: {
