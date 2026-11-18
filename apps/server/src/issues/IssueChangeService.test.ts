@@ -2,9 +2,13 @@ import * as ProjectionReplay from "../orchestration-v2/testkit/ProjectionReplay.
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  IssueOperationError,
   IssueReadError,
+  IssueTrackerKind,
+  IssueUnavailableError,
   DEFAULT_SERVER_SETTINGS,
   ISSUE_HOSTS,
+  ProjectId,
   ThreadId,
   type IssueChangeOperation,
   type IssueChangeBaseline,
@@ -25,6 +29,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as IssueChangeService from "./IssueChangeService.ts";
 import * as IssueService from "./IssueService.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
@@ -70,7 +75,7 @@ const setup = Effect.gen(function* () {
   const allowFailureSettlement = yield* Deferred.make<void>();
   const comments: string[] = [];
   const commentCompleted = yield* Deferred.make<void>();
-  let failCreate: "rejected" | "uncertain" | "unresolved" | undefined;
+  let failCreate: "rejected" | "uncertain" | undefined;
   let reportIdentity = false;
   let failLink = false;
   let loseBodyResponse = false;
@@ -78,55 +83,66 @@ const setup = Effect.gen(function* () {
   let blockersComplete = true;
   let loseLinkResponse = false;
   let capabilities = ISSUE_HOSTS.github!.capabilities;
+  const lostResponse = (detail: string) => new IssueOperationError({ operation: "write", detail });
+  // Upstream's service files, edits and closes; the fork's GitHub extension does the rest.
+  const tracker = Layer.mock(TrackerIssueService.IssueService)({
+    resolveUrl: (url) =>
+      Effect.succeed({
+        projectId: ProjectId.make("project"),
+        tracker: IssueTrackerKind.make("github"),
+        host: repository.host,
+        scope: repository.repository,
+        key: url.split("/").at(-1)!,
+        writable: true,
+      }),
+    create: (input) =>
+      Effect.gen(function* () {
+        const outcome = failCreate;
+        failCreate = undefined;
+        calls.create++;
+        if (outcome === "rejected")
+          return yield* new IssueUnavailableError({ reason: "unauthenticated" });
+        if (outcome !== undefined) return yield* lostResponse("Create outcome");
+        const created = issue(20 + calls.create);
+        snapshots.set(created.number, {
+          issue: created,
+          body: input.body,
+          state: "open",
+          milestoneNumber: null,
+        });
+        if (reportIdentity) {
+          reportIdentity = false;
+          return yield* lostResponse("Create response lost");
+        }
+        return { key: String(created.number), displayKey: `#${created.number}`, url: created.url };
+      }),
+    update: (input) =>
+      Effect.gen(function* () {
+        calls.body++;
+        const number = Number(input.key);
+        snapshots.set(number, { ...snapshots.get(number)!, body: input.body! });
+        if (loseBodyResponse) {
+          loseBodyResponse = false;
+          return yield* lostResponse("Body write response lost");
+        }
+      }),
+    setState: (input) =>
+      Effect.sync(() => {
+        calls.state++;
+        const number = Number(input.key);
+        snapshots.set(number, {
+          ...snapshots.get(number)!,
+          state: input.state === "Open" ? "open" : "closed",
+        });
+      }),
+  });
   const github = Layer.mock(IssueService.IssueService)({
     capabilities: () => Effect.sync(() => capabilities),
     readChangeState: (input) => Effect.sync(() => snapshots.get(input.number)!),
-    createIssue: (input) =>
-      Effect.gen(function* () {
-        if (failCreate !== undefined && !reportIdentity) {
-          const outcome = failCreate;
-          if (outcome === "rejected") failCreate = undefined;
-          if (input.recover !== true) calls.create++;
-          return yield* new IssueReadError({
-            code: "upstream",
-            operation: "detail",
-            message: "Create outcome",
-            createOutcome: input.recover === true ? "unresolved" : outcome,
-          });
-        }
-        calls.create++;
-        const created: IssueChangeBaseline = {
-          issue: issue(20 + calls.create),
-          body: input.body,
-          state: "open",
-          milestoneNumber: input.milestoneNumber,
-        };
-        snapshots.set(created.issue.number, created);
-        yield* input.onCreated?.(created.issue) ?? Effect.void;
-        if (reportIdentity) {
-          reportIdentity = false;
-          return yield* new IssueReadError({
-            code: "invalid-response",
-            operation: "detail",
-            message: "Malformed body",
-            createOutcome: "uncertain",
-          });
-        }
-        return created;
-      }),
-    updateBody: (input) =>
-      Effect.gen(function* () {
-        calls.body++;
-        snapshots.set(input.number, { ...snapshots.get(input.number)!, body: input.body });
-        if (loseBodyResponse) {
-          loseBodyResponse = false;
-          return yield* new IssueReadError({
-            code: "upstream",
-            operation: "detail",
-            message: "Body write response lost",
-          });
-        }
-      }),
+    findCreatedIssue: (input) =>
+      Effect.sync(
+        () => [...snapshots.values()].find((issue) => issue.body.includes(input.marker)) ?? null,
+      ),
     setMilestone: (input) =>
       Effect.sync(() => {
         calls.milestone++;
@@ -134,11 +150,6 @@ const setup = Effect.gen(function* () {
           ...snapshots.get(input.number)!,
           milestoneNumber: input.milestoneNumber,
         });
-      }),
-    setState: (input) =>
-      Effect.sync(() => {
-        calls.state++;
-        snapshots.set(input.number, { ...snapshots.get(input.number)!, state: input.state });
       }),
     workRead: (input) =>
       Effect.sync(() => ({
@@ -196,7 +207,7 @@ const setup = Effect.gen(function* () {
       issueUpkeepRequiresApproval: requireApproval,
     })),
   });
-  const dependencies = Layer.mergeAll(github, settings, EffectOutbox.layer);
+  const dependencies = Layer.mergeAll(github, tracker, settings, EffectOutbox.layer);
   const changes = IssueChangeService.layer.pipe(Layer.provideMerge(dependencies));
   const executor = Layer.effect(
     EffectWorker.OrchestrationEffectExecutorV2,
@@ -312,7 +323,8 @@ it.effect("auto-approved create and milestone moves run once through the outbox"
       yield* service.execute(accepted.id);
       yield* propose({ type: "milestone", number: 10, milestoneNumber: 2 }, "milestone");
       assert.equal(yield* drain, 1);
-      assert.deepStrictEqual(h.calls, { create: 1, body: 0, milestone: 1, state: 0, link: 0 });
+      // Upstream files the issue without a milestone; the extension sets it as a second write.
+      assert.deepStrictEqual(h.calls, { create: 1, body: 0, milestone: 2, state: 0, link: 0 });
       const rows = yield* service.list({ threadId });
       assert.isTrue(rows.every((row) => row.status === "succeeded"));
     }).pipe(Effect.provide(h.runtime)),
@@ -703,7 +715,7 @@ it.effect("uncertain split creation needs user attention and cannot create anoth
 );
 
 it.effect(
-  "definite create rejection retries safely, and available identities survive malformed responses",
+  "definite create rejection retries safely, and a create whose response was lost is found, not repeated",
   () =>
     inDatabase((h) =>
       Effect.gen(function* () {
@@ -725,11 +737,13 @@ it.effect(
           "receipt",
         );
         yield* drain;
-        const saved = (yield* service.list({ threadId }))[0]!;
-        assert.equal(saved.completedSteps["create:0"]?.issue?.number, 23);
+        assert.equal((yield* service.list({ threadId }))[0]?.status, "failed");
         yield* TestClock.adjust(100);
         yield* drain;
-        assert.equal((yield* service.list({ threadId }))[0]?.status, "succeeded");
+        const saved = (yield* service.list({ threadId }))[0]!;
+        assert.equal(saved.status, "succeeded");
+        // The retry found issue 23 by the marker in its body instead of filing another.
+        assert.equal(saved.completedSteps["create:0"]?.issue?.number, 23);
         assert.equal(h.calls.create, 3);
       }).pipe(Effect.provide(h.runtime)),
     ),

@@ -19,16 +19,16 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { IssueListPageCache } from "./IssueListPageCache.ts";
-import * as IssueGitHubHost from "./IssueGitHubHost.ts";
 import {
-  type IssueHost,
+  make as makeGitHubExtension,
+  type IssueGitHubExtension,
   type IssuePullRequestFacts,
   type IssueRepositoryScope,
   type IssuePageResult,
   type PageResult,
   type PageResponse,
   type ListMetadata,
-} from "./IssueHost.ts";
+} from "./IssueGitHubExtension.ts";
 import { LIVE_ISSUE_REFRESH_MS } from "@t3tools/contracts";
 type IssueOperation = IssueReadError["operation"];
 const issueListEndpoint = (
@@ -95,20 +95,15 @@ function safeRepository(host: string, value: string): string | null {
 export class IssueService extends Context.Service<
   IssueService,
   Omit<
-    IssueHost,
+    IssueGitHubExtension,
     | "withIdentity"
     | "listIssuePage"
     | "listMilestonePage"
     | "listMetadata"
     | "statuses"
-    | "closeIssuesFixedBy"
     | "capabilities"
     | "pullRequest"
   > & {
-    /** Closes the issues a merged pull request's body names where its host does not. */
-    readonly closeIssuesFixedBy: (
-      pullRequest: RepositoryIssueRef,
-    ) => Effect.Effect<void, IssueReadError>;
     readonly canonicalHost: (host: string) => Effect.Effect<string>;
     /** What the issue host serving `host` supports. */
     readonly capabilities: (host: string) => Effect.Effect<IssueHostCapabilities>;
@@ -130,7 +125,7 @@ export class IssueService extends Context.Service<
     >;
     readonly statusBatch: (
       input: import("@t3tools/contracts").IssueStatusBatchInput,
-    ) => ReturnType<IssueHost["statuses"]>;
+    ) => ReturnType<IssueGitHubExtension["statuses"]>;
     /** One page of the repository's milestones, a conditional read that is free when unchanged. */
     readonly milestones: (
       input: IssueRepositoryRef & {
@@ -225,7 +220,12 @@ export const make = Effect.fn("IssueService.make")(function* () {
     return { cwd: homeDirectory, host, repository };
   });
 
-  const github: IssueHost = yield* IssueGitHubHost.make({ safeRepository, resolveScope });
+  const github: IssueGitHubExtension = yield* makeGitHubExtension({
+    safeRepository,
+    resolveScope,
+  });
+  // Hosts whose credential lacks `read:project`, by credential, so the overlay stops asking.
+  const withoutProjectScope = new Set<string>();
   const pageResult = <A>(
     response: PageResponse<A>,
     cached: { readonly page: PageResult<A>; readonly etag: string | undefined } | undefined,
@@ -378,15 +378,20 @@ export const make = Effect.fn("IssueService.make")(function* () {
     capabilities: Effect.fn("IssueService.capabilities")((_host) =>
       Effect.succeed(github.capabilities),
     ),
-    pullRequest: Effect.fn("IssueService.pullRequest")(function* (input) {
-      const read = github.pullRequest;
-      return read === undefined ? null : yield* read(input);
-    }),
+    pullRequest: Effect.fn("IssueService.pullRequest")((input) => github.pullRequest(input)),
     milestones,
     overlay: Effect.fn("IssueService.overlay")(function* (input) {
       const scope = yield* resolveScope("list", input).pipe(Effect.option);
       if (scope._tag === "None") return Option.some(new Map());
-      return yield* github.listMetadata(scope.value, input.numbers);
+      return yield* github
+        .withIdentity(scope.value, "list", ({ credentialFingerprint }) => {
+          const key = JSON.stringify([scope.value.host, credentialFingerprint]);
+          return github.listMetadata(scope.value, input.numbers, {
+            granted: !withoutProjectScope.has(key),
+            revoke: () => withoutProjectScope.add(key),
+          });
+        })
+        .pipe(Effect.orElseSucceed(() => Option.none()));
     }),
     revision: Effect.fn("IssueService.revision")(function* (input) {
       const scope = yield* resolveScope("list", input).pipe(Effect.option);
@@ -400,25 +405,12 @@ export const make = Effect.fn("IssueService.make")(function* () {
     readChangeState: Effect.fn("IssueService.readChangeState")((input) =>
       github.readChangeState(input),
     ),
-    createIssue: Effect.fn("IssueService.createIssue")((input) =>
-      afterWrite(input, github.createIssue(input)),
-    ),
-    updateBody: Effect.fn("IssueService.updateBody")((input) =>
-      afterWrite(input, github.updateBody(input)),
+    findCreatedIssue: Effect.fn("IssueService.findCreatedIssue")((input) =>
+      github.findCreatedIssue(input),
     ),
     setMilestone: Effect.fn("IssueService.setMilestone")((input) =>
       afterWrite(input, github.setMilestone(input)),
     ),
-    setState: Effect.fn("IssueService.setState")((input) =>
-      afterWrite(input, github.setState(input)),
-    ),
-    closeIssuesFixedBy: Effect.fn("IssueService.closeIssuesFixedBy")((pullRequest) => {
-      const host = github;
-      const close = host.capabilities.closesFromMergedChangeRequests
-        ? host.closeIssuesFixedBy
-        : undefined;
-      return close === undefined ? Effect.void : afterWrite(pullRequest, close(pullRequest));
-    }),
     workRead: Effect.fn("IssueService.workRead")((input) => github.workRead(input)),
     milestoneIssues,
     repositoryIdentity: Effect.fn("IssueService.repositoryIdentity")((input) =>
@@ -461,8 +453,11 @@ export const make = Effect.fn("IssueService.make")(function* () {
     setParent: Effect.fn("IssueService.setParent")((input) =>
       afterWrite(input.parent, github.setParent(input)),
     ),
-    writeManagedComment: Effect.fn("IssueService.writeManagedComment")((input) =>
-      afterWrite(input.issue, github.writeManagedComment(input)),
+    findManagedComment: Effect.fn("IssueService.findManagedComment")((input) =>
+      github.findManagedComment(input),
+    ),
+    updateManagedComment: Effect.fn("IssueService.updateManagedComment")((input) =>
+      afterWrite(input.issue, github.updateManagedComment(input)),
     ),
   });
 });

@@ -3,7 +3,6 @@ import {
   CommandId,
   IssueChange,
   IssueChangeError,
-  IssueReadError,
   IssueChangeProposeInput,
   IssueChangeOperation,
   type IssueChangeBaseline,
@@ -24,7 +23,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as DateTime from "effect/DateTime";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
+import * as TrackerIssueService from "../issue/IssueService.ts";
 import * as IssueService from "./IssueService.ts";
+import { fromTrackerError, trackerIssueRef } from "./trackerIssueRef.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -128,6 +129,7 @@ const unsupportedBy = (can: IssueHostCapabilities, op: IssueChangeOperation) => 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const issues = yield* IssueService.IssueService;
+  const tracker = yield* TrackerIssueService.IssueService;
   const settings = yield* ServerSettings.ServerSettingsService;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const executionLock = yield* Semaphore.make(1);
@@ -439,6 +441,76 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * Upstream creates; retry safety stays here. A create whose answer was lost is found by the
+   * marker in its body before another is sent, and any failure once one may have been sent
+   * leaves the step to that recovery.
+   */
+  const createIssue = Effect.fn("IssueChangeService.createIssue")(function* (input: {
+    readonly host: string;
+    readonly repository: string;
+    readonly title: string;
+    readonly body: string;
+    readonly milestoneNumber: number | null;
+    readonly marker: string;
+    readonly recover: boolean;
+  }) {
+    const repository = { host: input.host, repository: input.repository };
+    const outcome =
+      (createOutcome: "rejected" | "uncertain") =>
+      (error: { readonly message: string; readonly retryAt?: number | undefined }) =>
+        githubError({ message: error.message, retryAt: error.retryAt, createOutcome });
+    const uncertain = outcome("uncertain");
+    let created: IssueChangeBaseline;
+    if (input.recover) {
+      const found = yield* issues
+        .findCreatedIssue({ ...repository, marker: input.marker })
+        .pipe(Effect.mapError(uncertain));
+      if (found === null)
+        return yield* githubError({
+          message:
+            "The earlier create may have succeeded, but its marker was not found. Check GitHub and mark this change resolved; submit a new proposal only if another create is intended.",
+          createOutcome: "unresolved",
+        });
+      created = found;
+    } else {
+      const ref = yield* trackerIssueRef(tracker, "detail", repository).pipe(
+        Effect.mapError(outcome("rejected")),
+      );
+      const { key } = yield* tracker
+        .create({
+          projectId: ref.projectId,
+          tracker: ref.tracker,
+          host: ref.host,
+          scope: ref.scope,
+          title: input.title,
+          body: `${input.body}\n\n${input.marker}`,
+          labels: [],
+          assignees: [],
+        })
+        .pipe(
+          // Upstream refuses an unusable tracker or a read-only scope before sending.
+          Effect.mapError((error) =>
+            outcome(
+              error._tag === "IssueUnavailableError" || error.reason === "read-only"
+                ? "rejected"
+                : "uncertain",
+            )(fromTrackerError("detail")(error)),
+          ),
+        );
+      created = yield* issues
+        .readChangeState({ ...repository, number: Number(key) })
+        .pipe(Effect.mapError(uncertain));
+    }
+    if (input.milestoneNumber !== created.milestoneNumber) {
+      yield* issues
+        .setMilestone({ ...created.issue, milestoneNumber: input.milestoneNumber })
+        .pipe(Effect.mapError(uncertain));
+      created = { ...created, milestoneNumber: input.milestoneNumber };
+    }
+    return created;
+  });
+
   const execute: IssueChangeService["Service"]["execute"] = (id) =>
     executionLock.withPermit(
       Effect.gen(function* () {
@@ -514,38 +586,19 @@ const make = Effect.gen(function* () {
             let child = steps[key]?.issue;
             if (child === undefined) {
               yield* startStep(key);
-              const created = yield* issues
-                .createIssue({
-                  host: change.host,
-                  repository: change.repository,
-                  ...drafts[index]!,
-                  writeKey: `${id}:${index}`,
-                  recover: row.in_flight_step === key,
-                  onCreated: (issue) =>
-                    saveStep(key, issue, {
-                      issue,
-                      body: `${drafts[index]!.body}\n\n<!-- t3-issue-change:${id}:${index} -->`,
-                      state: "open",
-                      milestoneNumber: drafts[index]!.milestoneNumber,
-                    }).pipe(
-                      Effect.mapError(
-                        (error) =>
-                          new IssueReadError({
-                            code: "upstream",
-                            operation: "detail",
-                            message: error.message,
-                            createOutcome: "uncertain",
-                          }),
-                      ),
-                    ),
-                })
-                .pipe(Effect.mapError(githubError));
+              const draft = drafts[index]!;
+              const marker = `<!-- t3-issue-change:${id}:${index} -->`;
+              const created = yield* createIssue({
+                host: change.host,
+                repository: change.repository,
+                title: draft.title,
+                body: draft.body,
+                milestoneNumber: draft.milestoneNumber,
+                marker,
+                recover: row.in_flight_step === key,
+              });
               child = created.issue;
-              if (steps[key] === undefined)
-                yield* saveStep(key, child, {
-                  ...created,
-                  body: `${drafts[index]!.body}\n\n<!-- t3-issue-change:${id}:${index} -->`,
-                });
+              yield* saveStep(key, child, { ...created, body: `${draft.body}\n\n${marker}` });
             }
             const parent = change.baseline?.issue;
             if (parent !== undefined && steps[`link:${index}`] === undefined) {
@@ -617,14 +670,16 @@ const make = Effect.gen(function* () {
             }
           } else {
             yield* startStep("write");
-            if (op.type === "body")
-              yield* issues
-                .updateBody({ ...baseline.issue, body: op.body })
-                .pipe(Effect.mapError(githubError));
-            if (op.type === "state")
-              yield* issues
-                .setState({ ...baseline.issue, state: op.state })
-                .pipe(Effect.mapError(githubError));
+            if (op.type === "body" || op.type === "state") {
+              const ref = yield* trackerIssueRef(tracker, "detail", baseline.issue).pipe(
+                Effect.mapError(githubError),
+              );
+              yield* (
+                op.type === "body"
+                  ? tracker.update({ ...ref, body: op.body })
+                  : tracker.setState({ ...ref, state: op.state === "open" ? "Open" : "Completed" })
+              ).pipe(Effect.mapError((error) => githubError(fromTrackerError("detail")(error))));
+            }
             if (op.type === "milestone")
               yield* issues
                 .setMilestone({ ...baseline.issue, milestoneNumber: op.milestoneNumber })

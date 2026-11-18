@@ -288,7 +288,7 @@ it.effect(
       credential = "writer";
       yield* issues.statusBatch(input);
       assert.equal(harness.calls.length, 4);
-      yield* issues.setState({ ...listInput, number: 7, state: "closed" });
+      yield* issues.setMilestone({ ...listInput, number: 7, milestoneNumber: null });
       credential = "reader";
       assert.equal((yield* issues.statusBatch(input))[0]?.state, "closed");
       assert.equal(harness.calls.length, 6);
@@ -663,143 +663,105 @@ it.effect("resolves the stable GitHub repository and issue identities", () =>
   }),
 );
 
-it.effect("reconciles an uncertain closeout create by marker before retrying it", () =>
+it.effect("finds T3's comment by its marker and rewrites it in place", () =>
   Effect.gen(function* () {
-    const marker = "<!-- t3-issue-closeout:github.com:123:456:thread:child:run:1 -->";
+    const marker = "<!-- t3-issue-status:github.com:123:456 -->";
     const harness = makeHarness({
       responses: [
-        httpResponse([]),
-        httpResponse({ message: "ambiguous write" }, {}, 500),
-        httpResponse([{ id: 789, body: `Final result\n\n${marker}` }]),
+        httpResponse([
+          { id: 788, body: "Someone else" },
+          { id: 789, body: `Working\n\n${marker}` },
+        ]),
+        httpResponse({}),
       ],
     });
     const issues = yield* service(harness);
-    const input = {
-      issue: {
-        host: HOST,
-        repository: REPOSITORY,
-        repositoryId: "123",
-        id: "456",
-        nodeId: "I_kwDOIssue456",
-        number: 7,
-        url: `https://${HOST}/${REPOSITORY}/issues/7`,
-        title: "Stable identity",
-      },
-      operation: "closeout_create" as const,
-      marker,
-      body: "Final result",
+    const issue = {
+      host: HOST,
+      repository: REPOSITORY,
+      repositoryId: "123",
+      id: "456",
+      nodeId: "I_kwDOIssue456",
+      number: 7,
+      url: `https://${HOST}/${REPOSITORY}/issues/7`,
+      title: "Stable identity",
     };
-    const first = yield* Effect.result(issues.writeManagedComment(input));
-    assert.isTrue(Result.isFailure(first));
-    const retry = yield* issues.writeManagedComment(input);
-
-    assert.deepEqual(retry, { commentId: "789" });
-    assert.equal(harness.calls.length, 3);
-    assert.equal(harness.calls[1]!.method, "POST");
-    assert.notEqual(harness.calls[2]!.method, "POST");
+    const commentId = yield* issues.findManagedComment({ issue, marker });
+    assert.equal(commentId, "789");
+    yield* issues.updateManagedComment({ issue, commentId: commentId!, body: `Done\n\n${marker}` });
+    assert.equal(harness.calls[1]!.method, "PATCH");
+    assert.isTrue(harness.calls[1]!.url.endsWith("/repos/acme/web/issues/comments/789"));
+    assert.deepEqual(yield* decodeJson(harness.calls[1]!.body!), { body: `Done\n\n${marker}` });
   }),
 );
 
-it.effect(
-  "creates issues with exact payloads and recovers a lost create response without duplicating",
-  () =>
-    Effect.gen(function* () {
-      const repositoryIdentity = { id: 123, node_id: "R_123", full_name: REPOSITORY };
-      const marker = "<!-- t3-issue-change:proposal:0 -->";
-      const created = {
-        ...rawIssue(7),
-        id: 456,
-        node_id: "I_456",
-        html_url: `https://${HOST}/${REPOSITORY}/issues/7`,
-        body: `Exact body\n\n${marker}`,
-      };
-      const harness = makeHarness({
-        responses: [
-          httpResponse(repositoryIdentity),
-          httpResponse({ message: "response lost" }, {}, 500),
-          httpResponse(repositoryIdentity),
-          httpResponse([created]),
-        ],
-      });
-      const issues = yield* service(harness);
-      const input = {
-        ...listInput,
-        title: "Exact title",
-        body: "Exact body",
-        milestoneNumber: 2,
-        writeKey: "proposal:0",
-      };
-      assert.isTrue(
-        Result.isFailure(yield* Effect.result(issues.createIssue({ ...input, recover: false }))),
-      );
-      const recovered = yield* issues.createIssue(input);
-      assert.equal(recovered.issue.id, "456");
-      assert.equal(harness.calls.filter((call) => call.method === "POST").length, 1);
-      const payload = yield* decodeJson(harness.calls[1]!.body!);
-      assert.deepEqual(payload, {
-        title: "Exact title",
-        body: `Exact body\n\n${marker}`,
-        milestone: 2,
-      });
-    }),
+it.effect("finds an earlier create by the marker in its body, skipping pull requests", () =>
+  Effect.gen(function* () {
+    const marker = "<!-- t3-issue-change:proposal:0 -->";
+    const created = {
+      ...rawIssue(7),
+      id: 456,
+      node_id: "I_456",
+      html_url: `https://${HOST}/${REPOSITORY}/issues/7`,
+      body: `Exact body\n\n${marker}`,
+    };
+    const pullRequest = { ...created, id: 455, number: 6, pull_request: {} };
+    const harness = makeHarness({
+      responses: [
+        httpResponse({ id: 123, node_id: "R_123", full_name: REPOSITORY }),
+        httpResponse([pullRequest, created]),
+      ],
+    });
+    const found = yield* (yield* service(harness)).findCreatedIssue({ ...listInput, marker });
+    assert.equal(found?.issue.id, "456");
+    assert.isTrue(harness.calls.every((call) => call.method === "GET"));
+  }),
 );
 
-it.effect(
-  "writes body, milestone, state and native sub-issue relations through verified GitHub APIs",
-  () =>
-    Effect.gen(function* () {
-      const harness = makeHarness({ responses: Array.from({ length: 8 }, () => httpResponse({})) });
-      const issues = yield* service(harness);
-      const ref = { ...listInput, number: 7 };
-      const parent = {
-        ...ref,
-        repositoryId: "123",
-        id: "456",
-        nodeId: "I_456",
-        url: `https://${HOST}/${REPOSITORY}/issues/7`,
-        title: "Parent",
-      };
-      const child = { ...parent, number: 8, id: "789", nodeId: "I_789" };
-      yield* issues.updateBody({ ...ref, body: "Exact replacement\n" });
-      yield* issues.setMilestone({ ...ref, milestoneNumber: null });
-      yield* issues.setState({ ...ref, state: "closed" });
-      yield* issues.setState({ ...ref, state: "open" });
-      yield* issues.setParent({ parent, child, action: "add" });
-      yield* issues.setParent({ parent, child, action: "remove" });
-      yield* issues.setBlockedBy({ issue: parent, blocker: child, action: "add" });
-      yield* issues.setBlockedBy({ issue: parent, blocker: child, action: "remove" });
-      const payloads = yield* Effect.forEach(harness.calls.slice(0, 6), (call) =>
-        decodeJson(call.body!),
-      );
-      assert.deepEqual(payloads, [
-        { body: "Exact replacement\n" },
-        { milestone: null },
-        { state: "closed" },
-        { state: "open" },
-        { sub_issue_id: 789 },
-        { sub_issue_id: 789 },
-      ]);
-      for (const [index, mutation] of ["addBlockedBy", "removeBlockedBy"].entries()) {
-        const call = harness.calls[index + 6]!;
-        assert.isTrue(call.url.endsWith("/graphql"));
-        const payload = yield* decodeJson(call.body!);
-        assert.deepEqual(payload, {
-          query: `mutation($issueId: ID!, $blockingIssueId: ID!) { ${mutation}(input: { issueId: $issueId, blockingIssueId: $blockingIssueId }) { clientMutationId } }`,
-          variables: { issueId: "I_456", blockingIssueId: "I_789" },
-        });
-      }
-      assert.equal(harness.calls[4]!.method, "POST");
-      assert.isTrue(harness.calls[4]!.url.endsWith("/repos/acme/web/issues/7/sub_issues"));
-      assert.equal(harness.calls[5]!.method, "DELETE");
-      assert.isTrue(harness.calls[5]!.url.endsWith("/repos/acme/web/issues/7/sub_issue"));
-    }),
+it.effect("writes milestone and native sub-issue relations through verified GitHub APIs", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({ responses: Array.from({ length: 5 }, () => httpResponse({})) });
+    const issues = yield* service(harness);
+    const ref = { ...listInput, number: 7 };
+    const parent = {
+      ...ref,
+      repositoryId: "123",
+      id: "456",
+      nodeId: "I_456",
+      url: `https://${HOST}/${REPOSITORY}/issues/7`,
+      title: "Parent",
+    };
+    const child = { ...parent, number: 8, id: "789", nodeId: "I_789" };
+    yield* issues.setMilestone({ ...ref, milestoneNumber: null });
+    yield* issues.setParent({ parent, child, action: "add" });
+    yield* issues.setParent({ parent, child, action: "remove" });
+    yield* issues.setBlockedBy({ issue: parent, blocker: child, action: "add" });
+    yield* issues.setBlockedBy({ issue: parent, blocker: child, action: "remove" });
+    const payloads = yield* Effect.forEach(harness.calls.slice(0, 3), (call) =>
+      decodeJson(call.body!),
+    );
+    assert.deepEqual(payloads, [{ milestone: null }, { sub_issue_id: 789 }, { sub_issue_id: 789 }]);
+    for (const [index, mutation] of ["addBlockedBy", "removeBlockedBy"].entries()) {
+      const call = harness.calls[index + 3]!;
+      assert.isTrue(call.url.endsWith("/graphql"));
+      const payload = yield* decodeJson(call.body!);
+      assert.deepEqual(payload, {
+        query: `mutation($issueId: ID!, $blockingIssueId: ID!) { ${mutation}(input: { issueId: $issueId, blockingIssueId: $blockingIssueId }) { clientMutationId } }`,
+        variables: { issueId: "I_456", blockingIssueId: "I_789" },
+      });
+    }
+    assert.equal(harness.calls[1]!.method, "POST");
+    assert.isTrue(harness.calls[1]!.url.endsWith("/repos/acme/web/issues/7/sub_issues"));
+    assert.equal(harness.calls[2]!.method, "DELETE");
+    assert.isTrue(harness.calls[2]!.url.endsWith("/repos/acme/web/issues/7/sub_issue"));
+  }),
 );
 
 it.effect("issue writes surface permission failures and respect the shared rate limit", () =>
   Effect.gen(function* () {
     const denied = makeHarness({ responses: [httpResponse({ message: "Forbidden" }, {}, 403)] });
     const deniedResult = yield* Effect.result(
-      (yield* service(denied)).updateBody({ ...listInput, number: 7, body: "New" }),
+      (yield* service(denied)).setMilestone({ ...listInput, number: 7, milestoneNumber: 2 }),
     );
     assert.isTrue(Result.isFailure(deniedResult));
     if (Result.isFailure(deniedResult))
@@ -814,7 +776,7 @@ it.effect("issue writes surface permission failures and respect the shared rate 
       ],
     });
     const limitedResult = yield* Effect.result(
-      (yield* service(limited)).setState({ ...listInput, number: 7, state: "closed" }),
+      (yield* service(limited)).setMilestone({ ...listInput, number: 7, milestoneNumber: null }),
     );
     assert.isTrue(Result.isFailure(limitedResult));
     if (Result.isFailure(limitedResult)) {
@@ -1225,134 +1187,6 @@ it.effect("shares a 403 Retry-After pause with the rate-limit service", () =>
   }),
 );
 
-it.effect("an uncertain create cannot duplicate an issue after its marker is removed", () =>
-  Effect.gen(function* () {
-    const identity = { id: 123, node_id: "R_123", full_name: REPOSITORY };
-    const existing = {
-      ...rawIssue(7),
-      id: 456,
-      node_id: "I_456",
-      html_url: `https://${HOST}/${REPOSITORY}/issues/7`,
-      body: "User replaced the issue body",
-    };
-    const harness = makeHarness({
-      responses: [
-        httpResponse(identity),
-        httpResponse({ message: "response lost" }, {}, 500),
-        httpResponse(identity),
-        httpResponse([existing]),
-      ],
-    });
-    const issues = yield* service(harness);
-    const input = {
-      ...listInput,
-      title: "Task",
-      body: "Task",
-      milestoneNumber: null,
-      writeKey: "proposal:0",
-    };
-    const first = yield* issues.createIssue({ ...input, recover: false }).pipe(Effect.flip);
-    assert.equal(first.createOutcome, "uncertain");
-    const recovery = yield* issues.createIssue({ ...input, recover: true }).pipe(Effect.flip);
-    assert.equal(recovery.createOutcome, "unresolved");
-    assert.equal(harness.calls.filter((call) => call.method === "POST").length, 1);
-  }),
-);
-
-it.effect(
-  "create failure outcomes distinguish HTTP rejection and preflight denial from uncertain writes",
-  () =>
-    Effect.gen(function* () {
-      const identity = { id: 123, node_id: "R_123", full_name: REPOSITORY };
-      const input = {
-        ...listInput,
-        title: "Task",
-        body: "Task",
-        milestoneNumber: null,
-        writeKey: "rejected:0",
-        recover: false,
-      };
-      for (const status of [401, 403, 404, 422, 429, 500]) {
-        const harness = makeHarness({
-          responses: [httpResponse(identity), httpResponse({ message: "Denied" }, {}, status)],
-        });
-        const issues = yield* service(harness);
-        const error = yield* issues.createIssue(input).pipe(Effect.flip);
-        assert.equal(error.createOutcome, status === 500 ? "uncertain" : "rejected");
-      }
-      const harness = makeHarness({ responses: [httpResponse({ message: "Denied" }, {}, 403)] });
-      const issues = yield* service(harness);
-      assert.equal((yield* issues.createIssue(input).pipe(Effect.flip)).createOutcome, "rejected");
-      assert.equal(harness.calls.filter((call) => call.method === "POST").length, 0);
-    }),
-);
-
-it.effect("persists a created issue identity even when mutable response fields are invalid", () =>
-  Effect.gen(function* () {
-    const identity = { id: 123, node_id: "R_123", full_name: REPOSITORY };
-    const created = {
-      ...rawIssue(7),
-      id: 456,
-      node_id: "I_456",
-      html_url: `https://${HOST}/${REPOSITORY}/issues/7`,
-      body: 42,
-    };
-    const harness = makeHarness({ responses: [httpResponse(identity), httpResponse(created)] });
-    const issues = yield* service(harness);
-    const receipts: string[] = [];
-    const error = yield* issues
-      .createIssue({
-        ...listInput,
-        title: "Task",
-        body: "Task",
-        milestoneNumber: null,
-        writeKey: "receipt:0",
-        recover: false,
-        onCreated: (issue) =>
-          Effect.sync(() => {
-            receipts.push(issue.id);
-          }),
-      })
-      .pipe(Effect.flip);
-    assert.equal(error.createOutcome, "uncertain");
-    assert.deepEqual(receipts, ["456"]);
-  }),
-);
-
-it.effect("a denied recovery read does not turn an uncertain create into a rejected create", () =>
-  Effect.gen(function* () {
-    const identity = { id: 123, node_id: "R_123", full_name: REPOSITORY };
-    const harness = makeHarness({
-      responses: [
-        httpResponse(identity),
-        httpResponse({}, {}, 500),
-        httpResponse(identity),
-        httpResponse({}, {}, 403),
-        httpResponse(identity),
-        httpResponse([]),
-      ],
-    });
-    const issues = yield* service(harness);
-    const input = {
-      ...listInput,
-      title: "Task",
-      body: "Task",
-      milestoneNumber: null,
-      writeKey: "denied-recovery:0",
-    };
-    yield* issues.createIssue({ ...input, recover: false }).pipe(Effect.flip);
-    assert.equal(
-      (yield* issues.createIssue({ ...input, recover: true }).pipe(Effect.flip)).createOutcome,
-      "uncertain",
-    );
-    assert.equal(
-      (yield* issues.createIssue({ ...input, recover: true }).pipe(Effect.flip)).createOutcome,
-      "unresolved",
-    );
-    assert.equal(harness.calls.filter((call) => call.method === "POST").length, 1);
-  }),
-);
-
 it.effect(
   "batches native parents, closed and external blockers, and PR references with Project fields",
   () =>
@@ -1466,14 +1300,16 @@ it.effect(
     }),
 );
 
-it.effect("loads roadmap relationships without Project scope across blocker pages", () =>
+it.effect("loads roadmap relationships without Project scope, and stops asking for it", () =>
   Effect.gen(function* () {
     const related = (number: number) => ({
       number,
       state: "CLOSED",
       repository: { nameWithOwner: REPOSITORY },
     });
+    let credential = "credential-fingerprint";
     const harness = makeHarness({
+      credentialFingerprint: () => credential,
       responses: [
         httpResponse({
           errors: [
@@ -1500,10 +1336,13 @@ it.effect("loads roadmap relationships without Project scope across blocker page
             },
           },
         }),
+        httpResponse({ data: { p0: { issue: { parent: null } } } }),
+        httpResponse({ data: { p0: { issue: { parent: null, projectItems: null } } } }),
       ],
     });
+    const issues = yield* service(harness);
     const result = Option.getOrThrow(
-      yield* (yield* service(harness)).overlay({
+      yield* issues.overlay({
         ...listInput,
         numbers: [948, 868, 860],
       }),
@@ -1529,6 +1368,17 @@ it.effect("loads roadmap relationships without Project scope across blocker page
       assert.include(request.query, "blockedBy(");
     }
     assert.equal(harness.calls.length, 3);
+
+    // The next read leaves Projects out from the start, until the credential changes.
+    yield* issues.overlay({ ...listInput, numbers: [948] });
+    credential = "another-credential";
+    yield* issues.overlay({ ...listInput, numbers: [948] });
+    const [remembered, renewed] = yield* Effect.forEach(harness.calls.slice(3), (call) =>
+      decodeProjectRequest(call.body!),
+    );
+    assert.notInclude(remembered!.query, "projectItems(");
+    assert.include(renewed!.query, "projectItems(");
+    assert.equal(harness.calls.length, 5);
   }),
 );
 

@@ -2,6 +2,7 @@ import { assert, it, vi } from "@effect/vitest";
 import {
   CommandId,
   EventId,
+  IssueTrackerKind,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -25,6 +26,7 @@ import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.test
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as IssueEffects from "./IssueEffects.ts";
 import * as IssueService from "./IssueService.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
 
 it.effect(
   "managed event commits read no thread history, coalesce refreshes, and skip unchanged status writes",
@@ -179,19 +181,35 @@ it.effect(
 );
 
 it.effect(
-  "issue comment effects roll back a failed receipt, rewrite by marker on retry, skip stale status and replay once",
+  "issue comment effects roll back a failed receipt, find the posted comment on retry, skip stale status and replay once",
   () => {
+    // GitHub's comments: upstream posts them, the extension finds them by marker.
+    const comments = new Map<string, string>();
     const writes: Array<{ readonly marker: string; readonly commentId?: string }> = [];
-    const issuesLayer = Layer.mock(IssueService.IssueService)({
-      writeManagedComment: (input) =>
-        Effect.sync(() => {
-          writes.push({
-            marker: input.marker,
-            ...(input.commentId === undefined ? {} : { commentId: input.commentId }),
-          });
-          return { commentId: input.commentId ?? `comment:${writes.length}` };
-        }),
-    });
+    const markerOf = (body: string) => /<!-- t3-issue-[^>]*-->/u.exec(body)![0];
+    const issuesLayer = Layer.mergeAll(
+      Layer.mock(IssueService.IssueService)({
+        findManagedComment: ({ marker }) => Effect.sync(() => comments.get(marker) ?? null),
+        updateManagedComment: ({ commentId, body }) =>
+          Effect.sync(() => void writes.push({ marker: markerOf(body), commentId })),
+      }),
+      Layer.mock(TrackerIssueService.IssueService)({
+        resolveUrl: (url) =>
+          Effect.succeed({
+            projectId: ProjectId.make("project-issue-effects"),
+            tracker: IssueTrackerKind.make("github"),
+            host: "github.com",
+            scope: "owner/repo",
+            key: url.split("/").at(-1)!,
+            writable: true,
+          }),
+        comment: ({ body }) =>
+          Effect.sync(() => {
+            writes.push({ marker: markerOf(body) });
+            comments.set(markerOf(body), `comment:${comments.size + 1}`);
+          }),
+      }),
+    );
     const dependencies = Layer.mergeAll(
       ProjectionStore.layer,
       CommandReceipts.layer,
@@ -284,16 +302,13 @@ it.effect(
       assert.deepEqual(yield* receipts, []);
       assert.deepEqual(yield* recordedEvents, []);
 
-      // The retry carries the same marker, which the host uses to find the earlier comment.
+      // The retry finds the comment GitHub already has by its marker instead of posting again.
       yield* execute(closeout);
-      assert.deepEqual(
-        writes.map((write) => write.marker),
-        [closeoutMarker, closeoutMarker],
-      );
-      assert.deepEqual(yield* receipts, [{ comment_id: "comment:2" }]);
+      assert.equal(writes.length, 1);
+      assert.deepEqual(yield* receipts, [{ comment_id: "comment:1" }]);
       // A replay after restart builds a fresh executor and sees the committed receipt.
       yield* execute(closeout);
-      assert.equal(writes.length, 2);
+      assert.equal(writes.length, 1);
 
       const stale = yield* comment("effect:status:1", {
         operation: "status_sync",
@@ -312,12 +327,12 @@ it.effect(
         body: `Done\n\n${statusMarker}`,
       });
       yield* execute(stale);
-      assert.equal(writes.length, 2);
+      assert.equal(writes.length, 1);
       yield* execute(current);
       assert.deepEqual(writes.at(-1), { marker: statusMarker });
       const status = yield* sql<{ readonly status_comment_id: string }>`
         SELECT status_comment_id FROM orchestration_v2_projection_issue_work WHERE issue_id = '3'`;
-      assert.deepEqual(status, [{ status_comment_id: "comment:3" }]);
+      assert.deepEqual(status, [{ status_comment_id: "comment:2" }]);
     }).pipe(Effect.provide(testLayer));
   },
 );

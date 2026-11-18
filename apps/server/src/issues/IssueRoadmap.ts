@@ -4,7 +4,6 @@ import {
   type IssueActor,
   type IssueDetailInput,
   type IssueDetailResult,
-  type IssueError,
   type IssueMilestone,
   type IssueRepositoryRef,
   type IssueStatusBatchInput,
@@ -24,7 +23,8 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as TrackerIssueService from "../issue/IssueService.ts";
-import type { ListMetadata } from "./IssueHost.ts";
+import type { ListMetadata } from "./IssueGitHubExtension.ts";
+import { fromTrackerError, trackerIssueRef } from "./trackerIssueRef.ts";
 import * as IssueLinks from "./IssueLinks.ts";
 import * as IssueService from "./IssueService.ts";
 
@@ -57,31 +57,6 @@ const readError = (
     message,
     ...(retryAt === undefined ? {} : { retryAt }),
   });
-
-const fromTrackerError =
-  (operation: IssueReadError["operation"]) =>
-  (error: IssueError): IssueReadError => {
-    if (error._tag === "IssueUnavailableError")
-      return readError(
-        operation,
-        error.reason === "tool-missing"
-          ? "missing-tool"
-          : error.reason === "unauthenticated"
-            ? "unauthenticated"
-            : "unsupported",
-        error.message,
-      );
-    return readError(
-      operation,
-      error.reason === "rate-limited"
-        ? "rate-limited"
-        : error.reason === "not-found"
-          ? "inaccessible"
-          : "upstream",
-      error.detail,
-      error.retryAt,
-    );
-  };
 
 const actor = (value: IssueActor) => ({
   login: value.login,
@@ -179,17 +154,7 @@ export const layer = Layer.effect(
       input: IssueRepositoryRef & { readonly state: "open" | "all" },
       position: Position | null,
     ) {
-      const url = `https://${input.host}/${input.repository}/issues/1`;
-      // Upstream reads only a project's own scope; a repository without a project has no rows.
-      const scope = yield* trackerIssues
-        .resolveUrl(url)
-        .pipe(Effect.mapError(fromTrackerError("list")));
-      if (!scope.writable)
-        return yield* readError(
-          "list",
-          "scope-unavailable",
-          "Add this repository as a project to see its issues.",
-        );
+      const scope = yield* trackerIssueRef(trackerIssues, "list", input);
       const cursorKey = `${scope.host} ${scope.scope.toLowerCase()}`;
       const issuesFrom = position === null ? undefined : position.issues;
       const milestonePage = position === null ? 1 : position.milestones;

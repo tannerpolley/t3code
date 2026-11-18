@@ -131,7 +131,6 @@ const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         [WS_METHODS.issuesRepositories]: () => issues.repositories(),
         [WS_METHODS.issueWorkRoadmap]: (input) => roadmap.list(input),
         [WS_METHODS.issuesCleanup]: (input) => cleanup.cleanup(input),
-        [WS_METHODS.issueWorkSetState]: (input) => issues.setState(input),
         [WS_METHODS.issueWorkDetail]: (input) => roadmap.detail(input),
         [WS_METHODS.issuesStatusBatch]: (input) => roadmap.statusBatch(input),
         [WS_METHODS.issuesInboxList]: (input) => inbox.list(input),
