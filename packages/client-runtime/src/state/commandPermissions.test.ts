@@ -25,6 +25,7 @@ import {
   AuthSettingsWriteScope,
   AuthTerminalOperateScope,
   AuthSourceControlWriteScope,
+  IssueTrackerKind,
   ThreadId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -43,6 +44,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
 import { createOwnerDecisionAtoms } from "./ownerDecisions.ts";
+import { createIssueEnvironmentAtoms } from "./issues.ts";
 import { createRepositoryIssueEnvironmentAtoms } from "./repositoryIssues.ts";
 import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
@@ -1090,7 +1092,7 @@ it.effect("issue state writes check the destination's exact grant", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const registry = yield* setup;
-      const issues = createRepositoryIssueEnvironmentAtoms(runtime, () => Atom.make(null));
+      const issues = createIssueEnvironmentAtoms(runtime);
       const statePermission = issues.setState.permissionAtom(env);
       registry.set(
         sessions(env),
@@ -1102,7 +1104,14 @@ it.effect("issue state writes check the destination's exact grant", () =>
       const failed = yield* Effect.promise(() =>
         issues.setState.run(registry, {
           environmentId: env,
-          input: { host: "github.com", repository: "owner/repo", number: 44, state: "closed" },
+          input: {
+            projectId: ProjectId.make("issue-project"),
+            tracker: IssueTrackerKind.make("github"),
+            host: "github.com",
+            scope: "owner/repo",
+            key: "44",
+            state: "Completed",
+          },
         }),
       );
       expect(failed._tag).toBe("Failure");
