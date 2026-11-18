@@ -298,24 +298,47 @@ apps connected to that server, but the host's own site will not show them, and t
 On mobile, open a changed file and mark it viewed from its header. Viewed files collapse,
 and their marks follow the same rules as on web and desktop.
 
-## Browse GitHub issues
+## Roadmap and issue work
 
-Drag an issue onto the composer or type `#` to reference a repository issue in chat.
+The roadmap shows a GitHub repository's issues by the state of their work. Use it to start, queue
+and follow agent work on issues. To read and edit issues across all your projects and trackers,
+use the [Issues page](#issues) instead.
 
-When a connected environment has GitHub Issues support, a thread's details list its repository's
-issues; open one, or the full list, beside the thread. The full list opens on that project’s
-repository. Opened without a current repository, the Roadmap page (**Open roadmap** in the command
-palette) lists issues from every
-repository your GitHub account owns and every organization repository you administer, whether or
-not the repository is a T3 Code project. Repositories you only collaborate on, including the upstream
-of a fork, are left out. Repositories are grouped by owner, with your own account first.
+The roadmap needs a connected environment with GitHub Issues support. It appears in two places:
 
-Use **Filter** to choose what is shown: open and closed issues; archived, forked, empty, public,
-private, personal, and organization repositories; assignment; and how issues are
-sorted. Open issues are shown by default, with archived, forked, and empty repositories hidden.
-Filter choices are remembered in that browser. The compact search box matches issue numbers, titles
-and other issue details. Search, Filter and Refresh share the header row. An Issues tab opened from a thread stays scoped to that project’s
-repository.
+- **The Issues panel** shows one repository beside a thread: the repository of that thread's
+  project (for a fork checkout, the fork itself). Open it with **Issues** (shortcut `I`) from the
+  empty right panel or its **+** menu, or with **Show issues beside thread** in the command
+  palette. A thread's details list the same roadmap in a shorter **Issues** section; **Browse all
+  issues** there opens the panel. To hide that section, turn off **Issues in thread details** in
+  **Settings → Source control & issues → Issue work & branch picker**.
+- **The Roadmap page** covers every repository. Open it with **Open roadmap** in the command
+  palette. It lists the repositories your GitHub account owns and the organization repositories
+  you administer, grouped by owner with your own account first. Repositories you only collaborate
+  on, including the upstream of a fork, are left out. Issues load only for a repository that is
+  a project in T3 Code; add any other repository as a project to see its issues.
+
+Select an issue to open it in the issue panel, the same one the Issues page uses: in a tab next to
+the Issues panel, or beside the list on the Roadmap page. Its work section holds **Start agent**,
+**Add to queue**, **Prepare draft**, the issue's work state, GitHub Project fields, sub-issues,
+blockers, pending decisions and changes. A linked pull request opens in the pull request panel,
+and its back arrow returns to the issue. A link to an issue in one of your projects' repositories
+opens the same panel. **Prepare draft** opens a new thread for the issue's project in a worktree
+on a branch named after the issue, with an unsent prompt. You can also drag an issue onto the
+composer, or type `#` there, to reference it in chat.
+
+Use **Filter** to choose what is shown: open and closed issues, assignment, and how issues are
+sorted. On the Roadmap page it also chooses among archived, forked, empty, public, private,
+personal and organization repositories. Open issues are shown by default, with archived, forked
+and empty repositories hidden. Filter choices are remembered in that browser. The search box
+matches issue numbers, titles and other issue details. The roadmap updates by itself when T3
+Code changes an issue or its work, and within a few minutes of a change made on GitHub;
+**Refresh** reads it again at once.
+
+To keep one repository visible on the Roadmap page while its kind is hidden, such as a single
+fork, show it once, then use the pin button on its row. A pinned repository ignores the
+repository filters but still follows the issue filters and search. Pins are remembered with your
+filter choices.
 
 Each repository's issues show as a roadmap in dependency order, with **Closed**, **Blocked**,
 **Inbox**, **Ready**, **Queued**, **Paused**, **In progress** and **Done** sections. Blocked shows
@@ -345,17 +368,6 @@ Select a work indicator to open its linked thread; hover to see the thread's bra
 pull requests. To include work started outside **Start agent**, ask the agent to link the issue it
 is working on. Ordinary threads and delegated workers can both link issues.
 
-To keep one repository visible while its kind is hidden, such as a single fork, show it once, then
-use the pin button on its row. A pinned repository ignores the repository filters but still follows
-the issue filters and search. Pins are remembered with your filter choices.
-
-Select an issue to open it in the issue panel, the same one the Issues page uses. Its work section
-holds **Start agent**, **Add to queue**, **Prepare draft**, the issue's work state, GitHub Project
-fields, sub-issues, blockers, pending decisions and changes. A linked pull request opens in the pull
-request panel, and its back arrow returns to the issue. A link to an issue in one of your projects'
-repositories opens the same panel. **Prepare draft** opens a new thread for the issue's project in a
-worktree on a branch named after the issue, with an unsent prompt.
-
 To assign the repository orchestrator, right-click an unarchived top-level thread in its project
 and choose **Make repository orchestrator**, or use that action in the command palette.
 Choosing another thread moves the role after live issue work drains. If none is registered when
@@ -369,8 +381,8 @@ Archiving or deleting an idle orchestrator thread also ends orchestration; live 
 
 To run issue work, open an issue, choose **Start agent**, then a model role and the
 matching repository project. Use a model role with an available Codex or Claude target.
-**Start agent on issue…** in the command palette opens the current
-repository’s issues beside the thread, or the Roadmap page when there is no current repository.
+**Start agent on issue…** in the command palette opens the Issues panel for the current
+repository, or the Roadmap page when there is no current repository.
 If no repository orchestrator is registered, choose an existing lead in the matching project or
 explicitly choose **Create first orchestrator**. When you open issues beside a thread, its lead
 is selected for you. A thread becomes the repository orchestrator only from the main checkout on the
@@ -401,7 +413,7 @@ registered orchestrator, the queue waits. Claimed work is managed through its or
 Repository orchestration is managed in **Settings → Projects**, under the project that holds the
 repository's checkout; the section is named **Repository orchestration**. It shows the
 orchestrator, the limits, the usage sprint and the repository **Status**. Until a repository has
-an orchestrator the section only says so, because the limits need one. The Issues pane keeps no
+an orchestrator the section only says so, because the limits need one. The roadmap keeps no
 such controls. It shows a single status line with a **Project settings** link while repository work
 is paused, a handoff is pending, or issues are on hold.
 
@@ -435,11 +447,11 @@ under the repository's **Status** to finish the retained attempt and clear its h
 
 Issue agents can create issues, split work into sub-issues, and move issues between milestones.
 To require approval for these too, turn on **Ask before agents create, split or move issues** in
-**Settings → Source Control → Version control & issues** for the server. This applies to new
+**Settings → Source control & issues → Issue work & branch picker** for the server. This applies to new
 proposals; existing proposals keep their approval decision. Body edits, closing or reopening issues,
 and other parent changes also apply right away, unless the agent thread is in **Approval required**
-mode; then they wait for you. Review a waiting change in the issue's detail on
-the Roadmap page, then approve or reject it. Results stay visible there, and failed changes can retry
+mode; then they wait for you. Review a waiting change in the issue's panel, then approve or
+reject it. Results stay visible there, and failed changes can retry
 their remaining steps. If the issue changed since the
 preview, the agent must propose a new change. If GitHub may have created an issue but T3 cannot
 recover it, the change needs your attention. Check GitHub, then choose **Mark resolved** to stop
@@ -458,19 +470,9 @@ top-level thread in the same project.
 Only you can approve this restore. Existing issue workers keep their threads, and the repository
 remains paused after the change. Resume it from **Status** when you are ready to continue.
 
-A thread's details also show its repository's roadmap in an **Issues** section, and open issues
-beside the thread. For a fork checkout, these are the fork's
-issues. Turn either view off in **Settings → Source Control**.
-
-To browse all of the repository's issues without leaving a thread, choose **Browse all issues** in
-that section, pick **Issues** (shortcut `I`) from the empty right panel or its **+** menu, or run
-**Show issues beside thread** from the command palette. The list opens in the right panel with the
-same grouping and filters, and an issue you select opens in a tab next to it. **Show all
-repositories** widens it to every repository you can read.
-
 ### Cross-project issue inbox
 
-The **Inbox** on the repository's **Issues** page holds issues opened and comments posted by
+The **Inbox** section of a repository's roadmap holds issues opened and comments posted by
 another project through `t3_issue_post`. Unmarked writes and other issue changes do not appear.
 T3 checks repositories with an orchestrator every five minutes and other project repositories every
 15 minutes. It notifies the orchestrator of unacknowledged items at most once every 15 minutes. A paused repository catches up when resumed.
@@ -579,6 +581,6 @@ even when its changes look independent. Stack actions require an environment tha
 
 ## Owner decisions
 
-When Don't ask mode is on, agents can request a decision on a GitHub issue or pull request instead of asking you in the thread, with two to four choices, a recommendation, evidence, and the consequence of each choice. Open **Decisions** on the Roadmap page, a thread's Issues pane, or the Pull requests page, or answer from the issue or pull request detail. The all-projects view gathers decisions from connected environments and warns when an environment is unavailable.
+When Don't ask mode is on, agents can request a decision on a GitHub issue or pull request instead of asking you in the thread, with two to four choices, a recommendation, evidence, and the consequence of each choice. Open **Decisions** on the Roadmap page, a thread's Issues panel, or the Pull requests page, or answer from the issue or pull request detail. The all-projects view gathers decisions from connected environments and warns when an environment is unavailable.
 
 Only T3's signed-in owner interface accepts a choice. Agents and Ask mode cannot choose. T3 records the choice in a GitHub comment, then notifies the requesting thread. Temporary publication or delivery failures retry automatically. Comment mismatches and unavailable requesters without a successor stay visible and stop retrying. While Ask mode is on, agents ask you with their question tool and T3 refuses new decision requests; decisions already open stay available. A decision does not approve a separate issue-change preview. This identity guarantee uses the owner login boundary: it cannot prove a physical person clicked if someone else has the owner's credentials.
