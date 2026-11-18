@@ -261,6 +261,7 @@ export class OrchestratorMcpService extends Context.Service<
 >()("t3/mcp/OrchestratorMcpService") {}
 
 export const isThreadManagementError = Schema.is(ThreadManagementService.ThreadManagementError);
+const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
@@ -2808,7 +2809,7 @@ const make = Effect.gen(function* () {
         input.target?.override === true
           ? undefined
           : yield* loadRoleDefaultTarget(input.role, input.target, providers, usageSprint);
-      if (roleDefault instanceof OrchestratorMcpFailure) return yield* roleDefault;
+      if (isOrchestratorMcpFailure(roleDefault)) return yield* roleDefault;
       const target = yield* resolveTargetRechecking({
         parent,
         target: roleDefault === undefined ? input.target : { ...input.target, ...roleDefault },
