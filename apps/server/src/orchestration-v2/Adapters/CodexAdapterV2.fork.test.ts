@@ -38,6 +38,7 @@ import { TestClock } from "effect/testing";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { t3OrchestrationPolicy } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -256,7 +257,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer test-token",
         browserToolsAvailable: false,
-        managedIssue: role,
+        orchestration: t3OrchestrationPolicy(role, ""),
       });
       const requests: Array<unknown> = [];
       const entries = codexReplayPreamble({

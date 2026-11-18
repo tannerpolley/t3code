@@ -1,5 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
 
+import { t3OrchestrationPolicy } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { describe, it } from "vite-plus/test";
 
 import {
@@ -15,8 +16,7 @@ describe("buildCodexAdditionalContext", () => {
     const context = buildCodexAdditionalContext(
       { model: "gpt-5.3-codex", reasoningEffort: "high" },
       false,
-      [],
-      role,
+      t3OrchestrationPolicy(role, ""),
     );
     const first = context.t3_code_orchestration_01?.value ?? "";
     const orchestration = Object.entries(context)

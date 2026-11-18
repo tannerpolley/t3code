@@ -8,6 +8,7 @@ import {
   type ProviderDriverKind,
   type ThreadLinkedIssue,
 } from "@t3tools/contracts";
+import type { ManagedIssueRole } from "@t3tools/provider-core/server/mcpSession";
 
 export const isReadOnlyIssueRole = (role: string | undefined) => {
   const resolved = role === undefined ? undefined : resolveThreadRole(role);
@@ -35,6 +36,16 @@ export const requiresManagedIssueAdmission = (
   (parent.repositoryOrchestration !== undefined ||
     parent.linkedIssue !== undefined ||
     root.repositoryOrchestration !== undefined);
+
+/** Linked issue workers and the repository root get managed orchestration instructions. */
+export const managedIssueRole = (
+  thread: Pick<OrchestrationV2AppThread, "linkedIssue" | "repositoryOrchestration">,
+): ManagedIssueRole | undefined =>
+  thread.linkedIssue !== undefined
+    ? "worker"
+    : thread.repositoryOrchestration !== undefined
+      ? "root"
+      : undefined;
 
 /** Codex and Claude drivers; IssueEligibility.test.ts ties these names to the real drivers. */
 export const supportsManagedIssueWork = (driver: ProviderDriverKind) =>

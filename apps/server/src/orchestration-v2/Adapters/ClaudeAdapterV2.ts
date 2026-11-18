@@ -124,7 +124,6 @@ import {
   type OrchestrationV2WorkflowRunHandles,
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
-  type OrchestratorMcpModelRole,
   type ProviderApprovalDecision,
   type ProviderApprovalFullAccessOverride,
   type ProviderApprovalOption,
@@ -219,7 +218,7 @@ import {
   type ClaudeScopedLimitNames,
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
-import { t3OrchestrationInstructions } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { t3OrchestrationText } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
@@ -2183,8 +2182,7 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
-  readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
-  readonly managedIssue?: McpProviderSession.ManagedIssueRole;
+  readonly orchestration?: McpProviderSession.McpOrchestrationPolicy;
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -2340,7 +2338,7 @@ export function makeClaudeQueryOptions(input: {
         buildRuntimeInstructions({ harness: "Claude Code" }) +
           (input.mcpServers === undefined
             ? ""
-            : t3OrchestrationInstructions(input.modelRoles, input.managedIssue) +
+            : t3OrchestrationText(input.orchestration) +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
               CLAUDE_SEND_TO_USER_INSTRUCTIONS +
               (deviceInstructions
@@ -2491,7 +2489,7 @@ export function claudeMcpQueryOverrides(input: {
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
-  readonly managedIssue?: McpProviderSession.ManagedIssueRole;
+  readonly orchestration?: McpProviderSession.McpOrchestrationPolicy;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
 } {
   const session = input.mcpSession;
@@ -2503,8 +2501,8 @@ export function claudeMcpQueryOverrides(input: {
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
-    ...(session.managedIssue === undefined ? {} : { managedIssue: session.managedIssue }),
-    ...(session.managedIssue === "worker"
+    ...(session.orchestration === undefined ? {} : { orchestration: session.orchestration }),
+    ...(session.orchestration?.nativeSubagents === false
       ? { disallowedTools: ["Agent", "Task", "TeamCreate"] }
       : {}),
     mcpServers: {
@@ -3561,7 +3559,7 @@ export function claudeEffectiveQueryPolicyKey(
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
     readonly disallowedTools?: ReadonlyArray<string>;
-    readonly managedIssue?: McpProviderSession.ManagedIssueRole;
+    readonly orchestration?: McpProviderSession.McpOrchestrationPolicy;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   },
 ): string {
@@ -3574,7 +3572,8 @@ export function claudeEffectiveQueryPolicyKey(
     }),
     mcpServers: mcpOverrides.mcpServers,
     disallowedTools: mcpOverrides.disallowedTools,
-    managedIssue: mcpOverrides.managedIssue,
+    // The system prompt is fixed for a live query; model roles alone do not restart it.
+    orchestration: mcpOverrides.orchestration?.sections,
   });
 }
 
@@ -13162,10 +13161,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(mcpOverrides.disallowedTools === undefined
               ? {}
               : { disallowedTools: mcpOverrides.disallowedTools }),
-            ...(mcpOverrides.managedIssue === undefined
+            ...(mcpOverrides.orchestration === undefined
               ? {}
-              : { managedIssue: mcpOverrides.managedIssue }),
-            modelRoles: (yield* mcpSessions.read(turnInput.threadId))?.modelRoles ?? [],
+              : { orchestration: mcpOverrides.orchestration }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined

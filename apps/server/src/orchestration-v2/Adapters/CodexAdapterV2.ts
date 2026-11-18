@@ -64,7 +64,6 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
   ModelSelection,
-  OrchestratorMcpModelRole,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderFailure,
@@ -842,8 +841,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly hasT3Mcp?: boolean;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
-    readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
-    readonly managedIssue?: McpProviderSession.ManagedIssueRole;
+    readonly orchestration?: McpProviderSession.McpOrchestrationPolicy;
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
@@ -893,8 +891,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
             },
-            input.modelRoles,
-            input.managedIssue,
+            input.orchestration,
           )
         : undefined;
     const additionalContext =
@@ -1573,7 +1570,7 @@ function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
-      ...(mcpSession?.managedIssue === "worker"
+      ...(mcpSession?.orchestration?.nativeSubagents === false
         ? { "features.multi_agent": false, "features.multi_agent_v2": false }
         : {}),
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
@@ -7817,12 +7814,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
-              ...(mcpSession?.managedIssue === undefined
+              ...(mcpSession?.orchestration === undefined
                 ? {}
-                : { managedIssue: mcpSession.managedIssue }),
-              ...(mcpSession?.modelRoles === undefined
-                ? {}
-                : { modelRoles: mcpSession.modelRoles }),
+                : { orchestration: mcpSession.orchestration }),
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
