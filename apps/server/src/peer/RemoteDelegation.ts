@@ -34,6 +34,7 @@ import * as Tool from "effect/ai/Tool";
 import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { roleDefaultTarget } from "../mcp/delegateTaskTarget.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
   resolveInteractionMode,
@@ -287,7 +288,6 @@ const make = Effect.gen(function* () {
         });
       }
       const parentNodeId = parentRun.rootNodeId;
-      const { target } = input;
       // A worktree there would branch from a commit this checkout has and the
       // other may not, so a remote task runs in that project's checkout.
       if (input.isolation === "worktree") {
@@ -297,7 +297,24 @@ const make = Effect.gen(function* () {
             'A task in a linked environment runs in that project\'s checkout; isolation "worktree" is not supported there. Omit isolation, or use t3_thread_launch with environmentId and a worktree workspaceStrategy.',
         });
       }
-      // The provider and model inherit as they do for a task here. Another
+      let target = input.target;
+      if (input.role !== undefined && input.role !== "general" && target.override !== true) {
+        const { modelRoles, providers } = yield* forwarding.call(
+          scope,
+          RemoteCapabilitiesTool,
+          target.environmentId,
+          {},
+        );
+        const choice = roleDefaultTarget(
+          modelRoles,
+          input.role,
+          target,
+          (id) => providers.find((provider) => provider.providerInstanceId === id)?.driverKind,
+        );
+        if (choice instanceof OrchestratorMcpFailure) return yield* choice;
+        if (choice !== undefined) target = { ...target, ...choice };
+      }
+      // Outside a configured role, the provider and model inherit. Another
       // provider there has no model to inherit, so the caller names one.
       const inherited = parent.thread.modelSelection;
       const instanceId =

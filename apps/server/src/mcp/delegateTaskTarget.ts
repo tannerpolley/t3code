@@ -5,6 +5,7 @@ import {
   type ModelRoleTarget,
   resolveThreadRole,
   OrchestratorMcpFailure,
+  type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpModelRole,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -211,14 +212,15 @@ export function workerProviderTargets<T extends ModelRoleTarget>(
 }
 
 /**
- * The first choice, in `modelRoleStatuses` order, of the model role a requested
- * `delegate_task` role names. Implementors get Implementor unless the name means
- * the fast profile, such as `sprinter`. A string explains why none is available.
+ * The first live role choice that matches the requested fields. Implementors
+ * get Implementor unless the name means the fast profile, such as `sprinter`.
  */
 export function roleDefaultTarget(
   roles: ReadonlyArray<OrchestratorMcpModelRole>,
   requestedRole: string,
-): ModelRoleTarget | string | undefined {
+  target: OrchestratorMcpDelegateTaskInput["target"],
+  driverFor: (id: ProviderInstanceId) => ProviderDriverKind | undefined,
+): ModelRoleTarget | OrchestratorMcpFailure | undefined {
   const threadRole = resolveThreadRole(requestedRole);
   const profile =
     requestedRole === "implementor" || requestedRole === "implementation"
@@ -230,9 +232,36 @@ export function roleDefaultTarget(
       (profile === undefined || (entry.profile ?? modelRoleProfile(entry.id)) === profile),
   );
   if (role === undefined) return undefined;
-  const [{ providerInstanceId, model, options, unavailableReason }] = role.targets;
-  if (unavailableReason !== null)
-    return `No ${role.name} model role choice is available, so the child uses this thread's model. First choice: ${unavailableReason}`;
+  const requestedOptions = target?.options;
+  const choice = role.targets.find(
+    ({ providerInstanceId, model, options }) =>
+      (target?.providerInstanceId === undefined ||
+        target.providerInstanceId === providerInstanceId) &&
+      (target?.driverKind === undefined || target.driverKind === driverFor(providerInstanceId)) &&
+      (target?.model === undefined || target.model === model) &&
+      (requestedOptions === undefined ||
+        (requestedOptions.length === (options?.length ?? 0) &&
+          (options ?? []).every(({ id, value }) =>
+            requestedOptions.some((option) => option.id === id && option.value === value),
+          ))),
+  );
+  if (choice === undefined) {
+    const [current] = role.targets;
+    return new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: `The target is outside the current ${role.name} choices. The first choice is ${current.model} on ${current.providerInstanceId}${current.options?.length ? ` with ${current.options.map(({ id, value }) => `${id}=${value}`).join(", ")}` : ""}. Omit the model target fields to use the role's choice, or ask the owner through the question tool and set target.override to true after they approve.`,
+    });
+  }
+  const { providerInstanceId, model, options, unavailableReason, weeklyUsage } = choice;
+  const reason =
+    unavailableReason ??
+    (weeklyUsage?.remainingPercent === 0 ? "Weekly usage is exhausted." : null);
+  if (reason !== null) {
+    return new OrchestratorMcpFailure({
+      code: "provider_unavailable",
+      message: `The ${role.name} role choice ${model} on ${providerInstanceId} is unavailable. ${reason} Ask the owner through the question tool before using another model. Offer the role's other choices with a recommendation and wait for the answer.`,
+    });
+  }
   return { providerInstanceId, model, ...(options === undefined ? {} : { options }) };
 }
 

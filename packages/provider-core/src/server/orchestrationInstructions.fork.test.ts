@@ -54,10 +54,7 @@ describe("T3 orchestration provider instructions", () => {
       })),
     }));
     const text = t3ModelRolesInstructions(roles);
-    assert.include(
-      text,
-      "The user's choices for delegated work follow configured order, with the Default first. Choices with weekly headroom below 0.8 are demoted behind the others, ordered by headroom. Unknown usage is not demoted, and unavailable targets go last. You may override this order for task fit; explicit user instructions win.",
-    );
+    assert.include(text, "Pass `role` and omit `target` to use the live role default.");
     assert.include(
       text,
       '- Checker (role: checker): Check a build for missed places, weak tests and edge cases. gpt-6.1-sol high (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-6.1-sol","options":{"reasoningEffort":"high"}}`',
