@@ -1,4 +1,7 @@
 {
+  "7c9d12777939861a": "Escolha uma pasta neste ambiente",
+  "0ccd3cc985de10d0": "Escolha uma pasta existente",
+  "7a74461ddd09dff0": "Escolher pasta",
   "1915a433d092839d": "Ambos",
   "1b7c524fccf06537": "Precisa da sua atenção",
   "9118979e7d982335": "Pronto para revisão",
@@ -99,6 +102,11 @@
   "5503ef439beb8d42": "Confirmação ao fechar terminais",
   "86b43caa9ff41ea2": "Atalho de saída",
   "c3091df5aa9526a8": "Alertas no celular",
+  "88b7b50b247328f7": "Não foi possível salvar a seção de projetos",
+  "b973064d3aacf2bb": "Não foi possível adicionar estas pastas como projetos",
+  "6cc3a43639370dff": "Procurar",
+  "3d5fd6670d1e8546": "Usa a pasta existente {path}",
+  "4ff59e3efe808734": "Adicionar subpastas como projetos",
   "1a47fae902ee1859": "Provedores por função",
   "b6295e8a6dd8291f": "Autorizar o uso de créditos quando a cota semanal estiver quase esgotada."
 }

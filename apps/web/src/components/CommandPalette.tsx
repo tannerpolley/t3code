@@ -11,6 +11,7 @@ import { sectionTarget } from "../projectSectionPlacement";
 import { setAddProjectSection } from "../projectSectionPlacement";
 import { folderSubsectionInput } from "../sectionProjectPath";
 import { sectionFolderPath } from "../sectionProjectPath";
+import { useGT } from "gt-react";
 import { threadIssueRepository } from "./chat/ThreadDetailsRepositoryIssueRows";
 import { useUiStateStore } from "../uiStateStore";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
@@ -306,6 +307,12 @@ const NEW_THREAD_IN_GROUP = "projects";
 /** The submenu an open intent starts in; its groups resolve while rendering. */
 function openIntentView(intent: CommandPaletteOpenIntent | null): CommandPaletteView | null {
   switch (intent?.kind) {
+    case "pick-folder":
+      return {
+        addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
+        groups: [],
+        initialQuery: intent.query,
+      };
     case "add-project":
       return {
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
@@ -441,6 +448,7 @@ function OpenCommandPaletteDialog(props: {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { openChildSearch, setOpen } = props;
+  const gt = useGT();
   // Keyed by palette session: the intent and restored search only seed this
   // mount, and closing must not change what the closing palette shows.
   const [initialSearch] = useState(
@@ -449,6 +457,9 @@ function OpenCommandPaletteDialog(props: {
         query: props.openIntent?.kind === "search" ? props.openIntent.query : "",
         linkedThreadSearch: props.openIntent?.kind === "search" ? props.openIntent : null,
       },
+  );
+  const [folderPicker] = useState(() =>
+    props.openIntent?.kind === "pick-folder" ? props.openIntent : null,
   );
   const linkedThreadSearch = initialSearch.linkedThreadSearch;
   // Rows were captured when the palette opened; drop any hidden since then.
@@ -459,7 +470,7 @@ function OpenCommandPaletteDialog(props: {
   const [searchState, dispatchSearch] = useReducer(reduceCommandPaletteSearchState, null, () => {
     const view = props.initialContext ? null : openIntentView(props.openIntent);
     return view
-      ? { query: "", views: [{ view, parentQuery: "" }] }
+      ? { query: folderPicker?.query ?? "", views: [{ view, parentQuery: "" }] }
       : createCommandPaletteSearchState(initialSearch.query);
   });
   const { query, views: viewStack } = searchState;
@@ -663,6 +674,7 @@ function OpenCommandPaletteDialog(props: {
         : false;
     }) ?? null;
   const browseEnvironmentId =
+    folderPicker?.environmentId ??
     addProjectEnvironmentId ??
     sectionTarget(currentAddProjectSection())?.[0] ??
     defaultAddProjectEnvironmentId;
@@ -1016,6 +1028,10 @@ function OpenCommandPaletteDialog(props: {
   });
 
   function popView(): void {
+    if (folderPicker) {
+      setOpen(false);
+      return;
+    }
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
@@ -1047,7 +1063,7 @@ function OpenCommandPaletteDialog(props: {
       };
     }
     setQuery(resolvedQuery);
-    if (nextQuery === "" && currentView?.initialQuery) {
+    if (nextQuery === "" && currentView?.initialQuery && !folderPicker) {
       popView();
     }
   }
@@ -2092,6 +2108,24 @@ function OpenCommandPaletteDialog(props: {
 
     const cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
     if (cwd.length === 0) return;
+    if (folderPicker) {
+      if (input.environmentId !== folderPicker.environmentId) {
+        toastManager.add({ type: "error", title: gt("Choose a folder on this environment") });
+        return;
+      }
+      const selected = await loadBrowsePath({
+        environmentId: input.environmentId,
+        input: { partialPath: getAddProjectInitialQuery(cwd) },
+      });
+      if (useCommandPaletteStore.getState().openIntent !== folderPicker) return;
+      if (selected._tag === "Failure") {
+        toastManager.add({ type: "error", title: gt("Choose an existing folder") });
+        return;
+      }
+      folderPicker.onPick(selected.value.parentPath);
+      setOpen(false);
+      return;
+    }
     if (isAddingFolderSubsection()) {
       const parent = useUiStateStore
         .getState()
@@ -2716,10 +2750,11 @@ function OpenCommandPaletteDialog(props: {
   );
   const canCloneProject = canWriteSourceControl && canCreateClonedProject;
   const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
+  const canSubmitToEnvironment = folderPicker ? browseAccess.canReadFiles : canCreateProject;
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&
-    canCreateProject &&
+    canSubmitToEnvironment &&
     (!isCloneDestinationStep || canCloneProject) &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
   const willCreateProjectPath =
@@ -2731,15 +2766,17 @@ function OpenCommandPaletteDialog(props: {
     (hasTrailingPathSeparator(query) ? !browseResult : exactBrowseEntry === null);
   const useMetaForMod = isMacPlatform(navigator.platform);
   const submitModifierLabel = useMetaForMod ? "\u2318" : "Ctrl";
-  const submitActionLabel = isAddingFolderSubsection()
-    ? "Add subsection"
-    : isCloneDestinationStep
-      ? willCreateProjectPath
-        ? "Create & Clone"
-        : "Clone"
-      : willCreateProjectPath
-        ? "Create & Add"
-        : "Add";
+  const submitActionLabel = folderPicker
+    ? gt("Choose folder")
+    : isAddingFolderSubsection()
+      ? "Add subsection"
+      : isCloneDestinationStep
+        ? willCreateProjectPath
+          ? "Create & Clone"
+          : "Clone"
+        : willCreateProjectPath
+          ? "Create & Add"
+          : "Add";
   const addShortcutLabel = hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter";
   const hasHighlightedNewProjectItem = newProjectFlow !== null && highlightedItemValue !== null;
   const createShortcutLabel = hasHighlightedNewProjectItem
@@ -3109,7 +3146,7 @@ function OpenCommandPaletteDialog(props: {
   const browseSubmitLabel =
     isCloneDestinationStep && !canCloneProject
       ? "This connection needs permission to write source control and add projects."
-      : canCreateProject
+      : canSubmitToEnvironment
         ? `${submitActionLabel} (${addShortcutLabel})`
         : "This connection cannot add projects.";
   const inputAccessory =
@@ -3145,7 +3182,7 @@ function OpenCommandPaletteDialog(props: {
         ariaLabel={browseSubmitLabel}
         tooltip={browseSubmitLabel}
         disabled={
-          !canCreateProject ||
+          !canSubmitToEnvironment ||
           !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
           relativePathNeedsActiveProject ||
           (isCloneDestinationStep && (!canCloneProject || isRemoteProjectPending))

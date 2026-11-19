@@ -1,4 +1,7 @@
 {
+  "7c9d12777939861a": "Choisissez un dossier dans cet environnement",
+  "0ccd3cc985de10d0": "Choisissez un dossier existant",
+  "7a74461ddd09dff0": "Choisir un dossier",
   "1915a433d092839d": "Les deux",
   "1b7c524fccf06537": "Nécessite votre attention",
   "9118979e7d982335": "Prêt pour la revue",
@@ -99,6 +102,11 @@
   "5503ef439beb8d42": "Confirmation de la fermeture des terminaux",
   "86b43caa9ff41ea2": "Raccourci Quitter",
   "c3091df5aa9526a8": "Alertes sur téléphone",
+  "88b7b50b247328f7": "Impossible d’enregistrer la section de projets",
+  "b973064d3aacf2bb": "Impossible d’ajouter ces dossiers comme projets",
+  "6cc3a43639370dff": "Parcourir",
+  "3d5fd6670d1e8546": "Utilise le dossier existant {path}",
+  "4ff59e3efe808734": "Ajouter les sous-dossiers comme projets",
   "1a47fae902ee1859": "Fournisseurs par rôle",
   "b6295e8a6dd8291f": "Autoriser l’utilisation de crédits quand le quota hebdomadaire est presque épuisé."
 }

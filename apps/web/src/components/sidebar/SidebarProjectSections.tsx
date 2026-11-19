@@ -8,7 +8,6 @@ import {
   type SidebarFamilySeparator,
 } from "./SidebarFamilySeparators.logic";
 import { ForkSidebarTextSizes } from "./ForkSidebarTextSizes";
-import { sectionTarget, useProjectSectionPlacementReady } from "../../projectSectionPlacement";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
@@ -36,7 +35,13 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
+import { getAddProjectInitialQuery } from "@t3tools/client-runtime/operations/projects";
+import { useGT } from "gt-react";
 import {
   CheckIcon,
   CornerDownRightIcon,
@@ -114,7 +119,12 @@ import {
   type ReactNode,
 } from "react";
 
-import { type EnvironmentId, type ProjectIconColor, type ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentId,
+  type ProjectIconColor,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 import {
   inheritedSectionFolderAppearance,
@@ -125,8 +135,28 @@ import { openCommandPalette } from "../../commandPaletteBus";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { SidebarThreadSummary } from "../../types";
 import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore";
-import { cn } from "~/lib/utils";
-import { useClientSettings } from "../../hooks/useSettings";
+import { cn, newProjectId } from "~/lib/utils";
+import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
+import { dispatchCommandPalette, useCommandPaletteStore } from "../../commandPaletteStore";
+import {
+  completeProjectSectionPlacement,
+  sectionPlacementInput,
+  sectionTarget,
+  useProjectSectionPlacementReady,
+  waitForNewSectionPlacement,
+} from "../../projectSectionPlacement";
+import {
+  folderSubsectionInput,
+  sectionFolderPath,
+  sectionProjectCandidates,
+  suggestSectionFolder,
+} from "../../sectionProjectPath";
+import { sidebarSectionKey } from "../../sidebarLayoutProjection";
+import { useProjects } from "../../state/entities";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { filesystemEnvironment, useFilesystemReadAccess } from "../../state/filesystem";
+import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentScope } from "../../state/session";
 import {
   flattenRunningSubagents,
   resolveLocationLeads,
@@ -137,6 +167,7 @@ import {
 } from "../Sidebar.logic";
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import {
   Dialog,
   DialogDescription,
@@ -1800,24 +1831,138 @@ function ProjectSectionDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const { target } = props;
-  const canWrite = useSidebarLayoutPermission(
-    target.kind === "rename" ? target.id : (target.parent?.id ?? null),
+  const gt = useGT();
+  const parentId = target.kind === "create" ? (target.parent?.id ?? null) : null;
+  const canWrite = useSidebarLayoutPermission(target.kind === "rename" ? target.id : parentId);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const environmentId =
+    target.kind === "create" ? (sectionTarget(parentId)?.[0] ?? primaryEnvironmentId) : null;
+  const parentFolder = useUiStateStore(
+    (store) => store.sidebarProjectSections.find((section) => section.id === parentId)?.folderPath,
   );
+  const root = useEnvironmentSettings(
+    environmentId ?? EnvironmentId.make("unavailable"),
+    (settings) => settings.projectFolderRoot || settings.addProjectBaseDirectory,
+  );
+  const parentPath =
+    target.kind === "create" && target.parent
+      ? sectionFolderPath(root, [target.parent.name], parentFolder)
+      : root.trim() || null;
   const addSection = useUiStateStore((store) => store.addSidebarProjectSection);
   const renameSection = useUiStateStore((store) => store.renameSidebarProjectSection);
+  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const canCreateProject = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const { canReadFiles } = useFilesystemReadAccess(environmentId);
+  const projects = useProjects();
+  const picking = useCommandPaletteStore((store) => store.openIntent?.kind === "pick-folder");
   const [name, setName] = useState(target.kind === "rename" ? target.name : "");
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const [pickedPath, setPickedPath] = useState<string | null>(null);
+  const [checkedPaths, setCheckedPaths] = useState<readonly string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const readFolders = (path: string | null) =>
+    props.open && environmentId && canReadFiles && path
+      ? filesystemEnvironment.browse({
+          environmentId,
+          input: { partialPath: getAddProjectInitialQuery(path) },
+        })
+      : null;
+  const parentFolders = useEnvironmentQuery(readFolders(pickedPath ? null : parentPath));
+  const suggestedFolder = suggestSectionFolder(name, parentFolders.data?.entries ?? []);
+  const folderPath = pickedPath ?? suggestedFolder?.fullPath;
+  const subfolders = useEnvironmentQuery(readFolders(folderPath ?? null));
+  const candidates = canCreateProject
+    ? sectionProjectCandidates(
+        subfolders.data?.entries ?? [],
+        projects
+          .filter((project) => project.environmentId === environmentId)
+          .map((project) => project.workspaceRoot),
+      )
+    : [];
+
+  const browse = () => {
+    if (!environmentId) return;
+    dispatchCommandPalette({
+      _tag: "OpenFolderPicker",
+      intent: {
+        kind: "pick-folder",
+        environmentId,
+        query: getAddProjectInitialQuery(folderPath ?? parentPath),
+        onPick: (path) => {
+          setPickedPath(path);
+          setCheckedPaths([]);
+          setName((current) =>
+            current.trim() ? current : (folderSubsectionInput(path)?.name ?? path.slice(0, 80)),
+          );
+        },
+      },
+    });
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed || !canWrite) return;
-    if (target.kind === "create") addSection(trimmed, target.parent?.id);
-    else renameSection(target.id, trimmed);
+    if (!trimmed || !canWrite || busy) return;
+    if (target.kind === "rename") {
+      renameSection(target.id, trimmed);
+      props.onOpenChange(false);
+      return;
+    }
+    if (environmentId === null) return;
+    setBusy(true);
+    const id = await addSection(trimmed, target.parent?.id, folderPath);
+    if (id === null) {
+      setBusy(false);
+      toastManager.add({ type: "error", title: gt("Couldn't save the project section") });
+      return;
+    }
+    const selected = candidates.filter((folder) => checkedPaths.includes(folder.fullPath));
+    if (selected.length > 0) {
+      const sectionId = sidebarSectionKey(environmentId, id);
+      const ready = await waitForNewSectionPlacement(environmentId, sectionId);
+      const failed: string[] = [];
+      for (const folder of selected) {
+        const placement = ready ? sectionPlacementInput(environmentId, sectionId) : null;
+        if (placement === null) {
+          failed.push(folder.name);
+          continue;
+        }
+        const projectId = newProjectId();
+        const result = await createProject({
+          environmentId,
+          input: {
+            ...placement,
+            projectId,
+            title: folder.name,
+            workspaceRoot: folder.fullPath,
+            defaultModelSelection: null,
+          },
+        });
+        if (result._tag === "Success") {
+          completeProjectSectionPlacement(scopeProjectRef(environmentId, projectId), sectionId);
+        } else {
+          failed.push(folder.name);
+        }
+      }
+      if (failed.length > 0) {
+        toastManager.add({
+          type: "error",
+          title: gt("Couldn't add these folders as projects"),
+          description: failed.join(", "),
+        });
+      }
+    }
     props.onOpenChange(false);
+    setBusy(false);
   };
   return (
-    <Dialog onOpenChange={props.onOpenChange} open={props.open}>
+    <Dialog
+      onOpenChange={(open) => {
+        if (!busy && !picking) props.onOpenChange(open);
+      }}
+      open={props.open && !picking}
+    >
       <DialogPopup className="max-w-md">
-        <form onSubmit={handleSubmit}>
+        <form className="flex min-h-0 flex-col" onSubmit={(event) => void handleSubmit(event)}>
           <DialogHeader>
             <DialogTitle>
               {target.kind === "rename"
@@ -1831,20 +1976,73 @@ function ProjectSectionDialog(props: {
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
-            <Input
-              aria-label="Project section name"
-              autoFocus
-              maxLength={80}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="e.g. Work"
-              value={name}
-            />
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <Input
+                  aria-label="Project section name"
+                  autoFocus
+                  disabled={busy}
+                  maxLength={80}
+                  onChange={(event) => {
+                    setName(event.target.value);
+                    if (!pickedPath) setCheckedPaths([]);
+                  }}
+                  placeholder="e.g. Work"
+                  value={name}
+                />
+              </div>
+              {target.kind === "create" ? (
+                <Button
+                  disabled={!canWrite || !canReadFiles || busy}
+                  onClick={browse}
+                  type="button"
+                  variant="outline"
+                >
+                  {gt("Browse")}
+                </Button>
+              ) : null}
+            </div>
+            {folderPath ? (
+              <p className="break-all text-xs text-muted-foreground">
+                {gt("Uses existing folder {path}", { path: folderPath })}
+              </p>
+            ) : null}
+            {candidates.length > 0 ? (
+              <fieldset
+                disabled={busy}
+                className="flex max-h-48 min-w-0 flex-col gap-2 overflow-y-auto"
+              >
+                <legend className="mb-2 text-sm font-medium">
+                  {gt("Add subfolders as projects")}
+                </legend>
+                {candidates.map((folder) => (
+                  <label key={folder.fullPath} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={checkedPaths.includes(folder.fullPath)}
+                      onCheckedChange={(checked) =>
+                        setCheckedPaths((paths) =>
+                          checked
+                            ? [...paths, folder.fullPath]
+                            : paths.filter((path) => path !== folder.fullPath),
+                        )
+                      }
+                    />
+                    <span className="break-all">{folder.name}</span>
+                  </label>
+                ))}
+              </fieldset>
+            ) : null}
           </DialogPanel>
           <DialogFooter>
-            <Button onClick={() => props.onOpenChange(false)} type="button" variant="outline">
+            <Button
+              disabled={busy}
+              onClick={() => props.onOpenChange(false)}
+              type="button"
+              variant="outline"
+            >
               Cancel
             </Button>
-            <Button disabled={!canWrite || name.trim().length === 0} type="submit">
+            <Button disabled={!canWrite || busy || name.trim().length === 0} type="submit">
               Save
             </Button>
           </DialogFooter>

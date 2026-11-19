@@ -4,6 +4,8 @@ import {
   folderSubsectionInput,
   projectFolderNameProblem,
   sectionFolderPath,
+  sectionProjectCandidates,
+  suggestSectionFolder,
 } from "./sectionProjectPath";
 
 describe("sectionFolderPath", () => {
@@ -50,4 +52,18 @@ it("uses the selected folder basename and keeps its path after a rename or root 
   });
   expect(folderSubsectionInput("/")).toBeNull();
   expect(folderSubsectionInput("C:\\")).toBeNull();
+});
+
+it("suggests an existing section folder and only offers unadded, visible subfolders", () => {
+  const entry = (name: string, parent = "/work") => ({ name, fullPath: `${parent}/${name}` });
+  const personal = entry("Personal");
+  expect(suggestSectionFolder(" Personal ", [entry("Personal Notes"), personal])).toBe(personal);
+  expect(suggestSectionFolder("Missing", [personal])).toBeNull();
+  const hobby = entry("Hobby", personal.fullPath);
+  expect(
+    sectionProjectCandidates(
+      [entry(".hidden", personal.fullPath), entry("Already added", personal.fullPath), hobby],
+      ["/work/Personal/Already added/"],
+    ),
+  ).toEqual([hobby]);
 });
