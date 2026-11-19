@@ -35,6 +35,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
@@ -623,6 +624,30 @@ describe("OrchestratorMcpService provider resolution", () => {
       (chooseCodex(providers(93, 3, false)) as OrchestratorMcpFailure).message,
       /not authenticated.*Ask the owner/,
     );
+  });
+
+  it("reports a positive Codex balance as unspendable at the monthly credit cap", () => {
+    const codex: ServerProvider = {
+      ...providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "sol",
+      }),
+      usageLimits: codexRateLimitsToLimits({
+        checkedAt: modelRoleStatusCheckedAt,
+        snapshot: {
+          credits: { hasCredits: true, unlimited: false, balance: "12" },
+          individualLimit: {
+            remainingPercent: 0,
+            resetsAt: Date.parse(modelRoleStatusResetAt(0.7)) / 1000,
+          },
+        },
+      }),
+    };
+    const status = providerCreditStatuses([codex], { claude: false, codex: true }).find(
+      (entry) => entry.providerInstanceId === codexInstanceId,
+    );
+    assert.include(status, { approved: true, balance: "12", creditsAvailable: false });
   });
 
   it("keeps configured order unless headroom is below the threshold", () => {

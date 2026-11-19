@@ -153,6 +153,25 @@ describe("usage-limit target selection", () => {
     ).toBeUndefined();
   });
 
+  it("prefers an Implementor's matching effort over Sprinter's default effort on the same tier", () => {
+    const settings = settingsWith({
+      modelRoles: {
+        "implementor-fast": { tier: 2, provider: "both", effort: "default" },
+        "implementor-thorough": { tier: 2, provider: "codex", effort: "high" },
+      },
+      modelTiers: { 2: { claude: { model: "opus" }, codex: { model: "sol" } } },
+    });
+    expect(
+      usageLimitSwitchTarget(
+        { ...topLevel, role: "implementor", modelSelection: source },
+        settings,
+        [provider(codex, "codex", "sol", 100), provider(claude, "claudeAgent", "opus")],
+        new Set([codex, claude]),
+        now,
+      ),
+    ).toBeNull();
+  });
+
   it("uses existing weekly-headroom ranking across alternatives and preserves provider-specific effort", () => {
     const settings = settingsWith({
       modelRoles: { reviewer: { provider: "codex" } },
