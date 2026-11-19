@@ -37,7 +37,12 @@ export function folderSubsectionInput(path: string) {
   return { name: name.slice(0, 80), folderPath };
 }
 
-export function suggestSectionFolder(name: string, folders: readonly FilesystemBrowseEntry[]) {
+export function suggestSectionFolder(
+  name: string,
+  folders: readonly FilesystemBrowseEntry[],
+  isPending: boolean,
+) {
+  if (isPending) return "pending";
   const trimmed = name.trim();
   return folders.find((folder) => folder.name === trimmed) ?? null;
 }

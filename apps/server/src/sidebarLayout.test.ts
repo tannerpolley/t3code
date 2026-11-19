@@ -55,6 +55,36 @@ const run = <A, E>(
   >,
 ) => body.pipe(Effect.provide(Layer.fresh(layer)));
 
+it.effect("places a project in its linked section without inferring an extra section", () =>
+  run(
+    Effect.gen(function* () {
+      const service = yield* Sidebar.SidebarLayoutService;
+      const settings = yield* Settings.ServerSettingsService;
+      yield* settings.updateSettings({ autoOrganizeByFolder: true, projectFolderRoot: "/work" });
+      yield* service.update({
+        revision: 0,
+        operations: [
+          {
+            type: "add",
+            section: { id: "weekend", name: "Weekend", folderPath: "/work/Personal" },
+          },
+        ],
+      });
+      yield* service.withProjectChange(
+        { projectId: "c", workspaceRoot: "/work/Personal/Hobby", sectionId: "weekend" },
+        (persist) => persist,
+      );
+      assert.deepEqual(
+        (yield* service.get).layout.sidebarProjectSections.map((section) => [
+          section.name,
+          section.projectKeys,
+        ]),
+        [["Weekend", ["c"]]],
+      );
+    }),
+  ),
+);
+
 it.effect("applies nesting, ordering, membership, deletion and expansion through one service", () =>
   run(
     Effect.gen(function* () {
