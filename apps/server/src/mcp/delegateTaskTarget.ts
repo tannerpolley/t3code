@@ -268,8 +268,12 @@ export function providerCreditStatuses(
       : spend === undefined
         ? undefined
         : remainingPercent(spend);
-    const creditsAvailable =
-      credits?.hasCredits || credits?.unlimited || (extraUsageRemainingPercent ?? 0) > 0
+    const monthlyCreditLimitReached =
+      id === "codex" &&
+      limits?.windows.some((window) => window.id === "individual" && window.usedPercent >= 100);
+    const creditsAvailable = monthlyCreditLimitReached
+      ? false
+      : credits?.hasCredits || credits?.unlimited || (extraUsageRemainingPercent ?? 0) > 0
         ? true
         : credits != null || extraUsageRemainingPercent !== undefined
           ? false

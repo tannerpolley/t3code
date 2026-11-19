@@ -21,7 +21,7 @@ type UsageLimitThread = Pick<
 
 /**
  * The thread's role (the same one the sidebar shows) picks the profiles; within it, the profile
- * listing the current selection wins, else its first one. Implementor profiles live in settings.
+ * matching the most options on the current selection wins, else its first one.
  */
 export function usageLimitThreadRole(
   thread: UsageLimitThread,
@@ -30,17 +30,25 @@ export function usageLimitThreadRole(
   const threadRole = effectiveThreadRole(thread);
   const owned = roles.filter((role) => (role.role ?? resolveThreadRole(role.id)) === threadRole);
   const { instanceId, model, options } = thread.modelSelection;
-  const matched = owned.find((role) =>
-    role.targets.some(
-      (target) =>
+  let matched = owned[0];
+  let specificity = -1;
+  for (const role of owned) {
+    for (const target of role.targets) {
+      const required = target.options ?? [];
+      if (
+        required.length > specificity &&
         target.providerInstanceId === instanceId &&
         target.model === model &&
-        (target.options ?? []).every(({ id, value }) =>
+        required.every(({ id, value }) =>
           options?.some((option) => option.id === id && option.value === value),
-        ),
-    ),
-  );
-  return matched ?? owned[0];
+        )
+      ) {
+        matched = role;
+        specificity = required.length;
+      }
+    }
+  }
+  return matched;
 }
 
 export function usageLimitSwitchTarget(
