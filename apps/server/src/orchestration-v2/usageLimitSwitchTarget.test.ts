@@ -123,10 +123,15 @@ describe("usage-limit target selection", () => {
       alternative,
       { role: "implementor", profile: "fast" },
     );
-    const thorough = role("implementor-thorough", source, alternative, {
-      role: "implementor",
-      profile: "thorough",
-    });
+    const thorough = role(
+      "implementor-thorough",
+      { ...source, options: [{ id: "reasoningEffort", value: "high" }] },
+      alternative,
+      {
+        role: "implementor",
+        profile: "thorough",
+      },
+    );
     const roles = [orchestrator, fast, thorough];
     expect(
       usageLimitThreadRole(
@@ -173,6 +178,29 @@ describe("usage-limit target selection", () => {
       model: "opus",
       options: [{ id: "effort", value: "low" }],
     });
+  });
+
+  it("keeps the approved first recovery target ahead of a higher-headroom fallback", () => {
+    const codexAlt = ProviderInstanceId.make("codex-alt");
+    const primary = { instanceId: codex, model: "sol" };
+    const settings = settingsWith({
+      modelRoles: { orchestrator: { provider: "claude" } },
+      providerCreditsApproved: { codex: true },
+      usageLimitFallbackModels: [primary, { ...primary, instanceId: codexAlt }],
+    });
+    expect(
+      usageLimitSwitchTarget(
+        { ...topLevel, modelSelection: alternative },
+        settings,
+        [
+          provider(claude, "claudeAgent", "opus", 100),
+          provider(codex, "codex", "sol", 93),
+          provider(codexAlt, "codex", "sol", 20),
+        ],
+        new Set([claude, codex, codexAlt]),
+        now,
+      ),
+    ).toEqual(primary);
   });
 
   it.each(["exhausted", "unauthenticated", "invalid-effort", "missing-adapter", "disabled"])(

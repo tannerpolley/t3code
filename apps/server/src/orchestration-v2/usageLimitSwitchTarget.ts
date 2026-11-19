@@ -10,12 +10,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
-import {
-  modelRoleStatuses,
-  modelWeeklyHeadroom,
-  providerCreditStatuses,
-} from "../mcp/delegateTaskTarget.ts";
+import { modelRoleStatuses, providerCreditStatuses } from "../mcp/delegateTaskTarget.ts";
 
 type UsageLimitThread = Pick<
   OrchestrationV2AppThread,
@@ -34,13 +29,15 @@ export function usageLimitThreadRole(
 ): ModelRole | undefined {
   const threadRole = effectiveThreadRole(thread);
   const owned = roles.filter((role) => (role.role ?? resolveThreadRole(role.id)) === threadRole);
+  const { instanceId, model, options } = thread.modelSelection;
   const matched = owned.find((role) =>
-    role.targets.some((target) =>
-      modelSelectionsEqual(thread.modelSelection, {
-        instanceId: target.providerInstanceId,
-        model: target.model,
-        ...(target.options === undefined ? {} : { options: target.options }),
-      }),
+    role.targets.some(
+      (target) =>
+        target.providerInstanceId === instanceId &&
+        target.model === model &&
+        (target.options ?? []).every(({ id, value }) =>
+          options?.some((option) => option.id === id && option.value === value),
+        ),
     ),
   );
   return matched ?? owned[0];
@@ -84,21 +81,11 @@ export function usageLimitSwitchTarget(
     capableIds,
     now,
     providerCreditStatuses(providers, settings.providerCreditsApproved),
+    undefined,
+    "weekly-headroom",
   );
   const choice = ranked
-    .flatMap((candidate) =>
-      [...candidate.targets].sort((left, right) => {
-        const headroom = (target: typeof left) => {
-          const provider = providers.find(
-            (entry) => entry.instanceId === target.providerInstanceId,
-          );
-          return provider === undefined
-            ? undefined
-            : modelWeeklyHeadroom(provider, target.model, now);
-        };
-        return (headroom(right) ?? -Infinity) - (headroom(left) ?? -Infinity) || 0;
-      }),
-    )
+    .flatMap((candidate) => candidate.targets)
     .find((target) => {
       const provider = providers.find(
         (provider) => provider.instanceId === target.providerInstanceId,

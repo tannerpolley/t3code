@@ -269,14 +269,9 @@ export function providerCreditStatuses(
         ? undefined
         : remainingPercent(spend);
     const creditsAvailable =
-      (resetCreditCount ?? 0) > 0 ||
-      credits?.hasCredits ||
-      credits?.unlimited ||
-      (extraUsageRemainingPercent ?? 0) > 0
+      credits?.hasCredits || credits?.unlimited || (extraUsageRemainingPercent ?? 0) > 0
         ? true
-        : resetCreditCount !== undefined ||
-            credits != null ||
-            extraUsageRemainingPercent !== undefined
+        : credits != null || extraUsageRemainingPercent !== undefined
           ? false
           : undefined;
     return {
@@ -302,6 +297,7 @@ export function modelRoleStatuses(
   now: number,
   providerCredits: ReadonlyArray<OrchestratorMcpProviderCredits> = [],
   usageSprint?: RepositoryUsageSprint,
+  order: "configured" | "weekly-headroom" = "configured",
 ): ReadonlyArray<OrchestratorMcpModelRole> {
   const providerById = new Map(providers.map((provider) => [provider.instanceId, provider]));
   return roles.map((role) => {
@@ -328,10 +324,7 @@ export function modelRoleStatuses(
         (entry) => entry.providerInstanceId === target.providerInstanceId,
       );
       const creditsApproved = credits?.approved === true;
-      const headroom =
-        provider === undefined || creditsApproved
-          ? undefined
-          : modelWeeklyHeadroom(provider, target.model, now);
+      const headroom = creditsApproved ? Infinity : modelWeeklyHeadroom(windows, now);
       const weeklyUsage =
         window === undefined
           ? undefined
@@ -344,8 +337,8 @@ export function modelRoleStatuses(
         typeof checked !== "string"
           ? checked.message
           : weeklyUsage?.remainingPercent === 0 &&
-              (!creditsApproved || credits.creditsAvailable === false)
-            ? creditsApproved
+              (!creditsApproved || credits.creditsAvailable !== true)
+            ? creditsApproved && credits.creditsAvailable === false
               ? "Weekly usage and credits are exhausted."
               : "Weekly usage is exhausted."
             : null;
@@ -367,25 +360,19 @@ export function modelRoleStatuses(
         const rank = (choice: (typeof choices)[number]) =>
           choice.unavailable
             ? 2
-            : choice.headroom !== undefined &&
-                choice.headroom + Number.EPSILON < MIN_WEEKLY_HEADROOM
+            : order === "weekly-headroom" ||
+                (choice.headroom !== undefined &&
+                  choice.headroom + Number.EPSILON < MIN_WEEKLY_HEADROOM)
               ? 1
               : 0;
-        const byAvailability = rank(left) - rank(right);
-        if (byAvailability !== 0) return byAvailability < 0 ? -1 : 1;
-        if (
-          rank(left) === 1 &&
-          left.headroom !== undefined &&
-          right.headroom !== undefined &&
-          left.headroom !== right.headroom
-        ) {
-          return left.headroom > right.headroom ? -1 : 1;
+        const leftRank = rank(left);
+        const byRank = Order.Number(leftRank, rank(right));
+        if (byRank !== 0) return byRank;
+        if (leftRank === 1) {
+          const byHeadroom = Order.Number(right.headroom ?? -Infinity, left.headroom ?? -Infinity);
+          if (byHeadroom !== 0) return byHeadroom;
         }
-        return left.configuredOrder < right.configuredOrder
-          ? -1
-          : left.configuredOrder > right.configuredOrder
-            ? 1
-            : 0;
+        return Order.Number(left.configuredOrder, right.configuredOrder);
       }),
     );
     return {
@@ -395,12 +382,11 @@ export function modelRoleStatuses(
   });
 }
 
-export function modelWeeklyHeadroom(
-  provider: ServerProvider,
-  model: string,
+function modelWeeklyHeadroom(
+  windows: readonly ServerProviderUsageWindow[],
   now: number,
 ): number | undefined {
-  const headrooms = weeklyWindowsForModel(provider, model, now).flatMap((window) => {
+  const headrooms = windows.flatMap((window) => {
     const headroom = weeklyHeadroom(window, now);
     return headroom === undefined ? [] : [headroom];
   });

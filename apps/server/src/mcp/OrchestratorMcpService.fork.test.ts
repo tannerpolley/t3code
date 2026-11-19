@@ -540,12 +540,13 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
-  it("keeps approved choices at low headroom and refuses exhausted credits or unavailable providers", () => {
+  it("keeps approved choices at low headroom and requires spendable credit at exhaustion", () => {
     const claude = ProviderInstanceId.make("claudeAgent");
     const providers = (
       usedPercent: number,
       availableCount: number,
       authenticated = true,
+      credits?: NonNullable<ServerProvider["usageLimits"]>["credits"],
     ): ServerProvider[] => [
       {
         ...providerSnapshot({
@@ -567,6 +568,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             },
           ],
           resetCredits: { availableCount },
+          ...(credits === undefined ? {} : { credits }),
         },
       },
       providerSnapshot({
@@ -601,9 +603,20 @@ describe("OrchestratorMcpService provider resolution", () => {
         { providerInstanceId: codexInstanceId },
         () => undefined,
       );
-    assert.deepEqual(chooseCodex(providers(100, 3)), role.targets[0]);
     assert.match(
-      (chooseCodex(providers(100, 0)) as OrchestratorMcpFailure).message,
+      (chooseCodex(providers(100, 3)) as OrchestratorMcpFailure).message,
+      /Weekly usage is exhausted.*Ask the owner/,
+    );
+    assert.deepEqual(
+      chooseCodex(providers(100, 0, true, { hasCredits: true, unlimited: false, balance: "12" })),
+      role.targets[0],
+    );
+    assert.match(
+      (
+        chooseCodex(
+          providers(100, 0, true, { hasCredits: false, unlimited: false, balance: "0" }),
+        ) as OrchestratorMcpFailure
+      ).message,
       /credits are exhausted.*Ask the owner/,
     );
     assert.match(

@@ -10,15 +10,12 @@ import {
   TIER_PROVIDER_EFFORT_OPTIONS,
   TIER_PROVIDER_INSTANCES,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const ForkPersistedServerSettingsFields = {
   usageLimitRecovery: Schema.optionalKey(Schema.Unknown),
-  modelRoles: Schema.Union([ModelRoles, Schema.Array(Schema.Unknown)]).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-  ),
+  modelRoles: Schema.optionalKey(Schema.Union([ModelRoles, Schema.Array(Schema.Unknown)])),
   workerProvider: Schema.optionalKey(Schema.Unknown),
 };
 
@@ -27,6 +24,10 @@ const isEffort = Schema.is(ModelRoleEffort);
 
 function migrateLegacyRoles(saved: readonly unknown[], workerProvider: unknown) {
   const roles = { ...DEFAULT_SERVER_SETTINGS.modelRoles };
+  // Sprinter was the only default role with choices on both providers.
+  if (workerProvider === "claude" || workerProvider === "codex") {
+    roles["implementor-fast"] = { ...roles["implementor-fast"], provider: workerProvider };
+  }
   for (const entry of saved) {
     const role = Option.getOrUndefined(decodeLegacyRole(entry));
     if (role === undefined) continue;
@@ -77,12 +78,14 @@ export const migrateForkPersistedServerSettings = ({
   ...saved
 }: Omit<ServerSettings, "usageLimitRecovery" | "modelRoles"> & {
   readonly usageLimitRecovery?: unknown;
-  readonly modelRoles: ServerSettings["modelRoles"] | readonly unknown[];
+  readonly modelRoles?: ServerSettings["modelRoles"] | readonly unknown[];
   readonly workerProvider?: unknown;
 }): ServerSettings => ({
   ...saved,
   modelRoles:
-    "orchestrator" in modelRoles ? modelRoles : migrateLegacyRoles(modelRoles, workerProvider),
+    modelRoles !== undefined && "orchestrator" in modelRoles
+      ? modelRoles
+      : migrateLegacyRoles(modelRoles ?? [], workerProvider),
   usageLimitRecovery:
     saved.usageLimitRecovery === "off" ||
     saved.usageLimitRecovery === "wait" ||
