@@ -1,4 +1,7 @@
 {
+  "7c9d12777939861a": "Choose a folder on this environment",
+  "0ccd3cc985de10d0": "Choose an existing folder",
+  "7a74461ddd09dff0": "Choose folder",
   "1915a433d092839d": "Both",
   "1b7c524fccf06537": "Needs you",
   "9118979e7d982335": "Ready for review",
@@ -99,6 +102,11 @@
   "5503ef439beb8d42": "Terminal close confirmation",
   "86b43caa9ff41ea2": "Quit shortcut",
   "c3091df5aa9526a8": "Phone alerts",
+  "88b7b50b247328f7": "Couldn't save the project section",
+  "b973064d3aacf2bb": "Couldn't add these folders as projects",
+  "6cc3a43639370dff": "Browse",
+  "3d5fd6670d1e8546": "Uses existing folder {path}",
+  "4ff59e3efe808734": "Add subfolders as projects",
   "1a47fae902ee1859": "Role providers",
   "b6295e8a6dd8291f": "Approve using credits when weekly usage runs low."
 }

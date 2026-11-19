@@ -71,6 +71,28 @@ export function useProjectSectionPlacementReady(
     () => environmentId !== null && canPlaceProjectInSection(environmentId, sectionId),
   );
 }
+/** A freshly added section first appears in the optimistic layout, before the server can place projects in it. */
+export async function waitForNewSectionPlacement(environmentId: EnvironmentId, sectionId: string) {
+  if (canPlaceProjectInSection(environmentId, sectionId)) return true;
+  const controller = layoutController;
+  const target = sectionTarget(sectionId);
+  if (controller === null || target === null || controller.record(environmentId) === null)
+    return false;
+  return new Promise<boolean>((resolve) => {
+    const check = () => {
+      const ready = canPlaceProjectInSection(environmentId, sectionId);
+      const pending = controller
+        .getSnapshot()
+        .get(environmentId)
+        ?.sidebarProjectSections.some((section) => section.id === target[1]);
+      if (!ready && pending && controller.hasPending(environmentId)) return;
+      unsubscribe();
+      resolve(ready);
+    };
+    const unsubscribe = subscribeReadiness(check);
+    check();
+  });
+}
 let place: (ref: ScopedProjectRef, sectionId: string) => void = () => {};
 export function configureProjectSectionPlacement(
   callback: typeof place,
