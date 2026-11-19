@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
   isRepositoryOrchestratorEligible,
+  resolveModelRoles,
   type IssueRepositoryRef,
   type EnvironmentId,
   type RepositoryIssueRef,
@@ -89,7 +90,8 @@ function IssueStartControls({
   const [startError, setStartError] = useState<string | null>(null);
   const projects = useProjects();
   const thread = useThreadShell(threadRef);
-  const roles = useEnvironmentSettings(environmentId, (settings) => settings.modelRoles);
+  const settings = useEnvironmentSettings(environmentId);
+  const roles = resolveModelRoles(settings);
   const statusAtom = repositoryIssueEnvironment.workStatus({ environmentId, input: reference });
   const statusQuery = useEnvironmentQuery(statusAtom);
   const status = statusQuery.data;

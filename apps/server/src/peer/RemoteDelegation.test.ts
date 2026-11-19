@@ -594,15 +594,8 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
     Layer.provide(
       ServerSettings.layerTest({
-        modelRoles: [
-          {
-            id: "reviewer",
-            name: "Reviewer",
-            description: "",
-            role: "reviewer",
-            targets: [{ providerInstanceId: boxClaude.instanceId, model: "claude-sonnet-4-6" }],
-          },
-        ],
+        modelRoles: { reviewer: { provider: "claude", effort: "default" } },
+        modelTiers: { 1: { claude: { model: "claude-sonnet-4-6" } } },
       }),
     ),
     Layer.provide(NodeServices.layer),
@@ -622,9 +615,9 @@ const mcpClient = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-/** The box's only provider: a Claude instance, under its own id. */
+/** The box's only provider: its default Claude instance. */
 const boxClaude: ServerProvider = {
-  instanceId: ProviderInstanceId.make("claude-box"),
+  instanceId: ProviderInstanceId.make("claudeAgent"),
   driver: ProviderDriverKind.make("claudeAgent"),
   enabled: true,
   installed: true,

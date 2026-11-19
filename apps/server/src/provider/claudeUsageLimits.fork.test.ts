@@ -37,6 +37,7 @@ describe("claudeUsageResponseToLimits", () => {
       names: { overageIncluded: "Fable" },
       limits: {
         checkedAt,
+        credits: { hasCredits: false, unlimited: false },
         windows: [
           {
             id: "five_hour",
@@ -73,34 +74,6 @@ describe("claudeUsageResponseToLimits", () => {
       },
     });
   });
-
-  const enterpriseResponse = {
-    rate_limits_available: true,
-    rate_limits: {
-      five_hour: null,
-      seven_day: null,
-      spend: {
-        enabled: true,
-        used: { amount_minor: 4_631, currency: "USD", exponent: 2 },
-        limit: { amount_minor: 50_000, currency: "USD", exponent: 2 },
-        percent: 9,
-      },
-      extra_usage: {
-        is_enabled: true,
-        used_credits: 4_631,
-        monthly_limit: 50_000,
-        utilization: 9.261999999999999,
-        currency: "USD",
-        decimal_places: 2,
-      },
-    },
-  };
-  const monthlyWindow = {
-    id: "monthly_spend",
-    kind: "monthly",
-    label: "Monthly spend",
-    usedPercent: expect.closeTo(9.262, 10),
-  };
 });
 
 describe("claudeRateLimitEventToUpdate", () => {

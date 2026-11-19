@@ -409,10 +409,10 @@ const assertQuietContinuation = (key: string) =>
     assert.equal(yield* sink.latestSequence(), sequence);
   });
 
-it.effect("keeps root creation on the configured fallback when workers use All Claude", () => {
+it.effect("uses the Orchestrator and worker provider selections independently", () => {
   const claude = {
     ...adapter,
-    instanceId: ProviderInstanceId.make("claude"),
+    instanceId: ProviderInstanceId.make("claudeAgent"),
     driver: ProviderDriverKind.make("claudeAgent"),
   };
   const adapters = [adapter, claude];
@@ -436,18 +436,13 @@ it.effect("keeps root creation on the configured fallback when workers use All C
     projectRepositoryIdentity,
     localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
     serverSettings: {
-      workerProvider: "claude",
-      modelRoles: [
-        {
-          id: "worker",
-          name: "Worker",
-          description: "Issue worker",
-          targets: [
-            { providerInstanceId: modelSelection.instanceId, model: modelSelection.model },
-            { providerInstanceId: claude.instanceId, model: "claude-sonnet-4-6" },
-          ],
-        },
-      ],
+      modelRoles: {
+        orchestrator: { provider: "codex", effort: "default" },
+        "implementor-thorough": { provider: "claude", effort: "default" },
+      },
+      modelTiers: {
+        2: { codex: { model: modelSelection.model }, claude: { model: "claude-sonnet-4-6" } },
+      },
     },
   });
   const dependencies = Layer.mergeAll(
@@ -463,7 +458,7 @@ it.effect("keeps root creation on the configured fallback when workers use All C
     const started = yield* service.start({
       ...input(1, "worker-provider:root"),
       projectId,
-      modelRoleId: "worker",
+      modelRoleId: "implementor-thorough",
       createOrchestrator: true,
     });
     assert.deepEqual(

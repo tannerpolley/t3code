@@ -35,6 +35,7 @@ describe("claudeUsageResponseToLimits", () => {
       names: { overageIncluded: "Fable" },
       limits: {
         checkedAt,
+        credits: { hasCredits: false, unlimited: false },
         windows: [
           {
             id: "five_hour",

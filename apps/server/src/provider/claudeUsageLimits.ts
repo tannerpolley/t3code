@@ -242,6 +242,7 @@ export function claudeUsageResponseToLimits(input: {
     limits: {
       ...makeUsageLimits({ checkedAt, windows }),
       ...(extra?.is_enabled && extra.monthly_limit === 0 ? { zeroSpendCap: true } : {}),
+      ...(extra?.is_enabled === false ? { credits: { hasCredits: false, unlimited: false } } : {}),
     },
     names: { overageIncluded },
   };

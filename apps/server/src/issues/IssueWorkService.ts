@@ -4,7 +4,7 @@ import {
   CommandId,
   type EnvironmentId,
   CLOSED_ISSUE_SUSPENSION_REASON,
-  OrchestratorMcpFailure,
+  resolveModelRoles,
   type RepositoryUsageSprintInput,
   ThreadId,
   type IssueQueueInput,
@@ -22,7 +22,6 @@ import {
   type RepositoryWorkRestoreInput,
   type IssueWorkStartResult,
   type IssueWorkStatusResult,
-  type ModelSelection,
   type RepositoryWorkInput,
   type RepositoryWorkControlInput,
   RepositoryWorkerLimitInput,
@@ -75,8 +74,12 @@ import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRe
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { checkDelegateTarget, workerProviderTargets } from "../mcp/delegateTaskTarget.ts";
-import { usageSprintCheck, usageSprintRefusal, usageSprintWindow } from "./usageSprint.ts";
+import {
+  checkDelegateTarget,
+  modelRoleStatuses,
+  providerCreditStatuses,
+} from "../mcp/delegateTaskTarget.ts";
+import { usageSprintCheck, usageSprintWindow } from "./usageSprint.ts";
 import {
   issueEligibility,
   isUnmanagedIssueRole,
@@ -324,79 +327,40 @@ export const layer = Layer.effect(
           message: "Repository work is paused.",
         });
       const serverSettings = yield* settings.getSettings.pipe(Effect.mapError(mapError));
-      const roles = serverSettings.modelRoles;
-      const role = roles.find((entry) => entry.id === input.modelRoleId);
-      if (role === undefined)
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: "The selected model role no longer exists.",
-        });
       const availableProviders = yield* providers.getProviders;
       const capableIds = new Set<import("@t3tools/contracts").ProviderInstanceId>();
       for (const instanceId of yield* adapters.list()) {
         const adapter = yield* adapters.get(instanceId).pipe(Effect.mapError(mapError));
         if (supportsManagedIssueWork(adapter.driver)) capableIds.add(instanceId);
       }
-      let selection: ModelSelection | undefined;
-      let rejection: string | undefined;
       const usageSprint =
         root === null ? undefined : (yield* store.configuration(root.rootThreadId))?.usageSprint;
-      const checkedTargets = new Map(
-        role.targets.map((target) => {
-          const sprintRefusal = usageSprintRefusal(usageSprint, target.providerInstanceId);
-          return [
-            target,
-            sprintRefusal === null
-              ? checkDelegateTarget({
-                  providers: availableProviders,
-                  orchestrationCapableInstanceIds: capableIds,
-                  instanceId: target.providerInstanceId,
-                  requestedModel: target.model,
-                  inheritedModel: undefined,
-                  options: target.options,
-                })
-              : new OrchestratorMcpFailure({
-                  code: "provider_unavailable",
-                  message: sprintRefusal,
-                }),
-          ];
-        }),
-      );
-      const preferred = workerProviderTargets(
-        role,
+      const roles = modelRoleStatuses(
+        resolveModelRoles(serverSettings),
         availableProviders,
-        serverSettings.workerProvider,
-        (target) => typeof checkedTargets.get(target) === "string",
+        capableIds,
+        yield* Clock.currentTimeMillis,
+        providerCreditStatuses(availableProviders, serverSettings.providerCreditsApproved),
+        usageSprint,
       );
-      for (const target of role.targets) {
-        const model = checkedTargets.get(target)!;
-        if (typeof model === "string") {
-          selection = {
-            instanceId: target.providerInstanceId,
-            model,
-            ...(target.options === undefined ? {} : { options: target.options }),
-          };
-          break;
-        }
-        rejection = model.message;
-      }
-      if (selection === undefined)
+      const role = roles.find((entry) => entry.id === input.modelRoleId);
+      if (role === undefined)
         return yield* new IssueWorkError({
           code: "invalid-request",
-          message: `Managed issue work requires an available Codex or Claude target in the selected model role${rejection === undefined ? "" : ` (${rejection})`}.`,
+          message: "The selected model role no longer exists.",
         });
-      const fallbackSelection = selection;
-      for (const target of preferred) {
-        const model = checkedTargets.get(target)!;
-        if (typeof model === "string") {
-          selection = {
-            instanceId: target.providerInstanceId,
-            model,
-            ...(target.options === undefined ? {} : { options: target.options }),
-          };
-          break;
-        }
-      }
+      const select = ({ providerInstanceId, model, options }: (typeof role.targets)[number]) => ({
+        instanceId: providerInstanceId,
+        model,
+        ...(options === undefined ? {} : { options }),
+      });
+      const [worker] = role.targets;
+      if (worker.unavailableReason !== null)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: `Managed issue work requires an available Codex or Claude target in the selected model role (${worker.unavailableReason}).`,
+        });
+      const selection = select(worker);
       if (
         root === null &&
         requireExplicitRoot &&
@@ -456,26 +420,13 @@ export const layer = Layer.effect(
           if (previous === null || repositoryPhase(previous) !== "retired") break;
           commandId = CommandId.make(`${commandId}:restart`);
         }
-        const orchestratorRole = roles.find((entry) => entry.id === "orchestrator");
-        let rootSelection = fallbackSelection;
-        for (const target of orchestratorRole?.targets ?? []) {
-          const model = checkDelegateTarget({
-            providers: availableProviders,
-            orchestrationCapableInstanceIds: capableIds,
-            instanceId: target.providerInstanceId,
-            requestedModel: target.model,
-            inheritedModel: undefined,
-            options: target.options,
+        const orchestrator = roles.find((entry) => entry.id === "orchestrator")!.targets[0];
+        if (orchestrator.unavailableReason !== null)
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: `The Orchestrator role is unavailable (${orchestrator.unavailableReason}).`,
           });
-          if (typeof model === "string") {
-            rootSelection = {
-              instanceId: target.providerInstanceId,
-              model,
-              ...(target.options === undefined ? {} : { options: target.options }),
-            };
-            break;
-          }
-        }
+        const rootSelection = select(orchestrator);
         const launched = yield* launch
           .launch({
             commandId,

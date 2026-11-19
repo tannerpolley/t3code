@@ -355,11 +355,11 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["thread title rename regenerate automatic refresh luna sidebar names"],
   },
   {
-    id: "worker-provider",
-    title: "Worker provider",
+    id: "model-tiers",
+    title: "Model tiers and notes",
     to: "/settings/providers",
     scope: "environment-defaults",
-    searchTerms: ["worker provider all Claude mixed all Codex model roles override"],
+    searchTerms: ["tiers paired models preferences notes strengths weaknesses Claude Codex"],
   },
   {
     id: "model-roles",
@@ -367,7 +367,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/providers",
     scope: "environment-defaults",
     searchTerms: [
-      "model roles orchestrator designer writer sprinter implementor delegate subagent builder checker reviewer default model effort",
+      "model roles orchestrator designer writer sprinter implementor delegate subagent builder checker reviewer default model effort provider Claude Both Codex",
     ],
   },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
