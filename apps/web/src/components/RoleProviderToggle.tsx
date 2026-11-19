@@ -1,6 +1,8 @@
 import { ModelRoleProvider } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
+import { ClaudeAI, OpenAI } from "./Icons";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export function RoleProviderToggle({
   label,
@@ -23,9 +25,15 @@ export function RoleProviderToggle({
       }}
     >
       {ModelRoleProvider.literals.map((provider) => (
-        <ToggleGroupItem key={provider} value={provider}>
-          {labels[provider]}
-        </ToggleGroupItem>
+        <Tooltip key={provider}>
+          <TooltipTrigger
+            render={<ToggleGroupItem value={provider} aria-label={labels[provider]} />}
+          >
+            {provider !== "codex" && <ClaudeAI />}
+            {provider !== "claude" && <OpenAI />}
+          </TooltipTrigger>
+          <TooltipPopup>{labels[provider]}</TooltipPopup>
+        </Tooltip>
       ))}
     </ToggleGroup>
   );

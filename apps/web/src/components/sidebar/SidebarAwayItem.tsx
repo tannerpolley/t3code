@@ -1,4 +1,5 @@
-import { BellIcon, BellOffIcon, MonitorIcon } from "lucide-react";
+import { BellIcon, BellOffIcon, BellRingIcon } from "lucide-react";
+import { useGT } from "gt-react";
 import {
   usePrimarySettings,
   usePrimarySettingsAvailable,
@@ -12,13 +13,14 @@ import {
   MenuRadioItemIndicator,
   MenuTrigger,
   MenuSeparator,
+  MenuGroupLabel,
 } from "../ui/menu";
 import { SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const modes = [
-  { value: "auto", label: "Auto", detail: "Alert when idle or locked", icon: MonitorIcon },
-  { value: "away", label: "Away", detail: "Always alert", icon: BellIcon },
+  { value: "auto", label: "Auto", detail: "Alert when idle or locked", icon: BellIcon },
+  { value: "away", label: "Away", detail: "Always alert", icon: BellRingIcon },
   { value: "here", label: "Here", detail: "Silence input and approval alerts", icon: BellOffIcon },
 ] as const;
 
@@ -27,6 +29,7 @@ export function SidebarAwayItem() {
   const mode = usePrimarySettings((settings) => settings.awayMode);
   const idleMinutes = usePrimarySettings((settings) => settings.awayIdleMinutes);
   const updateSettings = useUpdatePrimarySettings();
+  const gt = useGT();
   if (!available) return null;
   const selected = modes.find((option) => option.value === mode) ?? modes[0];
   const Icon = selected.icon;
@@ -37,9 +40,8 @@ export function SidebarAwayItem() {
         <Tooltip>
           <TooltipTrigger
             render={
-              <MenuTrigger render={<SidebarMenuButton aria-label={label} />}>
+              <MenuTrigger render={<SidebarMenuButton size="icon" aria-label={label} />}>
                 <Icon />
-                <span>{selected.label}</span>
               </MenuTrigger>
             }
           />
@@ -55,6 +57,7 @@ export function SidebarAwayItem() {
               if (option) updateSettings({ awayMode: option.value });
             }}
           >
+            <MenuGroupLabel>{gt("Phone alerts")}</MenuGroupLabel>
             {modes.map((option) => (
               <MenuRadioItem key={option.value} value={option.value}>
                 <span className="flex items-center gap-2">
