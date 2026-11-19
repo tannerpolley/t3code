@@ -1816,7 +1816,7 @@ it.effect("hides ungated issue writes from managed threads and their descendants
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("lists pull request watch tools only to threads that are not delegated children", () =>
+it.effect("lets managed children stop their own PR watches", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const scopeFor = (
@@ -1838,6 +1838,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
       const scopes = new Map([
         ["parentToken", scopeFor("parentToken", false)],
         ["childToken", scopeFor("childToken", true)],
+        ["managedToken", scopeFor("managedToken", true)],
       ]);
       const serverLayer = McpHttpServer.layerMcpTransport(
         McpHttpServer.layerPullRequestsToolkit,
@@ -1856,6 +1857,9 @@ it.effect("lists pull request watch tools only to threads that are not delegated
             Layer.mock(PullRequestService.PullRequestService)({}),
             Layer.mock(Orchestrator.OrchestratorV2)({}),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+            Layer.mock(IssueChangeService.IssueChangeService)({
+              isManagedCaller: (threadId) => Effect.succeed(threadId === "thread-managedToken"),
+            }),
             NodeServices.layer,
             NodeCrypto.layer,
           ),
@@ -1897,12 +1901,15 @@ it.effect("lists pull request watch tools only to threads that are not delegated
 
       const parentTools = yield* listedTools("parentToken");
       const childTools = yield* listedTools("childToken");
+      const managedTools = yield* listedTools("managedToken");
       expect(parentTools).toEqual(
         expect.arrayContaining(["link_pull_request", "watch_pull_request", "unwatch_pull_request"]),
       );
       expect(childTools).toContain("link_pull_request");
       expect(childTools).not.toContain("watch_pull_request");
       expect(childTools).not.toContain("unwatch_pull_request");
+      expect(managedTools).not.toContain("watch_pull_request");
+      expect(managedTools).toContain("unwatch_pull_request");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

@@ -1,5 +1,6 @@
 import {
   CommandId,
+  OrchestratorMcpFailure,
   type OrchestrationProjectShell,
   type PullRequestState,
   type OrchestrationV2ThreadShell,
@@ -205,6 +206,16 @@ const make = Effect.gen(function* () {
     const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
     const threadId = input.threadId ?? scope.thread?.threadId;
     if (threadId === undefined) return yield* new PullRequestThreadRequiredError();
+    if (
+      !watching &&
+      scope.thread?.subagent === true &&
+      (scope.repositoryManaged !== true || threadId !== scope.thread.threadId)
+    ) {
+      return yield* new OrchestratorMcpFailure({
+        code: "capability_denied",
+        message: "Managed children can only stop watches on their own thread.",
+      });
+    }
     return yield* watches.setWatching({ threadId, target: input, watching }).pipe(
       Effect.catchTags({
         PullRequestWatchThreadNotFoundError: (error) =>

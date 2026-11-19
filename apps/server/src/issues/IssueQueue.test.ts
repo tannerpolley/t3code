@@ -28,6 +28,7 @@ import {
   type ServerProvider,
   ThreadId,
   type OrchestrationV2Run,
+  type PullRequestComment,
   type ThreadRole,
 } from "@t3tools/contracts";
 import * as IssueInbox from "./IssueInbox.ts";
@@ -53,6 +54,8 @@ import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenanc
 import * as ProjectionReplay from "../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as PullRequestWatchReactor from "../orchestration-v2/PullRequestWatchReactor.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProviderRuntimeRecovery from "../orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as IssueService from "./IssueService.ts";
@@ -769,6 +772,148 @@ const createRoot = (paused = true) =>
       },
     });
   });
+
+it.effect("wakes a managed implementor on new PR feedback after its first turn ends", () =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    yield* createRoot(false);
+    yield* threads.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("pr-watch-root-start"),
+      threadId: rootId,
+      messageId: MessageId.make("pr-watch-root-start"),
+      text: "Start issue work",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const parentRun = (yield* threads.getThreadRecords(rootId, ["runs"])).runs[0]!;
+    yield* threads.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("pr-watch-delegate"),
+      parentThreadId: rootId,
+      parentRunId: parentRun.id,
+      parentNodeId: parentRun.rootNodeId!,
+      issue: issue(1),
+      role: "implementor",
+      task: "Implement issue 1",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const threadId = (yield* store.issueOwner(issue(1)))!;
+    const repository = "tannerpolley/t3code";
+    const url = `https://github.com/${repository}/pull/12`;
+    const at = DateTime.formatIso(yield* DateTime.now);
+    const comments: PullRequestComment[] = [];
+    const reactor = yield* PullRequestWatchReactor.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            watchFingerprint: () =>
+              Effect.sync(() => ({ status: "open", remarks: String(comments.length) })),
+            invalidate: () => Effect.void,
+            detail: () =>
+              Effect.succeed({
+                provider: SourceControlProviderKind.make("github"),
+                capabilities: {
+                  checksAlwaysReport: true,
+                  diff: true,
+                  comment: true,
+                  actions: [],
+                  mergeMethods: [],
+                  search: false,
+                  review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+                  reviewers: { request: false, listCandidates: false },
+                },
+                viewerPermissions: {
+                  actions: [],
+                  comment: true,
+                  resolve: true,
+                  verdicts: [],
+                  requestReviewers: false,
+                },
+                projectId,
+                projectTitle: "Queue root",
+                workspaceRoot: "/repo",
+                repository,
+                number: 12,
+                title: "Implement issue 1",
+                body: "",
+                url,
+                author: null,
+                state: "open",
+                isDraft: true,
+                mergeability: "mergeable",
+                additions: 1,
+                deletions: 0,
+                changedFiles: 1,
+                headBranch: "feature",
+                headSha: "abc1234",
+                baseBranch: "main",
+                createdAt: at,
+                updatedAt: at,
+                mergedAt: null,
+                closedAt: null,
+                reviewers: [],
+                labels: [],
+                checks: [],
+                mergeCapabilities: { merge: true, squash: true, rebase: true },
+              }),
+            activity: () =>
+              Effect.sync(() => ({
+                comments,
+                commentCount: comments.length,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              })),
+          }),
+        ),
+      ),
+    );
+    yield* threads.dispatch({
+      type: "thread.pull-request.link",
+      commandId: CommandId.make("pr-watch-created"),
+      threadId,
+      host: "github.com",
+      repository,
+      number: 12,
+      url,
+      source: "created",
+    });
+    yield* reactor.sweep;
+    const before = yield* threads.getThreadRecords(threadId, ["runs", "messages"]);
+    assert.equal(before.thread.pullRequests?.[0]?.watch?.checksPending, false);
+    yield* finish(before.runs[0]!, "pr-watch-worker-finished");
+    yield* TestClock.adjust("30 minutes");
+    yield* reactor.sweep;
+
+    comments.push({
+      id: "review-1",
+      kind: "review-comment",
+      author: { login: "review-bot", name: null, avatarUrl: null },
+      body: "Please handle an empty response.",
+      createdAt: DateTime.formatIso(yield* DateTime.now),
+      url: null,
+      path: "src/main.ts",
+      reviewState: null,
+    });
+    yield* reactor.sweep;
+    const after = yield* threads.getThreadRecords(threadId, ["messages", "runs"]);
+    const wakes = after.messages.filter(
+      (message) => message.notification?.source.kind === "monitor",
+    );
+    assert.lengthOf(wakes, 1);
+    assert.include(wakes[0]!.text, comments[0]!.body);
+    assert.equal(after.runs.find((run) => run.id === wakes[0]!.runId)?.status, "starting");
+  }).pipe(Effect.provide(harness())),
+);
 
 const statusToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),

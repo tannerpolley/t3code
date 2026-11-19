@@ -52,6 +52,7 @@ export function evaluatePullRequestWatch(
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
+  waitForChecks = true,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
   // A read without a head says nothing about pushes, so it keeps the last known one.
@@ -68,7 +69,10 @@ export function evaluatePullRequestWatch(
   let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
   // A watch with no answer (saved before the field, or since a push) waits only while the clock
   // below runs.
-  let checksPending = headMoved ? false : (watch.checksPending ?? watch.checksAwaitedSince != null);
+  let checksPending =
+    headMoved || (!waitForChecks && watch.checksAwaitedSince != null)
+      ? false
+      : (watch.checksPending ?? watch.checksAwaitedSince != null);
   // An unavailable approval read cannot establish success or that no checks exist.
   const unread = detail.checks.some((check) => check.placeholder === true);
   const checks = detail.checks.filter((check) => check.placeholder !== true);
@@ -162,8 +166,9 @@ export function evaluatePullRequestWatch(
   // Only a head never read with checks waits for them; a legacy watch's clock starts at its next
   // push. CI can register late on any host, so every host waits, but running out of time is news
   // only where a host always reports checks: elsewhere an empty list can mean there are none.
-  const awaitedBefore =
-    headMoved || watch.awaitingBaseline === "all"
+  const awaitedBefore = !waitForChecks
+    ? null
+    : headMoved || watch.awaitingBaseline === "all"
       ? DateTime.formatIso(DateTime.makeUnsafe(now))
       : (watch.checksAwaitedSince ?? null);
   let checksAwaitedSince = checks.length > 0 ? null : awaitedBefore;
@@ -452,6 +457,7 @@ export function pullRequestWatchMessage(input: {
   readonly url: string;
   readonly baseBranch: string;
   readonly headSha: string | null;
+  readonly canRestart?: boolean;
   readonly report: PullRequestWatchReport;
 }): { readonly text: string; readonly notification: OrchestrationV2Notification } {
   const { changes, exhausted } = input.report;
@@ -464,7 +470,7 @@ export function pullRequestWatchMessage(input: {
     ...changes.flatMap((change) => changeLines(change, context)),
     "",
     exhausted
-      ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
+      ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row.${input.canRestart === false ? "" : " Call watch_pull_request to watch it again."}`
       : WATCHING_CLOSING,
   ].join("\n");
   const failed = changes.some(
