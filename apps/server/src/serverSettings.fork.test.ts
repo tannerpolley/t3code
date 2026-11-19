@@ -151,9 +151,15 @@ it.effect.each([
   ),
 );
 
-it.effect.each(["codex", "mixed"])(
-  "migrates the saved %s worker switch and choices to per-role tiers",
-  (workerProvider) =>
+const legacyWorkerSettings = [
+  { label: "Codex", workerProvider: "codex", sparse: false },
+  { label: "Mixed", workerProvider: "mixed", sparse: false },
+  { label: "Codex with omitted roles", workerProvider: "codex", sparse: true },
+] as const;
+
+it.effect.each(legacyWorkerSettings)(
+  "migrates the $label worker switch to per-role tiers",
+  ({ workerProvider, sparse }) =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
@@ -204,9 +210,15 @@ it.effect.each(["codex", "mixed"])(
       }));
       yield* fs.writeFileString(
         config.settingsPath,
-        JSON.stringify({ modelRoles, workerProvider }),
+        JSON.stringify(sparse ? { workerProvider } : { modelRoles, workerProvider }),
       );
       const migrated = yield* service.getSettings;
+      if (sparse) {
+        assert.equal(migrated.modelRoles["implementor-fast"].provider, "codex");
+        assert.equal(migrated.modelRoles.orchestrator.provider, "claude");
+        assert.equal(migrated.modelRoles.writer.provider, "claude");
+        return;
+      }
       if (workerProvider === "mixed") {
         assert.deepEqual(migrated.modelRoles["implementor-fast"], {
           description: "Saved implementor-fast description",
