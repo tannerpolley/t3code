@@ -1,5 +1,6 @@
 import { EMPTY_SIDEBAR_LAYOUT, EnvironmentId, type SidebarLayoutRecord } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+// oxlint-disable-next-line t3code/require-disposable-render -- react-test-renderer unit test without a browser
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -87,6 +88,7 @@ const record = (revision: number, collapsed = false): SidebarLayoutRecord => ({
 });
 beforeEach(() => {
   vi.useFakeTimers();
+  // oxlint-disable-next-line t3code/require-disposable-render -- react-test-renderer unit test without a browser
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const storage = new Map<string, string>();
   const localStorage = {
@@ -148,7 +150,10 @@ it("a read-only client sees the shared layout and live updates without submittin
   await render();
   expect(useUiStateStore.getState().sidebarProjectSections[0]?.name).toBe("Shared empty section");
   const sectionId = useUiStateStore.getState().sidebarProjectSections[0]!.id;
-  await act(() => {
+  await act(async () => {
+    expect(
+      await useUiStateStore.getState().addSidebarProjectSection("Unauthorized add"),
+    ).toBeNull();
     useUiStateStore.getState().renameSidebarProjectSection(sectionId, "Unauthorized rename");
   });
   await act(() => vi.advanceTimersByTimeAsync(250));

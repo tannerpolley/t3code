@@ -2156,7 +2156,11 @@ function OpenCommandPaletteDialog(props: {
       const saved = await useUiStateStore
         .getState()
         .addSidebarProjectSection(folder.name, parent.id, folder.folderPath);
-      if (saved) setOpen(false);
+      if (saved === null) {
+        toastManager.add({ type: "error", title: gt("Couldn't save the project section") });
+        return;
+      }
+      setOpen(false);
       return;
     }
 

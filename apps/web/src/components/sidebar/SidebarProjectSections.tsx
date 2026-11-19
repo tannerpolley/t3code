@@ -1852,7 +1852,8 @@ function ProjectSectionDialog(props: {
   const renameSection = useUiStateStore((store) => store.renameSidebarProjectSection);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const canCreateProject = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const { canReadFiles } = useFilesystemReadAccess(environmentId);
+  const { canReadFiles, isPending: filesystemAccessPending } =
+    useFilesystemReadAccess(environmentId);
   const projects = useProjects();
   const picking = useCommandPaletteStore((store) => store.openIntent?.kind === "pick-folder");
   const [name, setName] = useState(target.kind === "rename" ? target.name : "");
@@ -1867,8 +1868,18 @@ function ProjectSectionDialog(props: {
         })
       : null;
   const parentFolders = useEnvironmentQuery(readFolders(pickedPath ? null : parentPath));
-  const suggestedFolder = suggestSectionFolder(name, parentFolders.data?.entries ?? []);
-  const folderPath = pickedPath ?? suggestedFolder?.fullPath;
+  const folderLookupPending =
+    environmentId !== null &&
+    !pickedPath &&
+    parentPath !== null &&
+    (filesystemAccessPending || parentFolders.isPending);
+  const suggestion = suggestSectionFolder(
+    name,
+    parentFolders.data?.entries ?? [],
+    folderLookupPending,
+  );
+  const canSubmit = canWrite && !busy && suggestion !== "pending" && name.trim().length > 0;
+  const folderPath = pickedPath ?? (suggestion === "pending" ? undefined : suggestion?.fullPath);
   const subfolders = useEnvironmentQuery(readFolders(folderPath ?? null));
   const candidates = canCreateProject
     ? sectionProjectCandidates(
@@ -1900,8 +1911,8 @@ function ProjectSectionDialog(props: {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canSubmit) return;
     const trimmed = name.trim();
-    if (!trimmed || !canWrite || busy) return;
     if (target.kind === "rename") {
       renameSection(target.id, trimmed);
       props.onOpenChange(false);
@@ -2042,7 +2053,7 @@ function ProjectSectionDialog(props: {
             >
               Cancel
             </Button>
-            <Button disabled={!canWrite || busy || name.trim().length === 0} type="submit">
+            <Button disabled={!canSubmit} type="submit">
               Save
             </Button>
           </DialogFooter>

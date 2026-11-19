@@ -57,8 +57,11 @@ it("uses the selected folder basename and keeps its path after a rename or root 
 it("suggests an existing section folder and only offers unadded, visible subfolders", () => {
   const entry = (name: string, parent = "/work") => ({ name, fullPath: `${parent}/${name}` });
   const personal = entry("Personal");
-  expect(suggestSectionFolder(" Personal ", [entry("Personal Notes"), personal])).toBe(personal);
-  expect(suggestSectionFolder("Missing", [personal])).toBeNull();
+  expect(suggestSectionFolder(" Personal ", [], true)).toBe("pending");
+  expect(suggestSectionFolder(" Personal ", [entry("Personal Notes"), personal], false)).toBe(
+    personal,
+  );
+  expect(suggestSectionFolder("Missing", [personal], false)).toBeNull();
   const hobby = entry("Hobby", personal.fullPath);
   expect(
     sectionProjectCandidates(
