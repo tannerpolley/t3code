@@ -19,6 +19,8 @@ import {
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
   isProviderAvailable,
+  resolveModelNotes,
+  resolveModelRoles,
   type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
   type OrchestratorMcpModelOption,
@@ -110,6 +112,7 @@ import {
   checkDelegateTarget,
   LISTED_MODEL_LIMIT,
   modelRoleStatuses,
+  providerCreditStatuses,
   roleDefaultTarget,
   unavailableModelMessage,
 } from "./delegateTaskTarget.ts";
@@ -1550,11 +1553,11 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
       const roles = modelRoleStatuses(
-        settings.modelRoles,
+        resolveModelRoles(settings),
         providers,
         yield* loadOrchestrationCapableInstanceIds(),
         yield* Clock.currentTimeMillis,
-        settings.workerProvider,
+        providerCreditStatuses(providers, settings.providerCreditsApproved),
         usageSprint,
       );
       return roleDefaultTarget(
@@ -2652,12 +2655,13 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
       const usageSprint = parent === undefined ? undefined : yield* loadUsageSprint(parent.thread);
+      const providerCredits = providerCreditStatuses(providers, settings.providerCreditsApproved);
       const modelRoles = modelRoleStatuses(
-        settings.modelRoles,
+        resolveModelRoles(settings),
         providers,
         orchestrationCapableInstanceIds,
         yield* Clock.currentTimeMillis,
-        settings.workerProvider,
+        providerCredits,
         usageSprint,
       );
       const inherited = parent?.thread.modelSelection;
@@ -2677,6 +2681,8 @@ const make = Effect.gen(function* () {
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         modelRoles,
+        modelNotes: resolveModelNotes(settings.modelTiers),
+        providerCredits,
         ...(usageSprint === undefined ? {} : { usageSprint }),
         providers: providers.map((provider) => {
           // Snapshots list instances any project enables; delegate_task checks the caller's project.

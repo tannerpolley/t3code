@@ -1,6 +1,5 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SchemaTransformation from "effect/SchemaTransformation";
 import { NonNegativeInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { ModelSelection } from "./modelSelection.ts";
@@ -18,15 +17,11 @@ export type ProjectIconFallback = typeof ProjectIconFallback.Type;
 export const SidebarTogglePosition = Schema.Literals(["left", "right"]);
 export type SidebarTogglePosition = typeof SidebarTogglePosition.Type;
 
-const MAX_LEGACY_CUSTOM_MODEL_ROLES = 26;
-export const MAX_MODEL_ROLES = MAX_LEGACY_CUSTOM_MODEL_ROLES + 8;
-// Legacy lists can converge on one profile without discarding any saved choices.
-export const MAX_MODEL_ROLE_TARGETS = 12;
-export const MAX_MODEL_ROLE_NAME_LENGTH = 60;
 export const MAX_MODEL_ROLE_DESCRIPTION_LENGTH = 200;
-export const MAX_MODEL_ROLE_MODEL_LENGTH = 100;
-export const MAX_MODEL_ROLE_OPTIONS = 8;
-export const MAX_MODEL_ROLE_OPTION_LENGTH = 60;
+const MAX_MODEL_ROLE_MODEL_LENGTH = 100;
+const MAX_MODEL_ROLE_OPTIONS = 8;
+const MAX_MODEL_ROLE_OPTION_LENGTH = 60;
+export const MAX_MODEL_NOTE_LENGTH = 200;
 
 const ModelRoleOptionText = TrimmedNonEmptyString.check(
   Schema.isMaxLength(MAX_MODEL_ROLE_OPTION_LENGTH),
@@ -57,201 +52,184 @@ export const ModelRole = Schema.Struct({
   role: Schema.optional(ThreadRole),
   profile: Schema.optional(Schema.Literals(["fast", "thorough"])),
   id: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_NAME_LENGTH)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(60)),
   description: TrimmedString.check(Schema.isMaxLength(MAX_MODEL_ROLE_DESCRIPTION_LENGTH)),
-  targets: Schema.NonEmptyArray(ModelRoleTarget).check(Schema.isMaxLength(MAX_MODEL_ROLE_TARGETS)),
+  targets: Schema.NonEmptyArray(ModelRoleTarget).check(Schema.isMaxLength(12)),
 });
 export type ModelRole = typeof ModelRole.Type;
 
-// Roles saved before multiple choices per role held one `target`.
-const LegacyModelRole = Schema.Struct({
-  id: ModelRole.fields.id,
-  name: ModelRole.fields.name,
-  description: ModelRole.fields.description,
-  target: Schema.toEncoded(ModelRoleTarget),
-}).pipe(
-  Schema.decodeTo(
-    ModelRole,
-    SchemaTransformation.transform({
-      decode: ({ target, ...role }): typeof ModelRole.Encoded => ({ ...role, targets: [target] }),
-      encode: ({ targets, ...role }) => ({ ...role, target: targets[0] }),
-    }),
-  ),
-);
-// Try the current shape first so encoding never writes the legacy `target` key.
-const ModelRoleSetting = Schema.Union([ModelRole, LegacyModelRole]);
-const SavedModelRoles = Schema.Array(ModelRoleSetting).check(
-  Schema.isMaxLength(MAX_MODEL_ROLES),
-  Schema.makeFilter(
-    (roles) =>
-      roles.filter((entry) => entry.role === undefined && resolveThreadRole(entry.id) === undefined)
-        .length <= MAX_LEGACY_CUSTOM_MODEL_ROLES,
-    { expected: "at most 26 legacy custom roles, leaving room for the standard profiles" },
-  ),
-);
-export const ModelRoles = SavedModelRoles.pipe(
-  Schema.decodeTo(
-    Schema.Array(Schema.toType(ModelRole)),
-    SchemaTransformation.transform({ decode: migrateModelRoles, encode: (roles) => roles }),
-  ),
-);
+export const TIER_PROVIDERS = ["claude", "codex"] as const;
+export const TIER_PROVIDER_INSTANCES = {
+  claude: ProviderInstanceId.make("claudeAgent"),
+  codex: ProviderInstanceId.make("codex"),
+};
+export const TIER_PROVIDER_EFFORT_OPTIONS = { claude: "effort", codex: "reasoningEffort" } as const;
+export const ModelRoleProvider = Schema.Literals(["claude", "both", "codex"]);
+export type ModelRoleProvider = typeof ModelRoleProvider.Type;
+export const ModelRoleEffort = Schema.Literals([
+  "default",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+export type ModelRoleEffort = typeof ModelRoleEffort.Type;
+export const ModelTier = Schema.Literals([1, 2, 3, 4]);
+export type ModelTier = typeof ModelTier.Type;
 
-const modelRole = (
-  id: string,
-  name: string,
+const defaulted = <S extends Schema.Top>(schema: S, value: S["Encoded"]) =>
+  schema.pipe(Schema.withDecodingDefault(Effect.succeed(value)));
+
+const ModelNote = TrimmedString.check(Schema.isMaxLength(MAX_MODEL_NOTE_LENGTH));
+const TierModel = ModelRoleTarget.fields.model;
+const tierSlot = (model: string) =>
+  defaulted(
+    Schema.Struct({ model: defaulted(TierModel, model), note: defaulted(ModelNote, "") }),
+    {},
+  );
+export const DEFAULT_MODEL_TIERS = {
+  1: { claude: "claude-fable-5-2", codex: "gpt-6.2-astra" },
+  2: { claude: "claude-opus-5-5", codex: "gpt-6.2-sol" },
+  3: { claude: "claude-sonnet-5-5", codex: "gpt-6.1-terra" },
+  4: { claude: "claude-haiku-5-5", codex: "gpt-6-luna" },
+} as const;
+const tier = (id: ModelTier) =>
+  defaulted(
+    Schema.Struct({
+      claude: tierSlot(DEFAULT_MODEL_TIERS[id].claude),
+      codex: tierSlot(DEFAULT_MODEL_TIERS[id].codex),
+    }),
+    {},
+  );
+const ModelTiers = Schema.Struct({ 1: tier(1), 2: tier(2), 3: tier(3), 4: tier(4) });
+
+const ModelRoleSettingFields = {
+  description: ModelRole.fields.description,
+  tier: ModelTier,
+  provider: ModelRoleProvider,
+  effort: ModelRoleEffort,
+};
+const roleSetting = (
   description: string,
-  providerInstanceId: "claudeAgent" | "codex",
-  model: string,
-  effort: string,
-  alternatives: ReadonlyArray<ModelRoleTarget> = [],
-): ModelRole => ({
-  id,
-  name,
-  description,
-  targets: [
-    {
-      providerInstanceId: ProviderInstanceId.make(providerInstanceId),
-      model,
-      options: [
-        { id: providerInstanceId === "codex" ? "reasoningEffort" : "effort", value: effort },
-      ],
-    },
-    ...alternatives,
-  ],
+  tierId: ModelTier,
+  provider: ModelRoleProvider,
+  effort: ModelRoleEffort,
+) =>
+  defaulted(
+    Schema.Struct({
+      description: defaulted(ModelRoleSettingFields.description, description),
+      tier: defaulted(ModelTier, tierId),
+      provider: defaulted(ModelRoleProvider, provider),
+      effort: defaulted(ModelRoleEffort, effort),
+    }),
+    {},
+  );
+
+export const ModelRoles = Schema.Struct({
+  orchestrator: roleSetting("Plans, delegates, integrates", 2, "claude", "medium"),
+  designer: roleSetting(
+    "Research requests and design issues with a plan and strategy decisions",
+    1,
+    "claude",
+    "medium",
+  ),
+  "implementor-fast": roleSetting(
+    "Bounded changes where speed matters; a Checker reviews afterwards",
+    3,
+    "both",
+    "medium",
+  ),
+  checker: roleSetting(
+    "Check a build for missed places, weak tests and edge cases",
+    2,
+    "codex",
+    "high",
+  ),
+  "implementor-thorough": roleSetting(
+    "Broad, cross-cutting or correctness-critical implementation",
+    2,
+    "codex",
+    "high",
+  ),
+  investigator: roleSetting("Gather evidence and investigate questions", 4, "codex", "max"),
+  reviewer: roleSetting("Strong read-only review and design guidance", 1, "codex", "xhigh"),
+  writer: roleSetting(
+    "Writes deliverables in the parent checkout with direct owner guidance",
+    1,
+    "claude",
+    "high",
+  ),
+});
+export const MODEL_ROLE_IDS = Object.keys(ModelRoles.fields) as Array<
+  keyof typeof ModelRoles.fields
+>;
+export type ModelRoleSettingId = (typeof MODEL_ROLE_IDS)[number];
+
+const RolePatch = Schema.Struct({
+  description: Schema.optionalKey(ModelRoleSettingFields.description),
+  tier: Schema.optionalKey(ModelTier),
+  provider: Schema.optionalKey(ModelRoleProvider),
+  effort: Schema.optionalKey(ModelRoleEffort),
+});
+const ModelRolesPatch = Schema.Struct(
+  Object.fromEntries(MODEL_ROLE_IDS.map((id) => [id, Schema.optionalKey(RolePatch)])) as {
+    [Id in ModelRoleSettingId]: Schema.optionalKey<typeof RolePatch>;
+  },
+);
+const TierSlotPatch = Schema.optionalKey(
+  Schema.Struct({
+    model: Schema.optionalKey(TierModel),
+    note: Schema.optionalKey(ModelNote),
+  }),
+);
+const TierPatch = Schema.optionalKey(
+  Schema.Struct({ claude: TierSlotPatch, codex: TierSlotPatch }),
+);
+const ModelTiersPatch = Schema.Struct({ 1: TierPatch, 2: TierPatch, 3: TierPatch, 4: TierPatch });
+
+const CreditsApproved = Schema.Struct({
+  claude: defaulted(Schema.Boolean, false),
+  codex: defaulted(Schema.Boolean, false),
 });
 
-export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
-  modelRole(
-    "orchestrator",
-    "Orchestrator",
-    "Plans, delegates, integrates",
-    "claudeAgent",
-    "claude-opus-5-5",
-    "medium",
-  ),
-  modelRole(
-    "designer",
-    "Designer",
-    "Research requests and design issues with a plan and strategy decisions",
-    "claudeAgent",
-    "claude-fable-5-2",
-    "medium",
-  ),
-  {
-    ...modelRole(
-      "implementor-fast",
-      "Sprinter",
-      "Bounded changes where speed matters; a Checker reviews afterwards",
-      "claudeAgent",
-      "claude-opus-5-5",
-      "medium",
-      [
-        {
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-6.1-sol",
-          options: [{ id: "reasoningEffort", value: "medium" }],
-        },
-      ],
-    ),
-    role: "implementor",
-    profile: "fast" as const,
-  },
-  modelRole(
-    "checker",
-    "Checker",
-    "Check a build for missed places, weak tests and edge cases",
-    "codex",
-    "gpt-6.1-sol",
-    "high",
-  ),
-  {
-    ...modelRole(
-      "implementor-thorough",
-      "Implementor",
-      "Broad, cross-cutting or correctness-critical implementation",
-      "codex",
-      "gpt-6.1-sol",
-      "high",
-    ),
-    role: "implementor",
-    profile: "thorough" as const,
-  },
-  modelRole(
-    "investigator",
-    "Investigator",
-    "Gather evidence and investigate questions",
-    "codex",
-    "gpt-6-luna",
-    "max",
-  ),
-  modelRole(
-    "reviewer",
-    "Reviewer",
-    "Strong read-only review and design guidance",
-    "codex",
-    "gpt-6-astra",
-    "xhigh",
-  ),
-  modelRole(
-    "writer",
-    "Writer",
-    "Writes deliverables in the parent checkout with direct owner guidance",
-    "claudeAgent",
-    "claude-fable-5-2",
-    "high",
-  ),
-].map((entry) => ({ ...entry, role: resolveThreadRole(entry.id)! }));
-
-/** Default-fill missing profiles, keeping every saved model, option and choice order. */
-function migrateModelRoles(saved: ReadonlyArray<ModelRole>): ReadonlyArray<ModelRole> {
-  const migrated: Array<ModelRole> = [];
-  for (const entry of saved) {
-    const role =
-      entry.role ??
-      resolveThreadRole(entry.id) ??
-      // A custom row the user already named Designer becomes the Designer row, not a second one.
-      (entry.name.toLowerCase() === "designer" ? "designer" : undefined);
-    const profile =
-      role === "implementor" ? (entry.profile ?? modelRoleProfile(entry.id) ?? "fast") : undefined;
-    const id =
-      role === undefined ? entry.id : profile === undefined ? role : `implementor-${profile}`;
-    const previous = migrated.findIndex((candidate) => candidate.id === id);
-    const normalized: ModelRole = {
-      ...entry,
-      id,
-      ...(role === undefined
+export function resolveModelRoles(settings: {
+  readonly modelRoles: typeof ModelRoles.Type;
+  readonly modelTiers: typeof ModelTiers.Type;
+}): ReadonlyArray<ModelRole & { readonly id: ModelRoleSettingId }> {
+  return MODEL_ROLE_IDS.map((id) => {
+    const { description, tier, provider, effort } = settings.modelRoles[id];
+    const role = resolveThreadRole(id)!;
+    const profile = modelRoleProfile(id);
+    const target = (provider: (typeof TIER_PROVIDERS)[number]): ModelRoleTarget => ({
+      providerInstanceId: TIER_PROVIDER_INSTANCES[provider],
+      model: settings.modelTiers[tier][provider].model,
+      ...(effort === "default"
         ? {}
         : {
-            role,
-            name: profile === "fast" ? "Sprinter" : THREAD_ROLE_LABELS[role],
+            options: [{ id: TIER_PROVIDER_EFFORT_OPTIONS[provider], value: effort }],
           }),
+    });
+    return {
+      id,
+      role,
       ...(profile === undefined ? {} : { profile }),
+      name: profile === "fast" ? "Sprinter" : THREAD_ROLE_LABELS[role],
+      description,
+      targets: provider === "both" ? [target("claude"), target("codex")] : [target(provider)],
     };
-    if (previous === -1) {
-      migrated.push(normalized);
-      continue;
-    }
-    const choices = [...migrated[previous]!.targets, ...entry.targets];
-    const targets = choices.filter(
-      (target, index) =>
-        choices.findIndex(
-          (candidate) =>
-            candidate.providerInstanceId === target.providerInstanceId &&
-            candidate.model === target.model &&
-            (candidate.options?.length ?? 0) === (target.options?.length ?? 0) &&
-            (candidate.options ?? []).every((option) =>
-              (target.options ?? []).some(
-                (other) => other.id === option.id && other.value === option.value,
-              ),
-            ),
-        ) === index,
-    );
-    migrated[previous] = { ...migrated[previous]!, targets: [targets[0]!, ...targets.slice(1)] };
-  }
-  for (const entry of DEFAULT_MODEL_ROLES) {
-    if (!migrated.some((candidate) => candidate.id === entry.id)) migrated.push(entry);
-  }
-  return migrated;
+  });
+}
+
+export function resolveModelNotes(tiers: typeof ModelTiers.Type) {
+  return ModelTier.literals.flatMap((tier) =>
+    TIER_PROVIDERS.flatMap((provider) => {
+      const { model, note } = tiers[tier][provider];
+      return note === ""
+        ? []
+        : [{ providerInstanceId: TIER_PROVIDER_INSTANCES[provider], model, note }];
+    }),
+  );
 }
 
 /** Stored in `worktreesDirectory` to select a repository-local folder. */
@@ -351,8 +329,6 @@ export const ForkClientSettingsFields = {
   fastShimmer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 };
 
-const WorkerProvider = Schema.Literals(["mixed", "claude", "codex"]);
-
 const ToolOutputRetentionDays = Schema.NullOr(NonNegativeInt.check(Schema.isGreaterThan(0)));
 
 const AwayMode = Schema.Literals(["auto", "away", "here"]);
@@ -364,7 +340,6 @@ export const ForkServerSettingsFields = {
   toolOutputRetentionDays: ToolOutputRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(14)),
   ),
-  workerProvider: WorkerProvider.pipe(Schema.withDecodingDefault(Effect.succeed("mixed"))),
   autoUseExpiringResetCredits: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -374,11 +349,9 @@ export const ForkServerSettingsFields = {
   ),
   /** User-only: the server answers every pending agent question and approval while on. */
   dontAskMode: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  /**
-   * Ordered defaults for delegated work, shown to orchestrating agents in
-   * new sessions and turns. Server-side because the prompt is built here.
-   */
-  modelRoles: ModelRoles.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_MODEL_ROLES))),
+  modelRoles: defaulted(ModelRoles, {}),
+  modelTiers: defaulted(ModelTiers, {}),
+  providerCreditsApproved: defaulted(CreditsApproved, {}),
   /** Disconnect agent sessions after this many idle minutes; 0 keeps sessions open. */
   idleAgentSessionMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   usageLimitRecovery: UsageLimitRecoveryMode.pipe(
@@ -449,13 +422,18 @@ export const ForkServerSettingsPatchFields = {
   awayMode: Schema.optionalKey(AwayMode),
   awayIdleMinutes: Schema.optionalKey(AwayIdleMinutes),
   toolOutputRetentionDays: Schema.optionalKey(ToolOutputRetentionDays),
-  workerProvider: Schema.optionalKey(WorkerProvider),
   autoUseExpiringResetCredits: Schema.optionalKey(Schema.Boolean),
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
   issueUpkeepRequiresApproval: Schema.optionalKey(Schema.Boolean),
   dontAskMode: Schema.optionalKey(Schema.Boolean),
-  // Whole-list replacement: roles are ordered and edited as one list.
-  modelRoles: Schema.optionalKey(ModelRoles),
+  modelRoles: Schema.optionalKey(ModelRolesPatch),
+  modelTiers: Schema.optionalKey(ModelTiersPatch),
+  providerCreditsApproved: Schema.optionalKey(
+    Schema.Struct({
+      claude: Schema.optionalKey(Schema.Boolean),
+      codex: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
   idleAgentSessionMinutes: Schema.optionalKey(NonNegativeInt),
   usageLimitRecovery: Schema.optionalKey(UsageLimitRecoveryMode),
   usageLimitFallbackModels: Schema.optionalKey(Schema.Array(ModelSelection)),

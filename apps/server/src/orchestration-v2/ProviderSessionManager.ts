@@ -4,6 +4,8 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
+  resolveModelNotes,
+  resolveModelRoles,
   ModelSelection,
   type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
@@ -54,11 +56,12 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import { modelRoleStatuses } from "../mcp/delegateTaskTarget.ts";
+import { modelRoleStatuses, providerCreditStatuses } from "../mcp/delegateTaskTarget.ts";
 import { lineageUsageSprint } from "../issues/usageSprint.ts";
 import { managedIssueRole } from "../issues/IssueEligibility.ts";
 import {
   t3ModelRolesInstructions,
+  t3ModelNotesInstructions,
   t3OrchestrationPolicy,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -575,31 +578,35 @@ export const layerWithOptions = (
         function* (threadId: ThreadId) {
           if ((yield* mcpSessions.read(threadId)) === undefined) return;
           const thread = yield* projectionStore.getThread(threadId);
-          const modelRoles = yield* Effect.gen(function* () {
-            if (Option.isNone(serverSettings)) return "";
+          const modelInstructions = yield* Effect.gen(function* () {
+            if (Option.isNone(serverSettings)) return { roles: "", notes: "" };
             const settings = yield* serverSettings.value.getSettings;
             const providers = Option.isSome(providerRegistry)
               ? yield* providerRegistry.value.getProviders
               : [];
-            return t3ModelRolesInstructions(
-              modelRoleStatuses(
-                settings.modelRoles,
-                providers,
-                new Set(yield* registry.list()),
-                yield* Clock.currentTimeMillis,
-                settings.workerProvider,
-                yield* lineageUsageSprint(thread, projectionStore.getThread),
-              ),
+            const credits = providerCreditStatuses(providers, settings.providerCreditsApproved);
+            const roles = modelRoleStatuses(
+              resolveModelRoles(settings),
+              providers,
+              new Set(yield* registry.list()),
+              yield* Clock.currentTimeMillis,
+              credits,
+              yield* lineageUsageSprint(thread, projectionStore.getThread),
             );
+            return {
+              roles: t3ModelRolesInstructions(roles, credits),
+              notes: t3ModelNotesInstructions(resolveModelNotes(settings.modelTiers)),
+            };
           }).pipe(Effect.option);
           const session = yield* mcpSessions.read(threadId);
           if (session === undefined) return;
+          const { roles, notes } = Option.getOrElse(modelInstructions, () => ({
+            roles: session.orchestration?.modelRoles ?? "",
+            notes: session.orchestration?.modelNotes ?? "",
+          }));
           yield* mcpSessions.set({
             ...session,
-            orchestration: t3OrchestrationPolicy(
-              managedIssueRole(thread),
-              Option.getOrElse(modelRoles, () => session.orchestration?.modelRoles ?? ""),
-            ),
+            orchestration: t3OrchestrationPolicy(managedIssueRole(thread), roles, notes),
           });
         },
         (effect) => effect.pipe(Effect.ignore),

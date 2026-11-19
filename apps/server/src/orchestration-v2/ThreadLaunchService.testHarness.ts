@@ -446,7 +446,7 @@ const reviewRead = (issue: ReturnType<typeof reviewIssue>) => ({
 
 function reviewHarness(
   workRead: IssueService.IssueService["Service"]["workRead"],
-  unsupportedRole = false,
+  unavailableRole = false,
   failInterrupt?: (threadId: ThreadId) => boolean,
 ) {
   const openCode = {
@@ -469,7 +469,17 @@ function reviewHarness(
     auth: { status: "authenticated" },
     checkedAt: "2026-10-05T00:00:00Z",
     availability: "available",
-    models: [],
+    models:
+      entry === adapter
+        ? [
+            {
+              slug: modelSelection.model,
+              name: modelSelection.model,
+              isCustom: false,
+              capabilities: null,
+            },
+          ]
+        : [],
     slashCommands: [],
     skills: [],
   }));
@@ -496,19 +506,14 @@ function reviewHarness(
       },
     },
     serverSettings: {
-      modelRoles: [
-        {
-          id: "worker",
-          name: "Worker",
-          description: "Issue worker",
-          targets: [
-            {
-              providerInstanceId: unsupportedRole ? openCode.instanceId : adapter.instanceId,
-              model: "test-model",
-            },
-          ],
-        },
-      ],
+      modelRoles: {
+        orchestrator: { provider: "codex", effort: "default" },
+        "implementor-thorough": { effort: "default", tier: 3 },
+      },
+      modelTiers: {
+        2: { codex: { model: modelSelection.model } },
+        3: { codex: { model: unavailableRole ? "missing-model" : modelSelection.model } },
+      },
     },
   });
   const dependencies = Layer.mergeAll(
@@ -563,7 +568,7 @@ const createReviewRoot = Effect.fn("test.createReviewRoot")(function* (
       milestones: [
         {
           number: 1,
-          modelRoleId: "worker",
+          modelRoleId: "implementor-thorough",
 
           status: "running",
           fingerprint: "",

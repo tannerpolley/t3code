@@ -37,7 +37,7 @@ import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPr
 import { readIssueListPreferences } from "../issue/issueListPreferences";
 import { IssueGlyph } from "../issue/issuePresentation";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
-import { SidebarWorkerProviderItem } from "./SidebarWorkerProviderItem";
+import { SidebarRoleProvidersItem } from "./SidebarRoleProvidersItem";
 import { SidebarAskModeItem } from "./SidebarAskModeItem";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
@@ -310,7 +310,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       )}
       <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
-      <SidebarWorkerProviderItem />
+      <SidebarRoleProvidersItem />
       <SidebarAwayItem />
       {isOnUtilityPage ? null : <SidebarAskModeItem />}
     </SidebarMenu>

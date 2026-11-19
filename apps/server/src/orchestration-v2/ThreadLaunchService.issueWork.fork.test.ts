@@ -121,16 +121,11 @@ describe("managed issue work", () => {
         displayName: "tannerpolley/t3code",
       },
       serverSettings: {
-        modelRoles: [
-          {
-            id: "worker",
-            name: "Worker",
-            description: "Issue worker",
-            targets: [
-              { providerInstanceId: modelSelection.instanceId, model: modelSelection.model },
-            ],
-          },
-        ],
+        modelRoles: {
+          orchestrator: { provider: "codex", effort: "default" },
+          "implementor-thorough": { effort: "default" },
+        },
+        modelTiers: { 2: { codex: { model: modelSelection.model } } },
       },
     });
     const store = IssueWorkStore.layer.pipe(Layer.provide(harness.layer));
@@ -250,7 +245,7 @@ describe("managed issue work", () => {
         number: issue.number,
         projectId,
         orchestratorThreadId: selectedLeadId,
-        modelRoleId: "worker",
+        modelRoleId: "implementor-thorough",
       };
       const starts = yield* Effect.all(
         [
@@ -925,7 +920,7 @@ it.effect(
         milestones: [
           {
             number: 1,
-            modelRoleId: "worker",
+            modelRoleId: "implementor-thorough",
 
             status: "running" as const,
             fingerprint: "",
@@ -1350,16 +1345,11 @@ it.effect(
         displayName: "tannerpolley/t3code",
       },
       serverSettings: {
-        modelRoles: [
-          {
-            id: "worker",
-            name: "Worker",
-            description: "Issue worker",
-            targets: [
-              { providerInstanceId: modelSelection.instanceId, model: modelSelection.model },
-            ],
-          },
-        ],
+        modelRoles: {
+          orchestrator: { provider: "codex", effort: "default" },
+          "implementor-thorough": { effort: "default" },
+        },
+        modelTiers: { 2: { codex: { model: modelSelection.model } } },
       },
     });
     const dependencies = Layer.mergeAll(
@@ -1377,7 +1367,7 @@ it.effect(
         host: "github.com",
         repository: "tannerpolley/t3code",
         projectId,
-        modelRoleId: "worker",
+        modelRoleId: "implementor-thorough",
       };
       const emptyPlan = yield* service.workMilestone({
         ...input,
@@ -1597,7 +1587,7 @@ it.effect(
         .start({
           ...childIssue,
           projectId,
-          modelRoleId: "worker",
+          modelRoleId: "implementor-thorough",
 
           clientRequestId: CommandId.make("cross-start"),
         })
@@ -1635,7 +1625,7 @@ it.effect(
 );
 
 it.effect(
-  "rejects unsupported adapters at managed start, delegation and provider changes while allowing Claude",
+  "rejects unavailable roles at managed start and unsupported adapters for delegation and provider changes",
   () => {
     const harness = reviewHarness(
       (input) => Effect.succeed(reviewRead(reviewIssue(input.number, input.repository))),
@@ -1649,7 +1639,7 @@ it.effect(
         .start({
           ...reviewIssue(1),
           projectId,
-          modelRoleId: "worker",
+          modelRoleId: "implementor-thorough",
 
           clientRequestId: CommandId.make("unsupported-start"),
         })

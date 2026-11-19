@@ -1,5 +1,8 @@
 import {
   isProviderAvailable,
+  TIER_PROVIDERS,
+  TIER_PROVIDER_INSTANCES,
+  type OrchestratorMcpProviderCredits,
   modelRoleProfile,
   type ModelRole,
   type ModelRoleTarget,
@@ -191,26 +194,6 @@ export function checkDelegateTarget(input: {
   return model;
 }
 
-export function workerProviderTargets<T extends ModelRoleTarget>(
-  role: Pick<ModelRole, "id" | "role"> & { readonly targets: readonly [T, ...T[]] },
-  providers: ReadonlyArray<ServerProvider>,
-  workerProvider: ServerSettings["workerProvider"],
-  isAvailable: (target: T) => boolean,
-): readonly [T, ...T[]] {
-  if (workerProvider === "mixed" || (role.role ?? resolveThreadRole(role.id)) === "orchestrator")
-    return role.targets;
-  const driver = workerProvider === "claude" ? "claudeAgent" : "codex";
-  const matching = role.targets.filter(
-    (target) =>
-      providers.some(
-        (provider) =>
-          provider.instanceId === target.providerInstanceId && provider.driver === driver,
-      ) && isAvailable(target),
-  );
-  const [first, ...rest] = matching;
-  return first === undefined ? role.targets : [first, ...rest];
-}
-
 /**
  * The first live role choice that matches the requested fields. Implementors
  * get Implementor unless the name means the fast profile, such as `sprinter`.
@@ -252,10 +235,11 @@ export function roleDefaultTarget(
       message: `The target is outside the current ${role.name} choices. The first choice is ${current.model} on ${current.providerInstanceId}${current.options?.length ? ` with ${current.options.map(({ id, value }) => `${id}=${value}`).join(", ")}` : ""}. Omit the model target fields to use the role's choice, or ask the owner through the question tool and set target.override to true after they approve.`,
     });
   }
-  const { providerInstanceId, model, options, unavailableReason, weeklyUsage } = choice;
+  const { providerInstanceId, model, options, unavailableReason, weeklyUsage, creditsApproved } =
+    choice;
   const reason =
     unavailableReason ??
-    (weeklyUsage?.remainingPercent === 0 ? "Weekly usage is exhausted." : null);
+    (weeklyUsage?.remainingPercent === 0 && !creditsApproved ? "Weekly usage is exhausted." : null);
   if (reason !== null) {
     return new OrchestratorMcpFailure({
       code: "provider_unavailable",
@@ -267,13 +251,56 @@ export function roleDefaultTarget(
 
 const MIN_WEEKLY_HEADROOM = 0.8;
 
+export function providerCreditStatuses(
+  providers: ReadonlyArray<ServerProvider>,
+  approved: ServerSettings["providerCreditsApproved"],
+): ReadonlyArray<OrchestratorMcpProviderCredits> {
+  return TIER_PROVIDERS.map((id) => {
+    const providerInstanceId = TIER_PROVIDER_INSTANCES[id];
+    const limits = providers.find(
+      (provider) => provider.instanceId === providerInstanceId,
+    )?.usageLimits;
+    const resetCreditCount = limits?.resetCredits?.availableCount;
+    const credits = limits?.credits;
+    const spend = limits?.windows.find((window) => window.id === "monthly_spend");
+    const extraUsageRemainingPercent = limits?.zeroSpendCap
+      ? 0
+      : spend === undefined
+        ? undefined
+        : remainingPercent(spend);
+    const creditsAvailable =
+      (resetCreditCount ?? 0) > 0 ||
+      credits?.hasCredits ||
+      credits?.unlimited ||
+      (extraUsageRemainingPercent ?? 0) > 0
+        ? true
+        : resetCreditCount !== undefined ||
+            credits != null ||
+            extraUsageRemainingPercent !== undefined
+          ? false
+          : undefined;
+    return {
+      providerInstanceId,
+      approved: approved[id],
+      ...(resetCreditCount === undefined ? {} : { resetCreditCount }),
+      ...(credits?.unlimited
+        ? { balance: "unlimited" }
+        : credits?.balance == null
+          ? {}
+          : { balance: credits.balance }),
+      ...(extraUsageRemainingPercent === undefined ? {} : { extraUsageRemainingPercent }),
+      ...(creditsAvailable === undefined ? {} : { creditsAvailable }),
+    };
+  });
+}
+
 /** Each role's choices with why `delegate_task` would reject each right now, or null. */
 export function modelRoleStatuses(
   roles: ReadonlyArray<ModelRole>,
   providers: ReadonlyArray<ServerProvider>,
   orchestrationCapableInstanceIds: ReadonlySet<ProviderInstanceId>,
   now: number,
-  workerProvider: ServerSettings["workerProvider"] = "mixed",
+  providerCredits: ReadonlyArray<OrchestratorMcpProviderCredits> = [],
   usageSprint?: RepositoryUsageSprint,
 ): ReadonlyArray<OrchestratorMcpModelRole> {
   const providerById = new Map(providers.map((provider) => [provider.instanceId, provider]));
@@ -297,8 +324,14 @@ export function modelRoleStatuses(
       const window = [...windows].sort(
         (left, right) => remainingPercent(left) - remainingPercent(right),
       )[0];
+      const credits = providerCredits.find(
+        (entry) => entry.providerInstanceId === target.providerInstanceId,
+      );
+      const creditsApproved = credits?.approved === true;
       const headroom =
-        provider === undefined ? undefined : modelWeeklyHeadroom(provider, target.model, now);
+        provider === undefined || creditsApproved
+          ? undefined
+          : modelWeeklyHeadroom(provider, target.model, now);
       const weeklyUsage =
         window === undefined
           ? undefined
@@ -307,14 +340,24 @@ export function modelRoleStatuses(
               resetsAt: window.resetsAt ?? null,
               pace: paceOf(window, now),
             };
+      const unavailableReason =
+        typeof checked !== "string"
+          ? checked.message
+          : weeklyUsage?.remainingPercent === 0 &&
+              (!creditsApproved || credits.creditsAvailable === false)
+            ? creditsApproved
+              ? "Weekly usage and credits are exhausted."
+              : "Weekly usage is exhausted."
+            : null;
       return {
         target: {
           ...target,
-          unavailableReason: typeof checked === "string" ? null : checked.message,
+          unavailableReason,
+          ...(creditsApproved ? { creditsApproved } : {}),
           ...(weeklyUsage === undefined ? {} : { weeklyUsage }),
         },
         configuredOrder,
-        unavailable: typeof checked !== "string",
+        unavailable: unavailableReason !== null,
         headroom,
       };
     });
@@ -347,12 +390,7 @@ export function modelRoleStatuses(
     );
     return {
       ...role,
-      targets: workerProviderTargets(
-        { ...role, targets: Arr.map(sortedChoices, ({ target }) => target) },
-        providers,
-        workerProvider,
-        (target) => target.unavailableReason === null,
-      ),
+      targets: Arr.map(sortedChoices, ({ target }) => target),
     };
   });
 }

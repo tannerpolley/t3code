@@ -438,23 +438,24 @@ Claude can also report background monitors, while Codex reports terminal command
 A non-server shell running for
 over two hours is marked as possibly stuck.
 
-To tell agents which model and effort suit each kind of delegated work, edit
-**Model roles** in **Settings → Providers** on web and desktop. **Settings → Customizations**
-also gathers every fork setting, grouped by its normal tab. Agents use these
-roles at their own discretion; your explicit instructions in a thread win. The
-standard roles are Orchestrator, Designer, Writer, Implementor, Reviewer, Investigator and Checker.
-Designer researches requests and writes issue plans before implementation.
-For documents and other writing, ask the orchestrator to delegate to a Writer.
-The Writer shares its parent’s checkout; open its thread to give guidance and answer
-its questions directly. Its final result still returns to the orchestrator.
-Implementor has separate Sprinter and Implementor profiles, each with its own model and
-effort choices. Choices are ranked by available weekly usage; unavailable choices
-are marked. Codex agents see changes on their next turn and
-Claude agents in their next session; the current choices are always available through
-`orchestrator_capabilities`. Reset model roles to get the latest
-defaults; this replaces your customizations.
+In **Settings → Providers → Model roles**, choose a tier, provider and effort for
+each kind of delegated work. **Settings → Customizations** also includes these
+settings. Each tier pairs one Claude model with one Codex model. Changing a tier's
+model updates every role that uses it. Add a short note to either model to tell
+agents when it works well. Resetting the tier models keeps your notes.
 
-Choose **All Claude**, **Mixed** (weekly usage ordering), or **All Codex** beside the sidebar update control or in Model roles settings to override worker choices; orchestrators and roles without an available choice from the selected provider keep their choices.
+Open **Role providers** beside the sidebar update control to change any role to
+**Claude**, **Both** or **Codex**. **Both** lets agents use either model in the tier,
+with low weekly headroom moving a choice down the list. A role pinned to one
+provider asks for your direction if its choice is unavailable. In the same popup,
+you can approve credit use separately for Claude and Codex. While approved, low
+weekly usage alone won't lower that provider's priority or require another
+question. Agents still ask when a choice is unavailable, including when weekly
+usage and known credits are exhausted.
+
+Codex agents see changes on their next turn and Claude agents in a new session.
+Agents can read the current choices, notes and credit approvals anytime through
+`orchestrator_capabilities`.
 
 Every thread has a role. Threads that start in a worktree, or move into one, are
 Implementors. Other threads you start are Orchestrators. Child agents are

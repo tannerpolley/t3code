@@ -4,7 +4,7 @@ import { USAGE_LIMIT_SWITCH_HOLD_MS } from "./usageLimitRecoveryPending.ts";
 import * as UsageLimitProviderSwitchWorker from "./UsageLimitProviderSwitchWorker.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { type ServerProvider, type ModelRole } from "@t3tools/contracts";
+import { type ServerProvider } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 
@@ -975,21 +975,6 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
           : DateTime.formatIso(
               DateTime.add(now, { hours: scenario === "expired-no-target" ? -1 : 1 }),
             );
-      const role: ModelRole = {
-        id: "implementor-thorough",
-        role: "implementor",
-        profile: "thorough",
-        name: "Implementor",
-        description: "",
-        // The source need not match: persisted role must take precedence.
-        targets: [
-          {
-            providerInstanceId: target.instanceId,
-            model: target.model,
-            ...(target.options === undefined ? {} : { options: target.options }),
-          },
-        ],
-      };
       const settings = {
         usageLimitRecovery:
           scenario === "off"
@@ -997,20 +982,16 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
             : scenario === "wait"
               ? ("wait" as const)
               : ("switch" as const),
-        // The role-less thread is an Orchestrator: keep that profile on its own provider so only
-        // the scenario's fallback models offer a target.
-        modelRoles:
-          scenario === "role" || scenario === "reactor"
-            ? [role]
-            : [
-                {
-                  id: "orchestrator",
-                  role: "orchestrator" as const,
-                  name: "Orchestrator",
-                  description: "",
-                  targets: [{ providerInstanceId: source.instanceId, model: source.model }],
-                },
-              ],
+        modelTiers: {
+          2: { claude: { model: claudeSelection.model }, codex: { model: modelSelection.model } },
+        },
+        modelRoles: {
+          orchestrator: {
+            provider: scenario === "claude-to-codex" ? ("claude" as const) : ("codex" as const),
+            effort: "default" as const,
+          },
+          "implementor-thorough": { provider: "claude" as const, effort: "high" as const },
+        },
         usageLimitFallbackModels:
           scenario === "unavailable" || scenario === "expired-no-target" ? [] : [target],
         dontAskMode: true,
@@ -1519,16 +1500,10 @@ it.effect.each([
     // no switch target either.
     ...(scenario === "no-target"
       ? {
-          modelRoles: (["fast", "thorough"] as const).map((profile) => ({
-            id: `implementor-${profile}`,
-            role: "implementor" as const,
-            profile,
-            name: "Implementor",
-            description: "",
-            targets: [
-              { providerInstanceId: modelSelection.instanceId, model: modelSelection.model },
-            ],
-          })),
+          modelRoles: {
+            "implementor-fast": { provider: "codex" },
+            "implementor-thorough": { provider: "codex" },
+          },
         }
       : {}),
   } satisfies Parameters<typeof ServerSettings.layerTest>[0];

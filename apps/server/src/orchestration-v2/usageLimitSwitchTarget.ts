@@ -1,5 +1,6 @@
 import {
   effectiveThreadRole,
+  resolveModelRoles,
   resolveThreadRole,
   type ModelRole,
   type ModelSelection,
@@ -10,7 +11,11 @@ import {
 } from "@t3tools/contracts";
 import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import { modelRoleStatuses, modelWeeklyHeadroom } from "../mcp/delegateTaskTarget.ts";
+import {
+  modelRoleStatuses,
+  modelWeeklyHeadroom,
+  providerCreditStatuses,
+} from "../mcp/delegateTaskTarget.ts";
 
 type UsageLimitThread = Pick<
   OrchestrationV2AppThread,
@@ -43,7 +48,10 @@ export function usageLimitThreadRole(
 
 export function usageLimitSwitchTarget(
   thread: UsageLimitThread,
-  settings: Pick<ServerSettings, "modelRoles" | "usageLimitFallbackModels">,
+  settings: Pick<
+    ServerSettings,
+    "modelRoles" | "modelTiers" | "providerCreditsApproved" | "usageLimitFallbackModels"
+  >,
   providers: readonly ServerProvider[],
   capableIds: ReadonlySet<ProviderInstanceId>,
   now: number,
@@ -53,7 +61,7 @@ export function usageLimitSwitchTarget(
     (provider) => provider.instanceId === thread.modelSelection.instanceId,
   );
   if (source?.driver !== "codex" && source?.driver !== "claudeAgent") return null;
-  const role = usageLimitThreadRole(thread, settings.modelRoles);
+  const role = usageLimitThreadRole(thread, resolveModelRoles(settings));
   // Reuse the role ranking and its model/option validation for fallback targets too.
   const fallbackTargets = settings.usageLimitFallbackModels.map((selection) => ({
     providerInstanceId: selection.instanceId,
@@ -75,6 +83,7 @@ export function usageLimitSwitchTarget(
     providers,
     capableIds,
     now,
+    providerCreditStatuses(providers, settings.providerCreditsApproved),
   );
   const choice = ranked
     .flatMap((candidate) =>
@@ -100,7 +109,6 @@ export function usageLimitSwitchTarget(
         !excludedTargetInstanceIds.has(target.providerInstanceId) &&
         (provider.driver === "codex" || provider.driver === "claudeAgent") &&
         provider.driver !== source.driver &&
-        target.weeklyUsage?.remainingPercent !== 0 &&
         !provider.usageLimits?.windows.some(
           (window) =>
             window.kind !== "weekly" &&

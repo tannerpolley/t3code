@@ -1,4 +1,9 @@
-import type { OrchestratorMcpModelRole, ProviderInteractionMode } from "@t3tools/contracts";
+import type {
+  OrchestratorMcpModelNote,
+  OrchestratorMcpModelRole,
+  OrchestratorMcpProviderCredits,
+  ProviderInteractionMode,
+} from "@t3tools/contracts";
 
 import type { ManagedIssueRole, McpOrchestrationPolicy } from "./mcpSession.ts";
 
@@ -34,78 +39,117 @@ export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 ${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
 `;
 
-/** Upper bound on the model roles block, which providers deliver with their orchestration instructions. */
-export const MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH = 6_000;
+// Codex caps each additional-context entry at 4,000 UTF-8 bytes.
+const MODEL_INSTRUCTIONS_MAX_BYTES = 4_000;
 
 const MODEL_ROLES_HEADER = `
 
 ### Model roles
 
-The user can switch worker providers (All Claude / Mixed / All Codex) at any time, so read \`orchestrator_capabilities\` before choosing a worker model because its roles are current.
+The user sets each role's provider (Claude, Both or Codex) and can change it at any time, so read \`orchestrator_capabilities\` before choosing a worker model because its roles are current.
 
-The user's choices for delegated work follow configured order, with the Default first. Choices with weekly headroom below 0.8 are demoted behind the others, ordered by headroom. Unknown usage is not demoted, and unavailable targets go last. Weekly usage shows quota left, reset time, and pace against elapsed window time when reported. Pass \`role\` and omit \`target\` to use the live role default. Target JSON identifies individual choices when needed. \`orchestrator_capabilities\` lists all choices and their availability again.
+The user's choices for delegated work follow configured order, with the Default first. Choices with weekly headroom below 0.8 are demoted behind the others, ordered by headroom. Unknown usage is not demoted, and unavailable targets go last. Weekly usage shows quota left, reset time, and pace against elapsed window time when reported. Pass \`role\` and omit \`target\` to use the live role default. To use a role's other choice, pass only \`target.providerInstanceId\`. \`orchestrator_capabilities\` lists all choices and their availability again.
 
 `;
 
-const oneLine = (text: string, maxLength: number) => {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > maxLength ? `${flat.slice(0, maxLength - 1)}…` : flat;
-};
+const byteLength = (text: string) => Buffer.byteLength(text, "utf8");
 
-function modelRoleLine(role: OrchestratorMcpModelRole, maxLength: number): string {
-  const description = oneLine(role.description, 200);
-  const head = `- ${oneLine(role.name, 60)}${role.role ? ` (role: ${role.role})` : ""}${description.length > 0 ? `: ${description}` : ""}.`;
+function oneLine(text: string, maxBytes: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (byteLength(flat) <= maxBytes) return flat;
+  let shortened = "";
+  let remaining = maxBytes - byteLength("…");
+  for (const character of flat) {
+    remaining -= byteLength(character);
+    if (remaining < 0) break;
+    shortened += character;
+  }
+  return shortened + "…";
+}
+
+function modelRoleLine(role: OrchestratorMcpModelRole, maxBytes: number): string {
+  const head = `- ${role.name}${role.role ? ` (role: ${role.role})` : ""}`;
+  const description = oneLine(role.description, 600);
   const choices = role.targets.map(
     ({ providerInstanceId, model, options, unavailableReason, weeklyUsage }) => {
-      const traits = options?.map((option) => oneLine(String(option.value), 60)).join(" ");
-      const label = `${oneLine(model, 100)}${traits ? ` ${traits}` : ""} (${providerInstanceId})`;
+      const traits = options?.map((option) => option.value).join(" ");
+      const label = `${model}${traits ? ` ${traits}` : ""} (${providerInstanceId})`;
       const usage = weeklyUsage
         ? ` Weekly usage: ${weeklyUsage.remainingPercent}% left; resets ${weeklyUsage.resetsAt ?? "unknown"}; pace ${weeklyUsage.pace ?? "unknown"}.`
         : "";
-      if (unavailableReason !== null) {
-        return `${label}.${usage} Unavailable: ${oneLine(unavailableReason, 200)}`;
-      }
-      const target = {
-        providerInstanceId,
-        model,
-        ...(options === undefined || options.length === 0
-          ? {}
-          : { options: Object.fromEntries(options.map((option) => [option.id, option.value])) }),
-      };
-      return `${label}.${usage} Target JSON: \`${JSON.stringify(target)}\``;
+      return unavailableReason === null
+        ? `${label}.${usage}`
+        : `${label}.${usage} Unavailable: ${oneLine(unavailableReason, 200)}`;
     },
   );
-  const full = `${head} ${choices.join(" or ")}`;
-  if (full.length <= maxLength) return full;
-  const suffix = " More choices: call `orchestrator_capabilities`.";
-  let line = oneLine(head, maxLength - suffix.length);
-  for (const choice of choices) {
-    const next = `${line} ${choice}`;
-    if (next.length + suffix.length > maxLength) break;
-    line = next;
-  }
-  return line + suffix;
+  const allChoices = choices.join(" or ");
+  const full = description ? `${head}: ${description}. ${allChoices}` : `${head}: ${allChoices}`;
+  if (byteLength(full) <= maxBytes) return full;
+  const compact = `${head}: ${allChoices}`;
+  if (byteLength(compact) <= maxBytes) return compact;
+  const suffix = " See `orchestrator_capabilities` for choices.";
+  return byteLength(`${head}: ${choices[0]}${suffix}`) <= maxBytes
+    ? `${head}: ${choices[0]}${suffix}`
+    : head + "." + suffix;
 }
 
-/** Budget model-role lines without cutting target JSON or omitting a role. */
-export function t3ModelRolesInstructions(roles: ReadonlyArray<OrchestratorMcpModelRole>): string {
+export function t3ModelRolesInstructions(
+  roles: ReadonlyArray<OrchestratorMcpModelRole>,
+  providerCredits: ReadonlyArray<OrchestratorMcpProviderCredits> = [],
+): string {
   if (roles.length === 0) return "";
-  const budget = MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH - MODEL_ROLES_HEADER.length - roles.length - 1;
-  const full = roles.map((role) => modelRoleLine(role, Number.POSITIVE_INFINITY));
-  const perRole = Math.floor(budget / roles.length);
+  const creditLines = providerCredits.map(
+    ({ providerInstanceId, approved, resetCreditCount, balance, extraUsageRemainingPercent }) =>
+      [
+        `${providerInstanceId} credits ${approved ? "approved" : "require approval"}.`,
+        resetCreditCount === undefined ? "" : `Banked resets: ${resetCreditCount}.`,
+        balance === undefined ? "" : `Balance: ${oneLine(balance, 48)}.`,
+        extraUsageRemainingPercent === undefined
+          ? ""
+          : `Extra usage: ${extraUsageRemainingPercent}% left.`,
+      ]
+        .filter(Boolean)
+        .join(" "),
+  );
+  const credits =
+    creditLines.length === 0
+      ? ""
+      : `Approved credits keep a choice in its usual order even when weekly usage is low. In that case, use the provider without asking. Ask if the role's choice is unavailable. ${creditLines.join(" ")}\n\n`;
+  const header = MODEL_ROLES_HEADER + credits;
+  const budget = MODEL_INSTRUCTIONS_MAX_BYTES - byteLength(header) - roles.length;
+  const full = roles.map((role) => modelRoleLine(role, Infinity)).join("\n");
   const lines =
-    full.join("\n").length <= budget ? full : roles.map((role) => modelRoleLine(role, perRole));
-  return `${MODEL_ROLES_HEADER}${lines.join("\n")}\n`;
+    byteLength(full) <= budget
+      ? full
+      : roles.map((role) => modelRoleLine(role, Math.floor(budget / roles.length))).join("\n");
+  return `${header}${lines}\n`;
+}
+
+export function t3ModelNotesInstructions(notes: ReadonlyArray<OrchestratorMcpModelNote>): string {
+  if (notes.length === 0) return "";
+  const header =
+    "\n\n### Model notes\n\nThe owner's notes on each model. Weigh them when you pick a role or ask the owner for a model outside a role.\n\n";
+  const lines = notes.map(({ model, note }) => `- ${model}: ${note.replace(/\s+/g, " ").trim()}`);
+  const full = lines.join("\n");
+  const budget = MODEL_INSTRUCTIONS_MAX_BYTES - byteLength(header) - notes.length;
+  return (
+    header +
+    (byteLength(full) <= budget
+      ? full
+      : lines.map((line) => oneLine(line, Math.floor(budget / notes.length))).join("\n"))
+  );
 }
 
 /** The one place a managed role decides a session's instructions and native subagents. */
 export function t3OrchestrationPolicy(
   managedIssue: ManagedIssueRole | undefined,
   modelRoles: string,
+  modelNotes = "",
 ): McpOrchestrationPolicy {
   return {
     sections: t3OrchestrationSections(managedIssue),
     modelRoles,
+    modelNotes,
     // The repository root keeps native subagents for its own work between orchestration runs.
     nativeSubagents: managedIssue !== "worker",
   };
@@ -115,7 +159,7 @@ export function t3OrchestrationPolicy(
 export function t3OrchestrationText(policy: McpOrchestrationPolicy | undefined): string {
   return policy === undefined
     ? T3_CODE_ORCHESTRATION_INSTRUCTIONS
-    : `\n\n${policy.sections.join("\n\n")}\n${policy.modelRoles}`;
+    : `\n\n${policy.sections.join("\n\n")}\n${policy.modelRoles}${policy.modelNotes}`;
 }
 
 /** Managed issue work has one durable delegation path, including same-provider children. */

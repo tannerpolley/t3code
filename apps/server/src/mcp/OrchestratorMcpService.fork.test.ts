@@ -12,6 +12,7 @@ import {
   IssueWorkError,
   NodeId,
   OrchestratorMcpDelegateTaskInput,
+  type OrchestratorMcpFailure,
   OrchestratorMcpTarget,
   ProjectId,
   ProviderDriverKind,
@@ -25,7 +26,6 @@ import {
 
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Arr from "effect/Array";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -42,7 +42,11 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import { modelRoleStatuses } from "./delegateTaskTarget.ts";
+import {
+  roleDefaultTarget,
+  providerCreditStatuses,
+  modelRoleStatuses,
+} from "./delegateTaskTarget.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -536,81 +540,76 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
-  it("filters worker choices by provider, retaining fallback choices and orchestrators", () => {
-    const claude = ProviderInstanceId.make("custom-claude");
-    const blockedClaude = ProviderInstanceId.make("blocked-claude");
-    const providers: ServerProvider[] = [
-      providerSnapshot({
-        instanceId: codexInstanceId,
-        driver: ProviderDriverKind.make("codex"),
-        model: "sol",
-      }),
+  it("keeps approved choices at low headroom and refuses exhausted credits or unavailable providers", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const providers = (
+      usedPercent: number,
+      availableCount: number,
+      authenticated = true,
+    ): ServerProvider[] => [
+      {
+        ...providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          model: "sol",
+        }),
+        ...(!authenticated ? { auth: { status: "unauthenticated" } } : {}),
+        usageLimits: {
+          checkedAt: modelRoleStatusCheckedAt,
+          windows: [
+            {
+              id: "weekly",
+              kind: "weekly",
+              label: "Weekly",
+              usedPercent,
+              resetsAt: modelRoleStatusResetAt(0.7),
+              windowDurationMins: 10080,
+            },
+          ],
+          resetCredits: { availableCount },
+        },
+      },
       providerSnapshot({
         instanceId: claude,
         driver: ProviderDriverKind.make("claudeAgent"),
         model: "opus",
       }),
-      {
-        ...providerSnapshot({
-          instanceId: blockedClaude,
-          driver: ProviderDriverKind.make("claudeAgent"),
-          model: "opus",
-        }),
-        auth: { status: "unauthenticated" },
-      },
     ];
-    const targets = [
-      { providerInstanceId: codexInstanceId, model: "sol" },
-      { providerInstanceId: blockedClaude, model: "opus" },
-      { providerInstanceId: claude, model: "opus" },
-    ] as const;
     const role: ModelRole = {
-      id: "implementor-fast",
-      name: "Implementor",
+      id: "checker",
+      name: "Checker",
       description: "",
-      targets,
+      targets: [
+        { providerInstanceId: codexInstanceId, model: "sol" },
+        { providerInstanceId: claude, model: "opus" },
+      ],
     };
-    const roles: ModelRole[] = [
-      role,
-      { ...role, id: "orchestrator" },
-      { ...role, id: "checker", targets: [targets[0], targets[1]] },
-    ];
-    const capable = new Set(providers.map((provider) => provider.instanceId));
-    const statuses = (mode: "mixed" | "claude" | "codex") =>
-      modelRoleStatuses(roles, providers, capable, modelRoleStatusNow, mode);
-    const mixed = statuses("mixed");
-    const claudeOnly = statuses("claude");
-    const codexOnly = statuses("codex");
-    assert.deepEqual(
-      claudeOnly[0]!.targets.map((target) => target.providerInstanceId),
-      [claude],
-    );
-    assert.deepEqual(
-      codexOnly[0]!.targets.map((target) => target.providerInstanceId),
-      [codexInstanceId],
-    );
-    assert.deepEqual(claudeOnly[1], mixed[1]);
-    assert.deepEqual(codexOnly[1], mixed[1]);
-    assert.deepEqual(claudeOnly[2], mixed[2]);
-    assert.deepEqual(
-      mixed[0]!.targets.map((target) => target.providerInstanceId),
-      [codexInstanceId, claude, blockedClaude],
-    );
-    assert.deepEqual(modelRoleStatuses(roles, providers, capable, modelRoleStatusNow), mixed);
-    // A usage sprint makes every other provider's choice unavailable, including the orchestrator's.
-    const sprint = modelRoleStatuses(roles, providers, capable, modelRoleStatusNow, "claude", {
-      providerInstanceId: codexInstanceId,
-      windowId: "weekly",
-      usedPercent: 0,
-      resetsAt: "2026-11-13T23:31:57.000Z",
-      startedAt: "2026-11-09T00:00:00.000Z",
-    });
-    for (const role of sprint)
-      assert.deepEqual(
-        role.targets.map((target) => target.unavailableReason === null),
-        role.targets.map((target) => target.providerInstanceId === codexInstanceId),
+    const ranked = (snapshots: ServerProvider[], approved: boolean) =>
+      modelRoleStatuses(
+        [role],
+        snapshots,
+        new Set([codexInstanceId, claude]),
+        modelRoleStatusNow,
+        providerCreditStatuses(snapshots, { claude: false, codex: approved }),
       );
-    assert.equal(sprint[0]!.targets[0]!.providerInstanceId, codexInstanceId);
+    assert.equal(ranked(providers(93, 3), false)[0]?.targets[0].providerInstanceId, claude);
+    assert.equal(ranked(providers(93, 3), true)[0]?.targets[0].providerInstanceId, codexInstanceId);
+    const chooseCodex = (snapshots: ServerProvider[]) =>
+      roleDefaultTarget(
+        ranked(snapshots, true),
+        "checker",
+        { providerInstanceId: codexInstanceId },
+        () => undefined,
+      );
+    assert.deepEqual(chooseCodex(providers(100, 3)), role.targets[0]);
+    assert.match(
+      (chooseCodex(providers(100, 0)) as OrchestratorMcpFailure).message,
+      /credits are exhausted.*Ask the owner/,
+    );
+    assert.match(
+      (chooseCodex(providers(93, 3, false)) as OrchestratorMcpFailure).message,
+      /not authenticated.*Ask the owner/,
+    );
   });
 
   it("keeps configured order unless headroom is below the threshold", () => {
@@ -841,24 +840,19 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   it.effect("lists the user's model roles, marking targets delegate_task would reject", () => {
     const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
-    const target = (providerInstanceId: ProviderInstanceId, model: string) => ({
-      providerInstanceId,
-      model,
-      options: [{ id: "reasoningEffort", value: "high" }],
-    });
-    const modelRoles: ReadonlyArray<ModelRole> = [
-      {
-        id: "builder",
-        name: "Builder",
-        description: "Pick a suitable choice",
-        targets: [
-          target(codexInstanceId, "gpt-5.4"),
-          target(codexInstanceId, "gpt-0"),
-          target(ProviderInstanceId.make("ghost"), "gpt-5.4"),
-          target(claudeInstanceId, "claude-sonnet-4-6"),
-        ],
+    const { reviewer } = DEFAULT_SERVER_SETTINGS.modelRoles;
+    const modelRoles = {
+      ...DEFAULT_SERVER_SETTINGS.modelRoles,
+      reviewer: { ...reviewer, provider: "both" as const, effort: "default" as const },
+    };
+    const modelTiers = {
+      ...DEFAULT_SERVER_SETTINGS.modelTiers,
+      1: {
+        claude: { model: "claude-sonnet-4-6", note: "" },
+        codex: { model: "gpt-5.4", note: "Review code" },
       },
-    ];
+    };
+    const providerCreditsApproved = { claude: false, codex: true };
     const providers: ReadonlyArray<ServerProvider> = [
       providerSnapshot({
         instanceId: codexInstanceId,
@@ -877,20 +871,30 @@ describe("OrchestratorMcpService provider resolution", () => {
     return Effect.gen(function* () {
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       const capabilities = yield* service.capabilities(scope);
+      const role = capabilities.modelRoles.find(({ id }) => id === "reviewer")!;
+      assert.deepEqual(role.targets, [
+        {
+          providerInstanceId: codexInstanceId,
+          model: "gpt-5.4",
+          unavailableReason: null,
+          creditsApproved: true,
+        },
+        {
+          providerInstanceId: claudeInstanceId,
+          model: "claude-sonnet-4-6",
+          unavailableReason:
+            "Provider claudeAgent cannot run a child task: Provider is not authenticated.",
+        },
+      ]);
+      assert.deepEqual(capabilities.modelNotes, [
+        { providerInstanceId: codexInstanceId, model: "gpt-5.4", note: "Review code" },
+      ]);
       assert.deepEqual(
-        capabilities.modelRoles,
-        modelRoles.map((entry) => ({
-          ...entry,
-          targets: Arr.map(entry.targets, (choice, index) => ({
-            ...choice,
-            unavailableReason: [
-              null,
-              "Model gpt-0 is not advertised by provider codex. Advertised models: gpt-5.4.",
-              "Provider instance ghost is not registered.",
-              "Provider claudeAgent cannot run a child task: Provider is not authenticated.",
-            ][index]!,
-          })),
-        })),
+        capabilities.providerCredits?.find((item) => item.providerInstanceId === codexInstanceId),
+        {
+          providerInstanceId: codexInstanceId,
+          approved: true,
+        },
       );
     }).pipe(
       Effect.provide(
@@ -909,7 +913,12 @@ describe("OrchestratorMcpService provider resolution", () => {
               Layer.mock(SecretRequests.SecretRequests)({}),
               Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
               Layer.mock(ServerSettings.ServerSettingsService)({
-                getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, modelRoles }),
+                getSettings: Effect.succeed({
+                  ...DEFAULT_SERVER_SETTINGS,
+                  modelRoles,
+                  modelTiers,
+                  providerCreditsApproved,
+                }),
               }),
             ),
           ),
@@ -1041,7 +1050,7 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   it.effect.each([
-    ["role without a target uses the role's first available choice", "designer", {}, "gpt-5.5"],
+    ["role without a target uses its tier choice", "designer", {}, "gpt-5.4"],
     ["implementor uses the Implementor role, not Sprinter", "implementor", {}, "gpt-5.5"],
     ["sprinter uses the Sprinter role", "sprinter", {}, "gpt-5.4"],
     ["a listed choice works", "designer", { model: "gpt-5.4" }, "gpt-5.4"],
@@ -1054,7 +1063,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       /gpt-5\.5/,
     ],
     ["an explicit override works", "implementor", { model: "gpt-5.4", override: true }, "gpt-5.4"],
-    ["unconfigured role copies the parent", "checker", {}, "gpt-5.4"],
+    ["checker uses its tier", "checker", {}, "gpt-5.5"],
     ["no available choice asks the owner", "reviewer", {}, null, /Ask the owner.*question tool/],
     [
       "exhausted usage asks the owner",
@@ -1066,26 +1075,6 @@ describe("OrchestratorMcpService provider resolution", () => {
   ] as const)("delegate_task model role default: %s", ([, role, target, expectedModel, error]) =>
     Effect.gen(function* () {
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
-      const choice = (model: string) => ({ providerInstanceId: codexInstanceId, model });
-      const modelRole = (
-        id: string,
-        targets: readonly [ReturnType<typeof choice>, ...ReturnType<typeof choice>[]],
-        profile?: "fast" | "thorough",
-      ): ModelRole => ({
-        id,
-        name: id,
-        description: "",
-        role: id === "sprinter" ? "implementor" : (id as ModelRole["role"]),
-        ...(profile === undefined ? {} : { profile }),
-        targets,
-      });
-      const modelRoles = [
-        modelRole("designer", [choice("gpt-0"), choice("gpt-5.5"), choice("gpt-5.4")]),
-        modelRole("sprinter", [choice("gpt-5.4")], "fast"),
-        modelRole("implementor", [choice("gpt-5.5")], "thorough"),
-        modelRole("reviewer", [choice("gpt-0")]),
-        modelRole("investigator", [choice("gpt-5.5")]),
-      ];
       const task = {
         id: taskId,
         threadId: parentThreadId,
@@ -1167,8 +1156,21 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        Layer.mock(ServerSettings.ServerSettingsService)({
-          getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, modelRoles }),
+        ServerSettings.layerTest({
+          modelTiers: {
+            1: { codex: { model: role === "reviewer" ? "gpt-0" : "gpt-5.4" } },
+            2: { codex: { model: "gpt-5.5" } },
+            3: { codex: { model: "gpt-5.4" } },
+            4: { codex: { model: "gpt-5.5" } },
+          },
+          modelRoles: {
+            designer: { provider: "codex", effort: "default" },
+            "implementor-fast": { provider: "codex", effort: "default" },
+            "implementor-thorough": { effort: "default" },
+            checker: { effort: "default" },
+            investigator: { effort: "default" },
+            reviewer: { effort: "default" },
+          },
         }),
       );
 
@@ -1575,7 +1577,7 @@ describe("OrchestratorMcpService provider resolution", () => {
   it.effect("limits a usage sprint lineage's children to the sprint provider", () =>
     Effect.gen(function* () {
       const rootThreadId = ThreadId.make("thread:mcp-providers-sprint-root");
-      const peerId = ProviderInstanceId.make("codex-subscription-2");
+      const peerId = ProviderInstanceId.make("claudeAgent");
       const driver = ProviderDriverKind.make("codex");
       const usageSprint = {
         providerInstanceId: codexInstanceId,
@@ -1636,21 +1638,16 @@ describe("OrchestratorMcpService provider resolution", () => {
             }),
         }),
         ServerSettings.layerTest({
-          modelRoles: [
-            {
-              id: "reviewer",
-              name: "Reviewer",
-              description: "",
-              targets: [codexInstanceId, peerId].map((providerInstanceId) => ({
-                providerInstanceId,
-                model: "gpt-5.4",
-              })),
-            },
-          ],
+          modelRoles: { reviewer: { provider: "both", effort: "default" } },
+          modelTiers: { 1: { codex: { model: "gpt-5.4" }, claude: { model: "claude-fable-5-2" } } },
         }),
         providerRegistryLayer([
           providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
-          providerSnapshot({ instanceId: peerId, driver, model: "gpt-5.4" }),
+          providerSnapshot({
+            instanceId: peerId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: "claude-fable-5-2",
+          }),
         ]),
         adapterRegistryLayer([codexInstanceId, peerId]),
         Layer.mock(ProjectService.ProjectService)({}),

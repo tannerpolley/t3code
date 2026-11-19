@@ -1,10 +1,12 @@
 import {
   ProviderDriverKind,
+  ServerSettings,
   ProviderInstanceId,
   type ModelRole,
   type ModelSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { usageLimitSwitchTarget, usageLimitThreadRole } from "./usageLimitSwitchTarget.ts";
 
@@ -86,16 +88,17 @@ const alternative: ModelSelection = {
   options: [{ id: "effort", value: "medium" }],
 };
 
+const settingsWith = Schema.decodeSync(ServerSettings);
+
 describe("usage-limit target selection", () => {
   it("switches a role-less top-level thread as an Orchestrator even when a Reviewer lists its model", () => {
-    const reviewerTarget: ModelSelection = { instanceId: otherClaude, model: "opus" };
-    const settings = {
-      modelRoles: [
-        role("reviewer", source, reviewerTarget, { role: "reviewer" }),
-        role("orchestrator", source, alternative, { role: "orchestrator" }),
-      ],
-      usageLimitFallbackModels: [],
-    };
+    const settings = settingsWith({
+      modelRoles: { orchestrator: { provider: "both" }, reviewer: { provider: "codex" } },
+      modelTiers: {
+        1: { codex: { model: "sol" } },
+        2: { claude: { model: "opus" }, codex: { model: "sol" } },
+      },
+    });
     const providers = [
       provider(codex, "codex", "sol"),
       provider(claude, "claudeAgent", "opus"),
@@ -146,18 +149,13 @@ describe("usage-limit target selection", () => {
   });
 
   it("uses existing weekly-headroom ranking across alternatives and preserves provider-specific effort", () => {
-    const base = role("reviewer", source, alternative, { role: "reviewer" });
-    const ranked: ModelRole = {
-      ...base,
-      targets: [
-        ...base.targets,
-        {
-          providerInstanceId: otherClaude,
-          model: "opus",
-          options: [{ id: "effort", value: "low" }],
-        },
+    const settings = settingsWith({
+      modelRoles: { reviewer: { provider: "codex" } },
+      usageLimitFallbackModels: [
+        alternative,
+        { instanceId: otherClaude, model: "opus", options: [{ id: "effort", value: "low" }] },
       ],
-    };
+    });
     const providers = [
       provider(codex, "codex", "sol"),
       provider(claude, "claudeAgent", "opus", 60),
@@ -165,7 +163,7 @@ describe("usage-limit target selection", () => {
     ];
     const result = usageLimitSwitchTarget(
       { ...topLevel, role: "reviewer", modelSelection: source },
-      { modelRoles: [ranked], usageLimitFallbackModels: [] },
+      settings,
       providers,
       new Set([codex, claude, otherClaude]),
       now,
@@ -208,7 +206,10 @@ describe("usage-limit target selection", () => {
       };
       const result = usageLimitSwitchTarget(
         { ...topLevel, modelSelection: source },
-        { modelRoles: [], usageLimitFallbackModels: [alternative] },
+        settingsWith({
+          modelRoles: { orchestrator: { provider: "codex" } },
+          usageLimitFallbackModels: [alternative],
+        }),
         [provider(codex, "codex", "sol"), target],
         new Set(reason === "missing-adapter" ? [codex] : [codex, claude]),
         now,
@@ -219,10 +220,10 @@ describe("usage-limit target selection", () => {
 });
 
 it("uses fallbacks when a role has no available other-provider choice and excludes only targets", () => {
-  const settings = {
-    modelRoles: [role("orchestrator", source, source, { role: "orchestrator" })],
+  const settings = settingsWith({
+    modelRoles: { orchestrator: { provider: "codex" } },
     usageLimitFallbackModels: [alternative],
-  };
+  });
   const providers = [provider(codex, "codex", "sol"), provider(claude, "claudeAgent", "opus")];
   expect(
     usageLimitSwitchTarget(

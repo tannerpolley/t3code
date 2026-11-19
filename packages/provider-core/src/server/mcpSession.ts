@@ -9,6 +9,7 @@ export interface McpOrchestrationPolicy {
   readonly sections: ReadonlyArray<string>;
   /** The user's model roles block, refreshed before each turn; empty when there are none. */
   readonly modelRoles: string;
+  readonly modelNotes: string;
   /** False for issue workers, which must delegate through T3. */
   readonly nativeSubagents: boolean;
 }

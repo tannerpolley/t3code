@@ -1,7 +1,12 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId, ServerSettings } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  resolveModelRoles,
+  ServerSettings,
+} from "@t3tools/contracts";
 
 import { assert, it } from "@effect/vitest";
 
@@ -45,6 +50,7 @@ it.effect("agents cannot change user-only policies through environment preferenc
     const decoded = yield* decodeAgentPreferences({
       issueUpkeepRequiresApproval: false,
       dontAskMode: true,
+      providerCreditsApproved: { codex: true },
       enableProviderUpdateChecks: false,
     });
     assert.deepEqual(decoded, { enableProviderUpdateChecks: false });
@@ -143,4 +149,116 @@ it.effect.each([
       ),
     ),
   ),
+);
+
+it.effect.each(["codex", "mixed"])(
+  "migrates the saved %s worker switch and choices to per-role tiers",
+  (workerProvider) =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const rows = [
+        ["orchestrator", 2, "claude", "default", "claude-opus-5-5", null],
+        ["implementor-fast", 3, "codex", "xhigh", "gpt-6.1-terra", ["claude-sonnet-5-5", "high"]],
+        ["implementor-thorough", 2, "codex", "high", "gpt-6.2-sol", ["claude-opus-5-5", "medium"]],
+        ["checker", 2, "codex", "high", "gpt-6.2-sol", ["claude-opus-5-5", "xhigh"]],
+        ["reviewer", 1, "codex", "medium", "gpt-6.2-astra", ["claude-fable-5-2", "high"]],
+        ["investigator", 4, "codex", "xhigh", "gpt-6-luna", ["claude-haiku-5-5", "xhigh"]],
+        ["designer", 1, "claude", "high", "claude-fable-5-2", null],
+        ["writer", 1, "claude", "high", "claude-fable-5-2", null],
+      ] as const;
+      const modelRoles = rows.map(([id, , provider, effort, model, alternate]) => ({
+        id,
+        name: id,
+        description: `Saved ${id} description`,
+        targets: [
+          ...(alternate === null
+            ? []
+            : [
+                {
+                  providerInstanceId: "claudeAgent",
+                  model: alternate[0],
+                  options: [{ id: "effort", value: alternate[1] }],
+                },
+              ]),
+          {
+            providerInstanceId: ProviderInstanceId.make(
+              provider === "claude" ? "claudeAgent" : "codex",
+            ),
+            model,
+            ...(effort === "default"
+              ? {}
+              : {
+                  options:
+                    provider === "claude"
+                      ? [{ id: "effort", value: effort }]
+                      : [
+                          { id: "reasoningEffort", value: effort },
+                          { id: "serviceTier", value: "default" },
+                          { id: "cyberAccessProgram", value: "standard" },
+                        ],
+                }),
+          },
+        ],
+      }));
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({ modelRoles, workerProvider }),
+      );
+      const migrated = yield* service.getSettings;
+      if (workerProvider === "mixed") {
+        assert.deepEqual(migrated.modelRoles["implementor-fast"], {
+          description: "Saved implementor-fast description",
+          tier: 3,
+          provider: "both",
+          effort: "high",
+        });
+        return;
+      }
+      const resolved = resolveModelRoles(migrated);
+      for (const [id, tier, provider, effort, model] of rows) {
+        assert.deepEqual(migrated.modelRoles[id], {
+          description: `Saved ${id} description`,
+          tier,
+          provider,
+          effort,
+        });
+        assert.deepEqual(resolved.find((role) => role.id === id)?.targets, [
+          {
+            providerInstanceId: ProviderInstanceId.make(
+              provider === "claude" ? "claudeAgent" : "codex",
+            ),
+            model,
+            ...(effort === "default"
+              ? {}
+              : {
+                  options: [
+                    { id: provider === "claude" ? "effort" : "reasoningEffort", value: effort },
+                  ],
+                }),
+          },
+        ]);
+      }
+
+      yield* Effect.all(
+        [
+          service.updateSettings({ modelRoles: { reviewer: { provider: "both" } } }),
+          service.updateSettings({ modelRoles: { writer: { effort: "max" } } }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const persisted = yield* fs.readFileString(config.settingsPath);
+      assert.notProperty(JSON.parse(persisted), "workerProvider");
+      const patched = yield* decodeServerSettingsJson(persisted);
+      assert.equal(patched.modelRoles.reviewer.provider, "both");
+      assert.equal(patched.modelRoles.writer.effort, "max");
+      assert.equal(patched.modelRoles.reviewer.description, "Saved reviewer description");
+    }).pipe(
+      Effect.provide(
+        layerServerSettings().pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
 );

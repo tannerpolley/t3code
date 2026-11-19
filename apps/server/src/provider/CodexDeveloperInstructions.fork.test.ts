@@ -1,12 +1,68 @@
 import * as NodeAssert from "node:assert/strict";
 
-import { t3OrchestrationPolicy } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  resolveModelNotes,
+  resolveModelRoles,
+  ServerSettings,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import * as Arr from "effect/Array";
+import {
+  t3ModelNotesInstructions,
+  t3ModelRolesInstructions,
+  t3OrchestrationPolicy,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { describe, it } from "vite-plus/test";
 
 import {
   buildCodexAdditionalContext,
   CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
 } from "./CodexDeveloperInstructions.ts";
+
+const worstCase = Schema.decodeSync(ServerSettings)({
+  modelRoles: Object.fromEntries(
+    Object.keys(DEFAULT_SERVER_SETTINGS.modelRoles).map((id) => [
+      id,
+      { provider: "both", description: "界".repeat(200) },
+    ]),
+  ),
+  modelTiers: Object.fromEntries(
+    [1, 2, 3, 4].map((tier) => [
+      tier,
+      {
+        claude: { model: "甲".repeat(100), note: "界".repeat(200) },
+        codex: { model: "乙".repeat(100), note: "界".repeat(200) },
+      },
+    ]),
+  ),
+});
+const roles = resolveModelRoles(worstCase).map((role) => ({
+  ...role,
+  targets: Arr.map(role.targets, (target) => ({
+    ...target,
+    unavailableReason: "界".repeat(200),
+    weeklyUsage: {
+      remainingPercent: 0,
+      resetsAt: "2026-12-01T12:00:00.000Z",
+      pace: "ahead" as const,
+    },
+  })),
+}));
+const roleText = t3ModelRolesInstructions(roles, [
+  {
+    providerInstanceId: roles[0]!.targets[0].providerInstanceId,
+    approved: true,
+    extraUsageRemainingPercent: 100,
+  },
+  {
+    providerInstanceId: roles[0]!.targets[1]!.providerInstanceId,
+    approved: true,
+    resetCreditCount: 12,
+    balance: "界".repeat(100),
+  },
+]);
+const modelNotes = t3ModelNotesInstructions(resolveModelNotes(worstCase.modelTiers));
 
 describe("buildCodexAdditionalContext", () => {
   it.each([
@@ -16,7 +72,15 @@ describe("buildCodexAdditionalContext", () => {
     const context = buildCodexAdditionalContext(
       { model: "gpt-5.3-codex", reasoningEffort: "high" },
       false,
-      t3OrchestrationPolicy(role, ""),
+      t3OrchestrationPolicy(role, roleText, modelNotes),
+    );
+    NodeAssert.equal(
+      context.t3_code_model_roles?.value.split("\n").filter((line) => line.startsWith("- ")).length,
+      8,
+    );
+    NodeAssert.equal(
+      context.t3_code_model_notes?.value.split("\n").filter((line) => line.startsWith("- ")).length,
+      8,
     );
     const first = context.t3_code_orchestration_01?.value ?? "";
     const orchestration = Object.entries(context)

@@ -48,7 +48,7 @@ import {
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
-import { MAX_MODEL_ROLE_TARGETS, ModelRole, ModelRoleTarget } from "./settings.ts";
+import { ModelRole, ModelRoleTarget } from "./settings.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
@@ -726,6 +726,7 @@ export const OrchestratorMcpModelRole = Schema.Struct({
     Schema.Struct({
       ...ModelRoleTarget.fields,
       unavailableReason: Schema.NullOr(Schema.String),
+      creditsApproved: Schema.optionalKey(Schema.Boolean),
       /** Current provider weekly usage, when the target's provider reports one. */
       weeklyUsage: Schema.optional(
         Schema.Struct({
@@ -735,7 +736,7 @@ export const OrchestratorMcpModelRole = Schema.Struct({
         }),
       ),
     }),
-  ).check(Schema.isMaxLength(MAX_MODEL_ROLE_TARGETS)),
+  ).check(Schema.isMaxLength(12)),
 });
 export type OrchestratorMcpModelRole = typeof OrchestratorMcpModelRole.Type;
 export const OrchestratorMcpEnvironmentLink = Schema.Struct({
@@ -759,6 +760,23 @@ export const OrchestratorMcpEnvironmentLinksResult = Schema.Struct({
 export type OrchestratorMcpEnvironmentLinksResult =
   typeof OrchestratorMcpEnvironmentLinksResult.Type;
 
+const OrchestratorMcpProviderCredits = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  approved: Schema.Boolean,
+  resetCreditCount: Schema.optionalKey(NonNegativeInt),
+  balance: Schema.optionalKey(Schema.String),
+  extraUsageRemainingPercent: Schema.optionalKey(Schema.Number),
+  creditsAvailable: Schema.optionalKey(Schema.Boolean),
+});
+export type OrchestratorMcpProviderCredits = typeof OrchestratorMcpProviderCredits.Type;
+
+const OrchestratorMcpModelNote = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.String,
+  note: Schema.String,
+});
+export type OrchestratorMcpModelNote = typeof OrchestratorMcpModelNote.Type;
+
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   parentThreadId: Schema.NullOr(ThreadId),
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
@@ -772,6 +790,9 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
    * and unavailable choices last. Task fit and explicit user instructions take priority.
    */
   modelRoles: Schema.Array(OrchestratorMcpModelRole),
+  modelNotes: Schema.optionalKey(Schema.Array(OrchestratorMcpModelNote)),
+  providerCredits: Schema.optionalKey(Schema.Array(OrchestratorMcpProviderCredits)),
+
   /** The caller's repository usage sprint: only this provider's targets are allowed until it ends. */
   usageSprint: Schema.optional(RepositoryUsageSprint),
   features: Schema.Struct({

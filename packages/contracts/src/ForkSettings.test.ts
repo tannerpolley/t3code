@@ -24,23 +24,6 @@ const storedSettingsFile = JSON.stringify({
     autoOrganizeByFolder: false,
     issueUpkeepRequiresApproval: true,
     dontAskMode: true,
-    modelRoles: [
-      {
-        id: "builder",
-        name: "Builder",
-        description: "Saved legacy choice",
-        target: {
-          providerInstanceId: "codex",
-          model: "owner-model",
-          options: [
-            {
-              id: "reasoningEffort",
-              value: "high",
-            },
-          ],
-        },
-      },
-    ],
     idleAgentSessionMinutes: 45,
     usageLimitRecovery: "switch",
     usageLimitFallbackModels: [
@@ -105,39 +88,21 @@ describe("stored fork settings compatibility", () => {
     expect(decodeClientPatch(client)).toEqual({ projectsView: false });
   });
 
-  it("preserves every stored fork field, legacy roles, and omitted-field defaults", () => {
+  it("preserves stored fork fields and omitted-field defaults", () => {
     const stored = JSON.parse(storedSettingsFile);
     const server = decodeServerSettingsFile(JSON.stringify(stored.server));
     const client = decodeClientSettingsFile(JSON.stringify(stored.client));
-    const { modelRoles: _legacyRoles, ...serverFields } = stored.server;
+    const serverFields = stored.server;
     expect(server).toMatchObject({ ...serverFields, projectFolderRoot: "/work/projects" });
     expect(client).toMatchObject(stored.client);
-    expect(server.modelRoles[0]).toMatchObject({
-      id: "builder",
-      targets: stored.server.modelRoles.map((role: { target: unknown }) => role.target),
-    });
-    expect(server.modelRoles).toHaveLength(9);
-    expect(server.modelRoles.find((role) => role.id === "writer")).toMatchObject({
-      role: "writer",
-      name: "Writer",
-      targets: [
-        {
-          providerInstanceId: "claudeAgent",
-          model: "claude-fable-5-2",
-          options: [{ id: "effort", value: "high" }],
-        },
-      ],
-    });
     expect(encodeServerSettings(server)).toMatchObject({
       ...serverFields,
       projectFolderRoot: "/work/projects",
-      modelRoles: server.modelRoles,
     });
     expect(encodeClientSettings(client)).toMatchObject(stored.client);
     expect(decodeServerPatch(stored.server)).toEqual({
       ...serverFields,
       projectFolderRoot: "/work/projects",
-      modelRoles: server.modelRoles,
     });
     // These two local fields were never writable through the patch schema.
     const {
@@ -303,16 +268,4 @@ it("defaults banked reset automation and reminders on and preserves opt-outs", (
   expect(decodeClientPatch({ resetCreditReminders: false })).toEqual({
     resetCreditReminders: false,
   });
-});
-
-it("defaults worker provider to mixed and validates saved overrides and patches", () => {
-  expect(decodeServerSettingsFile("{}").workerProvider).toBe("mixed");
-  for (const workerProvider of ["mixed", "claude", "codex"]) {
-    const saved = { workerProvider };
-    expect(
-      encodeServerSettings(decodeServerSettingsFile(JSON.stringify(saved))).workerProvider,
-    ).toBe(workerProvider);
-    expect(decodeServerPatch(saved)).toEqual(saved);
-  }
-  expect(() => decodeServerPatch({ workerProvider: "other" })).toThrow();
 });
