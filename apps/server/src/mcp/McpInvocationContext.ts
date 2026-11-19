@@ -183,6 +183,12 @@ export const hiddenFromSubagents = (): boolean => {
   return scope?.thread?.subagent !== true;
 };
 
+export const allowsPullRequestUnwatch = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.thread?.subagent !== true || scope.repositoryManaged === true;
+};
+
 /**
  * `McpSchema.EnabledWhen` for tools that act as the calling thread: a client
  * from outside has none. Discovery only; `McpToolAccess` still refuses the

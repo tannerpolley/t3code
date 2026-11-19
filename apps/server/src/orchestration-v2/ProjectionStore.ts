@@ -222,7 +222,14 @@ export interface ProjectionTitleRefreshCandidate {
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
+  | "id"
+  | "projectId"
+  | "lineage"
+  | "linkedIssue"
+  | "role"
+  | "settledOverride"
+  | "settledAt"
+  | "pullRequests"
 >;
 
 export type ProjectionSettlementCandidate = Pick<
@@ -8896,6 +8903,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 id: thread.id,
                 projectId: thread.projectId,
                 lineage: thread.lineage,
+                ...(thread.linkedIssue === undefined ? {} : { linkedIssue: thread.linkedIssue }),
+                ...(thread.role === undefined ? {} : { role: thread.role }),
                 settledOverride: thread.settledOverride,
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],

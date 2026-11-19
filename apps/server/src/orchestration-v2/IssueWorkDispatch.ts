@@ -254,6 +254,7 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
       command.type === "issue.queue.deliver" ||
       command.type === "delegated_task.request" ||
       command.type === "message.dispatch" ||
+      (command.type === "thread.pull-request-watch.sync" && command.wake !== undefined) ||
       command.type === "prepared-run.retry" ||
       command.type === "queue.resume" ||
       command.type === "repository.work.continue";

@@ -28,6 +28,7 @@ import {
 import { threadIssueKeysEqual } from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
+import { isManagedIssueImplementor } from "../issues/IssueEligibility.ts";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -960,6 +961,21 @@ function withPullRequestWatch(
   if (watch !== undefined) return { ...rest, watch };
   const ended = previous ?? endedWatch;
   return ended === undefined ? rest : { ...rest, endedWatch: ended };
+}
+
+function startPullRequestWatch(startedAt: string): ThreadPullRequestWatch {
+  return {
+    startedAt,
+    headSha: null,
+    failedChecks: [],
+    passed: false,
+    passedChecks: [],
+    conflicting: false,
+    awaitingBaseline: "all",
+    remarksThrough: startedAt,
+    remarkIds: [],
+    wakes: 0,
+  };
 }
 
 function syncedPullRequestWatch(
@@ -4149,32 +4165,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? { section: sections[index] }
           : {}),
       }));
-      yield* dispatchMessage(
-        {
-          type: "message.dispatch",
-          commandId: command.commandId,
-          threadId: command.threadId,
-          messageId: wakeMessage.messageId,
-          text: wakeMessage.text,
-          notification: {
-            ...wakeMessage.notification,
-            source:
-              wake.notification.source.kind === "monitor"
-                ? {
-                    kind: "monitor",
-                    pullRequest: stamps[0]!,
-                    ...(stamps.length > 1 ? { otherPullRequests: stamps.slice(1) } : {}),
-                  }
-                : wake.notification.source,
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
+      const message = {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: wakeMessage.messageId,
+        text: wakeMessage.text,
+        notification: {
+          ...wakeMessage.notification,
+          source:
+            wake.notification.source.kind === "monitor"
+              ? {
+                  kind: "monitor",
+                  pullRequest: stamps[0]!,
+                  ...(stamps.length > 1 ? { otherPullRequests: stamps.slice(1) } : {}),
+                }
+              : wake.notification.source,
         },
-        events,
-        effects,
-      );
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      } satisfies Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>;
+      yield* dispatchMessage(message, events, effects);
+      // The managed worker and its parent already share the root's dispatch lock.
+      if (isManagedIssueImplementor(thread))
+        yield* recordSubagentFollowup(message, events, true).pipe(mapDispatchError(command));
     },
   );
 
@@ -4388,22 +4404,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is a subagent; its parent thread watches pull requests.`,
       });
     }
-    // Agent watches use the latest executed run to catch calls racing Stop; users can still watch.
+    // Agent and automatic watches use the latest executed run to catch links racing Stop.
+    let startsManagedWatch =
+      command.type === "thread.pull-request.link" &&
+      command.source !== "stack" &&
+      command.source !== "stack-dismissed" &&
+      isManagedIssueImplementor(thread) &&
+      thread.archivedAt === null &&
+      thread.settledAt === null &&
+      thread.settledOverride !== "settled";
     if (
-      command.type === "thread.pull-request.watch" &&
-      command.watching &&
-      command.link?.source === "agent"
+      startsManagedWatch ||
+      (command.type === "thread.pull-request.watch" &&
+        command.watching &&
+        command.link?.source === "agent")
     ) {
       const { runs } = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs"])
         .pipe(mapDispatchError(command));
       const latest = latestExecutedRun(runs);
       if (latest !== null && (yield* stopReachedRun(command, command.threadId, latest.id))) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} was stopped.`,
-        });
+        if (startsManagedWatch) startsManagedWatch = false;
+        else
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} was stopped.`,
+          });
       }
     }
     if (
@@ -5191,7 +5218,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               command.source !== "stack" &&
               command.source !== "stack-dismissed";
             if (existing && !undismisses) return thread;
-            const link = existing
+            const link: ThreadPullRequestLink = existing
               ? {
                   ...existing,
                   source: command.source,
@@ -5232,7 +5259,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   ]
                 : []),
               ...links.filter((entry) => !threadPullRequestKeysEqual(entry, key)),
-              link,
+              startsManagedWatch &&
+              link.snapshot?.state !== "merged" &&
+              link.endedWatch === undefined
+                ? withPullRequestWatch(link, startPullRequestWatch(DateTime.formatIso(now)))
+                : link,
             ];
           } else if (command.type === "thread.pull-request.unlink") {
             if (!existing) return thread;
@@ -5363,12 +5394,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : !command.watching
                 ? undefined
                 : (existing.watch ?? {
-                    startedAt,
-                    headSha: null,
-                    failedChecks: [],
-                    passed: false,
-                    passedChecks: [],
-                    conflicting: false,
+                    ...startPullRequestWatch(startedAt),
                     // Watching again must not repeat check or conflict news the last watch told.
                     ...(existing.endedWatch && {
                       headSha: existing.endedWatch.headSha,
@@ -5395,9 +5421,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                       checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
                     }),
-                    remarksThrough: startedAt,
-                    remarkIds: [],
-                    wakes: 0,
                   });
           if (watch === existing.watch && links === linked) return thread;
           const final =
@@ -10167,8 +10190,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const recordSubagentFollowup = Effect.fnUntraced(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    fromManagedPullRequestWatch = false,
   ) {
-    if (!mayStartSubagentFollowup(command)) return;
+    if (!fromManagedPullRequestWatch && !mayStartSubagentFollowup(command)) return;
     const pending = yield* Ref.get(events);
     const message = pending
       .flatMap((event) =>
