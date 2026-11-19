@@ -62,7 +62,14 @@ export function SidebarRoleProvidersItem() {
             </p>
             {TIER_PROVIDERS.map((provider) => (
               <label key={provider} className="flex items-center justify-between gap-2 text-sm">
-                {provider === "claude" ? "Claude" : "Codex"}
+                <span className="flex items-center gap-2">
+                  {provider === "claude" ? (
+                    <ClaudeAI className="size-4" />
+                  ) : (
+                    <OpenAI className="size-4" />
+                  )}
+                  {provider === "claude" ? "Claude" : "Codex"}
+                </span>
                 <Switch
                   size="sm"
                   checked={credits[provider]}
