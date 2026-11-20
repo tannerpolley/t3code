@@ -10,14 +10,14 @@ checklist. Expand a thread to see its commands, process groups and nested agents
 1. **01 · Processes and background work** — expand the C++ Implementor: `ccache`, `c++` and
    `cc1plus` each fold **16 members** into one row. Open a member caret and click a process for
    its command details. Compare the Vite `node`/`esbuild` groups, Rust's **12 `rustc`** members,
-   and its nested Checker's **eight pytest xdist workers**. The finished benchmark Checker has
+   and its nested Reviewer's **eight pytest xdist workers**. The finished benchmark Reviewer has
    only processes and background work, with no child agents: a Python job, multiprocessing
    workers, a log writer and a monitor. Check CPU, memory, running marks, elapsed times and
    command output. The Rust thread has processes followed by a dashed separator before agents.
 2. **02 · Thread families and separators** — one orchestrator above Implementors, Reviewer,
-   Investigator and Checker. Newer Implementors sort first within their role. Helpers stay
+   Designer. Newer Implementors sort first within their role. Helpers stay
    nested below their parent. In **Family style → Lines**, solid lines separate families and
-   dashed lines mark checkout changes; the standalone Investigator supplies another family.
+   dashed lines mark checkout changes; the standalone Designer supplies another family.
 3. **03 · Roles and native subagents** — explicit app-owned roles beside native Claude
    `general-purpose`, `Explore`, `code-reviewer` and Codex `worker`, `explorer`, `tester` agents.
    Compare role-column alignment and inspect the generic native agent's label. This fixture
@@ -34,7 +34,7 @@ checklist. Expand a thread to see its commands, process groups and nested agents
    and a completed inline shell result. All these PRs are mock snapshots.
 6. **06 · Questions, plans and task lists** — the Claude orchestrator has completed, running and
    pending tasks above the composer. Open the Claude question for single-choice questions and
-   a custom answer, the Codex Checker for multi-select release gates, and the standalone plugin
+   a custom answer, the Codex Reviewer for multi-select release gates, and the standalone plugin
    plan for plan mode and the proposed-plan card.
 7. **07 · Sections and plain folders** — under **Folder sections → Plain folders**, inspect a
    project with no Git metadata and a deliberately long settled thread title. **Feature
@@ -48,7 +48,7 @@ checklist. Expand a thread to see its commands, process groups and nested agents
    direct thread route.
 
 Every project has one main-checkout orchestrator. Implementors with separate checkouts precede
-main-checkout Reviewers, Investigators and Checkers; native helpers share their parent's checkout.
+main-checkout Reviewers and Designers; native helpers share their parent's checkout.
 Titles explain expected behavior; they do not change sidebar sorting or role inference.
 
 ## Rebuild and restore

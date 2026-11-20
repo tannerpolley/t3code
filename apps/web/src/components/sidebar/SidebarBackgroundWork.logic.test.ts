@@ -112,8 +112,8 @@ describe("describeSidebarBackgroundWork", () => {
     const old = "2026-09-23T09:00:00.000Z";
     const recent = "2026-09-23T11:00:00.000Z";
     const children = [
-      worker("investigator", "investigator", recent, true),
-      worker("checker", "checker", recent),
+      worker("designer", "designer", recent, true),
+      worker("reviewer-first", "reviewer", recent),
       worker("reviewer-old", "reviewer", old),
       worker("implementor-old", "implementor", old),
       worker("other", "orchestrator", recent),
@@ -124,11 +124,11 @@ describe("describeSidebarBackgroundWork", () => {
     const expected = [
       "implementor-recent",
       "implementor-old",
+      "reviewer-first",
       "reviewer-recent",
       "reviewer-tied",
       "reviewer-old",
-      "investigator",
-      "checker",
+      "designer",
       "other",
     ];
     expect(describeSidebarBackgroundWork([], children).map((row) => row.taskId)).toEqual(expected);
@@ -139,7 +139,7 @@ describe("describeSidebarBackgroundWork", () => {
     expect(describeSidebarBackgroundWork([], streamingChildren).map((row) => row.taskId)).toEqual(
       expected,
     );
-    expect(children[0]?.id).toBe("investigator");
+    expect(children[0]?.id).toBe("designer");
     const sharedCheckout = children.map((child) => ({
       ...child,
       worktreePath: child.id === "reviewer-old" ? null : `/worktrees/${child.id}`,
@@ -397,7 +397,7 @@ describe("sidebarRoleLabel", () => {
     };
     // The issue shows as its own badge, so it never replaces the role.
     expect(title("implementor", child, "/wt/x", issue)).toBe("Implementor");
-    expect(title("checker", child)).toBe("Checker");
+    expect(title("reviewer", child)).toBe("Reviewer");
     // A role-less thread the user starts outside a worktree, or forks there, is an Orchestrator.
     expect(title(undefined, top)).toBe("Orchestrator");
     expect(title(undefined, { relationshipToParent: "fork" })).toBe("Orchestrator");

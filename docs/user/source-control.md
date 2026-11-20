@@ -421,8 +421,8 @@ To change how much issue work runs at once, edit **Workers** in that section. Th
 are in use. Raising it starts eligible queued work. Lowering it lets current workers finish and
 holds new starts until there is room. A slot covers a managed worker preparing, running, waiting,
 or awaiting your response. Queued workers and completed workers, including those with an open PR,
-do not hold slots. The repository orchestrator and read-only designers, reviewers, checkers and investigators
-do not use worker slots. They use a separate **Read-only** limit in the same section, initially
+do not hold slots. The repository orchestrator also runs outside the worker limit. Read-only
+Designers and Reviewers use a separate **Read-only** limit in the same section, initially
 4 and adjustable from 1 to 32. It covers children throughout the repository's thread tree, including
 restart continuations. Excess requests wait in order until a slot frees. Raising the limit starts
 queued children; lowering it lets current children finish. Agents can set either limit through

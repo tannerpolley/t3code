@@ -9,9 +9,7 @@ import {
   PencilRulerIcon,
   PenLineIcon,
   HardHatIcon,
-  ListChecksIcon,
   NetworkIcon,
-  SearchIcon,
   ShieldCheckIcon,
   WrenchIcon,
 } from "lucide-react";
@@ -29,17 +27,13 @@ const ROLE_ICONS = {
   writer: PenLineIcon,
   implementor: WrenchIcon,
   reviewer: ShieldCheckIcon,
-  investigator: SearchIcon,
-  checker: ListChecksIcon,
 };
 const ROLE_DESCRIPTIONS = {
-  designer: "Researches requests and plans issues",
+  designer: "Gathers evidence and plans issues",
   writer: "Writes deliverables with your direct guidance",
   orchestrator: "Coordinates the repository's work and starts workers",
   implementor: "Makes the changes in its own worktree",
   reviewer: "Reviews work read-only",
-  investigator: "Gathers evidence and answers questions",
-  checker: "Verifies builds and tests",
 };
 
 export function threadRoleDisplay(thread: RoleDisplayThread) {

@@ -4,6 +4,8 @@ import {
   MAX_MODEL_ROLE_DESCRIPTION_LENGTH,
   ModelRoleEffort,
   ModelTier,
+  THREAD_ROLES,
+  THREAD_ROLE_LABELS,
   ProviderDriverKind,
   resolveModelRoles,
   TIER_PROVIDERS,
@@ -49,6 +51,7 @@ export function ModelRolesSection() {
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(settings, providers);
   const roles = resolveModelRoles(settings);
+  const levelLabels = { routine: gt("Routine"), complex: gt("Complex") };
   const tierLabel = gt("Tier");
   const effortLabel = gt("Effort");
   const effortLabels: Record<ModelRoleEffort, string> = {
@@ -148,132 +151,145 @@ export function ModelRolesSection() {
       <SettingsRow
         {...searchableSetting("model-roles")}
         title={gt("Model roles")}
-        description={gt("Set the tier, provider, and effort for each delegation role.")}
+        description={gt("Set the tier, provider, and effort for each level of a delegation role.")}
         serverScoped
         settingKeys={["modelRoles"]}
       />
-      {roles.map((role) => {
-        const { tier, provider, effort } = settings.modelRoles[role.id];
-        return (
-          <SettingsRow
-            key={role.id}
-            title={role.name}
-            serverScoped
-            settingKeys={["modelRoles"]}
-            control={
-              <div className="flex min-w-0 flex-col items-end gap-2">
-                <DraftInput
-                  aria-label={`${role.name} · ${gt("Role description")}`}
-                  size="sm"
-                  maxLength={MAX_MODEL_ROLE_DESCRIPTION_LENGTH}
-                  placeholder={gt("When to use this role")}
-                  value={role.description}
-                  onCommit={(next) =>
-                    updateSettings({ modelRoles: { [role.id]: { description: next.trim() } } })
+      {THREAD_ROLES.map((name) => (
+        <div key={name} role="group" aria-label={THREAD_ROLE_LABELS[name]}>
+          {roles
+            .filter((role) => role.role === name)
+            .map((role) => {
+              const { level } = role;
+              const label = `${THREAD_ROLE_LABELS[name]} · ${levelLabels[level]}`;
+              const { tier, provider, effort } = settings.modelRoles[name][level];
+              return (
+                <SettingsRow
+                  key={role.id}
+                  title={label}
+                  serverScoped
+                  settingKeys={["modelRoles"]}
+                  control={
+                    <div className="flex min-w-0 flex-col items-end gap-2">
+                      <DraftInput
+                        aria-label={`${label} · ${gt("Role description")}`}
+                        size="sm"
+                        maxLength={MAX_MODEL_ROLE_DESCRIPTION_LENGTH}
+                        placeholder={gt("When to use this role")}
+                        value={role.description}
+                        onCommit={(next) =>
+                          updateSettings({
+                            modelRoles: { [name]: { [level]: { description: next.trim() } } },
+                          })
+                        }
+                      />
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <Select
+                          value={String(tier)}
+                          onValueChange={(value) => {
+                            const tier = ModelTier.literals.find((tier) => String(tier) === value);
+                            if (tier !== undefined)
+                              updateSettings({ modelRoles: { [name]: { [level]: { tier } } } });
+                          }}
+                        >
+                          <SelectTrigger
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`${label} · ${tierLabel}`}
+                          >
+                            <SelectValue>{`${tierLabel} ${tier}`}</SelectValue>
+                          </SelectTrigger>
+                          <SelectPopup>
+                            {ModelTier.literals.map((tier) => (
+                              <SelectItem
+                                key={tier}
+                                value={String(tier)}
+                              >{`${tierLabel} ${tier}`}</SelectItem>
+                            ))}
+                          </SelectPopup>
+                        </Select>
+                        <RoleProviderToggle
+                          label={label}
+                          value={provider}
+                          onChange={(provider) =>
+                            updateSettings({ modelRoles: { [name]: { [level]: { provider } } } })
+                          }
+                        />
+                        <Select
+                          value={effort}
+                          onValueChange={(value) => {
+                            const effort = ModelRoleEffort.literals.find(
+                              (effort) => effort === value,
+                            );
+                            if (effort !== undefined)
+                              updateSettings({ modelRoles: { [name]: { [level]: { effort } } } });
+                          }}
+                        >
+                          <SelectTrigger
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`${label} · ${effortLabel}`}
+                          >
+                            <SelectValue>{effortLabels[effort]}</SelectValue>
+                          </SelectTrigger>
+                          <SelectPopup>
+                            {ModelRoleEffort.literals.map((effort) => (
+                              <SelectItem key={effort} value={effort}>
+                                {effortLabels[effort]}
+                              </SelectItem>
+                            ))}
+                          </SelectPopup>
+                        </Select>
+                      </div>
+                      {role.targets.map((target) => {
+                        const entry = entries.find(
+                          (entry) => entry.instanceId === target.providerInstanceId,
+                        );
+                        const model = modelOptionsByInstance
+                          .get(target.providerInstanceId)
+                          ?.find(
+                            (model) =>
+                              model.slug === target.model || model.aliases?.includes(target.model),
+                          );
+                        const descriptors = entry?.models.find(
+                          (model) =>
+                            model.slug === target.model || model.aliases?.includes(target.model),
+                        )?.capabilities?.optionDescriptors;
+                        const effortAvailable =
+                          effort === "default" ||
+                          descriptors === undefined ||
+                          descriptors.some(
+                            (option) =>
+                              option.type === "select" &&
+                              option.id === target.options?.[0]?.id &&
+                              option.options.some((choice) => choice.id === effort),
+                          );
+                        const available =
+                          entry &&
+                          isProviderInstancePickerReady(entry) &&
+                          entry.snapshot.auth.status !== "unauthenticated" &&
+                          model &&
+                          !model.isUnavailable &&
+                          effortAvailable;
+                        return (
+                          <span
+                            key={target.providerInstanceId}
+                            className={
+                              available ? "text-xs text-muted-foreground" : "text-xs text-warning"
+                            }
+                          >
+                            {target.model}
+                            {available ? "" : ` · ${gt("Unavailable")}`}
+                          </span>
+                        );
+                      })}
+                    </div>
                   }
                 />
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <Select
-                    value={String(tier)}
-                    onValueChange={(value) => {
-                      const tier = ModelTier.literals.find((tier) => String(tier) === value);
-                      if (tier !== undefined)
-                        updateSettings({ modelRoles: { [role.id]: { tier } } });
-                    }}
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`${role.name} · ${tierLabel}`}
-                    >
-                      <SelectValue>{`${tierLabel} ${tier}`}</SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup>
-                      {ModelTier.literals.map((tier) => (
-                        <SelectItem
-                          key={tier}
-                          value={String(tier)}
-                        >{`${tierLabel} ${tier}`}</SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                  <RoleProviderToggle
-                    label={role.name}
-                    value={provider}
-                    onChange={(provider) =>
-                      updateSettings({ modelRoles: { [role.id]: { provider } } })
-                    }
-                  />
-                  <Select
-                    value={effort}
-                    onValueChange={(value) => {
-                      const effort = ModelRoleEffort.literals.find((effort) => effort === value);
-                      if (effort !== undefined)
-                        updateSettings({ modelRoles: { [role.id]: { effort } } });
-                    }}
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`${role.name} · ${effortLabel}`}
-                    >
-                      <SelectValue>{effortLabels[effort]}</SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup>
-                      {ModelRoleEffort.literals.map((effort) => (
-                        <SelectItem key={effort} value={effort}>
-                          {effortLabels[effort]}
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                </div>
-                {role.targets.map((target) => {
-                  const entry = entries.find(
-                    (entry) => entry.instanceId === target.providerInstanceId,
-                  );
-                  const model = modelOptionsByInstance
-                    .get(target.providerInstanceId)
-                    ?.find(
-                      (model) =>
-                        model.slug === target.model || model.aliases?.includes(target.model),
-                    );
-                  const descriptors = entry?.models.find(
-                    (model) => model.slug === target.model || model.aliases?.includes(target.model),
-                  )?.capabilities?.optionDescriptors;
-                  const effortAvailable =
-                    effort === "default" ||
-                    descriptors === undefined ||
-                    descriptors.some(
-                      (option) =>
-                        option.type === "select" &&
-                        option.id === target.options?.[0]?.id &&
-                        option.options.some((choice) => choice.id === effort),
-                    );
-                  const available =
-                    entry &&
-                    isProviderInstancePickerReady(entry) &&
-                    entry.snapshot.auth.status !== "unauthenticated" &&
-                    model &&
-                    !model.isUnavailable &&
-                    effortAvailable;
-                  return (
-                    <span
-                      key={target.providerInstanceId}
-                      className={
-                        available ? "text-xs text-muted-foreground" : "text-xs text-warning"
-                      }
-                    >
-                      {target.model}
-                      {available ? "" : ` · ${gt("Unavailable")}`}
-                    </span>
-                  );
-                })}
-              </div>
-            }
-          />
-        );
-      })}
+              );
+            })}
+        </div>
+      ))}
     </SettingsSection>
   );
 }

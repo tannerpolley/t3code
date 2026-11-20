@@ -221,21 +221,21 @@ it("orders subsections alongside projects and keeps body drops as moves into the
 
 describe("orchestratorsFirst", () => {
   it("puts a project's orchestrators above newer workers and keeps everyone else's order", () => {
-    const thread = (id: string, role: "orchestrator" | "investigator" | "implementor") => ({
+    const thread = (id: string, role: "orchestrator" | "designer" | "implementor") => ({
       id,
       source: { role, branch: null, worktreePath: null, lineage: { relationshipToParent: null } },
     });
     const ordered = orchestratorsFirst([
-      thread("newest-investigator", "investigator"),
+      thread("newest-designer", "designer"),
       thread("implementor", "implementor"),
       thread("orchestrator", "orchestrator"),
-      thread("older-investigator", "investigator"),
+      thread("older-designer", "designer"),
     ]);
     expect(ordered.map((entry) => entry.id)).toEqual([
       "orchestrator",
-      "newest-investigator",
+      "newest-designer",
       "implementor",
-      "older-investigator",
+      "older-designer",
     ]);
   });
 });
