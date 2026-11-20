@@ -88,7 +88,7 @@ export function WorkerArchiveSettings({
           "Preview eligible threads before archiving them. You can restore them from Archived threads.",
         )}
         control={
-          result?.kind === "archived" ? (
+          result?.kind === "archived" && result.unknown === 0 ? (
             <span role="status">
               {gt("Workers archived")}: {result.archived}
             </span>
@@ -106,10 +106,20 @@ export function WorkerArchiveSettings({
           )
         }
       />
+      {result?.kind === "archived" && result.unknown > 0 && (
+        <p role="status" className="px-4 py-3">
+          {gt("Workers archived")}: {result.archived}. {gt("Completion unknown")}: {result.unknown}
+        </p>
+      )}
       {result?.kind === "preview" && (
         <div className="space-y-2 px-4 py-3">
           <p role="status">
             {gt("Eligible workers")}: {result.workers.length}
+            {result.unknown > 0 && (
+              <>
+                . {gt("Completion unknown")}: {result.unknown}
+              </>
+            )}
           </p>
           {result.workers.length > 0 && (
             <ul className="max-h-56 list-disc overflow-y-auto ps-5">

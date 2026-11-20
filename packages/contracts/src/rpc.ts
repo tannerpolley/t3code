@@ -897,8 +897,13 @@ const WorkerArchiveResult = Schema.Union([
     kind: Schema.Literal("preview"),
     token: TrimmedNonEmptyString,
     workers: Schema.Array(Schema.Struct({ id: ThreadId, title: Schema.String })),
+    unknown: NonNegativeInt,
   }),
-  Schema.Struct({ kind: Schema.Literal("archived"), archived: NonNegativeInt }),
+  Schema.Struct({
+    kind: Schema.Literal("archived"),
+    archived: NonNegativeInt,
+    unknown: NonNegativeInt,
+  }),
   Schema.Struct({ kind: Schema.Literal("completed") }),
 ]);
 export type WorkerArchiveResult = typeof WorkerArchiveResult.Type;

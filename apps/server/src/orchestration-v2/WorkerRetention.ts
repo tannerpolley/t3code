@@ -15,19 +15,38 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as GitManager from "../git/GitManager.ts";
 import * as IssueService from "../issue/IssueService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { isIdleWorker } from "./ThreadSettlementService.ts";
+import { isIdleWorker, workerCompletionIsCurrent } from "./ThreadSettlementService.ts";
+
+function pullRequestCompletionAt(
+  snapshot: {
+    readonly state: string;
+    readonly mergedAt?: string | null | undefined;
+    readonly closedAt?: string | null | undefined;
+  } | null,
+) {
+  if (snapshot === null) return "unknown" as const;
+  if (snapshot.state !== "merged" && snapshot.state !== "closed") return null;
+  const endedAt = Date.parse(
+    (snapshot.state === "merged" ? snapshot.mergedAt : snapshot.closedAt) ?? "",
+  );
+  return Number.isFinite(endedAt) ? endedAt : ("unknown" as const);
+}
 
 const isWorkerArchiveError = Schema.is(WorkerArchiveError);
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const projects = yield* ProjectStore.ProjectStoreV2;
+  const git = yield* GitManager.GitManager;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const settings = yield* ServerSettings.ServerSettingsService;
   const issues = yield* IssueService.IssueService;
@@ -41,66 +60,89 @@ const make = Effect.gen(function* () {
     ([row]) => row!,
   );
   const { cutoff } = yield* backlog;
+  const cutoffMs = Date.parse(cutoff);
 
-  const isFinished = Effect.fn("WorkerRetention.isFinished")(function* (
+  const completion = Effect.fn("WorkerRetention.completion")(function* (
     worker: ProjectionStore.ProjectionSettlementCandidate,
     now: DateTime.Utc,
-    includeBacklog: boolean,
   ) {
-    if (!isIdleWorker(worker, now)) return false;
-    const createdAt = DateTime.toEpochMillis(worker.createdAt);
-    if (includeBacklog && createdAt > Date.parse(cutoff)) return false;
-    const after = Math.max(
-      includeBacklog ? Number.NEGATIVE_INFINITY : Date.parse(cutoff),
-      worker.workerUnarchivedAt === undefined
-        ? Number.NEGATIVE_INFINITY
-        : Date.parse(worker.workerUnarchivedAt),
-    );
-    const workedSince =
-      createdAt > after ||
-      (worker.latestRunRequestedAt != null &&
-        DateTime.toEpochMillis(worker.latestRunRequestedAt) > after);
-    for (const link of visibleThreadPullRequests(worker.pullRequests ?? [])) {
-      const snapshot = link.snapshot;
-      if (snapshot?.state !== "closed" && snapshot?.state !== "merged") continue;
-      const endedAt = snapshot.state === "merged" ? snapshot.mergedAt : snapshot.closedAt;
-      if (workedSince || Date.parse(link.linkedAt) > after || Date.parse(endedAt ?? "") > after) {
-        return true;
-      }
+    if (!isIdleWorker(worker, now)) return null;
+    let unknown = false;
+    const allLinks = worker.pullRequests ?? [];
+    const readPullRequest = (reference: NonNullable<typeof worker.linkedPullRequest>) =>
+      pullRequests
+        .summary(reference, {
+          recoverTransientFailure: false,
+          bypassCache: worker.archivedAt !== null,
+        })
+        .pipe(
+          Effect.map(pullRequestCompletionAt),
+          Effect.orElseSucceed(() => "unknown" as const),
+        );
+    for (const link of visibleThreadPullRequests(allLinks)) {
+      const recorded = pullRequestCompletionAt(link.snapshot);
+      const endedAt =
+        recorded === "unknown" || (worker.archivedAt !== null && link.snapshot?.state !== "merged")
+          ? yield* readPullRequest({ ...link, projectId: worker.projectId })
+          : recorded;
+      if (typeof endedAt === "number" && workerCompletionIsCurrent(worker, endedAt)) return endedAt;
+      if (endedAt === "unknown") unknown = true;
     }
-    const legacyLink = worker.linkedPullRequest;
-    if (
-      legacyLink != null &&
-      !(worker.pullRequests ?? []).some(
-        (link) =>
-          link.number === legacyLink.number &&
-          link.repository.toLowerCase() === legacyLink.repository.toLowerCase(),
-      )
-    ) {
-      const summary = yield* pullRequests
-        .summary(legacyLink, { recoverTransientFailure: false })
-        .pipe(Effect.option);
+
+    for (const reference of [worker.linkedPullRequest, worker.branchPullRequest]) {
       if (
-        summary._tag === "Some" &&
-        ((summary.value.state === "merged" &&
-          (workedSince || Date.parse(summary.value.mergedAt ?? "") > after)) ||
-          (summary.value.state === "closed" &&
-            (workedSince || Date.parse(summary.value.closedAt ?? "") > after)))
+        reference == null ||
+        allLinks.some(
+          (link) =>
+            link.number === reference.number &&
+            link.repository.toLowerCase() === reference.repository.toLowerCase(),
+        )
       )
-        return true;
+        continue;
+      const endedAt = yield* readPullRequest(reference);
+      if (typeof endedAt === "number" && workerCompletionIsCurrent(worker, endedAt)) return endedAt;
+      if (endedAt === "unknown") unknown = true;
+    }
+    if (
+      worker.linkedPullRequest == null &&
+      worker.branchPullRequest == null &&
+      allLinks.length === 0 &&
+      worker.branch !== null
+    ) {
+      const project = yield* projects.getShell(worker.projectId);
+      const cwd =
+        worker.worktreePath ?? (project._tag === "Some" ? project.value.workspaceRoot : null);
+      if (cwd === null) {
+        unknown = true;
+      } else {
+        const pullRequest = yield* git
+          .branchPullRequest(
+            { cwd, branch: worker.branch },
+            { refresh: worker.archivedAt !== null },
+          )
+          .pipe(Effect.option);
+        const endedAt =
+          pullRequest._tag === "Some"
+            ? pullRequest.value === null
+              ? null
+              : pullRequestCompletionAt(pullRequest.value)
+            : "unknown";
+        if (typeof endedAt === "number" && workerCompletionIsCurrent(worker, endedAt))
+          return endedAt;
+        if (endedAt === "unknown") unknown = true;
+      }
     }
     for (const link of worker.issues ?? []) {
       const issue = yield* issues.detail(link).pipe(Effect.option);
-      if (
-        issue._tag === "Some" &&
-        issue.value.state.category === "closed" &&
-        (workedSince ||
-          Date.parse(link.linkedAt) > after ||
-          Date.parse(issue.value.closedAt ?? "") > after)
-      )
-        return true;
+      if (issue._tag === "None") {
+        unknown = true;
+      } else if (issue.value.state.category === "closed") {
+        const endedAt = Date.parse(issue.value.closedAt ?? "");
+        if (workerCompletionIsCurrent(worker, endedAt)) return endedAt;
+        if (!Number.isFinite(endedAt)) unknown = true;
+      }
     }
-    return false;
+    return unknown ? ("unknown" as const) : null;
   });
 
   const archive = Effect.fn("WorkerRetention.archive")(function* (
@@ -120,13 +162,13 @@ const make = Effect.gen(function* () {
     threadId?: ThreadId,
     afterThreadId?: ThreadId,
   ) {
-    const workers = yield* projections.getSettlementCandidates(
-      threadId,
-      afterThreadId === undefined ? {} : { afterThreadId },
-    );
+    const workers = yield* projections.getSettlementCandidates(threadId, {
+      createdAfter: cutoff,
+      ...(afterThreadId === undefined ? {} : { afterThreadId }),
+    });
     const now = yield* DateTime.now;
     for (const worker of workers) {
-      if (yield* isFinished(worker, now, false)) yield* archive(worker);
+      if (typeof (yield* completion(worker, now)) === "number") yield* archive(worker);
     }
     return workers.at(-1)?.id;
   });
@@ -142,12 +184,16 @@ const make = Effect.gen(function* () {
       archivedBefore: DateTime.subtract(now, { days: archivedWorkerRetentionDays }),
     });
     for (const worker of workers) {
-      if (worker.archivedAt === null || !isIdleWorker(worker, now)) continue;
+      if (worker.archivedAt === null || worker.workerArchiveSequence === undefined) continue;
+      const completedAt = yield* completion(worker, now);
+      if (typeof completedAt !== "number") continue;
       yield* orchestrator.dispatch({
         type: "thread.delete",
         commandId: CommandId.make(`worker-retention:${yield* random.uuidV4()}`),
         threadId: worker.id,
         workerDeleteArchivedAt: worker.archivedAt,
+        workerArchiveSequence: worker.workerArchiveSequence,
+        workerCompletedAt: completedAt,
       });
     }
     return workers.at(-1)?.id;
@@ -156,6 +202,7 @@ const make = Effect.gen(function* () {
   let preview:
     | {
         readonly token: string;
+        readonly unknown: number;
         readonly workers: ReadonlyArray<{ readonly id: ThreadId; readonly title: string }>;
       }
     | undefined;
@@ -166,6 +213,7 @@ const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       if (input.kind === "preview") {
         const workers: Array<{ id: ThreadId; title: string }> = [];
+        let unknown = 0;
         let cursor: ThreadId | undefined;
         do {
           const page = yield* projections.getSettlementCandidates(
@@ -173,31 +221,34 @@ const make = Effect.gen(function* () {
             cursor === undefined ? {} : { afterThreadId: cursor },
           );
           for (const worker of page) {
-            if (yield* isFinished(worker, now, true)) {
+            if (DateTime.toEpochMillis(worker.createdAt) > cutoffMs) continue;
+            const completedAt = yield* completion(worker, now);
+            if (typeof completedAt === "number")
               workers.push({ id: worker.id, title: worker.title ?? worker.id });
-            }
+            if (completedAt === "unknown") unknown++;
           }
           cursor = page.at(-1)?.id;
         } while (cursor !== undefined);
-        preview = { token: yield* random.uuidV4(), workers };
+        preview = { token: yield* random.uuidV4(), workers, unknown };
         return { kind: "preview", ...preview } as const;
       }
       if (preview?.token !== input.token)
         return yield* new WorkerArchiveError({ reason: "preview-expired" });
       let archived = 0;
+      let unknown = preview.unknown;
       for (const { id } of preview.workers) {
         const [worker] = yield* projections.getSettlementCandidates(id, {});
-        if (
-          worker !== undefined &&
-          (yield* isFinished(worker, now, true)) &&
-          (yield* archive(worker))
-        ) {
-          archived++;
+        if (worker === undefined) continue;
+        const completedAt = yield* completion(worker, now);
+        if (completedAt === "unknown") unknown++;
+        if (typeof completedAt === "number") {
+          if (yield* archive(worker)) archived++;
+          else unknown++;
         }
       }
-      yield* sql`UPDATE worker_archive_backlog SET completed = 1 WHERE id = 1`;
+      if (unknown === 0) yield* sql`UPDATE worker_archive_backlog SET completed = 1 WHERE id = 1`;
       preview = undefined;
-      return { kind: "archived", archived } as const;
+      return { kind: "archived", archived, unknown } as const;
     },
     (effect) =>
       effect.pipe(

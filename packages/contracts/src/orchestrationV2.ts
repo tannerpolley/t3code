@@ -4151,6 +4151,8 @@ export type OrchestrationV2ServerCommand = (
   readonly retryInterruptUntilDone?: boolean;
   readonly workerArchiveSequence?: number;
   readonly workerDeleteArchivedAt?: DateTime.Utc;
+  /** Completion read outside the lock, valid for the worker's checked event sequence. */
+  readonly workerCompletedAt?: number;
 };
 
 export const ORCHESTRATION_V2_WS_METHODS = {
