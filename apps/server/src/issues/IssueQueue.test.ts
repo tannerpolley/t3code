@@ -12,6 +12,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitManager from "../git/GitManager.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -54,6 +55,7 @@ import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenanc
 import * as ProjectionReplay from "../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as PullRequestSyncReactor from "../orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "../orchestration-v2/PullRequestWatchReactor.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProviderRuntimeRecovery from "../orchestration-v2/ProviderRuntimeRecoveryService.ts";
@@ -889,6 +891,68 @@ it.effect(
       });
       assert.exists((yield* links)?.find((entry) => entry.number === 13)?.watch);
     }).pipe(Effect.provide(harness())),
+);
+
+it.effect("does not rewrite an unchanged PR snapshot after a managed worker stops", () =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const threadId = yield* startWatchTestWorker();
+    const key = { ...reference, number: 12 };
+    const url = "https://github.com/owner/repo/pull/12";
+    const { runs } = yield* threads.getThreadRecords(threadId, ["runs"]);
+    yield* finish(runs[0]!, "complete-before-pr-link");
+    yield* threads.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("stop-before-pr-link"),
+      threadId,
+    });
+    yield* threads.dispatch({
+      type: "thread.pull-request.link",
+      commandId: CommandId.make("link-after-stop"),
+      threadId,
+      ...key,
+      url,
+      source: "created",
+    });
+    const reactor = yield* PullRequestSyncReactor.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeCrypto.layer,
+          Layer.mock(GitManager.GitManager)({}),
+          Layer.mock(PullRequestService.PullRequestService)({
+            withSharedProjectReads: (effect) => effect,
+            batchesReads: () => Effect.succeed(false),
+            invalidate: () => Effect.void,
+            summary: () =>
+              Effect.succeed({
+                provider: SourceControlProviderKind.make("github"),
+                projectId,
+                ...key,
+                url,
+                title: "Late pull request",
+                state: "open",
+                headBranch: "feature",
+                baseBranch: "main",
+                updatedAt: "1970-01-01T00:00:00.000Z",
+                stack: null,
+              }),
+          }),
+        ),
+      ),
+    );
+    const link = threads
+      .getThreadRecords(threadId, [])
+      .pipe(Effect.map(({ thread }) => thread.pullRequests?.[0]));
+    yield* reactor.requestSync(key);
+    yield* reactor.drain;
+    const first = yield* link;
+    assert.equal(first?.snapshot?.state, "open");
+    assert.isUndefined(first?.watch);
+    yield* TestClock.adjust("1 minute");
+    yield* reactor.requestSync(key);
+    yield* reactor.drain;
+    assert.equal((yield* link)?.snapshot?.syncedAt, first?.snapshot?.syncedAt);
+  }).pipe(Effect.scoped, Effect.provide(harness())),
 );
 
 it.effect("wakes a managed implementor on new PR feedback after its first turn ends", () =>
