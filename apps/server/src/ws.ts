@@ -950,6 +950,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           afterSequence,
         })
         .pipe(
+          Stream.filter(({ event }) => event.type !== "thread.quiet-updated"),
           Stream.map(threadStreamEventItem),
           coalesceThreadLiveStream,
           Stream.mapError(
@@ -973,6 +974,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           skipUnknownEventTypes: true,
         })
         .pipe(
+          Stream.filter(({ event }) => event.type !== "thread.quiet-updated"),
           Stream.map((stored) => ({
             kind: "event" as const,
             sequence: stored.sequence,

@@ -1,6 +1,7 @@
 import * as NodeSqlite from "node:sqlite";
 
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   CommandId,
   MessageId,
@@ -1884,6 +1885,7 @@ const installQuietSweep = Effect.fn("test.installQuietSweep")(function* () {
           }),
           Layer.mock(ThreadManagementService)({ dispatch: fixture.orchestrator.dispatch }),
           ServerSettings.layerTest({}),
+          NodeCrypto.layer,
         ),
       ),
     ),
@@ -1958,12 +1960,12 @@ it.effect("drops a persisted quiet wake when the child resumes before queue admi
     const {
       orchestrator,
       projections,
-      eventSink,
       parentThreadId,
       parentRun,
       childThreadId,
       childRun,
       startedAt,
+      streamDelta,
     } = yield* quietWorkerFixture();
     yield* TestClock.adjust("11 minutes");
     const messageId = MessageId.make("message:quiet-worker");
@@ -1995,36 +1997,7 @@ it.effect("drops a persisted quiet wake when the child resumes before queue admi
     assert.equal((yield* readWake)?.status, "queued");
 
     const now = yield* DateTime.now;
-    yield* eventSink.write({
-      events: [
-        {
-          id: EventId.make("event:quiet-worker-resumed"),
-          type: "turn-item.updated",
-          threadId: childThreadId,
-          runId: childRun.id,
-          occurredAt: now,
-          payload: {
-            id: TurnItemId.make("item:quiet-worker-resumed"),
-            threadId: childThreadId,
-            runId: childRun.id,
-            nodeId: childRun.rootNodeId,
-            providerThreadId: null,
-            providerTurnId: null,
-            parentItemId: null,
-            nativeItemRef: null,
-            ordinal: 1,
-            startedAt: startedAt,
-            updatedAt: now,
-            completedAt: null,
-            title: null,
-            type: "reasoning",
-            status: "running",
-            streaming: true,
-            text: "Working again",
-          },
-        },
-      ],
-    });
+    yield* streamDelta("resumed before parent admission");
     yield* projections.apply({
       id: EventId.make("event:stale-quiet-parent-finished"),
       type: "run.updated",

@@ -1,4 +1,5 @@
 import { it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -52,6 +53,7 @@ it.effect("wakes the parent once per quiet stretch using only the quiet candidat
             }),
             Layer.mock(ThreadManagementService)({ dispatch }),
             ServerSettings.layerTest({}),
+            NodeCrypto.layer,
           ),
         ),
       ),
