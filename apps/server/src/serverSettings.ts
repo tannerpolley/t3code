@@ -1,5 +1,6 @@
 import {
   ForkPersistedServerSettingsFields,
+  migrateForkPersistedModelRoles,
   migrateForkPersistedServerSettings,
 } from "./ForkServerSettings.ts";
 
@@ -399,16 +400,17 @@ const PersistedServerSettings = Schema.Struct({
     ),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
-// Parse first and decode second, so a managed policy can fill its defaults in between.
-const decodeSettingsFileJsonExit = Schema.decodeUnknownExit(fromLenientJson(Schema.Unknown));
+// Migrate saved role keys before policy defaults can add current-format fields.
+const decodeSettingsFileJson = Schema.decodeUnknownEffect(fromLenientJson(Schema.Unknown));
+const decodeSettingsFile = (raw: string) =>
+  decodeSettingsFileJson(raw).pipe(Effect.flatMap(migrateForkPersistedModelRoles));
 const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(
   PersistedServerSettings.pipe(
     Schema.decodeTo(
       Schema.toType(ServerSettings),
-      SchemaTransformation.transformEffect({
-        decode: (saved) =>
-          Effect.mapError(migrateForkPersistedServerSettings(saved), (error) => error.issue),
-        encode: Effect.succeed,
+      SchemaTransformation.transform<ServerSettings, typeof PersistedServerSettings.Type>({
+        decode: migrateForkPersistedServerSettings,
+        encode: (settings) => settings,
       }),
     ),
   ),
@@ -753,7 +755,7 @@ const make = Effect.gen(function* () {
   // The file before this write, parsed; only read when policy defaults need it.
   const readStoredSettings = Effect.gen(function* () {
     if (!(yield* readConfigExists)) return undefined;
-    const parsed = decodeSettingsFileJsonExit(yield* readRawConfig);
+    const parsed = yield* Effect.exit(decodeSettingsFile(yield* readRawConfig));
     return Exit.isSuccess(parsed) ? parsed.value : undefined;
   });
 
@@ -824,7 +826,7 @@ const make = Effect.gen(function* () {
 
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
-      const parsed = decodeSettingsFileJsonExit(raw);
+      const parsed = yield* Effect.exit(decodeSettingsFile(raw));
       const decoded = Exit.isFailure(parsed)
         ? parsed
         : decodePersistedServerSettingsExit(managed.withDefaults(parsed.value));

@@ -3,6 +3,7 @@ import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type ManagedPolicyDocument,
   ProviderInstanceId,
   resolveModelRoles,
   resolveModelRoleName,
@@ -32,9 +33,9 @@ const decodeAgentPreferences = Schema.decodeUnknownEffect(
 );
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 
-const layerServerSettings = () =>
+const layerServerSettings = (policy?: ManagedPolicyDocument) =>
   ServerSettingsModule.layer.pipe(
-    Layer.provide(ManagedPolicy.layerTest()),
+    Layer.provide(ManagedPolicy.layerTest(policy)),
     Layer.provide(ServerSecretStore.layer),
     Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
@@ -100,6 +101,38 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
 
       assert.isFalse((yield* service.getSettings).agentBrowserTabLimits);
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("keeps migrated role choices through an unrelated save under a managed default", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({ modelRoles: { designer: { effort: "high", provider: "claude" } } }),
+      );
+
+      const settings = yield* service.getSettings;
+      assert.equal(settings.modelRoles.designer.complex.effort, "high");
+      assert.equal(settings.modelRoles.reviewer.routine.provider, "claude");
+      yield* service.updateSettings({ dontAskMode: !settings.dontAskMode });
+
+      const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.deepEqual(stored.modelRoles.designer.complex, { effort: "high", provider: "claude" });
+      assert.notProperty(stored.modelRoles, "reviewer");
+    }).pipe(
+      Effect.provide(
+        layerServerSettings({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          settings: {
+            "modelRoles.designer.complex.provider": { value: "claude", locked: false },
+            "modelRoles.reviewer.routine.provider": { value: "claude", locked: false },
+          },
+        }),
+      ),
+    ),
   );
 });
 
