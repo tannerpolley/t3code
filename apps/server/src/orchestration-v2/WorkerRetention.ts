@@ -46,7 +46,7 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
-  const discoverBranch = yield* makeBranchPullRequestDiscovery;
+  const branchDiscovery = yield* makeBranchPullRequestDiscovery;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const settings = yield* ServerSettings.ServerSettingsService;
   const issues = yield* IssueService.IssueService;
@@ -65,6 +65,7 @@ const make = Effect.gen(function* () {
   const completion = Effect.fn("WorkerRetention.completion")(function* (
     worker: ProjectionStore.ProjectionSettlementCandidate,
     now: DateTime.Utc,
+    discoverBranch: typeof branchDiscovery.discover,
     period?: "backlog" | "automatic",
   ) {
     if (!isIdleWorker(worker, now)) return null;
@@ -165,8 +166,10 @@ const make = Effect.gen(function* () {
       afterThreadId === undefined ? {} : { afterThreadId },
     );
     const now = yield* DateTime.now;
+    const discoverBranch = yield* branchDiscovery.forPass(false);
     for (const worker of workers) {
-      if (typeof (yield* completion(worker, now, "automatic")) === "number") yield* archive(worker);
+      if (typeof (yield* completion(worker, now, discoverBranch, "automatic")) === "number")
+        yield* archive(worker);
     }
     return workers.at(-1)?.id;
   });
@@ -181,9 +184,10 @@ const make = Effect.gen(function* () {
       ...(afterThreadId === undefined ? {} : { afterThreadId }),
       archivedBefore: DateTime.subtract(now, { days: archivedWorkerRetentionDays }),
     });
+    const discoverBranch = yield* branchDiscovery.forPass(true);
     for (const worker of workers) {
       if (worker.archivedAt === null || worker.workerArchiveSequence === undefined) continue;
-      const completedAt = yield* completion(worker, now);
+      const completedAt = yield* completion(worker, now, discoverBranch);
       if (typeof completedAt !== "number") continue;
       yield* orchestrator.dispatch({
         type: "thread.delete",
@@ -209,6 +213,7 @@ const make = Effect.gen(function* () {
     function* (input: WorkerArchiveInput) {
       if ((yield* backlog).completed !== 0) return { kind: "completed" } as const;
       const now = yield* DateTime.now;
+      const discoverBranch = yield* branchDiscovery.forPass(false);
       if (input.kind === "preview") {
         const workers: Array<{ id: ThreadId; title: string }> = [];
         let unknown = 0;
@@ -220,7 +225,7 @@ const make = Effect.gen(function* () {
           );
           for (const worker of page) {
             if (DateTime.toEpochMillis(worker.createdAt) > cutoffMs) continue;
-            const completedAt = yield* completion(worker, now, "backlog");
+            const completedAt = yield* completion(worker, now, discoverBranch, "backlog");
             if (typeof completedAt === "number")
               workers.push({ id: worker.id, title: worker.title ?? worker.id });
             if (completedAt === "unknown") unknown++;
@@ -237,7 +242,7 @@ const make = Effect.gen(function* () {
       for (const { id } of preview.workers) {
         const [worker] = yield* projections.getSettlementCandidates(id, {});
         if (worker === undefined) continue;
-        const completedAt = yield* completion(worker, now, "backlog");
+        const completedAt = yield* completion(worker, now, discoverBranch, "backlog");
         if (completedAt === "unknown") unknown++;
         if (typeof completedAt === "number") {
           if (yield* archive(worker)) archived++;
