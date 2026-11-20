@@ -5529,15 +5529,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .getThreadRecords(command.threadId, ["runs"])
           .pipe(mapDispatchError(command));
         const latest = latestExecutedRun(runs);
-        if (latest === null || !(yield* stopReachedRun(command, command.threadId, latest.id))) {
-          const watch = startPullRequestWatch(DateTime.formatIso(now));
-          updatedThread = {
-            ...updatedThread,
-            pullRequests: links.map((link) =>
-              candidates.includes(link) ? { ...link, watch } : link,
-            ),
-          };
-        }
+        const stopped =
+          latest !== null && (yield* stopReachedRun(command, command.threadId, latest.id));
+        const watch = startPullRequestWatch(DateTime.formatIso(now));
+        // Persist the suppression so future syncs honor Stop just as they honor unwatch.
+        const watchState = stopped ? { endedWatch: watch } : { watch };
+        updatedThread = {
+          ...updatedThread,
+          pullRequests: links.map((link) =>
+            candidates.includes(link) ? { ...link, ...watchState } : link,
+          ),
+        };
       }
     }
     if (command.type === "thread.pull-request-watch.checks-reopen") {
