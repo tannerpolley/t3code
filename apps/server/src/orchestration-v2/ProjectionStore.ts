@@ -176,11 +176,21 @@ export class ProjectionStoreReadError extends Schema.TaggedError<ProjectionStore
   }
 }
 
+export class ProjectionStoreSnapshotTooLargeError extends Schema.TaggedError<ProjectionStoreSnapshotTooLargeError>()(
+  "ProjectionStoreSnapshotTooLargeError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return "The full thread snapshot exceeds its read budget.";
+  }
+}
+
 export const ProjectionStoreV2Error = Schema.Union([
   ProjectionStoreSetupError,
   ProjectionStoreApplyEventError,
   ProjectionStoreThreadNotFoundError,
   ProjectionStoreReadError,
+  ProjectionStoreSnapshotTooLargeError,
 ]);
 export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
 
@@ -850,7 +860,10 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<ThreadId>,
     ProjectionStoreV2Error
   >;
-  readonly getThreadSnapshot: (threadId: ThreadId) => Effect.Effect<
+  readonly getThreadSnapshot: (
+    threadId: ThreadId,
+    maxReadCost?: number,
+  ) => Effect.Effect<
     {
       readonly schemaVersion: number;
       readonly snapshotSequence: number;
@@ -1458,6 +1471,7 @@ const decodeContextTransferPayload = Schema.decodeUnknownEffect(
 
 const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
 const isProjectionStoreReadError = Schema.is(ProjectionStoreReadError);
+const isProjectionStoreSnapshotTooLargeError = Schema.is(ProjectionStoreSnapshotTooLargeError);
 
 function parseEncodedPayload(json: string): Record<string, unknown> {
   return JSON.parse(json) as Record<string, unknown>;
@@ -3840,8 +3854,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         window?: ProjectionWindow,
         fields?: ReadonlyArray<ProjectionRecordField>,
         filter?: ProjectionRecordFilter,
+        budget?: { remaining: number },
       ) {
-        const threadRows = yield* sql<PayloadRow>`
+        const readFullRows =
+          budget === undefined
+            ? sql<PayloadRow>
+            : Effect.fn("ProjectionStore.readSnapshotPayloadRows")(function* (
+                strings: TemplateStringsArray,
+                ...args: ReadonlyArray<unknown>
+              ) {
+                const query = sql<PayloadRow>(strings, ...args);
+                // Check in SQLite before transferring bodies. Charge small rows for decode and wire objects too.
+                const [size] = yield* sql<{ cost: number }>`
+                  SELECT COALESCE(SUM(octet_length(payload_json) + 1024), 0) AS cost
+                  FROM (${query})
+                `;
+                budget.remaining -= size!.cost;
+                if (budget.remaining < 0) {
+                  return yield* new ProjectionStoreSnapshotTooLargeError({ threadId });
+                }
+                return yield* query;
+              });
+        const threadRows = yield* readFullRows`
           SELECT payload_json
           FROM orchestration_v2_projection_threads
           WHERE thread_id = ${threadId}
@@ -3882,7 +3916,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ))
             ? []
             : window === undefined
-              ? yield* sql<PayloadRow>`
+              ? yield* readFullRows`
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
                 ${
@@ -4083,7 +4117,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 filter?.latestRunLimit === undefined)))
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT payload_json
             FROM orchestration_v2_projection_runs
             WHERE ${threadColumn(filter?.latestRunLimit === undefined ? filter?.runIds : [])} = ${threadId}
@@ -4154,7 +4188,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (window === undefined && matchesNothing(filter?.attemptIds))
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT payload_json
             FROM orchestration_v2_projection_run_attempts
             WHERE ${threadColumn(filter?.attemptIds)} = ${threadId}
@@ -4173,7 +4207,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (window === undefined && matchesNothing(filter?.nodeIds))
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT payload_json
             FROM orchestration_v2_projection_nodes AS node
             WHERE ${
@@ -4242,7 +4276,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ))
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT payload_json
             FROM orchestration_v2_projection_subagents AS subagent
             WHERE ${threadColumn(filter?.subagentIds ?? filter?.subagentChildThreadIds)} = ${threadId}
@@ -4272,7 +4306,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           fields !== undefined && !fields.includes("providerSessions")
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT sessions.payload_json
             FROM orchestration_v2_projection_provider_sessions AS sessions
             INNER JOIN orchestration_v2_projection_provider_session_bindings AS bindings
@@ -4296,7 +4330,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (window === undefined && matchesNothing(filter?.providerThreadIds))
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_threads
             WHERE (thread_id = ${threadId}
@@ -4351,7 +4385,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ))
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_turns
             WHERE ${threadColumn(filter?.providerTurnIds ?? filter?.providerTurnAttemptIds)} = ${threadId}
@@ -4386,7 +4420,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (window === undefined && matchesNothing(filter?.runtimeRequestStatuses))
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT payload_json
             FROM orchestration_v2_projection_runtime_requests
             WHERE thread_id = ${threadId}
@@ -4406,7 +4440,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             matchesNothing(filter?.messageIds, filter?.messageRoles, filter?.messageRunIds))
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
                 SELECT payload_json FROM orchestration_v2_projection_messages
                 ${recentRunIndex("messages_run_idx")}
                 WHERE ${recentRunIds === null ? threadColumn(filter?.messageIds) : sql.literal("thread_id")} = ${threadId}
@@ -4440,7 +4474,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           fields !== undefined && !fields.includes("plans")
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
                 SELECT payload_json FROM orchestration_v2_projection_plans
                 WHERE thread_id = ${threadId} ORDER BY plan_id ASC
               `
@@ -4462,7 +4496,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           fields !== undefined && !fields.includes("checkpointScopes")
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT payload_json
             FROM orchestration_v2_projection_checkpoint_scopes
             WHERE thread_id = ${threadId}
@@ -4478,7 +4512,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           fields !== undefined && !fields.includes("checkpoints")
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT payload_json
             FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId}
@@ -4504,7 +4538,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           fields !== undefined && !fields.includes("contextHandoffs")
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
                 SELECT payload_json FROM orchestration_v2_projection_context_handoffs
                 WHERE thread_id = ${threadId} ORDER BY rowid ASC
               `
@@ -4525,7 +4559,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (window === undefined && matchesNothing(filter?.contextTransferStatuses))
             ? Effect.succeed([])
             : window === undefined
-              ? sql<PayloadRow>`
+              ? readFullRows`
             SELECT payload_json
             FROM orchestration_v2_projection_context_transfers
             WHERE ${
@@ -4649,10 +4683,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         } satisfies OrchestrationV2ThreadProjection;
         return projection;
       },
-      (effect, threadId, _window?, _fields?, _filter?) =>
+      (effect, threadId, _window?, _fields?, _filter?, _budget?) =>
         effect.pipe(
           Effect.mapError((cause) =>
-            isProjectionStoreThreadNotFoundError(cause)
+            isProjectionStoreThreadNotFoundError(cause) ||
+            isProjectionStoreSnapshotTooLargeError(cause)
               ? cause
               : new ProjectionStoreReadError({
                   threadId,
@@ -4666,6 +4701,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       threadId: ThreadId,
       seenThreadIds: ReadonlySet<ThreadId>,
       window?: ProjectionWindow,
+      budget?: { remaining: number },
     ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error> = Effect.fn(
       "ProjectionStore.readProjection",
     )(
@@ -4673,6 +4709,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         threadId: ThreadId,
         seenThreadIds: ReadonlySet<ThreadId>,
         window?: ProjectionWindow,
+        budget?: { remaining: number },
       ) {
         const localWindow =
           window?.suppressLocal === true ||
@@ -4685,6 +4722,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           window !== undefined && seenThreadIds.size > 0
             ? ["runs", "attempts", "turnItems"]
             : undefined,
+          undefined,
+          budget,
         );
         const forkedFrom = inheritedRunFork(projection.thread);
         if (forkedFrom === null || seenThreadIds.has(forkedFrom.threadId)) {
@@ -4834,6 +4873,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           forkedFrom.threadId,
           new Set([...seenThreadIds, threadId]),
           sourceWindow,
+          budget,
         );
         return {
           ...projection,
@@ -4843,10 +4883,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
         };
       },
-      (effect, threadId, _seenThreadIds, _window?) =>
+      (effect, threadId, _seenThreadIds, _window?, _budget?) =>
         effect.pipe(
           Effect.mapError((cause) =>
-            isProjectionStoreThreadNotFoundError(cause) || isProjectionStoreReadError(cause)
+            isProjectionStoreThreadNotFoundError(cause) ||
+            isProjectionStoreReadError(cause) ||
+            isProjectionStoreSnapshotTooLargeError(cause)
               ? cause
               : new ProjectionStoreReadError({ threadId, cause }),
           ),
@@ -6915,11 +6957,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
     );
 
-    const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (threadId) =>
+    const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (
+      threadId,
+      maxReadCost,
+    ) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const projection = yield* getThreadProjection(threadId);
+            const projection = yield* readProjection(
+              threadId,
+              new Set(),
+              undefined,
+              maxReadCost === undefined ? undefined : { remaining: maxReadCost },
+            );
             const rows = yield* sql<{ readonly snapshot_sequence: number | null }>`
             SELECT MAX(sequence) AS snapshot_sequence
             FROM orchestration_events
@@ -6936,7 +6986,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(
           Effect.mapError((cause) =>
-            isProjectionStoreThreadNotFoundError(cause) || isProjectionStoreReadError(cause)
+            isProjectionStoreThreadNotFoundError(cause) ||
+            isProjectionStoreReadError(cause) ||
+            isProjectionStoreSnapshotTooLargeError(cause)
               ? cause
               : new ProjectionStoreReadError({ threadId, cause }),
           ),

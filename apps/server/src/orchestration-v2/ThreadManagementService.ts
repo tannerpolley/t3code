@@ -761,9 +761,12 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getCheckpointContext(threadId)),
     );
 
-  const getThreadSnapshot: ThreadManagementServiceShape["getThreadSnapshot"] = (threadId) =>
+  const getThreadSnapshot: ThreadManagementServiceShape["getThreadSnapshot"] = (
+    threadId,
+    maxReadCost,
+  ) =>
     ensureProjectionTranscript(threadId).pipe(
-      Effect.andThen(orchestrator.getThreadSnapshot(threadId)),
+      Effect.andThen(orchestrator.getThreadSnapshot(threadId, maxReadCost)),
     );
   // Full-thread exports can otherwise hold every SQLite reader and stall ordinary thread opens.
   const transcriptExportPermits = yield* Semaphore.make(2);
