@@ -188,12 +188,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   }),
   level: Schema.optional(ModelRoleLevel).annotate({
     description:
-      "Use routine for bounded work or evidence gathering and complex for broad or correctness-critical work. Defaults to complex unless a legacy role name implies routine. Sets the model choice for this delegation.",
+      "Use routine for bounded work or evidence and complex for broad or correctness-critical work. Defaults to complex unless a legacy name implies routine.",
   }),
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({
       description:
-        "Managed issue workers always get a new issue worktree cut from the default branch; this argument applies only to other tasks. For other tasks, defaults to worktree for Implementor and shared for Writer, Designer, Orchestrator and Reviewer; legacy general also shares. shared keeps the child in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's current local commit (uncommitted edits are not copied), with the project's setup script run before the child starts. Explicit isolation always overrides the role default.",
+        "Managed issue workers always branch from the default branch in their own worktree. For other tasks, Implementor defaults to worktree and other roles, including legacy general, default to shared. Explicit isolation overrides the default. shared uses this checkout. worktree branches from this thread's current local commit, omits uncommitted edits, and runs project setup before the child starts.",
     }),
   ),
   workspace: Schema.optional(
