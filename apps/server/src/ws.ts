@@ -55,6 +55,7 @@ import {
   OrchestrationSearchThreadsError,
   OrchestrationV2SearchThreadError,
   OrchestrationGetTurnDiffError,
+  SIDEBAR_WORKER_PAGE_SIZE,
   ORCHESTRATION_V2_WS_METHODS,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   CLIENT_CAPABILITIES_QUERY_PARAM,
@@ -1983,7 +1984,7 @@ export const layerWsRpc = (
       // Rows the shell can omit, read with the same snapshot sequence the shell uses.
       const readOmittableShellRows = Effect.fn("ws.orchestrationV2.readOmittableShellRows")(
         function* (
-          options: { readonly familyOf: ThreadId } | { readonly worktreePath: string },
+          options: NonNullable<Parameters<typeof threadManagement.readShellSnapshot>[0]>,
           message: string,
         ) {
           const { threads, snapshotSequence } = yield* loadShellSnapshotParts({
@@ -2134,8 +2135,36 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
           getOrchestrationV2ArchivedShellSnapshot,
-        [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) =>
-          readOmittableShellRows({ familyOf: input.threadId }, "Failed to load the thread family"),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: ({ threadId, workers, pathOnly }) =>
+          readOmittableShellRows(
+            workers !== undefined
+              ? { workerPage: { ...workers, parentThreadId: threadId } }
+              : pathOnly === true
+                ? { ancestorPathOf: threadId }
+                : { familyOf: threadId },
+            "Failed to load threads",
+          ).pipe(
+            Effect.map((result) => {
+              if (workers === undefined || result.threads.length <= SIDEBAR_WORKER_PAGE_SIZE)
+                return result;
+              const threads = result.threads
+                .toSorted(
+                  (a, b) =>
+                    DateTime.toEpochMillis(b.createdAt) - DateTime.toEpochMillis(a.createdAt) ||
+                    (a.id < b.id ? 1 : -1),
+                )
+                .slice(0, SIDEBAR_WORKER_PAGE_SIZE);
+              const last = threads.at(-1)!;
+              return {
+                ...result,
+                threads,
+                nextWorkerPage: {
+                  threadId: last.id,
+                  createdAt: DateTime.formatIso(last.createdAt),
+                },
+              };
+            }),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input) =>
           threadManagement.getThreadLinkMetadata(input.threadIds).pipe(
             Effect.mapError(

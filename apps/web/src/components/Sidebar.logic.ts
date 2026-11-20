@@ -685,6 +685,7 @@ export interface ThreadStatusPill {
     | "Awaiting Input"
     | "Guest Request"
     | "Waiting"
+    | "Paused"
     | "Plan Ready";
   colorClass: string;
   dotClass: string;
@@ -702,6 +703,7 @@ type ThreadStatusInput = Pick<
   | "latestRun"
   | "runtime"
 > & {
+  source?: Parameters<typeof isExplicitlyPausedThread>[0] | undefined;
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
   blockedOnThreadWait?: boolean | undefined;
@@ -984,9 +986,11 @@ type SidebarThreadStatusInput = Pick<
   | "runtime"
   | "blockedOnThreadWait"
 > &
-  Partial<Pick<SidebarThreadSummary, "latestRun" | "pendingBackgroundTasks" | "source">>;
+  Partial<Pick<SidebarThreadSummary, "latestRun" | "pendingBackgroundTasks">>;
 
-export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+export function resolveSidebarThreadStatus(
+  thread: SidebarThreadStatusInput & Pick<ThreadStatusInput, "source">,
+): SidebarThreadStatus {
   const activity = resolveThreadActivity(thread);
   if (
     activity === "ready" &&
@@ -1409,6 +1413,19 @@ export function resolveThreadStatusPill(input: {
 }): ThreadStatusPill | null {
   const { thread } = input;
   const activity = resolveThreadActivity(thread);
+
+  if (
+    activity === "ready" &&
+    thread.source !== undefined &&
+    isExplicitlyPausedThread(thread.source)
+  ) {
+    return {
+      label: "Paused",
+      colorClass: "text-warning-foreground",
+      dotClass: "bg-warning",
+      pulse: false,
+    };
+  }
 
   if (activity === "approval") {
     return {

@@ -54,6 +54,8 @@ it.effect(
         "idle",
         "running",
         "stopped",
+        "stopped-before-restart",
+        "system-interrupt",
         "interrupted",
         "queued",
         "held",
@@ -180,14 +182,16 @@ it.effect(
               ? "queued"
               : name === "running"
                 ? "running"
-                : name === "stopped" || name === "interrupted"
-                  ? "interrupted"
-                  : name === "waiting" ||
-                      name === "question" ||
-                      name === "auth" ||
-                      name === "monitor"
-                    ? "waiting"
-                    : "completed",
+                : name === "stopped-before-restart"
+                  ? "cancelled"
+                  : name === "stopped" || name === "interrupted" || name === "system-interrupt"
+                    ? "interrupted"
+                    : name === "waiting" ||
+                        name === "question" ||
+                        name === "auth" ||
+                        name === "monitor"
+                      ? "waiting"
+                      : "completed",
           ...(name === "held" ? { queueHeld: true } : {}),
           requestedAt: now,
           startedAt: now,
@@ -205,16 +209,20 @@ it.effect(
             occurredAt: now,
             payload: name === "limited" ? { ...run, status: "failed", completedAt: now } : run,
           });
-        if (name === "stopped") {
+        if (
+          name === "stopped" ||
+          name === "stopped-before-restart" ||
+          name === "system-interrupt"
+        ) {
           yield* apply({
-            id: EventId.make("stop-request"),
+            id: EventId.make(`stop-request:${name}`),
             type: "turn-item.updated",
             threadId: id,
             runId,
             nodeId,
             occurredAt: now,
             payload: {
-              id: TurnItemId.make("stop-request"),
+              id: TurnItemId.make(`stop-request:${name}`),
               threadId: id,
               runId,
               nodeId,
@@ -226,12 +234,17 @@ it.effect(
               status: "completed",
               type: "run_interrupt_request",
               title: "Interrupt requested",
-              message: "Stopped by user",
+              message:
+                name === "system-interrupt"
+                  ? "Interrupted by issue work suspension"
+                  : "Stopped by user",
               startedAt: now,
               completedAt: now,
               updatedAt: now,
             },
           });
+        }
+        if (name === "stopped") {
           const cancelledAt = DateTime.add(now, { seconds: 1 });
           const queuedId = RunId.make("cancelled-queued-after-stop");
           yield* apply({
@@ -251,7 +264,7 @@ it.effect(
           });
           const shell = yield* projections.getThreadShell(id);
           assert.equal(shell?.status, "cancelled");
-          assert.isTrue(shell?.cancelledAfterStop);
+          assert.isTrue(shell?.explicitStopRequested);
         }
         if (name === "limited") {
           yield* apply({
@@ -387,6 +400,13 @@ it.effect(
       assert.equal(work.find((item) => item.threadId === "explicit")?.inherited, false);
       assert.equal(work.find((item) => item.threadId === "archived")?.status, "idle");
       assert.isTrue(work.find((item) => item.threadId === "stopped")?.paused);
+      assert.deepEqual(
+        work
+          .filter((item) => item.paused)
+          .map((item) => item.threadId)
+          .sort(),
+        ["stopped", "stopped-before-restart"],
+      );
       assert.isUndefined(work.find((item) => item.threadId === "interrupted")?.paused);
       assert.deepEqual(work.find((item) => item.threadId === "legacy")?.pullRequests, [pr.url]);
       assert.equal(first.issues[0]!.pullRequestCount, 1);

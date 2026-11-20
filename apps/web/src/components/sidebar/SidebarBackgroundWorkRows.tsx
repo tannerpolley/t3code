@@ -498,8 +498,8 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               props.onChildContextMenu ? (
                 <SidebarWorkerRows
                   thread={row.child}
-                  onClick={(event) => props.onChildClick?.(event, row.child!)}
-                  onContextMenu={(_, position) => props.onChildContextMenu?.(row.child!, position)}
+                  onClick={props.onChildClick}
+                  onContextMenu={props.onChildContextMenu}
                 />
               ) : null}
             </li>

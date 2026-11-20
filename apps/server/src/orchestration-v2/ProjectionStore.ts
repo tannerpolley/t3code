@@ -56,6 +56,7 @@ import type {
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2ShellThreadStatus,
+  OrchestrationV2GetThreadFamilyInput,
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
@@ -66,6 +67,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   IDLE_COMPACTION_TEXT,
+  SIDEBAR_WORKER_PAGE_SIZE,
   idleCompactionOf,
   isQueuedProviderThreadPlaceholder,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -514,6 +516,10 @@ export interface ProjectionTimelinePage {
 }
 
 export interface ShellSnapshotOptions {
+  readonly workerPage?: NonNullable<OrchestrationV2GetThreadFamilyInput["workers"]> & {
+    readonly parentThreadId: ThreadId;
+  };
+  readonly ancestorPathOf?: ThreadId;
   readonly location?: "active" | "archive";
   readonly projectId?: ProjectId;
   readonly unsettledOnly?: boolean;
@@ -1292,7 +1298,7 @@ type ShellThreadRow = {
   readonly latest_run_started_at: string | null;
   readonly latest_run_completed_at: string | null;
   readonly latest_run_stop_requested: number;
-  readonly cancelled_after_stop: number;
+  readonly explicit_stop_requested: number;
   readonly latest_run_background_wake: number;
   readonly active_run_id: string | null;
   readonly active_run_status: string | null;
@@ -1878,6 +1884,9 @@ const linkCardStillAsks = (
   latestUserAuthoredMessageAt === null ||
   !DateTime.isGreaterThan(latestUserAuthoredMessageAt, item.startedAt ?? item.updatedAt);
 
+const EXPLICIT_STOP_MESSAGES = ["Stopped by user", "Force stopped by user", "Stopped by an agent"];
+const AGENT_STOP_MESSAGE_PREFIX = "Stopped by an agent: ";
+
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
   nativeSubagent: OrchestrationV2Subagent | null = null,
@@ -1899,16 +1908,18 @@ export function threadShellFromProjection(
       providerSession?.lastError ?? null,
     ) ?? latestUnheldRun(runs);
   // A task cancellation can close queued work after it stops the turn that was running.
-  const stoppedBeforeCancellation =
-    latestRun?.status === "cancelled" &&
-    latestRun.startedAt === null &&
-    latestUnheldRun(runs.filter((run) => run.status !== "cancelled" || run.startedAt !== null));
-  const cancelledAfterStop =
-    stoppedBeforeCancellation &&
-    stoppedBeforeCancellation.status === "interrupted" &&
+  const pauseRun =
+    latestRun?.status === "cancelled" && latestRun.startedAt === null
+      ? latestUnheldRun(runs.filter((run) => run.status !== "cancelled" || run.startedAt !== null))
+      : latestRun;
+  const explicitStopRequested =
+    (pauseRun?.status === "interrupted" || pauseRun?.status === "cancelled") &&
     projection.turnItems.some(
       (item) =>
-        item.runId === stoppedBeforeCancellation.id && item.type === "run_interrupt_request",
+        item.runId === pauseRun.id &&
+        item.type === "run_interrupt_request" &&
+        (EXPLICIT_STOP_MESSAGES.includes(item.message) ||
+          item.message.startsWith(AGENT_STOP_MESSAGE_PREFIX)),
     );
   const activeRun =
     runs
@@ -2017,7 +2028,7 @@ export function threadShellFromProjection(
       projection.turnItems.some(
         (item) => item.runId === latestRun.id && item.type === "run_interrupt_request",
       ),
-    ...(cancelledAfterStop ? { cancelledAfterStop: true as const } : {}),
+    ...(explicitStopRequested ? { explicitStopRequested: true as const } : {}),
     latestRunBackgroundWake:
       latestRun != null && isBackgroundWakeRunForShell(latestRun, projection),
     activeRunId: activeRun?.id ?? null,
@@ -2160,7 +2171,7 @@ type ShellThreadState = {
   readonly latestRunStartedAt: DateTime.Utc | null;
   readonly latestRunCompletedAt: DateTime.Utc | null;
   readonly latestRunStopRequested: boolean;
-  readonly cancelledAfterStop?: true;
+  readonly explicitStopRequested?: true;
   readonly latestRunBackgroundWake: boolean;
   readonly activeRunId: RunId | null;
   readonly blockedOnThreadWait: boolean;
@@ -2376,7 +2387,7 @@ function shellFromState(input: {
     latestRunStartedAt: input.state.latestRunStartedAt,
     latestRunCompletedAt: input.state.latestRunCompletedAt,
     latestRunStopRequested: input.state.latestRunStopRequested,
-    ...(input.state.cancelledAfterStop === true ? { cancelledAfterStop: true as const } : {}),
+    ...(input.state.explicitStopRequested === true ? { explicitStopRequested: true as const } : {}),
     latestRunBackgroundWake: input.state.latestRunBackgroundWake,
     activeRunId: input.state.activeRunId,
     blockedOnThreadWait: input.state.blockedOnThreadWait,
@@ -8485,15 +8496,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       LIMIT 1
     )`;
 
-    const cancelledAfterStop = sql`CASE
-      WHEN presented.status = 'cancelled' AND json_extract(presented.payload_json, '$.startedAt') IS NULL
+    const explicitStopRequested = sql`CASE
+      WHEN presented.status IN ('cancelled', 'interrupted')
       THEN EXISTS (
-        SELECT 1 FROM orchestration_v2_projection_runs prior
+        SELECT 1 FROM orchestration_v2_projection_runs stopped
         CROSS JOIN orchestration_v2_projection_turn_items stop_request
-        WHERE prior.run_id = ${presentedShellRunId(sql`t.thread_id`, true)}
-          AND prior.status = 'interrupted'
-          AND stop_request.thread_id = t.thread_id AND stop_request.run_id = prior.run_id
+          INDEXED BY orchestration_v2_projection_turn_items_stop_request_idx
+        WHERE stopped.run_id = CASE
+          WHEN presented.status = 'cancelled' AND json_extract(presented.payload_json, '$.startedAt') IS NULL
+          THEN ${presentedShellRunId(sql`t.thread_id`, true)}
+          ELSE presented.run_id END
+          AND stopped.status IN ('cancelled', 'interrupted')
+          AND stop_request.thread_id = t.thread_id AND stop_request.run_id = stopped.run_id
           AND stop_request.type = 'run_interrupt_request'
+          AND (
+            json_extract(stop_request.payload_json, '$.message') IN ${sql.in(EXPLICIT_STOP_MESSAGES)}
+            OR substr(json_extract(stop_request.payload_json, '$.message'), 1,
+              ${AGENT_STOP_MESSAGE_PREFIX.length}) = ${AGENT_STOP_MESSAGE_PREFIX}
+          )
       )
       ELSE 0 END`;
 
@@ -8554,7 +8574,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
                   AND stop_request.type = 'run_interrupt_request'
               ) AS latest_run_stop_requested,
-              ${cancelledAfterStop} AS cancelled_after_stop,
+              ${explicitStopRequested} AS explicit_stop_requested,
               ${isBackgroundWakeShellRun("presented")} AS latest_run_background_wake,
               active.run_id AS active_run_id,
               active.status AS active_run_status,
@@ -9471,7 +9491,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           latestRunStartedAt,
           latestRunCompletedAt,
           latestRunStopRequested,
-          ...(row.cancelled_after_stop === 1 ? { cancelledAfterStop: true as const } : {}),
+          ...(row.explicit_stop_requested === 1 ? { explicitStopRequested: true as const } : {}),
           latestRunBackgroundWake,
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
           blockedOnThreadWait: deriveBlockedOnThreadWait({
@@ -9532,7 +9552,37 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const readShellSnapshotRows = Effect.fn("ProjectionStore.readShellSnapshotRows")(function* (
       options: ShellSnapshotOptions | undefined,
     ) {
-      const targetThreadRows = yield* selectShellThreadRows(undefined, options);
+      const workerPage = options?.workerPage;
+      const pathOf = options?.ancestorPathOf;
+      const selected =
+        workerPage !== undefined
+          ? yield* sql<{ thread_id: ThreadId }>`
+            SELECT thread_id FROM orchestration_v2_projection_threads
+            WHERE deleted_at IS NULL AND archived_at IS NULL
+              AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.lineage.relationshipToParent') END = 'subagent'
+              AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.lineage.parentThreadId') END = ${workerPage.parentThreadId}
+              AND thread_id NOT IN (SELECT value FROM json_each(${encodeIdList(workerPage.exclude)}))
+              ${workerPage.before === undefined ? sql`` : sql`AND (created_at, thread_id) < (${workerPage.before.createdAt}, ${workerPage.before.threadId})`}
+            ORDER BY created_at DESC, thread_id DESC
+            LIMIT ${SIDEBAR_WORKER_PAGE_SIZE + 1}
+          `
+          : pathOf !== undefined
+            ? yield* sql<{ thread_id: ThreadId }>`
+              WITH RECURSIVE path(thread_id) AS (
+                VALUES (${pathOf})
+                UNION
+                SELECT json_extract(thread.payload_json, '$.lineage.parentThreadId')
+                FROM path JOIN orchestration_v2_projection_threads thread USING (thread_id)
+                WHERE json_extract(thread.payload_json, '$.lineage.parentThreadId') IS NOT NULL
+              )
+              SELECT thread_id FROM path
+            `
+            : undefined;
+      const ids = selected?.map((row) => row.thread_id);
+      const targetThreadRows = yield* selectShellThreadRows(undefined, {
+        ...options,
+        ...(ids === undefined ? {} : { threadIds: ids }),
+      });
       const targetThreadIds = new Set(targetThreadRows.map((row) => ThreadId.make(row.thread_id)));
       const rowsByThreadId = new Map(
         targetThreadRows.map((row) => [ThreadId.make(row.thread_id), row] as const),
@@ -10333,7 +10383,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           sql,
           ids,
           presentedShellRunId(sql`t.thread_id`),
-          cancelledAfterStop,
+          explicitStopRequested,
         ).pipe(NodeSqliteClient.readOnly, Effect.mapError(shellSnapshotReadError)),
       getTitleRefreshCandidates: readOnReader(getTitleRefreshCandidates),
       getPendingRoutedRequestThreadIds: readOnReader(getPendingRoutedRequestThreadIds),

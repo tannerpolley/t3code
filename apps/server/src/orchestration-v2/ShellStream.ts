@@ -192,6 +192,7 @@ type ShellTrimRow = Pick<
  * store's index, so a snapshot read only for the rows it sends trims the same way.
  */
 interface ShellTrimFacts {
+  readonly threadIds: ReadonlySet<ThreadId>;
   readonly subagentParentIds: ReadonlySet<string>;
   readonly subagentThreadIds: Set<string>;
   /** Only the store's index knows these; shells alone leave it empty. */
@@ -204,11 +205,13 @@ interface ShellTrimFacts {
 const NEWEST_SETTLED_KEPT = 25;
 
 function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
+  const threadIds = new Set<ThreadId>();
   const subagentParentIds = new Set<string>();
   const subagentThreadIds = new Set<string>();
   const remoteTaskParentIds = new Set<string>();
   const settledTimes: Array<number> = [];
   for (const row of rows) {
+    threadIds.add(row.id);
     if (row.hasRemoteTasks === true) remoteTaskParentIds.add(row.id);
     if (row.lineage.relationshipToParent === "subagent") {
       subagentThreadIds.add(row.id);
@@ -233,6 +236,7 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
     }
   }
   return {
+    threadIds,
     subagentParentIds,
     subagentThreadIds,
     remoteTaskParentIds,
@@ -255,7 +259,7 @@ function hiddenChildAncestorIds(
 
 function omitIdleSubagentShellsWith(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
-  facts: Pick<ShellTrimFacts, "subagentParentIds" | "remoteTaskParentIds">,
+  facts: Pick<ShellTrimFacts, "threadIds" | "subagentParentIds" | "remoteTaskParentIds">,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   const keptIds = new Set(facts.subagentParentIds);
   for (const thread of threads) {
@@ -267,6 +271,7 @@ function omitIdleSubagentShellsWith(
   return threads.filter(
     (thread) =>
       thread.lineage.relationshipToParent !== "subagent" ||
+      !facts.threadIds.has(thread.lineage.parentThreadId ?? thread.id) ||
       isLiveSubagentShell(thread) ||
       keptIds.has(thread.id) ||
       facts.remoteTaskParentIds.has(thread.id),
@@ -310,8 +315,7 @@ function omitOlderSettledShellsWith(
 }
 
 /**
- * Clients that opt in read idle subagent children from their thread family. A child stays while it is live, the parent of another child, or named by a
- * pending task (its parent's row lists it), so walks over shell rows never meet a gap. It also stays as the parent of a linked-environment task.
+ * Clients page omitted idle workers by parent, so a child without an active parent stays in the shell.
  */
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
@@ -388,6 +392,7 @@ function shellSubscriberThreadIds(
     (entry) =>
       entry.lineage.relationshipToParent === "subagent" &&
       (!options.omitIdleSubagents ||
+        !facts.threadIds.has(entry.lineage.parentThreadId ?? entry.id) ||
         entry.mayBeLive ||
         entry.hasRemoteTasks ||
         facts.subagentParentIds.has(entry.id)),
@@ -464,10 +469,15 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
     if (input.options.omitIdleSubagents && read.index !== null) {
       const sent = new Set(snapshot.threads.map((thread) => thread.id));
       for (const { id, lineage } of read.index) {
-        if (lineage.relationshipToParent !== "subagent" || sent.has(id)) continue;
+        if (
+          lineage.relationshipToParent !== "subagent" ||
+          lineage.parentThreadId === null ||
+          sent.has(id)
+        )
+          continue;
         omittedWorkers.set(
-          lineage.rootThreadId,
-          (omittedWorkers.get(lineage.rootThreadId) ?? 0) + 1,
+          lineage.parentThreadId,
+          (omittedWorkers.get(lineage.parentThreadId) ?? 0) + 1,
         );
       }
     }
@@ -477,8 +487,8 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
           ? snapshot
           : {
               ...snapshot,
-              omittedWorkers: Array.from(omittedWorkers, ([rootThreadId, count]) => ({
-                rootThreadId,
+              omittedWorkers: Array.from(omittedWorkers, ([parentThreadId, count]) => ({
+                parentThreadId,
                 count,
               })),
             },

@@ -490,7 +490,10 @@ export interface ThreadManagementServiceShape {
   readonly listActiveShellIndex: Orchestrator.OrchestratorV2["Service"]["listActiveShellIndex"];
   readonly listOlderSettledThreads: Orchestrator.OrchestratorV2["Service"]["listOlderSettledThreads"];
   readonly readShellSnapshot: (
-    options?: Pick<ShellSnapshotOptions, "location" | "familyOf" | "worktreePath" | "threadIds">,
+    options?: Pick<
+      ShellSnapshotOptions,
+      "location" | "familyOf" | "worktreePath" | "threadIds" | "workerPage" | "ancestorPathOf"
+    >,
   ) => Effect.Effect<
     Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>,
     Orchestrator.OrchestratorV2Error

@@ -79,11 +79,7 @@ const decodeItems = Schema.decodeEffect(
 export type IssueWorkThread = typeof workThread.Type &
   Pick<
     OrchestrationV2ThreadShell,
-    | "status"
-    | "latestRunStopRequested"
-    | "cancelledAfterStop"
-    | "activityRunStatus"
-    | "pendingBackgroundTasks"
+    "status" | "explicitStopRequested" | "activityRunStatus" | "pendingBackgroundTasks"
   > & {
     readonly pendingRuntimeRequest: {
       readonly kind: NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"];
@@ -95,14 +91,13 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
   sql: SqlClient.SqlClient,
   threadIds: readonly ThreadId[],
   presentedRunId: Statement.Fragment,
-  cancelledAfterStop: Statement.Fragment,
+  explicitStopRequested: Statement.Fragment,
 ) {
   if (threadIds.length === 0) return [];
   const rows = yield* sql<{
     thread_json: string;
     run_json: string;
-    stop_requested: number;
-    cancelled_after_stop: number;
+    explicit_stop_requested: number;
     blocked_run_json: string;
     blocked_failure: string | null;
     session_error: string | null;
@@ -130,12 +125,7 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
     )) AS thread_json,
     CASE WHEN presented.run_id IS NULL THEN 'null' ELSE json_object(
       'id', presented.run_id, 'ordinal', presented.ordinal, 'status', presented.status) END AS run_json,
-    EXISTS (
-      SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
-      WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
-        AND stop_request.type = 'run_interrupt_request'
-    ) AS stop_requested,
-    ${cancelledAfterStop} AS cancelled_after_stop,
+    ${explicitStopRequested} AS explicit_stop_requested,
     CASE WHEN blocked.run_id IS NULL THEN 'null' ELSE json_object(
       'id', blocked.run_id, 'ordinal', blocked.ordinal, 'status', blocked.status) END AS blocked_run_json,
     (SELECT json_extract(item.payload_json, '$.failure')
@@ -219,8 +209,7 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
       return {
         ...thread,
         status,
-        ...(run === latest && row.stop_requested === 1 ? { latestRunStopRequested: true } : {}),
-        ...(row.cancelled_after_stop === 1 ? { cancelledAfterStop: true as const } : {}),
+        ...(row.explicit_stop_requested === 1 ? { explicitStopRequested: true as const } : {}),
         activityRunStatus:
           row.activity_status ??
           (native === "pending"

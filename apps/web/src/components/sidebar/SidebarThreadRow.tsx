@@ -8,7 +8,7 @@ import type { ProjectFolderAppearance } from "../../projectFolderAppearance";
 import { useProjectFolderAppearance } from "../../projectFolderAppearance";
 import { shortModelName } from "../chat/ForkModelNames";
 import { SidebarThreadTime } from "./SidebarThreadTime";
-import { SidebarWorkerFamily } from "./SidebarWorkers";
+import { SidebarWorkerRows } from "./SidebarWorkers";
 import { IssueInboxBadge } from "../issues/IssueInbox";
 import { useAtomMount } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
@@ -1211,11 +1211,15 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   ) : null;
 
   const workers = (
-    <SidebarWorkerFamily
+    <SidebarWorkerRows
       thread={thread}
       includeRunning={variant !== "columns"}
-      onClick={props.onThreadClick}
-      onContextMenu={(ref, position) => props.onContextMenu(ref, position, "mouse")}
+      onClick={(event, worker) =>
+        props.onThreadClick(event, scopeThreadRef(worker.environmentId, worker.id))
+      }
+      onContextMenu={(worker, position) =>
+        props.onContextMenu(scopeThreadRef(worker.environmentId, worker.id), position, "mouse")
+      }
     />
   );
 

@@ -2389,7 +2389,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStopRequested: Schema.optional(Schema.Boolean),
-  cancelledAfterStop: Schema.optionalKey(Schema.Literal(true)),
+  explicitStopRequested: Schema.optionalKey(Schema.Literal(true)),
   /** The latest run answers a background-work progress wake, like a Monitor line, not a terminal one. Absent from older servers. */
   latestRunBackgroundWake: Schema.optional(Schema.Boolean),
   activeRunId: Schema.NullOr(RunId),
@@ -2527,7 +2527,7 @@ export const OrchestrationV2ShellSnapshot = Schema.Struct({
   projects: Schema.Array(OrchestrationProjectShell),
   olderSettled: Schema.optionalKey(OrchestrationV2OlderSettledThreads),
   omittedWorkers: Schema.optionalKey(
-    Schema.Array(Schema.Struct({ rootThreadId: ThreadId, count: NonNegativeInt })),
+    Schema.Array(Schema.Struct({ parentThreadId: ThreadId, count: NonNegativeInt })),
   ),
 });
 export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
@@ -4329,8 +4329,17 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
 });
 export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
 
+export const SIDEBAR_WORKER_PAGE_SIZE = 10;
+const WorkerPageCursor = Schema.Struct({ createdAt: IsoDateTime, threadId: ThreadId });
 export const OrchestrationV2GetThreadFamilyInput = Schema.Struct({
   threadId: ThreadId,
+  workers: Schema.optionalKey(
+    Schema.Struct({
+      before: Schema.optionalKey(WorkerPageCursor),
+      exclude: Schema.Array(ThreadId).check(Schema.isMaxLength(100)),
+    }),
+  ),
+  pathOnly: Schema.optionalKey(Schema.Literal(true)),
 });
 export type OrchestrationV2GetThreadFamilyInput = typeof OrchestrationV2GetThreadFamilyInput.Type;
 
@@ -4342,6 +4351,7 @@ export type OrchestrationV2GetThreadFamilyInput = typeof OrchestrationV2GetThrea
 export const OrchestrationV2ThreadFamily = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
+  nextWorkerPage: Schema.optionalKey(WorkerPageCursor),
 });
 export type OrchestrationV2ThreadFamily = typeof OrchestrationV2ThreadFamily.Type;
 
