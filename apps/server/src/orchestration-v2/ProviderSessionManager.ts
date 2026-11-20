@@ -584,12 +584,18 @@ export const layerWithOptions = (
             const providers = Option.isSome(providerRegistry)
               ? yield* providerRegistry.value.getProviders
               : [];
-            const credits = providerCreditStatuses(providers, settings.providerCreditsApproved);
+            const capableIds = new Set(yield* registry.list());
+            const now = yield* Clock.currentTimeMillis;
+            const credits = providerCreditStatuses(
+              providers,
+              settings.providerCreditsApproved,
+              now,
+            );
             const roles = modelRoleStatuses(
               resolveModelRoles(settings),
               providers,
-              new Set(yield* registry.list()),
-              yield* Clock.currentTimeMillis,
+              capableIds,
+              now,
               credits,
               yield* lineageUsageSprint(thread, projectionStore.getThread),
             );
