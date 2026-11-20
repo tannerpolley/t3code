@@ -50,6 +50,9 @@ const failedChildTest = (
       const childEnsureEntered = yield* Deferred.make<void>();
       let childEnsureAttempts = 0;
       let childTurns = 0;
+      let lastChildTurn:
+        | Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>[0]
+        | undefined;
       const startsNormally = mode !== "refused" && mode !== "stalled";
       const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
@@ -127,6 +130,7 @@ const failedChildTest = (
                 Effect.gen(function* () {
                   if (turn.threadId === parentThreadId) return;
                   childTurns += 1;
+                  lastChildTurn = turn;
                   const succeeded = mode === "recovers" && childTurns === 2;
                   const completedAt = yield* DateTime.now;
                   const turnId = ProviderTurnId.make(`provider-turn:retry:${turn.runId}`);
@@ -297,6 +301,11 @@ const failedChildTest = (
             assert.equal(childTurns, previousTurns);
             yield* TestClock.adjust(1);
             yield* drainTurn;
+            assert.include(
+              lastChildTurn?.message.text ?? "",
+              "Before you repeat one that changes state",
+            );
+            assert.isUndefined(lastChildTurn?.restartContinuationOfRunId);
           }
           yield* worker.drain();
           yield* sink.stream({ afterSequence: beforeFailure, eventType: "message.updated" }).pipe(

@@ -727,6 +727,19 @@ export const layer: Layer.Layer<
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
+    const readTransientFailureAttempt = Effect.fn(
+      "RunExecutionService.readTransientFailureAttempt",
+    )(function* (run: OrchestrationV2Run) {
+      const sourceRunId = run.restartContinuationOfRunId;
+      if (sourceRunId === undefined) return undefined;
+      const source = Option.getOrUndefined(
+        yield* outbox.get(`effect:restart-continuation:${sourceRunId}`),
+      )?.request;
+      return source?.type === "provider-runtime.continue"
+        ? source.transientFailureAttempt
+        : undefined;
+    });
+
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
         readonly run: OrchestrationV2Run;
@@ -859,17 +872,7 @@ export const layer: Layer.Layer<
           input.terminal.status === "failed" &&
           isTransientWorkerFailure(input.terminal.failure, input.terminal.httpStatus)
         ) {
-          const previousId = input.run.restartContinuationOfRunId;
-          const previous =
-            previousId === undefined
-              ? undefined
-              : Option.getOrUndefined(
-                  yield* outbox.get(`effect:restart-continuation:${previousId}`),
-                )?.request;
-          const next =
-            (previous?.type === "provider-runtime.continue"
-              ? (previous.transientFailureAttempt ?? 0)
-              : 0) + 1;
+          const next = ((yield* readTransientFailureAttempt(input.run)) ?? 0) + 1;
           const delayMs = [2_000, 4_000][next - 1];
           if (delayMs !== undefined) {
             // Commit the retry with the failure so every completion reader sees the open continuation.
@@ -2331,7 +2334,14 @@ export const layer: Layer.Layer<
                     }),
                   }),
                 ))
-              : input.session.startTurn(turnInput);
+              : readTransientFailureAttempt(input.run).pipe(
+                  Effect.flatMap((retryAttempt) => {
+                    if (retryAttempt === undefined) return input.session.startTurn(turnInput);
+                    // Codex resumes without sending text when it receives this continuation marker.
+                    const { restartContinuationOfRunId: _sourceRunId, ...promptedTurn } = turnInput;
+                    return input.session.startTurn(promptedTurn);
+                  }),
+                );
         yield* Effect.andThen(shouldStart, startTurn).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.
