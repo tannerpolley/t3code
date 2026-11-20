@@ -54,6 +54,7 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
+import { isExplicitlyPausedThread } from "@t3tools/shared/threadActivity";
 import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
@@ -947,6 +948,7 @@ export type SidebarThreadStatus =
   | "waiting"
   | "failed"
   | "limited"
+  | "paused"
   | "ready";
 
 export function shouldRecedeSidebarThread(input: {
@@ -982,10 +984,16 @@ type SidebarThreadStatusInput = Pick<
   | "runtime"
   | "blockedOnThreadWait"
 > &
-  Partial<Pick<SidebarThreadSummary, "latestRun" | "pendingBackgroundTasks">>;
+  Partial<Pick<SidebarThreadSummary, "latestRun" | "pendingBackgroundTasks" | "source">>;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   const activity = resolveThreadActivity(thread);
+  if (
+    activity === "ready" &&
+    thread.source !== undefined &&
+    isExplicitlyPausedThread(thread.source)
+  )
+    return "paused";
   return activity === "connecting"
     ? thread.runtime?.status === "preparing"
       ? "preparing"

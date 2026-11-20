@@ -4,14 +4,20 @@ import {
   type EnvironmentId,
   type RepositoryIssueSummary,
 } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { CirclePauseIcon, CirclePlayIcon, LinkIcon } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
-import { issueLiveWorkSummary, LIVE_WORK_STATUS_LABELS } from "./issueRoadmap.logic";
+import {
+  issueLiveWorkSummary,
+  issueWorkerStatus,
+  LIVE_WORK_STATUS_LABELS,
+} from "./issueRoadmap.logic";
 
 const STATUS_ICONS = {
   suspended: CirclePauseIcon,
+  paused: CirclePauseIcon,
   working: CirclePlayIcon,
   waiting_on_you: CirclePauseIcon,
   idle: LinkIcon,
@@ -25,7 +31,9 @@ export function IssueLiveWork({
   environmentId: EnvironmentId;
 }) {
   const navigate = useNavigate();
-  const summary = issueLiveWorkSummary(issue);
+  const gt = useGT();
+  const pausedLabel = gt("Paused");
+  const summary = issueLiveWorkSummary(issue, pausedLabel);
   if (summary === null) return null;
   const { status, work, label, more } = summary;
   const Icon = STATUS_ICONS[status];
@@ -51,7 +59,7 @@ export function IssueLiveWork({
           className={cn(
             "size-3.5 shrink-0",
             status === "working" && "text-primary",
-            status === "waiting_on_you" && "text-warning-foreground",
+            (status === "waiting_on_you" || status === "paused") && "text-warning-foreground",
           )}
         />
         <span className="min-w-0 truncate">{label}</span>
@@ -64,7 +72,11 @@ export function IssueLiveWork({
               <p>
                 {thread.role === undefined ? "" : `${THREAD_ROLE_LABELS[thread.role]}: `}
                 {thread.title} ·{" "}
-                {status === "suspended" ? label : LIVE_WORK_STATUS_LABELS[thread.status]}
+                {status === "suspended"
+                  ? label
+                  : issueWorkerStatus(thread) === "paused"
+                    ? pausedLabel
+                    : LIVE_WORK_STATUS_LABELS[thread.status]}
               </p>
               {thread.branch ? <p>Branch: {thread.branch}</p> : null}
               {thread.worktreePath ? <p>Worktree: {thread.worktreePath}</p> : null}

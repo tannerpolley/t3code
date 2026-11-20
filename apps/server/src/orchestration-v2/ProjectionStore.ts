@@ -1292,6 +1292,7 @@ type ShellThreadRow = {
   readonly latest_run_started_at: string | null;
   readonly latest_run_completed_at: string | null;
   readonly latest_run_stop_requested: number;
+  readonly cancelled_after_stop: number;
   readonly latest_run_background_wake: number;
   readonly active_run_id: string | null;
   readonly active_run_status: string | null;
@@ -1897,6 +1898,18 @@ export function threadShellFromProjection(
       projection.turnItems,
       providerSession?.lastError ?? null,
     ) ?? latestUnheldRun(runs);
+  // A task cancellation can close queued work after it stops the turn that was running.
+  const stoppedBeforeCancellation =
+    latestRun?.status === "cancelled" &&
+    latestRun.startedAt === null &&
+    latestUnheldRun(runs.filter((run) => run.status !== "cancelled" || run.startedAt !== null));
+  const cancelledAfterStop =
+    stoppedBeforeCancellation &&
+    stoppedBeforeCancellation.status === "interrupted" &&
+    projection.turnItems.some(
+      (item) =>
+        item.runId === stoppedBeforeCancellation.id && item.type === "run_interrupt_request",
+    );
   const activeRun =
     runs
       .filter(isInterruptibleRunForShell)
@@ -2004,6 +2017,7 @@ export function threadShellFromProjection(
       projection.turnItems.some(
         (item) => item.runId === latestRun.id && item.type === "run_interrupt_request",
       ),
+    ...(cancelledAfterStop ? { cancelledAfterStop: true as const } : {}),
     latestRunBackgroundWake:
       latestRun != null && isBackgroundWakeRunForShell(latestRun, projection),
     activeRunId: activeRun?.id ?? null,
@@ -2146,6 +2160,7 @@ type ShellThreadState = {
   readonly latestRunStartedAt: DateTime.Utc | null;
   readonly latestRunCompletedAt: DateTime.Utc | null;
   readonly latestRunStopRequested: boolean;
+  readonly cancelledAfterStop?: true;
   readonly latestRunBackgroundWake: boolean;
   readonly activeRunId: RunId | null;
   readonly blockedOnThreadWait: boolean;
@@ -2361,6 +2376,7 @@ function shellFromState(input: {
     latestRunStartedAt: input.state.latestRunStartedAt,
     latestRunCompletedAt: input.state.latestRunCompletedAt,
     latestRunStopRequested: input.state.latestRunStopRequested,
+    ...(input.state.cancelledAfterStop === true ? { cancelledAfterStop: true as const } : {}),
     latestRunBackgroundWake: input.state.latestRunBackgroundWake,
     activeRunId: input.state.activeRunId,
     blockedOnThreadWait: input.state.blockedOnThreadWait,
@@ -8430,7 +8446,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       )`;
     };
     // The newest run not held or outlived before it started, matching latestUnheldRun.
-    const presentedShellRunId = (threadId: Statement.Fragment) => sql`(
+    const presentedShellRunId = (
+      threadId: Statement.Fragment,
+      skipUnstartedCancels = false,
+    ) => sql`(
       SELECT candidate.run_id
       FROM orchestration_v2_projection_runs candidate
       WHERE candidate.thread_id = ${threadId}
@@ -8438,6 +8457,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           candidate.status = 'queued'
           AND json_extract(candidate.payload_json, '$.queueHeld') IS 1
         )
+        ${
+          skipUnstartedCancels
+            ? sql`AND NOT (
+          candidate.status = 'cancelled' AND json_extract(candidate.payload_json, '$.startedAt') IS NULL
+        )`
+            : sql``
+        }
         AND NOT (
           candidate.status = 'cancelled'
           AND json_extract(candidate.payload_json, '$.startedAt') IS NULL
@@ -8458,6 +8484,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ORDER BY candidate.ordinal DESC, candidate.run_id DESC
       LIMIT 1
     )`;
+
+    const cancelledAfterStop = sql`CASE
+      WHEN presented.status = 'cancelled' AND json_extract(presented.payload_json, '$.startedAt') IS NULL
+      THEN EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_runs prior
+        CROSS JOIN orchestration_v2_projection_turn_items stop_request
+        WHERE prior.run_id = ${presentedShellRunId(sql`t.thread_id`, true)}
+          AND prior.status = 'interrupted'
+          AND stop_request.thread_id = t.thread_id AND stop_request.run_id = prior.run_id
+          AND stop_request.type = 'run_interrupt_request'
+      )
+      ELSE 0 END`;
 
     // Mirrors isBackgroundWakeRunForShell. Stored sources keep the legacy encoding, where a
     // command is background_command and a subagent is background_task with work "subagent".
@@ -8516,6 +8554,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
                   AND stop_request.type = 'run_interrupt_request'
               ) AS latest_run_stop_requested,
+              ${cancelledAfterStop} AS cancelled_after_stop,
               ${isBackgroundWakeShellRun("presented")} AS latest_run_background_wake,
               active.run_id AS active_run_id,
               active.status AS active_run_status,
@@ -9432,6 +9471,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           latestRunStartedAt,
           latestRunCompletedAt,
           latestRunStopRequested,
+          ...(row.cancelled_after_stop === 1 ? { cancelledAfterStop: true as const } : {}),
           latestRunBackgroundWake,
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
           blockedOnThreadWait: deriveBlockedOnThreadWait({
@@ -10289,10 +10329,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(shellSnapshotReadError),
       ),
       getIssueWorkThreads: (ids) =>
-        readIssueWorkThreads(sql, ids).pipe(
-          NodeSqliteClient.readOnly,
-          Effect.mapError(shellSnapshotReadError),
-        ),
+        readIssueWorkThreads(
+          sql,
+          ids,
+          presentedShellRunId(sql`t.thread_id`),
+          cancelledAfterStop,
+        ).pipe(NodeSqliteClient.readOnly, Effect.mapError(shellSnapshotReadError)),
       getTitleRefreshCandidates: readOnReader(getTitleRefreshCandidates),
       getPendingRoutedRequestThreadIds: readOnReader(getPendingRoutedRequestThreadIds),
       getRecentUsageLimitChildren: readOnReader(getRecentUsageLimitChildren),

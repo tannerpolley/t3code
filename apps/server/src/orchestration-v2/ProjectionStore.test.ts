@@ -7023,7 +7023,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isDefined(threadQuery);
       const plan = yield* planOf(threadQuery);
       const stopRequestLookups = plan.filter((detail) => detail.startsWith("SEARCH stop_request "));
-      assert.lengthOf(stopRequestLookups, 2);
+      assert.lengthOf(stopRequestLookups, 3);
       for (const lookup of stopRequestLookups) {
         assert.include(lookup, "orchestration_v2_projection_turn_items_stop_request_idx");
       }

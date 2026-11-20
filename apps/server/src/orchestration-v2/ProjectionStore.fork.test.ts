@@ -453,6 +453,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           latestSequence: Effect.succeed(0),
           options: { omitIdleSubagents: true, omitOlderSettled: false },
         });
+        assert.deepEqual(snapshot.omittedWorkers, [{ rootThreadId: root, count: 1 }]);
         assert.deepEqual(requested?.toSorted(), [root, delegated].toSorted());
         assert.deepEqual(
           snapshot.threads.map((shell) => shell.id).toSorted(),

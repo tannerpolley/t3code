@@ -635,10 +635,21 @@ it.effect("does not count stale active IDs or parked background work as a runnin
   const h = harness([base]);
   return Effect.gen(function* () {
     const links = yield* IssueLinks.IssueLinks;
-    for (const [thread, expected] of [
+    for (const [thread, expected, paused] of [
       [{ ...base, status: "running" as const }, "working"],
       [{ ...base, status: "completed" as const, activityRunStatus: "running" as const }, "working"],
       [{ ...base, status: "completed" as const }, "idle"],
+      [{ ...base, status: "interrupted" as const }, "idle"],
+      [{ ...base, status: "interrupted" as const, latestRunStopRequested: true }, "idle", true],
+      [
+        {
+          ...base,
+          status: "interrupted" as const,
+          latestRunStopRequested: true,
+          activityRunStatus: "running" as const,
+        },
+        "working",
+      ],
       [
         {
           ...base,
@@ -657,7 +668,9 @@ it.effect("does not count stale active IDs or parked background work as a runnin
       ],
     ] as const) {
       h.setShells([thread]);
-      assert.equal((yield* links.enrich(list())).issues[0]?.liveWork?.[0]?.status, expected);
+      const work = (yield* links.enrich(list())).issues[0]?.liveWork?.[0];
+      assert.equal(work?.status, expected);
+      assert.equal(work?.paused, paused);
     }
   }).pipe(Effect.provide(h.layer));
 });

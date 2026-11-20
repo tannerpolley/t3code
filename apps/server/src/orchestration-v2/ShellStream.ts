@@ -310,8 +310,7 @@ function omitOlderSettledShellsWith(
 }
 
 /**
- * Idle subagent children have no sidebar row, so clients that opt in read them from their thread
- * family instead. A child stays while it is live, the parent of another child, or named by a
+ * Clients that opt in read idle subagent children from their thread family. A child stays while it is live, the parent of another child, or named by a
  * pending task (its parent's row lists it), so walks over shell rows never meet a gap. It also stays as the parent of a linked-environment task.
  */
 export function omitIdleSubagentShells(
@@ -460,8 +459,29 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
       snapshotSequence: read.snapshotSequence,
     });
     const facts = shellTrimFacts(read.index ?? base.threads);
+    const snapshot = trimShellSnapshot(base, facts, { ...input.options, now: yield* DateTime.now });
+    const omittedWorkers = new Map<ThreadId, number>();
+    if (input.options.omitIdleSubagents && read.index !== null) {
+      const sent = new Set(snapshot.threads.map((thread) => thread.id));
+      for (const { id, lineage } of read.index) {
+        if (lineage.relationshipToParent !== "subagent" || sent.has(id)) continue;
+        omittedWorkers.set(
+          lineage.rootThreadId,
+          (omittedWorkers.get(lineage.rootThreadId) ?? 0) + 1,
+        );
+      }
+    }
     return {
-      snapshot: trimShellSnapshot(base, facts, { ...input.options, now: yield* DateTime.now }),
+      snapshot:
+        omittedWorkers.size === 0
+          ? snapshot
+          : {
+              ...snapshot,
+              omittedWorkers: Array.from(omittedWorkers, ([rootThreadId, count]) => ({
+                rootThreadId,
+                count,
+              })),
+            },
       subagentThreadIds: facts.subagentThreadIds,
     };
   },

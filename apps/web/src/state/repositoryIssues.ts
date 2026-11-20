@@ -1,3 +1,5 @@
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+import { environmentCatalog } from "../connection/catalog";
 import { useAtomValue } from "@effect/atom-react";
 import { createRepositoryIssueEnvironmentAtoms } from "@t3tools/client-runtime/state/repositoryIssues";
 import type {
@@ -21,15 +23,30 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAllEnvironmentShellsBootstrapped } from "./entities";
 import { environmentThreadShells } from "./threads";
 import { environmentServerConfigsAtom } from "./server";
-import { allEnvironmentShellsBootstrappedAtom, environmentSnapshotAtom } from "./shell";
+import {
+  allEnvironmentShellsBootstrappedAtom,
+  environmentShell,
+  environmentSnapshotAtom,
+} from "./shell";
 import { issueStatePresentation } from "../components/issues/IssueStateIcon";
 import {
   createLiveIssueWorkOverlay,
   indexIssueWork,
 } from "../components/issues/issueLiveWork.logic";
 
+const removedThreadsFor = Atom.family((environmentId: EnvironmentId) =>
+  Atom.map(environmentShell.stateValueAtom(environmentId), (state) => state.removedAt),
+);
+
 const issueWorkIndexAtom = Atom.make((get) =>
-  indexIssueWork(get(environmentThreadShells.threadShellsAtom)),
+  indexIssueWork(
+    get(environmentThreadShells.threadShellsAtom),
+    new Map(
+      [...enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))].map(
+        (id) => [id, get(removedThreadsFor(id))] as const,
+      ),
+    ),
+  ),
 );
 
 export const repositoryIssueEnvironment = createRepositoryIssueEnvironmentAtoms(

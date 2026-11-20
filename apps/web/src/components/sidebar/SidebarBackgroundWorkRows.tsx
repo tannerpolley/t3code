@@ -70,6 +70,7 @@ import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { workRowProgram } from "./SidebarThreadProcesses.logic";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SidebarWorkerRows } from "./SidebarWorkers";
 import type { SidebarThreadStatus } from "../Sidebar.logic";
 
 /** A row's label; a command's full command line shows on hover. */
@@ -328,7 +329,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               {props.compact ? null : (
                 <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
               )}
-              {status === "approval" || status === "input" ? (
+              {status === "approval" || status === "input" || status === "paused" ? (
                 <span className="flex w-12 shrink-0 justify-end">
                   <ThreadStatusMark status={status} />
                 </span>
@@ -491,6 +492,16 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 />
               ) : null}
               {toggle === null || toggle.open ? nested?.children : null}
+              {row.kind === "subagent" &&
+              row.child &&
+              props.onChildClick &&
+              props.onChildContextMenu ? (
+                <SidebarWorkerRows
+                  thread={row.child}
+                  onClick={(event) => props.onChildClick?.(event, row.child!)}
+                  onContextMenu={(_, position) => props.onChildContextMenu?.(row.child!, position)}
+                />
+              ) : null}
             </li>
           );
         };
