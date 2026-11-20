@@ -367,7 +367,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     Exit.match(exit, {
       onSuccess: (value) =>
         value === null ? DEFAULT_NEGATIVE_CACHE_TTL : DEFAULT_POSITIVE_CACHE_TTL,
-      onFailure: () => Duration.zero,
+      onFailure: () => DEFAULT_NEGATIVE_CACHE_TTL,
     });
 
   const repositoryRootCache = yield* Cache.makeWith<
@@ -406,10 +406,20 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
 
   // Git probes already trace cache misses.
   const resolveCached = Effect.fnUntraced(function* (cwd: string, refresh?: boolean) {
-    if (refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
+    if (refresh) {
+      // A cached failure still counts as unknown until its cooldown expires.
+      const previousRoot = yield* Cache.getOption(repositoryRootCache, cwd);
+      if (previousRoot._tag === "Some" && previousRoot.value !== null) {
+        yield* Cache.getOption(repositoryIdentityCache, previousRoot.value);
+      }
+      yield* Cache.invalidate(repositoryRootCache, cwd);
+    }
     const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
     if (cacheKey === null) return null;
-    if (refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
+    if (refresh) {
+      yield* Cache.getOption(repositoryIdentityCache, cacheKey);
+      yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
+    }
     return yield* Cache.get(repositoryIdentityCache, cacheKey);
   });
 

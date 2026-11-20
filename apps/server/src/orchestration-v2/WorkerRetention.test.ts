@@ -613,6 +613,7 @@ it.effect.each(["timeout", "failed exit"] as const)(
   "keeps the backlog open after a Git %s during repository identification",
   (failure) => {
     let gitAvailable = false;
+    let rootProbes = 0;
     const layerFileSystem = Layer.effect(
       FileSystem.FileSystem,
       Effect.map(FileSystem.FileSystem, (fs) => FileSystem.makeNoop({ stat: () => fs.stat(".") })),
@@ -620,6 +621,7 @@ it.effect.each(["timeout", "failed exit"] as const)(
     const layerRunner = Layer.mock(ProcessRunner.ProcessRunner)({
       run: ({ args, timeoutBehavior }) => {
         const operation = args[2];
+        if (operation === "rev-parse") rootProbes++;
         const failed = !gitAvailable && operation === "rev-parse";
         const timeout = failed && failure === "timeout";
         if (timeout && timeoutBehavior !== "timedOutResult") {
@@ -657,12 +659,44 @@ it.effect.each(["timeout", "failed exit"] as const)(
     ).pipe(Layer.provide(Layer.mergeAll(layerRunner, layerFileSystem, Path.layer)));
 
     return Effect.gen(function* () {
-      const { service, seed } = yield* makeFixture();
+      const { service, seed, createdAt, projections } = yield* makeFixture();
       const worker = yield* seed("unidentified", "open", { pullRequests: [], branch: "own" });
+      const other = yield* seed("unidentified-other", "open", {
+        pullRequests: [],
+        branch: "other",
+      });
+      const archived = yield* seed("archived", "open", {
+        pullRequests: [],
+        branch: "own",
+        archivedAt: createdAt,
+      });
+      const archivedOther = yield* seed("archived-other", "open", {
+        pullRequests: [],
+        branch: "other",
+        archivedAt: createdAt,
+      });
+      yield* TestClock.adjust("15 days");
       const preview = yield* service.archiveBacklog({ kind: "preview" });
       if (preview.kind !== "preview") return assert.fail("Expected a preview");
       const result = yield* service.archiveBacklog({ kind: "archive", token: preview.token });
       gitAvailable = true;
+      const coolingDown = yield* service.archiveBacklog({ kind: "preview" });
+      yield* service.autoArchive();
+      yield* service.removeExpired();
+      assert.deepEqual(
+        [rootProbes, coolingDown.kind === "preview" ? coolingDown.unknown : coolingDown.kind],
+        [1, 2],
+        "Preview and both sweeps share the failed checkout probe during its cooldown",
+      );
+      assert.isNull((yield* projections.getThread(archived)).deletedAt);
+      assert.isNull((yield* projections.getThread(archivedOther)).deletedAt);
+
+      yield* TestClock.adjust("1 minute");
+      yield* service.removeExpired();
+      assert.equal(rootProbes, 2, "The cleanup sweep refreshes a shared checkout once");
+      assert.isNotNull((yield* projections.getThread(archived)).deletedAt);
+      assert.isNotNull((yield* projections.getThread(archivedOther)).deletedAt);
+
       const retry = yield* service.archiveBacklog({ kind: "preview" });
       assert.deepEqual(
         [
@@ -671,7 +705,7 @@ it.effect.each(["timeout", "failed exit"] as const)(
           result,
           retry.kind === "preview" ? retry.workers.map(({ id }) => id) : retry.kind,
         ],
-        [[], 1, { kind: "archived", archived: 0, unknown: 1 }, [worker]],
+        [[], 2, { kind: "archived", archived: 0, unknown: 2 }, [worker, other]],
       );
     }).pipe(Effect.provide(layerRetentionBase.pipe(Layer.provide(identities))));
   },

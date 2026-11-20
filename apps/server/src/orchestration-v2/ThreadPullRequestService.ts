@@ -8,6 +8,7 @@ import {
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -84,37 +85,44 @@ export const makeBranchPullRequestDiscovery = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const git = yield* GitManager.GitManager;
-  return Effect.fn("ThreadPullRequestServiceV2.discoverBranch")(function* (
-    project: OrchestrationProjectShell,
-    thread: Pick<OrchestrationV2ThreadShell, "branch" | "worktreePath">,
-    options: { readonly refresh: boolean; readonly confirmTerminal?: boolean },
-  ) {
-    // Post-turn discovery refreshes 15-minute identity caches because agents may add remotes.
-    const repositoryIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
-      refresh: options.refresh,
-      recoverFailure: false,
+  // Post-turn discovery refreshes 15-minute identity caches because agents may add remotes.
+  const resolveIdentity = (cwd: string, refresh: boolean) =>
+    repositoryIdentities.resolve(cwd, { refresh, recoverFailure: false });
+  const makeDiscovery = (resolve: typeof resolveIdentity) =>
+    Effect.fn("ThreadPullRequestServiceV2.discoverBranch")(function* (
+      project: OrchestrationProjectShell,
+      thread: Pick<OrchestrationV2ThreadShell, "branch" | "worktreePath">,
+      options: { readonly refresh: boolean; readonly confirmTerminal?: boolean },
+    ) {
+      const repositoryIdentity = yield* resolve(project.workspaceRoot, options.refresh);
+      const repository = sourceControlDefinitions.repositorySelector(repositoryIdentity);
+      if (thread.branch !== null && repository === null) return null;
+      // A missing .git falls back to the project checkout. An unreadable one keeps the worktree.
+      const cwd =
+        thread.worktreePath !== null &&
+        (yield* fileSystem
+          .exists(path.join(thread.worktreePath, ".git"))
+          .pipe(Effect.orElseSucceed(() => true)))
+          ? thread.worktreePath
+          : project.workspaceRoot;
+      const detected =
+        thread.branch === null
+          ? null
+          : yield* git.branchPullRequest({ cwd, branch: thread.branch }, options);
+      if (
+        detected !== null &&
+        !pullRequestMatchesProject(detected, { ...project, repositoryIdentity })
+      )
+        return null;
+      return { cwd, repository, detected };
     });
-    const repository = sourceControlDefinitions.repositorySelector(repositoryIdentity);
-    if (thread.branch !== null && repository === null) return null;
-    // A missing .git falls back to the project checkout. An unreadable one keeps the worktree.
-    const cwd =
-      thread.worktreePath !== null &&
-      (yield* fileSystem
-        .exists(path.join(thread.worktreePath, ".git"))
-        .pipe(Effect.orElseSucceed(() => true)))
-        ? thread.worktreePath
-        : project.workspaceRoot;
-    const detected =
-      thread.branch === null
-        ? null
-        : yield* git.branchPullRequest({ cwd, branch: thread.branch }, options);
-    if (
-      detected !== null &&
-      !pullRequestMatchesProject(detected, { ...project, repositoryIdentity })
-    )
-      return null;
-    return { cwd, repository, detected };
-  });
+  return {
+    discover: makeDiscovery(resolveIdentity),
+    forPass: (refresh: boolean) =>
+      Cache.makeWith((cwd: string) => resolveIdentity(cwd, refresh), {
+        capacity: Number.POSITIVE_INFINITY,
+      }).pipe(Effect.map((cache) => makeDiscovery((cwd) => Cache.get(cache, cwd)))),
+  };
 });
 
 export function projectWorkspaceMatchesSnapshot(
@@ -140,7 +148,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-  const discoverBranch = yield* makeBranchPullRequestDiscovery;
+  const { discover: discoverBranch } = yield* makeBranchPullRequestDiscovery;
   const random = yield* SecureRandom.SecureRandom;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const pendingBackfill = new Map<ThreadId, number>();
