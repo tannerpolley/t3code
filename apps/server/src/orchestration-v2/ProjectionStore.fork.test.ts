@@ -4,7 +4,7 @@ import { ProviderSessionId } from "@t3tools/contracts";
 import { ProviderTurnId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -481,10 +481,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         }
         const pageOptions = { parentThreadId: root, exclude: [delegated, unrelated] };
         const page = yield* store.getShellSnapshot({ location: "active", workerPage: pageOptions });
-        assert.sameMembers(
-          page.threads.map((shell) => shell.id),
-          ids.slice(1),
-        );
+        expect
+          .soft(page.threads.map((shell) => shell.id).toSorted())
+          .toEqual(ids.slice(2).toSorted());
+        expect.soft(page.remainingWorkers).toBe(4);
         const lastVisible = page.threads.find((shell) => shell.id === ids[2])!;
         const next = yield* store.getShellSnapshot({
           location: "active",
@@ -496,10 +496,25 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             },
           },
         });
-        assert.sameMembers(
-          next.threads.map((shell) => shell.id),
-          ids.slice(0, 2),
-        );
+        expect
+          .soft(
+            next.threads.map((shell) => shell.id).toSorted(),
+            "formerly live children are pageable",
+          )
+          .toEqual([...ids.slice(0, 2), delegated, unrelated].toSorted());
+        const { thread: unseen } = yield* store.getThreadRecords(unrelated, []);
+        yield* store.apply({
+          id: EventId.make("archive-unseen-child"),
+          type: "thread.archived",
+          threadId: unrelated,
+          occurredAt: now,
+          payload: { ...unseen, archivedAt: now },
+        });
+        const fresh = yield* store.getShellSnapshot({
+          location: "active",
+          workerPage: pageOptions,
+        });
+        expect.soft(fresh.remainingWorkers, "the server count reflects an unseen archive").toBe(3);
         const path = yield* store.getShellSnapshot({ location: "active", ancestorPathOf: ids[0]! });
         assert.sameMembers(
           path.threads.map((shell) => shell.id),

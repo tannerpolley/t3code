@@ -1478,6 +1478,7 @@ const make = Effect.gen(function* () {
                 threadId: input.threadId,
                 runId: run.id,
                 reason: FORCE_STOP_REASON,
+                markPaused: true,
               })
             : orchestrator.dispatch({
                 type: "thread.background-work.settle",
@@ -1486,6 +1487,7 @@ const make = Effect.gen(function* () {
                 providerThreadId: providerTurn.providerThreadId,
                 providerTurnId: providerTurn.id,
                 reason: FORCE_STOP_REASON,
+                markPaused: true,
               });
       }
       const ownProviderThreadIds = records.providerThreads.flatMap((providerThread) =>

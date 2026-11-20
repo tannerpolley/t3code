@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import {
   EventId,
   IssueTrackerKind,
@@ -55,6 +55,7 @@ it.effect(
         "running",
         "stopped",
         "stopped-before-restart",
+        "resumed-before-restart",
         "system-interrupt",
         "interrupted",
         "queued",
@@ -184,7 +185,10 @@ it.effect(
                 ? "running"
                 : name === "stopped-before-restart"
                   ? "cancelled"
-                  : name === "stopped" || name === "interrupted" || name === "system-interrupt"
+                  : name === "stopped" ||
+                      name === "resumed-before-restart" ||
+                      name === "interrupted" ||
+                      name === "system-interrupt"
                     ? "interrupted"
                     : name === "waiting" ||
                         name === "question" ||
@@ -212,6 +216,7 @@ it.effect(
         if (
           name === "stopped" ||
           name === "stopped-before-restart" ||
+          name === "resumed-before-restart" ||
           name === "system-interrupt"
         ) {
           yield* apply({
@@ -234,37 +239,69 @@ it.effect(
               status: "completed",
               type: "run_interrupt_request",
               title: "Interrupt requested",
-              message:
-                name === "system-interrupt"
-                  ? "Interrupted by issue work suspension"
-                  : "Stopped by user",
+              message: "Stopped by user",
               startedAt: now,
               completedAt: now,
               updatedAt: now,
             },
           });
         }
-        if (name === "stopped") {
-          const cancelledAt = DateTime.add(now, { seconds: 1 });
-          const queuedId = RunId.make("cancelled-queued-after-stop");
+        if (
+          name === "stopped" ||
+          name === "stopped-before-restart" ||
+          name === "resumed-before-restart"
+        ) {
           yield* apply({
-            id: EventId.make("cancelled-queued-after-stop"),
+            id: EventId.make(`paused:${name}`),
+            type: "thread.paused",
+            threadId: id,
+            occurredAt: now,
+            payload: {},
+          });
+        }
+        if (name === "resumed-before-restart") {
+          const requestedAt = DateTime.add(now, { seconds: 1 });
+          const resumed: OrchestrationV2Run = {
+            ...run,
+            id: RunId.make("resumed-after-stop"),
+            ordinal: 2,
+            status: "starting",
+            requestedAt,
+            startedAt: null,
+            completedAt: null,
+          };
+          yield* apply({
+            id: EventId.make("requested-after-stop"),
             type: "run.created",
             threadId: id,
-            runId: queuedId,
+            runId: resumed.id,
+            occurredAt: requestedAt,
+            payload: resumed,
+          });
+          assert.isUndefined((yield* projections.getThread(id)).paused);
+          const cancelledAt = DateTime.add(requestedAt, { seconds: 1 });
+          yield* apply({
+            id: EventId.make("cancelled-after-resume"),
+            type: "run.updated",
+            threadId: id,
+            runId: resumed.id,
             occurredAt: cancelledAt,
             payload: {
-              ...run,
-              id: queuedId,
-              ordinal: 2,
+              ...resumed,
               status: "cancelled",
-              startedAt: null,
               completedAt: cancelledAt,
             },
           });
           const shell = yield* projections.getThreadShell(id);
-          assert.equal(shell?.status, "cancelled");
-          assert.isTrue(shell?.explicitStopRequested);
+          expect
+            .soft(shell?.explicitStopRequested, "a new request cleared the pause")
+            .toBeUndefined();
+        }
+        if (name === "system-interrupt") {
+          const shell = yield* projections.getThreadShell(id);
+          expect
+            .soft(shell?.explicitStopRequested, "legacy interrupts have no pause marker")
+            .toBeUndefined();
         }
         if (name === "limited") {
           yield* apply({

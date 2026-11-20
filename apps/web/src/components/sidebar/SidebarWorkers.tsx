@@ -25,7 +25,7 @@ const sidebarWorkers = Atom.map(environmentThreadShells.quietThreadShellsAtom, i
 const omittedFamilies = Atom.family((environmentId: EnvironmentId) =>
   Atom.map(
     Atom.map(environmentSnapshotAtom(environmentId), (snapshot) => snapshot?.omittedWorkers),
-    (omitted) => new Map(omitted?.map(({ parentThreadId, count }) => [parentThreadId, count])),
+    (omitted) => new Set(omitted?.map(({ parentThreadId }) => parentThreadId)),
   ),
 );
 const EMPTY: readonly SidebarThreadSummary[] = [];
@@ -62,22 +62,19 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   const key = scopedThreadKey(scopeThreadRef(environmentId, id));
   const { idle, running } = useAtomValue(childrenFor(key));
   const omitted = useAtomValue(omittedFamilies(environmentId));
-  const omittedCount = omitted.get(id) ?? 0;
+  const canPage = omitted.has(id) || idle.length > SIDEBAR_WORKER_PAGE_SIZE;
   const { rowRef, leaseLiveStatus: nearViewport } = useSidebarRowSubscriptionLease(false);
   const listRef = useStableCallback(rowRef);
-  const [exclude, setExclude] = useState<readonly ThreadId[] | null>(null);
-  if (exclude === null && omittedCount > 0 && nearViewport) {
-    setExclude(running.slice(0, 100).map((worker) => worker.id));
-  }
+  const [paging, setPaging] = useState(false);
+  if (!paging && canPage && nearViewport) setPaging(true);
   const [count, setCount] = useState(1);
-  const pageKey = JSON.stringify([environmentId, id, exclude ?? [], exclude === null ? 0 : count]);
-  const pageAtom = threadFamilies.workerPagesAtom(pageKey);
-  const pages = useAtomValue(pageAtom);
+  const pageKey = JSON.stringify([environmentId, id, paging ? count : 0]);
+  const { state, rows } = threadFamilies.workerPages(pageKey);
+  const { pages, waiting, failedQuery } = useAtomValue(state);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- merges the mounted pages with authoritative shell deltas
   useEffect(() => {
-    if (exclude !== null)
-      return threadFamilies.mountRows(appAtomRegistry, environmentId, pageKey, pageAtom);
-  }, [exclude, environmentId, pageKey, pageAtom]);
+    if (paging) return threadFamilies.mountRows(appAtomRegistry, environmentId, pageKey, rows);
+  }, [paging, environmentId, pageKey, rows]);
   const limit = count * SIDEBAR_WORKER_PAGE_SIZE;
   const selectedOutsidePage = useParams({
     strict: false,
@@ -107,19 +104,12 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
     ),
   ];
   const lastPage = pages.at(-1);
-  const next = lastPage?.nextWorkerPage !== undefined;
-  const waitingForPage =
-    exclude !== null && (lastPage === undefined || (next && pages.length < count));
-  const showMore = !waitingForPage && (idle.length > limit || next);
-  const remaining = Math.max(
-    idle.length - limit,
-    omittedCount - pages.reduce((total, page) => total + page.threads.length, 0),
-    1,
-  );
-  if (workers.length === 0 && omittedCount === 0) return null;
+  const remaining = lastPage?.remainingWorkers ?? 0;
+  const showMore = !waiting && remaining > 0;
+  if (workers.length === 0 && !canPage && failedQuery === null) return null;
   return (
     <ul
-      ref={listRef}
+      ref={canPage && !paging ? listRef : undefined}
       className="ms-3 min-h-px border-s border-sidebar-border/60 ps-1"
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -138,14 +128,20 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
           <SidebarWorkerRows {...props} thread={worker} />
         </li>
       ))}
-      {showMore ? (
+      {failedQuery !== null || showMore ? (
         <li className="list-none">
           <button
             type="button"
             className="w-full cursor-pointer rounded-md px-2 py-0.5 text-start text-xs text-muted-foreground hover:bg-sidebar-row-hover hover:text-foreground"
-            onClick={() => setCount((current) => current + 1)}
+            onClick={() =>
+              failedQuery === null
+                ? setCount((current) => current + 1)
+                : appAtomRegistry.refresh(failedQuery)
+            }
           >
-            {gt("Show more workers ({count})", { count: remaining })}
+            {failedQuery === null
+              ? gt("Show more workers ({count})", { count: remaining })
+              : gt("Retry loading workers")}
           </button>
         </li>
       ) : null}

@@ -132,5 +132,6 @@
   "b6295e8a6dd8291f": "Guthaben verwenden, wenn das Wochenkontingent knapp wird.",
   "408a142fdd1bb20c": "seit {minutes} Min. still",
   "0a1ab3194d17d5de": "Pausiert",
-  "4aa825fb9e126e78": "Weitere Worker anzeigen ({count})"
+  "4aa825fb9e126e78": "Weitere Worker anzeigen ({count})",
+  "d54039a1d96a0e3c": "Worker erneut laden"
 }

@@ -561,6 +561,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
+  paused: Schema.optional(Schema.Literal(true)),
   workerUnarchivedAt: Schema.optional(IsoDateTime),
   settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -2169,6 +2170,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.paused"),
+    payload: Schema.Struct({}),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.quiet-updated"),
     payload: Schema.Struct({
       runId: RunId,
@@ -2514,7 +2520,14 @@ export const OrchestrationV2OlderSettledThreads = Schema.Struct({
 });
 export type OrchestrationV2OlderSettledThreads = typeof OrchestrationV2OlderSettledThreads.Type;
 
+const WorkerPageCursor = Schema.Struct({ createdAt: IsoDateTime, threadId: ThreadId });
+const WorkerPageFields = {
+  nextWorkerPage: Schema.optionalKey(WorkerPageCursor),
+  remainingWorkers: Schema.optionalKey(NonNegativeInt),
+};
+
 export const OrchestrationV2ThreadShellSnapshot = Schema.Struct({
+  ...WorkerPageFields,
   schemaVersion: PositiveInt,
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
@@ -3168,6 +3181,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.paused"),
+    payload: Schema.Struct({}),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("thread.quiet-updated"),
     payload: Schema.Struct({
       runId: RunId,
@@ -3707,6 +3725,7 @@ export const OrchestrationV2Command = Schema.Union([
     runId: RunId,
     reason: Schema.optional(Schema.String),
     holdQueue: Schema.optional(Schema.Boolean),
+    markPaused: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),
@@ -4099,6 +4118,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     providerTurnId: ProviderTurnId,
     /** Replaces the Stop's own reason on the result, as Force stop does. */
     reason: Schema.optional(Schema.String),
+    markPaused: Schema.optional(Schema.Literal(true)),
     subagent: Schema.optional(
       Schema.Struct({
         id: NodeId,
@@ -4330,13 +4350,11 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
 export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
 
 export const SIDEBAR_WORKER_PAGE_SIZE = 10;
-const WorkerPageCursor = Schema.Struct({ createdAt: IsoDateTime, threadId: ThreadId });
 export const OrchestrationV2GetThreadFamilyInput = Schema.Struct({
   threadId: ThreadId,
   workers: Schema.optionalKey(
     Schema.Struct({
       before: Schema.optionalKey(WorkerPageCursor),
-      exclude: Schema.Array(ThreadId).check(Schema.isMaxLength(100)),
     }),
   ),
   pathOnly: Schema.optionalKey(Schema.Literal(true)),
@@ -4349,9 +4367,9 @@ export type OrchestrationV2GetThreadFamilyInput = typeof OrchestrationV2GetThrea
  * a deleted one still names its root.
  */
 export const OrchestrationV2ThreadFamily = Schema.Struct({
+  ...WorkerPageFields,
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
-  nextWorkerPage: Schema.optionalKey(WorkerPageCursor),
 });
 export type OrchestrationV2ThreadFamily = typeof OrchestrationV2ThreadFamily.Type;
 

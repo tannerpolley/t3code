@@ -94,9 +94,11 @@ export function createThreadFamilyAtoms<R, ER, E>(
     idleTtlMs: 60_000,
     execute: Effect.fn("ThreadFamilies.read")(function* ({
       generation: _generation,
+      removalSequence: _removalSequence,
       ...input
     }: OrchestrationV2GetThreadFamilyInput & {
       readonly generation: number;
+      readonly removalSequence?: number;
     }) {
       const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
       const session = yield* SubscriptionRef.get(supervisor.session);
@@ -128,38 +130,61 @@ export function createThreadFamilyAtoms<R, ER, E>(
       },
     });
 
-  const workerPagesAtom = Atom.family((key: string) => {
-    const [environmentId, threadId, exclude, count] = JSON.parse(key) as [
-      EnvironmentId,
-      ThreadId,
-      readonly ThreadId[],
-      number,
-    ];
-    return Atom.make((get): ReadonlyArray<OrchestrationV2ThreadFamily> => {
-      const generation = get(generationAtom(environmentId));
-      if (count === 0 || generation === 0) return EMPTY_READS;
-      const pages: OrchestrationV2ThreadFamily[] = [];
-      let before: OrchestrationV2ThreadFamily["nextWorkerPage"];
-      for (let index = 0; index < count; index++) {
-        const page = selectEnvironmentQueryData(
-          get(
-            familyQueryAtom({
-              environmentId,
-              input: {
-                threadId,
-                generation,
-                workers: { exclude, ...(before === undefined ? {} : { before }) },
-              },
-            }),
-          ),
-        );
-        if (page === null) break;
-        pages.push(page);
-        before = page.nextWorkerPage;
-        if (before === undefined) break;
-      }
-      return pages;
-    }).pipe(Atom.withLabel(`environment-worker-pages:${key}`));
+  const removalSequenceAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.map(
+      Atom.map(shellStateAtom(environmentId), (state) => shellStateValue(state)?.removedAt),
+      (removedAt) => {
+        let sequence = 0;
+        for (const removed of removedAt?.values() ?? []) sequence = Math.max(sequence, removed);
+        return sequence;
+      },
+    ),
+  );
+  const EMPTY_WORKER_PAGES = { pages: EMPTY_READS, waiting: false, failedQuery: null };
+  const workerPages = Atom.family((key: string) => {
+    const [environmentId, threadId, count] = JSON.parse(key) as [EnvironmentId, ThreadId, number];
+    const state = Atom.make(
+      (
+        get,
+      ): {
+        readonly pages: ReadonlyArray<OrchestrationV2ThreadFamily>;
+        readonly waiting: boolean;
+        readonly failedQuery: ReturnType<typeof familyQueryAtom> | null;
+      } => {
+        if (count === 0) return EMPTY_WORKER_PAGES;
+        const generation = get(generationAtom(environmentId));
+        if (generation === 0) return { ...EMPTY_WORKER_PAGES, waiting: true };
+        const removalSequence = get(removalSequenceAtom(environmentId));
+        const pages: OrchestrationV2ThreadFamily[] = [];
+        let before: OrchestrationV2ThreadFamily["nextWorkerPage"];
+        for (let index = 0; index < count; index++) {
+          const query = familyQueryAtom({
+            environmentId,
+            input: {
+              threadId,
+              generation,
+              removalSequence,
+              workers: before === undefined ? {} : { before },
+            },
+          });
+          const result = get(query);
+          const read = threadFamilyRead(result);
+          const page = selectEnvironmentQueryData(result);
+          if (page === null) {
+            return {
+              pages,
+              waiting: read === "pending",
+              failedQuery: read === "failed" ? query : null,
+            };
+          }
+          pages.push(page);
+          before = page.nextWorkerPage;
+          if (before === undefined) break;
+        }
+        return { pages, waiting: false, failedQuery: null };
+      },
+    );
+    return { state, rows: Atom.map(state, (result) => result.pages) };
   });
 
   const familyAtom = Atom.family((key: string) => {
@@ -305,7 +330,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
       familyAtom(familyKey(environmentId, threadId)),
     mount,
     mountRows,
-    workerPagesAtom,
+    workerPages,
     refresh,
   };
 }

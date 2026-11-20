@@ -132,5 +132,6 @@
   "b6295e8a6dd8291f": "Autorizar o uso de créditos quando a cota semanal estiver quase esgotada.",
   "408a142fdd1bb20c": "{minutes} min sem atividade",
   "0a1ab3194d17d5de": "Em pausa",
-  "4aa825fb9e126e78": "Mostrar mais agentes ({count})"
+  "4aa825fb9e126e78": "Mostrar mais agentes ({count})",
+  "d54039a1d96a0e3c": "Tentar carregar os agentes novamente"
 }

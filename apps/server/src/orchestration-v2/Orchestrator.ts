@@ -14362,6 +14362,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const markThreadPaused = Effect.fn("Orchestrator.markThreadPaused")(function* (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      {
+        readonly type: "thread.stop" | "run.interrupt" | "thread.background-work.settle";
+      }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.paused",
+      threadId: command.threadId,
+      occurredAt: yield* DateTime.now,
+      payload: {},
+    });
+  });
+
   const dispatchThreadStop = Effect.fn("Orchestrator.dispatchThreadStop")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.stop" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -14378,6 +14398,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     if (projection.thread.deletedAt !== null) return undefined;
+    if (!projection.thread.paused) yield* markThreadPaused(command, events);
     // Queued after the interrupt, since a thread's effects run in order.
     const stopDelegatedTasks =
       command.stopDelegatedTasks === false ||
@@ -16073,6 +16094,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchSubagentStop(command, events, effects);
         break;
       case "run.interrupt":
+        if (command.holdQueue === true || command.markPaused === true)
+          yield* markThreadPaused(command, events);
         cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
         if (command.holdQueue === true) {
           // Stop must still commit when a child can't be read, so a failed repair's
@@ -16216,6 +16239,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchRuntimeRequestDeliveryFail(command, events);
         break;
       case "thread.background-work.settle":
+        if (command.markPaused === true) yield* markThreadPaused(command, events);
         yield* dispatchBackgroundWorkSettle(command, events, effects);
         break;
       case "thread.interrupt.unresponsive":

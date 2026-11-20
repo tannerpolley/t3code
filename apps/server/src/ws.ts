@@ -55,7 +55,6 @@ import {
   OrchestrationSearchThreadsError,
   OrchestrationV2SearchThreadError,
   OrchestrationGetTurnDiffError,
-  SIDEBAR_WORKER_PAGE_SIZE,
   ORCHESTRATION_V2_WS_METHODS,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   CLIENT_CAPABILITIES_QUERY_PARAM,
@@ -1997,7 +1996,13 @@ export const layerWsRpc = (
               (cause) => new OrchestrationV2GetShellSnapshotError({ message, cause }),
             ),
           );
-          return { snapshotSequence, threads: threads.threads };
+          const { nextWorkerPage, remainingWorkers } = threads;
+          return {
+            snapshotSequence,
+            threads: threads.threads,
+            ...(nextWorkerPage === undefined ? {} : { nextWorkerPage }),
+            ...(remainingWorkers === undefined ? {} : { remainingWorkers }),
+          };
         },
       );
 
@@ -2143,27 +2148,6 @@ export const layerWsRpc = (
                 ? { ancestorPathOf: threadId }
                 : { familyOf: threadId },
             "Failed to load threads",
-          ).pipe(
-            Effect.map((result) => {
-              if (workers === undefined || result.threads.length <= SIDEBAR_WORKER_PAGE_SIZE)
-                return result;
-              const threads = result.threads
-                .toSorted(
-                  (a, b) =>
-                    DateTime.toEpochMillis(b.createdAt) - DateTime.toEpochMillis(a.createdAt) ||
-                    (a.id < b.id ? 1 : -1),
-                )
-                .slice(0, SIDEBAR_WORKER_PAGE_SIZE);
-              const last = threads.at(-1)!;
-              return {
-                ...result,
-                threads,
-                nextWorkerPage: {
-                  threadId: last.id,
-                  createdAt: DateTime.formatIso(last.createdAt),
-                },
-              };
-            }),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input) =>
           threadManagement.getThreadLinkMetadata(input.threadIds).pipe(

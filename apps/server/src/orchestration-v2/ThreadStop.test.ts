@@ -970,10 +970,12 @@ it.effect.each([false, true])(
         assert.equal(result?.status, "completed");
         assert.isEmpty(result?.pendingBackgroundTasks ?? []);
         assert.equal(result?.latestRunStopRequested, stopped);
+        assert.equal(result?.explicitStopRequested, stopped ? true : undefined);
       }
 
       yield* send(threadId, "next", "start_immediately");
       assert.isFalse((yield* projections.getThreadShell(threadId))?.latestRunStopRequested);
+      assert.isUndefined((yield* projections.getThread(threadId)).paused);
     }).pipe(Effect.provide(layerTest)),
 );
 

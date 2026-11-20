@@ -132,5 +132,6 @@
   "b6295e8a6dd8291f": "Autorizar el uso de créditos cuando quede poca cuota semanal.",
   "408a142fdd1bb20c": "{minutes} min sin actividad",
   "0a1ab3194d17d5de": "En pausa",
-  "4aa825fb9e126e78": "Mostrar más agentes ({count})"
+  "4aa825fb9e126e78": "Mostrar más agentes ({count})",
+  "d54039a1d96a0e3c": "Reintentar la carga de agentes"
 }

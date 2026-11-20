@@ -307,6 +307,8 @@ export function applyOrchestrationV2ProjectionEvent(
         ...base,
         thread: applyThreadPullRequestLinkUpdate(projection.thread, event.payload),
       };
+    case "thread.paused":
+      return { ...base, thread: { ...projection.thread, paused: true } };
     case "thread.created":
     case "thread.archived":
     case "thread.unarchived":
@@ -328,12 +330,12 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.model-selection-updated":
     case "thread.provider-switched":
     case "thread.guest-share-updated":
-      return { ...base, thread: event.payload };
+      return { ...base, thread: { ...event.payload, paused: projection.thread.paused } };
     // Visited tracking and tags are not activity: skip the updatedAt bump.
     case "thread.visited":
     case "thread.tags-updated":
     case "thread.marked-unread":
-      return { ...projection, thread: event.payload };
+      return { ...projection, thread: { ...event.payload, paused: projection.thread.paused } };
     case "thread.visit-recorded":
       return {
         ...projection,
@@ -343,7 +345,13 @@ export function applyOrchestrationV2ProjectionEvent(
     case "run.updated": {
       const next = {
         ...base,
-        thread: clearSilentWakeAttention(base.thread, event.payload, event.occurredAt),
+        thread: clearSilentWakeAttention(
+          event.type === "run.created" && base.thread.paused
+            ? { ...base.thread, paused: undefined }
+            : base.thread,
+          event.payload,
+          event.occurredAt,
+        ),
         runs: upsertEntity(base.runs, event.payload),
       };
       const visible = { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
