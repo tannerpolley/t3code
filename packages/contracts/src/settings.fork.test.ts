@@ -68,6 +68,19 @@ describe("model roles", () => {
     ).toThrow();
   });
 
+  it("rejects legacy model-role patch fields instead of dropping the edit", () => {
+    expect(() =>
+      decodeServerSettingsPatch({
+        modelRoles: { reviewer: { effort: "medium" } },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        modelRoles: { checker: { provider: "both" } },
+      }),
+    ).toThrow();
+  });
+
   it("keeps saved issue-work role references usable after the settings migration", () => {
     const decode = Schema.decodeUnknownSync(RepositoryMilestonePlan);
     const mappings = {

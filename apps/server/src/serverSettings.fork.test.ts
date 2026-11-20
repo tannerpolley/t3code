@@ -277,6 +277,29 @@ it.effect.each(legacyWorkerSettings)(
     ),
 );
 
+it.effect.each([
+  [{ designer: {} }, "both"],
+  [{ sprinter: { provider: "claude" } }, "claude"],
+] as const)(
+  "identifies a partial legacy modelRoles file (%j)",
+  ([modelRoles, implementorProvider]) =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(config.settingsPath, JSON.stringify({ modelRoles }));
+      const { modelRoles: migrated } = yield* service.getSettings;
+      assert.deepInclude(migrated.designer.routine, { tier: 4, provider: "codex", effort: "max" });
+      assert.equal(migrated.implementor.routine.provider, implementorProvider);
+    }).pipe(
+      Effect.provide(
+        layerServerSettings().pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
+);
+
 it.effect("fills old defaults before folding the owner's sparse role settings", () =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;

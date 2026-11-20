@@ -240,7 +240,7 @@ describe("delegate_task isolation", () => {
 
   it.effect.each([
     { choice: {}, role: "designer" },
-    { choice: { role: "general" }, role: "designer" },
+    { choice: { role: "general" }, role: "implementor" },
     { choice: { isolation: "worktree" }, role: "implementor" },
     { choice: { role: "general", isolation: "worktree" }, role: "implementor" },
     // Binding the worktree keeps an explicit role.

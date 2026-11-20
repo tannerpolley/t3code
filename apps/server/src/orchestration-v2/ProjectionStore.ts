@@ -8,7 +8,13 @@ import {
 import { makeIssueWorkProjection } from "../issues/IssueWorkEventProjection.ts";
 import { pendingRoutedRequestThreadIds } from "./ForkProjectionReads.ts";
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { applyOrchestrationV2ThreadVisit, pendingGuestMessageCount } from "@t3tools/contracts";
+import {
+  applyOrchestrationV2ThreadVisit,
+  pendingGuestMessageCount,
+  resolveModelRoleName,
+  THREAD_ROLE_NAMES,
+  type ThreadRole,
+} from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -688,6 +694,10 @@ export interface ProjectionStoreV2Shape {
   readonly getIssueWorkThreads: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<ReadonlyArray<IssueWorkThread>, ProjectionStoreV2Error>;
+  readonly hasLegacyRoutineRole: (
+    threadId: ThreadId,
+    role: ThreadRole,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
@@ -9976,6 +9986,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       };
     }, Effect.mapError(shellSnapshotReadError));
 
+    const hasLegacyRoutineRole = Effect.fn("ProjectionStore.hasLegacyRoutineRole")(function* (
+      threadId: ThreadId,
+      role: ThreadRole,
+    ) {
+      const aliases = THREAD_ROLE_NAMES.filter((name) => {
+        const [canonical, level] = resolveModelRoleName(name)!;
+        return name !== canonical && canonical === role && level === "routine";
+      });
+      if (aliases.length === 0) return false;
+      // A newer thread snapshot can have the canonical role while older events still hold the alias.
+      const [row] = yield* sql<{ readonly found: number }>`
+        SELECT EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId} AND json_extract(payload_json, '$.role') IN ${sql.in(aliases)}
+        ) OR EXISTS (
+          SELECT 1 FROM orchestration_events
+          WHERE stream_id = ${threadId} AND application_event_version = 2 AND aggregate_kind = 'thread'
+            AND event_type IN ('thread.created', 'thread.metadata-updated')
+            AND json_extract(payload_json, '$.role') IN ${sql.in(aliases)}
+        ) AS found
+      `.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
+      return row?.found === 1;
+    });
+
     const getThreadShell: ProjectionStoreV2Shape["getThreadShell"] = (threadId) =>
       sql
         .withTransaction(
@@ -10080,6 +10114,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readShellSnapshot: readOnReader(readShellSnapshot),
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),
       getThreadShell: readOnReader(getThreadShell),
+      hasLegacyRoutineRole: readOnReader(hasLegacyRoutineRole),
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
       findThread: readOnReader(findThread),

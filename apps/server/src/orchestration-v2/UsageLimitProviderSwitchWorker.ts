@@ -94,8 +94,11 @@ const make = Effect.gen(function* () {
           (previous.resetAt === null || Date.parse(previous.resetAt) > nowMs)
             ? new Set([previous.switchBack.instanceId])
             : new Set<ProviderInstanceId>();
+        const legacyRoutineRole =
+          shell.role !== undefined &&
+          (yield* projections.hasLegacyRoutineRole(threadId, shell.role));
         const target = usageLimitSwitchTarget(
-          shell,
+          { ...shell, legacyRoutineRole },
           preferences,
           snapshots,
           new Set(yield* adapters.list()),

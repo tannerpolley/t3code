@@ -1084,7 +1084,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             task: string;
           };
           assert.equal(request.modelSelection.instanceId, altInstanceId);
-          assert.equal(request.role, role === "general" ? "designer" : resolveThreadRole(role));
+          assert.equal(request.role, resolveThreadRole(role));
           assert.isUndefined(request.worktree);
           assert.equal(
             request.task,
