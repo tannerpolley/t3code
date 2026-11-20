@@ -30,6 +30,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
@@ -47,7 +48,6 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   killed = false;
   exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
-  onKill: ((signal?: string) => void) | undefined;
 
   constructor(pid: number) {
     this.pid = pid;
@@ -70,7 +70,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   kill(signal?: string): void {
     this.killed = true;
     this.killSignals.push(signal);
-    this.onKill?.(signal);
+    this.emitExit({ exitCode: 0, signal: null });
   }
 
   onData(callback: (data: string) => void): () => void {
@@ -242,7 +242,7 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
-      });
+      }).pipe(Effect.provideService(SpawnExecutableResolution, (command) => command));
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
         Ref.update(eventsRef, (events) => [...events, event]),

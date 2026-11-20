@@ -27,6 +27,32 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("sidebar client writes", () => {
+  it("fails a stalled section save and sends the next queued save", async () => {
+    vi.useFakeTimers();
+    const section = { id: "child", name: "Child", parentId: "work" };
+    const saved = { id: "retry", name: "Retry", parentId: "work" };
+    const send = vi
+      .fn()
+      .mockReturnValueOnce(new Promise<SidebarLayoutRecord>(() => {}))
+      .mockResolvedValueOnce({
+        ...record,
+        revision: 1,
+        layout: applySidebarLayoutMutation(record.layout, { type: "add", section: saved }),
+      });
+    const client = createSidebarLayoutClient(send, vi.fn());
+    client.configure(local, true, record.layout);
+    client.receive(local, record);
+    const first = vi.fn();
+    void client.addSection(local, { type: "add", section }).then(first);
+    await vi.advanceTimersByTimeAsync(SIDEBAR_WRITE_DELAY);
+    const retry = vi.fn();
+    void client.addSection(local, { type: "add", section: saved }).then(retry);
+    await vi.runAllTimersAsync();
+    expect(first).toHaveBeenCalledWith(false);
+    expect(retry).toHaveBeenCalledWith(true);
+    client.dispose();
+  });
+
   it("applies N toggles immediately and sends one batch, leaving other environments alone", async () => {
     vi.useFakeTimers();
     const send = vi.fn(async (_id: EnvironmentId, _input: SidebarLayoutUpdate) => ({

@@ -11,9 +11,11 @@ import * as Option from "effect/Option";
 import { applySidebarLayoutMutation } from "@t3tools/shared/sidebarLayout";
 
 export const SIDEBAR_WRITE_DELAY = 250;
+const SIDEBAR_WRITE_TIMEOUT = 15_000;
 export function usesServerSidebar(capability: boolean | undefined) {
   return capability === true;
 }
+type AddSection = Extract<SidebarLayoutMutation, { type: "add" }>;
 interface ClientEnvironment {
   server: boolean;
   canWrite: boolean;
@@ -49,6 +51,22 @@ export function createSidebarLayoutClient(
 ) {
   const environments = new Map<EnvironmentId, ClientEnvironment>();
   const listeners = new Set<() => void>();
+  const additions = new Map<SidebarLayoutMutation, (saved: boolean) => void>();
+  const settleAdditions = (
+    operations: Iterable<SidebarLayoutMutation>,
+    confirmed?: SidebarLayout,
+  ) => {
+    for (const operation of operations) {
+      if (operation.type !== "add") continue;
+      const resolve = additions.get(operation);
+      if (!resolve) continue;
+      additions.delete(operation);
+      resolve(
+        confirmed?.sidebarProjectSections.some((section) => section.id === operation.section.id) ===
+          true,
+      );
+    }
+  };
   let snapshot = new Map<EnvironmentId, SidebarLayout>();
   const notify = () => {
     snapshot = new Map([...environments].map(([id, entry]) => [id, layout(entry)]));
@@ -102,12 +120,23 @@ export function createSidebarLayoutClient(
       return;
     entry.flight = compact(entry.pending);
     entry.pending = [];
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const record = await send(id, { revision: entry.base.revision, operations: entry.flight });
+      const record = await Promise.race([
+        send(id, { revision: entry.base.revision, operations: entry.flight }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("Sidebar layout write timed out.")),
+            SIDEBAR_WRITE_TIMEOUT,
+          );
+        }),
+      ]);
       if (record.revision >= entry.base.revision) entry.base = record;
     } catch (error) {
       onError(error);
     } finally {
+      clearTimeout(timeout);
+      settleAdditions(entry.flight, entry.base.layout);
       entry.flight = [];
       notify();
       if (entry.pending.length) schedule(id, entry);
@@ -119,6 +148,20 @@ export function createSidebarLayoutClient(
       entry.timer = null;
       void flush(id);
     }, SIDEBAR_WRITE_DELAY);
+  };
+  const enqueue = (id: EnvironmentId, operation: SidebarLayoutMutation) => {
+    const entry = environments.get(id);
+    if (!entry) return false;
+    if (entry.server) {
+      if (!entry.canWrite) return false;
+      entry.pending.push(operation);
+      schedule(id, entry);
+    } else {
+      entry.local = apply(entry.local, [operation]);
+      saveLocal(id, entry.local);
+    }
+    notify();
+    return true;
   };
   return {
     subscribe(listener: () => void) {
@@ -140,7 +183,10 @@ export function createSidebarLayoutClient(
       if (previous && previous.server === server) {
         if (previous.canWrite !== canWrite) {
           previous.canWrite = canWrite;
-          if (!canWrite) previous.pending = [];
+          if (!canWrite) {
+            settleAdditions(previous.pending);
+            previous.pending = [];
+          }
           notify();
         }
         if (!server) {
@@ -153,7 +199,11 @@ export function createSidebarLayoutClient(
         }
         return;
       }
-      if (previous?.timer) clearTimeout(previous.timer);
+      if (previous) {
+        if (previous.timer !== null) clearTimeout(previous.timer);
+        settleAdditions(previous.pending);
+        settleAdditions(previous.flight);
+      }
       const local = readLocalSidebarLayout(id, previous ? layout(previous) : fallback);
       if (!server && fallbackReady) saveLocal(id, local);
       environments.set(id, {
@@ -181,19 +231,14 @@ export function createSidebarLayoutClient(
     record(id: EnvironmentId) {
       return environments.get(id)?.base ?? null;
     },
-    enqueue(id: EnvironmentId, operation: SidebarLayoutMutation) {
-      const entry = environments.get(id);
-      if (!entry) return false;
-      if (entry.server) {
-        if (!entry.canWrite) return false;
-        entry.pending.push(operation);
-        schedule(id, entry);
-      } else {
-        entry.local = apply(entry.local, [operation]);
-        saveLocal(id, entry.local);
-      }
-      notify();
-      return true;
+    enqueue,
+    addSection(id: EnvironmentId, operation: AddSection) {
+      return new Promise<boolean>((resolve) => {
+        additions.set(operation, resolve);
+        const entry = environments.get(id);
+        if (!enqueue(id, operation)) settleAdditions([operation]);
+        else if (entry && !entry.server) settleAdditions([operation], entry.local);
+      });
     },
     layouts(ids: Iterable<EnvironmentId>) {
       return new Map(
@@ -205,6 +250,7 @@ export function createSidebarLayoutClient(
     },
     dispose() {
       for (const entry of environments.values()) if (entry.timer) clearTimeout(entry.timer);
+      settleAdditions(additions.keys());
       listeners.clear();
     },
   };

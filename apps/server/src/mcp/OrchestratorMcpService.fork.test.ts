@@ -48,7 +48,7 @@ import {
   roleDefaultTarget,
   providerCreditStatuses,
   modelRoleStatuses,
-} from "./delegateTaskTarget.ts";
+} from "../provider/modelRolePolicy.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -594,7 +594,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         snapshots,
         new Set([codexInstanceId, claude]),
         modelRoleStatusNow,
-        providerCreditStatuses(snapshots, { claude: false, codex: approved }),
+        providerCreditStatuses(snapshots, { claude: false, codex: approved }, modelRoleStatusNow),
       );
     assert.equal(ranked(providers(93, 3), false)[0]?.targets[0].providerInstanceId, claude);
     assert.equal(ranked(providers(93, 3), true)[0]?.targets[0].providerInstanceId, codexInstanceId);
@@ -628,29 +628,37 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
-  it("reports a positive Codex balance as unspendable at the monthly credit cap", () => {
-    const codex: ServerProvider = {
-      ...providerSnapshot({
-        instanceId: codexInstanceId,
-        driver: ProviderDriverKind.make("codex"),
-        model: "sol",
-      }),
-      usageLimits: codexRateLimitsToLimits({
-        checkedAt: modelRoleStatusCheckedAt,
-        snapshot: {
-          credits: { hasCredits: true, unlimited: false, balance: "12" },
-          individualLimit: {
-            remainingPercent: 0,
-            resetsAt: Date.parse(modelRoleStatusResetAt(0.7)) / 1000,
+  it.each([
+    { window: "active", timeLeft: 0.7, creditsAvailable: false },
+    { window: "expired", timeLeft: -0.1, creditsAvailable: true },
+  ])(
+    "checks spendable Codex credits at an $window monthly cap",
+    ({ timeLeft, creditsAvailable }) => {
+      const codex: ServerProvider = {
+        ...providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          model: "sol",
+        }),
+        usageLimits: codexRateLimitsToLimits({
+          checkedAt: modelRoleStatusCheckedAt,
+          snapshot: {
+            credits: { hasCredits: true, unlimited: false, balance: "12" },
+            individualLimit: {
+              remainingPercent: 0,
+              resetsAt: Date.parse(modelRoleStatusResetAt(timeLeft)) / 1000,
+            },
           },
-        },
-      }),
-    };
-    const status = providerCreditStatuses([codex], { claude: false, codex: true }).find(
-      (entry) => entry.providerInstanceId === codexInstanceId,
-    );
-    assert.include(status, { approved: true, balance: "12", creditsAvailable: false });
-  });
+        }),
+      };
+      const status = providerCreditStatuses(
+        [codex],
+        { claude: false, codex: true },
+        modelRoleStatusNow,
+      ).find((entry) => entry.providerInstanceId === codexInstanceId);
+      assert.include(status, { approved: true, balance: "12", creditsAvailable });
+    },
+  );
 
   it("keeps configured order unless headroom is below the threshold", () => {
     const instance = (id: string) => ProviderInstanceId.make(id);
@@ -835,9 +843,10 @@ describe("OrchestratorMcpService provider resolution", () => {
             resetsAt: modelRoleStatusResetAt(0.5),
           },
           {
-            id: "seven_day_opus",
+            id: "scoped",
             kind: "weekly",
-            label: "Weekly · Opus",
+            label: "Model allowance",
+            modelIds: ["claude-opus-4-6"],
             usedPercent: 95,
             windowDurationMins: 7 * 24 * 60,
             resetsAt: modelRoleStatusResetAt(0.1),
@@ -846,7 +855,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             id: "seven_day_sonnet",
             kind: "weekly",
             label: "Weekly · Sonnet",
-            usedPercent: 20,
+            usedPercent: 75,
             windowDurationMins: 7 * 24 * 60,
             resetsAt: modelRoleStatusResetAt(0.4),
           },
@@ -859,7 +868,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     assert.deepEqual(
       choices.map((choice) => choice.model),
-      ["claude-sonnet-4-6", "claude-3-5-haiku", "claude-opus-4-6"],
+      ["claude-3-5-haiku", "claude-sonnet-4-6", "claude-opus-4-6"],
     );
     assert.deepEqual(byModel.get("claude-opus-4-6"), {
       remainingPercent: 5,
@@ -867,8 +876,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       pace: "on",
     });
     assert.deepEqual(byModel.get("claude-sonnet-4-6"), {
-      remainingPercent: 40,
-      resetsAt: modelRoleStatusResetAt(0.5),
+      remainingPercent: 25,
+      resetsAt: modelRoleStatusResetAt(0.4),
       pace: "ahead",
     });
     assert.deepEqual(byModel.get("claude-3-5-haiku"), {

@@ -56,7 +56,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import { modelRoleStatuses, providerCreditStatuses } from "../mcp/delegateTaskTarget.ts";
+import { modelRoleStatuses, providerCreditStatuses } from "../provider/modelRolePolicy.ts";
 import { lineageUsageSprint } from "../issues/usageSprint.ts";
 import { managedIssueRole } from "../issues/IssueEligibility.ts";
 import {
@@ -584,12 +584,18 @@ export const layerWithOptions = (
             const providers = Option.isSome(providerRegistry)
               ? yield* providerRegistry.value.getProviders
               : [];
-            const credits = providerCreditStatuses(providers, settings.providerCreditsApproved);
+            const capableIds = new Set(yield* registry.list());
+            const now = yield* Clock.currentTimeMillis;
+            const credits = providerCreditStatuses(
+              providers,
+              settings.providerCreditsApproved,
+              now,
+            );
             const roles = modelRoleStatuses(
               resolveModelRoles(settings),
               providers,
-              new Set(yield* registry.list()),
-              yield* Clock.currentTimeMillis,
+              capableIds,
+              now,
               credits,
               yield* lineageUsageSprint(thread, projectionStore.getThread),
             );

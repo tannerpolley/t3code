@@ -48,7 +48,7 @@ it("reads GitHub issue pages and leaves every other link alone", () => {
   expect(parseIssueUrl("https://github.com/acme/web/issues/0", hosts)).toBeNull();
 });
 
-it("opens Forgejo issue links in T3, matching the host with its port", () => {
+it("leaves Forgejo and GitHub Enterprise issue links outside T3", () => {
   const identity: RepositoryIdentity = {
     provider: SourceControlProviderKind.make("forgejo"),
     // The server keys a repository without its port; the remote URL keeps it.
@@ -67,15 +67,14 @@ it("opens Forgejo issue links in T3, matching the host with its port", () => {
         ...identity,
         provider: SourceControlProviderKind.make("github"),
         canonicalKey: "github.example/owner/repo",
+        locator: {
+          ...identity.locator,
+          remoteUrl: "https://github.example/owner/repo",
+        },
       },
     },
   ]);
-  // GitHub issues are served on github.com only, so an Enterprise project adds no host.
-  expect([...issueHosts]).toEqual(["github.com", "forge.example:3000"]);
-  expect(parseIssueUrl("https://forge.example:3000/owner/repo/issues/1", issueHosts)).toEqual({
-    host: "forge.example:3000",
-    repository: "owner/repo",
-    number: 1,
-  });
-  expect(parseIssueUrl("https://forge.example/owner/repo/issues/1", issueHosts)).toBeNull();
+  expect([...issueHosts]).toEqual(["github.com"]);
+  expect(parseIssueUrl("https://forge.example:3000/owner/repo/issues/1", issueHosts)).toBeNull();
+  expect(parseIssueUrl("https://github.example/owner/repo/issues/1", issueHosts)).toBeNull();
 });

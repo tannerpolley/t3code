@@ -1168,12 +1168,8 @@ it.effect("recovers a persisted coalescing window after restarting the service",
   );
 });
 
-// quarantine: #468 fails once another migration is registered; the interrupt point moves with setup work
-it.effect.skip("a pending dispatch interrupted at its permit does not block later polls", () => {
+it.effect("a pending dispatch interrupted at its permit does not block later polls", () => {
   const workers = new Map<string, Effect.Effect<void>>();
-  // One shared dispatcher lets the test run the retry's forked worker to completion.
-  const mixed = new EffectScheduler.MixedScheduler("sync");
-  const dispatcher = mixed.makeDispatcher();
   return withService(
     ({ service, sql, launches }) =>
       Effect.gen(function* () {
@@ -1203,20 +1199,15 @@ it.effect.skip("a pending dispatch interrupted at its permit does not block late
         const firstPoll = yield* poll.pipe(Effect.withTracer(interruptAtPermit), Effect.forkChild);
         assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(yield* Deferred.await(entered))));
         yield* Fiber.await(firstPoll);
+        assert.equal(yield* Queue.size(launches), 0);
+        assert.lengthOf(yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`, 1);
 
-        yield* poll;
-        dispatcher.flush();
+        yield* drainPendingDispatch(workers);
 
         assert.equal(yield* Queue.size(launches), 1);
         assert.lengthOf(yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`, 0);
       }),
     { workers },
-  ).pipe(
-    Effect.provideService(EffectScheduler.Scheduler, {
-      executionMode: mixed.executionMode,
-      makeDispatcher: () => dispatcher,
-      shouldYield: (fiber) => mixed.shouldYield(fiber),
-    }),
   );
 });
 

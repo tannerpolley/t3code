@@ -835,19 +835,21 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
 it.effect("a refused dispatch records its refusal, and opaque causes stay generic", () =>
   Effect.gen(function* () {
     const refusal = "Thread thread:refused was stopped.";
-    const refused = (cause: unknown) =>
+    const refused = (cause: unknown, detail?: string) =>
       new OrchestratorDispatchError({
         commandId: CommandId.make("command:refused"),
         commandType: "message.dispatch",
         cause,
+        detail,
       });
     const generic = refused(undefined).message;
     const cases = [
-      [refusal, refusal],
-      ["   ", generic],
-      [new Error("private-nested-secret"), generic],
+      [refused(refusal), refusal],
+      [refused("   "), generic],
+      [refused(new Error("private-nested-secret")), generic],
+      [refused(new Error("private-nested-secret"), "   "), generic],
     ] as const;
-    const failure = yield* Ref.make<unknown>(undefined);
+    const failure = yield* Ref.make(refused(undefined));
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -855,8 +857,7 @@ it.effect("a refused dispatch records its refusal, and opaque causes stay generi
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadShell: () => Effect.succeed(threadShell(ProjectId.make("project:test"))),
-            sendToThread: () =>
-              Ref.get(failure).pipe(Effect.flatMap((cause) => Effect.fail(refused(cause)))),
+            sendToThread: () => Ref.get(failure).pipe(Effect.flatMap(Effect.fail)),
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
@@ -883,8 +884,8 @@ it.effect("a refused dispatch records its refusal, and opaque causes stay generi
         runtimeMode: "full-access",
         interactionMode: "default",
       });
-      for (const [cause, expected] of cases) {
-        yield* Ref.set(failure, cause);
+      for (const [error, expected] of cases) {
+        yield* Ref.set(failure, error);
         const result = yield* service.runNow({ id: task.id });
         assert.equal(result.task.lastRunStatus, "failed");
         assert.equal(result.task.lastRunError, expected);

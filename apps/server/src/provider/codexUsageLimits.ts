@@ -1,43 +1,41 @@
 import type {
   ProviderUsageLimitsUpdate,
   ServerProviderResetCredits,
-  ServerProviderCredits,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import type * as CodexErrors from "effect-codex-app-server/errors";
+import type {
+  V2GetAccountRateLimitsResponse,
+  V2GetAccountRateLimitsResponse__RateLimitResetCredit,
+} from "effect-codex-app-server/schema";
 
 import { clampPercent, makeUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
 
-interface CodexRateLimitWindow {
-  readonly usedPercent: number;
-  readonly resetsAt?: number | null;
-  readonly windowDurationMins?: number | null;
-}
+type AppServerRateLimits = V2GetAccountRateLimitsResponse["rateLimits"];
 
-export interface CodexRateLimitSnapshot {
-  readonly credits?: ServerProviderCredits | null;
-  readonly limitId?: string | null;
-  readonly planType?: string | null;
-  readonly rateLimitReachedType?: string | null;
-  readonly primary?: CodexRateLimitWindow | null;
-  readonly secondary?: CodexRateLimitWindow | null;
-  readonly individualLimit?: {
-    readonly remainingPercent: number;
-    readonly resetsAt: number;
-  } | null;
-}
+export type CodexRateLimitSnapshot = Pick<
+  AppServerRateLimits,
+  "credits" | "limitId" | "planType" | "rateLimitReachedType" | "primary" | "secondary"
+> & {
+  readonly individualLimit?: Pick<
+    NonNullable<AppServerRateLimits["individualLimit"]>,
+    "remainingPercent" | "resetsAt"
+  > | null;
+};
 
-export interface CodexResetCreditsSummary {
-  readonly availableCount: number;
-  readonly credits?: ReadonlyArray<{
-    readonly id?: string;
-    readonly status: string;
-    readonly expiresAt?: number | null;
-  }> | null;
-}
+export type CodexResetCreditsSummary = Pick<
+  NonNullable<V2GetAccountRateLimitsResponse["rateLimitResetCredits"]>,
+  "availableCount"
+> & {
+  readonly credits?: ReadonlyArray<
+    Pick<V2GetAccountRateLimitsResponse__RateLimitResetCredit, "status" | "expiresAt"> &
+      Partial<Pick<V2GetAccountRateLimitsResponse__RateLimitResetCredit, "id">>
+  > | null;
+};
 
 const SESSION_MINS = 5 * 60;
 const WEEK_MINS = 7 * 24 * 60;
@@ -210,12 +208,15 @@ export function mergeCodexRateLimits(
   };
 }
 
-/** All exhausted windows must reset before a continuation can run. */
+/** All active exhausted windows must reset before a continuation can run. */
 export function codexUsageLimitResetAt(
   snapshot: CodexRateLimitSnapshot | undefined,
+  now: number,
 ): string | null {
   if (!snapshot) return null;
-  const windows = codexRateLimitsToWindows(snapshot).filter((window) => window.usedPercent >= 100);
+  const windows = codexRateLimitsToWindows(snapshot).filter(
+    (window) => window.usedPercent >= 100 && !isUsageWindowStale(window, now),
+  );
   if (windows.length === 0 || windows.some((window) => !window.resetsAt)) return null;
   return windows.reduce<string | null>(
     (latest, window) =>

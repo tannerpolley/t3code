@@ -18,7 +18,6 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
-  isProviderAvailable,
   resolveModelNotes,
   resolveModelRoles,
   type OrchestratorMcpCapabilitiesInput,
@@ -111,11 +110,14 @@ import {
   advertisedModel,
   checkDelegateTarget,
   LISTED_MODEL_LIMIT,
+  providerConstraints,
+  unavailableModelMessage,
+} from "./delegateTaskTarget.ts";
+import {
   modelRoleStatuses,
   providerCreditStatuses,
   roleDefaultTarget,
-  unavailableModelMessage,
-} from "./delegateTaskTarget.ts";
+} from "../provider/modelRolePolicy.ts";
 import { lineageUsageSprint, usageSprintRefusal } from "../issues/usageSprint.ts";
 import {
   DispatchModeLimit,
@@ -402,33 +404,6 @@ export const requireAdvertisedModel = (provider: ServerProvider, model: string) 
   }
   return Effect.fail(failure("model_unavailable", unavailableModelMessage(provider, model)));
 };
-
-function providerConstraints(
-  provider: ServerProvider | undefined,
-  supportsOrchestrationV2: boolean,
-): ReadonlyArray<string> {
-  const constraints: Array<string> = [];
-  if (!supportsOrchestrationV2) {
-    constraints.push("No V2 provider adapter is registered.");
-  }
-  if (provider === undefined) return constraints;
-  if (!isProviderAvailable(provider)) {
-    constraints.push(provider.unavailableReason ?? "Provider driver is unavailable.");
-  }
-  if (!provider.enabled) {
-    constraints.push("Provider instance is disabled.");
-    // Disabled snapshots contain placeholders for installation, health, and auth.
-    return constraints;
-  }
-  if (!provider.installed) constraints.push("Provider executable is not installed.");
-  if (provider.status === "error" || provider.status === "disabled") {
-    constraints.push(provider.message ?? `Provider status is ${provider.status}.`);
-  }
-  if (provider.auth.status === "unauthenticated") {
-    constraints.push("Provider is not authenticated.");
-  }
-  return constraints;
-}
 
 /** t3_thread_launch keeps a selection as given, so it can hold options its model does not have. */
 function knownOptions(
@@ -1553,12 +1528,14 @@ const make = Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
+      const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+      const now = yield* Clock.currentTimeMillis;
       const roles = modelRoleStatuses(
         resolveModelRoles(settings),
         providers,
-        yield* loadOrchestrationCapableInstanceIds(),
-        yield* Clock.currentTimeMillis,
-        providerCreditStatuses(providers, settings.providerCreditsApproved),
+        orchestrationCapableInstanceIds,
+        now,
+        providerCreditStatuses(providers, settings.providerCreditsApproved, now),
         usageSprint,
       );
       return roleDefaultTarget(
@@ -2657,12 +2634,17 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
       const usageSprint = parent === undefined ? undefined : yield* loadUsageSprint(parent.thread);
-      const providerCredits = providerCreditStatuses(providers, settings.providerCreditsApproved);
+      const now = yield* Clock.currentTimeMillis;
+      const providerCredits = providerCreditStatuses(
+        providers,
+        settings.providerCreditsApproved,
+        now,
+      );
       const modelRoles = modelRoleStatuses(
         resolveModelRoles(settings),
         providers,
         orchestrationCapableInstanceIds,
-        yield* Clock.currentTimeMillis,
+        now,
         providerCredits,
         usageSprint,
       );

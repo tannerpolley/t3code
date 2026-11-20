@@ -448,15 +448,13 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       );
       const createdAt = yield* currentIsoTimestamp;
       yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-        const targets = input.tabId
-          ? [state.sessions.get(compositeKey(input.threadId, input.tabId))].filter(
-              (entry): entry is PreviewSessionState => entry !== undefined,
-            )
-          : sessionsForThread(state, input.threadId);
-        if (targets.length === 0) {
+        const remainingTargets = targets.filter((target) =>
+          state.sessions.has(compositeKey(target.threadId, target.tabId)),
+        );
+        if (remainingTargets.length === 0) {
           return Effect.succeed([undefined, state] as const);
         }
-        const removed = removeSessions(state, targets, createdAt);
+        const removed = removeSessions(state, remainingTargets, createdAt);
         return Effect.as(
           Effect.forEach(
             removed.events,

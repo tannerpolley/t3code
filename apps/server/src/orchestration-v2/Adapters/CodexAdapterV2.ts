@@ -88,6 +88,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -1303,13 +1304,14 @@ function withCodexManagedFailure(
 function failureResetAt(
   failure: OrchestrationV2ProviderFailure,
   snapshot: CodexRateLimitSnapshot | undefined,
+  now: number,
   /** Read the failure text against when Codex reported it; omit to use the snapshot only. */
   text?: { readonly failedAt: DateTime.Utc; readonly zone: DateTime.TimeZone },
 ) {
   // Sharing caps have no reset timestamp in the ordinary Codex allowance snapshot.
   if (classifyCodexManagedError(failure.code)?.usageLimit) return null;
   return (
-    codexUsageLimitResetAt(snapshot) ??
+    codexUsageLimitResetAt(snapshot, now) ??
     (text === undefined ? null : codexMessageResetAt(failure.message, text.failedAt, text.zone))
   );
 }
@@ -5064,11 +5066,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             );
             const snapshot = yield* Ref.get(rateLimitSnapshot);
             for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
-              const resetAt = failureResetAt(item.failure, snapshot);
-              if (resetAt === null || item.failure.resetAt != null) continue;
+              if (item.failure.resetAt != null) continue;
+              const now = yield* DateTime.now;
+              const resetAt = failureResetAt(item.failure, snapshot, DateTime.toEpochMillis(now));
+              if (resetAt === null) continue;
               const updated = {
                 ...item,
-                updatedAt: yield* DateTime.now,
+                updatedAt: now,
                 failure: { ...item.failure, resetAt },
               };
               yield* Ref.update(limitedTurnItems, (current) =>
@@ -6656,10 +6660,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   failure.class === "usage_limit"
                     ? {
                         ...failure,
-                        resetAt: failureResetAt(failure, yield* Ref.get(rateLimitSnapshot), {
-                          failedAt: input.completedAt,
-                          zone: codexZone,
-                        }),
+                        resetAt: failureResetAt(
+                          failure,
+                          yield* Ref.get(rateLimitSnapshot),
+                          yield* Clock.currentTimeMillis,
+                          { failedAt: input.completedAt, zone: codexZone },
+                        ),
                       }
                     : failure,
                 ...(input.providerRetry === undefined
@@ -6699,7 +6705,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ...event.failure,
                     resetAt:
                       event.failure.resetAt ??
-                      failureResetAt(event.failure, yield* Ref.get(rateLimitSnapshot)),
+                      failureResetAt(
+                        event.failure,
+                        yield* Ref.get(rateLimitSnapshot),
+                        yield* Clock.currentTimeMillis,
+                      ),
                   },
                 }
               : event;
@@ -6732,7 +6742,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             event.failure.resetAt == null &&
             // The account read only reports the ordinary allowance, never a sharing cap's reset.
             !classifyCodexManagedError(event.failure.code)?.usageLimit &&
-            codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)) === null;
+            codexUsageLimitResetAt(
+              yield* Ref.get(rateLimitSnapshot),
+              yield* Clock.currentTimeMillis,
+            ) === null;
           if (!awaitsReset) yield* publishRootTerminal(context, event);
           const continued = continuedRuns.get(context.providerTurnId) ?? [context];
           if (event.status !== "completed") {

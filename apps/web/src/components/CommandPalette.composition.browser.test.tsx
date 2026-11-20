@@ -6,15 +6,20 @@ import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3t
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
+import { dispatchCommandPalette, useCommandPaletteStore } from "../commandPaletteStore";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { useUiStateStore } from "../uiStateStore";
+import { toastManager } from "./ui/toast";
 
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
+  deletedSection: undefined as string | undefined,
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
   scopes.sourceControl = sourceControl;
+  scopes.deletedSection = undefined;
 };
 const githubAvailable = {
   versionControlSystems: [],
@@ -72,8 +77,21 @@ vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: undefined }),
+  useAtomQueryRunner:
+    () =>
+    async ({ input }: { input: { partialPath?: string } }) => ({
+      _tag: "Success",
+      value: input.partialPath === undefined ? undefined : { parentPath: input.partialPath },
+    }),
 }));
+vi.mock("../projectSectionPlacement", async (original) => {
+  const actual = await original<typeof import("../projectSectionPlacement")>();
+  return {
+    ...actual,
+    canPlaceProjectInSection: (...args: Parameters<typeof actual.canPlaceProjectInSection>) =>
+      args[1] !== scopes.deletedSection && actual.canPlaceProjectInSection(...args),
+  };
+});
 vi.mock("../state/environments", async (original) => ({
   ...(await original<typeof import("../state/environments")>()),
   useEnvironments: () => ({
@@ -242,4 +260,48 @@ it("tells screen readers whether a new project will be published", async () => {
   await expect.element(option).toHaveAttribute("aria-checked", "false");
   await option.click();
   await expect.element(option).toHaveAttribute("aria-checked", "true");
+});
+
+const parentSectionId = JSON.stringify(["local", "work"]);
+const openFolderSubsection = () =>
+  openCommandPalette({ open: "add-project", sectionId: parentSectionId, folderSubsection: true });
+
+it("reports that the subsection could not be saved if its parent disappeared before submit", async () => {
+  setup();
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  using toast = vi.spyOn(toastManager, "add").mockReturnValue("test-toast");
+  await act(openFolderSubsection);
+  await page.getByRole("combobox").fill("/workspace/Child");
+  scopes.deletedSection = parentSectionId;
+  await userEvent.keyboard("{Enter}");
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Couldn't save the project section" }),
+  );
+});
+
+it("leaves a reopened subsection picker open when the previous save finishes", async () => {
+  setup();
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  const originalSections = useUiStateStore.getState().sidebarProjectSections;
+  using _sections = {
+    [Symbol.dispose]: () => useUiStateStore.setState({ sidebarProjectSections: originalSections }),
+  };
+  useUiStateStore.setState({
+    sidebarProjectSections: [
+      { id: parentSectionId, name: "Work", projectKeys: [], collapsed: false },
+    ],
+  });
+  const save = Promise.withResolvers<string | null>();
+  using add = vi
+    .spyOn(useUiStateStore.getState(), "addSidebarProjectSection")
+    .mockReturnValue(save.promise);
+  await act(openFolderSubsection);
+  await page.getByRole("combobox").fill("/workspace/First");
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(add).toHaveBeenCalledOnce());
+  await act(() => dispatchCommandPalette({ _tag: "SetOpen", open: false }));
+  await act(openFolderSubsection);
+  await page.getByRole("combobox").fill("/workspace/Second");
+  await act(() => save.resolve("first-section"));
+  expect(useCommandPaletteStore.getState().open).toBe(true);
 });

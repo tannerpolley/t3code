@@ -75,11 +75,8 @@ import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRe
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import {
-  checkDelegateTarget,
-  modelRoleStatuses,
-  providerCreditStatuses,
-} from "../mcp/delegateTaskTarget.ts";
+import { checkDelegateTarget } from "../mcp/delegateTaskTarget.ts";
+import { modelRoleStatuses, providerCreditStatuses } from "../provider/modelRolePolicy.ts";
 import { usageSprintCheck, usageSprintWindow } from "./usageSprint.ts";
 import {
   issueEligibility,
@@ -336,12 +333,13 @@ export const layer = Layer.effect(
       }
       const usageSprint =
         root === null ? undefined : (yield* store.configuration(root.rootThreadId))?.usageSprint;
+      const now = yield* Clock.currentTimeMillis;
       const roles = modelRoleStatuses(
         resolveModelRoles(serverSettings),
         availableProviders,
         capableIds,
-        yield* Clock.currentTimeMillis,
-        providerCreditStatuses(availableProviders, serverSettings.providerCreditsApproved),
+        now,
+        providerCreditStatuses(availableProviders, serverSettings.providerCreditsApproved, now),
         usageSprint,
       );
       const role = roles.find((entry) => entry.id === input.modelRoleId);

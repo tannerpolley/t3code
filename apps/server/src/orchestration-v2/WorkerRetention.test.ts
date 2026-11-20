@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -20,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as GitManager from "../git/GitManager.ts";
@@ -28,6 +30,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import WorkerArchiveBacklog from "../persistence/ForkMigrations/031_WorkerArchiveBacklog.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
@@ -73,7 +76,22 @@ const layerTest = Layer.mergeAll(
   ),
 );
 
-const layerRetention = WorkerRetention.layer.pipe(
+const layerIdentity = Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+  resolve: () =>
+    Effect.succeed({
+      canonicalKey: "github.com/owner/project",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "https://github.com/owner/project.git",
+      },
+      provider: SourceControlProviderKind.make("github"),
+      owner: "owner",
+      name: "project",
+    }),
+});
+
+const layerRetentionBase = WorkerRetention.layer.pipe(
   Layer.provideMerge(layerTest),
   Layer.provide(
     Layer.mergeAll(
@@ -85,20 +103,6 @@ const layerRetention = WorkerRetention.layer.pipe(
       }),
       FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
       Path.layer,
-      Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-        resolve: () =>
-          Effect.succeed({
-            canonicalKey: "github.com/owner/project",
-            locator: {
-              source: "git-remote",
-              remoteName: "origin",
-              remoteUrl: "https://github.com/owner/project.git",
-            },
-            provider: SourceControlProviderKind.make("github"),
-            owner: "owner",
-            name: "project",
-          }),
-      }),
       Layer.mock(GitManager.GitManager)({
         branchPullRequest: ({ cwd, branch }) =>
           Effect.succeed(
@@ -134,6 +138,8 @@ const layerRetention = WorkerRetention.layer.pipe(
     ),
   ),
 );
+
+const layerRetention = layerRetentionBase.pipe(Layer.provide(layerIdentity));
 
 const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -601,4 +607,106 @@ it.effect(
         [[branchWorker, known], 1, "preview"],
       );
     }).pipe(Effect.provide(layerRetention)),
+);
+
+it.effect.each(["timeout", "failed exit"] as const)(
+  "keeps the backlog open after a Git %s during repository identification",
+  (failure) => {
+    let gitAvailable = false;
+    let rootProbes = 0;
+    const layerFileSystem = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.map(FileSystem.FileSystem, (fs) => FileSystem.makeNoop({ stat: () => fs.stat(".") })),
+    ).pipe(Layer.provide(NodeFileSystem.layer));
+    const layerRunner = Layer.mock(ProcessRunner.ProcessRunner)({
+      run: ({ args, timeoutBehavior }) => {
+        const operation = args[2];
+        if (operation === "rev-parse") rootProbes++;
+        const failed = !gitAvailable && operation === "rev-parse";
+        const timeout = failed && failure === "timeout";
+        if (timeout && timeoutBehavior !== "timedOutResult") {
+          return Effect.fail(
+            new ProcessRunner.ProcessTimeoutError({
+              command: "git",
+              argumentCount: args.length,
+              timeoutMs: 60_000,
+            }),
+          );
+        }
+        return Effect.succeed({
+          stdout: failed
+            ? ""
+            : operation === "rev-parse"
+              ? `${workspaceRoot}\n`
+              : operation === "remote"
+                ? "origin\thttps://github.com/owner/project.git (fetch)\n"
+                : "",
+          stderr: failed && !timeout ? "fatal: bad config line\n" : "",
+          code: timeout
+            ? null
+            : ChildProcessSpawner.ExitCode(failed ? 128 : operation === "config" ? 1 : 0),
+          timedOut: timeout,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        });
+      },
+    });
+    const identities = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make(),
+    ).pipe(Layer.provide(Layer.mergeAll(layerRunner, layerFileSystem, Path.layer)));
+
+    return Effect.gen(function* () {
+      const { service, seed, createdAt, projections } = yield* makeFixture();
+      const worker = yield* seed("unidentified", "open", { pullRequests: [], branch: "own" });
+      const other = yield* seed("unidentified-other", "open", {
+        pullRequests: [],
+        branch: "other",
+      });
+      const archived = yield* seed("archived", "open", {
+        pullRequests: [],
+        branch: "own",
+        archivedAt: createdAt,
+      });
+      const archivedOther = yield* seed("archived-other", "open", {
+        pullRequests: [],
+        branch: "other",
+        archivedAt: createdAt,
+      });
+      yield* TestClock.adjust("15 days");
+      const preview = yield* service.archiveBacklog({ kind: "preview" });
+      if (preview.kind !== "preview") return assert.fail("Expected a preview");
+      const result = yield* service.archiveBacklog({ kind: "archive", token: preview.token });
+      gitAvailable = true;
+      const coolingDown = yield* service.archiveBacklog({ kind: "preview" });
+      yield* service.autoArchive();
+      yield* service.removeExpired();
+      assert.deepEqual(
+        [rootProbes, coolingDown.kind === "preview" ? coolingDown.unknown : coolingDown.kind],
+        [1, 2],
+        "Preview and both sweeps share the failed checkout probe during its cooldown",
+      );
+      assert.isNull((yield* projections.getThread(archived)).deletedAt);
+      assert.isNull((yield* projections.getThread(archivedOther)).deletedAt);
+
+      yield* TestClock.adjust("1 minute");
+      yield* service.removeExpired();
+      assert.equal(rootProbes, 2, "The cleanup sweep refreshes a shared checkout once");
+      assert.isNotNull((yield* projections.getThread(archived)).deletedAt);
+      assert.isNotNull((yield* projections.getThread(archivedOther)).deletedAt);
+
+      const retry = yield* service.archiveBacklog({ kind: "preview" });
+      assert.deepEqual(
+        [
+          preview.workers,
+          preview.unknown,
+          result,
+          retry.kind === "preview" ? retry.workers.map(({ id }) => id) : retry.kind,
+        ],
+        [[], 2, { kind: "archived", archived: 0, unknown: 2 }, [worker, other]],
+      );
+    }).pipe(Effect.provide(layerRetentionBase.pipe(Layer.provide(identities))));
+  },
 );
