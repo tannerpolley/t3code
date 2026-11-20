@@ -147,6 +147,22 @@ export function isIdleWorker(
   );
 }
 
+export function workerCompletionIsCurrent(
+  worker: ProjectionStore.ProjectionSettlementCandidate,
+  completedAt: number,
+): boolean {
+  return (
+    Number.isFinite(completedAt) &&
+    completedAt >=
+      Math.max(
+        DateTime.toEpochMillis(worker.createdAt),
+        toMillis(worker.latestRunRequestedAt) ?? Number.NEGATIVE_INFINITY,
+        toMillis(worker.latestUserAuthoredMessageAt) ?? Number.NEGATIVE_INFINITY,
+      ) &&
+    (worker.workerUnarchivedAt === undefined || completedAt > Date.parse(worker.workerUnarchivedAt))
+  );
+}
+
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,

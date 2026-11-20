@@ -677,7 +677,7 @@ it.effect(
             group.toLayerHandler(WS_METHODS.workerArchiveBacklog, () =>
               Effect.sync(() => {
                 handled = true;
-                return { kind: "archived" as const, archived: 0 };
+                return { kind: "archived" as const, archived: 0, unknown: 0 };
               }),
             ),
             RpcAuthorization.layer([AuthOrchestrationReadScope]),

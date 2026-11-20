@@ -239,7 +239,7 @@ import {
   usageLimitSwitchMessageId,
   usageLimitRecoveryPending,
 } from "./usageLimitRecoveryPending.ts";
-import { isIdleWorker, isSnoozed } from "./ThreadSettlementService.ts";
+import { isIdleWorker, isSnoozed, workerCompletionIsCurrent } from "./ThreadSettlementService.ts";
 import {
   makeForkDelegatedCompletion,
   completionCohort,
@@ -15821,6 +15821,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             worker?.archivedAt == null ||
             DateTime.toEpochMillis(worker.archivedAt) !==
               DateTime.toEpochMillis(command.workerDeleteArchivedAt) ||
+            command.workerArchiveSequence === undefined ||
+            worker.workerArchiveSequence !== command.workerArchiveSequence ||
+            command.workerCompletedAt === undefined ||
+            !workerCompletionIsCurrent(worker, command.workerCompletedAt) ||
             !isIdleWorker(worker, now)
           )
             return { events: [], effects: [] };

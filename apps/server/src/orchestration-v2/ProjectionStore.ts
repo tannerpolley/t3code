@@ -94,6 +94,7 @@ import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchest
 import {
   deriveBlockedOnThreadWait,
   derivePendingBackgroundWork,
+  pendingBackgroundWorkOfThread,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -228,6 +229,7 @@ export type ProjectionThreadPullRequests = Pick<
 export type WorkerRetentionPage = {
   readonly afterThreadId?: ThreadId;
   readonly archivedBefore?: DateTime.Utc;
+  readonly createdAfter?: string;
 };
 
 export type ProjectionSettlementCandidate = Pick<
@@ -8722,12 +8724,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .withTransaction(
           Effect.gen(function* () {
             const rows = yield* sql<
-              SettlementThreadRow & { readonly worker_archive_sequence: number }
+              SettlementThreadRow & {
+                readonly worker_archive_sequence: number;
+                readonly parent_thread_id: string | null;
+                readonly prior_restore_at: string | null;
+              }
             >`
             SELECT t.thread_id, t.payload_json,
+              ${workers === undefined ? sql`NULL` : sql`json_extract(t.payload_json, '$.lineage.parentThreadId')`} AS parent_thread_id,
+              ${
+                workers === undefined
+                  ? sql`NULL`
+                  : sql`(
+                SELECT restored_at FROM worker_archive_prior_restores WHERE thread_id = t.thread_id
+              )`
+              } AS prior_restore_at,
               ${nativeSubagentPayload} AS native_subagent_payload_json,
               ${
-                workers === undefined || workers.archivedBefore !== undefined
+                workers === undefined
                   ? sql`0`
                   : sql`(
                 SELECT COALESCE(MAX(event.sequence), 0) FROM orchestration_events event
@@ -8787,12 +8801,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `
                   : sql`
               AND t.thread_id > ${workers.afterThreadId ?? ""}
+              ${workers.createdAfter === undefined ? sql`` : sql`AND t.created_at > ${workers.createdAfter}`}
               AND ${
                 workers.archivedBefore === undefined
                   ? sql`t.archived_at IS NULL AND (
                     json_array_length(t.payload_json, '$.pullRequests') > 0
                     OR json_array_length(t.payload_json, '$.issues') > 0
                     OR json_type(t.payload_json, '$.linkedPullRequest') = 'object'
+                    OR json_type(t.payload_json, '$.branchPullRequest') = 'object'
+                    OR json_extract(t.payload_json, '$.branch') IS NOT NULL
                   )`
                   : sql`t.archived_at <= ${DateTime.formatIso(workers.archivedBefore)}`
               }
@@ -8801,6 +8818,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
               AND json_extract(t.payload_json, '$.createdBy') IS NOT 'user'
               AND json_extract(t.payload_json, '$.role') IS NOT 'orchestrator'
+              AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
               AND json_extract(t.payload_json, '$.repositoryOrchestration') IS NULL
               AND json_extract(t.payload_json, '$.silentWakeAttention') IS NULL
               AND json_extract(t.payload_json, '$.limitRecovery.autoResume') IS NOT 1
@@ -8859,9 +8877,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `;
             if (rows.length === 0) return [];
             const threadIds = rows.map((row) => ThreadId.make(row.thread_id));
+            const providerThreadIds = new Set(threadIds);
+            for (const row of rows) {
+              if (row.parent_thread_id !== null)
+                providerThreadIds.add(ThreadId.make(row.parent_thread_id));
+            }
             const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
               yield* pendingBackgroundDataByThreadId({
-                providerThreadRows: yield* selectShellProviderThreadRows(threadIds),
+                providerThreadRows: yield* selectShellProviderThreadRows([...providerThreadIds]),
                 pendingTurnItemRows: yield* selectShellPendingTurnItemRows(threadIds),
               });
             return yield* Effect.forEach(rows, (row) =>
@@ -8876,6 +8899,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   row.latest_run_id === null ? null : RunId.make(row.latest_run_id);
                 return {
                   ...thread,
+                  ...(thread.workerUnarchivedAt === undefined && row.prior_restore_at !== null
+                    ? { workerUnarchivedAt: row.prior_restore_at }
+                    : {}),
                   pinnedAt: thread.pinnedAt ?? null,
 
                   autoSettleDisabledAt: thread.autoSettleDisabledAt ?? null,
@@ -8914,6 +8940,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         workerArchiveSequence: row.worker_archive_sequence,
                         workerArchiveBlocked:
                           (thread.pullRequests ?? []).some((link) => link.watch !== undefined) ||
+                          (row.parent_thread_id !== null &&
+                            (
+                              providerThreadsByThreadId.get(ThreadId.make(row.parent_thread_id)) ??
+                              []
+                            ).some(
+                              (parent) =>
+                                pendingBackgroundWorkOfThread(
+                                  thread.id,
+                                  [],
+                                  parent.pendingBackgroundTasks,
+                                ).length > 0,
+                            )) ||
                           (yield* hasPendingDelegatedCompletion(thread.id)),
                       }),
                   pendingBackgroundTasks: derivePendingBackgroundWork({
