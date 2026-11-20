@@ -27,7 +27,7 @@ const defaulted = <S extends Schema.Top>(schema: S, value: S["Encoded"]) =>
 const roleSetting = (
   description: string,
   tier: ModelTier,
-  provider: typeof ModelRoleProvider.Type,
+  provider: ModelRoleProvider,
   effort: ModelRoleEffort,
 ) =>
   defaulted(
@@ -81,7 +81,7 @@ const legacyRoleIds = Object.keys(LegacyModelRoles.fields) as Array<
 >;
 const decodeLegacyModelRoles = Schema.decodeUnknownEffect(LegacyModelRoles);
 const decodeModelRoles = Schema.decodeUnknownEffect(ModelRoles);
-const legacyDefaults = Schema.decodeUnknownSync(LegacyModelRoles)({});
+const legacyDefaults = Schema.decodeSync(LegacyModelRoles)({});
 
 const decodeLegacyRole = Schema.decodeUnknownOption(ModelRole);
 const isEffort = Schema.is(ModelRoleEffort);

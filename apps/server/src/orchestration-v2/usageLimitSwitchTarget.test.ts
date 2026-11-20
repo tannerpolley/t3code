@@ -122,14 +122,14 @@ describe("usage-limit target selection", () => {
 
   it("uses the thread's effective role and matches Implementor levels within it", () => {
     const orchestrator = role("orchestrator", source, alternative, { role: "orchestrator" });
-    const fast = role(
-      "implementor-fast",
+    const routine = role(
+      "implementor-routine",
       { ...source, options: [{ id: "reasoningEffort", value: "medium" }] },
       alternative,
       { role: "implementor", level: "routine" },
     );
-    const thorough = role(
-      "implementor-thorough",
+    const complex = role(
+      "implementor-complex",
       { ...source, options: [{ id: "reasoningEffort", value: "high" }] },
       alternative,
       {
@@ -137,7 +137,7 @@ describe("usage-limit target selection", () => {
         level: "complex",
       },
     );
-    const roles = [orchestrator, thorough, fast];
+    const roles = [orchestrator, complex, routine];
     expect(
       usageLimitThreadRole(
         { ...topLevel, modelSelection: { ...source, options: source.options!.toReversed() } },
@@ -146,13 +146,23 @@ describe("usage-limit target selection", () => {
     ).toBe(orchestrator);
     expect(
       usageLimitThreadRole({ ...topLevel, role: "implementor", modelSelection: source }, roles),
-    ).toBe(thorough);
+    ).toBe(complex);
+    expect(
+      usageLimitThreadRole(
+        {
+          ...topLevel,
+          role: "implementor",
+          modelSelection: { ...source, options: [{ id: "reasoningEffort", value: "medium" }] },
+        },
+        roles,
+      ),
+    ).toBe(routine);
     expect(
       usageLimitThreadRole(
         { ...topLevel, role: "implementor", modelSelection: { ...source, model: "custom" } },
         roles,
       ),
-    ).toBe(fast);
+    ).toBe(complex);
     expect(
       usageLimitThreadRole({ ...topLevel, role: "reviewer", modelSelection: source }, roles),
     ).toBeUndefined();

@@ -920,7 +920,7 @@ it.effect(
         milestones: [
           {
             number: 1,
-            modelRoleId: "implementor-complex",
+            modelRoleId: "implementor-thorough",
 
             status: "running" as const,
             fingerprint: "",
@@ -943,6 +943,11 @@ it.effect(
         createdBy: "user",
         creationSource: "web",
       });
+      const saved = yield* threads.getThreadRecords(rootId, []);
+      assert.equal(
+        saved.thread.repositoryOrchestration?.milestones[0]?.modelRoleId,
+        "implementor-complex",
+      );
       yield* threads.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make("milestone-root-start"),
