@@ -271,7 +271,7 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
 ) {
   override get message(): string {
     return (
-      this.detail ??
+      (this.detail?.trim() ? this.detail : undefined) ??
       (typeof this.cause === "string" && this.cause.trim() !== "" ? this.cause : undefined) ??
       `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`
     );
