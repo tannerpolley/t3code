@@ -1,7 +1,8 @@
 import * as NodeAssert from "node:assert/strict";
 
 import {
-  DEFAULT_SERVER_SETTINGS,
+  THREAD_ROLES,
+  MODEL_ROLE_LEVELS,
   resolveModelNotes,
   resolveModelRoles,
   ServerSettings,
@@ -22,9 +23,14 @@ import {
 
 const worstCase = Schema.decodeSync(ServerSettings)({
   modelRoles: Object.fromEntries(
-    Object.keys(DEFAULT_SERVER_SETTINGS.modelRoles).map((id) => [
-      id,
-      { provider: "both", description: "界".repeat(200) },
+    THREAD_ROLES.map((role) => [
+      role,
+      Object.fromEntries(
+        MODEL_ROLE_LEVELS.map((level) => [
+          level,
+          { provider: "both", description: "界".repeat(200) },
+        ]),
+      ),
     ]),
   ),
   modelTiers: Object.fromEntries(
@@ -76,8 +82,12 @@ describe("buildCodexAdditionalContext", () => {
     );
     NodeAssert.equal(
       context.t3_code_model_roles?.value.split("\n").filter((line) => line.startsWith("- ")).length,
-      8,
+      5,
     );
+    for (const role of THREAD_ROLES) {
+      const line = roleText.split("\n").find((line) => line.includes(`(${role}):`));
+      NodeAssert.match(line ?? "", /complex: 甲+… \(claudeAgent\).*routine: 甲+… \(claudeAgent\)/);
+    }
     NodeAssert.equal(
       context.t3_code_model_notes?.value.split("\n").filter((line) => line.startsWith("- ")).length,
       8,

@@ -26,18 +26,18 @@ describe("T3 orchestration provider instructions", () => {
       ...role,
       targets: Arr.map(role.targets, (target) => ({
         ...target,
-        unavailableReason: role.id === "reviewer" ? "Provider is not authenticated." : null,
+        unavailableReason: role.id === "reviewer-complex" ? "Provider is not authenticated." : null,
       })),
     }));
     const credits = [
       {
-        providerInstanceId: roles[3]!.targets[0].providerInstanceId,
+        providerInstanceId: roles[4]!.targets[0].providerInstanceId,
         approved: true,
         resetCreditCount: 2,
       },
     ];
     const text = t3ModelRolesInstructions(roles, credits);
-    assert.include(text, "Pass `role` and omit `target` to use the live role default.");
+    assert.include(text, "Pass `role` and omit `target` to use the first choice at that level.");
     assert.include(text, "codex credits approved. Banked resets: 2.");
     assert.include(
       text,
@@ -50,7 +50,7 @@ describe("T3 orchestration provider instructions", () => {
     assert.notInclude(text, "Target JSON");
     assert.equal(t3ModelNotesInstructions([]), "");
     const notes = t3ModelNotesInstructions([
-      { ...roles[1]!.targets[0], note: "Writing and research" },
+      { ...roles[2]!.targets[0], note: "Writing and research" },
     ]);
     assert.include(notes, "- claude-fable-5-2: Writing and research");
     assert.equal(
