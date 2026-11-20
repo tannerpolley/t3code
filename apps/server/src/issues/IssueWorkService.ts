@@ -336,12 +336,13 @@ export const layer = Layer.effect(
       }
       const usageSprint =
         root === null ? undefined : (yield* store.configuration(root.rootThreadId))?.usageSprint;
+      const now = yield* Clock.currentTimeMillis;
       const roles = modelRoleStatuses(
         resolveModelRoles(serverSettings),
         availableProviders,
         capableIds,
-        yield* Clock.currentTimeMillis,
-        providerCreditStatuses(availableProviders, serverSettings.providerCreditsApproved),
+        now,
+        providerCreditStatuses(availableProviders, serverSettings.providerCreditsApproved, now),
         usageSprint,
       );
       const role = roles.find((entry) => entry.id === input.modelRoleId);
