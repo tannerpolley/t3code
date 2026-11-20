@@ -1,5 +1,8 @@
 import {
   EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2GetThreadProjectionError,
+  ThreadId,
   type RelayClientInstallProgressEvent,
   type ServerConfig,
   type ServerLifecycleStreamEvent,
@@ -480,6 +483,44 @@ describe("environment RPC", () => {
 
       expect(subscriptions).toEqual(["first", "second"]);
       expect(yield* Ref.get(retryCount)).toBe(0);
+    }),
+  );
+
+  it.effect("does not retry an oversized thread snapshot on the same session", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("oversized-thread");
+      const error = Object.assign(
+        new OrchestrationV2GetThreadProjectionError({ threadId, message: "Snapshot too large" }),
+        { reason: "thread_snapshot_too_large" as const },
+      );
+      const failureObserved = yield* Deferred.make<unknown>();
+      let requests = 0;
+      const client = {
+        [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: () => {
+          requests += 1;
+          return Stream.fail(error);
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const fiber = yield* subscribe(
+        ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+        { threadId },
+        {
+          onExpectedFailure: (cause) =>
+            Deferred.succeed(failureObserved, Cause.squash(cause)).pipe(Effect.asVoid),
+          retryExpectedFailureAfter: "250 millis",
+        },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      expect(yield* Deferred.await(failureObserved)).toBe(error);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.interrupt(fiber);
+      expect(requests).toBe(1);
     }),
   );
 

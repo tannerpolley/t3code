@@ -422,7 +422,7 @@ it.effect("rejects oversized WebSocket snapshots on initial subscribe and cursor
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
         expect(result.failure).toMatchObject({
-          _tag: "EnvironmentRequestInvalidError",
+          _tag: "OrchestrationV2GetThreadProjectionError",
           reason: "thread_snapshot_too_large",
         });
       }
