@@ -40,6 +40,7 @@ import * as OrchestrationHttp from "./http.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import { subscribeOrchestrationV2Thread } from "../ws.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -389,6 +390,43 @@ it.effect("rejects an oversized full thread snapshot and still serves bounded hi
     expect(yield* Effect.promise(() => boundedSnapshot.json())).toMatchObject({
       hasMoreHistory: true,
     });
+  }),
+);
+
+it.effect("rejects oversized WebSocket snapshots on initial subscribe and cursor fallback", () =>
+  Effect.gen(function* () {
+    const { services, eventSink } = yield* serveOrchestrationHttp(() => true);
+    const item = items.find((item) => item.type === "command_execution")!;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make(`create-${item.id}`),
+          type: "turn-item.updated",
+          threadId: thread.id,
+          occurredAt: now,
+          payload: { ...item, type: "reasoning", text: "Thinking", streaming: false },
+        },
+      ],
+    });
+    const sql = Context.get(services, SqlClient.SqlClient);
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.text', printf('%.*c', ${9 * 1024 * 1024}, 'x'))
+      WHERE turn_item_id = ${item.id}
+    `;
+    for (const cursor of [{}, { afterSequence: Number.MAX_SAFE_INTEGER }]) {
+      const result = yield* subscribeOrchestrationV2Thread({ threadId: thread.id, ...cursor }).pipe(
+        Effect.provideContext(services),
+        Effect.result,
+      );
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure).toMatchObject({
+          _tag: "EnvironmentRequestInvalidError",
+          reason: "thread_snapshot_too_large",
+        });
+      }
+    }
   }),
 );
 
