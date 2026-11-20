@@ -5,9 +5,11 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { LocalServerHideRule } from "./preview.ts";
 import {
-  ThreadRole,
-  resolveThreadRole,
-  modelRoleProfile,
+  ThreadRoleInput,
+  type ThreadRole,
+  ModelRoleLevel,
+  MODEL_ROLE_LEVELS,
+  THREAD_ROLES,
   THREAD_ROLE_LABELS,
 } from "./threadRole.ts";
 
@@ -49,8 +51,8 @@ export type ModelRoleTarget = typeof ModelRoleTarget.Type;
 
 /** Ordered delegation choices; the first is the default. Bounded for per-turn instructions. */
 export const ModelRole = Schema.Struct({
-  role: Schema.optional(ThreadRole),
-  profile: Schema.optional(Schema.Literals(["fast", "thorough"])),
+  role: Schema.optional(ThreadRoleInput),
+  level: Schema.optional(ModelRoleLevel),
   id: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(60)),
   description: TrimmedString.check(Schema.isMaxLength(MAX_MODEL_ROLE_DESCRIPTION_LENGTH)),
@@ -126,45 +128,47 @@ const roleSetting = (
     {},
   );
 
+type RoleSetting = ReturnType<typeof roleSetting>;
+const roleLevels = (complex: RoleSetting, routine: RoleSetting) =>
+  defaulted(Schema.Struct({ complex, routine }), {});
+
 export const ModelRoles = Schema.Struct({
-  orchestrator: roleSetting("Plans, delegates, integrates", 2, "claude", "medium"),
-  designer: roleSetting(
-    "Research requests and design issues with a plan and strategy decisions",
-    1,
-    "claude",
-    "medium",
+  orchestrator: roleLevels(
+    roleSetting("Plans, delegates, integrates", 2, "claude", "medium"),
+    roleSetting("Coordinates well-specified work and follows up on results", 3, "claude", "medium"),
   ),
-  "implementor-fast": roleSetting(
-    "Bounded changes where speed matters; a Checker reviews afterwards",
-    3,
-    "both",
-    "medium",
+  designer: roleLevels(
+    roleSetting(
+      "Research requests and design issues with a plan and strategy decisions",
+      1,
+      "claude",
+      "medium",
+    ),
+    roleSetting("Gather evidence and investigate questions", 2, "claude", "medium"),
   ),
-  checker: roleSetting(
-    "Check a build for missed places, weak tests and edge cases",
-    2,
-    "codex",
-    "high",
+  implementor: roleLevels(
+    roleSetting("Broad, cross-cutting or correctness-critical implementation", 2, "codex", "high"),
+    roleSetting(
+      "Bounded changes with a clear implementation and verification path",
+      3,
+      "both",
+      "medium",
+    ),
   ),
-  "implementor-thorough": roleSetting(
-    "Broad, cross-cutting or correctness-critical implementation",
-    2,
-    "codex",
-    "high",
+  reviewer: roleLevels(
+    roleSetting("Strong read-only review and design guidance", 1, "codex", "xhigh"),
+    roleSetting("Check a build for missed places, weak tests and edge cases", 2, "codex", "high"),
   ),
-  investigator: roleSetting("Gather evidence and investigate questions", 4, "codex", "max"),
-  reviewer: roleSetting("Strong read-only review and design guidance", 1, "codex", "xhigh"),
-  writer: roleSetting(
-    "Writes deliverables in the parent checkout with direct owner guidance",
-    1,
-    "claude",
-    "high",
+  writer: roleLevels(
+    roleSetting(
+      "Writes deliverables in the parent checkout with direct owner guidance",
+      1,
+      "claude",
+      "high",
+    ),
+    roleSetting("Edits well-specified deliverables in the parent checkout", 2, "claude", "high"),
   ),
 });
-export const MODEL_ROLE_IDS = Object.keys(ModelRoles.fields) as Array<
-  keyof typeof ModelRoles.fields
->;
-export type ModelRoleSettingId = (typeof MODEL_ROLE_IDS)[number];
 
 const RolePatch = Schema.Struct({
   description: Schema.optionalKey(ModelRoleSettingFields.description),
@@ -172,11 +176,19 @@ const RolePatch = Schema.Struct({
   provider: Schema.optionalKey(ModelRoleProvider),
   effort: Schema.optionalKey(ModelRoleEffort),
 });
-const ModelRolesPatch = Schema.Struct(
-  Object.fromEntries(MODEL_ROLE_IDS.map((id) => [id, Schema.optionalKey(RolePatch)])) as {
-    [Id in ModelRoleSettingId]: Schema.optionalKey<typeof RolePatch>;
-  },
+const RoleLevelsPatch = Schema.optionalKey(
+  Schema.Struct({
+    routine: Schema.optionalKey(RolePatch),
+    complex: Schema.optionalKey(RolePatch),
+  }),
 );
+const ModelRolesPatch = Schema.Struct({
+  orchestrator: RoleLevelsPatch,
+  designer: RoleLevelsPatch,
+  writer: RoleLevelsPatch,
+  implementor: RoleLevelsPatch,
+  reviewer: RoleLevelsPatch,
+});
 const TierSlotPatch = Schema.optionalKey(
   Schema.Struct({
     model: Schema.optionalKey(TierModel),
@@ -196,29 +208,29 @@ const CreditsApproved = Schema.Struct({
 export function resolveModelRoles(settings: {
   readonly modelRoles: typeof ModelRoles.Type;
   readonly modelTiers: typeof ModelTiers.Type;
-}): ReadonlyArray<ModelRole & { readonly id: ModelRoleSettingId }> {
-  return MODEL_ROLE_IDS.map((id) => {
-    const { description, tier, provider, effort } = settings.modelRoles[id];
-    const role = resolveThreadRole(id)!;
-    const profile = modelRoleProfile(id);
-    const target = (provider: (typeof TIER_PROVIDERS)[number]): ModelRoleTarget => ({
-      providerInstanceId: TIER_PROVIDER_INSTANCES[provider],
-      model: settings.modelTiers[tier][provider].model,
-      ...(effort === "default"
-        ? {}
-        : {
-            options: [{ id: TIER_PROVIDER_EFFORT_OPTIONS[provider], value: effort }],
-          }),
-    });
-    return {
-      id,
-      role,
-      ...(profile === undefined ? {} : { profile }),
-      name: profile === "fast" ? "Sprinter" : THREAD_ROLE_LABELS[role],
-      description,
-      targets: provider === "both" ? [target("claude"), target("codex")] : [target(provider)],
-    };
-  });
+}): ReadonlyArray<ModelRole & { readonly role: ThreadRole; readonly level: ModelRoleLevel }> {
+  return THREAD_ROLES.flatMap((role) =>
+    MODEL_ROLE_LEVELS.map((level) => {
+      const { description, tier, provider, effort } = settings.modelRoles[role][level];
+      const target = (provider: (typeof TIER_PROVIDERS)[number]): ModelRoleTarget => ({
+        providerInstanceId: TIER_PROVIDER_INSTANCES[provider],
+        model: settings.modelTiers[tier][provider].model,
+        ...(effort === "default"
+          ? {}
+          : {
+              options: [{ id: TIER_PROVIDER_EFFORT_OPTIONS[provider], value: effort }],
+            }),
+      });
+      return {
+        id: `${role}-${level}`,
+        role,
+        level,
+        name: `${THREAD_ROLE_LABELS[role]} · ${level}`,
+        description,
+        targets: provider === "both" ? [target("claude"), target("codex")] : [target(provider)],
+      };
+    }),
+  );
 }
 
 export function resolveModelNotes(tiers: typeof ModelTiers.Type) {

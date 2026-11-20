@@ -5,6 +5,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
   resolveModelRoles,
+  resolveModelRoleName,
   ServerSettings,
 } from "@t3tools/contracts";
 
@@ -214,13 +215,13 @@ it.effect.each(legacyWorkerSettings)(
       );
       const migrated = yield* service.getSettings;
       if (sparse) {
-        assert.equal(migrated.modelRoles["implementor-fast"].provider, "codex");
-        assert.equal(migrated.modelRoles.orchestrator.provider, "claude");
-        assert.equal(migrated.modelRoles.writer.provider, "claude");
+        assert.equal(migrated.modelRoles.implementor.routine.provider, "codex");
+        assert.equal(migrated.modelRoles.orchestrator.complex.provider, "claude");
+        assert.equal(migrated.modelRoles.writer.complex.provider, "claude");
         return;
       }
       if (workerProvider === "mixed") {
-        assert.deepEqual(migrated.modelRoles["implementor-fast"], {
+        assert.deepEqual(migrated.modelRoles.implementor.routine, {
           description: "Saved implementor-fast description",
           tier: 3,
           provider: "both",
@@ -230,13 +231,14 @@ it.effect.each(legacyWorkerSettings)(
       }
       const resolved = resolveModelRoles(migrated);
       for (const [id, tier, provider, effort, model] of rows) {
-        assert.deepEqual(migrated.modelRoles[id], {
+        const [role, level] = resolveModelRoleName(id)!;
+        assert.deepEqual(migrated.modelRoles[role][level], {
           description: `Saved ${id} description`,
           tier,
           provider,
           effort,
         });
-        assert.deepEqual(resolved.find((role) => role.id === id)?.targets, [
+        assert.deepEqual(resolved.find((entry) => entry.id === `${role}-${level}`)?.targets, [
           {
             providerInstanceId: ProviderInstanceId.make(
               provider === "claude" ? "claudeAgent" : "codex",
@@ -255,17 +257,17 @@ it.effect.each(legacyWorkerSettings)(
 
       yield* Effect.all(
         [
-          service.updateSettings({ modelRoles: { reviewer: { provider: "both" } } }),
-          service.updateSettings({ modelRoles: { writer: { effort: "max" } } }),
+          service.updateSettings({ modelRoles: { reviewer: { complex: { provider: "both" } } } }),
+          service.updateSettings({ modelRoles: { writer: { complex: { effort: "max" } } } }),
         ],
         { concurrency: "unbounded" },
       );
       const persisted = yield* fs.readFileString(config.settingsPath);
       assert.notProperty(JSON.parse(persisted), "workerProvider");
       const patched = yield* decodeServerSettingsJson(persisted);
-      assert.equal(patched.modelRoles.reviewer.provider, "both");
-      assert.equal(patched.modelRoles.writer.effort, "max");
-      assert.equal(patched.modelRoles.reviewer.description, "Saved reviewer description");
+      assert.equal(patched.modelRoles.reviewer.complex.provider, "both");
+      assert.equal(patched.modelRoles.writer.complex.effort, "max");
+      assert.equal(patched.modelRoles.reviewer.complex.description, "Saved reviewer description");
     }).pipe(
       Effect.provide(
         layerServerSettings().pipe(
@@ -273,4 +275,61 @@ it.effect.each(legacyWorkerSettings)(
         ),
       ),
     ),
+);
+
+it.effect("fills old defaults before folding the owner's sparse role settings", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const service = yield* ServerSettingsModule.ServerSettingsService;
+    yield* fs.writeFileString(
+      config.settingsPath,
+      JSON.stringify({
+        modelRoles: {
+          designer: { effort: "high" },
+          "implementor-fast": { provider: "codex", effort: "xhigh" },
+          investigator: { effort: "xhigh", description: "Saved investigator description" },
+          reviewer: { effort: "medium" },
+        },
+      }),
+    );
+    const { modelRoles } = yield* service.getSettings;
+    assert.deepInclude(modelRoles.designer.routine, {
+      tier: 4,
+      provider: "codex",
+      effort: "xhigh",
+      description: "Saved investigator description",
+    });
+    assert.deepInclude(modelRoles.designer.complex, {
+      tier: 1,
+      provider: "claude",
+      effort: "high",
+    });
+    assert.deepInclude(modelRoles.implementor.routine, {
+      tier: 3,
+      provider: "codex",
+      effort: "xhigh",
+    });
+    assert.deepInclude(modelRoles.reviewer.routine, { tier: 2, provider: "codex", effort: "high" });
+    assert.deepInclude(modelRoles.reviewer.complex, {
+      tier: 1,
+      provider: "codex",
+      effort: "medium",
+    });
+    const patched = yield* service.updateSettings({
+      modelRoles: { designer: { routine: { tier: 3 } } },
+    });
+    const persisted = yield* fs.readFileString(config.settingsPath);
+    assert.deepEqual((yield* decodeServerSettingsJson(persisted)).modelRoles, patched.modelRoles);
+    assert.deepEqual(patched.modelRoles.designer, {
+      ...modelRoles.designer,
+      routine: { ...modelRoles.designer.routine, tier: 3 },
+    });
+  }).pipe(
+    Effect.provide(
+      layerServerSettings().pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );
