@@ -3,11 +3,13 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ModelRole,
   ModelRoleEffort,
+  type ModelRoleLevel,
   ModelRoleProvider,
   resolveModelRoleName,
   ModelRoles,
   ModelTier,
   type ServerSettings,
+  type ThreadRole,
   TIER_PROVIDER_EFFORT_OPTIONS,
   TIER_PROVIDER_INSTANCES,
 } from "@t3tools/contracts";
@@ -17,8 +19,6 @@ import * as Schema from "effect/Schema";
 
 export const ForkPersistedServerSettingsFields = {
   usageLimitRecovery: Schema.optionalKey(Schema.Unknown),
-  modelRoles: Schema.optionalKey(Schema.Unknown),
-  workerProvider: Schema.optionalKey(Schema.Unknown),
 };
 
 const defaulted = <S extends Schema.Top>(schema: S, value: S["Encoded"]) =>
@@ -76,21 +76,19 @@ const LegacyModelRoles = Schema.Struct({
   ),
 });
 
-const legacyRoleIds = Object.keys(LegacyModelRoles.fields) as Array<
-  keyof typeof LegacyModelRoles.fields
->;
+type LegacyRoleId = keyof typeof LegacyModelRoles.fields;
+const legacyRoleIds = Object.keys(LegacyModelRoles.fields) as LegacyRoleId[];
 const decodeLegacyModelRoles = Schema.decodeUnknownEffect(LegacyModelRoles);
-const decodeModelRoles = Schema.decodeUnknownEffect(ModelRoles);
 const legacyDefaults = Schema.decodeSync(LegacyModelRoles)({});
 
 const decodeLegacyRole = Schema.decodeUnknownOption(ModelRole);
 const isEffort = Schema.is(ModelRoleEffort);
 
 function migrateLegacyRoles(saved: readonly unknown[], workerProvider: unknown) {
-  const roles = { ...legacyDefaults };
+  const roles: Partial<Record<LegacyRoleId, Partial<(typeof legacyDefaults)[LegacyRoleId]>>> = {};
   // Sprinter was the only default role with choices on both providers.
   if (workerProvider === "claude" || workerProvider === "codex") {
-    roles["implementor-fast"] = { ...roles["implementor-fast"], provider: workerProvider };
+    roles["implementor-fast"] = { provider: workerProvider };
   }
   for (const entry of saved) {
     const role = Option.getOrUndefined(decodeLegacyRole(entry));
@@ -128,7 +126,7 @@ function migrateLegacyRoles(saved: readonly unknown[], workerProvider: unknown) 
     )?.value;
     roles[id] = {
       description: role.description,
-      tier: tier ?? roles[id].tier,
+      tier: tier ?? roles[id]?.tier ?? legacyDefaults[id].tier,
       provider,
       effort: isEffort(effort) ? effort : "default",
     };
@@ -136,78 +134,81 @@ function migrateLegacyRoles(saved: readonly unknown[], workerProvider: unknown) 
   return roles;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
 function isLegacyRoleObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object") return false;
+  if (!isRecord(value)) return false;
   const hasLegacyRole = Object.keys(value).some(
     (id) =>
       id === "sprinter" ||
       (Object.hasOwn(LegacyModelRoles.fields, id) && !Object.hasOwn(ModelRoles.fields, id)),
   );
   if (hasLegacyRole) return true;
-  const groups = Object.values(value).filter((role) => role !== null && typeof role === "object");
+  const groups = Object.values(value).filter(isRecord);
   return groups.length > 0 && !groups.some((role) => "routine" in role || "complex" in role);
 }
 
-function foldLegacyRoles(legacy: typeof LegacyModelRoles.Type): ServerSettings["modelRoles"] {
+function foldLegacyRoles(legacy: typeof LegacyModelRoles.Type, stored: Record<string, unknown>) {
   const defaults = DEFAULT_SERVER_SETTINGS.modelRoles;
-  const roles = {
-    orchestrator: { ...defaults.orchestrator },
-    designer: { ...defaults.designer },
-    implementor: { ...defaults.implementor },
-    reviewer: { ...defaults.reviewer },
-    writer: { ...defaults.writer },
+  const roles: Record<ThreadRole, Partial<Record<ModelRoleLevel, Record<string, unknown>>>> = {
+    orchestrator: {},
+    designer: {},
+    implementor: {},
+    reviewer: {},
+    writer: {},
   };
   for (const id of legacyRoleIds) {
     const [role, level] = resolveModelRoleName(id)!;
-    const setting = legacy[id];
-    roles[role][level] =
-      id === "implementor-fast" && setting.description === legacyDefaults[id].description
-        ? { ...setting, description: defaults.implementor.routine.description }
-        : setting;
+    const setting =
+      id === "implementor-fast" && legacy[id].description === legacyDefaults[id].description
+        ? { ...legacy[id], description: defaults.implementor.routine.description }
+        : legacy[id];
+    const previous = stored[id];
+    const baseline: Record<string, unknown> = defaults[role][level];
+    // Equal defaults stay sparse unless the user explicitly saved the value.
+    roles[role][level] = Object.fromEntries(
+      Object.entries(setting).filter(
+        ([key, value]) =>
+          value !== baseline[key] || (isRecord(previous) && Object.hasOwn(previous, key)),
+      ),
+    );
   }
   for (const role of ["orchestrator", "writer"] as const) {
-    roles[role].routine = { ...roles[role].routine, provider: roles[role].complex.provider };
+    const provider = roles[role].complex?.provider;
+    if (provider !== undefined) roles[role].routine = { provider };
   }
   return roles;
 }
 
-export const migrateForkPersistedServerSettings = ({
-  modelRoles,
-  workerProvider,
-  ...saved
-}: Omit<ServerSettings, "usageLimitRecovery" | "modelRoles"> & {
-  readonly usageLimitRecovery?: unknown;
-  readonly modelRoles?: unknown;
-  readonly workerProvider?: unknown;
-}) => {
-  const roles =
-    Array.isArray(modelRoles) || (modelRoles === undefined && workerProvider !== undefined)
-      ? Effect.succeed(
-          foldLegacyRoles(
-            migrateLegacyRoles(Array.isArray(modelRoles) ? modelRoles : [], workerProvider),
-          ),
-        )
-      : isLegacyRoleObject(modelRoles)
-        ? Effect.map(
-            decodeLegacyModelRoles(
-              !Object.hasOwn(modelRoles, "implementor-fast") &&
-                Object.hasOwn(modelRoles, "sprinter")
-                ? { ...modelRoles, "implementor-fast": modelRoles.sprinter }
-                : modelRoles,
-            ),
-            foldLegacyRoles,
-          )
-        : decodeModelRoles(modelRoles === undefined ? {} : modelRoles);
-  return Effect.map(roles, (modelRoles): ServerSettings => ({
-    ...saved,
-    modelRoles,
-    usageLimitRecovery:
-      saved.usageLimitRecovery === "off" ||
-      saved.usageLimitRecovery === "wait" ||
-      saved.usageLimitRecovery === "switch"
-        ? saved.usageLimitRecovery
-        : saved.autoResumeLimitedThreads || saved.snoozeLimitedThreads
-          ? "wait"
-          : "off",
-  }));
-};
+export const migrateForkPersistedModelRoles = Effect.fn("serverSettings.migrateModelRoles")(
+  function* (value: unknown) {
+    if (!isRecord(value)) return value;
+    const { modelRoles, workerProvider, ...saved } = value;
+    const legacy =
+      Array.isArray(modelRoles) || (modelRoles === undefined && workerProvider !== undefined)
+        ? migrateLegacyRoles(Array.isArray(modelRoles) ? modelRoles : [], workerProvider)
+        : isLegacyRoleObject(modelRoles)
+          ? !Object.hasOwn(modelRoles, "implementor-fast") && Object.hasOwn(modelRoles, "sprinter")
+            ? { ...modelRoles, "implementor-fast": modelRoles.sprinter }
+            : modelRoles
+          : undefined;
+    if (legacy === undefined) return value;
+    const decoded = yield* decodeLegacyModelRoles(legacy);
+    return { ...saved, modelRoles: foldLegacyRoles(decoded, legacy) };
+  },
+);
+
+export const migrateForkPersistedServerSettings = (
+  saved: Omit<ServerSettings, "usageLimitRecovery"> & { readonly usageLimitRecovery?: unknown },
+): ServerSettings => ({
+  ...saved,
+  usageLimitRecovery:
+    saved.usageLimitRecovery === "off" ||
+    saved.usageLimitRecovery === "wait" ||
+    saved.usageLimitRecovery === "switch"
+      ? saved.usageLimitRecovery
+      : saved.autoResumeLimitedThreads || saved.snoozeLimitedThreads
+        ? "wait"
+        : "off",
+});
