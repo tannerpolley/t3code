@@ -120,7 +120,7 @@ export function sidebarThreadRowProps(
       sidebarQuietClock(
         thread.environmentId,
         Date.parse(state.snoozeNow),
-        serverConfigs.get(thread.environmentId)?.settings.quietThreadMinutes,
+        serverConfigs.get(thread.environmentId)?.settings?.quietThreadMinutes,
       ),
     ),
     isPinned: thread.pinnedAt != null,

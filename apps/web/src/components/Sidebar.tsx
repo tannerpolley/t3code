@@ -698,7 +698,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     sidebarQuietClock(
       thread.environmentId,
       nowMs,
-      serverConfigs.get(thread.environmentId)?.settings.quietThreadMinutes,
+      serverConfigs.get(thread.environmentId)?.settings?.quietThreadMinutes,
     );
   const isQuiet = (thread: EnvironmentThreadShell) =>
     threadQuietMinutes(thread, quietClock(thread)) !== null;

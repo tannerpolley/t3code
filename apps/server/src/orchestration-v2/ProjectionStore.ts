@@ -8322,9 +8322,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT COALESCE(json_extract(active.payload_json, '$.startedAt'), active.requested_at)
                     AS updated_at
                   UNION ALL
-                  SELECT MAX(item.updated_at)
-                  FROM orchestration_v2_projection_turn_items item
-                  WHERE item.thread_id = t.thread_id AND item.run_id = active.run_id
+                  SELECT MAX(activity_item.updated_at)
+                  FROM orchestration_v2_projection_turn_items activity_item
+                  WHERE activity_item.thread_id = t.thread_id AND activity_item.run_id = active.run_id
                   UNION ALL
                   SELECT MAX(message.updated_at)
                   FROM orchestration_v2_projection_messages message
