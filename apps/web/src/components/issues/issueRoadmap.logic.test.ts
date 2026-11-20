@@ -302,7 +302,7 @@ it("names the first thread in the issue's status, its role and how many more are
       ],
     }),
   );
-  expect(summary?.label).toBe("Working · Investigator: #736 Pahlavanzadeh 2013 MDEA research");
+  expect(summary?.label).toBe("Working · Designer: #736 Pahlavanzadeh 2013 MDEA research");
   expect(summary?.more).toBe(2);
   expect(summary?.work.map((item) => item.title)).toEqual([
     "#736 Pahlavanzadeh 2013 MDEA research",

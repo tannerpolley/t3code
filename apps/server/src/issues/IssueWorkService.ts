@@ -421,7 +421,9 @@ export const layer = Layer.effect(
           if (previous === null || repositoryPhase(previous) !== "retired") break;
           commandId = CommandId.make(`${commandId}:restart`);
         }
-        const orchestrator = roles.find((entry) => entry.id === "orchestrator")!.targets[0];
+        const orchestrator = roles.find(
+          (entry) => entry.role === "orchestrator" && entry.level === "complex",
+        )!.targets[0];
         if (orchestrator.unavailableReason !== null)
           return yield* new IssueWorkError({
             code: "invalid-request",

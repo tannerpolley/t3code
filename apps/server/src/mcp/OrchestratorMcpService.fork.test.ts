@@ -970,9 +970,16 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
-  it.effect.each(["general", "checker", "test", "reviewer", "investigator", "designer"] as const)(
+  it.effect.each([
+    ["general", null],
+    ["checker", "Reviewer"],
+    ["test", "Reviewer"],
+    ["reviewer", "Reviewer"],
+    ["investigator", "Designer"],
+    ["designer", "Designer"],
+  ] as const)(
     "driver-only delegation inherits the checkout for %s and skips disabled instances",
-    (role) =>
+    ([role, label]) =>
       Effect.gen(function* () {
         const altInstanceId = ProviderInstanceId.make("codex-alt");
         const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
@@ -1081,9 +1088,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.isUndefined(request.worktree);
           assert.equal(
             request.task,
-            role === "general"
+            label === null
               ? "Summarize the diff."
-              : `Act as the ${role === "test" ? "Checker" : role[0]!.toUpperCase() + role.slice(1)} sub-agent for this task.\n\nSummarize the diff.`,
+              : `Act as the ${label} sub-agent for this task.\n\nSummarize the diff.`,
           );
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),

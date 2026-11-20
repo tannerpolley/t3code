@@ -594,7 +594,12 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
     Layer.provide(
       ServerSettings.layerTest({
-        modelRoles: { reviewer: { complex: { provider: "claude", effort: "default" } } },
+        modelRoles: {
+          reviewer: {
+            complex: { provider: "claude", effort: "default" },
+            routine: { provider: "claude", effort: "default" },
+          },
+        },
         modelTiers: { 1: { claude: { model: "claude-sonnet-4-6" } } },
       }),
     ),
@@ -627,6 +632,7 @@ const boxClaude: ServerProvider = {
   checkedAt: "2026-09-13T00:00:00.000Z",
   models: [
     { slug: "claude-sonnet-4-6", name: "Claude Sonnet", isCustom: false, capabilities: null },
+    { slug: "claude-opus-5-5", name: "Claude Opus", isCustom: false, capabilities: null },
   ],
   slashCommands: [],
   skills: [],
@@ -1263,33 +1269,40 @@ it.effect("a task named only by environment inherits the parent's model, within 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a task naming another driver there never runs its model on the parent's instance", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
-      yield* linkTo(a.links, b, "full-access");
-      yield* seedParent(a);
+it.effect.each([
+  [
+    "another driver",
+    { target: { driverKind: "claudeAgent", model: "claude-sonnet-4-6" } },
+    "claude-sonnet-4-6",
+  ],
+  ["a routine role", { role: "reviewer", level: "routine", target: {} }, "claude-opus-5-5"],
+] as const)(
+  "a task naming %s there selects the linked environment's provider",
+  ([, input, model]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
 
-      const result = yield* a.call("delegate_task", {
-        task: "Run the suite on the box.",
-        target: {
-          environmentId: box.environmentId,
-          driverKind: "claudeAgent",
-          model: "claude-sonnet-4-6",
-        },
-      });
-      expect(result.isError).toBe(false);
-      expect((yield* Ref.get(thread.launchedWith))?.modelSelection.instanceId).toBe(
-        boxClaude.instanceId,
-      );
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        const result = yield* a.call("delegate_task", {
+          task: "Run the suite on the box.",
+          ...input,
+          target: { environmentId: box.environmentId, ...input.target },
+        });
+        expect(result.isError).toBe(false);
+        expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toMatchObject({
+          instanceId: boxClaude.instanceId,
+          model,
+        });
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("refuses worktree isolation for a task there before launching anything", () =>
