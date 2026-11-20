@@ -560,3 +560,15 @@ A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.
+
+### Archived workers
+
+An idle worker is archived when a linked pull request merges or closes, or a linked
+issue closes. Running work, queued messages, pending requests, and background tasks
+keep it active. Restore a worker from **Settings → Archived threads**. It stays
+visible until its work changes.
+
+In **Settings → Archived threads**, preview the worker backlog to see which older
+threads qualify, then choose **Archive workers**. Use **Archived worker retention**
+to change the default of 14 days or choose **Never**. Retention permanently deletes
+archived workers and their history.

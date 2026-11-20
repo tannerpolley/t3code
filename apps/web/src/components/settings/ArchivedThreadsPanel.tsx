@@ -1,3 +1,4 @@
+import { WorkerArchiveSettings } from "./WorkerArchiveSettings";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { Spinner } from "~/components/ui/spinner";
 import { ArchiveIcon, ArchiveX, Trash2Icon } from "lucide-react";
@@ -188,6 +189,16 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      {environments
+        .filter((environment) => scope.environmentIds.includes(environment.environmentId))
+        .map((environment) => (
+          <WorkerArchiveSettings
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            environmentLabel={settingsScopeEnvironmentLabels(environment, environments).primary}
+            onArchived={refreshArchivedThreads}
+          />
+        ))}
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}
