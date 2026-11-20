@@ -324,15 +324,19 @@ import { codexUsageLimitResetAt } from "./codexUsageLimits.ts";
 
 describe("codexUsageLimitResetAt", () => {
   it("waits for every exhausted window and never invents an unknown reset", () => {
+    const now = Date.parse(checkedAt);
     expect(
-      codexUsageLimitResetAt({
-        primary: { usedPercent: 100, resetsAt: 2000000000 },
-        secondary: { usedPercent: 100, resetsAt: 2000100000 },
-      }),
+      codexUsageLimitResetAt(
+        {
+          primary: { usedPercent: 100, resetsAt: 2000000000 },
+          secondary: { usedPercent: 100, resetsAt: 2000100000 },
+        },
+        now,
+      ),
     ).toBe("2033-05-19T07:20:00.000Z");
-    expect(codexUsageLimitResetAt({ primary: { usedPercent: 100 } })).toBeNull();
+    expect(codexUsageLimitResetAt({ primary: { usedPercent: 100 } }, now)).toBeNull();
     expect(
-      codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }),
+      codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }, now),
     ).toBeNull();
   });
 });
