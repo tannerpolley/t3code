@@ -278,18 +278,30 @@ it.effect.each(legacyWorkerSettings)(
 );
 
 it.effect.each([
-  [{ designer: {} }, "both"],
-  [{ sprinter: { provider: "claude" } }, "claude"],
+  [{ designer: {} }, "both", "codex", { tier: 4, provider: "codex", effort: "max" }],
+  [
+    { sprinter: { provider: "claude" } },
+    "claude",
+    "codex",
+    { tier: 4, provider: "codex", effort: "max" },
+  ],
+  [
+    { designer: {}, reviewer: { routine: { provider: "claude" } } },
+    "both",
+    "claude",
+    { tier: 2, provider: "claude", effort: "medium" },
+  ],
 ] as const)(
-  "identifies a partial legacy modelRoles file (%j)",
-  ([modelRoles, implementorProvider]) =>
+  "loads a partial modelRoles file (%j)",
+  ([modelRoles, implementorProvider, reviewerProvider, designerRoutine]) =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
       const service = yield* ServerSettingsModule.ServerSettingsService;
       yield* fs.writeFileString(config.settingsPath, JSON.stringify({ modelRoles }));
       const { modelRoles: migrated } = yield* service.getSettings;
-      assert.deepInclude(migrated.designer.routine, { tier: 4, provider: "codex", effort: "max" });
+      assert.equal(migrated.reviewer.routine.provider, reviewerProvider);
+      assert.deepInclude(migrated.designer.routine, designerRoutine);
       assert.equal(migrated.implementor.routine.provider, implementorProvider);
     }).pipe(
       Effect.provide(

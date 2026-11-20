@@ -138,12 +138,14 @@ function migrateLegacyRoles(saved: readonly unknown[], workerProvider: unknown) 
 
 function isLegacyRoleObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object") return false;
-  return Object.entries(value).some(
-    ([id, role]) =>
+  const hasLegacyRole = Object.keys(value).some(
+    (id) =>
       id === "sprinter" ||
-      (Object.hasOwn(LegacyModelRoles.fields, id) && !Object.hasOwn(ModelRoles.fields, id)) ||
-      (role !== null && typeof role === "object" && !("routine" in role || "complex" in role)),
+      (Object.hasOwn(LegacyModelRoles.fields, id) && !Object.hasOwn(ModelRoles.fields, id)),
   );
+  if (hasLegacyRole) return true;
+  const groups = Object.values(value).filter((role) => role !== null && typeof role === "object");
+  return groups.length > 0 && !groups.some((role) => "routine" in role || "complex" in role);
 }
 
 function foldLegacyRoles(legacy: typeof LegacyModelRoles.Type): ServerSettings["modelRoles"] {
