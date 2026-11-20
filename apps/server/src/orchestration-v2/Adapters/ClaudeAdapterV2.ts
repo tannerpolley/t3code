@@ -176,6 +176,7 @@ import {
   claudeLaunchArgDirectories,
   customClaudeApiEndpointHost,
   discoverClaudeSkills,
+  discoverClaudeInstalledSkillsForPreload,
   readClaudeSettingsEnv,
 } from "../../provider/Drivers/ClaudeSkills.ts";
 import {
@@ -14239,6 +14240,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
+          installedSkillsForPreload: (cwd) =>
+            discoverClaudeInstalledSkillsForPreload(
+              adapterOptions.settings,
+              cwd,
+              adapterOptions.environment,
+            ).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            ),
           getModelContextWindow: (selection) => claudeContextWindow(selection) ?? undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           backgroundTasksEndWithProcess: true,

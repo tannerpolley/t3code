@@ -1,4 +1,4 @@
-import { ThreadRoleInput } from "./threadRole.ts";
+import { ThreadRole, ThreadRoleInput } from "./threadRole.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
@@ -150,6 +150,7 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   title: Schema.String,
+  role: Schema.optionalKey(ThreadRole),
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
@@ -847,6 +848,40 @@ export function orchestrationV2RunWorkStartedAt(
   return run.workStartedAt ?? run.startedAt ?? run.requestedAt;
 }
 
+const SkillPreloadRequest = Schema.Struct({
+  id: Schema.String,
+  source: Schema.Literals(["role", "issue", "brief"]),
+});
+export const OrchestrationV2SkillPreload = Schema.Struct({
+  skills: Schema.Array(
+    Schema.Union([
+      SkillPreloadRequest.mapFields((fields) => ({
+        ...fields,
+        outcome: Schema.Literals(["loaded", "delivery_unknown"]),
+      })),
+      SkillPreloadRequest.mapFields((fields) => ({
+        ...fields,
+        outcome: Schema.Literal("skipped"),
+        reason: Schema.Literals([
+          "unavailable",
+          "ambiguous",
+          "unreadable",
+          "unsupported",
+          "policy_unknown",
+          "budget",
+          "delivery_refused",
+        ]),
+      })),
+    ]),
+  ),
+  issueLookupFailed: Schema.optionalKey(Schema.Literal(true)),
+});
+export type OrchestrationV2SkillPreload = typeof OrchestrationV2SkillPreload.Type;
+const SkillPreloadRecorded = Schema.Struct({
+  attemptId: RunAttemptId,
+  record: OrchestrationV2SkillPreload,
+});
+
 export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
   // Provider-thread rows can be reused after recovery; retain the native input destination.
@@ -869,6 +904,7 @@ export const OrchestrationV2RunAttempt = Schema.Struct({
   ]),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  skillPreload: Schema.optionalKey(OrchestrationV2SkillPreload),
 });
 export type OrchestrationV2RunAttempt = typeof OrchestrationV2RunAttempt.Type;
 
@@ -2212,6 +2248,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run-attempt.skill-preload-recorded"),
+    payload: SkillPreloadRecorded,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("node.updated"),
     payload: OrchestrationV2ExecutionNode,
   }),
@@ -3204,6 +3245,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("run-attempt.updated"),
     payload: OrchestrationV2RunAttemptJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run-attempt.skill-preload-recorded"),
+    payload: SkillPreloadRecorded,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,

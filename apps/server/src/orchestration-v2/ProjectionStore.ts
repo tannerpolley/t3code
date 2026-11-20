@@ -79,6 +79,7 @@ import {
   OrchestrationV2ProviderThreadJson as OrchestrationV2ProviderThreadJsonSchema,
   OrchestrationV2ProviderTurnJson as OrchestrationV2ProviderTurnJsonSchema,
   OrchestrationV2RunAttemptJson as OrchestrationV2RunAttemptJsonSchema,
+  OrchestrationV2SkillPreload,
   OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
@@ -1148,11 +1149,27 @@ export function applyToProjection(
         ),
       };
     case "run-attempt.created":
-    case "run-attempt.updated":
+    case "run-attempt.updated": {
+      const skillPreload = base.attempts.find(
+        (attempt) => attempt.id === event.payload.id,
+      )?.skillPreload;
       return withLocalVisibleTurnItems({
         ...base,
-        attempts: upsertById(base.attempts, event.payload),
+        attempts: upsertById(base.attempts, {
+          ...event.payload,
+          ...(skillPreload === undefined ? {} : { skillPreload }),
+        }),
       });
+    }
+    case "run-attempt.skill-preload-recorded":
+      return {
+        ...base,
+        attempts: base.attempts.map((attempt) =>
+          attempt.id === event.payload.attemptId
+            ? { ...attempt, skillPreload: event.payload.record }
+            : attempt,
+        ),
+      };
     case "node.updated":
       return {
         ...base,
@@ -1389,6 +1406,7 @@ const encodeRestartCancelledBackgroundWork = Schema.encodeEffect(
 const encodeRunAttemptPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema),
 );
+const encodeSkillPreload = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2SkillPreload));
 const encodeNodePayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ExecutionNodeJsonSchema),
 );
@@ -2775,8 +2793,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 provider_thread_id = excluded.provider_thread_id,
                 provider_turn_id = excluded.provider_turn_id,
                 status = excluded.status,
-                payload_json = excluded.payload_json
+                payload_json = CASE
+                  WHEN json_type(payload_json, '$.skillPreload') IS NOT NULL
+                  THEN json_set(excluded.payload_json, '$.skillPreload', json_extract(payload_json, '$.skillPreload'))
+                  ELSE excluded.payload_json
+                END
             `;
+              break;
+            }
+            case "run-attempt.skill-preload-recorded": {
+              const record = yield* encodeSkillPreload(event.payload.record);
+              yield* sql`
+                UPDATE orchestration_v2_projection_run_attempts
+                SET payload_json = json_set(payload_json, '$.skillPreload', json(${record}))
+                WHERE thread_id = ${event.threadId} AND attempt_id = ${event.payload.attemptId}
+              `;
               break;
             }
             case "node.updated": {

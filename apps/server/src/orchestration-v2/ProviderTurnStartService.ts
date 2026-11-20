@@ -39,6 +39,7 @@ import { withTurnStartReservation, withWorkspaceLease } from "../workspace/works
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import { makeRoleSkillTurn } from "./RoleSkillDelivery.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeRestoreMissingWorktree } from "../workspace/restoreMissingWorktree.ts";
 import * as EventSink from "./EventSink.ts";
@@ -243,6 +244,7 @@ export const layer: Layer.Layer<
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const projects = yield* ProjectService.ProjectService;
+    const startRoleSkillTurn = yield* makeRoleSkillTurn;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -1815,7 +1817,18 @@ export const layer: Layer.Layer<
                     compact: message.text.trim().toLowerCase() === "/compact",
                   },
                   (text) =>
-                    session.startTurn({ ...turnInput, message: { ...turnInput.message, text } }),
+                    session.startTurn({
+                      ...turnInput,
+                      message: { ...turnInput.message, text },
+                      ...(turnInput.inlineContextLength === undefined
+                        ? {}
+                        : {
+                            inlineContextLength:
+                              turnInput.inlineContextLength +
+                              text.length -
+                              turnInput.message.text.length,
+                          }),
+                    }),
                 )
                 .pipe(
                   Effect.mapError((cause) =>
@@ -1831,6 +1844,19 @@ export const layer: Layer.Layer<
                   ),
                 ),
           };
+      const skillSession =
+        (resumeSource ?? run).ordinal === 1 && !goalCommand && session.installedSkillsForPreload
+          ? {
+              ...inlineSession,
+              startTurn: (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+                startRoleSkillTurn(
+                  inlineSession,
+                  turnInput,
+                  providerMessage.text,
+                  refusedBeforePrompt,
+                ),
+            }
+          : inlineSession;
       const persistHandoff = Effect.fn("ProviderTurnStartService.persist")(function* (
         handoff: OrchestrationV2ContextHandoff,
       ) {
@@ -1871,7 +1897,9 @@ export const layer: Layer.Layer<
             persist: persistHandoff,
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
-          const start = compact ? session.compactThread! : inlineSession.startTurn;
+          const start: typeof session.startTurn = compact
+            ? session.compactThread!
+            : skillSession.startTurn;
           // Like history, the side chat context waits for a turn that sends a prompt.
           const sideChatContext =
             sideChatHandoff === undefined || compact || goalCommand
@@ -1970,8 +1998,8 @@ export const layer: Layer.Layer<
         sideChatHandoff === undefined &&
         restartNote === "" &&
         !noteContinuation
-          ? inlineSession
-          : makeDeliverySession(inlineSession, startWithHandoffs);
+          ? skillSession
+          : makeDeliverySession(skillSession, startWithHandoffs);
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
