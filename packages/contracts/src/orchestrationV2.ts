@@ -4540,6 +4540,7 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   {
     threadId: ThreadId,
     message: Schema.String,
+    reason: Schema.optionalKey(Schema.Literal("thread_snapshot_too_large")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

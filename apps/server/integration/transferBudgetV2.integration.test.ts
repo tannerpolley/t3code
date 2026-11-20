@@ -12,7 +12,6 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
   EnvironmentId,
-  EnvironmentRequestInvalidError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   ORCHESTRATION_V2_WS_METHODS,
@@ -225,7 +224,7 @@ const group = RpcGroup.make(
   Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeThread, {
     payload: OrchestrationV2RpcSchemas.subscribeThread.input,
     success: OrchestrationV2RpcSchemas.subscribeThread.output,
-    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentRequestInvalidError]),
+    error: OrchestrationV2GetThreadProjectionError,
     stream: true,
   }),
   Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeShell, {
