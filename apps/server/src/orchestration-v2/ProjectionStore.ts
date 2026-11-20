@@ -591,11 +591,6 @@ export interface ProjectionStoreV2Shape {
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
-  /** Bytes of tool output a transcript export is sure to hold, or 0 when it can fit in `limit`. */
-  readonly getTranscriptByteFloor: (
-    threadId: ThreadId,
-    limit: number,
-  ) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getRunCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Child threads of the thread's app-owned tasks, in task order, without decoding the tasks. */
@@ -6713,41 +6708,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => rows[0]?.count ?? 0),
         Effect.mapError(controlReadError(threadId)),
       );
-    // Tool output reaches the export unchanged, so the bytes of its text, also inside a structured
-    // result, are a floor for the export. Other stored bytes are not: decoding drops fields. A
-    // rolled back run is the only way the export hides a tool row, and rows a fork inherits only
-    // add to it. The output sum parses payloads, so it runs only when the tool rows exceed `limit`.
-    const getTranscriptByteFloor: ProjectionStoreV2Shape["getTranscriptByteFloor"] = (
-      threadId,
-      limit,
-    ) =>
-      sql<{ bytes: number }>`
-        WITH tool_rows AS (
-          SELECT payload_json FROM orchestration_v2_projection_turn_items
-          WHERE thread_id = ${threadId}
-            AND type IN ('command_execution', 'dynamic_tool')
-            AND (run_id IS NULL OR run_id NOT IN (
-              SELECT run_id FROM orchestration_v2_projection_runs
-              WHERE thread_id = ${threadId} AND status = 'rolled_back'
-            ))
-        )
-        SELECT CASE
-          WHEN (SELECT COALESCE(SUM(octet_length(payload_json)), 0) FROM tool_rows) <= ${limit}
-            THEN 0
-          ELSE (
-            -- json_valid is false past SQLite's nesting limit, where json_tree would fail.
-            SELECT COALESCE(SUM(CASE WHEN json_valid(payload_json) THEN (
-              SELECT COALESCE(SUM(octet_length(leaf.value)), 0)
-              FROM json_tree(tool_rows.payload_json, '$.output') AS leaf
-              WHERE leaf.type = 'text'
-            ) ELSE 0 END), 0)
-            FROM tool_rows
-          )
-        END AS bytes
-      `.pipe(
-        Effect.map((rows) => rows[0]?.bytes ?? 0),
-        Effect.mapError(controlReadError(threadId)),
-      );
     const getRunCount: ProjectionStoreV2Shape["getRunCount"] = (threadId) =>
       sql<{
         count: number;
@@ -10144,7 +10104,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getRunProviderRecords: readOnReader(getRunProviderRecords),
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
-      getTranscriptByteFloor: readOnReader(getTranscriptByteFloor),
       getSubagentCount: readOnReader(getSubagentCount),
       getRunCount: readOnReader(getRunCount),
       listAppOwnedChildThreadIds: readOnReader(listAppOwnedChildThreadIds),

@@ -6,6 +6,7 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   EventId,
+  MessageId,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   OrchestrationV2AppThread,
@@ -16,7 +17,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
-import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -182,7 +182,7 @@ const serveOrchestrationHttp = (allowed: () => boolean) =>
     return { services, eventSink, handler };
   });
 
-it.effect("exports full history with size, scope, and missing-thread checks", () =>
+it.effect("exports full visible history with scope and missing-thread checks", () =>
   Effect.gen(function* () {
     let allowed = true;
     const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => allowed);
@@ -193,18 +193,6 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
             headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
           }),
         ),
-      );
-
-    const readTranscriptError = Context.get(
-      services,
-      ThreadManagementService.ThreadManagementService,
-    )
-      .getThreadTranscript(thread.id)
-      .pipe(
-        Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
-          getEnvironmentId: Effect.succeed(environmentId),
-        }),
-        Effect.flip,
       );
 
     const emptyResponse = yield* read(thread.id);
@@ -230,89 +218,8 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     expect(transcript.items[0]?.visibility).toBe("local");
     expect(transcript.items[199]?.position).toBe(199);
 
-    const emptyOutputRows = transcript.items.map((row, position) =>
-      position === 0 ? { ...row, item: { ...row.item, output: "" } } : row,
-    );
-    const header = threadTranscriptHeader(environmentId, transcript);
-    const baseSize =
-      Buffer.byteLength(header, "utf8") +
-      emptyOutputRows.reduce(
-        (size, row) => size + Buffer.byteLength(`${JSON.stringify(row)}\n`, "utf8"),
-        0,
-      );
-    const boundaryOutput = "界" + "x".repeat(PROVIDER_SEND_TURN_MAX_FILE_BYTES - baseSize - 3);
-    for (const [suffix, expectedStatus] of [
-      ["", 200],
-      ["x", 400],
-    ] as const) {
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make(`boundary-${expectedStatus}`),
-            type: "turn-item.updated",
-            threadId: thread.id,
-            occurredAt: now,
-            payload: {
-              ...items.find((item) => item.type === "command_execution")!,
-              output: boundaryOutput + suffix,
-            },
-          },
-        ],
-      });
-      const response = yield* read(thread.id);
-      expect(response.status).toBe(expectedStatus);
-      if (expectedStatus === 200) continue;
-      expect(yield* readTranscriptError).toBeInstanceOf(
-        ThreadManagementService.ThreadTranscriptTooLargeError,
-      );
-      expect(yield* Effect.promise(() => response.json())).toMatchObject({
-        _tag: "EnvironmentRequestInvalidError",
-        reason: "thread_transcript_too_large",
-      });
-    }
-
     const sql = Context.get(services, SqlClient.SqlClient);
-    const commandItemId = items.find((item) => item.type === "command_execution")!.id;
-    const setCommandPayload = (payload: Statement.Fragment) => sql`
-      UPDATE orchestration_v2_projection_turn_items SET payload_json = ${payload}
-      WHERE turn_item_id = ${commandItemId}
-    `;
-    const fill = (bytes: number) => sql`printf('%.*c', ${bytes}, 'x')`;
-    // Stored bytes the export drops do not count, and neither does a row SQLite cannot parse:
-    // only what the export keeps can reject it.
-    yield* setCommandPayload(sql`json_set(
-      payload_json, '$.output', 'x',
-      '$.droppedLegacyField', ${fill(PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1)}
-    )`);
-    expect((yield* read(thread.id)).status).toBe(200);
-    const deepField = sql`'"droppedDeepField":' || printf('%.*c', 1001, '[') || printf('%.*c', 1001, ']') || ','`;
-    yield* setCommandPayload(
-      sql`replace(payload_json, '"droppedLegacyField":', ${deepField} || '"droppedLegacyField":')`,
-    );
-    expect((yield* read(thread.id)).status).toBe(200);
-    // Tool output over the limit rejects the export, here as the content array a dynamic tool
-    // stores. Its only read is the size.
-    yield* sql`
-      UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool'
-      WHERE turn_item_id = ${commandItemId}
-    `;
-    yield* setCommandPayload(sql`json_set(
-      replace(payload_json, ${deepField}, ''), '$.type', 'dynamic_tool', '$.toolName', NULL,
-      '$.output',
-      json_array(json_object('type', 'text', 'text', ${fill(PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1)}))
-    )`);
-    const reads: Array<string> = [];
-    expect(
-      yield* readTranscriptError.pipe(
-        Effect.provideService(Statement.CurrentTransformer, (statement) => {
-          reads.push(statement.compile()[0]);
-          return Effect.succeed(statement);
-        }),
-      ),
-    ).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
-    expect(reads).toEqual([expect.stringContaining("octet_length(payload_json)")]);
-    expect((yield* read(thread.id)).status).toBe(400);
-    // The export leaves a rolled back run out, so its output cannot reject it.
+    const commandItemId = items[0]!.id;
     yield* eventSink.write({
       events: [
         {
@@ -325,10 +232,11 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       ],
     });
     yield* sql`
-      UPDATE orchestration_v2_projection_turn_items SET run_id = ${rolledBackRun.id}
+      UPDATE orchestration_v2_projection_turn_items
+      SET run_id = ${rolledBackRun.id},
+        payload_json = json_set(payload_json, '$.runId', ${rolledBackRun.id})
       WHERE turn_item_id = ${commandItemId}
     `;
-    yield* setCommandPayload(sql`json_set(payload_json, '$.runId', ${rolledBackRun.id})`);
     const withoutRolledBackRun = yield* read(thread.id);
     expect(withoutRolledBackRun.status).toBe(200);
     expect(
@@ -339,6 +247,115 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     allowed = false;
     expect((yield* read(thread.id)).status).toBe(403);
   }),
+);
+
+it.effect.each([
+  { type: "reasoning", inherited: false },
+  { type: "assistant_message", inherited: false },
+  { type: "reasoning", inherited: true },
+] as const)(
+  "bounds transcript projection reads for $type (inherited: $inherited)",
+  ({ type, inherited }) =>
+    Effect.gen(function* () {
+      const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+      const run = { ...rolledBackRun, status: "completed" as const };
+      const forkId = ThreadId.make("fork");
+      const item = items.find((item) => item.type === "command_execution")!;
+      const textItem = {
+        ...item,
+        runId: run.id,
+        text: "Small transcript",
+        streaming: false,
+      };
+      const events = [
+        {
+          id: EventId.make("create-run"),
+          type: "run.created" as const,
+          threadId: thread.id,
+          occurredAt: now,
+          payload: run,
+        },
+        {
+          id: EventId.make("create-item"),
+          type: "turn-item.updated" as const,
+          threadId: thread.id,
+          occurredAt: now,
+          payload:
+            type === "reasoning"
+              ? { ...textItem, type }
+              : { ...textItem, type, messageId: MessageId.make("message:assistant") },
+        },
+        {
+          id: EventId.make("create-fork"),
+          type: "thread.created" as const,
+          threadId: forkId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            id: forkId,
+            forkedFrom: { type: "run" as const, threadId: thread.id, runId: run.id },
+            lineage: {
+              parentThreadId: thread.id,
+              relationshipToParent: "fork" as const,
+              rootThreadId: thread.id,
+            },
+          },
+        },
+      ];
+      yield* eventSink.write({ events });
+      const threadId = inherited ? forkId : thread.id;
+      const read = () =>
+        Effect.promise(() =>
+          handler(
+            new Request(`http://localhost/api/orchestration/threads/${threadId}/transcript`, {
+              headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+            }),
+          ),
+        );
+      const smallResponse = yield* read();
+      expect(smallResponse.status).toBe(200);
+      expect(
+        (yield* decodeTranscript(yield* Effect.promise(() => smallResponse.json()))).items,
+      ).toContainEqual(
+        expect.objectContaining({
+          visibility: inherited ? "inherited" : "local",
+          item: expect.objectContaining({ type, text: "Small transcript" }),
+        }),
+      );
+
+      const sql = Context.get(services, SqlClient.SqlClient);
+      yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.text', printf('%.*c', ${PROVIDER_SEND_TURN_MAX_FILE_BYTES}, 'x'))
+      WHERE turn_item_id = ${item.id}
+    `;
+      const reads: string[] = [];
+      const error = yield* Context.get(services, ThreadManagementService.ThreadManagementService)
+        .getThreadTranscript(threadId)
+        .pipe(
+          Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+            getEnvironmentId: Effect.succeed(environmentId),
+          }),
+          Effect.provideService(Statement.CurrentTransformer, (statement) => {
+            const [query, parameters] = statement.compile();
+            if (
+              parameters[0] === thread.id &&
+              query.includes("FROM orchestration_v2_projection_turn_items")
+            ) {
+              reads.push(query);
+            }
+            return Effect.succeed(statement);
+          }),
+          Effect.flip,
+        );
+      expect(error).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
+      expect(reads).toEqual([expect.stringContaining("octet_length(payload_json) + 1024")]);
+      const largeResponse = yield* read();
+      expect(largeResponse.status).toBe(400);
+      expect(yield* Effect.promise(() => largeResponse.json())).toMatchObject({
+        reason: "thread_transcript_too_large",
+      });
+    }),
 );
 
 it.effect("rejects an oversized full thread snapshot and still serves bounded history", () =>

@@ -174,6 +174,61 @@ it.effect("imports a pending transcript once even when the ensure effect is reus
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("resumes a paged legacy transcript import without gaps or duplicate events", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:first");
+    yield* seedPendingTranscripts;
+    yield* sql`
+      WITH RECURSIVE messages(n) AS (
+        VALUES (1) UNION ALL SELECT n + 1 FROM messages WHERE n < 101
+      )
+      INSERT INTO projection_thread_messages (
+        message_id, thread_id, role, text, is_streaming, created_at, updated_at
+      )
+      SELECT printf('extra:%03d', n), ${threadId}, 'assistant', 'Extra reply', 0,
+        '2026-01-03T01:00:00.000Z', '2026-01-03T01:00:00.000Z'
+      FROM messages
+    `;
+
+    let reads = 0;
+    const firstAttempt = yield* importer.ensureTranscript(threadId).pipe(
+      Effect.provideService(Statement.CurrentTransformer, (statement) => {
+        const [query] = statement.compile();
+        if (query.includes("FROM projection_thread_messages") && ++reads === 2) {
+          return Effect.interrupt;
+        }
+        return Effect.succeed(statement);
+      }),
+      Effect.exit,
+    );
+    assert.isTrue(Exit.hasInterrupts(firstAttempt));
+    assert.equal(yield* importer.pendingThreadCount, 2);
+    assert.lengthOf((yield* projections.getThreadProjection(threadId)).turnItems, 50);
+
+    assert.deepStrictEqual(yield* importer.ensureTranscript(threadId), {
+      importedThreadCount: 1,
+      importedMessageCount: 53,
+    });
+    const projection = yield* projections.getThreadProjection(threadId);
+    const ids = [
+      "thread:first:old",
+      "thread:first:latest",
+      ...Array.from({ length: 101 }, (_, index) => `extra:${String(index + 1).padStart(3, "0")}`),
+    ];
+    assert.deepStrictEqual(
+      projection.turnItems.map(({ id, ordinal }) => [id, ordinal]),
+      ids.map((id, index) => [`migration:v1:turn-item:${id}`, index + 1]),
+    );
+    const [result] = yield* sql`
+      SELECT imported_message_count FROM orchestration_v2_legacy_imports WHERE thread_id = ${threadId}
+    `;
+    assert.deepStrictEqual(result, { imported_message_count: ids.length });
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("routes shell selectors to readers while imports stay writable", () =>
   Effect.gen(function* () {
     const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
