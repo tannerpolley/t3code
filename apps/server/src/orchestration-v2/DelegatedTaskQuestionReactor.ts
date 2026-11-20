@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { delegatedRequestsGoToOwner } from "./DelegatedRequestRouting.ts";
 import { wakeRoutedDelegatedRequest, delegatedRequestPromptEvent } from "./DelegatedRequestWake.ts";
 import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
 import { reportLabel } from "@t3tools/provider-core/server/notification";
@@ -45,7 +46,8 @@ const make = Effect.gen(function* () {
     request: OrchestrationV2RuntimeRequest,
   ) {
     if (task.childThreadId === null) return;
-    if ((yield* projections.getThreadShell(task.childThreadId))?.role === "writer") return;
+    const child = yield* projections.getThreadShell(task.childThreadId);
+    if (delegatedRequestsGoToOwner(child?.role)) return;
     const key = `${task.threadId}:${request.id}`;
     const label = reportLabel(task.title?.trim() || task.prompt);
     const situation =

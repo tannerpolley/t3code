@@ -56,7 +56,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import { modelRoleStatuses, providerCreditStatuses } from "../mcp/delegateTaskTarget.ts";
+import { modelRoleStatuses, providerCreditStatuses } from "../provider/modelRolePolicy.ts";
 import { lineageUsageSprint } from "../issues/usageSprint.ts";
 import { managedIssueRole } from "../issues/IssueEligibility.ts";
 import {

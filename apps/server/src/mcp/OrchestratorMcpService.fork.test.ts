@@ -48,7 +48,7 @@ import {
   roleDefaultTarget,
   providerCreditStatuses,
   modelRoleStatuses,
-} from "./delegateTaskTarget.ts";
+} from "../provider/modelRolePolicy.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -835,9 +835,10 @@ describe("OrchestratorMcpService provider resolution", () => {
             resetsAt: modelRoleStatusResetAt(0.5),
           },
           {
-            id: "seven_day_opus",
+            id: "scoped",
             kind: "weekly",
-            label: "Weekly · Opus",
+            label: "Model allowance",
+            modelIds: ["claude-opus-4-6"],
             usedPercent: 95,
             windowDurationMins: 7 * 24 * 60,
             resetsAt: modelRoleStatusResetAt(0.1),
@@ -846,7 +847,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             id: "seven_day_sonnet",
             kind: "weekly",
             label: "Weekly · Sonnet",
-            usedPercent: 20,
+            usedPercent: 75,
             windowDurationMins: 7 * 24 * 60,
             resetsAt: modelRoleStatusResetAt(0.4),
           },
@@ -859,7 +860,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     assert.deepEqual(
       choices.map((choice) => choice.model),
-      ["claude-sonnet-4-6", "claude-3-5-haiku", "claude-opus-4-6"],
+      ["claude-3-5-haiku", "claude-sonnet-4-6", "claude-opus-4-6"],
     );
     assert.deepEqual(byModel.get("claude-opus-4-6"), {
       remainingPercent: 5,
@@ -867,8 +868,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       pace: "on",
     });
     assert.deepEqual(byModel.get("claude-sonnet-4-6"), {
-      remainingPercent: 40,
-      resetsAt: modelRoleStatusResetAt(0.5),
+      remainingPercent: 25,
+      resetsAt: modelRoleStatusResetAt(0.4),
       pace: "ahead",
     });
     assert.deepEqual(byModel.get("claude-3-5-haiku"), {

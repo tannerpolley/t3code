@@ -3450,7 +3450,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   (testCase.name === "explicit-disabled-without-adapter"
                     ? "No V2 provider adapter is registered. "
                     : "") +
-                  "Provider instance is disabled. Provider executable is not installed. Provider is disabled in T3 Code settings.";
+                  "Provider instance is disabled.";
                 assert.equal(error.message, expectedMessage);
                 const threadError = yield* service
                   .createThreads(scope, {

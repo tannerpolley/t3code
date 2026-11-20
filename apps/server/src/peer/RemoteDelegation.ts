@@ -35,7 +35,7 @@ import * as Tool from "effect/ai/Tool";
 import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
-import { roleDefaultTarget } from "../mcp/delegateTaskTarget.ts";
+import { roleDefaultTarget } from "../provider/modelRolePolicy.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
   resolveInteractionMode,

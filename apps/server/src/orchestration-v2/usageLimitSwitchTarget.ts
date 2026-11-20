@@ -10,7 +10,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
-import { modelRoleStatuses, providerCreditStatuses } from "../mcp/delegateTaskTarget.ts";
+import { modelRoleStatuses, providerCreditStatuses } from "../provider/modelRolePolicy.ts";
 
 type UsageLimitThread = Pick<
   OrchestrationV2AppThread,

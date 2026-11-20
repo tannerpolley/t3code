@@ -6,6 +6,7 @@ import {
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadProjection,
+  type ThreadRole,
 } from "@t3tools/contracts";
 import {
   type pendingUserRequests,
@@ -38,6 +39,10 @@ type Projections = Pick<
   "getThreadShell" | "getThreadRecords" | "getRuntimeRequest"
 >;
 
+export function delegatedRequestsGoToOwner(role: ThreadRole | null | undefined): boolean {
+  return role === "writer";
+}
+
 /** Only durable app-owned delegation gives a parent authority over a child's requests. */
 const delegatedParent = Effect.fn("delegatedParent")(function* <E>(
   threads: Threads<E>,
@@ -46,7 +51,7 @@ const delegatedParent = Effect.fn("delegatedParent")(function* <E>(
   const child = yield* threads.getThreadShell(childThreadId);
   const parentThreadId = child?.lineage.parentThreadId;
   if (
-    child?.role === "writer" ||
+    delegatedRequestsGoToOwner(child?.role) ||
     child?.lineage.relationshipToParent !== "subagent" ||
     parentThreadId == null ||
     child.forkedFrom?.type !== "node"
