@@ -12,6 +12,7 @@ export const activeQuietWork = `type IN ('command_execution', 'dynamic_tool', 's
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`ALTER TABLE orchestration_v2_projection_threads ADD COLUMN last_provider_activity_at INTEGER`;
+  yield* sql`ALTER TABLE orchestration_v2_projection_runs ADD COLUMN quiet_activity_at INTEGER`;
   yield* sql`
     CREATE INDEX orchestration_v2_projection_runs_quiet_idx
     ON orchestration_v2_projection_runs(thread_id, run_id)

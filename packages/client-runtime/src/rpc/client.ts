@@ -6,6 +6,7 @@ import {
   type EnvironmentId,
   type ClientGuardedRpcTag,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2GetThreadProjectionError,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -115,11 +116,15 @@ export class EnvironmentRpcSubscriptionObserver extends Context.Reference<{
 
 export const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
 const isEnvironmentAuthorizationError = Schema.is(EnvironmentAuthorizationError);
+const isThreadProjectionError = Schema.is(OrchestrationV2GetThreadProjectionError);
 
-/** A subscription never retries an authorization failure on its own. */
-export const isAuthorizationFailure = (cause: Cause.Cause<unknown>) =>
+export const isPermanentSubscriptionFailure = (cause: Cause.Cause<unknown>) =>
   cause.reasons.some(
-    (reason) => reason._tag === "Fail" && isEnvironmentAuthorizationError(reason.error),
+    (reason) =>
+      reason._tag === "Fail" &&
+      (isEnvironmentAuthorizationError(reason.error) ||
+        (isThreadProjectionError(reason.error) &&
+          reason.error.reason === "thread_snapshot_too_large")),
   );
 
 const MAX_EXPECTED_FAILURE_RETRY_DELAY_MS = 30_000;
@@ -435,7 +440,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         );
                         if (
                           options.retryExpectedFailureAfter === undefined ||
-                          isAuthorizationFailure(cause)
+                          isPermanentSubscriptionFailure(cause)
                         ) {
                           return handled;
                         }

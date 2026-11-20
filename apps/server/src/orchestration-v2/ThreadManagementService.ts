@@ -58,6 +58,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -82,6 +83,16 @@ import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
+
+const FULL_THREAD_SNAPSHOT_READ_BUDGET = 8 * 1024 * 1024;
+
+export function isThreadSnapshotTooLarge(error: Orchestrator.OrchestratorV2Error): boolean {
+  return (
+    error._tag === "OrchestratorProjectionError" &&
+    Predicate.hasProperty(error.cause, "_tag") &&
+    error.cause._tag === "ProjectionStoreSnapshotTooLargeError"
+  );
+}
 
 export interface ThreadManagementProvenance {
   readonly createdBy: OrchestrationV2Actor;
@@ -450,7 +461,9 @@ export interface ThreadManagementServiceShape {
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, Orchestrator.OrchestratorV2Error>;
   readonly getCheckpointContext: Orchestrator.OrchestratorV2["Service"]["getCheckpointContext"];
-  readonly getThreadSnapshot: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshot"];
+  readonly getThreadSnapshot: (
+    threadId: ThreadId,
+  ) => ReturnType<Orchestrator.OrchestratorV2["Service"]["getThreadSnapshot"]>;
   readonly getThreadTranscript: (
     threadId: ThreadId,
   ) => Effect.Effect<
@@ -763,7 +776,7 @@ const make = Effect.gen(function* () {
 
   const getThreadSnapshot: ThreadManagementServiceShape["getThreadSnapshot"] = (threadId) =>
     ensureProjectionTranscript(threadId).pipe(
-      Effect.andThen(orchestrator.getThreadSnapshot(threadId)),
+      Effect.andThen(orchestrator.getThreadSnapshot(threadId, FULL_THREAD_SNAPSHOT_READ_BUDGET)),
     );
   // Full-thread exports can otherwise hold every SQLite reader and stall ordinary thread opens.
   const transcriptExportPermits = yield* Semaphore.make(2);

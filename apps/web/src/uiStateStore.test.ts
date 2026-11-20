@@ -294,13 +294,19 @@ describe("uiStateStore persistence", () => {
     expect(persisted.sidebarProjectScopeKey).toBe("github.com/pingdotgg/t3code");
   });
 
-  it("keeps legacy projects omitted from the expanded list collapsed across a save and reload", () => {
+  it("keeps legacy projects omitted from the expanded list collapsed across a save and reload", async () => {
     const projectAKey = legacyProjectCwdPreferenceKey("/repo/a");
     const projectBKey = legacyProjectCwdPreferenceKey("/repo/b");
-    const migrated = parsePersistedState({ expandedProjectCwds: ["/repo/a"] });
+    localStorageStub.setItem(
+      PERSISTED_STATE_KEY,
+      JSON.stringify({ expandedProjectCwds: ["/repo/a"] }),
+    );
+    vi.resetModules();
+    const { legacySidebarLayout: migrated, persistState: persistAfterStartup } =
+      await import("./uiStateStore");
     expect(resolveProjectExpanded(migrated.projectExpandedById, [projectBKey])).toBe(false);
 
-    persistState({ ...migrated, pullRequestMergeMethod: "squash" });
+    persistAfterStartup({ ...migrated, pullRequestMergeMethod: "squash" });
     const reloaded = parsePersistedState(
       JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}") as PersistedUiState,
     );

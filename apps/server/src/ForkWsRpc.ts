@@ -27,6 +27,7 @@ import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
 import * as IssueService from "./issues/IssueService.ts";
 import * as IssueWorkService from "./issues/IssueWorkService.ts";
 import { RpcInstrumentation } from "./observability/RpcInstrumentation.ts";
+import * as WorkerRetention from "./orchestration-v2/WorkerRetention.ts";
 import * as ThreadWorkspaceService from "./orchestration-v2/ThreadWorkspaceService.ts";
 import * as BackgroundTasks from "./orchestration-v2/backgroundTaskOutput.ts";
 import { InlineShellRuns } from "./terminal/InlineShellRuns.ts";
@@ -57,8 +58,10 @@ const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const decisions = yield* OwnerDecisions.OwnerDecisions;
       const inbox = yield* IssueInbox.IssueInbox;
       const artifacts = yield* ProjectArtifacts.ProjectArtifacts;
+      const workerRetention = yield* WorkerRetention.WorkerRetention;
       const notebook = yield* NotebookService.NotebookService;
       return {
+        [WS_METHODS.workerArchiveBacklog]: workerRetention.archiveBacklog,
         [NOTEBOOK_METHODS.reload]: (input) => notebook.reload(input, currentSession),
         [NOTEBOOK_METHODS.save]: (input) => notebook.save(input, currentSession),
         [NOTEBOOK_METHODS.edit]: (input) => notebook.edit(input, currentSession),

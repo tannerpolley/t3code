@@ -1006,14 +1006,20 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             })
           : threadManagement.getThreadSnapshot(input.threadId)
       ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestrationV2GetThreadProjectionError({
+        Effect.mapError((cause) => {
+          if (ThreadManagementService.isThreadSnapshotTooLarge(cause)) {
+            return new OrchestrationV2GetThreadProjectionError({
               threadId: input.threadId,
-              message: `Failed to load orchestration V2 thread ${input.threadId}`,
-              cause,
-            }),
-        ),
+              message: "The thread is too large for a full snapshot.",
+              reason: "thread_snapshot_too_large",
+            });
+          }
+          return new OrchestrationV2GetThreadProjectionError({
+            threadId: input.threadId,
+            message: `Failed to load orchestration V2 thread ${input.threadId}`,
+            cause,
+          });
+        }),
       );
       const { snapshotSequence } = snapshot;
       const snapshotItem = useBoundedSnapshot

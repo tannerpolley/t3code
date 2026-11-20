@@ -243,7 +243,7 @@ export const make = Effect.gen(function* () {
             projectOrder: layout.projectOrder.filter((id) => id !== input.projectId),
           };
         } else {
-          if (input.workspaceRoot !== undefined) {
+          if (input.sectionId === undefined && input.workspaceRoot !== undefined) {
             const prefs = yield* settings.getSettings.pipe(Effect.mapError(error));
             if (prefs.autoOrganizeByFolder) {
               const rows = (yield* projectRows).filter((row) => row.projectId !== input.projectId);

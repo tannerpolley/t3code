@@ -1,3 +1,6 @@
+import type { FilesystemBrowseEntry } from "@t3tools/contracts";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+
 /**
  * Where a section's projects live on disk: <root>/<Section> or <root>/<Section>/<Subsection>, the
  * same layout Organize by folder reads. Null without a full root path.
@@ -32,4 +35,26 @@ export function folderSubsectionInput(path: string) {
   const name = folderPath.split(/[/\\]/).at(-1) ?? "";
   if (projectFolderNameProblem(name) !== null || /^[A-Za-z]:$/.test(name)) return null;
   return { name: name.slice(0, 80), folderPath };
+}
+
+export function suggestSectionFolder(
+  name: string,
+  folders: readonly FilesystemBrowseEntry[],
+  isPending: boolean,
+) {
+  if (isPending) return "pending";
+  const trimmed = name.trim();
+  return folders.find((folder) => folder.name === trimmed) ?? null;
+}
+
+export function sectionProjectCandidates(
+  folders: readonly FilesystemBrowseEntry[],
+  projectPaths: readonly string[],
+) {
+  const added = new Set(projectPaths.map(normalizeProjectPathForComparison));
+  return folders.filter(
+    (folder) =>
+      !folder.name.startsWith(".") &&
+      !added.has(normalizeProjectPathForComparison(folder.fullPath)),
+  );
 }

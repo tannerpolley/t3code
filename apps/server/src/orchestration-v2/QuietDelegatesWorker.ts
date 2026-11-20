@@ -12,7 +12,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { quietActivitySamplingWindowMs } from "../persistence/ForkMigrations/031_QuietDelegateActivity.ts";
+import { quietActivitySamplingWindowMs } from "../persistence/ForkMigrations/032_QuietThreadActivity.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { Scheduler } from "../scheduling/Scheduler.ts";
 import { ServerSettingsService } from "../serverSettings.ts";

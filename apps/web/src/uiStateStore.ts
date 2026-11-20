@@ -697,7 +697,7 @@ interface UiStateStore extends UiState {
     name: string,
     parentId?: string,
     folderPath?: string,
-  ) => Promise<boolean>;
+  ) => Promise<string | null>;
   organizeSidebarSectionsByFolder: (
     projects: readonly FolderOrganizedProject[],
     root: string,
@@ -758,16 +758,19 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setSidebarMode: (mode) => set((state) => setSidebarMode(state, mode)),
   setSidebarOtherProjectsExpanded: (expanded) =>
     sendSidebarMutation({ type: "otherExpanded", expanded }),
-  addSidebarProjectSection: (name, parentId, folderPath) =>
-    sendSidebarMutation({
+  addSidebarProjectSection: async (name, parentId, folderPath) => {
+    const id = randomUUID();
+    const accepted = await sendSidebarMutation({
       type: "add",
       section: {
-        id: randomUUID(),
+        id,
         name: name.trim().slice(0, 80),
         ...(parentId === undefined ? {} : { parentId }),
         ...(folderPath === undefined ? {} : { folderPath }),
       },
-    }),
+    });
+    return accepted ? id : null;
+  },
   organizeSidebarSectionsByFolder: (projects, root, onlyUnsorted = false) =>
     sendSidebarMutation({ type: "organize", projects, root, onlyUnsorted }),
   renameSidebarProjectSection: (sectionId, name) =>

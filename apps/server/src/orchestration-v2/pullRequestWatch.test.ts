@@ -13,8 +13,10 @@ import {
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
 const evaluatePullRequestWatch = (
-  ...args: Parameters<typeof evaluate> extends [...infer Head, number] ? Head : never
-) => evaluate(...args, 0);
+  watch: ThreadPullRequestWatch,
+  detail: Detail,
+  remarks: ReadonlyArray<PullRequestComment> | null,
+) => evaluate(watch, detail, remarks, 0);
 
 const STARTED = "2026-10-02T12:00:00.000Z";
 
@@ -40,7 +42,7 @@ const check = (name: string, status: PullRequestCheck["status"]): PullRequestChe
   url: `https://ci.example/${name}`,
 });
 
-type Detail = Parameters<typeof evaluatePullRequestWatch>[1];
+type Detail = Parameters<typeof evaluate>[1];
 
 const capabilities = (checksAlwaysReport: boolean): Detail["capabilities"] => ({
   diff: true,

@@ -34,6 +34,7 @@ import {
   PullRequestProviderError,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import { isManagedIssueImplementor } from "../issues/IssueEligibility.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -338,7 +339,7 @@ export const make = Effect.gen(function* () {
 
   const giveUp = (target: WatchTarget) =>
     record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request only if it is still open.`,
+      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself${isManagedIssueImplementor(target.thread) ? "." : ", and call watch_pull_request only if it is still open."}`,
       notification: {
         source: { kind: "monitor" },
         outcome: "failed",
@@ -530,7 +531,7 @@ export const make = Effect.gen(function* () {
       target,
       next: null,
       wake: {
-        text: `Pull request #${target.link.number} (${target.link.url}) was closed, so T3 Code stopped watching it. Call watch_pull_request if it reopens.`,
+        text: `Pull request #${target.link.number} (${target.link.url}) was closed, so T3 Code stopped watching it.${isManagedIssueImplementor(target.thread) ? "" : " Call watch_pull_request if it reopens."}`,
         notification: {
           source: { kind: "monitor" },
           outcome: "updated",
@@ -545,7 +546,7 @@ export const make = Effect.gen(function* () {
       ? "merged"
       : thread.settledOverride === "settled" || thread.settledAt !== null
         ? "settled"
-        : thread.lineage.relationshipToParent === "subagent"
+        : thread.lineage.relationshipToParent === "subagent" && !isManagedIssueImplementor(thread)
           ? "subagent"
           : undefined;
 
@@ -696,8 +697,11 @@ export const make = Effect.gen(function* () {
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
     });
+    // GitHub Actions are disabled in this fork. Real review-bot checks can still report.
+    const waitForChecks =
+      reference.host !== "github.com" || reference.repository !== "tannerpolley/t3code";
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now, waitForChecks);
       if (report.changes.length > 0) {
         const wake = {
           ...pullRequestWatchMessage({
@@ -705,6 +709,7 @@ export const make = Effect.gen(function* () {
             url: target.link.url,
             baseBranch: detail.baseBranch,
             headSha: report.next.headSha,
+            canRestart: !isManagedIssueImplementor(target.thread),
             report,
           }),
           includesRemarks: report.changes.some((change) => change.kind === "remarks"),
@@ -868,12 +873,19 @@ export const make = Effect.gen(function* () {
     // sweep would otherwise be taken as old news and never wake the thread.
     yield* forkParked(
       Stream.runForEach(engine.streamDomainEvents, (event) => {
-        if (event.type !== "thread.pull-request-synced") return Effect.void;
-        const unread = visibleThreadPullRequests(event.payload.pullRequests ?? []).flatMap(
-          (link) =>
-            link.watch === undefined || lives.has(lifeKeyOf(event.threadId, link, link.watch))
-              ? []
-              : [threadPullRequestKeyOf(link)],
+        if (
+          event.type !== "thread.pull-request-link-updated" &&
+          event.type !== "thread.pull-request-synced"
+        )
+          return Effect.void;
+        const links =
+          event.type === "thread.pull-request-link-updated"
+            ? [event.payload]
+            : (event.payload.pullRequests ?? []);
+        const unread = visibleThreadPullRequests(links).flatMap((link) =>
+          link.watch === undefined || lives.has(lifeKeyOf(event.threadId, link, link.watch))
+            ? []
+            : [threadPullRequestKeyOf(link)],
         );
         return Effect.forEach(new Set(unread), readOnChange, { discard: true });
       }).pipe(Effect.catchCause(logFailure("pull request watch event stream failed", {}))),

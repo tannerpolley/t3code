@@ -27,6 +27,13 @@ export const readOnlyIssueRoles = [...THREAD_ROLES, ...Object.keys(LEGACY_THREAD
 export const isUnmanagedIssueRole = (role: string | undefined) =>
   resolveThreadRole(role ?? "") === "writer" || isReadOnlyIssueRole(role);
 
+export const isManagedIssueImplementor = (
+  thread: Pick<OrchestrationV2AppThread, "lineage" | "linkedIssue" | "role">,
+) =>
+  thread.lineage.relationshipToParent === "subagent" &&
+  thread.linkedIssue !== undefined &&
+  (thread.role ?? "implementor") === "implementor";
+
 export const requiresManagedIssueAdmission = (
   role: string | undefined,
   parent: Pick<OrchestrationV2AppThread, "repositoryOrchestration" | "linkedIssue">,

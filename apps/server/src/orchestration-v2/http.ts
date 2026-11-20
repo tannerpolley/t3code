@@ -121,10 +121,6 @@ export const layer = HttpApiBuilder.group(
 
     const loadThreadSnapshot = Effect.fn("http.orchestration.loadThreadSnapshot")(function* (
       threadId: Parameters<typeof threadManagement.getThreadSnapshot>[0],
-      failureReason:
-        | "orchestration_thread_snapshot_failed"
-        | "orchestration_thread_bounded_snapshot_failed"
-        | "orchestration_thread_history_failed",
     ) {
       return yield* threadManagement.getThreadSnapshot(threadId).pipe(
         Effect.map((snapshot) => ({
@@ -136,7 +132,10 @@ export const layer = HttpApiBuilder.group(
             if (isThreadNotFound(error)) {
               return yield* failEnvironmentNotFound("thread_not_found");
             }
-            return yield* failEnvironmentInternal(failureReason, error);
+            if (ThreadManagementService.isThreadSnapshotTooLarge(error)) {
+              return yield* failEnvironmentInvalidRequest("thread_snapshot_too_large");
+            }
+            return yield* failEnvironmentInternal("orchestration_thread_snapshot_failed", error);
           }),
         ),
       );
@@ -200,10 +199,9 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          const snapshot = yield* loadThreadSnapshot(
-            args.params.threadId,
-            "orchestration_thread_snapshot_failed",
-          ).pipe(traceLocalHandlerWork);
+          const snapshot = yield* loadThreadSnapshot(args.params.threadId).pipe(
+            traceLocalHandlerWork,
+          );
           return {
             snapshotSequence: snapshot.snapshotSequence,
             projection: snapshot.projection,

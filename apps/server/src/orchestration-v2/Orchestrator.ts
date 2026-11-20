@@ -28,6 +28,7 @@ import {
 import { threadIssueKeysEqual } from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
+import { isManagedIssueImplementor } from "../issues/IssueEligibility.ts";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -98,7 +99,11 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { contextBoundaryOrdinal, isScheduledFreshRun } from "./contextBoundary.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
-import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
+import {
+  combinePullRequestWatchWakes,
+  needsManagedPullRequestWatch,
+  type PullRequestWatchWake,
+} from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
@@ -234,14 +239,14 @@ import {
 import { isRegisteredRepositoryRoot, planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
-import { quietActivitySamplingWindowMs } from "../persistence/ForkMigrations/031_QuietDelegateActivity.ts";
+import { quietActivitySamplingWindowMs } from "../persistence/ForkMigrations/032_QuietThreadActivity.ts";
 import { makeAutomaticProviderSwitchPolicy } from "./AutomaticProviderSwitchPolicy.ts";
 import {
   usageLimitSwitchResultRun,
   usageLimitSwitchMessageId,
   usageLimitRecoveryPending,
 } from "./usageLimitRecoveryPending.ts";
-import { isSnoozed } from "./ThreadSettlementService.ts";
+import { isIdleWorker, isSnoozed, workerCompletionIsCurrent } from "./ThreadSettlementService.ts";
 import {
   makeForkDelegatedCompletion,
   completionCohort,
@@ -524,7 +529,10 @@ export interface OrchestratorV2Shape {
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, OrchestratorV2Error>;
-  readonly getThreadSnapshot: (threadId: ThreadId) => Effect.Effect<
+  readonly getThreadSnapshot: (
+    threadId: ThreadId,
+    maxReadCost?: number,
+  ) => Effect.Effect<
     {
       readonly schemaVersion: number;
       readonly snapshotSequence: number;
@@ -962,6 +970,21 @@ function withPullRequestWatch(
   if (watch !== undefined) return { ...rest, watch };
   const ended = previous ?? endedWatch;
   return ended === undefined ? rest : { ...rest, endedWatch: ended };
+}
+
+function startPullRequestWatch(startedAt: string): ThreadPullRequestWatch {
+  return {
+    startedAt,
+    headSha: null,
+    failedChecks: [],
+    passed: false,
+    passedChecks: [],
+    conflicting: false,
+    awaitingBaseline: "all",
+    remarksThrough: startedAt,
+    remarkIds: [],
+    wakes: 0,
+  };
 }
 
 function syncedPullRequestWatch(
@@ -4170,32 +4193,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? { section: sections[index] }
           : {}),
       }));
-      yield* dispatchMessage(
-        {
-          type: "message.dispatch",
-          commandId: command.commandId,
-          threadId: command.threadId,
-          messageId: wakeMessage.messageId,
-          text: wakeMessage.text,
-          notification: {
-            ...wakeMessage.notification,
-            source:
-              wake.notification.source.kind === "monitor"
-                ? {
-                    kind: "monitor",
-                    pullRequest: stamps[0]!,
-                    ...(stamps.length > 1 ? { otherPullRequests: stamps.slice(1) } : {}),
-                  }
-                : wake.notification.source,
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
+      const message = {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: wakeMessage.messageId,
+        text: wakeMessage.text,
+        notification: {
+          ...wakeMessage.notification,
+          source:
+            wake.notification.source.kind === "monitor"
+              ? {
+                  kind: "monitor",
+                  pullRequest: stamps[0]!,
+                  ...(stamps.length > 1 ? { otherPullRequests: stamps.slice(1) } : {}),
+                }
+              : wake.notification.source,
         },
-        events,
-        effects,
-      );
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      } satisfies Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>;
+      yield* dispatchMessage(message, events, effects);
+      // The managed worker and its parent already share the root's dispatch lock.
+      if (isManagedIssueImplementor(thread))
+        yield* recordSubagentFollowup(message, events, true).pipe(mapDispatchError(command));
     },
   );
 
@@ -4954,7 +4977,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
-    const updatedThread: OrchestrationV2AppThread = (() => {
+    let updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
           return {
@@ -4966,7 +4989,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           };
         case "thread.unarchive":
-          return { ...thread, archivedAt: null, updatedAt: now };
+          return {
+            ...thread,
+            archivedAt: null,
+            ...(thread.lineage.relationshipToParent === "subagent"
+              ? { workerUnarchivedAt: DateTime.formatIso(now) }
+              : {}),
+            updatedAt: now,
+          };
         case "thread.settle": {
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
@@ -5212,7 +5242,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               command.source !== "stack" &&
               command.source !== "stack-dismissed";
             if (existing && !undismisses) return thread;
-            const link = existing
+            const link: ThreadPullRequestLink = existing
               ? {
                   ...existing,
                   source: command.source,
@@ -5384,12 +5414,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : !command.watching
                 ? undefined
                 : (existing.watch ?? {
-                    startedAt,
-                    headSha: null,
-                    failedChecks: [],
-                    passed: false,
-                    passedChecks: [],
-                    conflicting: false,
+                    ...startPullRequestWatch(startedAt),
                     // Watching again must not repeat check or conflict news the last watch told.
                     ...(existing.endedWatch && {
                       headSha: existing.endedWatch.headSha,
@@ -5416,9 +5441,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                       checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
                     }),
-                    remarksThrough: startedAt,
-                    remarkIds: [],
-                    wakes: 0,
                   });
           if (watch === existing.watch && links === linked) return thread;
           const final =
@@ -5520,6 +5542,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    if (
+      (command.type === "thread.pull-request.link" ||
+        command.type === "thread.pull-request-link.sync" ||
+        command.type === "thread.pull-request.sync") &&
+      isManagedIssueImplementor(updatedThread)
+    ) {
+      const links = threadPullRequestsOf(updatedThread);
+      const candidates = links.filter(
+        (link) =>
+          (command.type !== "thread.pull-request-link.sync" ||
+            threadPullRequestKeysEqual(link, command)) &&
+          needsManagedPullRequestWatch(updatedThread, link),
+      );
+      if (candidates.length > 0) {
+        const { runs } = yield* projectionStore
+          .getThreadRecords(command.threadId, ["runs"])
+          .pipe(mapDispatchError(command));
+        const latest = latestExecutedRun(runs);
+        const stopped =
+          latest !== null && (yield* stopReachedRun(command, command.threadId, latest.id));
+        const watch = startPullRequestWatch(DateTime.formatIso(now));
+        // Persist the suppression so future syncs honor Stop just as they honor unwatch.
+        const watchState = stopped ? { endedWatch: watch } : { watch };
+        updatedThread = {
+          ...updatedThread,
+          pullRequests: links.map((link) =>
+            candidates.includes(link) ? { ...link, ...watchState } : link,
+          ),
+        };
+      }
+    }
     if (command.type === "thread.pull-request-watch.checks-reopen") {
       if (updatedThread === thread) return;
       yield* emit(
@@ -10188,8 +10241,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const recordSubagentFollowup = Effect.fnUntraced(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    fromManagedPullRequestWatch = false,
   ) {
-    if (!mayStartSubagentFollowup(command)) return;
+    if (!fromManagedPullRequestWatch && !mayStartSubagentFollowup(command)) return;
     const pending = yield* Ref.get(events);
     const message = pending
       .flatMap((event) =>
@@ -15819,6 +15873,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
           );
         });
+        if (command.workerDeleteArchivedAt !== undefined) {
+          const { archivedWorkerRetentionDays } = yield* serverSettings.getSettings.pipe(
+            mapDispatchError(command),
+          );
+          if (archivedWorkerRetentionDays === null || sideChatIds.length > 0) {
+            return { events: [], effects: [] };
+          }
+          const [worker] = yield* projectionStore
+            .getSettlementCandidates(command.threadId, {
+              archivedBefore: DateTime.subtract(now, { days: archivedWorkerRetentionDays }),
+            })
+            .pipe(mapDispatchError(command));
+          if (
+            worker?.archivedAt == null ||
+            DateTime.toEpochMillis(worker.archivedAt) !==
+              DateTime.toEpochMillis(command.workerDeleteArchivedAt) ||
+            command.workerArchiveSequence === undefined ||
+            worker.workerArchiveSequence !== command.workerArchiveSequence ||
+            command.workerCompletedAt === undefined ||
+            !workerCompletionIsCurrent(worker, command.workerCompletedAt) ||
+            !isIdleWorker(worker, now)
+          )
+            return { events: [], effects: [] };
+        }
         // Checked under the thread lock: a message sent since the client looked keeps the thread.
         if (command.onlyIfUnused === true) {
           const usage = yield* projectionStore
@@ -15849,6 +15927,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
       }
       case "thread.archive":
+        if (command.workerArchiveSequence !== undefined) {
+          const [worker] = yield* projectionStore
+            .getSettlementCandidates(command.threadId, {})
+            .pipe(mapDispatchError(command));
+          if (
+            worker === undefined ||
+            worker.workerArchiveSequence !== command.workerArchiveSequence ||
+            !isIdleWorker(worker, yield* DateTime.now)
+          )
+            return { events: [], effects: [] };
+        }
+        yield* dispatchThreadMutation(command, events, effects);
+        break;
       case "thread.unarchive":
       case "thread.settle":
       case "thread.unsettle":
@@ -16316,7 +16407,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.type === "subagent.stop" ||
             // Closing a share again, or after it ended, is not an error.
             command.type === "thread.guest-share.close" ||
-            (command.type === "thread.delete" && command.onlyIfUnused === true),
+            (command.type === "thread.archive" && command.workerArchiveSequence !== undefined) ||
+            (command.type === "thread.delete" &&
+              (command.onlyIfUnused === true || command.workerDeleteArchivedAt !== undefined)),
           (_planned) =>
             new OrchestratorDispatchError({
               commandId: command.commandId,
@@ -17243,11 +17336,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getCheckpointContext(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
-    getThreadSnapshot: Effect.fn("OrchestratorV2.getThreadSnapshot")(function (threadId) {
-      return projectionStore
-        .getThreadSnapshot(threadId)
-        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
-    }),
+    getThreadSnapshot: Effect.fn("OrchestratorV2.getThreadSnapshot")(
+      function (threadId, maxReadCost) {
+        return projectionStore
+          .getThreadSnapshot(threadId, maxReadCost)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      },
+    ),
     getThreadSnapshotWindow: Effect.fn("OrchestratorV2.getThreadSnapshotWindow")(
       function (threadId, options) {
         return projectionStore

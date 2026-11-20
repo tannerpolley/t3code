@@ -561,6 +561,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
+  workerUnarchivedAt: Schema.optional(IsoDateTime),
   settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -4176,6 +4177,10 @@ export type OrchestrationV2ServerCommand = (
   readonly issueWorktree?: { readonly baseRef: string; readonly branch: string };
   /** Suspension interrupts retain their provider action until it succeeds. */
   readonly retryInterruptUntilDone?: boolean;
+  readonly workerArchiveSequence?: number;
+  readonly workerDeleteArchivedAt?: DateTime.Utc;
+  /** Completion read outside the lock, valid for the worker's checked event sequence. */
+  readonly workerCompletedAt?: number;
 };
 
 export const ORCHESTRATION_V2_WS_METHODS = {
@@ -4568,6 +4573,7 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   {
     threadId: ThreadId,
     message: Schema.String,
+    reason: Schema.optionalKey(Schema.Literal("thread_snapshot_too_large")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

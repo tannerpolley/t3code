@@ -10,7 +10,7 @@ import { configureProjectSectionPlacement, sectionTarget } from "../projectSecti
 import { randomUUID } from "../lib/utils";
 import { environmentCatalog } from "../connection/catalog";
 import { environmentShell } from "../state/shell";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type EnvironmentId,
@@ -24,6 +24,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
 import { useClientSettings } from "../hooks/useSettings";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import {
   buildSidebarProjectSnapshots,
@@ -62,55 +63,44 @@ export function SidebarLayoutSync() {
   const catalogReady = useAtomValue(environmentCatalog.catalogValueAtom).isReady;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const grouping = useClientSettings(selectProjectGroupingSettings);
-  const groups = useMemo(
-    () =>
-      buildSidebarProjectSnapshots({
-        projects,
-        settings: grouping,
-        groupScratchProjects: true,
-        primaryEnvironmentId,
-        resolveEnvironmentLabel: () => null,
-      }),
-    [projects, grouping, primaryEnvironmentId],
-  );
-  const update = useAtomCommand(serverEnvironment.updateSidebarLayout);
+  const groups = buildSidebarProjectSnapshots({
+    projects,
+    settings: grouping,
+    groupScratchProjects: true,
+    primaryEnvironmentId,
+    resolveEnvironmentLabel: () => null,
+  });
+  const update = useStableCallback(useAtomCommand(serverEnvironment.updateSidebarLayout));
   const [source] = useState(() => legacySidebarLayout);
-  const retireLegacy = useMemo(() => createLegacySidebarRetirement(clearLegacySidebarLayout), []);
+  const [retireLegacy] = useState(() => createLegacySidebarRetirement(clearLegacySidebarLayout));
   const [importEnvironments, setImportEnvironments] = useState<Set<EnvironmentId> | null>(null);
-  const controller = useMemo(
-    () =>
-      createSidebarLayoutClient(
-        async (environmentId, input) => {
-          const result = await update({ environmentId, input });
-          if (result._tag !== "Success") throw new Error("Could not save sidebar layout.");
-          return result.value;
-        },
-        () => toastManager.add({ type: "error", title: "Could not save sidebar layout" }),
-      ),
-    [update],
+  const [controller] = useState(() =>
+    createSidebarLayoutClient(
+      async (environmentId, input) => {
+        const result = await update({ environmentId, input });
+        if (result._tag !== "Success") throw new Error("Could not save sidebar layout.");
+        return result.value;
+      },
+      () => toastManager.add({ type: "error", title: "Could not save sidebar layout" }),
+    ),
   );
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- disposes the layout controller and its pending writes on unmount
   useEffect(() => () => controller.dispose(), [controller]);
-  const layouts = useMemo(
-    () => new Map([...configs.keys()].map((id) => [id, snapshot.get(id)])),
-    [configs, snapshot],
-  );
-  const sectionTargets = useMemo(
-    () =>
-      new Map(
-        [...layouts].flatMap(([environmentId, layout]) =>
-          (layout?.sidebarProjectSections ?? []).map(
-            (section) =>
-              [
-                sidebarSectionKey(environmentId, section.id),
-                { environmentId, sectionId: section.id },
-              ] as const,
-          ),
-        ),
+  const layouts = new Map([...configs.keys()].map((id) => [id, snapshot.get(id)]));
+  const sectionTargets = new Map(
+    [...layouts].flatMap(([environmentId, layout]) =>
+      (layout?.sidebarProjectSections ?? []).map(
+        (section) =>
+          [
+            sidebarSectionKey(environmentId, section.id),
+            { environmentId, sectionId: section.id },
+          ] as const,
       ),
-    [layouts],
+    ),
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the live layout to the sidebar store and retires the startup snapshot on its deadline
   useEffect(() => {
     const projected = projectSidebarLayout({ layouts, groups, primaryEnvironmentId });
     const knownIds = catalogReady ? environmentIds : null;
@@ -144,6 +134,7 @@ export function SidebarLayoutSync() {
     controller,
   ]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the store's layout actions for the current environments and projected section IDs
   useEffect(() => {
     const refresh = () => {
       if (useUiStateStore.getState().sidebarDisplaySnapshot !== null) return;
@@ -192,11 +183,11 @@ export function SidebarLayoutSync() {
       if ("sectionId" in mutation && mutation.sectionId !== null && !target) return false;
       switch (mutation.type) {
         case "add":
-          send(destination, {
+          if (mutation.section.parentId !== undefined && !target) return false;
+          return send(destination, {
             ...mutation,
             section: { ...mutation.section, ...(target ? { parentId: target.sectionId } : {}) },
           });
-          break;
         case "rename":
         case "color":
         case "folderIcons":
@@ -339,20 +330,11 @@ function SidebarLayoutEnvironment(props: {
   const server = usesServerSidebar(props.capable);
   const shellReady =
     useAtomValue(environmentShell.stateValueAtom(props.environmentId)).status === "live";
-  const pendingImport = useMemo(
-    () => readPendingSidebarImport(props.environmentId),
-    [props.environmentId],
-  );
-  const legacy = useMemo(
-    () =>
-      pendingImport?.legacy ??
-      (server ? readLocalSidebarLayout(props.environmentId, props.legacy) : props.legacy),
-    [pendingImport, server, props.environmentId, props.legacy],
-  );
-  const candidate = useMemo(
-    () => migrateSidebarLayout(legacy, props.groups, props.environmentId, props.primary),
-    [legacy, props.groups, props.environmentId, props.primary],
-  );
+  const [pendingImport] = useState(() => readPendingSidebarImport(props.environmentId));
+  const legacy =
+    pendingImport?.legacy ??
+    (server ? readLocalSidebarLayout(props.environmentId, props.legacy) : props.legacy);
+  const candidate = migrateSidebarLayout(legacy, props.groups, props.environmentId, props.primary);
   const fallbackReady =
     shellReady &&
     props.groups
@@ -360,6 +342,7 @@ function SidebarLayoutEnvironment(props: {
       .filter((project) => project.environmentId === props.environmentId)
       .every((project) => project.repositoryIdentityResolved !== false);
   const { controller, environmentId, onLegacyStored } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- updates the local layout controller when this environment's migration inputs become available
   useEffect(() => {
     if (!server) {
       controller.configure(environmentId, false, candidate, { fallbackReady });
@@ -399,6 +382,7 @@ function SidebarLayoutSubscription(props: {
   const importedProjects = useRef(new Set(props.pendingImport?.memberships ?? []));
   const committedProjects = useRef(new Set(props.pendingImport?.memberships ?? []));
   const cleared = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds server snapshots and write permissions into the layout controller
   useEffect(() => {
     // Configure before applying a snapshot; child effects run before parent effects.
     props.controller.configure(props.environmentId, true, props.candidate, {
@@ -411,6 +395,7 @@ function SidebarLayoutSubscription(props: {
   const current = useSyncExternalStore(props.controller.subscribe, () =>
     props.controller.record(props.environmentId),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resumes the saved sidebar import against the latest server layout
   useEffect(() => {
     if (
       !current ||
