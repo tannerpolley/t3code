@@ -73,6 +73,19 @@ describe("applyUsageLimitsUpdate", () => {
     });
   });
 
+  it("drops a previous monthly reset when a new cap is exhausted without a reset", () => {
+    const cap = { id: "individual", kind: "monthly", label: "Monthly credit limit" } as const;
+    const next = applyUsageLimitsUpdate({
+      previous: {
+        checkedAt,
+        windows: [{ ...cap, usedPercent: 90, resetsAt: "2026-09-03T14:00:00.000Z" }],
+      },
+      checkedAt: "2026-09-03T14:00:01.000Z",
+      update: { windows: [{ ...cap, usedPercent: 100 }] },
+    });
+    expect(next?.windows).toEqual([{ ...cap, usedPercent: 100 }]);
+  });
+
   it("leaves an unsupported account and an empty update alone", () => {
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };
     expect(

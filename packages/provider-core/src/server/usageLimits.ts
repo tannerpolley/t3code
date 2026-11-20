@@ -3,6 +3,7 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,
@@ -72,7 +73,13 @@ export function applyUsageLimitsUpdate(input: {
     const next: ServerProviderUsageWindow = {
       ...window,
       usedPercent: clampPercent(window.usedPercent),
-      ...(window.resetsAt === undefined && existing?.resetsAt !== undefined
+      ...(window.resetsAt === undefined &&
+      existing?.resetsAt !== undefined &&
+      window.kind === existing.kind &&
+      (window.windowDurationMins === undefined ||
+        existing.windowDurationMins === undefined ||
+        window.windowDurationMins === existing.windowDurationMins) &&
+      !isUsageWindowStale(existing, Date.parse(input.checkedAt))
         ? { resetsAt: existing.resetsAt }
         : {}),
       ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
