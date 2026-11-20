@@ -680,7 +680,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
                   "sh",
                   [
                     "-c",
-                    "echo 'F1111 11:50:12.383176 page-size.cc:19] Check failed: sysconf(_SC_PAGE_SIZE) == kPageSize (16384 vs. 4096) Compile-time page size does not match runtime page size' >&2; kill -ABRT $$",
+                    "read -r request; echo 'F1111 11:50:12.383176 page-size.cc:19] Check failed: sysconf(_SC_PAGE_SIZE) == kPageSize (16384 vs. 4096) Compile-time page size does not match runtime page size' >&2; kill -ABRT $$",
                   ],
                   { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
                 ),
@@ -695,8 +695,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         yield* installation.start;
         const state = yield* terminalState(installation);
         expect(state.phase).toBe("failed");
-        expect(state.message).toMatch(/page/i);
-      }),
+        expect(state.message).toMatch(/4 KiB memory pages/);
+      }).pipe(TestClock.withLive),
   );
 
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
