@@ -79,21 +79,41 @@ function pullRequestMatchesProject(
   );
 }
 
-const resolveProjectForPullRequestDiscovery = Effect.fn(
-  "ThreadPullRequestServiceV2.resolveProject",
-)(function* (
-  project: OrchestrationProjectShell,
-  repositoryIdentities: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
-  options?: { readonly refresh?: boolean },
-) {
-  // Post-turn discovery refreshes 15-minute identity caches because agents may add remotes.
-  const repositoryIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
-    refresh: options?.refresh ?? false,
+export const makeBranchPullRequestDiscovery = Effect.gen(function* () {
+  const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const git = yield* GitManager.GitManager;
+  return Effect.fn("ThreadPullRequestServiceV2.discoverBranch")(function* (
+    project: OrchestrationProjectShell,
+    thread: Pick<OrchestrationV2ThreadShell, "branch" | "worktreePath">,
+    options: { readonly refresh: boolean; readonly confirmTerminal?: boolean },
+  ) {
+    // Post-turn discovery refreshes 15-minute identity caches because agents may add remotes.
+    const repositoryIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
+      refresh: options.refresh,
+    });
+    const repository = sourceControlDefinitions.repositorySelector(repositoryIdentity);
+    if (thread.branch !== null && repository === null) return null;
+    // A missing .git falls back to the project checkout. An unreadable one keeps the worktree.
+    const cwd =
+      thread.worktreePath !== null &&
+      (yield* fileSystem
+        .exists(path.join(thread.worktreePath, ".git"))
+        .pipe(Effect.orElseSucceed(() => true)))
+        ? thread.worktreePath
+        : project.workspaceRoot;
+    const detected =
+      thread.branch === null
+        ? null
+        : yield* git.branchPullRequest({ cwd, branch: thread.branch }, options);
+    if (
+      detected !== null &&
+      !pullRequestMatchesProject(detected, { ...project, repositoryIdentity })
+    )
+      return null;
+    return { cwd, repository, detected };
   });
-  return {
-    project: { ...project, repositoryIdentity },
-    repository: sourceControlDefinitions.repositorySelector(repositoryIdentity),
-  };
 });
 
 export function projectWorkspaceMatchesSnapshot(
@@ -119,9 +139,8 @@ export const make = Effect.gen(function* () {
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  const discoverBranch = yield* makeBranchPullRequestDiscovery;
   const random = yield* SecureRandom.SecureRandom;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const pendingBackfill = new Map<ThreadId, number>();
   const noPullRequestRechecks = makeNoPullRequestRechecks();
@@ -216,32 +235,14 @@ export const make = Effect.gen(function* () {
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
           if (scheduled.has(key) && !scheduledLookups.has(key)) return;
-          const { project: resolvedProject, repository } =
-            yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities, {
-              refresh: request.refresh,
-            });
-          if (first.branch !== null && repository === null) return finishBackfill(group);
-          // A worktree folder can outlive its .git, and git there fails with not_a_repository.
-          // An unreadable .git keeps the worktree rather than failing the whole group.
-          const cwd =
-            first.worktreePath !== null &&
-            (yield* fileSystem
-              .exists(path.join(first.worktreePath, ".git"))
-              .pipe(Effect.orElseSucceed(() => true)))
-              ? first.worktreePath
-              : project.workspaceRoot;
           // A detected PR is confirmed against fresh git state before it is saved.
-          const detected =
-            first.branch === null
-              ? null
-              : yield* git.branchPullRequest(
-                  { cwd, branch: first.branch },
-                  { refresh: request.refresh, confirmTerminal: false },
-                );
+          const discovery = yield* discoverBranch(project, first, {
+            refresh: request.refresh,
+            confirmTerminal: false,
+          });
+          if (discovery === null) return finishBackfill(group);
+          const { cwd, repository, detected } = discovery;
           if (first.branch !== null) noPullRequestRechecks.record(key, nowMs, detected !== null);
-          if (detected !== null && !pullRequestMatchesProject(detected, resolvedProject)) {
-            return finishBackfill(group);
-          }
           const detectedReference =
             detected !== null && repository !== null
               ? {

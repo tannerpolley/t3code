@@ -15,7 +15,6 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import * as GitManager from "../git/GitManager.ts";
 import * as IssueService from "../issue/IssueService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -23,6 +22,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { makeBranchPullRequestDiscovery } from "./ThreadPullRequestService.ts";
 import { isIdleWorker, workerCompletionIsCurrent } from "./ThreadSettlementService.ts";
 
 function pullRequestCompletionAt(
@@ -46,7 +46,7 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
-  const git = yield* GitManager.GitManager;
+  const discoverBranch = yield* makeBranchPullRequestDiscovery;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const settings = yield* ServerSettings.ServerSettingsService;
   const issues = yield* IssueService.IssueService;
@@ -65,8 +65,12 @@ const make = Effect.gen(function* () {
   const completion = Effect.fn("WorkerRetention.completion")(function* (
     worker: ProjectionStore.ProjectionSettlementCandidate,
     now: DateTime.Utc,
+    period?: "backlog" | "automatic",
   ) {
     if (!isIdleWorker(worker, now)) return null;
+    const qualifies = (endedAt: number) =>
+      workerCompletionIsCurrent(worker, endedAt) &&
+      (period === undefined || (period === "automatic" ? endedAt > cutoffMs : endedAt <= cutoffMs));
     let unknown = false;
     const allLinks = worker.pullRequests ?? [];
     const readPullRequest = (reference: NonNullable<typeof worker.linkedPullRequest>) =>
@@ -85,7 +89,7 @@ const make = Effect.gen(function* () {
         recorded === "unknown" || (worker.archivedAt !== null && link.snapshot?.state !== "merged")
           ? yield* readPullRequest({ ...link, projectId: worker.projectId })
           : recorded;
-      if (typeof endedAt === "number" && workerCompletionIsCurrent(worker, endedAt)) return endedAt;
+      if (typeof endedAt === "number" && qualifies(endedAt)) return endedAt;
       if (endedAt === "unknown") unknown = true;
     }
 
@@ -100,7 +104,7 @@ const make = Effect.gen(function* () {
       )
         continue;
       const endedAt = yield* readPullRequest(reference);
-      if (typeof endedAt === "number" && workerCompletionIsCurrent(worker, endedAt)) return endedAt;
+      if (typeof endedAt === "number" && qualifies(endedAt)) return endedAt;
       if (endedAt === "unknown") unknown = true;
     }
     if (
@@ -110,25 +114,19 @@ const make = Effect.gen(function* () {
       worker.branch !== null
     ) {
       const project = yield* projects.getShell(worker.projectId);
-      const cwd =
-        worker.worktreePath ?? (project._tag === "Some" ? project.value.workspaceRoot : null);
-      if (cwd === null) {
+      if (project._tag === "None") {
         unknown = true;
       } else {
-        const pullRequest = yield* git
-          .branchPullRequest(
-            { cwd, branch: worker.branch },
-            { refresh: worker.archivedAt !== null },
-          )
-          .pipe(Effect.option);
+        const pullRequest = yield* discoverBranch(project.value, worker, {
+          refresh: worker.archivedAt !== null,
+        }).pipe(Effect.option);
         const endedAt =
           pullRequest._tag === "Some"
-            ? pullRequest.value === null
+            ? pullRequest.value?.detected == null
               ? null
-              : pullRequestCompletionAt(pullRequest.value)
+              : pullRequestCompletionAt(pullRequest.value.detected)
             : "unknown";
-        if (typeof endedAt === "number" && workerCompletionIsCurrent(worker, endedAt))
-          return endedAt;
+        if (typeof endedAt === "number" && qualifies(endedAt)) return endedAt;
         if (endedAt === "unknown") unknown = true;
       }
     }
@@ -138,7 +136,7 @@ const make = Effect.gen(function* () {
         unknown = true;
       } else if (issue.value.state.category === "closed") {
         const endedAt = Date.parse(issue.value.closedAt ?? "");
-        if (workerCompletionIsCurrent(worker, endedAt)) return endedAt;
+        if (qualifies(endedAt)) return endedAt;
         if (!Number.isFinite(endedAt)) unknown = true;
       }
     }
@@ -162,13 +160,13 @@ const make = Effect.gen(function* () {
     threadId?: ThreadId,
     afterThreadId?: ThreadId,
   ) {
-    const workers = yield* projections.getSettlementCandidates(threadId, {
-      createdAfter: cutoff,
-      ...(afterThreadId === undefined ? {} : { afterThreadId }),
-    });
+    const workers = yield* projections.getSettlementCandidates(
+      threadId,
+      afterThreadId === undefined ? {} : { afterThreadId },
+    );
     const now = yield* DateTime.now;
     for (const worker of workers) {
-      if (typeof (yield* completion(worker, now)) === "number") yield* archive(worker);
+      if (typeof (yield* completion(worker, now, "automatic")) === "number") yield* archive(worker);
     }
     return workers.at(-1)?.id;
   });
@@ -222,7 +220,7 @@ const make = Effect.gen(function* () {
           );
           for (const worker of page) {
             if (DateTime.toEpochMillis(worker.createdAt) > cutoffMs) continue;
-            const completedAt = yield* completion(worker, now);
+            const completedAt = yield* completion(worker, now, "backlog");
             if (typeof completedAt === "number")
               workers.push({ id: worker.id, title: worker.title ?? worker.id });
             if (completedAt === "unknown") unknown++;
@@ -239,7 +237,7 @@ const make = Effect.gen(function* () {
       for (const { id } of preview.workers) {
         const [worker] = yield* projections.getSettlementCandidates(id, {});
         if (worker === undefined) continue;
-        const completedAt = yield* completion(worker, now);
+        const completedAt = yield* completion(worker, now, "backlog");
         if (completedAt === "unknown") unknown++;
         if (typeof completedAt === "number") {
           if (yield* archive(worker)) archived++;
