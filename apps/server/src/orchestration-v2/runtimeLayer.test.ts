@@ -50,7 +50,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
-import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -1275,39 +1274,28 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
               )
             : readAttachmentIds(threadId),
         );
-      const deletionHeld = yield* Ref.make(false);
-      const requestsHeld = (held: Effect.Effect<boolean>) =>
-        Effect.all([Deferred.isDone(firstPlanned), held]).pipe(
-          Effect.flatMap(([planned, isHeld]) =>
-            planned && isHeld ? Queue.offer(blocked, undefined) : Effect.void,
-          ),
-        );
       const { withLock, withDeletionLock } = executor;
       const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
         key,
         effect,
-      ) => requestsHeld(Effect.succeed(key === first)).pipe(Effect.andThen(withLock(key, effect)));
+      ) =>
+        (key === first ? Queue.offer(blocked, undefined) : Effect.void).pipe(
+          Effect.andThen(withLock(key, effect)),
+        );
       const observeDeletion: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withDeletionLock"] =
-        (effect) =>
-          requestsHeld(Ref.get(deletionHeld)).pipe(
-            Effect.andThen(
-              withDeletionLock(
-                Ref.set(deletionHeld, true).pipe(
-                  Effect.andThen(effect),
-                  Effect.ensuring(Ref.set(deletionHeld, false)),
-                ),
-              ),
-            ),
-          );
-      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
-      const deletionSpy = vi
-        .spyOn(executor, "withDeletionLock")
-        .mockImplementation(observeDeletion);
+        (effect) => Queue.offer(blocked, undefined).pipe(Effect.andThen(withDeletionLock(effect)));
       const forkOfDeleted = yield* Effect.gen(function* () {
         const firstFiber = yield* deleteThread(first).pipe(
           Effect.forkChild({ startImmediately: true }),
         );
         yield* Deferred.await(firstPlanned);
+        yield* Effect.acquireRelease(
+          Effect.sync(() => [
+            vi.spyOn(executor, "withLock").mockImplementation(observeLock),
+            vi.spyOn(executor, "withDeletionLock").mockImplementation(observeDeletion),
+          ]),
+          (spies) => Effect.sync(() => spies.forEach((spy) => spy.mockRestore())),
+        );
         const forkFiber = yield* fork(first, firstRun.runId, ThreadId.make("html-fork-late")).pipe(
           Effect.match({
             onSuccess: () => "created",
@@ -1324,15 +1312,7 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         yield* Fiber.join(firstFiber);
         yield* Fiber.join(projectFiber);
         return yield* Fiber.join(forkFiber);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            lockSpy.mockRestore();
-            deletionSpy.mockRestore();
-            attachmentSpy.mockRestore();
-          }),
-        ),
-      );
+      }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(() => attachmentSpy.mockRestore())));
       assert.deepEqual(
         { afterLastForks: yield* pagesOnDisk, forkOfDeleted },
         { afterLastForks: [false, false, false], forkOfDeleted: `Thread ${first} was deleted.` },
@@ -2260,36 +2240,30 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       const busy = yield* delegate(busyThreadId);
       const idle = yield* delegate(ThreadId.make("runtime-question-wake-idle"));
 
-      const order: string[] = [];
       const idleWoken = yield* orchestrator.streamDomainEvents.pipe(
         Stream.filter(
           (event) => event.type === "message.updated" && event.payload.id === idle.wakeMessageId,
         ),
         Stream.take(1),
         Stream.runDrain,
-        Effect.andThen(Effect.sync(() => order.push("idle coordinator woken"))),
         Effect.forkScoped,
       );
       // Stands in for a long send or delegated bookkeeping holding the busy coordinator's lock.
       const lockHeld = yield* Deferred.make<void>();
+      const releaseBusy = yield* Deferred.make<void>();
       const busyLock = yield* executor
         .withLock(
           busyThreadId,
-          Deferred.succeed(lockHeld, undefined).pipe(
-            Effect.andThen(Effect.sleep("1 minute")),
-            Effect.andThen(Effect.sync(() => order.push("busy coordinator's lock released"))),
-          ),
+          Deferred.succeed(lockHeld, undefined).pipe(Effect.andThen(Deferred.await(releaseBusy))),
         )
         .pipe(Effect.forkScoped);
       yield* Deferred.await(lockHeld);
 
       yield* busy.ask;
       yield* idle.ask;
-      yield* TestClock.adjust("1 minute");
-      yield* Fiber.join(busyLock);
       yield* Fiber.join(idleWoken);
-
-      assert.deepEqual(order, ["idle coordinator woken", "busy coordinator's lock released"]);
+      yield* Deferred.succeed(releaseBusy, undefined);
+      yield* Fiber.join(busyLock);
     }),
   );
 

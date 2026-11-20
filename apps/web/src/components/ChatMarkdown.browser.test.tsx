@@ -631,18 +631,20 @@ describe("ChatMarkdown headings", () => {
 });
 
 describe("ChatMarkdown inline code selection", () => {
-  it("selects only a word on double-click in inline and fenced code", async () => {
+  it("selects the inline snippet and only a word in fenced code on double-click", async () => {
     setup();
+    using _writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
     await using screen = await renderText(
       "Run `migration-gate --dry-run` first.\n\n```txt\nfenced-block word\n```",
     );
     await userEvent.dblClick(screen.getByText("migration-gate --dry-run"), {
       position: { x: 12, y: 8 },
     });
-    expect(window.getSelection()?.toString()).toBe("migration");
+    expect(window.getSelection()?.toString()).toBe("migration-gate --dry-run");
 
     window.getSelection()?.removeAllRanges();
-    const fenced = screen.container.querySelector("pre code")!;
+    const fenced = screen.getByText("fenced-block word", { exact: true });
+    await expect.element(fenced).toBeVisible();
     await userEvent.dblClick(fenced, { position: { x: 4, y: 4 } });
     expect(window.getSelection()?.toString()).toBe("fenced");
   });

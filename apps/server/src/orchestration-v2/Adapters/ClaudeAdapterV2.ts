@@ -6869,6 +6869,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                             ? {}
                             : { commandKind: kept.commandKind }),
                           ...(kept?.command === undefined ? {} : { command: kept.command }),
+                          ...(kept?.itemId === undefined ? {} : { itemId: kept.itemId }),
+                          ...(kept?.sourceThreadId === undefined
+                            ? {}
+                            : { sourceThreadId: kept.sourceThreadId }),
                           startedAt: kept?.startedAt ?? now,
                         },
                       ] as const;

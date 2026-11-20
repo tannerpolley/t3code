@@ -480,7 +480,10 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
-        Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+        Layer.mock(RunExecutionService.RunExecutionServiceV2)({
+          forkBaseline: () => Effect.succeed(Effect.void),
+          startRootRun,
+        }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: resolveRuntimePolicy,
         }),
@@ -526,6 +529,7 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
       const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-start-" });
       const physicalPath = path.join(workspaceRoot, "project", "worktree");
       yield* fileSystem.makeDirectory(physicalPath, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(physicalPath, ".git"), "");
       const alias = path.join(workspaceRoot, "linked");
       yield* fileSystem.symlink(path.join(workspaceRoot, "project"), alias);
       const worktreePath = path.join(alias, "worktree");
@@ -569,7 +573,14 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
           : undefined;
       const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
       if (order === "cleanup-first") expect(harness.open).not.toHaveBeenCalled();
-      if (order === "startup-first") yield* Deferred.await(openEntered);
+      if (order === "startup-first") {
+        yield* Effect.raceFirst(
+          Deferred.await(openEntered),
+          Fiber.join(startup).pipe(
+            Effect.andThen(Effect.die("Provider startup finished before opening a session.")),
+          ),
+        );
+      }
       const laterCleanup =
         order === "startup-first"
           ? yield* cleanupEffect.pipe(Effect.forkChild({ startImmediately: true }))
@@ -585,6 +596,8 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
           refName: "feature/restore",
           path: worktreePath,
         });
+      } else {
+        expect(harness.createWorktree).not.toHaveBeenCalled();
       }
       expect(harness.resolveRuntimePolicy).toHaveBeenCalledWith(
         expect.objectContaining({
