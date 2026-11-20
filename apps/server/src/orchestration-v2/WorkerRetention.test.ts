@@ -17,7 +17,9 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as GitManager from "../git/GitManager.ts";
@@ -26,6 +28,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import WorkerArchiveBacklog from "../persistence/ForkMigrations/031_WorkerArchiveBacklog.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as WorkerRetention from "./WorkerRetention.ts";
@@ -38,6 +41,8 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
+const projectId = ProjectId.make("project:worker");
+const workspaceRoot = "/workspace/project";
 const adapter = {
   instanceId,
   driver: ProviderDriverKind.make("codex"),
@@ -48,7 +53,19 @@ const adapter = {
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
-  Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(Layer.provide(layerDatabase)),
+  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  Layer.mock(ProjectStore.ProjectStoreV2)({
+    getShell: () =>
+      Effect.succeedSome({
+        id: projectId,
+        title: "Project",
+        workspaceRoot,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "1969-12-31T00:00:00.000Z",
+        updatedAt: "1969-12-31T00:00:00.000Z",
+      }),
+  }),
   ProviderReplayHarness.layerWithRegistry(
     { name: "control-reads" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
@@ -66,7 +83,40 @@ const layerRetention = WorkerRetention.layer.pipe(
         detail: () =>
           Effect.fail(new IssueOperationError({ operation: "detail", detail: "Offline" })),
       }),
-      Layer.mock(GitManager.GitManager)({}),
+      FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
+      Path.layer,
+      Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+        resolve: () =>
+          Effect.succeed({
+            canonicalKey: "github.com/owner/project",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "https://github.com/owner/project.git",
+            },
+            provider: SourceControlProviderKind.make("github"),
+            owner: "owner",
+            name: "project",
+          }),
+      }),
+      Layer.mock(GitManager.GitManager)({
+        branchPullRequest: ({ cwd, branch }) =>
+          Effect.succeed(
+            cwd !== workspaceRoot
+              ? null
+              : {
+                  number: 48,
+                  title: "Merged pull request",
+                  url: `https://github.com/owner/${branch === "foreign" ? "another" : "project"}/pull/48`,
+                  repositoryKey: `github.com/owner/${branch === "foreign" ? "another" : "project"}`,
+                  state: "merged",
+                  headRef: branch,
+                  baseRef: "main",
+                  updatedAt: "1970-01-01T00:00:00.000Z",
+                  mergedAt: "1970-01-01T00:00:00.000Z",
+                },
+          ),
+      }),
       Layer.mock(PullRequestService.PullRequestService)({
         summary: (reference) =>
           Effect.succeed({
@@ -356,9 +406,9 @@ it.effect(
   "keeps an old worker for confirmation and rejects obsolete completion for a new worker",
   () =>
     Effect.gen(function* () {
-      const { service, sink, projections, seed } = yield* makeFixture();
+      const { service, sink, projections, seed, cutoff } = yield* makeFixture();
       const now = yield* DateTime.now;
-      const oldWorker = yield* seed("older-worker", "merged", {}, now);
+      const oldWorker = yield* seed("older-worker", "merged", {}, cutoff);
       const freshWorker = yield* seed(
         "newer-worker",
         "merged",
@@ -368,7 +418,7 @@ it.effect(
       yield* TestClock.adjust("1 second");
       const later = yield* DateTime.now;
       for (const [threadId, requestedAt] of [
-        [oldWorker, now],
+        [oldWorker, cutoff],
         [freshWorker, later],
       ] as const) {
         yield* sink.write({
@@ -432,6 +482,80 @@ it.effect("backfills the protection timestamp for restores before the upgrade", 
     yield* WorkerArchiveBacklog;
     const preview = yield* service.archiveBacklog({ kind: "preview" });
     assert.deepEqual(preview.kind === "preview" ? preview.workers : null, []);
+  }).pipe(Effect.provide(layerRetention)),
+);
+
+it.effect("archives an older worker automatically when new work finishes after the backlog", () =>
+  Effect.gen(function* () {
+    const { service, orchestrator, projections, seed } = yield* makeFixture();
+    const id = yield* seed("older-restored-worker", "merged");
+    const preview = yield* service.archiveBacklog({ kind: "preview" });
+    if (preview.kind !== "preview") return assert.fail("Expected a preview");
+    yield* service.archiveBacklog({ kind: "archive", token: preview.token });
+    assert.deepEqual(yield* service.archiveBacklog({ kind: "preview" }), { kind: "completed" });
+
+    yield* orchestrator.dispatch({
+      type: "thread.unarchive",
+      commandId: CommandId.make("restore-backlog-worker"),
+      threadId: id,
+    });
+    yield* service.autoArchive(id);
+    assert.isNull((yield* projections.getThread(id)).archivedAt);
+
+    const key = { host: "github.com", repository: "owner/project", number: 43 };
+    yield* orchestrator.dispatch({
+      type: "thread.pull-request.link",
+      commandId: CommandId.make("older-worker-new-pr"),
+      threadId: id,
+      ...key,
+      url: "https://github.com/owner/project/pull/43",
+      source: "agent",
+    });
+    yield* TestClock.adjust("1 second");
+    const completedAt = DateTime.formatIso(yield* DateTime.now);
+    const [previous] = (yield* projections.getThread(id)).pullRequests!;
+    yield* orchestrator.dispatch({
+      type: "thread.pull-request-link.sync",
+      commandId: CommandId.make("older-worker-new-pr-merged"),
+      threadId: id,
+      ...key,
+      snapshot: {
+        ...previous!.snapshot!,
+        mergedAt: completedAt,
+        updatedAt: completedAt,
+        syncedAt: completedAt,
+      },
+      stack: null,
+    });
+    yield* service.autoArchive(id);
+    assert.isNotNull((yield* projections.getThread(id)).archivedAt);
+  }).pipe(Effect.provide(layerRetention)),
+);
+
+it.effect("discovers branch completion only in the project repository", () =>
+  Effect.gen(function* () {
+    const { service, seed, projections, createdAt } = yield* makeFixture();
+    const own = yield* seed("own-pr", "open", {
+      pullRequests: [],
+      branch: "own",
+      worktreePath: "/workspace/missing-worktree",
+    });
+    yield* seed("foreign-pr", "open", { pullRequests: [], branch: "foreign" });
+    const archived = yield* seed("foreign-archived-pr", "open", {
+      pullRequests: [],
+      branch: "foreign",
+      archivedAt: createdAt,
+    });
+    const preview = yield* service.archiveBacklog({ kind: "preview" });
+    yield* TestClock.adjust("15 days");
+    yield* service.removeExpired();
+    assert.deepEqual(
+      [
+        preview.kind === "preview" ? preview.workers.map(({ id }) => id) : null,
+        (yield* projections.getThread(archived)).deletedAt,
+      ],
+      [[own], null],
+    );
   }).pipe(Effect.provide(layerRetention)),
 );
 

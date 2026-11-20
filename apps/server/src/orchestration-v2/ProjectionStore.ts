@@ -246,7 +246,6 @@ export type ProjectionThreadPullRequests = Pick<
 export type WorkerRetentionPage = {
   readonly afterThreadId?: ThreadId;
   readonly archivedBefore?: DateTime.Utc;
-  readonly createdAfter?: string;
 };
 
 export type ProjectionSettlementCandidate = Pick<
@@ -8860,7 +8859,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `
                   : sql`
               AND t.thread_id > ${workers.afterThreadId ?? ""}
-              ${workers.createdAfter === undefined ? sql`` : sql`AND t.created_at > ${workers.createdAfter}`}
               AND ${
                 workers.archivedBefore === undefined
                   ? sql`t.archived_at IS NULL AND (
