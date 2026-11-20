@@ -1,8 +1,7 @@
 import { it } from "@effect/vitest";
-import { OrchestrationV2ThreadShellJson } from "@t3tools/contracts";
+import { RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 
@@ -12,46 +11,17 @@ import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { workerLive } from "./QuietDelegatesWorker.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 
-const decodeShell = Schema.decodeSync(OrchestrationV2ThreadShellJson);
-
-it.effect("wakes the parent once per quiet stretch", () =>
+it.effect("wakes the parent once per quiet stretch using only the quiet candidate index", () =>
   Effect.gen(function* () {
-    const child = decodeShell({
-      createdBy: "agent",
-      creationSource: "server",
-      id: "child",
-      projectId: "project",
+    const child = {
+      threadId: ThreadId.make("child"),
+      parentThreadId: ThreadId.make("parent"),
+      runId: RunId.make("run"),
       title: "Worker",
-      providerInstanceId: "codex",
-      modelSelection: { instanceId: "codex", model: "model" },
-      runtimeMode: "approval-required",
-      interactionMode: "default",
-      lineage: {
-        parentThreadId: "parent",
-        rootThreadId: "parent",
-        relationshipToParent: "subagent",
-      },
-      forkedFrom: null,
-      latestRunId: "run",
-      activeRunId: "run",
-      status: "running",
-      lastProviderActivityAt: 0,
-      activeProviderThreadId: null,
-      pendingRuntimeRequest: null,
-      latestVisibleMessage: null,
-      latestUserMessageAt: null,
-      hasActionableProposedPlan: false,
-      branch: null,
-      worktreePath: null,
-      itemCount: 0,
-      visibleItemCount: 0,
-      createdAt: "1970-01-01T00:00:00Z",
-      updatedAt: "1970-01-01T00:00:00Z",
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      deletedAt: null,
-    });
+      hasActiveProviderWork: false,
+      runtime: { status: "running" as const },
+    };
+    const getShellSnapshot = vi.fn(() => Effect.die("quiet sweep read the general shell"));
     let latestActivityAt = 0;
     let sweep = Effect.void;
     const dispatch = vi.fn<ThreadManagementService["Service"]["dispatch"]>(() =>
@@ -73,13 +43,9 @@ it.effect("wakes the parent once per quiet stretch", () =>
                 ),
             }),
             Layer.mock(ProjectionStoreV2)({
-              getShellSnapshot: () =>
-                Effect.sync(() => ({
-                  schemaVersion: 2,
-                  snapshotSequence: 1,
-                  threads: [{ ...child, lastProviderActivityAt: latestActivityAt }],
-                  archivedThreads: [],
-                })),
+              getShellSnapshot,
+              getQuietDelegateCandidates: () =>
+                Effect.sync(() => [{ ...child, lastProviderActivityAt: latestActivityAt }]),
             }),
             Layer.mock(ThreadManagementService)({ dispatch }),
             ServerSettings.layerTest({}),
@@ -90,6 +56,7 @@ it.effect("wakes the parent once per quiet stretch", () =>
     yield* TestClock.setTime(599_999);
     yield* sweep;
     expect(dispatch).toHaveBeenCalledTimes(0);
+    expect(getShellSnapshot).not.toHaveBeenCalled();
     yield* TestClock.setTime(600_000);
     yield* sweep;
     yield* sweep;

@@ -105,6 +105,7 @@ import {
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { threadQuietMinutes } from "@t3tools/shared/threadActivity";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -2397,15 +2398,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
   });
 
-  const isStaleQuestionWake = Effect.fn("Orchestrator.isStaleQuestionWake")(function* (
+  const isStaleDelegatedWake = Effect.fn("Orchestrator.isStaleDelegatedWake")(function* (
     projection: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents">,
     messageId: MessageId,
     notification: OrchestrationV2ThreadProjection["messages"][number]["notification"],
   ) {
-    if (notification?.source.kind !== "delegated_task" || notification.outcome !== "updated")
-      return false;
-    const source = notification.source;
     const threadId = projection.thread.id;
+    const source = notification?.source;
+    if (source?.kind === "background_task" && source.quietDelegate !== undefined) {
+      const stamp = source.quietDelegate;
+      const candidates = yield* projectionStore
+        .getQuietDelegateCandidates(stamp.threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      const child = candidates.find(
+        (candidate) =>
+          candidate.parentThreadId === threadId &&
+          candidate.runId === stamp.runId &&
+          candidate.lastProviderActivityAt === stamp.lastProviderActivityAt,
+      );
+      return (
+        child === undefined ||
+        threadQuietMinutes(child, {
+          nowMs: DateTime.toEpochMillis(yield* DateTime.now),
+          quietMinutes: (yield* serverSettings.getSettings.pipe(Effect.orDie)).quietThreadMinutes,
+        }) === null
+      );
+    }
+    if (source?.kind !== "delegated_task" || notification?.outcome !== "updated") return false;
     const task =
       projection.subagents.find((candidate) => source.taskIds.includes(candidate.id)) ??
       // Command projections omit settled tasks whose result was already handed over.
@@ -2436,7 +2455,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
-  const cancelStaleQuestionWakes = Effect.fn("Orchestrator.cancelStaleQuestionWakes")(function* (
+  const cancelStaleDelegatedWakes = Effect.fn("Orchestrator.cancelStaleDelegatedWakes")(function* (
     projection: OrchestrationV2ThreadProjection,
   ) {
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
@@ -2445,14 +2464,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
       if (
         message === undefined ||
-        !(yield* isStaleQuestionWake(projection, message.id, message.notification).pipe(
+        !(yield* isStaleDelegatedWake(projection, message.id, message.notification).pipe(
           // A child thread read must not fail the parent's unrelated next queued run.
           Effect.catchTags({
             OrchestratorProjectionError: (cause) =>
-              Effect.logWarning("Failed to check a queued task question wake", {
+              Effect.logWarning("Failed to check a queued delegated wake", {
                 runId: run.id,
                 cause,
-              }).pipe(Effect.as(false)),
+              }).pipe(Effect.as(message.notification?.source.kind === "background_task")),
           }),
         ))
       )
@@ -2460,7 +2479,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* emitQueuedRunCancellation({
         command: {
           type: "queued-run.cancel",
-          commandId: CommandId.make(`command:system:stale-question:${run.id}`),
+          commandId: CommandId.make(`command:system:stale-delegated-wake:${run.id}`),
           threadId: projection.thread.id,
           runId: run.id,
         },
@@ -2498,7 +2517,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
-      if (yield* cancelStaleQuestionWakes(projection)) {
+      if (yield* cancelStaleDelegatedWakes(projection)) {
         projection = yield* readCommandProjection(threadId);
       }
       let storedQueuedRun =
@@ -7182,7 +7201,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
     }
-    if (yield* isStaleQuestionWake(projection, command.messageId, command.notification)) {
+    if (yield* isStaleDelegatedWake(projection, command.messageId, command.notification)) {
       yield* emit(
         events,
         command,

@@ -1748,6 +1748,145 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
   }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );
 
+it.effect("drops a persisted quiet wake when the child resumes before queue admission", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+    const parentThreadId = ThreadId.make("thread:stale-quiet-parent");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-stale-quiet-parent"),
+      threadId: parentThreadId,
+      projectId: ProjectId.make("project:stale-quiet"),
+      title: "Parent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-stale-quiet-parent"),
+      threadId: parentThreadId,
+      messageId: MessageId.make("message:stale-quiet-parent"),
+      text: "Delegate the proof",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const parentRun = (yield* projections.getThreadProjection(parentThreadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("delegate-stale-quiet-task"),
+      parentThreadId,
+      parentRunId: parentRun.id,
+      parentNodeId: parentRun.rootNodeId!,
+      task: "Capture the proof",
+      completionWake: "settled_only",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const task = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!;
+    const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs[0]!;
+    const startedAt = yield* DateTime.now;
+    const childThreadId = task.childThreadId!;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:quiet-worker-started"),
+          type: "run.updated",
+          threadId: childThreadId,
+          runId: childRun.id,
+          occurredAt: startedAt,
+          payload: { ...childRun, status: "running", startedAt },
+        },
+      ],
+    });
+    yield* TestClock.adjust("10 minutes");
+    const messageId = MessageId.make("message:quiet-worker");
+    // Store the stamp in the message so a fresh queue read can make the same decision.
+    const source = {
+      kind: "background_task",
+      quietDelegate: {
+        threadId: childThreadId,
+        runId: childRun.id,
+        lastProviderActivityAt: DateTime.toEpochMillis(startedAt),
+      },
+    } as const;
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("queue-quiet-worker"),
+      threadId: parentThreadId,
+      messageId,
+      text: "Check the quiet worker",
+      notification: { source, outcome: "updated", summary: "Quiet worker" },
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    const readWake = Effect.map(
+      projections.getThreadRecords(parentThreadId, ["runs"]),
+      ({ runs }) => runs.find((run) => run.userMessageId === messageId),
+    );
+    assert.equal((yield* readWake)?.status, "queued");
+
+    const now = yield* DateTime.now;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:quiet-worker-resumed"),
+          type: "turn-item.updated",
+          threadId: childThreadId,
+          runId: childRun.id,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make("item:quiet-worker-resumed"),
+            threadId: childThreadId,
+            runId: childRun.id,
+            nodeId: childRun.rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            parentItemId: null,
+            nativeItemRef: null,
+            ordinal: 1,
+            startedAt: startedAt,
+            updatedAt: now,
+            completedAt: null,
+            title: null,
+            type: "reasoning",
+            status: "running",
+            streaming: true,
+            text: "Working again",
+          },
+        },
+      ],
+    });
+    yield* projections.apply({
+      id: EventId.make("event:stale-quiet-parent-finished"),
+      type: "run.updated",
+      threadId: parentThreadId,
+      occurredAt: now,
+      payload: { ...parentRun, status: "completed", completedAt: now },
+    });
+    yield* orchestrator.dispatch({
+      type: "queue.resume",
+      commandId: CommandId.make("resume-stale-quiet"),
+      threadId: parentThreadId,
+    });
+    assert.equal((yield* readWake)?.status, "cancelled");
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each([false, true])(
   "drops a stale question wake (missed terminal event: %s)",
   (missedEvent) =>

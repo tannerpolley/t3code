@@ -283,7 +283,8 @@ export function threadActivityFromShell(thread: OrchestrationV2ThreadShell, requ
     runtime: threadActivityShellRuntime(thread),
     interactionMode: thread.interactionMode,
     blockedOnThreadWait: thread.blockedOnThreadWait ?? false,
-    lastProviderActivityAt: thread.lastProviderActivityAt,
+    lastProviderActivityAt:
+      thread.delegatedFrom == null ? thread.lastProviderActivityAt : undefined,
     hasActiveProviderWork:
       thread.hasActiveProviderWork ||
       (!requestVisible && thread.pendingRuntimeRequest !== null) ||

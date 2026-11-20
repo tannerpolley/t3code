@@ -106,6 +106,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import type * as Statement from "effect/sql/Statement";
 
+import { activeQuietWork } from "../persistence/ForkMigrations/031_QuietDelegateActivity.ts";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
@@ -479,7 +480,6 @@ export interface ShellSnapshotOptions {
   readonly location?: "active" | "archive";
   readonly projectId?: ProjectId;
   readonly unsettledOnly?: boolean;
-  readonly runningDelegatesOnly?: boolean;
   /**
    * Only the threads sharing this thread's `lineage.rootThreadId`: the root, its forks, and their
    * subagent trees. The thread may be deleted: forks keep a deleted source's root.
@@ -608,6 +608,18 @@ export interface ProjectionStoreV2Shape {
     threadId?: ThreadId,
   ) => Effect.Effect<
     { readonly snapshotSequence: number; readonly threads: ReadonlyArray<AgentAwarenessThread> },
+    ProjectionStoreV2Error
+  >;
+  readonly getQuietDelegateCandidates: (childThreadId?: ThreadId) => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly parentThreadId: ThreadId;
+      readonly runId: RunId;
+      readonly title: string;
+      readonly lastProviderActivityAt: number;
+      readonly hasActiveProviderWork: boolean;
+      readonly runtime: { readonly status: "running" };
+    }>,
     ProjectionStoreV2Error
   >;
   readonly getShellSnapshot: (
@@ -1236,7 +1248,7 @@ type ShellThreadRow = {
   readonly latest_run_background_wake: number;
   readonly active_run_id: string | null;
   readonly active_run_status: string | null;
-  readonly last_provider_activity_at: string | null;
+  readonly last_provider_activity_at: number | null;
   readonly activity_run_status: string | null;
   readonly activity_run_started_at: string | null;
   readonly last_error: string | null;
@@ -1817,29 +1829,6 @@ const linkCardStillAsks = (
   latestUserAuthoredMessageAt === null ||
   !DateTime.isGreaterThan(latestUserAuthoredMessageAt, item.startedAt ?? item.updatedAt);
 
-function providerActivityForRun(
-  lastRunActivityAt: number,
-  input: {
-    readonly turnItems: readonly OrchestrationV2TurnItem[];
-    readonly providerThreads: OrchestrationV2ThreadProjection["providerThreads"];
-    readonly activeProviderThreadId: OrchestrationV2ThreadProjection["thread"]["activeProviderThreadId"];
-    readonly runs?: OrchestrationV2ThreadProjection["runs"];
-  },
-) {
-  const providerThread = input.providerThreads.find(
-    (thread) => thread.id === input.activeProviderThreadId,
-  );
-  return {
-    lastProviderActivityAt:
-      providerThread === undefined
-        ? lastRunActivityAt
-        : Math.max(lastRunActivityAt, DateTime.toEpochMillis(providerThread.updatedAt)),
-    hasActiveProviderWork:
-      pendingBackgroundTurnItems(input).length > 0 ||
-      (providerThread?.pendingBackgroundTasks?.length ?? 0) > 0,
-  };
-}
-
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
   nativeSubagent: OrchestrationV2Subagent | null = null,
@@ -1970,20 +1959,6 @@ export function threadShellFromProjection(
     latestRunBackgroundWake:
       latestRun != null && isBackgroundWakeRunForShell(latestRun, projection),
     activeRunId: activeRun?.id ?? null,
-    ...(activeRun?.status === "running"
-      ? providerActivityForRun(
-          Math.max(
-            DateTime.toEpochMillis(activeRun.startedAt ?? activeRun.requestedAt),
-            ...projection.turnItems
-              .filter((item) => item.runId === activeRun.id)
-              .map((item) => DateTime.toEpochMillis(item.updatedAt)),
-            ...projection.messages
-              .filter((message) => message.runId === activeRun.id && message.role === "assistant")
-              .map((message) => DateTime.toEpochMillis(message.updatedAt)),
-          ),
-          { ...projection, activeProviderThreadId: projection.thread.activeProviderThreadId },
-        )
-      : {}),
     blockedOnThreadWait: deriveBlockedOnThreadWait({ activeRun, turnItems: projection.turnItems }),
     activityRunStatus: activityRun?.status ?? null,
     activityRunStartedAt:
@@ -2521,6 +2496,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       { readonly sequence: number; readonly index: TimelineIndex }
     >();
 
+    const advanceProviderActivity = (threadId: ThreadId, at: DateTime.Utc) => {
+      const timestamp = DateTime.toEpochMillis(at);
+      return sql`
+        UPDATE orchestration_v2_projection_threads
+        SET last_provider_activity_at = ${timestamp}
+        WHERE thread_id = ${threadId} AND COALESCE(last_provider_activity_at, -1) < ${timestamp}
+      `;
+    };
+
     const apply: ProjectionStoreV2Shape["apply"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
@@ -2625,6 +2609,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             case "run.created":
             case "run.updated": {
+              if (event.payload.status === "running") {
+                yield* advanceProviderActivity(
+                  event.threadId,
+                  event.payload.startedAt ?? event.payload.requestedAt,
+                );
+              }
               if (["starting", "running", "waiting"].includes(event.payload.status)) {
                 yield* sql`UPDATE orchestration_v2_projection_threads
                   SET payload_json = json_remove(payload_json, '$.silentWakeAttention')
@@ -3005,6 +2995,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   UPDATE orchestration_v2_projection_threads
                   SET
                     active_provider_thread_id = ${event.payload.id},
+                    last_provider_activity_at = MAX(
+                      COALESCE(last_provider_activity_at, -1),
+                      ${DateTime.toEpochMillis(event.payload.updatedAt)}
+                    ),
                     updated_at = ${stringField(parseEncodedPayload(updatedThreadPayloadJson), "updatedAt")},
                     payload_json = ${updatedThreadPayloadJson}
                   WHERE thread_id = ${event.payload.appThreadId}
@@ -3109,6 +3103,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 resolved_at = excluded.resolved_at,
                 payload_json = excluded.payload_json
             `;
+              if (event.payload.resolvedAt !== null) {
+                yield* advanceProviderActivity(event.threadId, event.payload.resolvedAt);
+              }
               break;
             }
             case "message.updated": {
@@ -8285,7 +8282,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         location,
         projectId,
         unsettledOnly = false,
-        runningDelegatesOnly = false,
         familyOf,
         worktreePath,
         threadIds,
@@ -8321,21 +8317,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ${isBackgroundWakeShellRun("presented")} AS latest_run_background_wake,
               active.run_id AS active_run_id,
               active.status AS active_run_status,
-              CASE WHEN active.status = 'running' THEN (
-                SELECT MAX(updated_at) FROM (
-                  SELECT COALESCE(json_extract(active.payload_json, '$.startedAt'), active.requested_at)
-                    AS updated_at
-                  UNION ALL
-                  SELECT MAX(activity_item.updated_at)
-                  FROM orchestration_v2_projection_turn_items activity_item
-                  WHERE activity_item.thread_id = t.thread_id AND activity_item.run_id = active.run_id
-                  UNION ALL
-                  SELECT MAX(message.updated_at)
-                  FROM orchestration_v2_projection_messages message
-                  WHERE message.thread_id = t.thread_id AND message.run_id = active.run_id
-                    AND message.role = 'assistant'
-                )
-              ) END AS last_provider_activity_at,
+              CASE WHEN active.status = 'running' THEN t.last_provider_activity_at
+              END AS last_provider_activity_at,
               (
                 SELECT r.status
                 -- Read active runs by status. Walking the ordinal index to skip this sort
@@ -8522,23 +8505,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : sql` AND CASE WHEN json_valid(t.payload_json)
                     THEN json_extract(t.payload_json, '$.worktreePath') END = ${worktreePath}`
             }${threadIds === undefined ? sql`` : sql` AND t.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
-            ${
-              runningDelegatesOnly
-                ? sql`
-              AND active.status = 'running'
-              AND t.archived_at IS NULL
-              AND EXISTS (
-                SELECT 1
-                FROM orchestration_v2_projection_subagents task
-                JOIN orchestration_v2_projection_threads parent ON parent.thread_id = task.thread_id
-                WHERE task.child_thread_id = t.thread_id AND task.origin = 'app_owned'
-                  AND task.status = 'running'
-                  AND parent.deleted_at IS NULL AND parent.archived_at IS NULL
-                  AND parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
-              )
-            `
-                : sql``
-            }
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
 
@@ -9163,14 +9129,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
           ...(row.last_provider_activity_at === null
             ? {}
-            : providerActivityForRun(
-                DateTime.toEpochMillis(DateTime.makeUnsafe(row.last_provider_activity_at)),
-                {
-                  providerThreads: providerThreadsByThreadId.get(thread.id) ?? [],
-                  turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
-                  activeProviderThreadId: thread.activeProviderThreadId,
-                },
-              )),
+            : {
+                lastProviderActivityAt: row.last_provider_activity_at,
+                hasActiveProviderWork:
+                  latestRunStopRequested ||
+                  pendingBackgroundTurnItems({
+                    turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
+                  }).length > 0 ||
+                  (providerThreadsByThreadId
+                    .get(thread.id)
+                    ?.find((provider) => provider.id === thread.activeProviderThreadId)
+                    ?.pendingBackgroundTasks?.length ?? 0) > 0,
+              }),
           activityRunStartedAt:
             row.activity_run_started_at === null
               ? null
@@ -9458,6 +9428,83 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(readShellSnapshotRows(options))
         .pipe(Effect.mapError(shellSnapshotReadError), Effect.flatMap(decodeShellSnapshot));
+
+    const getQuietDelegateCandidates: ProjectionStoreV2Shape["getQuietDelegateCandidates"] =
+      Effect.fn("ProjectionStore.getQuietDelegateCandidates")(
+        function* (childThreadId) {
+          // Quiet wakes only follow a parent on this environment.
+          const rows = yield* sql<{
+            readonly thread_id: string;
+            readonly parent_thread_id: string;
+            readonly run_id: string;
+            readonly title: string;
+            readonly last_provider_activity_at: number;
+            readonly has_active_provider_work: number;
+          }>`
+            SELECT child.thread_id, parent.thread_id AS parent_thread_id, r.run_id, child.title,
+              child.last_provider_activity_at,
+              (EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items work
+                  INDEXED BY orchestration_v2_projection_turn_items_quiet_work_idx
+                WHERE work.thread_id = child.thread_id AND ${sql.literal(activeQuietWork)}
+                  AND (work.run_id IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs undone
+                    WHERE undone.run_id = work.run_id AND undone.status = 'rolled_back'
+                  ))
+              ) OR EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_provider_threads provider
+                  INDEXED BY orchestration_v2_projection_provider_threads_pending_tasks_idx
+                WHERE provider.thread_id = child.thread_id
+                  AND provider.provider_thread_id = child.active_provider_thread_id
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+                    ELSE 0 END
+              ) OR EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+                WHERE request.thread_id = child.thread_id AND request.status = 'pending'
+              )) AS has_active_provider_work
+            FROM orchestration_v2_projection_runs r
+              INDEXED BY orchestration_v2_projection_runs_quiet_idx
+            CROSS JOIN orchestration_v2_projection_threads child ON child.thread_id = r.thread_id
+            JOIN orchestration_v2_projection_subagents task ON task.child_thread_id = child.thread_id
+            JOIN orchestration_v2_projection_threads parent ON parent.thread_id = task.thread_id
+            WHERE r.status = 'running'
+              AND child.last_provider_activity_at IS NOT NULL
+              AND child.archived_at IS NULL AND child.deleted_at IS NULL
+              AND parent.archived_at IS NULL AND parent.deleted_at IS NULL
+              AND task.origin = 'app_owned' AND task.status = 'running'
+              AND CASE WHEN json_valid(child.payload_json) THEN
+                json_extract(child.payload_json, '$.delegatedFrom') IS NULL AND
+                json_extract(child.payload_json, '$.lineage.parentThreadId') = parent.thread_id
+              END
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items stop
+                WHERE stop.thread_id = child.thread_id AND stop.run_id = r.run_id
+                  AND stop.type = 'run_interrupt_request'
+              )
+              ${childThreadId === undefined ? sql`` : sql`AND r.thread_id = ${childThreadId}`}
+          `;
+          return rows.map((row) => ({
+            threadId: ThreadId.make(row.thread_id),
+            parentThreadId: ThreadId.make(row.parent_thread_id),
+            runId: RunId.make(row.run_id),
+            title: row.title,
+            lastProviderActivityAt: row.last_provider_activity_at,
+            hasActiveProviderWork: row.has_active_provider_work !== 0,
+            runtime: { status: "running" as const },
+          }));
+        },
+        (effect, childThreadId) =>
+          effect.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectionStoreReadError({
+                  threadId: childThreadId ?? ThreadId.make("thread:quiet-delegates"),
+                  cause,
+                }),
+            ),
+          ),
+      );
 
     const listActiveSubagentThreadIds = Effect.fn("ProjectionStore.listActiveSubagentThreadIds")(
       function* () {
@@ -9836,6 +9883,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       apply,
       getAgentAwarenessSnapshot: readOnReader(getAgentAwarenessSnapshot),
       getShellSnapshot: readOnReader(getShellSnapshot),
+      getQuietDelegateCandidates: readOnReader(getQuietDelegateCandidates),
       getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       countThreads: readOnReader(countThreads),

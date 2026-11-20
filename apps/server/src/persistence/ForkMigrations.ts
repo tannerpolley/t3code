@@ -8,6 +8,7 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import GuardThreadJsonIndexes from "./ForkMigrations/030_GuardThreadJsonIndexes.ts";
+import QuietDelegateActivity from "./ForkMigrations/031_QuietDelegateActivity.ts";
 import DeduplicateThreadReferences from "./ForkMigrations/027_DeduplicateThreadReferences.ts";
 import IssueWorkQueryPaths from "./ForkMigrations/029_IssueWorkQueryPaths.ts";
 import OpenProviderTurns from "./ForkMigrations/028_OpenProviderTurns.ts";
@@ -72,6 +73,7 @@ export const forkMigrationEntries = [
   [28, "OpenProviderTurns", OpenProviderTurns],
   [29, "IssueWorkQueryPaths", IssueWorkQueryPaths],
   [30, "GuardThreadJsonIndexes", GuardThreadJsonIndexes],
+  [31, "QuietDelegateActivity", QuietDelegateActivity],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.

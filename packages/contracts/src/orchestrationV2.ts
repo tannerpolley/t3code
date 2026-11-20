@@ -1472,7 +1472,17 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
       /** The other pull requests one wake covers; outdated ones leave it before it starts. */
       otherPullRequests: Schema.optional(Schema.Array(MonitorPullRequestStamp)),
     }),
-    Schema.Struct({ ...NotificationSourceFields, kind: Schema.Literal("background_task") }),
+    Schema.Struct({
+      ...NotificationSourceFields,
+      kind: Schema.Literal("background_task"),
+      quietDelegate: Schema.optional(
+        Schema.Struct({
+          threadId: ThreadId,
+          runId: RunId,
+          lastProviderActivityAt: NonNegativeInt,
+        }),
+      ),
+    }),
     Schema.Struct({ ...NotificationSourceFields, kind: Schema.Literal("system") }),
   ],
   (kind) => Schema.Struct({ ...NotificationSourceFields, kind }),
