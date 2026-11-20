@@ -2,6 +2,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2GetThreadFamilyInput,
   type OrchestrationV2ThreadFamily,
   type OrchestrationV2ThreadShell,
   type ThreadId,
@@ -91,8 +92,10 @@ export function createThreadFamilyAtoms<R, ER, E>(
     label: "environment-data:orchestration:thread-family",
     staleTimeMs: Number.POSITIVE_INFINITY,
     idleTtlMs: 60_000,
-    execute: Effect.fn("ThreadFamilies.read")(function* (input: {
-      readonly threadId: ThreadId;
+    execute: Effect.fn("ThreadFamilies.read")(function* ({
+      generation: _generation,
+      ...input
+    }: OrchestrationV2GetThreadFamilyInput & {
       readonly generation: number;
     }) {
       const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
@@ -107,34 +110,83 @@ export function createThreadFamilyAtoms<R, ER, E>(
       const config = yield* session.value.initialConfig;
       // Servers without families send every child in the shell, so absent means gone.
       if (config.shellThreadFamilies !== true) return EMPTY_FAMILY;
-      return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadFamily, {
-        threadId: input.threadId,
-      });
+      return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadFamily, input);
     }),
   });
-  const queryFor = (environmentId: EnvironmentId, threadId: ThreadId, generation: number) =>
-    familyQueryAtom({ environmentId, input: { threadId, generation } });
+  const queryFor = (
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    generation: number,
+    pathOnly = false,
+  ) =>
+    familyQueryAtom({
+      environmentId,
+      input: {
+        threadId,
+        generation,
+        ...(pathOnly ? { pathOnly: true as const } : {}),
+      },
+    });
+
+  const workerPagesAtom = Atom.family((key: string) => {
+    const [environmentId, threadId, exclude, count] = JSON.parse(key) as [
+      EnvironmentId,
+      ThreadId,
+      readonly ThreadId[],
+      number,
+    ];
+    return Atom.make((get): ReadonlyArray<OrchestrationV2ThreadFamily> => {
+      const generation = get(generationAtom(environmentId));
+      if (count === 0 || generation === 0) return EMPTY_READS;
+      const pages: OrchestrationV2ThreadFamily[] = [];
+      let before: OrchestrationV2ThreadFamily["nextWorkerPage"];
+      for (let index = 0; index < count; index++) {
+        const page = selectEnvironmentQueryData(
+          get(
+            familyQueryAtom({
+              environmentId,
+              input: {
+                threadId,
+                generation,
+                workers: { exclude, ...(before === undefined ? {} : { before }) },
+              },
+            }),
+          ),
+        );
+        if (page === null) break;
+        pages.push(page);
+        before = page.nextWorkerPage;
+        if (before === undefined) break;
+      }
+      return pages;
+    }).pipe(Atom.withLabel(`environment-worker-pages:${key}`));
+  });
 
   const familyAtom = Atom.family((key: string) => {
-    const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
+    const [environmentId, threadId, pathOnly] = JSON.parse(key) as [
+      EnvironmentId,
+      ThreadId,
+      boolean,
+    ];
     return Atom.make((get) => {
       const generation = get(generationAtom(environmentId));
       return generation === 0
         ? AWAITING_AUTHORITATIVE_SHELL
-        : get(queryFor(environmentId, threadId, generation));
+        : get(queryFor(environmentId, threadId, generation, pathOnly));
     }).pipe(Atom.withLabel(`environment-thread-family:${key}`));
   });
-  const familyKey = (environmentId: EnvironmentId, threadId: ThreadId) =>
-    JSON.stringify([environmentId, threadId]);
+  const familyKey = (environmentId: EnvironmentId, threadId: ThreadId, pathOnly = false) =>
+    JSON.stringify([environmentId, threadId, pathOnly]);
 
   /** Reads the current generation's family again, so a failed read does not last the session. */
   const refresh = (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
     threadId: ThreadId,
+    pathOnly = false,
   ) => {
     const generation = registry.get(generationAtom(environmentId));
-    if (generation !== 0) registry.refresh(queryFor(environmentId, threadId, generation));
+    if (generation !== 0) registry.refresh(queryFor(environmentId, threadId, generation, pathOnly));
   };
 
   const mountsAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -186,12 +238,13 @@ export function createThreadFamilyAtoms<R, ER, E>(
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
     threadId: ThreadId,
+    pathOnly = false,
   ): (() => void) => {
-    const key = familyKey(environmentId, threadId);
+    const key = familyKey(environmentId, threadId, pathOnly);
     const release = mountRows(registry, environmentId, `family:${key}`, familyRowsAtom(key));
     // Mounting again after a failure retries instead of keeping the failure until reconnect.
     if (threadFamilyRead(registry.get(familyAtom(key))) === "failed") {
-      refresh(registry, environmentId, threadId);
+      refresh(registry, environmentId, threadId, pathOnly);
     }
     return release;
   };
@@ -252,6 +305,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
       familyAtom(familyKey(environmentId, threadId)),
     mount,
     mountRows,
+    workerPagesAtom,
     refresh,
   };
 }

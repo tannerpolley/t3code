@@ -1,9 +1,9 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { ThreadId } from "@t3tools/contracts";
+import { SIDEBAR_WORKER_PAGE_SIZE, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
 import { makeThreadFixture } from "~/test-fixtures";
-import { indexSidebarWorkers, sidebarWorkerPage, WORKER_PAGE_SIZE } from "./SidebarWorkers.logic";
+import { indexSidebarWorkers, sidebarWorkerPage } from "./SidebarWorkers.logic";
 
 it("keeps settled workers under their parent, bounds the initial page, and reveals an older worker", () => {
   const parent = makeThreadFixture({ id: ThreadId.make("parent") });
@@ -27,14 +27,14 @@ it("keeps settled workers under their parent, bounds the initial page, and revea
   expect(indexed.running.size).toBe(0);
   const idle = indexed.children.get(key)!;
   expect(idle).toHaveLength(234);
-  const page = sidebarWorkerPage(idle, WORKER_PAGE_SIZE, new Set());
+  const page = sidebarWorkerPage(idle, SIDEBAR_WORKER_PAGE_SIZE, new Set());
   expect(page).toHaveLength(10);
   expect(page[0]).toBe(newest);
-  expect(sidebarWorkerPage(idle, WORKER_PAGE_SIZE * 2, new Set())).toHaveLength(20);
+  expect(sidebarWorkerPage(idle, SIDEBAR_WORKER_PAGE_SIZE * 2, new Set())).toHaveLength(20);
 
   const restored = indexSidebarWorkers([parent, ...children]).children.get(key)!;
   expect(restored).toHaveLength(235);
-  const revealed = sidebarWorkerPage(restored, WORKER_PAGE_SIZE, new Set([oldest!.id]));
+  const revealed = sidebarWorkerPage(restored, SIDEBAR_WORKER_PAGE_SIZE, new Set([oldest!.id]));
   expect(revealed).toHaveLength(10);
   expect(revealed).toContain(oldest);
 });

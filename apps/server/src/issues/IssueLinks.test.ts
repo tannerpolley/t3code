@@ -640,12 +640,12 @@ it.effect("does not count stale active IDs or parked background work as a runnin
       [{ ...base, status: "completed" as const, activityRunStatus: "running" as const }, "working"],
       [{ ...base, status: "completed" as const }, "idle"],
       [{ ...base, status: "interrupted" as const }, "idle"],
-      [{ ...base, status: "interrupted" as const, latestRunStopRequested: true }, "idle", true],
+      [{ ...base, status: "interrupted" as const, explicitStopRequested: true }, "idle", true],
       [
         {
           ...base,
           status: "interrupted" as const,
-          latestRunStopRequested: true,
+          explicitStopRequested: true,
           activityRunStatus: "running" as const,
         },
         "working",

@@ -28,10 +28,9 @@ import {
 } from "../threadRoutes";
 
 /**
- * Keeps the family of an open thread the shell leaves out (an older settled thread) in the shell
- * rows until the route leaves it, so every reader of its shell row finds it.
+ * Keeps an omitted thread and its ancestors mounted until the route leaves it.
  */
-function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean) {
+function useOpenThreadPath(threadRef: ScopedThreadRef | null, missing: boolean) {
   const key = threadRef === null ? null : scopedThreadKey(threadRef);
   // Sticks to the route thread, so the row the family brings in does not release it.
   const [mountedKey, setMountedKey] = useState<string | null>(null);
@@ -41,7 +40,7 @@ function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean
   useEffect(() => {
     const ref = mountedKey === null ? null : parseScopedThreadKey(mountedKey);
     if (ref === null) return;
-    return threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId);
+    return threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId, true);
   }, [mountedKey]);
 }
 
@@ -108,7 +107,7 @@ export function ThreadRouteView({
     unlistedThreadRef?.environmentId ?? null,
     unlistedThreadRef?.threadId ?? null,
   );
-  useOpenThreadFamily(serverThreadRef, bootstrapComplete && unlistedThreadRef !== null);
+  useOpenThreadPath(serverThreadRef, bootstrapComplete && unlistedThreadRef !== null);
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
   const unlistedParentKey =

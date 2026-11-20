@@ -435,6 +435,15 @@ describe("resolveThreadStatusPill", () => {
     },
   };
 
+  it("shows an explicit pause in the command palette", () => {
+    const thread = {
+      ...baseThread,
+      runtime: null,
+      source: { status: "interrupted", archivedAt: null, explicitStopRequested: true } as const,
+    };
+    expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: "Paused", pulse: false });
+  });
+
   it("shows an active thread wait without a pulse and resumes Working when it ends", () => {
     const blocked = { ...baseThread, blockedOnThreadWait: true };
     expect(resolveSidebarThreadStatus(blocked)).toBe("waiting");

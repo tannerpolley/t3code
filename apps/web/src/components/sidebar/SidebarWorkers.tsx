@@ -1,31 +1,32 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import {
-  arrayElementsEqual,
-  parseThreadKey,
-  threadKey,
-} from "@t3tools/client-runtime/state/entities";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
+import { SIDEBAR_WORKER_PAGE_SIZE, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import { useParams } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
 import { useGT } from "gt-react";
 import { CornerDownRightIcon } from "lucide-react";
 import { useEffect, useState, type MouseEvent } from "react";
 
-import { useThreadRouteRef } from "../../hooks/useThreadRouteTarget";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { cn } from "../../lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentSnapshotAtom } from "../../state/shell";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { environmentThreadShells, threadFamilies } from "../../state/threads";
 import type { SidebarThreadSummary } from "../../types";
-import { resolveSidebarThreadStatus } from "../Sidebar.logic";
+import { resolveThreadRouteRef } from "../../threadRoutes";
+import { resolveSidebarThreadStatus, useSidebarRowSubscriptionLease } from "../Sidebar.logic";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { ThreadStatusMark } from "../ThreadStatusMark";
-import { indexSidebarWorkers, sidebarWorkerPage, WORKER_PAGE_SIZE } from "./SidebarWorkers.logic";
+import { indexSidebarWorkers, sidebarWorkerPage } from "./SidebarWorkers.logic";
 
 const sidebarWorkers = Atom.map(environmentThreadShells.quietThreadShellsAtom, indexSidebarWorkers);
 const omittedFamilies = Atom.family((environmentId: EnvironmentId) =>
-  Atom.map(environmentSnapshotAtom(environmentId), (snapshot) => snapshot?.omittedWorkers),
+  Atom.map(
+    Atom.map(environmentSnapshotAtom(environmentId), (snapshot) => snapshot?.omittedWorkers),
+    (omitted) => new Map(omitted?.map(({ parentThreadId, count }) => [parentThreadId, count])),
+  ),
 );
 const EMPTY: readonly SidebarThreadSummary[] = [];
 const childrenFor = Atom.family((key: string) =>
@@ -45,65 +46,81 @@ const childrenFor = Atom.family((key: string) =>
     ),
   ),
 );
-const routePathFor = Atom.family((key: string) => {
-  const ref = parseThreadKey(key);
-  return Atom.map(
-    environmentThreadShells.environmentThreadIndexAtom(ref.environmentId),
-    (threads): ReadonlySet<string> => {
-      const path = new Set<string>();
-      let id: typeof ref.threadId | null = ref.threadId;
-      while (id !== null && !path.has(id)) {
-        path.add(id);
-        id = threads.get(id)?.lineage.parentThreadId ?? null;
-      }
-      return path;
-    },
-  ).pipe(
-    Atom.withEquality<ReadonlySet<string>>(
-      (a, b) => a.size === b.size && [...a].every((id) => b.has(id)),
-    ),
-  );
-});
-const NO_ROUTE_PATH = Atom.make<ReadonlySet<string>>(new Set<string>());
-
 type WorkerRowsProps = {
   readonly thread: SidebarThreadSummary;
   readonly includeRunning?: boolean;
-  readonly onClick: (event: MouseEvent<HTMLButtonElement>, ref: ScopedThreadRef) => void;
-  readonly onContextMenu: (ref: ScopedThreadRef, position: { x: number; y: number }) => void;
+  readonly onClick: (event: MouseEvent<HTMLButtonElement>, thread: SidebarThreadSummary) => void;
+  readonly onContextMenu: (
+    thread: SidebarThreadSummary,
+    position: { x: number; y: number },
+  ) => void;
 };
-
-/** Visible sidebar parents lease their family; the socket keeps the idle rows out of its snapshot. */
-export function SidebarWorkerFamily(props: WorkerRowsProps) {
-  const { environmentId, id, lineage } = props.thread;
-  const omitted = useAtomValue(omittedFamilies(environmentId));
-  const shouldRead = omitted?.some((entry) => entry.rootThreadId === lineage.rootThreadId) === true;
-  const rootId = lineage.rootThreadId;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leases on-demand family rows in the shared shell while their sidebar parent is visible
-  useEffect(() => {
-    if (shouldRead) return threadFamilies.mount(appAtomRegistry, environmentId, rootId);
-  }, [shouldRead, environmentId, rootId]);
-  return <SidebarWorkerRows key={id} {...props} />;
-}
 
 export function SidebarWorkerRows(props: WorkerRowsProps) {
   const gt = useGT();
   const { environmentId, id } = props.thread;
   const key = scopedThreadKey(scopeThreadRef(environmentId, id));
   const { idle, running } = useAtomValue(childrenFor(key));
-  const route = useThreadRouteRef();
-  const routePath = useAtomValue(
-    route?.environmentId === environmentId ? routePathFor(threadKey(route)) : NO_ROUTE_PATH,
-  );
-  const [limit, setLimit] = useState(WORKER_PAGE_SIZE);
+  const omitted = useAtomValue(omittedFamilies(environmentId));
+  const omittedCount = omitted.get(id) ?? 0;
+  const { rowRef, leaseLiveStatus: nearViewport } = useSidebarRowSubscriptionLease(false);
+  const listRef = useStableCallback(rowRef);
+  const [exclude, setExclude] = useState<readonly ThreadId[] | null>(null);
+  if (exclude === null && omittedCount > 0 && nearViewport) {
+    setExclude(running.slice(0, 100).map((worker) => worker.id));
+  }
+  const [count, setCount] = useState(1);
+  const pageKey = JSON.stringify([environmentId, id, exclude ?? [], exclude === null ? 0 : count]);
+  const pageAtom = threadFamilies.workerPagesAtom(pageKey);
+  const pages = useAtomValue(pageAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- merges the mounted pages with authoritative shell deltas
+  useEffect(() => {
+    if (exclude !== null)
+      return threadFamilies.mountRows(appAtomRegistry, environmentId, pageKey, pageAtom);
+  }, [exclude, environmentId, pageKey, pageAtom]);
+  const limit = count * SIDEBAR_WORKER_PAGE_SIZE;
+  const selectedOutsidePage = useParams({
+    strict: false,
+    select: (params) => {
+      const route = resolveThreadRouteRef(params);
+      if (idle.length <= limit || route?.environmentId !== environmentId) return null;
+      const threads = appAtomRegistry.get(
+        environmentThreadShells.environmentThreadIndexAtom(environmentId),
+      );
+      const visited = new Set<ThreadId>();
+      let candidate: ThreadId | null = route.threadId;
+      while (candidate !== null && !visited.has(candidate)) {
+        const index = idle.findIndex((worker) => worker.id === candidate);
+        if (index >= 0) return index >= limit ? candidate : null;
+        visited.add(candidate);
+        candidate = threads.get(candidate)?.lineage.parentThreadId ?? null;
+      }
+      return null;
+    },
+  });
   const workers = [
     ...(props.includeRunning ? running : EMPTY),
-    ...sidebarWorkerPage(idle, limit, routePath),
+    ...sidebarWorkerPage(
+      idle,
+      limit,
+      selectedOutsidePage === null ? new Set() : new Set([selectedOutsidePage]),
+    ),
   ];
-  if (workers.length === 0) return null;
+  const lastPage = pages.at(-1);
+  const next = lastPage?.nextWorkerPage !== undefined;
+  const waitingForPage =
+    exclude !== null && (lastPage === undefined || (next && pages.length < count));
+  const showMore = !waitingForPage && (idle.length > limit || next);
+  const remaining = Math.max(
+    idle.length - limit,
+    omittedCount - pages.reduce((total, page) => total + page.threads.length, 0),
+    1,
+  );
+  if (workers.length === 0 && omittedCount === 0) return null;
   return (
     <ul
-      className="ms-3 border-s border-sidebar-border/60 ps-1"
+      ref={listRef}
+      className="ms-3 min-h-px border-s border-sidebar-border/60 ps-1"
       onPointerDown={(event) => event.stopPropagation()}
     >
       {workers.map((worker) => (
@@ -115,21 +132,20 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
           <SidebarWorkerButton
             thread={worker}
             parent={key}
-            active={route?.environmentId === environmentId && route.threadId === worker.id}
             onClick={props.onClick}
             onContextMenu={props.onContextMenu}
           />
           <SidebarWorkerRows {...props} thread={worker} />
         </li>
       ))}
-      {idle.length > limit ? (
+      {showMore ? (
         <li className="list-none">
           <button
             type="button"
             className="w-full cursor-pointer rounded-md px-2 py-0.5 text-start text-xs text-muted-foreground hover:bg-sidebar-row-hover hover:text-foreground"
-            onClick={() => setLimit((current) => current + WORKER_PAGE_SIZE)}
+            onClick={() => setCount((current) => current + 1)}
           >
-            {gt("Show more workers ({count})", { count: idle.length - limit })}
+            {gt("Show more workers ({count})", { count: remaining })}
           </button>
         </li>
       ) : null}
@@ -139,11 +155,15 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
 
 function SidebarWorkerButton(
   props: Pick<WorkerRowsProps, "thread" | "onClick" | "onContextMenu"> & {
-    readonly active: boolean;
     readonly parent: string;
   },
 ) {
-  const { active, thread } = props;
+  const { thread } = props;
+  const active = useParams({
+    strict: false,
+    select: (params) =>
+      params.environmentId === thread.environmentId && params.threadId === thread.id,
+  });
   const ref = scopeThreadRef(thread.environmentId, thread.id);
   const key = scopedThreadKey(ref);
   const selected = useThreadSelectionStore((store) => store.selectedThreadKeys.has(key));
@@ -160,10 +180,10 @@ function SidebarWorkerButton(
         selected && "bg-sidebar-row-selected",
         active && "bg-sidebar-row-active text-sidebar-foreground",
       )}
-      onClick={(event) => props.onClick(event, ref)}
+      onClick={(event) => props.onClick(event, thread)}
       onContextMenu={(event) => {
         event.preventDefault();
-        props.onContextMenu(ref, { x: event.clientX, y: event.clientY });
+        props.onContextMenu(thread, { x: event.clientX, y: event.clientY });
       }}
     >
       <CornerDownRightIcon aria-hidden className="size-3 shrink-0" />

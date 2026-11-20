@@ -257,8 +257,7 @@ export function isExplicitlyPausedThread(
   thread: Pick<
     OrchestrationV2ThreadShell,
     | "status"
-    | "latestRunStopRequested"
-    | "cancelledAfterStop"
+    | "explicitStopRequested"
     | "activityRunStatus"
     | "pendingBackgroundTasks"
     | "archivedAt"
@@ -266,8 +265,8 @@ export function isExplicitlyPausedThread(
 ): boolean {
   return (
     thread.archivedAt === null &&
-    ((thread.status === "interrupted" && thread.latestRunStopRequested === true) ||
-      (thread.status === "cancelled" && thread.cancelledAfterStop === true)) &&
+    (thread.status === "interrupted" || thread.status === "cancelled") &&
+    thread.explicitStopRequested === true &&
     thread.activityRunStatus == null &&
     !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
   );
