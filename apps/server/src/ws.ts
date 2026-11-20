@@ -272,7 +272,11 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
-import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import {
+  failEnvironmentAuthInvalid,
+  failEnvironmentInternal,
+  failEnvironmentInvalidRequest,
+} from "./auth/http.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -1006,13 +1010,17 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             })
           : threadManagement.getThreadSnapshot(input.threadId)
       ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestrationV2GetThreadProjectionError({
+        Effect.catch(
+          Effect.fnUntraced(function* (cause) {
+            if (ThreadManagementService.isThreadSnapshotTooLarge(cause)) {
+              return yield* failEnvironmentInvalidRequest("thread_snapshot_too_large");
+            }
+            return yield* new OrchestrationV2GetThreadProjectionError({
               threadId: input.threadId,
               message: `Failed to load orchestration V2 thread ${input.threadId}`,
               cause,
-            }),
+            });
+          }),
         ),
       );
       const { snapshotSequence } = snapshot;

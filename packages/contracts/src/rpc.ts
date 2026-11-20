@@ -100,6 +100,7 @@ import {
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
+import { EnvironmentRequestInvalidError } from "./environmentHttp.ts";
 import { ClientActivityReportInput } from "./background.ts";
 import {
   FilesystemGetMetadataInput,
@@ -2130,7 +2131,11 @@ const WsOrchestrationV2SubscribeShellRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.
 const WsOrchestrationV2SubscribeThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeThread, {
   payload: OrchestrationV2RpcSchemas.subscribeThread.input,
   success: OrchestrationV2RpcSchemas.subscribeThread.output,
-  error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    OrchestrationV2GetThreadProjectionError,
+    EnvironmentRequestInvalidError,
+    EnvironmentAuthorizationError,
+  ]),
   stream: true,
 });
 
