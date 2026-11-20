@@ -92,6 +92,7 @@ export const makeBranchPullRequestDiscovery = Effect.gen(function* () {
     // Post-turn discovery refreshes 15-minute identity caches because agents may add remotes.
     const repositoryIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
       refresh: options.refresh,
+      recoverFailure: false,
     });
     const repository = sourceControlDefinitions.repositorySelector(repositoryIdentity);
     if (thread.branch !== null && repository === null) return null;
