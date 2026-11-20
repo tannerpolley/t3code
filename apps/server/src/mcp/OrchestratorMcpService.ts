@@ -1528,12 +1528,14 @@ const make = Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
+      const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+      const now = yield* Clock.currentTimeMillis;
       const roles = modelRoleStatuses(
         resolveModelRoles(settings),
         providers,
-        yield* loadOrchestrationCapableInstanceIds(),
-        yield* Clock.currentTimeMillis,
-        providerCreditStatuses(providers, settings.providerCreditsApproved),
+        orchestrationCapableInstanceIds,
+        now,
+        providerCreditStatuses(providers, settings.providerCreditsApproved, now),
         usageSprint,
       );
       return roleDefaultTarget(
@@ -2632,12 +2634,17 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
       const usageSprint = parent === undefined ? undefined : yield* loadUsageSprint(parent.thread);
-      const providerCredits = providerCreditStatuses(providers, settings.providerCreditsApproved);
+      const now = yield* Clock.currentTimeMillis;
+      const providerCredits = providerCreditStatuses(
+        providers,
+        settings.providerCreditsApproved,
+        now,
+      );
       const modelRoles = modelRoleStatuses(
         resolveModelRoles(settings),
         providers,
         orchestrationCapableInstanceIds,
-        yield* Clock.currentTimeMillis,
+        now,
         providerCredits,
         usageSprint,
       );

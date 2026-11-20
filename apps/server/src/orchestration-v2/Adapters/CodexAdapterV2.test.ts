@@ -7838,12 +7838,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedClass: "usage_limit",
     },
     { name: "retry", code: "usageLimitExceeded", notification: true, expectedClass: "usage_limit" },
-    // A proxy such as CLIProxyAPI strips the snapshot, so only the error text carries the reset.
+    // The cached monthly cap has already reset, so use the retry time in the error.
     {
       name: "message-reset",
       code: "usageLimitExceeded",
       message:
         "You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Nov 11th, 2033 3:37 PM.",
+      failedAt: Date.parse("2033-11-10T12:00:00Z"),
+      individualLimit: {
+        limit: "12",
+        used: "12",
+        remainingPercent: 0,
+        resetsAt: Date.parse("2033-11-09T12:00:00Z") / 1000,
+      },
       notification: false,
       expectedClass: "usage_limit",
     },
@@ -8010,6 +8017,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     })),
   ] as const)("classifies Codex terminal failures from $name evidence", (scenario) =>
     Effect.gen(function* () {
+      if ("failedAt" in scenario) {
+        yield* TestClock.setTime(scenario.failedAt);
+      }
       const nativeThreadId = `native-limit-${scenario.name}`;
       const nativeTurnId = `turn-limit-${scenario.name}`;
       const message = "message" in scenario ? scenario.message : "Provider stopped this request.";
@@ -8063,6 +8073,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         scenario: `codex-limit-${scenario.name}`,
         entries: [
           ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+          ...("individualLimit" in scenario
+            ? [
+                {
+                  ...snapshot,
+                  frame: {
+                    ...snapshot.frame,
+                    params: {
+                      rateLimits: {
+                        limitId: "codex",
+                        individualLimit: scenario.individualLimit,
+                      },
+                    },
+                  },
+                },
+              ]
+            : []),
           ...("usedBefore" in scenario
             ? [
                 {
@@ -8180,6 +8206,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 threadId: nativeThreadId,
                 turn: {
                   ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                  ...("failedAt" in scenario ? { completedAt: scenario.failedAt / 1000 } : {}),
                   error: {
                     message:
                       "terminalMessage" in scenario

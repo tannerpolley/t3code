@@ -93,7 +93,7 @@ export function usageLimitSwitchTarget(
     providers,
     capableIds,
     now,
-    providerCreditStatuses(providers, settings.providerCreditsApproved),
+    providerCreditStatuses(providers, settings.providerCreditsApproved, now),
     undefined,
     "weekly-headroom",
   );

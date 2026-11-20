@@ -13,6 +13,7 @@ import type {
 } from "effect-codex-app-server/schema";
 
 import { clampPercent, makeUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
 
 type AppServerRateLimits = V2GetAccountRateLimitsResponse["rateLimits"];
 
@@ -207,12 +208,15 @@ export function mergeCodexRateLimits(
   };
 }
 
-/** All exhausted windows must reset before a continuation can run. */
+/** All active exhausted windows must reset before a continuation can run. */
 export function codexUsageLimitResetAt(
   snapshot: CodexRateLimitSnapshot | undefined,
+  now: number,
 ): string | null {
   if (!snapshot) return null;
-  const windows = codexRateLimitsToWindows(snapshot).filter((window) => window.usedPercent >= 100);
+  const windows = codexRateLimitsToWindows(snapshot).filter(
+    (window) => window.usedPercent >= 100 && !isUsageWindowStale(window, now),
+  );
   if (windows.length === 0 || windows.some((window) => !window.resetsAt)) return null;
   return windows.reduce<string | null>(
     (latest, window) =>

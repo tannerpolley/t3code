@@ -1066,10 +1066,6 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   };
 }
 
-function selectInlineCode(event: React.MouseEvent<HTMLElement>) {
-  window.getSelection()?.selectAllChildren(event.currentTarget);
-}
-
 const CHAT_MARKDOWN_COMPONENTS = {
   h1: markdownHeadingRenderer(1),
   h2: markdownHeadingRenderer(2),
@@ -1509,7 +1505,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       }
       // Inside a link the click belongs to the link.
       return inLink ? (
-        <code {...props} className={className} onDoubleClick={selectInlineCode}>
+        <code {...props} className={className}>
           {children}
         </code>
       ) : (

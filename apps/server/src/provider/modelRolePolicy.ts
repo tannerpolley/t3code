@@ -85,6 +85,7 @@ const MIN_WEEKLY_HEADROOM = 0.8;
 export function providerCreditStatuses(
   providers: ReadonlyArray<ServerProvider>,
   approved: ServerSettings["providerCreditsApproved"],
+  now: number,
 ): ReadonlyArray<OrchestratorMcpProviderCredits> {
   return TIER_PROVIDERS.map((id) => {
     const providerInstanceId = TIER_PROVIDER_INSTANCES[id];
@@ -101,7 +102,12 @@ export function providerCreditStatuses(
         : remainingPercent(spend);
     const monthlyCreditLimitReached =
       id === "codex" &&
-      limits?.windows.some((window) => window.id === "individual" && window.usedPercent >= 100);
+      limits?.windows.some(
+        (window) =>
+          window.id === "individual" &&
+          window.usedPercent >= 100 &&
+          !isUsageWindowStale(window, now),
+      );
     const creditsAvailable = monthlyCreditLimitReached
       ? false
       : credits?.hasCredits || credits?.unlimited || (extraUsageRemainingPercent ?? 0) > 0

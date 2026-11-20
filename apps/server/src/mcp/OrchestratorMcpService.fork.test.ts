@@ -594,7 +594,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         snapshots,
         new Set([codexInstanceId, claude]),
         modelRoleStatusNow,
-        providerCreditStatuses(snapshots, { claude: false, codex: approved }),
+        providerCreditStatuses(snapshots, { claude: false, codex: approved }, modelRoleStatusNow),
       );
     assert.equal(ranked(providers(93, 3), false)[0]?.targets[0].providerInstanceId, claude);
     assert.equal(ranked(providers(93, 3), true)[0]?.targets[0].providerInstanceId, codexInstanceId);
@@ -628,29 +628,37 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
-  it("reports a positive Codex balance as unspendable at the monthly credit cap", () => {
-    const codex: ServerProvider = {
-      ...providerSnapshot({
-        instanceId: codexInstanceId,
-        driver: ProviderDriverKind.make("codex"),
-        model: "sol",
-      }),
-      usageLimits: codexRateLimitsToLimits({
-        checkedAt: modelRoleStatusCheckedAt,
-        snapshot: {
-          credits: { hasCredits: true, unlimited: false, balance: "12" },
-          individualLimit: {
-            remainingPercent: 0,
-            resetsAt: Date.parse(modelRoleStatusResetAt(0.7)) / 1000,
+  it.each([
+    { window: "active", timeLeft: 0.7, creditsAvailable: false },
+    { window: "expired", timeLeft: -0.1, creditsAvailable: true },
+  ])(
+    "checks spendable Codex credits at an $window monthly cap",
+    ({ timeLeft, creditsAvailable }) => {
+      const codex: ServerProvider = {
+        ...providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          model: "sol",
+        }),
+        usageLimits: codexRateLimitsToLimits({
+          checkedAt: modelRoleStatusCheckedAt,
+          snapshot: {
+            credits: { hasCredits: true, unlimited: false, balance: "12" },
+            individualLimit: {
+              remainingPercent: 0,
+              resetsAt: Date.parse(modelRoleStatusResetAt(timeLeft)) / 1000,
+            },
           },
-        },
-      }),
-    };
-    const status = providerCreditStatuses([codex], { claude: false, codex: true }).find(
-      (entry) => entry.providerInstanceId === codexInstanceId,
-    );
-    assert.include(status, { approved: true, balance: "12", creditsAvailable: false });
-  });
+        }),
+      };
+      const status = providerCreditStatuses(
+        [codex],
+        { claude: false, codex: true },
+        modelRoleStatusNow,
+      ).find((entry) => entry.providerInstanceId === codexInstanceId);
+      assert.include(status, { approved: true, balance: "12", creditsAvailable });
+    },
+  );
 
   it("keeps configured order unless headroom is below the threshold", () => {
     const instance = (id: string) => ProviderInstanceId.make(id);
