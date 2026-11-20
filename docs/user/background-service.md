@@ -172,10 +172,10 @@ For failures after signing in to T3 Connect, see
 ## Reclaim database space
 
 T3 Code removes superseded internal history while it runs and returns freed pages
-to disk each minute. Once a day it deletes threads untouched for seven days that
-are archived, or are subagent threads whose parent is not running. Deleted
-threads are purged a day later once nothing retained references them. Messages are kept; [old tool output](#stored-tool-output)
-has a retention window.
+to disk each minute. [Archived workers](./thread-sidebar.md#archived-workers)
+are deleted after their retention period. Deleted threads and their history are
+purged after a day once nothing retained references them. [Old tool output](#stored-tool-output)
+has its own retention window.
 
 On the first startup that needs it, T3 enables automatic database shrinking.
 This appears as a database migration and can take time on a large database.

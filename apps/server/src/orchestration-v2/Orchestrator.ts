@@ -239,7 +239,7 @@ import {
   usageLimitSwitchMessageId,
   usageLimitRecoveryPending,
 } from "./usageLimitRecoveryPending.ts";
-import { isSnoozed } from "./ThreadSettlementService.ts";
+import { isIdleWorker, isSnoozed } from "./ThreadSettlementService.ts";
 import {
   makeForkDelegatedCompletion,
   completionCohort,
@@ -4945,7 +4945,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           };
         case "thread.unarchive":
-          return { ...thread, archivedAt: null, updatedAt: now };
+          return {
+            ...thread,
+            archivedAt: null,
+            ...(thread.lineage.relationshipToParent === "subagent"
+              ? { workerUnarchivedAt: DateTime.formatIso(now) }
+              : {}),
+            updatedAt: now,
+          };
         case "thread.settle": {
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
@@ -15798,6 +15805,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
           );
         });
+        if (command.workerDeleteArchivedAt !== undefined) {
+          const { archivedWorkerRetentionDays } = yield* serverSettings.getSettings.pipe(
+            mapDispatchError(command),
+          );
+          if (archivedWorkerRetentionDays === null || sideChatIds.length > 0) {
+            return { events: [], effects: [] };
+          }
+          const [worker] = yield* projectionStore
+            .getSettlementCandidates(command.threadId, {
+              archivedBefore: DateTime.subtract(now, { days: archivedWorkerRetentionDays }),
+            })
+            .pipe(mapDispatchError(command));
+          if (
+            worker?.archivedAt == null ||
+            DateTime.toEpochMillis(worker.archivedAt) !==
+              DateTime.toEpochMillis(command.workerDeleteArchivedAt) ||
+            !isIdleWorker(worker, now)
+          )
+            return { events: [], effects: [] };
+        }
         // Checked under the thread lock: a message sent since the client looked keeps the thread.
         if (command.onlyIfUnused === true) {
           const usage = yield* projectionStore
@@ -15828,6 +15855,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
       }
       case "thread.archive":
+        if (command.workerArchiveSequence !== undefined) {
+          const [worker] = yield* projectionStore
+            .getSettlementCandidates(command.threadId, {})
+            .pipe(mapDispatchError(command));
+          if (
+            worker === undefined ||
+            worker.workerArchiveSequence !== command.workerArchiveSequence ||
+            !isIdleWorker(worker, yield* DateTime.now)
+          )
+            return { events: [], effects: [] };
+        }
+        yield* dispatchThreadMutation(command, events, effects);
+        break;
       case "thread.unarchive":
       case "thread.settle":
       case "thread.unsettle":
@@ -16295,7 +16335,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.type === "subagent.stop" ||
             // Closing a share again, or after it ended, is not an error.
             command.type === "thread.guest-share.close" ||
-            (command.type === "thread.delete" && command.onlyIfUnused === true),
+            (command.type === "thread.archive" && command.workerArchiveSequence !== undefined) ||
+            (command.type === "thread.delete" &&
+              (command.onlyIfUnused === true || command.workerDeleteArchivedAt !== undefined)),
           (_planned) =>
             new OrchestratorDispatchError({
               commandId: command.commandId,

@@ -135,6 +135,18 @@ export function threadHasQueuedTurnStart(
   ].every((value) => value === null || value < messageAtMs);
 }
 
+export function isIdleWorker(
+  worker: ProjectionStore.ProjectionSettlementCandidate,
+  now: DateTime.Utc,
+): boolean {
+  return (
+    !worker.workerArchiveBlocked &&
+    (worker.pendingGuestMessageCount ?? 0) === 0 &&
+    (worker.pendingBackgroundTasks?.length ?? 0) === 0 &&
+    !threadHasQueuedTurnStart(worker, DateTime.toEpochMillis(now))
+  );
+}
+
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
@@ -265,7 +277,9 @@ export function resolveAutoSettlementAt(input: {
 export class ThreadSettlementServiceV2 extends Context.Service<
   ThreadSettlementServiceV2,
   {
-    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+    readonly start: (
+      archiveWorker?: (threadId: ThreadId) => Effect.Effect<void>,
+    ) => Effect.Effect<void, never, Scope.Scope>;
     readonly drain: Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/ThreadSettlementService/ThreadSettlementServiceV2") {}
@@ -655,6 +669,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+  let archiveWorker: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   let fullSweepPending = false;
   // A thread that just stopped must not wait behind a full sweep or another thread's host
   // reads: clients hold it in Working only briefly, so a late settle makes it appear and then vanish.
@@ -677,6 +692,7 @@ export const make = Effect.gen(function* () {
     threadId: ThreadId,
   ): Effect.Effect<void, Effect.Error<ReturnType<typeof runSweep>>> =>
     Effect.sync(() => threadSweepStates.set(threadId, "running")).pipe(
+      Effect.andThen(Effect.suspend(() => archiveWorker(threadId))),
       Effect.andThen(runSweep(null, threadId)),
       threadSweepSlots.withPermits(1),
       Effect.andThen(
@@ -801,7 +817,8 @@ export const make = Effect.gen(function* () {
 
   const start: ThreadSettlementServiceV2["Service"]["start"] = Effect.fn(
     "ThreadSettlementServiceV2.start",
-  )(function* () {
+  )(function* (archive) {
+    if (archive !== undefined) archiveWorker = archive;
     const settingsChanges = yield* settingsService.subscribeChanges;
     const mergedPullRequests = yield* pullRequests.subscribeMerges;
     const events = orchestrator.streamDomainEvents;
