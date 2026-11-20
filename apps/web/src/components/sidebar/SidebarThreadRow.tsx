@@ -8,6 +8,7 @@ import type { ProjectFolderAppearance } from "../../projectFolderAppearance";
 import { useProjectFolderAppearance } from "../../projectFolderAppearance";
 import { shortModelName } from "../chat/ForkModelNames";
 import { SidebarThreadTime } from "./SidebarThreadTime";
+import { SidebarWorkerFamily } from "./SidebarWorkers";
 import { IssueInboxBadge } from "../issues/IssueInbox";
 import { useAtomMount } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
@@ -49,6 +50,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotDashedIcon,
+  CirclePauseIcon,
   ClockIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
@@ -512,6 +514,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 };
 
 const TOP_STATUS_ICONS = {
+  paused: CirclePauseIcon,
   working: CircleDashedIcon,
   waiting: CircleDotDashedIcon,
   input: MessageCircleQuestionIcon,
@@ -833,19 +836,25 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       icon: "failed" as const,
                       className: "text-error-foreground",
                     }
-                  : isWoke
+                  : status === "paused"
                     ? {
-                        label: "Woke",
-                        icon: "woke" as const,
+                        label: gt("Paused"),
+                        icon: "paused" as const,
                         className: "text-warning-foreground",
                       }
-                    : isUnread
+                    : isWoke
                       ? {
-                          label: "Done",
-                          icon: "done" as const,
-                          className: "text-success-foreground",
+                          label: "Woke",
+                          icon: "woke" as const,
+                          className: "text-warning-foreground",
                         }
-                      : null;
+                      : isUnread
+                        ? {
+                            label: "Done",
+                            icon: "done" as const,
+                            className: "text-success-foreground",
+                          }
+                        : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
@@ -1201,6 +1210,15 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     )
   ) : null;
 
+  const workers = (
+    <SidebarWorkerFamily
+      thread={thread}
+      includeRunning={variant !== "columns"}
+      onClick={props.onThreadClick}
+      onContextMenu={(ref, position) => props.onContextMenu(ref, position, "mouse")}
+    />
+  );
+
   if (variant === "columns" && props.columns) {
     const columns = props.columns;
     return (
@@ -1249,6 +1267,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           {detailsTooltip}
         </Tooltip>
         {columns.after}
+        {workers}
       </li>
     );
   }
@@ -1305,6 +1324,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             {quietBadge}
             {pinIndicator}
             {terminalStatusIcon}
+            {status === "paused" ? (
+              <CirclePauseIcon aria-hidden className="size-3.5 text-warning-foreground" />
+            ) : null}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
                 Regenerating title
@@ -1411,6 +1433,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        {workers}
       </li>
     );
   }
@@ -1544,6 +1567,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
+              {multiline && status === "paused" ? (
+                <CirclePauseIcon aria-hidden className="size-3.5 text-warning-foreground" />
+              ) : null}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
@@ -1670,6 +1696,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        {workers}
       </li>
     );
   }
@@ -1929,6 +1956,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
+      {workers}
     </li>
   );
 });
@@ -1969,10 +1997,12 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
 }) {
   const thread =
     useThreadShell(scopeThreadRef(props.thread.environmentId, props.thread.id)) ?? props.thread;
+  const gt = useGT();
+  const paused = resolveSidebarRowStatus(thread) === "paused";
   const projectFolderAppearance = useProjectFolderAppearance(props.projectKey);
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
-    statusLabel: null,
+    statusLabel: paused ? gt("Paused") : null,
     projectDisplayName: props.projectDisplayName,
     isActive: props.isRouteActive,
   });
@@ -2116,6 +2146,9 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                   </ActivityShimmerOverlay>
                 ) : null}
               </span>
+              {paused ? (
+                <CirclePauseIcon aria-hidden className="size-3.5 text-warning-foreground" />
+              ) : null}
               <span id={`${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber
                   thread={thread}

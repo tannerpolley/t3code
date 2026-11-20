@@ -73,6 +73,7 @@ const IssueWorkStatus = Schema.Struct({
   /** Descendant work is visible, but only the directly linked thread drives running status. */
   inherited: Schema.optional(Schema.Boolean),
   status: Schema.Literals(["working", "waiting_on_you", "idle"]),
+  paused: Schema.optionalKey(Schema.Literal(true)),
 });
 
 export const RepositoryIssueSummary = Schema.Struct({
