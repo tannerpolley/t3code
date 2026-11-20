@@ -1,11 +1,34 @@
 import type {
+  OrchestrationV2AppThread,
   OrchestrationV2Notification,
   PullRequestCheck,
   PullRequestComment,
   PullRequestDetail,
+  ThreadPullRequestLink,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { isManagedIssueImplementor } from "../issues/IssueEligibility.ts";
+
+export function needsManagedPullRequestWatch(
+  thread: Pick<
+    OrchestrationV2AppThread,
+    "lineage" | "linkedIssue" | "role" | "settledAt" | "settledOverride"
+  > &
+    Partial<Pick<OrchestrationV2AppThread, "archivedAt">>,
+  link: ThreadPullRequestLink,
+): boolean {
+  return (
+    isManagedIssueImplementor(thread) &&
+    thread.archivedAt == null &&
+    thread.settledAt === null &&
+    thread.settledOverride !== "settled" &&
+    link.source !== "stack-dismissed" &&
+    (link.snapshot === null || link.snapshot.state === "open") &&
+    link.watch === undefined &&
+    link.endedWatch === undefined
+  );
+}
 
 /** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;

@@ -99,7 +99,11 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { contextBoundaryOrdinal, isScheduledFreshRun } from "./contextBoundary.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
-import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
+import {
+  combinePullRequestWatchWakes,
+  needsManagedPullRequestWatch,
+  type PullRequestWatchWake,
+} from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
@@ -4404,33 +4408,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is a subagent; its parent thread watches pull requests.`,
       });
     }
-    // Agent and automatic watches use the latest executed run to catch links racing Stop.
-    let startsManagedWatch =
-      command.type === "thread.pull-request.link" &&
-      command.source !== "stack" &&
-      command.source !== "stack-dismissed" &&
-      isManagedIssueImplementor(thread) &&
-      thread.archivedAt === null &&
-      thread.settledAt === null &&
-      thread.settledOverride !== "settled";
+    // Agent watches use the latest executed run to catch calls racing Stop; users can still watch.
     if (
-      startsManagedWatch ||
-      (command.type === "thread.pull-request.watch" &&
-        command.watching &&
-        command.link?.source === "agent")
+      command.type === "thread.pull-request.watch" &&
+      command.watching &&
+      command.link?.source === "agent"
     ) {
       const { runs } = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs"])
         .pipe(mapDispatchError(command));
       const latest = latestExecutedRun(runs);
       if (latest !== null && (yield* stopReachedRun(command, command.threadId, latest.id))) {
-        if (startsManagedWatch) startsManagedWatch = false;
-        else
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: `Thread ${command.threadId} was stopped.`,
-          });
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} was stopped.`,
+        });
       }
     }
     if (
@@ -4960,7 +4953,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
-    const updatedThread: OrchestrationV2AppThread = (() => {
+    let updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
           return {
@@ -5259,11 +5252,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   ]
                 : []),
               ...links.filter((entry) => !threadPullRequestKeysEqual(entry, key)),
-              startsManagedWatch &&
-              link.snapshot?.state !== "merged" &&
-              link.endedWatch === undefined
-                ? withPullRequestWatch(link, startPullRequestWatch(DateTime.formatIso(now)))
-                : link,
+              link,
             ];
           } else if (command.type === "thread.pull-request.unlink") {
             if (!existing) return thread;
@@ -5522,6 +5511,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    if (
+      (command.type === "thread.pull-request.link" ||
+        command.type === "thread.pull-request-link.sync" ||
+        command.type === "thread.pull-request.sync") &&
+      isManagedIssueImplementor(updatedThread)
+    ) {
+      const links = threadPullRequestsOf(updatedThread);
+      const candidates = links.filter(
+        (link) =>
+          (command.type !== "thread.pull-request-link.sync" ||
+            threadPullRequestKeysEqual(link, command)) &&
+          needsManagedPullRequestWatch(updatedThread, link),
+      );
+      if (candidates.length > 0) {
+        const { runs } = yield* projectionStore
+          .getThreadRecords(command.threadId, ["runs"])
+          .pipe(mapDispatchError(command));
+        const latest = latestExecutedRun(runs);
+        if (latest === null || !(yield* stopReachedRun(command, command.threadId, latest.id))) {
+          const watch = startPullRequestWatch(DateTime.formatIso(now));
+          updatedThread = {
+            ...updatedThread,
+            pullRequests: links.map((link) =>
+              candidates.includes(link) ? { ...link, watch } : link,
+            ),
+          };
+        }
+      }
+    }
     if (command.type === "thread.pull-request-watch.checks-reopen") {
       if (updatedThread === thread) return;
       yield* emit(
