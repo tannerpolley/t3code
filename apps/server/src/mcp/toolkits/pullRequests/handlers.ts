@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import { needsManagedPullRequestWatch } from "../../../orchestration-v2/pullRequestWatch.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchService.ts";
 import { resolveTarget, type ResolvedTarget } from "../../../pullRequest/pullRequestTarget.ts";
@@ -206,15 +207,33 @@ const make = Effect.gen(function* () {
     const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
     const threadId = input.threadId ?? scope.thread?.threadId;
     if (threadId === undefined) return yield* new PullRequestThreadRequiredError();
-    if (
-      !watching &&
-      scope.thread?.subagent === true &&
-      (scope.repositoryManaged !== true || threadId !== scope.thread.threadId)
-    ) {
-      return yield* new OrchestratorMcpFailure({
-        code: "capability_denied",
-        message: "Managed children can only stop watches on their own thread.",
-      });
+    if (scope.thread?.subagent === true) {
+      if (watching) return yield* new PullRequestWatchService.PullRequestWatchFromSubagentError();
+      const caller = scope.thread.threadId;
+      const target =
+        scope.repositoryManaged === true && threadId !== caller
+          ? yield* engine
+              .getThreadShell(threadId)
+              .pipe(
+                Effect.mapError(
+                  (cause) => new PullRequestWatchService.PullRequestWatchFailedError({ cause }),
+                ),
+              )
+          : null;
+      if (
+        scope.repositoryManaged !== true ||
+        (threadId !== caller &&
+          !(
+            target?.lineage.relationshipToParent === "subagent" &&
+            target.lineage.parentThreadId === caller
+          ))
+      ) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message:
+            "Managed children can only stop watches on their own thread or a direct child's thread.",
+        });
+      }
     }
     return yield* watches.setWatching({ threadId, target: input, watching }).pipe(
       Effect.catchTags({
@@ -288,6 +307,27 @@ const make = Effect.gen(function* () {
     handle: (params: P) => Effect.Effect<A, E, R>,
   ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
+  const linkIfNeeded = Effect.fn("PullRequestsToolkit.linkIfNeeded")(function* (
+    thread: OrchestrationV2ThreadShell,
+    target: ResolvedTarget,
+  ) {
+    const existing = threadPullRequestsOf(thread).find(
+      (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
+    );
+    if (existing === undefined || needsManagedPullRequestWatch(thread, existing)) {
+      yield* engine
+        .dispatch({
+          type: "thread.pull-request.link",
+          commandId: yield* commandId("mcp-pr-link", thread.id),
+          threadId: thread.id,
+          ...target,
+          source: "agent",
+        })
+        .pipe(Effect.catchCause(dispatchFailure(PullRequestLinkFailedError)));
+    }
+    return existing !== undefined;
+  });
+
   return {
     link_pull_request: writesThread((input) =>
       Effect.gen(function* () {
@@ -298,27 +338,7 @@ const make = Effect.gen(function* () {
             : {};
         const project = yield* projectOf(thread, PullRequestLinkFailedError);
         const target = yield* resolveTarget(input, project);
-        const existing = threadPullRequestsOf(thread).find((link) =>
-          threadPullRequestKeysEqual(link, target),
-        );
-        if (existing && existing.source !== "stack-dismissed")
-          return { ...target, alreadyLinked: true, ...next };
-        const alreadyLinked = yield* engine
-          .dispatch({
-            type: "thread.pull-request.link",
-            commandId: yield* commandId("mcp-pr-link", thread.id),
-            threadId: thread.id,
-            host: target.host,
-            repository: target.repository,
-            number: target.number,
-            url: target.url,
-            source: "agent",
-          })
-          .pipe(
-            Effect.as(false),
-
-            Effect.catchCause(dispatchFailure(PullRequestLinkFailedError)),
-          );
+        const alreadyLinked = yield* linkIfNeeded(thread, target);
         return { ...target, alreadyLinked, ...next };
       }),
     ),
@@ -333,27 +353,12 @@ const make = Effect.gen(function* () {
           else if (!targets.some((seen) => threadPullRequestKeysEqual(seen, target.value)))
             targets.push(target.value);
         }
-        const links = threadPullRequestsOf(thread);
-        const isLinked = (target: ResolvedTarget) =>
-          links.some(
-            (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
-          );
-        const fresh = targets.filter((target) => !isLinked(target));
-        const alreadyLinked = targets.filter(isLinked);
-        yield* Effect.forEach(fresh, (target) =>
-          Effect.gen(function* () {
-            yield* engine.dispatch({
-              type: "thread.pull-request.link",
-              commandId: yield* commandId("mcp-pr-link", thread.id),
-              threadId: thread.id,
-              host: target.host,
-              repository: target.repository,
-              number: target.number,
-              url: target.url,
-              source: "agent",
-            });
-          }).pipe(Effect.catchCause(dispatchFailure(PullRequestLinkFailedError))),
-        );
+        const fresh: ResolvedTarget[] = [];
+        const alreadyLinked: ResolvedTarget[] = [];
+        for (const target of targets) {
+          const linked = yield* linkIfNeeded(thread, target);
+          (linked ? alreadyLinked : fresh).push(target);
+        }
         const byRepository = (prs: ReadonlyArray<ResolvedTarget>) =>
           [...Map.groupBy(prs, (pr) => `${pr.host}/${pr.repository}`).values()].map((group) => ({
             host: group[0]!.host,

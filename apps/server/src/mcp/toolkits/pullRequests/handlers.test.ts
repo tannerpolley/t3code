@@ -137,6 +137,8 @@ interface HarnessOptions {
   readonly thread?: PullRequestTestThread | null;
   readonly project?: OrchestrationProjectShell | null;
   readonly reject?: (command: OrchestrationCommand) => string | null;
+  readonly scope?: McpInvocationContext.McpInvocationScope;
+  readonly setWatching?: PullRequestWatchService.PullRequestWatchService["Service"]["setWatching"];
   readonly projects?: ReadonlyArray<OrchestrationProjectShell>;
   readonly generate?: (
     input: PullRequestRef,
@@ -168,7 +170,9 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       return { sequence: 1, storedEvents: [] };
     });
   const layerDependencies = Layer.mergeAll(
-    Layer.mock(PullRequestWatchService.PullRequestWatchService)({}),
+    Layer.mock(PullRequestWatchService.PullRequestWatchService)(
+      options.setWatching === undefined ? {} : { setWatching: options.setWatching },
+    ),
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
       listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),
@@ -217,13 +221,40 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+      Effect.provideService(
+        McpInvocationContext.McpInvocationContext,
+        options.scope ?? invocation(capabilities),
+      ),
       Effect.provide(layerDependencies),
     );
   return { commands, guideRequests, call };
 });
 
 describe("pull request toolkit handlers", () => {
+  it.effect("lets a managed subagent unwatch its direct child's pull request", () =>
+    Effect.gen(function* () {
+      const rootThreadId = ThreadId.make("repository-root");
+      const parentThreadId = ThreadId.make("issue-parent");
+      const target = makeLink(124);
+      const scope = invocation(["pull-requests"]);
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([target]),
+          lineage: { rootThreadId, parentThreadId, relationshipToParent: "subagent" },
+        },
+        scope: {
+          ...scope,
+          repositoryManaged: true,
+          thread: { ...scope.thread!, threadId: parentThreadId, subagent: true },
+        },
+        setWatching: ({ watching }) => Effect.succeed({ ...target, wasWatching: true, watching }),
+      });
+      expect(
+        yield* harness.call("unwatch_pull_request", { threadId: THREAD_ID, url: target.url }),
+      ).toMatchObject({ wasWatching: true, watching: false });
+    }),
+  );
+
   it.effect("refuses a credential without the pull-requests capability", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
