@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  resolveThreadRole,
   EnvironmentId,
   IssueWorkError,
   NodeId,
@@ -600,7 +601,8 @@ describe("OrchestratorMcpService provider resolution", () => {
     const chooseCodex = (snapshots: ServerProvider[]) =>
       roleDefaultTarget(
         ranked(snapshots, true),
-        "checker",
+        "reviewer",
+        "routine",
         { providerInstanceId: codexInstanceId },
         () => undefined,
       );
@@ -881,7 +883,10 @@ describe("OrchestratorMcpService provider resolution", () => {
     const { reviewer } = DEFAULT_SERVER_SETTINGS.modelRoles;
     const modelRoles = {
       ...DEFAULT_SERVER_SETTINGS.modelRoles,
-      reviewer: { ...reviewer, provider: "both" as const, effort: "default" as const },
+      reviewer: {
+        ...reviewer,
+        complex: { ...reviewer.complex, provider: "both" as const, effort: "default" as const },
+      },
     };
     const modelTiers = {
       ...DEFAULT_SERVER_SETTINGS.modelTiers,
@@ -909,7 +914,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     return Effect.gen(function* () {
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       const capabilities = yield* service.capabilities(scope);
-      const role = capabilities.modelRoles.find(({ id }) => id === "reviewer")!;
+      const role = capabilities.modelRoles.find(({ id }) => id === "reviewer-complex")!;
       assert.deepEqual(role.targets, [
         {
           providerInstanceId: codexInstanceId,
@@ -1072,10 +1077,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             task: string;
           };
           assert.equal(request.modelSelection.instanceId, altInstanceId);
-          assert.equal(
-            request.role,
-            role === "general" ? "investigator" : role === "test" ? "checker" : role,
-          );
+          assert.equal(request.role, role === "general" ? "designer" : resolveThreadRole(role));
           assert.isUndefined(request.worktree);
           assert.equal(
             request.task,
@@ -1088,9 +1090,13 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   it.effect.each([
-    ["role without a target uses its tier choice", "designer", {}, "gpt-5.4"],
-    ["implementor uses the Implementor role, not Sprinter", "implementor", {}, "gpt-5.5"],
-    ["sprinter uses the Sprinter role", "sprinter", {}, "gpt-5.4"],
+    ["omitted level uses complex", "designer", {}, "gpt-5.4"],
+    ["explicit routine uses its own tier", "designer", {}, "gpt-5.5", undefined, "routine"],
+    ["explicit level overrides an old name", "investigator", {}, "gpt-5.4", undefined, "complex"],
+    ["old fast id uses routine", "implementor-fast", {}, "gpt-5.4"],
+    ["old thorough id uses complex", "implementor-thorough", {}, "gpt-5.5"],
+    ["implementor defaults to complex", "implementor", {}, "gpt-5.5"],
+    ["sprinter uses routine", "sprinter", {}, "gpt-5.4"],
     ["a listed choice works", "designer", { model: "gpt-5.4" }, "gpt-5.4"],
     ["a stale target is refused", "implementor", { model: "gpt-5.4" }, null, /gpt-5\.5/],
     [
@@ -1110,132 +1116,143 @@ describe("OrchestratorMcpService provider resolution", () => {
       null,
       /Weekly usage is exhausted.*Ask the owner/,
     ],
-  ] as const)("delegate_task model role default: %s", ([, role, target, expectedModel, error]) =>
-    Effect.gen(function* () {
-      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
-      const task = {
-        id: taskId,
-        threadId: parentThreadId,
-        runId: parentRunId,
-        parentNodeId,
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
-        providerThreadId: null,
-        childThreadId,
-        nativeTaskRef: null,
-        prompt: "Summarize the diff.",
-        title: null,
-        model: expectedModel,
-        status: "running",
-        result: null,
-        startedAt: null,
-        completedAt: null,
-      };
-      let delegated = false;
-      const layerDependencies = Layer.mergeAll(
-        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(null),
-          hasReceipt: () => Effect.succeed(false),
-          getThreadRecords: (threadId) =>
-            Effect.succeed(
-              threadId === parentThreadId
-                ? parentProjection(delegated ? [task] : [])
-                : childProjection,
-            ),
-          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
-          assertProviderInstanceEnabled: () => Effect.void,
-          dispatch: (command) =>
-            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
-              Effect.andThen(
-                Effect.sync(() => {
-                  delegated = true;
-                }),
+  ] as const)(
+    "delegate_task model role default: %s",
+    ([, role, target, expectedModel, error, level]) =>
+      Effect.gen(function* () {
+        const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          runId: parentRunId,
+          parentNodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Summarize the diff.",
+          title: null,
+          model: expectedModel,
+          status: "running",
+          result: null,
+          startedAt: null,
+          completedAt: null,
+        };
+        let delegated = false;
+        const layerDependencies = Layer.mergeAll(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(null),
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(delegated ? [task] : [])
+                  : childProjection,
               ),
-              Effect.as({
-                sequence: 1,
-                storedEvents: [
-                  {
-                    sequence: 1,
-                    commandId: null,
-                    event: { type: "subagent.updated", payload: task },
-                  },
-                ],
-              } as never),
-            ),
-        }),
-        providerRegistryLayer([
-          {
-            ...providerSnapshot({
-              instanceId: codexInstanceId,
-              driver: ProviderDriverKind.make("codex"),
-            }),
-            models: ["gpt-5.4", "gpt-5.5"].map((slug) => ({
-              slug,
-              name: slug,
-              isCustom: false,
-              capabilities: null,
-            })),
-            ...(role === "investigator"
-              ? {
-                  usageLimits: {
-                    checkedAt: modelRoleStatusCheckedAt,
-                    windows: [
-                      { id: "weekly", label: "Weekly", kind: "weekly" as const, usedPercent: 100 },
-                    ],
-                  },
-                }
-              : {}),
-          },
-        ]),
-        adapterRegistryLayer([codexInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        ServerSettings.layerTest({
-          modelTiers: {
-            1: { codex: { model: role === "reviewer" ? "gpt-0" : "gpt-5.4" } },
-            2: { codex: { model: "gpt-5.5" } },
-            3: { codex: { model: "gpt-5.4" } },
-            4: { codex: { model: "gpt-5.5" } },
-          },
-          modelRoles: {
-            designer: { provider: "codex", effort: "default" },
-            "implementor-fast": { provider: "codex", effort: "default" },
-            "implementor-thorough": { effort: "default" },
-            checker: { effort: "default" },
-            investigator: { effort: "default" },
-            reviewer: { effort: "default" },
-          },
-        }),
-      );
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+            assertProviderInstanceEnabled: () => Effect.void,
+            dispatch: (command) =>
+              Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    delegated = true;
+                  }),
+                ),
+                Effect.as({
+                  sequence: 1,
+                  storedEvents: [
+                    {
+                      sequence: 1,
+                      commandId: null,
+                      event: { type: "subagent.updated", payload: task },
+                    },
+                  ],
+                } as never),
+              ),
+          }),
+          providerRegistryLayer([
+            {
+              ...providerSnapshot({
+                instanceId: codexInstanceId,
+                driver: ProviderDriverKind.make("codex"),
+              }),
+              models: ["gpt-5.4", "gpt-5.5"].map((slug) => ({
+                slug,
+                name: slug,
+                isCustom: false,
+                capabilities: null,
+              })),
+              ...(role === "investigator" && level === undefined
+                ? {
+                    usageLimits: {
+                      checkedAt: modelRoleStatusCheckedAt,
+                      windows: [
+                        {
+                          id: "weekly",
+                          label: "Weekly",
+                          kind: "weekly" as const,
+                          usedPercent: 100,
+                        },
+                      ],
+                    },
+                  }
+                : {}),
+            },
+          ]),
+          adapterRegistryLayer([codexInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          ServerSettings.layerTest({
+            modelTiers: {
+              1: { codex: { model: role === "reviewer" ? "gpt-0" : "gpt-5.4" } },
+              2: { codex: { model: "gpt-5.5" } },
+              3: { codex: { model: "gpt-5.4" } },
+              4: { codex: { model: "gpt-5.5" } },
+            },
+            modelRoles: {
+              designer: {
+                complex: { provider: "codex", effort: "default" },
+                routine: { provider: "codex", effort: "default" },
+              },
+              implementor: {
+                routine: { provider: "codex", effort: "default" },
+                complex: { effort: "default" },
+              },
+              reviewer: { routine: { effort: "default" }, complex: { effort: "default" } },
+            },
+          }),
+        );
 
-      yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const input = yield* decodeDelegateTask({
-          task: "Summarize the diff.",
-          role,
-          target,
-          isolation: "shared",
-          mode: "async",
-          clientRequestId: `delegate-role-default-${role}`,
-        });
-        const delegate = service.delegateTask(scope, input);
-        if (error !== undefined) {
-          const failure = yield* Effect.flip(delegate);
-          assert.match(failure.message, error);
-          assert.deepEqual(yield* Ref.get(dispatched), []);
-          return;
-        }
-        yield* delegate;
-        const [request] = (yield* Ref.get(dispatched)) as ReadonlyArray<{
-          modelSelection: { model: string };
-        }>;
-        assert.equal(request!.modelSelection.model, expectedModel);
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
-    }),
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const input = yield* decodeDelegateTask({
+            task: "Summarize the diff.",
+            role,
+            level,
+            target,
+            isolation: "shared",
+            mode: "async",
+            clientRequestId: `delegate-role-default-${role}`,
+          });
+          const delegate = service.delegateTask(scope, input);
+          if (error !== undefined) {
+            const failure = yield* Effect.flip(delegate);
+            assert.match(failure.message, error);
+            assert.deepEqual(yield* Ref.get(dispatched), []);
+            return;
+          }
+          yield* delegate;
+          const [request] = (yield* Ref.get(dispatched)) as ReadonlyArray<{
+            modelSelection: { model: string };
+          }>;
+          assert.equal(request!.modelSelection.model, expectedModel);
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+      }),
   );
 
   it.effect(
@@ -1676,7 +1693,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             }),
         }),
         ServerSettings.layerTest({
-          modelRoles: { reviewer: { provider: "both", effort: "default" } },
+          modelRoles: { reviewer: { complex: { provider: "both", effort: "default" } } },
           modelTiers: { 1: { codex: { model: "gpt-5.4" }, claude: { model: "claude-fable-5-2" } } },
         }),
         providerRegistryLayer([

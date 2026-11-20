@@ -77,7 +77,7 @@ it.effect(
         const id = ThreadId.make(name);
         const thread = {
           ...idleThreadProjection(liveThreadShell(id)).thread,
-          role: "investigator" as const,
+          role: "designer" as const,
           ...(name === "inherited" || name === "explicit"
             ? {}
             : {

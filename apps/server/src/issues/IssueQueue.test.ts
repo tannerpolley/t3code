@@ -442,8 +442,8 @@ it.effect("uses the Orchestrator and worker provider selections independently", 
     localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
     serverSettings: {
       modelRoles: {
-        orchestrator: { provider: "codex", effort: "default" },
-        "implementor-thorough": { provider: "claude", effort: "default" },
+        orchestrator: { complex: { provider: "codex", effort: "default" } },
+        implementor: { complex: { provider: "claude", effort: "default" } },
       },
       modelTiers: {
         2: { codex: { model: modelSelection.model }, claude: { model: "claude-sonnet-4-6" } },
@@ -463,7 +463,7 @@ it.effect("uses the Orchestrator and worker provider selections independently", 
     const started = yield* service.start({
       ...input(1, "worker-provider:root"),
       projectId,
-      modelRoleId: "implementor-thorough",
+      modelRoleId: "implementor-complex",
       createOrchestrator: true,
     });
     assert.deepEqual(

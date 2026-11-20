@@ -296,7 +296,7 @@ it.effect(
     });
     const child = {
       ...liveThreadShell(ThreadId.make("delegated")),
-      role: "investigator" as const,
+      role: "designer" as const,
       branch: "feature/13",
       worktreePath: "/work/13",
       lineage: {
@@ -465,7 +465,7 @@ it.effect(
         ],
       );
       assert.deepEqual(work.find((item) => item.threadId === child.id)?.worktreePath, "/work/13");
-      assert.equal(work.find((item) => item.threadId === child.id)?.role, "investigator");
+      assert.equal(work.find((item) => item.threadId === child.id)?.role, "designer");
       assert.notProperty(
         work.find((item) => item.threadId === managed.id)!,
         "role",

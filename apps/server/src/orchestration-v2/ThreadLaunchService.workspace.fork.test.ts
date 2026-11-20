@@ -238,12 +238,12 @@ describe("delegate_task isolation", () => {
   });
 
   it.effect.each([
-    { choice: {}, role: "investigator" },
-    { choice: { role: "general" }, role: "investigator" },
+    { choice: {}, role: "designer" },
+    { choice: { role: "general" }, role: "designer" },
     { choice: { isolation: "worktree" }, role: "implementor" },
     { choice: { role: "general", isolation: "worktree" }, role: "implementor" },
     // Binding the worktree keeps an explicit role.
-    { choice: { role: "checker", isolation: "worktree" }, role: "checker" },
+    { choice: { role: "checker", isolation: "worktree" }, role: "reviewer" },
   ] as const)("gives a delegated child the $role role ($choice)", ({ choice, role }) => {
     const harness = makeHarness({ providers: [codexProvider] });
     return withDelegatingParent(harness, (service) =>

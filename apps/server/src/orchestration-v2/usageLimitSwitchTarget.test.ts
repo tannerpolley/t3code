@@ -1,5 +1,6 @@
 import {
   ProviderDriverKind,
+  ThreadRoleInput,
   ServerSettings,
   ProviderInstanceId,
   type ModelRole,
@@ -88,12 +89,16 @@ const alternative: ModelSelection = {
   options: [{ id: "effort", value: "medium" }],
 };
 
+const decodeThreadRole = Schema.decodeUnknownSync(ThreadRoleInput);
 const settingsWith = Schema.decodeSync(ServerSettings);
 
 describe("usage-limit target selection", () => {
   it("switches a role-less top-level thread as an Orchestrator even when a Reviewer lists its model", () => {
     const settings = settingsWith({
-      modelRoles: { orchestrator: { provider: "both" }, reviewer: { provider: "codex" } },
+      modelRoles: {
+        orchestrator: { complex: { provider: "both" } },
+        reviewer: { complex: { provider: "codex" } },
+      },
       modelTiers: {
         1: { codex: { model: "sol" } },
         2: { claude: { model: "opus" }, codex: { model: "sol" } },
@@ -115,13 +120,13 @@ describe("usage-limit target selection", () => {
     ).toEqual(alternative);
   });
 
-  it("uses the thread's effective role and matches Implementor profiles within it", () => {
+  it("uses the thread's effective role and matches Implementor levels within it", () => {
     const orchestrator = role("orchestrator", source, alternative, { role: "orchestrator" });
     const fast = role(
       "implementor-fast",
       { ...source, options: [{ id: "reasoningEffort", value: "medium" }] },
       alternative,
-      { role: "implementor", profile: "fast" },
+      { role: "implementor", level: "routine" },
     );
     const thorough = role(
       "implementor-thorough",
@@ -129,10 +134,10 @@ describe("usage-limit target selection", () => {
       alternative,
       {
         role: "implementor",
-        profile: "thorough",
+        level: "complex",
       },
     );
-    const roles = [orchestrator, fast, thorough];
+    const roles = [orchestrator, thorough, fast];
     expect(
       usageLimitThreadRole(
         { ...topLevel, modelSelection: { ...source, options: source.options!.toReversed() } },
@@ -153,11 +158,13 @@ describe("usage-limit target selection", () => {
     ).toBeUndefined();
   });
 
-  it("prefers an Implementor's matching effort over Sprinter's default effort on the same tier", () => {
+  it("prefers a matching complex effort over a routine default effort on the same tier", () => {
     const settings = settingsWith({
       modelRoles: {
-        "implementor-fast": { tier: 2, provider: "both", effort: "default" },
-        "implementor-thorough": { tier: 2, provider: "codex", effort: "high" },
+        implementor: {
+          routine: { tier: 2, provider: "both", effort: "default" },
+          complex: { tier: 2, provider: "codex", effort: "high" },
+        },
       },
       modelTiers: { 2: { claude: { model: "opus" }, codex: { model: "sol" } } },
     });
@@ -172,9 +179,30 @@ describe("usage-limit target selection", () => {
     ).toBeNull();
   });
 
+  it("recovers an old Checker thread using the matching Reviewer routine target", () => {
+    const settings = settingsWith({
+      modelRoles: { reviewer: { routine: { provider: "both", effort: "medium" } } },
+      modelTiers: { 2: { codex: { model: "sol" }, claude: { model: "opus" } } },
+    });
+    const role = decodeThreadRole("checker");
+    expect(
+      usageLimitSwitchTarget(
+        {
+          ...topLevel,
+          role,
+          modelSelection: { ...source, options: [{ id: "reasoningEffort", value: "medium" }] },
+        },
+        settings,
+        [provider(codex, "codex", "sol", 100), provider(claude, "claudeAgent", "opus")],
+        new Set([codex, claude]),
+        now,
+      ),
+    ).toEqual(alternative);
+  });
+
   it("uses existing weekly-headroom ranking across alternatives and preserves provider-specific effort", () => {
     const settings = settingsWith({
-      modelRoles: { reviewer: { provider: "codex" } },
+      modelRoles: { reviewer: { complex: { provider: "codex" } } },
       usageLimitFallbackModels: [
         alternative,
         { instanceId: otherClaude, model: "opus", options: [{ id: "effort", value: "low" }] },
@@ -203,7 +231,7 @@ describe("usage-limit target selection", () => {
     const codexAlt = ProviderInstanceId.make("codex-alt");
     const primary = { instanceId: codex, model: "sol" };
     const settings = settingsWith({
-      modelRoles: { orchestrator: { provider: "claude" } },
+      modelRoles: { orchestrator: { complex: { provider: "claude" } } },
       providerCreditsApproved: { codex: true },
       usageLimitFallbackModels: [primary, { ...primary, instanceId: codexAlt }],
     });
@@ -254,7 +282,7 @@ describe("usage-limit target selection", () => {
       const result = usageLimitSwitchTarget(
         { ...topLevel, modelSelection: source },
         settingsWith({
-          modelRoles: { orchestrator: { provider: "codex" } },
+          modelRoles: { orchestrator: { complex: { provider: "codex" } } },
           usageLimitFallbackModels: [alternative],
         }),
         [provider(codex, "codex", "sol"), target],
@@ -268,7 +296,7 @@ describe("usage-limit target selection", () => {
 
 it("uses fallbacks when a role has no available other-provider choice and excludes only targets", () => {
   const settings = settingsWith({
-    modelRoles: { orchestrator: { provider: "codex" } },
+    modelRoles: { orchestrator: { complex: { provider: "codex" } } },
     usageLimitFallbackModels: [alternative],
   });
   const providers = [provider(codex, "codex", "sol"), provider(claude, "claudeAgent", "opus")];

@@ -20,7 +20,7 @@ type UsageLimitThread = Pick<
 };
 
 /**
- * The thread's role (the same one the sidebar shows) picks the profiles; within it, the profile
+ * The thread's role (the same one the sidebar shows) picks the levels; within it, the level
  * matching the most options on the current selection wins, else its first one.
  */
 export function usageLimitThreadRole(

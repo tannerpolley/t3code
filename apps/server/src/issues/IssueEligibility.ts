@@ -1,8 +1,7 @@
 import {
   type IssueSuspension,
   resolveThreadRole,
-  THREAD_ROLES,
-  LEGACY_THREAD_ROLES,
+  THREAD_ROLE_NAMES,
   type IssueWorkRead,
   type OrchestrationV2AppThread,
   type ProviderDriverKind,
@@ -12,17 +11,10 @@ import type { ManagedIssueRole } from "@t3tools/provider-core/server/mcpSession"
 
 export const isReadOnlyIssueRole = (role: string | undefined) => {
   const resolved = role === undefined ? undefined : resolveThreadRole(role);
-  return (
-    resolved === "designer" ||
-    resolved === "checker" ||
-    resolved === "reviewer" ||
-    resolved === "investigator"
-  );
+  return resolved === "designer" || resolved === "reviewer";
 };
 
-export const readOnlyIssueRoles = [...THREAD_ROLES, ...Object.keys(LEGACY_THREAD_ROLES)].filter(
-  isReadOnlyIssueRole,
-);
+export const readOnlyIssueRoles = THREAD_ROLE_NAMES.filter(isReadOnlyIssueRole);
 
 export const isUnmanagedIssueRole = (role: string | undefined) =>
   resolveThreadRole(role ?? "") === "writer" || isReadOnlyIssueRole(role);

@@ -987,10 +987,12 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
         },
         modelRoles: {
           orchestrator: {
-            provider: scenario === "claude-to-codex" ? ("claude" as const) : ("codex" as const),
-            effort: "default" as const,
+            complex: {
+              provider: scenario === "claude-to-codex" ? ("claude" as const) : ("codex" as const),
+              effort: "default" as const,
+            },
           },
-          "implementor-thorough": { provider: "claude" as const, effort: "high" as const },
+          implementor: { complex: { provider: "claude" as const, effort: "high" as const } },
         },
         usageLimitFallbackModels:
           scenario === "unavailable" || scenario === "expired-no-target" ? [] : [target],
@@ -1501,8 +1503,7 @@ it.effect.each([
     ...(scenario === "no-target"
       ? {
           modelRoles: {
-            "implementor-fast": { provider: "codex" },
-            "implementor-thorough": { provider: "codex" },
+            implementor: { routine: { provider: "codex" }, complex: { provider: "codex" } },
           },
         }
       : {}),
