@@ -1817,20 +1817,27 @@ const linkCardStillAsks = (
   latestUserAuthoredMessageAt === null ||
   !DateTime.isGreaterThan(latestUserAuthoredMessageAt, item.startedAt ?? item.updatedAt);
 
-function hasActiveProviderWork(input: {
-  readonly turnItems: readonly OrchestrationV2TurnItem[];
-  readonly providerThreads: OrchestrationV2ThreadProjection["providerThreads"];
-  readonly activeProviderThreadId: OrchestrationV2ThreadProjection["thread"]["activeProviderThreadId"];
-  readonly runs?: OrchestrationV2ThreadProjection["runs"];
-}) {
-  return (
-    pendingBackgroundTurnItems(input).length > 0 ||
-    input.providerThreads.some(
-      (thread) =>
-        thread.id === input.activeProviderThreadId &&
-        (thread.pendingBackgroundTasks?.length ?? 0) > 0,
-    )
+function providerActivityForRun(
+  lastRunActivityAt: number,
+  input: {
+    readonly turnItems: readonly OrchestrationV2TurnItem[];
+    readonly providerThreads: OrchestrationV2ThreadProjection["providerThreads"];
+    readonly activeProviderThreadId: OrchestrationV2ThreadProjection["thread"]["activeProviderThreadId"];
+    readonly runs?: OrchestrationV2ThreadProjection["runs"];
+  },
+) {
+  const providerThread = input.providerThreads.find(
+    (thread) => thread.id === input.activeProviderThreadId,
   );
+  return {
+    lastProviderActivityAt:
+      providerThread === undefined
+        ? lastRunActivityAt
+        : Math.max(lastRunActivityAt, DateTime.toEpochMillis(providerThread.updatedAt)),
+    hasActiveProviderWork:
+      pendingBackgroundTurnItems(input).length > 0 ||
+      (providerThread?.pendingBackgroundTasks?.length ?? 0) > 0,
+  };
 }
 
 export function threadShellFromProjection(
@@ -1964,8 +1971,8 @@ export function threadShellFromProjection(
       latestRun != null && isBackgroundWakeRunForShell(latestRun, projection),
     activeRunId: activeRun?.id ?? null,
     ...(activeRun?.status === "running"
-      ? {
-          lastProviderActivityAt: Math.max(
+      ? providerActivityForRun(
+          Math.max(
             DateTime.toEpochMillis(activeRun.startedAt ?? activeRun.requestedAt),
             ...projection.turnItems
               .filter((item) => item.runId === activeRun.id)
@@ -1974,11 +1981,8 @@ export function threadShellFromProjection(
               .filter((message) => message.runId === activeRun.id && message.role === "assistant")
               .map((message) => DateTime.toEpochMillis(message.updatedAt)),
           ),
-          hasActiveProviderWork: hasActiveProviderWork({
-            ...projection,
-            activeProviderThreadId: projection.thread.activeProviderThreadId,
-          }),
-        }
+          { ...projection, activeProviderThreadId: projection.thread.activeProviderThreadId },
+        )
       : {}),
     blockedOnThreadWait: deriveBlockedOnThreadWait({ activeRun, turnItems: projection.turnItems }),
     activityRunStatus: activityRun?.status ?? null,
@@ -9159,16 +9163,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
           ...(row.last_provider_activity_at === null
             ? {}
-            : {
-                lastProviderActivityAt: DateTime.toEpochMillis(
-                  DateTime.makeUnsafe(row.last_provider_activity_at),
-                ),
-                hasActiveProviderWork: hasActiveProviderWork({
+            : providerActivityForRun(
+                DateTime.toEpochMillis(DateTime.makeUnsafe(row.last_provider_activity_at)),
+                {
                   providerThreads: providerThreadsByThreadId.get(thread.id) ?? [],
                   turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
                   activeProviderThreadId: thread.activeProviderThreadId,
-                }),
-              }),
+                },
+              )),
           activityRunStartedAt:
             row.activity_run_started_at === null
               ? null
