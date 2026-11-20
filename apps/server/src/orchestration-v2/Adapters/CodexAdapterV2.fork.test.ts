@@ -246,7 +246,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   it.effect.each([
     ["worker", { "features.multi_agent": false, "features.multi_agent_v2": false }],
     ["root", {}],
-    ["implementor", {}],
+    ["implementor", { "features.multi_agent": false, "features.multi_agent_v2": false }],
   ] as const)("sets native subagents for a %s Codex session", ([role, nativeSubagents]) =>
     Effect.gen(function* () {
       const scenario = `managed-native-subagents-${role}`;

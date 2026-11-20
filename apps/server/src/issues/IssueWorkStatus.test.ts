@@ -50,6 +50,32 @@ describe("deriveIssueWorkStatus", () => {
     ).toBe("working");
   });
 
+  it("keeps a failed implementor failed while a shell command is pending", () => {
+    const failed = shell("failed");
+    expect(
+      derive({
+        ...failed,
+        role: "implementor",
+        lineage: {
+          ...failed.lineage,
+          parentThreadId: failed.lineage.rootThreadId,
+          relationshipToParent: "subagent",
+        },
+        linkedIssue: {
+          host: "github",
+          repository: "acme/app",
+          repositoryId: "repo",
+          id: "1",
+          nodeId: "issue:1",
+          number: 1,
+          title: "Task",
+          url: "https://github.com/acme/app/issues/1",
+        },
+        pendingBackgroundTasks: [{ kind: "command", taskId: "command:unfinished" }],
+      }),
+    ).toBe("failed");
+  });
+
   it("keeps queued root completion separate from issue completion and preserves availability", () => {
     expect(
       deriveIssueWorkStatus({

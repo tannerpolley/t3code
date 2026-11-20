@@ -511,6 +511,8 @@ function reviewHarness(
       modelRoles: {
         orchestrator: { complex: { provider: "codex", effort: "default" } },
         implementor: { complex: { effort: "default", tier: 3 } },
+        reviewer: { complex: { effort: "default", tier: 2 } },
+        designer: { complex: { effort: "default", tier: 2 } },
       },
       modelTiers: {
         2: { codex: { model: modelSelection.model } },

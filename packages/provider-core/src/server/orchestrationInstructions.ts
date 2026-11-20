@@ -18,7 +18,7 @@ Ordinary coding tasks need no T3 tools.
 
 ${T3_CODE_NATIVE_SUBAGENT_GUIDANCE}
 - Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in \`task\`.
-- Use a separate Reviewer thread only when the owner or plan asks. Each such review or re-check is a new \`delegate_task\` (brief and findings), never a \`t3_thread_send\`. Fix small findings yourself. If told to use fewer delegates, \`task_cancel\` extras without replacing them.
+- The orchestrator delegates an independent Reviewer only when the owner or plan asks. Start each review or re-check with \`delegate_task\`. Fix small findings yourself. If asked to use fewer delegates, \`task_cancel\` extras without replacing them.
 - Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
 - If you are a subagent or child, do the work yourself. Start subagents only when your task or role calls for it.`,
   `- Multiple selections: use \`t3_request_user_input\`. Writers ask the owner directly through their question tool, and the owner can message their thread directly. Parents must not answer Writer questions; final results still return to the parent. Other children ask decisions through their question tool; parents read and respond with \`t3_pending_request\` with action \`read\` or \`respond\` (answers or approval decision). Approve only delegated descendants within task authority. Never message ancestors; final results return automatically.
@@ -179,7 +179,7 @@ export function t3OrchestrationPolicy(
     modelRoles,
     modelNotes,
     // The repository root keeps native subagents for its own work between orchestration runs.
-    nativeSubagents: managedIssue !== "worker",
+    nativeSubagents: managedIssue === undefined || managedIssue === "root",
   };
 }
 
@@ -197,7 +197,7 @@ export function t3OrchestrationBaseInstructions(managedIssue?: ManagedIssueRole)
     managedIssue === "worker"
       ? "Native subagent tools are disabled in this repository-managed session. Delegate children through `delegate_task`."
       : managedIssue === "implementor"
-        ? "Use `delegate_task` for issue work. After checks pass and the draft PR is pushed, run your native read-only `reviewer` (Codex `spawn_agent`, Claude `Agent`) in a fresh context and wait in the turn for its result. Give it the issue, plan and diff without your conclusions. Use native subagents only for this review. Fix real defects, record why you dismissed other findings, and re-review only after material changes. Ask through the question tool before a third fix round. Report upward when the PR is merge-ready with each finding's disposition and reason."
+        ? 'Native subagents are disabled. After checks pass and the draft PR is pushed, use `delegate_task` with `role: "reviewer"`, `mode: "async"` and shared isolation. Ask this read-only child to review the issue, plan and diff without sharing your conclusions. Tell it to leave the code untouched. End the turn while it reviews. T3 returns its result to you. Fix real defects, record why you dismissed other findings, and re-review only after material changes. Ask through the question tool before a third fix round. Report upward when the PR is merge-ready with each finding’s disposition and reason.'
         : "As the repository orchestrator, delegate code to an Implementor and deliverables to a Writer. Leave the review loop with the Implementor. Manage merges, builds, work ordering and owner decisions. Use native subagent tools only for your own work while no issue workers run, when they support the model and options. Delegate issue work through `delegate_task`.";
   return `Keep issues current through propose_issue_change with a typed operation and a stable clientRequestId on retries. Create, split into native sub-issues, and milestone moves execute automatically unless the user enabled approval for issue upkeep. Follow the decision returned for each proposal. Body edits and close/reopen always wait for the user's durable in-app approval of the exact preview; standalone parent and blocked_by add/remove changes execute automatically unless the thread is in approval-required mode. The tool returns the change reference, decision, completed steps and result. Agents cannot approve changes, and question answers never approve a mutation. A stale baseline needs a new proposal and preview. An uncertain create that needs attention requires the user to check GitHub and mark it resolved; never submit another create just because its marker is missing. T3 tracks its written bodies by exact baseline, never GitHub author login. Labels and assignees are outside this tool's scope.\n\n${T3_CODE_ORCHESTRATION_INSTRUCTIONS.replace(
     T3_CODE_NATIVE_SUBAGENT_GUIDANCE,

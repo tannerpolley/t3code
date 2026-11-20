@@ -43,17 +43,29 @@ export function isTransientWorkerFailure(
   failure: OrchestrationV2ProviderFailure,
   httpStatus?: number,
 ) {
-  return (
-    (failure.class === "provider_error" || failure.class === "transport_error") &&
-    failure.retryable !== false &&
-    (httpStatus === 502 ||
-      httpStatus === 503 ||
-      failure.code === "api_error_502" ||
-      failure.code === "api_error_503" ||
-      /\b(?:HTTP(?: status)?|status|API Error:)\s*50[23]\b|stream disconnected before completion|error decoding response body/i.test(
-        failure.message,
-      ))
-  );
+  if (
+    (failure.class !== "provider_error" && failure.class !== "transport_error") ||
+    failure.retryable === false
+  )
+    return false;
+
+  const apiStatus = /^api_error_(\d{3})$/.exec(failure.code ?? "")?.[1];
+  const status = httpStatus ?? (apiStatus === undefined ? undefined : Number(apiStatus));
+  if (status !== undefined) return status === 502 || status === 503;
+
+  if (
+    failure.code === "responseStreamDisconnected" ||
+    failure.code === "responseStreamConnectionFailed" ||
+    failure.code === "httpConnectionFailed"
+  )
+    return true;
+
+  const messageStatus = /\b(?:HTTP(?: status)?|status|API Error:)\s*(\d{3})\b/i.exec(
+    failure.message,
+  )?.[1];
+  return messageStatus === undefined
+    ? /stream disconnected before completion|error decoding response body/i.test(failure.message)
+    : messageStatus === "502" || messageStatus === "503";
 }
 
 const MAX_CONTINUATION_CHAIN = 3;

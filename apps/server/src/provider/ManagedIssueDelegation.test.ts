@@ -46,11 +46,8 @@ describe("repository-managed Claude delegation", () => {
     assert.include(options.allowedTools ?? [], "mcp__t3-code__*");
     assert.isUndefined(ordinary.disallowedTools);
     const implementor = overrides(t3OrchestrationPolicy("implementor", ""));
-    assert.isUndefined(implementor.disallowedTools);
-    assert.include(
-      implementor.orchestration?.sections.join("\n") ?? "",
-      "native read-only `reviewer`",
-    );
+    assert.deepEqual(implementor.disallowedTools, ["Agent", "Task", "TeamCreate"]);
+    assert.include(implementor.orchestration?.sections.join("\n") ?? "", 'role: "reviewer"');
     const append =
       typeof options.systemPrompt === "object" && "append" in options.systemPrompt
         ? options.systemPrompt.append

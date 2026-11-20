@@ -1617,7 +1617,7 @@ it.effect.each(["implementor", "worker", "ordinary"] as const)(
         });
         yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
         const orchestration = (yield* Ref.get(mcpConfigs)).at(-1)?.orchestration;
-        assert.equal(orchestration?.nativeSubagents, kind !== "worker");
+        assert.equal(orchestration?.nativeSubagents, kind === "ordinary");
         assert.equal(
           orchestration?.sections[0]?.startsWith("Keep issues current"),
           kind !== "ordinary",

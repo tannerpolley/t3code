@@ -7891,6 +7891,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       errorInfo: { httpConnectionFailed: { httpStatusCode: 503 } },
       notification: false,
       expectedClass: "provider_error",
+      expectedHttpStatus: 503,
+    },
+    {
+      name: "terminal-authentication-status",
+      code: "responseStreamDisconnected",
+      notification: false,
+      terminalMessage: "error decoding response body",
+      terminalErrorInfo: { responseStreamDisconnected: { httpStatusCode: 401 } },
+      expectedClass: "provider_error",
+      expectedHttpStatus: 401,
     },
     {
       name: "chatgpt-workspace-limit",
@@ -8346,9 +8356,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       }
       if (scenario.name === "retry" || "willRetry" in scenario)
         assert.equal(terminal.retry?.attempt, 1);
-      if (scenario.name === "http-provider-failure") {
-        assert.equal(terminal.httpStatus, 503);
-      }
+      if ("expectedHttpStatus" in scenario)
+        assert.equal(terminal.httpStatus, scenario.expectedHttpStatus);
       if ("expectedCode" in scenario && "expectedMessage" in scenario) {
         assert.equal(terminal.failure.code, scenario.expectedCode);
         assert.include(terminal.failure.message, scenario.expectedMessage);

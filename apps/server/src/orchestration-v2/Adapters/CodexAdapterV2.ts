@@ -6609,6 +6609,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     );
               const retry = input.providerRetry;
               const notification = input.context.latestProviderFailure;
+              const httpStatus =
+                codexErrorHttpStatus(input.failureErrorInfo) ??
+                (previousFailure?.failure === failure
+                  ? codexErrorHttpStatus(previousFailure?.errorInfo)
+                  : null) ??
+                (input.failureMessage === notification?.nativeMessage
+                  ? codexErrorHttpStatus(notification?.errorInfo)
+                  : null) ??
+                (input.failureMessage === retry?.nativeDetails
+                  ? codexErrorHttpStatus(retry?.errorInfo)
+                  : null);
               // Codex 0.164 reports an exhausted stream error as `other` with the same details.
               if (
                 codexTerminalErrorNeedsEvidence(input.failureErrorInfo, failure.code) &&
@@ -6629,11 +6640,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ) {
                 failure = { ...failure, class: "transport_error" };
               }
-              const httpStatus =
-                codexErrorHttpStatus(input.failureErrorInfo) ??
-                (input.failureMessage === notification?.nativeMessage
-                  ? codexErrorHttpStatus(notification?.errorInfo)
-                  : null);
               return {
                 type: "turn.terminal",
                 driver: CODEX_PROVIDER,
@@ -6645,7 +6651,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   `terminal-failure:${input.context.providerTurnId}`,
                 ),
                 status: terminalStatus,
-                ...(httpStatus === 502 || httpStatus === 503 ? { httpStatus } : {}),
+                ...(httpStatus === null ? {} : { httpStatus }),
                 failure:
                   failure.class === "usage_limit"
                     ? {

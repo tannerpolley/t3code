@@ -37,8 +37,8 @@ export function deriveIssueWorkStatus(input: {
           (request) => request.status === "pending" && runtimeRequestNeedsUser(request.kind),
         );
   if (needsUser) return "waiting_on_you";
+  if (shell.status === "failed") return "failed";
   if (input.queued === true) {
-    if (shell.status === "failed") return "failed";
     if (shell.status === "interrupted" || shell.status === "rolled_back") return "interrupted";
     if (shell.status === "cancelled") return "cancelled";
     return "queued_preparing";
@@ -67,8 +67,6 @@ export function deriveIssueWorkStatus(input: {
   switch (shell.status) {
     case "completed":
       return input.resultAvailable === true ? "done" : "working";
-    case "failed":
-      return "failed";
     case "interrupted":
     case "rolled_back":
       return "interrupted";

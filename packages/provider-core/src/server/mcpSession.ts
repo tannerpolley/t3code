@@ -10,7 +10,7 @@ export interface McpOrchestrationPolicy {
   /** The user's model roles block, refreshed before each turn; empty when there are none. */
   readonly modelRoles: string;
   readonly modelNotes: string;
-  /** False for managed workers without native review. */
+  /** False for managed workers that delegate through T3. */
   readonly nativeSubagents: boolean;
 }
 /**

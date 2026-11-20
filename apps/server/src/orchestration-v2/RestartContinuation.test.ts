@@ -22,7 +22,11 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun, continueRestartedRun } from "./RestartContinuation.ts";
+import {
+  restartContinuationRun,
+  continueRestartedRun,
+  isTransientWorkerFailure,
+} from "./RestartContinuation.ts";
 import { continuationStartRetryDelayMs } from "./RestartBackgroundNote.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
@@ -31,6 +35,36 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+
+it.each([
+  [
+    "Claude authentication",
+    "api_error_401",
+    "API Error: 401 · error decoding response body",
+    undefined,
+    false,
+  ],
+  [
+    "Codex authentication",
+    "responseStreamDisconnected",
+    "error decoding response body",
+    401,
+    false,
+  ],
+  ["Codex rate limit", "responseStreamDisconnected", "error decoding response body", 429, false],
+  ["Codex disconnect", "responseStreamDisconnected", "Connection lost.", undefined, true],
+] as const)(
+  "classifies %s by structured evidence first",
+  (_label, code, message, httpStatus, expected) => {
+    assert.equal(
+      isTransientWorkerFailure(
+        { class: "transport_error", code, message, retryable: null },
+        httpStatus,
+      ),
+      expected,
+    );
+  },
+);
 
 const threadId = ThreadId.make("thread:restart");
 const runId = RunId.make("run:restart");
