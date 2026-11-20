@@ -176,13 +176,22 @@ const RolePatch = Schema.Struct({
   provider: Schema.optionalKey(ModelRoleProvider),
   effort: Schema.optionalKey(ModelRoleEffort),
 });
+const exactRolePatch = <Fields extends Schema.Struct.Fields>(fields: Fields) =>
+  Schema.StructWithRest(Schema.Struct(fields), [
+    Schema.Record(Schema.String, Schema.Unknown),
+  ]).check(
+    Schema.makeFilter((patch) => Object.keys(patch).every((key) => Object.hasOwn(fields, key)), {
+      expected: "only known model role patch fields",
+    }),
+  );
+
 const RoleLevelsPatch = Schema.optionalKey(
-  Schema.Struct({
+  exactRolePatch({
     routine: Schema.optionalKey(RolePatch),
     complex: Schema.optionalKey(RolePatch),
   }),
 );
-const ModelRolesPatch = Schema.Struct({
+const ModelRolesPatch = exactRolePatch({
   orchestrator: RoleLevelsPatch,
   designer: RoleLevelsPatch,
   writer: RoleLevelsPatch,

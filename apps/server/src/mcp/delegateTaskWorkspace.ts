@@ -59,17 +59,8 @@ export const resolveDelegatedWorkspace = Effect.fn("resolveDelegatedWorkspace")(
   };
 });
 
-/**
- * The child's thread role. A child without one, or with legacy general, edits
- * code when it gets its own worktree, so it is an Implementor; otherwise it is
- * a Designer.
- */
 export const delegatedTaskRole = (
   role: OrchestratorMcpDelegateTaskInput["role"],
   worktree: boolean,
 ): ThreadRole =>
-  role === undefined || role === "general"
-    ? worktree
-      ? "implementor"
-      : "designer"
-    : resolveThreadRole(role)!;
+  role === undefined ? (worktree ? "implementor" : "designer") : resolveThreadRole(role)!;

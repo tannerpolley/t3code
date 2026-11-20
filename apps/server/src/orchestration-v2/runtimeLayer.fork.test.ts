@@ -1,3 +1,4 @@
+import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { USAGE_LIMIT_SWITCH_HOLD_MS } from "./usageLimitRecoveryPending.ts";
@@ -861,7 +862,7 @@ const makeUsageSwitchTest = (preferences: Parameters<typeof ServerSettings.layer
     Layer.provide(McpSessionRegistryTestkit.layer),
     Layer.provide(McpProviderSessions.layer),
     Layer.provideMerge(IssueWorkStore.layer),
-    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provide(layerCheckpointStoreTest),
     Layer.provide(layerServerConfig),
     Layer.provideMerge(ServerSettings.layerTest(preferences)),
@@ -891,6 +892,7 @@ const switchSnapshots: readonly ServerProvider[] = [modelSelection, claudeSelect
 it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => {
   it.effect.each([
     "role",
+    "legacy-checker",
     "no-role",
     "off",
     "wait",
@@ -917,7 +919,9 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
       const source =
         scenario === "claude-to-codex"
           ? { ...claudeSelection, options: [{ id: "effort", value: "low" }] }
-          : modelSelection;
+          : scenario === "legacy-checker"
+            ? { ...modelSelection, options: [{ id: "reasoningEffort", value: "high" }] }
+            : modelSelection;
       const target: ModelSelection =
         scenario === "claude-to-codex" ? modelSelection : claudeSelection;
       const now = yield* DateTime.now;
@@ -967,6 +971,19 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
           createdBy: "user",
           creationSource: "web",
         });
+      if (scenario === "legacy-checker") {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          UPDATE orchestration_events
+          SET payload_json = json_set(payload_json, '$.role', 'checker')
+          WHERE stream_id = ${threadId} AND event_type = 'thread.created'
+        `;
+        yield* sql`
+          UPDATE orchestration_v2_projection_threads
+          SET payload_json = json_set(payload_json, '$.role', 'reviewer')
+          WHERE thread_id = ${threadId}
+        `;
+      }
       const initial = yield* orchestrator.getThreadProjection(threadId);
       const original = initial.runs[0]!;
       const resetAt =
@@ -993,9 +1010,17 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
             },
           },
           implementor: { complex: { provider: "claude" as const, effort: "high" as const } },
+          reviewer: {
+            routine: { tier: 2 as const, provider: "both" as const, effort: "high" as const },
+            complex: { tier: 2 as const, provider: "codex" as const, effort: "high" as const },
+          },
         },
         usageLimitFallbackModels:
-          scenario === "unavailable" || scenario === "expired-no-target" ? [] : [target],
+          scenario === "unavailable" ||
+          scenario === "expired-no-target" ||
+          scenario === "legacy-checker"
+            ? []
+            : [target],
         dontAskMode: true,
         autoResumeLimitedThreads: scenario === "wait",
         snoozeLimitedThreads: scenario === "wait",

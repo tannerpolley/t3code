@@ -16,6 +16,7 @@ type UsageLimitThread = Pick<
   OrchestrationV2AppThread,
   "modelSelection" | "role" | "branch" | "worktreePath"
 > & {
+  readonly legacyRoutineRole?: boolean;
   readonly lineage: Pick<OrchestrationV2AppThread["lineage"], "relationshipToParent">;
 };
 
@@ -29,6 +30,10 @@ export function usageLimitThreadRole(
 ): ModelRole | undefined {
   const threadRole = effectiveThreadRole(thread);
   const owned = roles.filter((role) => (role.role ?? resolveThreadRole(role.id)) === threadRole);
+  if (thread.legacyRoutineRole) {
+    const routine = owned.find((role) => role.level === "routine");
+    if (routine !== undefined) return routine;
+  }
   const { instanceId, model, options } = thread.modelSelection;
   let matched = owned[0];
   let specificity = -1;

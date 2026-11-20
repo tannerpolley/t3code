@@ -136,17 +136,13 @@ function migrateLegacyRoles(saved: readonly unknown[], workerProvider: unknown) 
   return roles;
 }
 
-function isLegacyRoleObject(value: unknown) {
+function isLegacyRoleObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object") return false;
   return Object.entries(value).some(
     ([id, role]) =>
-      id === "implementor-fast" ||
-      id === "implementor-thorough" ||
-      id === "checker" ||
-      id === "investigator" ||
-      (role !== null &&
-        typeof role === "object" &&
-        Object.keys(role).some((key) => key !== "routine" && key !== "complex")),
+      id === "sprinter" ||
+      (Object.hasOwn(LegacyModelRoles.fields, id) && !Object.hasOwn(ModelRoles.fields, id)) ||
+      (role !== null && typeof role === "object" && !("routine" in role || "complex" in role)),
   );
 }
 
@@ -190,7 +186,15 @@ export const migrateForkPersistedServerSettings = ({
           ),
         )
       : isLegacyRoleObject(modelRoles)
-        ? Effect.map(decodeLegacyModelRoles(modelRoles), foldLegacyRoles)
+        ? Effect.map(
+            decodeLegacyModelRoles(
+              !Object.hasOwn(modelRoles, "implementor-fast") &&
+                Object.hasOwn(modelRoles, "sprinter")
+                ? { ...modelRoles, "implementor-fast": modelRoles.sprinter }
+                : modelRoles,
+            ),
+            foldLegacyRoles,
+          )
         : decodeModelRoles(modelRoles === undefined ? {} : modelRoles);
   return Effect.map(roles, (modelRoles): ServerSettings => ({
     ...saved,
