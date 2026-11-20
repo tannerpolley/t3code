@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import { applySidebarLayoutMutation } from "@t3tools/shared/sidebarLayout";
 
 export const SIDEBAR_WRITE_DELAY = 250;
+const SIDEBAR_WRITE_TIMEOUT = 15_000;
 export function usesServerSidebar(capability: boolean | undefined) {
   return capability === true;
 }
@@ -119,12 +120,22 @@ export function createSidebarLayoutClient(
       return;
     entry.flight = compact(entry.pending);
     entry.pending = [];
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const record = await send(id, { revision: entry.base.revision, operations: entry.flight });
+      const record = await Promise.race([
+        send(id, { revision: entry.base.revision, operations: entry.flight }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("Sidebar layout write timed out.")),
+            SIDEBAR_WRITE_TIMEOUT,
+          );
+        }),
+      ]);
       if (record.revision >= entry.base.revision) entry.base = record;
     } catch (error) {
       onError(error);
     } finally {
+      clearTimeout(timeout);
       settleAdditions(entry.flight, entry.base.layout);
       entry.flight = [];
       notify();
