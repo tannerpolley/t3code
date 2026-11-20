@@ -28,6 +28,13 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+export function usageWindowAppliesToModel(window: ServerProviderUsageWindow, model: string) {
+  return (
+    (window.modelIds === undefined || window.modelIds.includes(model)) &&
+    (window.providerIds === undefined || window.providerIds.includes(model.split("/")[0] ?? ""))
+  );
+}
+
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
   now: number,
@@ -37,10 +44,7 @@ export function exhaustedUsageWindow(
   const exhausted = windows.filter(
     (window) =>
       (window.usedPercent ?? 0) >= 100 &&
-      (model === undefined || window.modelIds === undefined || window.modelIds.includes(model)) &&
-      (model === undefined ||
-        window.providerIds === undefined ||
-        window.providerIds.includes(model.split("/")[0] ?? "")) &&
+      (model === undefined || usageWindowAppliesToModel(window, model)) &&
       (!window.resetsAt ||
         !Number.isFinite(Date.parse(window.resetsAt)) ||
         Date.parse(window.resetsAt) > now),

@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderOptionSelection } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { LocalServerHideRule } from "./preview.ts";
 import {
@@ -25,19 +26,17 @@ const MAX_MODEL_ROLE_OPTIONS = 8;
 const MAX_MODEL_ROLE_OPTION_LENGTH = 60;
 export const MAX_MODEL_NOTE_LENGTH = 200;
 
-const ModelRoleOptionText = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(MAX_MODEL_ROLE_OPTION_LENGTH),
-);
+const ModelRoleOptionLength = Schema.isMaxLength(MAX_MODEL_ROLE_OPTION_LENGTH);
 
 export const ModelRoleTarget = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_MODEL_LENGTH)),
   options: Schema.optionalKey(
     Schema.Array(
-      Schema.Struct({
-        id: ModelRoleOptionText,
-        value: Schema.Union([ModelRoleOptionText, Schema.Boolean]),
-      }),
+      ProviderOptionSelection.mapFields(({ id, value }) => ({
+        id: id.check(ModelRoleOptionLength),
+        value: value.mapMembers(([text, flag]) => [text.check(ModelRoleOptionLength), flag]),
+      })),
     ).check(
       Schema.isMaxLength(MAX_MODEL_ROLE_OPTIONS),
       Schema.makeFilter(
