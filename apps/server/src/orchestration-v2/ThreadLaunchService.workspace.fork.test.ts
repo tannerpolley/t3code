@@ -226,6 +226,7 @@ describe("delegate_task isolation", () => {
         const threads = yield* ThreadManagement.ThreadManagementService;
         const task = yield* service.delegateTask(scope, {
           task: "Review the parser",
+          target: { override: true },
           ...workspaceChoice,
         });
         assert.equal(task.branch, "feature/parent");
