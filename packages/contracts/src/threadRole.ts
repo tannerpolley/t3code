@@ -5,11 +5,9 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 export const THREAD_ROLES = [
   "orchestrator",
   "designer",
-  "writer",
   "implementor",
   "reviewer",
-  "investigator",
-  "checker",
+  "writer",
 ] as const;
 export const ThreadRole = Schema.Literals(THREAD_ROLES);
 export type ThreadRole = typeof ThreadRole.Type;
@@ -19,36 +17,49 @@ export const THREAD_ROLE_LABELS: Record<ThreadRole, string> = {
   writer: "Writer",
   implementor: "Implementor",
   reviewer: "Reviewer",
-  investigator: "Investigator",
-  checker: "Checker",
 };
 
-/** Old agent callers and saved role ids remain readable at the boundary. */
-export const LEGACY_THREAD_ROLES = {
-  implementation: "implementor",
-  research: "investigator",
-  review: "reviewer",
-  design: "designer",
-  sprinter: "implementor",
-  test: "checker",
-  general: "implementor",
-  "fast-builder": "implementor",
-  "thorough-builder": "implementor",
-  "bounded-worker": "implementor",
-  "quick-claude": "implementor",
-  "evidence-gatherer": "investigator",
-  "strong-reviewer": "reviewer",
-  "implementor-fast": "implementor",
-  "implementor-thorough": "implementor",
-} as const satisfies Record<string, ThreadRole>;
+export const MODEL_ROLE_LEVELS = ["complex", "routine"] as const;
+export const ModelRoleLevel = Schema.Literals(MODEL_ROLE_LEVELS);
+export type ModelRoleLevel = typeof ModelRoleLevel.Type;
 
-const isThreadRole = Schema.is(ThreadRole);
+const MODEL_ROLE_NAMES = {
+  orchestrator: ["orchestrator", "complex"],
+  designer: ["designer", "complex"],
+  writer: ["writer", "complex"],
+  implementor: ["implementor", "complex"],
+  reviewer: ["reviewer", "complex"],
+  implementation: ["implementor", "complex"],
+  research: ["designer", "routine"],
+  review: ["reviewer", "complex"],
+  design: ["designer", "complex"],
+  sprinter: ["implementor", "routine"],
+  test: ["reviewer", "routine"],
+  general: ["implementor", "routine"],
+  "fast-builder": ["implementor", "routine"],
+  "thorough-builder": ["implementor", "complex"],
+  "bounded-worker": ["implementor", "routine"],
+  "quick-claude": ["implementor", "routine"],
+  "evidence-gatherer": ["designer", "routine"],
+  "strong-reviewer": ["reviewer", "complex"],
+  "implementor-fast": ["implementor", "routine"],
+  "implementor-thorough": ["implementor", "complex"],
+  checker: ["reviewer", "routine"],
+  investigator: ["designer", "routine"],
+} as const satisfies Record<string, readonly [ThreadRole, ModelRoleLevel]>;
+
+export const THREAD_ROLE_NAMES = Object.keys(MODEL_ROLE_NAMES) as Array<
+  keyof typeof MODEL_ROLE_NAMES
+>;
+
+export function resolveModelRoleName(value: string) {
+  return Object.hasOwn(MODEL_ROLE_NAMES, value)
+    ? MODEL_ROLE_NAMES[value as keyof typeof MODEL_ROLE_NAMES]
+    : undefined;
+}
 
 export function resolveThreadRole(value: string): ThreadRole | undefined {
-  if (isThreadRole(value)) return value;
-  return Object.hasOwn(LEGACY_THREAD_ROLES, value)
-    ? LEGACY_THREAD_ROLES[value as keyof typeof LEGACY_THREAD_ROLES]
-    : undefined;
+  return resolveModelRoleName(value)?.[0];
 }
 
 // Provider default agents, matched whole before the word patterns below.
@@ -59,11 +70,11 @@ const NATIVE_SUBAGENT_DEFAULT_ROLES: ReadonlyMap<string, ThreadRole> = new Map([
 ]);
 
 // The first match wins, so the generic "doer" words come last: "code-reviewer"
-// is a Reviewer and "implementation-checker" a Checker.
+// is a Reviewer.
 const NATIVE_SUBAGENT_ROLE_PATTERNS: ReadonlyArray<readonly [RegExp, ThreadRole]> = [
   [/review/, "reviewer"],
-  [/test|check|verif/, "checker"],
-  [/explor|research|investigat|search/, "investigator"],
+  [/test|check|verif/, "reviewer"],
+  [/explor|research|investigat|search/, "designer"],
   [/writ/, "writer"],
   [/worker|implement|builder|coder/, "implementor"],
 ];
@@ -117,10 +128,7 @@ export function worktreeRole(thread: ThreadRoleDefaultInput): { readonly role?: 
   return thread.role === undefined && inWorktree(thread) ? { role: "implementor" } : {};
 }
 
-export const ThreadRoleInput = Schema.Literals([
-  ...THREAD_ROLES,
-  ...(Object.keys(LEGACY_THREAD_ROLES) as Array<keyof typeof LEGACY_THREAD_ROLES>),
-]).pipe(
+export const ThreadRoleInput = Schema.Literals(THREAD_ROLE_NAMES).pipe(
   Schema.decodeTo(
     ThreadRole,
     SchemaTransformation.transform({
@@ -130,24 +138,14 @@ export const ThreadRoleInput = Schema.Literals([
   ),
 );
 
-/** Implementor's profile is independent of its thread role. */
-export function modelRoleProfile(id: string) {
-  if (resolveThreadRole(id) !== "implementor") return undefined;
-  return id === "thorough-builder" || id === "implementor-thorough"
-    ? ("thorough" as const)
-    : ("fast" as const);
-}
-
-/** Stable settings-profile ids, including saved issue-work references to old names. */
+/** Stable model-role ids, including saved issue-work references to old names. */
 export const ModelRoleId = TrimmedNonEmptyString.pipe(
   Schema.decodeTo(
     Schema.String,
     SchemaTransformation.transform({
       decode: (id) => {
-        const role = resolveThreadRole(id);
-        if (role === undefined) return id;
-        const profile = modelRoleProfile(id);
-        return profile === undefined ? role : `implementor-${profile}`;
+        const slot = resolveModelRoleName(id);
+        return slot === undefined ? id : `${slot[0]}-${slot[1]}`;
       },
       encode: (id) => id,
     }),

@@ -405,9 +405,10 @@ const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(
   PersistedServerSettings.pipe(
     Schema.decodeTo(
       Schema.toType(ServerSettings),
-      SchemaTransformation.transform({
-        decode: (saved) => migrateForkPersistedServerSettings(saved),
-        encode: (settings) => settings,
+      SchemaTransformation.transformEffect({
+        decode: (saved) =>
+          Effect.mapError(migrateForkPersistedServerSettings(saved), (error) => error.issue),
+        encode: Effect.succeed,
       }),
     ),
   ),
