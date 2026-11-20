@@ -334,7 +334,10 @@ const ToolOutputRetentionDays = Schema.NullOr(NonNegativeInt.check(Schema.isGrea
 const AwayMode = Schema.Literals(["auto", "away", "here"]);
 const AwayIdleMinutes = NonNegativeInt.check(Schema.isGreaterThan(0));
 
+const QuietThreadMinutes = NonNegativeInt.check(Schema.isGreaterThan(0));
+
 export const ForkServerSettingsFields = {
+  quietThreadMinutes: defaulted(QuietThreadMinutes, 10),
   awayMode: AwayMode.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   awayIdleMinutes: AwayIdleMinutes.pipe(Schema.withDecodingDefault(Effect.succeed(5))),
   toolOutputRetentionDays: ToolOutputRetentionDays.pipe(
@@ -419,6 +422,7 @@ export const ForkClientSettingsPatchFields = {
 };
 
 export const ForkServerSettingsPatchFields = {
+  quietThreadMinutes: Schema.optionalKey(QuietThreadMinutes),
   awayMode: Schema.optionalKey(AwayMode),
   awayIdleMinutes: Schema.optionalKey(AwayIdleMinutes),
   toolOutputRetentionDays: Schema.optionalKey(ToolOutputRetentionDays),

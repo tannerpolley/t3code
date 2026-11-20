@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSidebarTextSizeSettings } from "./ForkSidebarTextSizeSettings";
@@ -529,10 +530,12 @@ function ForkGeneralSettings() {
 }
 
 function ForkGeneralBehaviorRows() {
+  const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { connectedEnvironments } = useSettingsScope();
   const hasServerTargets = connectedEnvironments.length > 0;
+  const mixedQuietTimeout = useScopedSettingsMixed(["quietThreadMinutes"]);
   const mixedIdleTimeout = useScopedSettingsMixed(["idleAgentSessionMinutes"]);
   return (
     <SettingsSection title="Agent sessions & background behavior">
@@ -578,6 +581,39 @@ function ForkGeneralBehaviorRows() {
           }
         />
       ) : null}
+      <SettingsRow
+        serverScoped
+        settingKeys={["quietThreadMinutes"]}
+        {...searchableSetting("quiet-thread-minutes")}
+        title={gt("Quiet thread threshold")}
+        description={gt(
+          "Flag a working thread and wake its parent after this much time without provider activity.",
+        )}
+        control={
+          <Select
+            value={mixedQuietTimeout ? null : String(settings.quietThreadMinutes)}
+            onValueChange={(value) => {
+              if (value !== null) updateSettings({ quietThreadMinutes: Number(value) });
+            }}
+            disabled={!hasServerTargets}
+          >
+            <SelectTrigger size="sm">
+              <SelectValue>
+                {mixedQuietTimeout
+                  ? gt("Mixed")
+                  : gt("{minutes} min", { minutes: settings.quietThreadMinutes })}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {[1, 5, 10, 15, 20, 30, 60].map((minutes) => (
+                <SelectItem key={minutes} hideIndicator value={String(minutes)}>
+                  {gt("{minutes} min", { minutes })}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
       <SettingsRow
         serverScoped
         settingKeys={["idleAgentSessionMinutes"]}

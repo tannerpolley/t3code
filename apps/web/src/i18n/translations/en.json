@@ -2,6 +2,10 @@
   "1915a433d092839d": "Both",
   "1b7c524fccf06537": "Needs you",
   "9118979e7d982335": "Ready for review",
+  "16cfc2ecead8fcc9": "Quiet thread threshold",
+  "927de6cb3121b1c5": "Flag a working thread and wake its parent after this much time without provider activity.",
+  "d52b3d6bf9f2a013": "Mixed",
+  "874249a1962865f1": "{minutes} min",
   "dd10f8671d149b28": "Tier",
   "c8835bc68ac01205": "Effort",
   "e40e6d4ec89b5365": "Default",
@@ -100,5 +104,6 @@
   "86b43caa9ff41ea2": "Quit shortcut",
   "c3091df5aa9526a8": "Phone alerts",
   "1a47fae902ee1859": "Role providers",
-  "b6295e8a6dd8291f": "Approve using credits when weekly usage runs low."
+  "b6295e8a6dd8291f": "Approve using credits when weekly usage runs low.",
+  "408a142fdd1bb20c": "quiet {minutes}m"
 }

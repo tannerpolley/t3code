@@ -66,6 +66,8 @@ export interface ThreadActivityInput {
   readonly hasPendingUserInput?: boolean | undefined;
   readonly pendingSubagentRequest?: "approval" | "user_input" | null | undefined;
   readonly pendingGuestMessageCount?: number | undefined;
+  readonly lastProviderActivityAt?: number | undefined;
+  readonly hasActiveProviderWork?: boolean | undefined;
   readonly blockedOnThreadWait?: boolean | undefined;
   readonly pendingBackgroundTasks?: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly runtime?: Pick<
@@ -210,15 +212,36 @@ export function visibleOpenPullRequest(pullRequests: readonly ThreadPullRequestL
   );
 }
 
+export interface ThreadQuietClock {
+  readonly nowMs: number;
+  readonly quietMinutes: number;
+}
+
+export function threadQuietMinutes(thread: ThreadActivityInput, clock: ThreadQuietClock) {
+  if (
+    thread.runtime?.status !== "running" ||
+    resolveThreadActivity(thread) !== "working" ||
+    thread.hasActiveProviderWork ||
+    (thread.pendingBackgroundTasks?.length ?? 0) > 0 ||
+    thread.lastProviderActivityAt === undefined
+  ) {
+    return null;
+  }
+  const minutes = Math.floor((clock.nowMs - thread.lastProviderActivityAt) / 60_000);
+  return minutes >= clock.quietMinutes ? minutes : null;
+}
+
 export function resolveThreadActivityGroup(
   thread: WorkingThreadInput & { readonly pullRequests: readonly ThreadPullRequestLink[] },
+  clock?: ThreadQuietClock,
 ) {
   const activity = resolveThreadActivity(thread);
   if (
     activity === "approval" ||
     activity === "input" ||
     activity === "failed" ||
-    activity === "limited"
+    activity === "limited" ||
+    (clock !== undefined && threadQuietMinutes(thread, clock) !== null)
   ) {
     return "needs-you";
   }
@@ -260,6 +283,11 @@ export function threadActivityFromShell(thread: OrchestrationV2ThreadShell, requ
     runtime: threadActivityShellRuntime(thread),
     interactionMode: thread.interactionMode,
     blockedOnThreadWait: thread.blockedOnThreadWait ?? false,
+    lastProviderActivityAt: thread.lastProviderActivityAt,
+    hasActiveProviderWork:
+      thread.hasActiveProviderWork ||
+      (!requestVisible && thread.pendingRuntimeRequest !== null) ||
+      request?.kind === "auth_refresh",
     hasPendingApprovals:
       request !== null && request.kind !== "user_input" && request.kind !== "auth_refresh",
     hasPendingUserInput: request?.kind === "user_input",

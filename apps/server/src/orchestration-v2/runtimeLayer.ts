@@ -9,6 +9,7 @@ import * as UsageLimitProviderSwitchWorker from "./UsageLimitProviderSwitchWorke
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
+import * as QuietDelegatesWorker from "./QuietDelegatesWorker.ts";
 import * as ThreadTitleRefreshWorker from "./ThreadTitleRefreshWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -481,6 +482,9 @@ export const layerProduction = Layer.mergeAll(
   ),
   DontAskModeWorker.workerLive.pipe(
     Layer.provide(Layer.mergeAll(layerOrchestratorProvided, ProjectionStore.layer, layerEventSink)),
+  ),
+  QuietDelegatesWorker.workerLive.pipe(
+    Layer.provide(Layer.merge(ProjectionStore.layer, layerThreadManagementProvided)),
   ),
   ThreadTitleRefreshWorker.workerLive.pipe(
     Layer.provide(Layer.merge(ProjectionStore.layer, layerThreadManagementProvided)),

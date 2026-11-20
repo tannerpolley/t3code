@@ -42,6 +42,7 @@ import {
 import {
   resolveThreadActivityGroup,
   threadActivityFromShell,
+  threadQuietMinutes,
   visibleOpenPullRequest,
 } from "@t3tools/shared/threadActivity";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -767,6 +768,7 @@ export const layer = Layer.effect(
       if (readShells === null) return groups;
 
       const { threads: family } = yield* readShells;
+      const clock = { nowMs: now, quietMinutes: (yield* settings.getSettings).quietThreadMinutes };
       const pendingRequests = pendingSubagentRequestsByThread(family);
       const summariesById = new Map(
         summaries.map(({ threadId, lastSummary }) => [threadId, lastSummary]),
@@ -776,12 +778,16 @@ export const layer = Layer.effect(
         const activity = threadActivityFromShell(child);
         const pullRequests = child.pullRequests ?? [];
         const pendingRequest = pendingRequests.get(child.id);
-        const group = resolveThreadActivityGroup({
+        const childActivity = {
           ...activity,
           pullRequests,
           pendingSubagentRequest:
-            pendingRequest === "user_only_input" ? "user_input" : (pendingRequest ?? null),
-        });
+            pendingRequest === "user_only_input"
+              ? ("user_input" as const)
+              : (pendingRequest ?? null),
+        };
+        const group = resolveThreadActivityGroup(childActivity, clock);
+        const quietMinutes = threadQuietMinutes(childActivity, clock);
         if (group === null) continue;
         const { latestRun } = activity;
         const start = Date.parse(
@@ -810,6 +816,7 @@ export const layer = Layer.effect(
               pullRequests.find((pr) => pr.source !== "stack-dismissed")
             )?.url ?? null,
           lastSummary: summariesById.get(child.id) ?? child.lastError ?? null,
+          ...(quietMinutes === null ? {} : { quietMinutes }),
           elapsedMs: Math.max(0, end - start),
         });
       }

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { ThreadWorktreeIndicator } from "../ThreadStatusIndicators";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
@@ -557,6 +558,7 @@ const SidebarThreadRowColumnsContent = memo(function SidebarThreadRowColumnsCont
 });
 
 export type SidebarThreadRowProps = {
+  readonly quietMinutes?: number | null;
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's branch and PR line under it;
@@ -666,6 +668,15 @@ function ThreadRenameInput(props: {
 }
 
 export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
+  const gt = useGT();
+  const quietLabel =
+    props.quietMinutes == null ? null : gt("quiet {minutes}m", { minutes: props.quietMinutes });
+  const quietBadge =
+    quietLabel === null ? null : (
+      <span className="shrink-0 whitespace-nowrap text-xs font-medium tabular-nums text-warning-foreground">
+        {quietLabel}
+      </span>
+    );
   const {
     isRenaming,
     onCancelRename,
@@ -1064,6 +1075,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
+  const rowLabel =
+    quietLabel === null ? accessibility.label : `${accessibility.label}, ${quietLabel}`;
 
   const title = isRenaming ? (
     <ThreadRenameInput
@@ -1259,7 +1272,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 ref={rowRef}
                 role="button"
                 tabIndex={0}
-                aria-label={accessibility.label}
+                aria-label={rowLabel}
                 aria-current={accessibility.current}
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
@@ -1289,6 +1302,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             </span>
             {draftIndicator}
             {title}
+            {quietBadge}
             {pinIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -1490,7 +1504,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 tabIndex={0}
                 data-sidebar-row={threadKey}
                 data-sidebar-parent={props.navigationParent}
-                aria-label={accessibility.label}
+                aria-label={rowLabel}
                 aria-current={accessibility.current}
                 data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
@@ -1526,6 +1540,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               )}
               {draftIndicator}
               {title}
+              {quietBadge}
               {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
@@ -1682,7 +1697,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               tabIndex={0}
               data-sidebar-row={threadKey}
               data-sidebar-parent={props.navigationParent}
-              aria-label={accessibility.label}
+              aria-label={rowLabel}
               aria-current={accessibility.current}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
@@ -1848,6 +1863,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
               <ThreadRoleIcon thread={thread.source} />
               {title}
+              {quietBadge}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title

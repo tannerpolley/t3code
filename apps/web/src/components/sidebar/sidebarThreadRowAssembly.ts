@@ -1,3 +1,6 @@
+import { threadQuietMinutes } from "@t3tools/shared/threadActivity";
+import type { ServerConfig } from "@t3tools/contracts";
+import { sidebarQuietClock } from "./sidebarActivityGroups.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
@@ -42,7 +45,7 @@ export type SidebarThreadRowAssembly = Pick<
     ReadonlyMap<string, SidebarProviderEntry>
   >;
   /** Environments whose config has loaded, which can settle, snooze and pin. */
-  readonly serverConfigs: ReadonlyMap<EnvironmentId, unknown>;
+  readonly serverConfigs: ReadonlyMap<EnvironmentId, Pick<ServerConfig, "settings">>;
   readonly scratchMachineLabelFor: (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,
   ) => string | null;
@@ -112,6 +115,14 @@ export function sidebarThreadRowProps(
     settlementSupported: supported,
     snoozeSupported: supported,
     pinningSupported: supported,
+    quietMinutes: threadQuietMinutes(
+      thread,
+      sidebarQuietClock(
+        thread.environmentId,
+        Date.parse(state.snoozeNow),
+        serverConfigs.get(thread.environmentId)?.settings.quietThreadMinutes,
+      ),
+    ),
     isPinned: thread.pinnedAt != null,
     wokeAt: threadWokeAt(thread, { now: state.snoozeNow }),
     isActive,

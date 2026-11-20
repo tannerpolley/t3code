@@ -2377,6 +2377,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   activityRunStatus: Schema.optional(
     Schema.NullOr(Schema.Literals(["preparing", "starting", "running", "waiting"])),
   ),
+  lastProviderActivityAt: Schema.optionalKey(NonNegativeInt),
+  hasActiveProviderWork: Schema.optionalKey(Schema.Boolean),
   blockedOnThreadWait: Schema.optional(Schema.Boolean),
   status: OrchestrationV2ShellThreadStatus,
   lastError: Schema.optional(Schema.NullOr(Schema.String)),

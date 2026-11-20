@@ -94,6 +94,7 @@ import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchest
 import {
   deriveBlockedOnThreadWait,
   derivePendingBackgroundWork,
+  pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -478,6 +479,7 @@ export interface ShellSnapshotOptions {
   readonly location?: "active" | "archive";
   readonly projectId?: ProjectId;
   readonly unsettledOnly?: boolean;
+  readonly runningDelegatesOnly?: boolean;
   /**
    * Only the threads sharing this thread's `lineage.rootThreadId`: the root, its forks, and their
    * subagent trees. The thread may be deleted: forks keep a deleted source's root.
@@ -1234,6 +1236,7 @@ type ShellThreadRow = {
   readonly latest_run_background_wake: number;
   readonly active_run_id: string | null;
   readonly active_run_status: string | null;
+  readonly last_provider_activity_at: string | null;
   readonly activity_run_status: string | null;
   readonly activity_run_started_at: string | null;
   readonly last_error: string | null;
@@ -1814,6 +1817,22 @@ const linkCardStillAsks = (
   latestUserAuthoredMessageAt === null ||
   !DateTime.isGreaterThan(latestUserAuthoredMessageAt, item.startedAt ?? item.updatedAt);
 
+function hasActiveProviderWork(input: {
+  readonly turnItems: readonly OrchestrationV2TurnItem[];
+  readonly providerThreads: OrchestrationV2ThreadProjection["providerThreads"];
+  readonly activeProviderThreadId: OrchestrationV2ThreadProjection["thread"]["activeProviderThreadId"];
+  readonly runs?: OrchestrationV2ThreadProjection["runs"];
+}) {
+  return (
+    pendingBackgroundTurnItems(input).length > 0 ||
+    input.providerThreads.some(
+      (thread) =>
+        thread.id === input.activeProviderThreadId &&
+        (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+    )
+  );
+}
+
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
   nativeSubagent: OrchestrationV2Subagent | null = null,
@@ -1944,6 +1963,23 @@ export function threadShellFromProjection(
     latestRunBackgroundWake:
       latestRun != null && isBackgroundWakeRunForShell(latestRun, projection),
     activeRunId: activeRun?.id ?? null,
+    ...(activeRun?.status === "running"
+      ? {
+          lastProviderActivityAt: Math.max(
+            DateTime.toEpochMillis(activeRun.startedAt ?? activeRun.requestedAt),
+            ...projection.turnItems
+              .filter((item) => item.runId === activeRun.id)
+              .map((item) => DateTime.toEpochMillis(item.updatedAt)),
+            ...projection.messages
+              .filter((message) => message.runId === activeRun.id && message.role === "assistant")
+              .map((message) => DateTime.toEpochMillis(message.updatedAt)),
+          ),
+          hasActiveProviderWork: hasActiveProviderWork({
+            ...projection,
+            activeProviderThreadId: projection.thread.activeProviderThreadId,
+          }),
+        }
+      : {}),
     blockedOnThreadWait: deriveBlockedOnThreadWait({ activeRun, turnItems: projection.turnItems }),
     activityRunStatus: activityRun?.status ?? null,
     activityRunStartedAt:
@@ -2086,6 +2122,8 @@ type ShellThreadState = {
   readonly latestRunBackgroundWake: boolean;
   readonly activeRunId: RunId | null;
   readonly blockedOnThreadWait: boolean;
+  readonly lastProviderActivityAt?: number;
+  readonly hasActiveProviderWork?: boolean;
   readonly activityRunStatus: ShellActivityRunStatus | null;
   readonly activityRunStartedAt: DateTime.Utc | null;
   readonly lastError: string | null;
@@ -2300,6 +2338,12 @@ function shellFromState(input: {
     latestRunBackgroundWake: input.state.latestRunBackgroundWake,
     activeRunId: input.state.activeRunId,
     blockedOnThreadWait: input.state.blockedOnThreadWait,
+    ...(input.state.lastProviderActivityAt === undefined
+      ? {}
+      : { lastProviderActivityAt: input.state.lastProviderActivityAt }),
+    ...(input.state.hasActiveProviderWork === undefined
+      ? {}
+      : { hasActiveProviderWork: input.state.hasActiveProviderWork }),
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
     status: input.state.latestRunStatus,
@@ -8237,6 +8281,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         location,
         projectId,
         unsettledOnly = false,
+        runningDelegatesOnly = false,
         familyOf,
         worktreePath,
         threadIds,
@@ -8272,6 +8317,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ${isBackgroundWakeShellRun("presented")} AS latest_run_background_wake,
               active.run_id AS active_run_id,
               active.status AS active_run_status,
+              CASE WHEN active.status = 'running' THEN (
+                SELECT MAX(updated_at) FROM (
+                  SELECT COALESCE(json_extract(active.payload_json, '$.startedAt'), active.requested_at)
+                    AS updated_at
+                  UNION ALL
+                  SELECT MAX(item.updated_at)
+                  FROM orchestration_v2_projection_turn_items item
+                  WHERE item.thread_id = t.thread_id AND item.run_id = active.run_id
+                  UNION ALL
+                  SELECT MAX(message.updated_at)
+                  FROM orchestration_v2_projection_messages message
+                  WHERE message.thread_id = t.thread_id AND message.run_id = active.run_id
+                    AND message.role = 'assistant'
+                )
+              ) END AS last_provider_activity_at,
               (
                 SELECT r.status
                 -- Read active runs by status. Walking the ordinal index to skip this sort
@@ -8458,6 +8518,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : sql` AND CASE WHEN json_valid(t.payload_json)
                     THEN json_extract(t.payload_json, '$.worktreePath') END = ${worktreePath}`
             }${threadIds === undefined ? sql`` : sql` AND t.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
+            ${
+              runningDelegatesOnly
+                ? sql`
+              AND active.status = 'running'
+              AND t.archived_at IS NULL
+              AND EXISTS (
+                SELECT 1
+                FROM orchestration_v2_projection_subagents task
+                JOIN orchestration_v2_projection_threads parent ON parent.thread_id = task.thread_id
+                WHERE task.child_thread_id = t.thread_id AND task.origin = 'app_owned'
+                  AND task.status = 'running'
+                  AND parent.deleted_at IS NULL AND parent.archived_at IS NULL
+                  AND parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+              )
+            `
+                : sql``
+            }
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
 
@@ -9080,6 +9157,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : { id: RunId.make(row.active_run_id), status: "running" },
             turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
           }),
+          ...(row.last_provider_activity_at === null
+            ? {}
+            : {
+                lastProviderActivityAt: DateTime.toEpochMillis(
+                  DateTime.makeUnsafe(row.last_provider_activity_at),
+                ),
+                hasActiveProviderWork: hasActiveProviderWork({
+                  providerThreads: providerThreadsByThreadId.get(thread.id) ?? [],
+                  turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
+                  activeProviderThreadId: thread.activeProviderThreadId,
+                }),
+              }),
           activityRunStartedAt:
             row.activity_run_started_at === null
               ? null
