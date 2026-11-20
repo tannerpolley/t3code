@@ -340,6 +340,58 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
   }),
 );
 
+it.effect("rejects an oversized full thread snapshot and still serves bounded history", () =>
+  Effect.gen(function* () {
+    const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+    const read = (suffix = "") =>
+      Effect.promise(() =>
+        handler(
+          new Request(`http://localhost/api/orchestration/threads/${thread.id}${suffix}`, {
+            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+          }),
+        ),
+      );
+    yield* eventSink.write({
+      events: items
+        .filter((item) => item.type === "command_execution")
+        .slice(0, 12)
+        .map((item) => ({
+          id: EventId.make(`create-${item.id}`),
+          type: "turn-item.updated" as const,
+          threadId: thread.id,
+          occurredAt: now,
+          payload: { ...item, type: "reasoning", text: "Thinking", streaming: false },
+        })),
+    });
+    const smallSnapshot = yield* read();
+    expect(smallSnapshot.status).toBe(200);
+    expect(yield* Effect.promise(() => smallSnapshot.json())).toMatchObject({
+      projection: {
+        turnItems: expect.arrayContaining([expect.objectContaining({ text: "Thinking" })]),
+      },
+    });
+
+    const sql = Context.get(services, SqlClient.SqlClient);
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.text', printf('%.*c', ${768 * 1024}, 'x'))
+      WHERE thread_id = ${thread.id}
+    `;
+
+    const oversizedSnapshot = yield* read();
+    expect(oversizedSnapshot.status).toBe(400);
+    expect(yield* Effect.promise(() => oversizedSnapshot.json())).toMatchObject({
+      _tag: "EnvironmentRequestInvalidError",
+      reason: "thread_snapshot_too_large",
+    });
+    const boundedSnapshot = yield* read("/bounded");
+    expect(boundedSnapshot.status).toBe(200);
+    expect(yield* Effect.promise(() => boundedSnapshot.json())).toMatchObject({
+      hasMoreHistory: true,
+    });
+  }),
+);
+
 it.effect("leaves older settled threads out of the HTTP shell only when asked", () =>
   Effect.gen(function* () {
     const { eventSink, handler } = yield* serveOrchestrationHttp(() => true);

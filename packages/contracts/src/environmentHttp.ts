@@ -115,6 +115,7 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "scope_not_granted",
   "invalid_command",
   "invalid_history_cursor",
+  "thread_snapshot_too_large",
   "thread_transcript_too_large",
   "invalid_audio",
   "speech_unavailable",
@@ -773,7 +774,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
       headers: OrchestrationProtocolHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
       success: OrchestrationV2ThreadDetailSnapshot,
-      error: EnvironmentOrchestrationThreadSnapshotErrors,
+      error: [EnvironmentRequestInvalidError, ...EnvironmentOrchestrationThreadSnapshotErrors],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
