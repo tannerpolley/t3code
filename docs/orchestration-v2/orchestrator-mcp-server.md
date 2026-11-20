@@ -278,14 +278,14 @@ own worktree, for children that edit code in parallel: its first run starts in
 `preparing`, and the same preparation `t3_thread_launch` uses creates a branch
 from the commit the parent's checkout is on (local commits only; uncommitted
 edits are not copied), binds the child, runs the project's setup script, and
-releases the run. Only `implementor` defaults to `worktree`; Orchestrator,
-Designer, Reviewer, Investigator and Checker share the caller's checkout. Checker reviews
-the builder's existing checkout. Explicit `isolation` overrides the role
-default. Legacy role names remain accepted: `implementation` maps to
-Implementor, `sprinter` to Implementor, `design` to Designer, `research` to Investigator, `review` to Reviewer, and
-`test` to Checker. A child without a role, or with legacy `general`, is an
-Implementor when it gets its own worktree and an Investigator otherwise. Implementor has Sprinter and Implementor model profiles; pass a profile's
-Target JSON as `target` and `implementor` as `role`. When the checkout has no
+releases the run. Implementor defaults to a worktree. Orchestrator, Designer,
+Reviewer and Writer share the caller's checkout. Explicit `isolation` overrides
+the role default. A child without a role is an Implementor when it gets its own
+worktree and a Designer when it shares the checkout.
+
+Each role has a routine and a complex level. Pass `role` and `level` to select
+the configured model, or omit `level` to use complex. Older callers can still
+use their saved role names. When the checkout has no
 commit to branch from, a defaulted worktree falls back to `shared` with a
 `workspaceNote`, and an explicit one fails. The branch name derives from the
 title and the delegate command id, so a retry with the same `clientRequestId`

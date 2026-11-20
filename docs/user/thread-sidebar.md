@@ -439,13 +439,13 @@ A non-server shell running for
 over two hours is marked as possibly stuck.
 
 In **Settings → Providers → Model roles**, choose a tier, provider and effort for
-each kind of delegated work. **Settings → Customizations** also includes these
+the routine and complex level of each role. **Settings → Customizations** also includes these
 settings. Each tier pairs one Claude model with one Codex model. Changing a tier's
 model updates every role that uses it. Add a short note to either model to tell
 agents when it works well. Resetting the tier models keeps your notes.
 
 Open **Role providers** beside the sidebar update control to change any role to
-**Claude**, **Both** or **Codex**. **Both** lets agents use either model in the tier,
+**Claude**, **Both** or **Codex** at both levels. **Both** lets agents use either model in the tier,
 with low weekly headroom moving a choice down the list. A role pinned to one
 provider asks for your direction if its choice is unavailable. In the same popup,
 you can approve credit use separately for Claude and Codex. While approved, low
@@ -461,8 +461,8 @@ Every thread has a role. Threads that start in a worktree, or move into one, are
 Implementors. Other threads you start are Orchestrators. Child agents are
 Implementors unless their parent gives them another role. Forks keep their source's
 role. A native provider subagent takes its role from its agent type: Codex's manager
-is an Orchestrator; reviewer types are Reviewers; explorer or researcher types are
-Investigators; writing types are Writers; tester or checker types are Checkers; and every other type, including
+is an Orchestrator, reviewer and tester types are Reviewers, explorer and researcher types are
+Designers, writing types are Writers, and every other type, including
 the default agents, is an Implementor. Native subagents with the Implementor role display as
 Worker with a hard hat icon. Role icons appear in the chat header, and in
 thread rows when you turn them on in **Settings → Appearance → Sidebar & projects**.
@@ -540,7 +540,7 @@ name. Running child agents show by default; a row you open or close keeps your c
 Processes and commands alone only reveal a caret: open it to see the running work rows. Child rows keep the same columns as their parent. A solid line separates
 each thread with child agents, and everything under it, from the rows around it; a dashed line
 marks each change of checkout between consecutive rows within a family. Workers stay under their
-parent across worktrees, ordered by role: Implementor, Reviewer, Investigator, Checker, then other
+parent across worktrees, ordered by role: Implementor, Reviewer, then other
 roles, with the newest activity first within each role.
 In **Settings → Appearance → Sidebar & projects**, choose which icons, model, effort and issue or pull request badges appear, or use a branch icon for worktrees; hidden columns give their space to the title.
 Choose **Role display → Icons** to replace role names with compact icons; hover an icon for its role and purpose.
@@ -548,8 +548,7 @@ Choose **Family style → Colors** to tint each family instead, with deeper rows
 Turn off **Codex-style sidebar** in **Settings → General** to use the classic rows and flat child list.
 The Activity view keeps its cards.
 
-Rows are titled by their role (Orchestrator, Designer, Writer, Implementor, Reviewer, Investigator, Checker,
-or Worker). Hover a title to see the thread's name. An orchestrator shows its pull request
+Rows are titled by their role (Orchestrator, Designer, Writer, Implementor, Reviewer, or Worker). Hover a title to see the thread's name. An orchestrator shows its pull request
 state; an issue-linked thread shows its issue number; other threads show their pull request
 state when they have one.
 

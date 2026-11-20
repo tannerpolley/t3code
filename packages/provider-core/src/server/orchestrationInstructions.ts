@@ -1,3 +1,4 @@
+import { THREAD_ROLES, THREAD_ROLE_LABELS } from "@t3tools/contracts";
 import type {
   OrchestratorMcpModelNote,
   OrchestratorMcpModelRole,
@@ -46,9 +47,9 @@ const MODEL_ROLES_HEADER = `
 
 ### Model roles
 
-The user sets each role's provider (Claude, Both or Codex) and can change it at any time, so read \`orchestrator_capabilities\` before choosing a worker model because its roles are current.
+Read \`orchestrator_capabilities\` for current choices. Each role has two levels. Pass \`level: "routine"\` for bounded, well-specified work, evidence gathering or sanity checks. Use \`complex\` (the default) for broad changes, correctness-critical work or decisions.
 
-The user's choices for delegated work follow configured order, with the Default first. Choices with weekly headroom below 0.8 are demoted behind the others, ordered by headroom. Unknown usage is not demoted, and unavailable targets go last. Weekly usage shows quota left, reset time, and pace against elapsed window time when reported. Pass \`role\` and omit \`target\` to use the live role default. To use a role's other choice, pass only \`target.providerInstanceId\`. \`orchestrator_capabilities\` lists all choices and their availability again.
+Pass \`role\` and omit \`target\` to use the first choice at that level. To use another choice at the same level, pass only \`target.providerInstanceId\`. Choices below 0.8 weekly headroom are demoted, ordered by headroom. Unknown usage keeps its place and unavailable choices go last.
 
 `;
 
@@ -67,30 +68,26 @@ function oneLine(text: string, maxBytes: number): string {
   return shortened + "…";
 }
 
-function modelRoleLine(role: OrchestratorMcpModelRole, maxBytes: number): string {
-  const head = `- ${role.name}${role.role ? ` (role: ${role.role})` : ""}`;
-  const description = oneLine(role.description, 600);
-  const choices = role.targets.map(
-    ({ providerInstanceId, model, options, unavailableReason, weeklyUsage }) => {
-      const traits = options?.map((option) => option.value).join(" ");
-      const label = `${model}${traits ? ` ${traits}` : ""} (${providerInstanceId})`;
-      const usage = weeklyUsage
-        ? ` Weekly usage: ${weeklyUsage.remainingPercent}% left; resets ${weeklyUsage.resetsAt ?? "unknown"}; pace ${weeklyUsage.pace ?? "unknown"}.`
-        : "";
-      return unavailableReason === null
-        ? `${label}.${usage}`
-        : `${label}.${usage} Unavailable: ${oneLine(unavailableReason, 200)}`;
-    },
-  );
-  const allChoices = choices.join(" or ");
-  const full = description ? `${head}: ${description}. ${allChoices}` : `${head}: ${allChoices}`;
-  if (byteLength(full) <= maxBytes) return full;
-  const compact = `${head}: ${allChoices}`;
-  if (byteLength(compact) <= maxBytes) return compact;
-  const suffix = " See `orchestrator_capabilities` for choices.";
-  return byteLength(`${head}: ${choices[0]}${suffix}`) <= maxBytes
-    ? `${head}: ${choices[0]}${suffix}`
-    : head + "." + suffix;
+function modelChoiceLabel(
+  {
+    providerInstanceId,
+    model,
+    options,
+    unavailableReason,
+  }: OrchestratorMcpModelRole["targets"][number],
+  compact: boolean,
+) {
+  const traits = options?.map((option) => option.value).join(" ");
+  const modelLabel = `${model}${traits ? ` ${traits}` : ""}`;
+  const label = compact ? oneLine(modelLabel, 105) : modelLabel;
+  const provider = compact ? oneLine(providerInstanceId, 40) : providerInstanceId;
+  return `${label} (${provider}).${
+    unavailableReason === null
+      ? ""
+      : compact
+        ? " Unavailable."
+        : ` Unavailable: ${oneLine(unavailableReason, 200)}`
+  }`;
 }
 
 export function t3ModelRolesInstructions(
@@ -116,13 +113,42 @@ export function t3ModelRolesInstructions(
       ? ""
       : `Approved credits keep a choice in its usual order even when weekly usage is low. In that case, use the provider without asking. Ask if the role's choice is unavailable. ${creditLines.join(" ")}\n\n`;
   const header = MODEL_ROLES_HEADER + credits;
-  const budget = MODEL_INSTRUCTIONS_MAX_BYTES - byteLength(header) - roles.length;
-  const full = roles.map((role) => modelRoleLine(role, Infinity)).join("\n");
-  const lines =
-    byteLength(full) <= budget
-      ? full
-      : roles.map((role) => modelRoleLine(role, Math.floor(budget / roles.length))).join("\n");
-  return `${header}${lines}\n`;
+  const byRole = THREAD_ROLES.map((role) => ({
+    role,
+    levels: roles.filter((entry) => entry.role === role),
+  })).filter(({ levels }) => levels.length > 0);
+  const lines = (mode: "full" | "first" | "compact") =>
+    byRole
+      .map(({ role, levels }) => {
+        const summaries = levels.map(({ level, description, targets }) => {
+          const choices =
+            mode === "full"
+              ? targets.map((target) => modelChoiceLabel(target, false)).join(" or ")
+              : modelChoiceLabel(targets[0], mode === "compact");
+          const detail = mode === "full" && description ? `${oneLine(description, 600)} → ` : "";
+          return `${level ?? "complex"}: ${detail}${choices}`;
+        });
+        return `- ${THREAD_ROLE_LABELS[role]} (${role}): ${summaries.join(" | ")}`;
+      })
+      .join("\n");
+
+  const usage = new Map<string, string>();
+  for (const role of roles) {
+    for (const { providerInstanceId, model, weeklyUsage } of role.targets) {
+      if (weeklyUsage === undefined) continue;
+      const label = `${model} (${providerInstanceId})`;
+      usage.set(
+        label,
+        `${label}: ${weeklyUsage.remainingPercent}% left, resets ${weeklyUsage.resetsAt ?? "unknown"}, pace ${weeklyUsage.pace ?? "unknown"}`,
+      );
+    }
+  }
+  const weekly = usage.size === 0 ? "" : `\n\nWeekly usage\n${[...usage.values()].join("\n")}`;
+  const full = `${header}${lines("full")}${weekly}\n`;
+  if (byteLength(full) <= MODEL_INSTRUCTIONS_MAX_BYTES) return full;
+  const firstChoices = `${header}${lines("first")}${weekly}\n`;
+  if (byteLength(firstChoices) <= MODEL_INSTRUCTIONS_MAX_BYTES) return firstChoices;
+  return `${header}${lines("compact")}\nSee orchestrator_capabilities for full choices and weekly usage.\n`;
 }
 
 export function t3ModelNotesInstructions(notes: ReadonlyArray<OrchestratorMcpModelNote>): string {
@@ -175,7 +201,7 @@ export function t3OrchestrationBaseInstructions(managedIssue?: ManagedIssueRole)
       T3_CODE_ORCHESTRATION_SECTIONS[0]!.indexOf("\n- Before"),
     ),
     nativeSubagents +
-      ' Use Designer before implementation when a request needs research or a plan; it writes the problem, findings, plan, strategy decisions and done criteria through issue tools, then returns a short result without editing code. Managed implementors require an `issue` argument and `mode="async"`. Read-only roles (`designer`, `checker`, `reviewer`, `investigator`) use ordinary delegation: no issue claim or worker slot, a separate read-only limit (default 4) across the repository lineage, shared isolation by default, and an optional `issue` only links visibility. Finish your turn while children work; deliver upward only in your final result. T3 publishes the managed status and closeout comments automatically; put evidence and remaining gates in your final result instead of publishing duplicate lifecycle comments. Run heavy checks through `agent-heavy`. The repository has one root orchestrator and an adjustable worker limit shared across its entire issue tree; queued workers wait for capacity, including resumes and result follow-ups. Use `get_repository_orchestration` to see both limits, slots in use for each pool, selected milestones and pause state. When planned parallel work exceeds a pool limit or children queue on a full pool, ask the owner with the question tool to approve a recommended limit, naming the pool, current and proposed limits and reason; on refusal continue within the limit, and after the burst you may offer to lower it; only the root can apply an approved change with `set_repository_worker_limit` and the current revision, while non-root owners ask the owner to use repository controls or the root to apply it; an explicit request for that size of work authorizes the change. Excess read-only requests queue in request order, including restart continuations. The root owns only top-level issues. An issue owner delegates only its immediate GitHub sub-issues. When an outside blocker prevents a managed implementor or issue owner from continuing, use propose_issue_change to create an issue describing the blocker, then add blocked_by with number set to the blocked issue and blockerNumber to the new issue; follow returned decisions and end with a final result naming the blocker. Do not do this for owner questions the question tool can answer or failing tests within the issue scope. Read native blockers and hierarchy before delegating; unreadable or partial relationships are unknown eligibility. Milestone work starts through `work_through_milestone`; T3 wakes owners on final results and newly eligible work. Use async delegation and end the turn while children run. A worker waiting for user input keeps its slot; an owner waiting on children after its turn ends frees its slot. Completed implementors with open PRs hold no slot. The repository root can use `close_out_issue_attempt` to finish a closed issue attempt once its remaining work is cancelled or finished. Ask before expanding the approved milestone or repository scope. Pause/resume through `set_repository_work_paused`. Do not poll task_status or create recurring user schedules to advance a milestone.',
+      ' Use Designer before implementation when a request needs research or a plan; it writes the problem, findings, plan, strategy decisions and done criteria through issue tools, then returns a short result without editing code. Managed implementors require an `issue` argument and `mode="async"`. Read-only roles (`designer`, `reviewer`) use ordinary delegation: no issue claim or worker slot, a separate read-only limit (default 4) across the repository lineage, shared isolation by default, and an optional `issue` only links visibility. Finish your turn while children work; deliver upward only in your final result. T3 publishes the managed status and closeout comments automatically; put evidence and remaining gates in your final result instead of publishing duplicate lifecycle comments. Run heavy checks through `agent-heavy`. The repository has one root orchestrator and an adjustable worker limit shared across its entire issue tree; queued workers wait for capacity, including resumes and result follow-ups. Use `get_repository_orchestration` to see both limits, slots in use for each pool, selected milestones and pause state. When planned parallel work exceeds a pool limit or children queue on a full pool, ask the owner with the question tool to approve a recommended limit, naming the pool, current and proposed limits and reason; on refusal continue within the limit, and after the burst you may offer to lower it; only the root can apply an approved change with `set_repository_worker_limit` and the current revision, while non-root owners ask the owner to use repository controls or the root to apply it; an explicit request for that size of work authorizes the change. Excess read-only requests queue in request order, including restart continuations. The root owns only top-level issues. An issue owner delegates only its immediate GitHub sub-issues. When an outside blocker prevents a managed implementor or issue owner from continuing, use propose_issue_change to create an issue describing the blocker, then add blocked_by with number set to the blocked issue and blockerNumber to the new issue; follow returned decisions and end with a final result naming the blocker. Do not do this for owner questions the question tool can answer or failing tests within the issue scope. Read native blockers and hierarchy before delegating; unreadable or partial relationships are unknown eligibility. Milestone work starts through `work_through_milestone`; T3 wakes owners on final results and newly eligible work. Use async delegation and end the turn while children run. A worker waiting for user input keeps its slot; an owner waiting on children after its turn ends frees its slot. Completed implementors with open PRs hold no slot. The repository root can use `close_out_issue_attempt` to finish a closed issue attempt once its remaining work is cancelled or finished. Ask before expanding the approved milestone or repository scope. Pause/resume through `set_repository_work_paused`. Do not poll task_status or create recurring user schedules to advance a milestone.',
   ).replace(
     T3_CODE_ORCHESTRATION_SECTIONS[1]!,
     managedIssue === "root"
