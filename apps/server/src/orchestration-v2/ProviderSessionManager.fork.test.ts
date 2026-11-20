@@ -1564,7 +1564,7 @@ it.effect.each([0, 1] as const)(
     }),
 );
 
-it.effect.each(["worker", "ordinary"] as const)(
+it.effect.each(["implementor", "worker", "ordinary"] as const)(
   "ProviderSessionManagerV2 gives a %s thread's MCP session its orchestration policy",
   (kind) =>
     Effect.gen(function* () {
@@ -1598,8 +1598,20 @@ it.effect.each(["worker", "ordinary"] as const)(
         };
         yield* sink.write({
           events: [
-            kind === "worker"
-              ? { ...created, payload: { ...created.payload, linkedIssue } }
+            kind !== "ordinary"
+              ? {
+                  ...created,
+                  payload: {
+                    ...created.payload,
+                    linkedIssue,
+                    role: kind === "implementor" ? "implementor" : "orchestrator",
+                    lineage: {
+                      ...created.payload.lineage,
+                      relationshipToParent: "subagent",
+                      parentThreadId: ThreadId.make("thread-managed-parent"),
+                    },
+                  },
+                }
               : created,
           ],
         });
@@ -1608,7 +1620,7 @@ it.effect.each(["worker", "ordinary"] as const)(
         assert.equal(orchestration?.nativeSubagents, kind !== "worker");
         assert.equal(
           orchestration?.sections[0]?.startsWith("Keep issues current"),
-          kind === "worker",
+          kind !== "ordinary",
         );
       }).pipe(Effect.provide(layerTest({ state, mcpConfigs })));
     }),

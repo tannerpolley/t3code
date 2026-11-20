@@ -1,3 +1,4 @@
+import type { OrchestrationV2AppThread } from "./orchestrationV2.ts";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -151,3 +152,10 @@ export const ModelRoleId = TrimmedNonEmptyString.pipe(
     }),
   ),
 );
+
+export const isManagedIssueImplementor = (
+  thread: Pick<OrchestrationV2AppThread, "lineage" | "linkedIssue" | "role">,
+) =>
+  thread.lineage.relationshipToParent === "subagent" &&
+  thread.linkedIssue !== undefined &&
+  (thread.role ?? "implementor") === "implementor";

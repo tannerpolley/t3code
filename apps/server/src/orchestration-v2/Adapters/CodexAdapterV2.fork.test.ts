@@ -246,6 +246,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   it.effect.each([
     ["worker", { "features.multi_agent": false, "features.multi_agent_v2": false }],
     ["root", {}],
+    ["implementor", {}],
   ] as const)("sets native subagents for a %s Codex session", ([role, nativeSubagents]) =>
     Effect.gen(function* () {
       const scenario = `managed-native-subagents-${role}`;
@@ -305,13 +306,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
               http_headers: { Authorization: "Bearer test-token" },
-              disabled_tools: ["t3_thread_wait"],
+              disabled_tools: ["t3_thread_wait", "delegate_task"],
             },
             "mcp_servers.t3-code-direct": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
               http_headers: { Authorization: "Bearer test-token" },
-              enabled_tools: ["t3_thread_wait"],
+              enabled_tools: ["t3_thread_wait", "delegate_task"],
               omit_tools_from: ["code_mode", "deferred"],
             },
           },

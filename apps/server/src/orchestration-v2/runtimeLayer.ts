@@ -171,6 +171,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
       IdAllocator.layer,
       layerProviderEventIngestorProvided,
       TurnItemPositionStore.layer,
+      EffectOutbox.layer,
       ThreadCommandExecutor.layer,
     ),
   ),

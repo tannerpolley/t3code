@@ -6629,6 +6629,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ) {
                 failure = { ...failure, class: "transport_error" };
               }
+              const httpStatus =
+                codexErrorHttpStatus(input.failureErrorInfo) ??
+                (input.failureMessage === notification?.nativeMessage
+                  ? codexErrorHttpStatus(notification?.errorInfo)
+                  : null);
               return {
                 type: "turn.terminal",
                 driver: CODEX_PROVIDER,
@@ -6640,6 +6645,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   `terminal-failure:${input.context.providerTurnId}`,
                 ),
                 status: terminalStatus,
+                ...(httpStatus === 502 || httpStatus === 503 ? { httpStatus } : {}),
                 failure:
                   failure.class === "usage_limit"
                     ? {

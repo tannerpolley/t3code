@@ -8346,6 +8346,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       }
       if (scenario.name === "retry" || "willRetry" in scenario)
         assert.equal(terminal.retry?.attempt, 1);
+      if (scenario.name === "http-provider-failure") {
+        assert.equal(terminal.httpStatus, 503);
+      }
       if ("expectedCode" in scenario && "expectedMessage" in scenario) {
         assert.equal(terminal.failure.code, scenario.expectedCode);
         assert.include(terminal.failure.message, scenario.expectedMessage);

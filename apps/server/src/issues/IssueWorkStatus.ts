@@ -1,4 +1,4 @@
-import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import { isManagedIssueImplementor, type OrchestrationV2ThreadShell } from "@t3tools/contracts";
 
 import type { IssueWorkStatus, OrchestrationV2RuntimeRequest } from "@t3tools/contracts";
 import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
@@ -7,6 +7,9 @@ import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentP
 export function deriveIssueWorkStatus(input: {
   readonly shell: Pick<
     OrchestrationV2ThreadShell,
+    | "lineage"
+    | "role"
+    | "linkedIssue"
     | "deletedAt"
     | "archivedAt"
     | "pendingRuntimeRequest"
@@ -59,7 +62,7 @@ export function deriveIssueWorkStatus(input: {
     input.waitingOnSubIssues ||
     (shell.pendingBackgroundTasks ?? []).some((task) => task.kind !== "monitor")
   ) {
-    return "waiting_on_sub_issues";
+    return isManagedIssueImplementor(shell) ? "working" : "waiting_on_sub_issues";
   }
   switch (shell.status) {
     case "completed":

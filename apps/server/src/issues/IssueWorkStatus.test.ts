@@ -1,11 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
-import { RuntimeRequestId, RunId, type OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import {
+  RuntimeRequestId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 
 type StatusShell = NonNullable<Parameters<typeof deriveIssueWorkStatus>[0]["shell"]>;
 const shell = (status: OrchestrationV2ThreadShell["status"]): StatusShell => ({
   status,
+  lineage: {
+    parentThreadId: null,
+    rootThreadId: ThreadId.make("thread"),
+    relationshipToParent: null,
+  },
   deletedAt: null,
   archivedAt: null,
   pendingRuntimeRequest: null,

@@ -28,7 +28,6 @@ import {
 import { threadIssueKeysEqual } from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
-import { isManagedIssueImplementor } from "../issues/IssueEligibility.ts";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -41,6 +40,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  isManagedIssueImplementor,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -3499,6 +3499,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               `effect:restart-continuation:${run.restartContinuationOfRunId}`,
             ),
           )?.request;
+    if (
+      previous?.type === "provider-runtime.continue" &&
+      previous.transientFailureAttempt !== undefined
+    )
+      return;
     const processLossCount =
       previous?.type === "provider-runtime.continue" ? previous.processLossCount : undefined;
     yield* writeSystemEvents(
@@ -7347,9 +7352,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     if (command.restartContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
+      const continuation =
+        source?.status === "failed" &&
+        command.commandId === `command:restart-continuation:${source.id}`
+          ? Option.getOrUndefined(
+              yield* effectOutbox
+                .get(`effect:restart-continuation:${source.id}`)
+                .pipe(mapDispatchError(command)),
+            )
+          : undefined;
+      const retryingTransientFailure =
+        continuation?.status === "running" &&
+        continuation.request.type === "provider-runtime.continue" &&
+        continuation.request.transientFailureAttempt !== undefined;
       if (
         !source ||
         !(
+          retryingTransientFailure ||
           isRestartContinuationSource(source, projection.providerTurns) ||
           continuationFailedBeforePrompt(source, projection.providerTurns)
         ) ||
@@ -10288,7 +10307,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (run === undefined || run.delegatedTaskId !== undefined) return;
     // A wake continues the latest follow-up while it is open, as it continues the original task.
     const latestFollowupId =
-      command.notification === undefined
+      command.notification === undefined && command.delegatedCompletion === undefined
         ? undefined
         : (yield* projectionStore
             .getThreadRecords(command.threadId, ["runs"])

@@ -2,6 +2,7 @@ import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
+  isManagedIssueImplementor,
   CommandId,
   type EventId,
   type ModelSelection,
@@ -32,17 +33,21 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { supportsManagedIssueWork } from "../issues/IssueEligibility.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
+import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -58,6 +63,7 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { isTransientWorkerFailure } from "./RestartContinuation.ts";
 import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
 
 export interface ProviderEventRoutingState {
@@ -696,6 +702,7 @@ export const layer: Layer.Layer<
   never,
   | CheckpointService.CheckpointServiceV2
   | EventSink.EventSinkV2
+  | EffectOutbox.EffectOutboxV2
   | IdAllocator.IdAllocatorV2
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ServerSettings.ServerSettingsService
@@ -709,6 +716,7 @@ export const layer: Layer.Layer<
     const scope = yield* Effect.scope;
     const checkpointService = yield* CheckpointService.CheckpointServiceV2;
     const eventSink = yield* EventSink.EventSinkV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -736,6 +744,7 @@ export const layer: Layer.Layer<
         // Stored root tool calls still open when the provider runtime was lost; nothing else ends them.
         readonly lostToolCalls?: ReadonlyArray<OrchestrationV2TurnItem>;
         readonly terminal: ProviderTerminalEvent;
+        readonly retryWorkerFailure?: boolean;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
         readonly refreshAfterTurn: Effect.Effect<void>;
@@ -844,6 +853,39 @@ export const layer: Layer.Layer<
         const checkpointCaptureCommandId = CommandId.make(
           `command:effect:checkpoint.capture:${input.run.id}`,
         );
+        let retry: EffectOutbox.PendingOrchestrationEffectV2 | undefined;
+        if (
+          input.retryWorkerFailure &&
+          input.terminal.status === "failed" &&
+          isTransientWorkerFailure(input.terminal.failure, input.terminal.httpStatus)
+        ) {
+          const previousId = input.run.restartContinuationOfRunId;
+          const previous =
+            previousId === undefined
+              ? undefined
+              : Option.getOrUndefined(
+                  yield* outbox.get(`effect:restart-continuation:${previousId}`),
+                )?.request;
+          const next =
+            (previous?.type === "provider-runtime.continue"
+              ? (previous.transientFailureAttempt ?? 0)
+              : 0) + 1;
+          const delayMs = [2_000, 4_000][next - 1];
+          if (delayMs !== undefined) {
+            // Commit the retry with the failure so every completion reader sees the open continuation.
+            retry = {
+              id: `effect:restart-continuation:${input.run.id}`,
+              commandId: CommandId.make(`command:restart-continuation-retry:${input.run.id}`),
+              threadId: input.run.threadId,
+              request: {
+                type: "provider-runtime.continue",
+                sourceRunId: input.run.id,
+                transientFailureAttempt: next,
+              },
+              availableAt: DateTime.add(completedAt, { milliseconds: delayMs }),
+            };
+          }
+        }
         // Stopped runs capture rollback points for the next message; enqueue before later starts on this effect lane.
         const finalization = {
           effects:
@@ -862,7 +904,9 @@ export const layer: Layer.Layer<
                     },
                   },
                 ]
-              : [],
+              : retry === undefined
+                ? []
+                : [retry],
           events: [
             ...cascadedSubagentEvents,
             ...(yield* interruptLostToolCalls({
@@ -1099,6 +1143,10 @@ export const layer: Layer.Layer<
             driver: input.providerThread.driver,
             nativeTurnId: `failed:${input.attempt.id}`,
           });
+        const retryWorkerFailure =
+          isManagedIssueImplementor(input.appThread) &&
+          supportsManagedIssueWork(input.providerThread.driver) &&
+          !isNativeMaintenanceCommand(input.message);
         const makeFailedTerminalEvent = (
           failure: OrchestrationV2ProviderFailure,
           failureItemOrdinal: number,
@@ -1304,6 +1352,7 @@ export const layer: Layer.Layer<
               openRunOwnedSubagentsTerminal: terminal,
               ...(abandonedProviderTurn === undefined ? {} : { abandonedProviderTurn }),
               terminal: settledTerminal,
+              retryWorkerFailure,
               failureItemPersisted: settledTerminal.status === "failed",
               refreshAfterTurn,
             }).pipe(
@@ -2136,13 +2185,14 @@ export const layer: Layer.Layer<
                     ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
                     lostToolCalls,
                     completedAt,
+                    retryWorkerFailure: retryWorkerFailure && runtimeLost,
                     terminal: makeFailedTerminalEvent(
                       makeProviderFailure({
                         cause: squashed,
                         message:
                           knownProviderFailureMessage(squashed) ??
                           userFacingDatabaseErrorMessage(squashed),
-                        class: "unknown",
+                        class: runtimeLost ? "transport_error" : "unknown",
                       }),
                       latestItemOrdinal + 1,
                     ),
@@ -2314,6 +2364,7 @@ export const layer: Layer.Layer<
                             expectedStatus: "running",
                           },
                           openRunOwnedSubagents: openSubagents,
+                          retryWorkerFailure,
                           terminal: makeFailedTerminalEvent(
                             makeProviderFailure({
                               cause: Cause.squash(cause),
