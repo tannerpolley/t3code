@@ -873,12 +873,15 @@ export const make = Effect.gen(function* () {
     // sweep would otherwise be taken as old news and never wake the thread.
     yield* forkParked(
       Stream.runForEach(engine.streamDomainEvents, (event) => {
+        if (
+          event.type !== "thread.pull-request-link-updated" &&
+          event.type !== "thread.pull-request-synced"
+        )
+          return Effect.void;
         const links =
           event.type === "thread.pull-request-link-updated"
             ? [event.payload]
-            : event.type === "thread.pull-request-synced"
-              ? (event.payload.pullRequests ?? [])
-              : [];
+            : (event.payload.pullRequests ?? []);
         const unread = visibleThreadPullRequests(links).flatMap((link) =>
           link.watch === undefined || lives.has(lifeKeyOf(event.threadId, link, link.watch))
             ? []
