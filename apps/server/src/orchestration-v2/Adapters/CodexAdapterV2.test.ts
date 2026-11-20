@@ -1687,6 +1687,98 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  const approvalThreadId = "full-access-approval-thread";
+  const approvalTurnId = "full-access-approval-turn";
+  const approvalItemId = "approval-item";
+  const approvalScript = `trap 'rm -f -- "$body_file"' EXIT\ncat "$body_file"`;
+  const itemApproval = {
+    threadId: approvalThreadId,
+    turnId: approvalTurnId,
+    itemId: approvalItemId,
+  };
+  const legacyApproval = { conversationId: approvalThreadId, callId: approvalItemId };
+
+  it.effect.each([
+    {
+      method: "item/commandExecution/requestApproval",
+      params: { ...itemApproval, command: `/bin/bash -lc ${JSON.stringify(approvalScript)}` },
+      decision: "accept",
+    },
+    { method: "item/fileChange/requestApproval", params: itemApproval, decision: "accept" },
+    {
+      method: "execCommandApproval",
+      params: {
+        ...legacyApproval,
+        command: ["/bin/bash", "-lc", approvalScript],
+        cwd: "/workspace",
+        parsedCmd: [],
+      },
+      decision: "approved",
+    },
+    {
+      method: "applyPatchApproval",
+      params: { ...legacyApproval, fileChanges: {} },
+      decision: "approved",
+    },
+  ])("answers $method in full access without a runtime request", ({ method, params, decision }) =>
+    Effect.gen(function* () {
+      const prompt = "Prepare the pull request.";
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "full-access-approval",
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId: approvalThreadId,
+              nativeTurnId: approvalTurnId,
+              prompt,
+            }),
+            { type: "emit_inbound", frame: { id: 100, method, params } },
+            { type: "expect_outbound", frame: { id: 100, result: { decision } } },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: approvalThreadId,
+                  turn: makeCodexReplayTurn({ id: approvalTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      const requests = () =>
+        harness.events.filter((event) => event.type === "runtime_request.updated");
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("full-access-approval-attempt"),
+          text: prompt,
+        }),
+      );
+      yield* harness.until(() => requests().length > 0 || harness.terminalEvents().length > 0);
+      assert.deepEqual(
+        requests().map((event) => event.runtimeRequest.kind),
+        [],
+      );
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed"],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["native", "ordinary"] as const)(
     "resumes Codex without a prompt only for an existing conversation (%s)",
     (mode) =>
@@ -12185,22 +12277,31 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario,
-            entries: [...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }), ...entries],
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId,
+                prompt,
+                turnPolicy: { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly" } },
+              }),
+              ...entries,
+            ],
           }),
           (event) =>
             event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
               ? Queue.offer(pending, event.runtimeRequest)
               : Effect.void,
         );
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now: yield* DateTime.now,
             attemptId: RunAttemptId.make(`${scenario}-attempt`),
             text: prompt,
           }),
-        );
+          runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "approval-required" },
+        });
         return {
           harness,
           answerNext: Queue.take(pending).pipe(
