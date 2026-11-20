@@ -9627,6 +9627,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               (
                 SELECT parent.thread_id
                 FROM orchestration_v2_projection_subagents task
+                  INDEXED BY orchestration_v2_projection_subagents_child_thread_idx
                 JOIN orchestration_v2_projection_threads parent ON parent.thread_id = task.thread_id
                 WHERE task.child_thread_id = child.thread_id
                   AND task.origin = 'app_owned' AND task.status = 'running'
