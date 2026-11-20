@@ -589,6 +589,7 @@ function OpenCommandPaletteDialog(props: {
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
   // State lags a render behind, so a repeated Enter could start a second create.
   const newProjectSubmittingRef = useRef(false);
+  const folderSubsectionSubmittingRef = useRef(false);
   const createNewProject = useNewProject();
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
@@ -2127,6 +2128,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     if (isAddingFolderSubsection()) {
+      if (folderSubsectionSubmittingRef.current) return;
       const parent = useUiStateStore
         .getState()
         .sidebarProjectSections.find((section) => section.id === sectionId);
@@ -2137,6 +2139,12 @@ function OpenCommandPaletteDialog(props: {
           ...(input.currentProjectCwd ? { cwd: input.currentProjectCwd } : {}),
         },
       });
+      if (
+        folderSubsectionSubmittingRef.current ||
+        !isAddingFolderSubsection() ||
+        currentAddProjectSection() !== sectionId
+      )
+        return;
       if (selected._tag === "Failure") {
         toastManager.add({
           type: "error",
@@ -2153,14 +2161,18 @@ function OpenCommandPaletteDialog(props: {
         (sectionTarget(parent.id)?.[0] ?? primaryEnvironmentId) !== input.environmentId
       )
         return;
+      folderSubsectionSubmittingRef.current = true;
       const saved = await useUiStateStore
         .getState()
-        .addSidebarProjectSection(folder.name, parent.id, folder.folderPath);
+        .addSidebarProjectSection(folder.name, parent.id, folder.folderPath)
+        .finally(() => {
+          folderSubsectionSubmittingRef.current = false;
+        });
       if (saved === null) {
         toastManager.add({ type: "error", title: gt("Couldn't save the project section") });
         return;
       }
-      setOpen(false);
+      if (isAddingFolderSubsection() && currentAddProjectSection() === sectionId) setOpen(false);
       return;
     }
 

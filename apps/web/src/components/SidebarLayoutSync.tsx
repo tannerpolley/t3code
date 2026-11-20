@@ -184,7 +184,7 @@ export function SidebarLayoutSync() {
       switch (mutation.type) {
         case "add":
           if (mutation.section.parentId !== undefined && !target) return false;
-          return send(destination, {
+          return controller.addSection(destination, {
             ...mutation,
             section: { ...mutation.section, ...(target ? { parentId: target.sectionId } : {}) },
           });

@@ -1,9 +1,13 @@
 import type { FilesystemBrowseEntry } from "@t3tools/contracts";
-import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+import {
+  isHostPath,
+  isWindowsAbsolutePath,
+  normalizeProjectPathForComparison,
+} from "@t3tools/shared/path";
 
 /**
  * Where a section's projects live on disk: <root>/<Section> or <root>/<Section>/<Subsection>, the
- * same layout Organize by folder reads. Null without a full root path.
+ * same layout Organize by folder reads. The destination environment expands home paths.
  */
 export function sectionFolderPath(
   root: string,
@@ -13,11 +17,16 @@ export function sectionFolderPath(
   if (folderPath) return folderPath;
   const trimmed = root.trim();
   if (
-    !trimmed.startsWith("/") ||
+    (trimmed !== "~" && !isHostPath(trimmed)) ||
+    /^[A-Za-z]:$/.test(trimmed) ||
     sectionNames.some((name) => projectFolderNameProblem(name) !== null)
   )
     return null;
-  return [trimmed.replace(/\/+$/, ""), ...sectionNames.map((name) => name.trim())].join("/");
+  const windows = isWindowsAbsolutePath(trimmed);
+  const base = windows
+    ? trimmed.replaceAll("/", "\\").replace(/\\+$/, "")
+    : trimmed.replace(/\/+$/, "");
+  return [base, ...sectionNames.map((name) => name.trim())].join(windows ? "\\" : "/");
 }
 
 /** Why a new project folder name can't be used, or null when it can. */

@@ -1,6 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { ensureBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -79,7 +80,7 @@ export function NewSectionProjectDialog(props: {
   const [initGit, setInitGit] = useState(true);
   const [busy, setBusy] = useState(false);
   const problem = projectFolderNameProblem(name);
-  const path = folder === null ? null : `${folder}/${name.trim()}`;
+  const path = folder === null ? null : `${ensureBrowseDirectoryPath(folder)}${name.trim()}`;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -114,7 +115,10 @@ export function NewSectionProjectDialog(props: {
     const projectRef = scopeProjectRef(environmentId, projectId);
     completeProjectSectionPlacement(projectRef, target.sectionId);
     if (initGit) {
-      const initialized = await initRepository({ environmentId, input: { cwd: path } });
+      const initialized = await initRepository({
+        environmentId,
+        input: { cwd: created.value.workspaceRoot },
+      });
       if (initialized._tag === "Failure" && !isAtomCommandInterrupted(initialized)) {
         toastManager.add({
           type: "warning",
