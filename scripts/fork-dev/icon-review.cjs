@@ -68,8 +68,6 @@ const sections = [
       I("Network", "Orchestrator", C.muted),
       I("Wrench", "Implementor", C.muted),
       I("ShieldCheck", "Reviewer", C.muted),
-      I("Search", "Investigator", C.muted, "Same glyph as every search field"),
-      I("ListChecks", "Checker", C.muted, "Same glyph as an issue's sub-issue progress"),
     ],
   ],
   [
@@ -179,7 +177,7 @@ const sections = [
     "Issues pane: rows, roadmap and detail",
     "",
     [
-      I("ListChecks", "Sub-issue progress (2/5)", C.muted, "Same glyph as the Checker role"),
+      I("ListChecks", "Sub-issue progress (2/5)", C.muted, "Completed and total sub-issues"),
       I("GitPullRequestArrow", "Linked pull request count", C.muted),
       I("MessageSquare", "Comment count", C.muted),
       I("Radio", "Roadmap: an agent is working on it", C.success),

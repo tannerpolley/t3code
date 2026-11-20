@@ -1,4 +1,9 @@
-import { DEFAULT_SERVER_SETTINGS, resolveModelRoles, TIER_PROVIDERS } from "@t3tools/contracts";
+import {
+  MODEL_ROLE_LEVELS,
+  THREAD_ROLES,
+  THREAD_ROLE_LABELS,
+  TIER_PROVIDERS,
+} from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { ShuffleIcon } from "lucide-react";
 import {
@@ -13,8 +18,6 @@ import { SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-const roles = resolveModelRoles(DEFAULT_SERVER_SETTINGS);
-
 export function SidebarRoleProvidersItem() {
   const available = usePrimarySettingsAvailable();
   const settings = usePrimarySettings((settings) => settings.modelRoles);
@@ -24,9 +27,13 @@ export function SidebarRoleProvidersItem() {
   if (!available) return null;
 
   const label = gt("Role providers");
-  const Icon = roles.every(({ id }) => settings[id].provider === "claude")
+  const Icon = THREAD_ROLES.every((role) =>
+    MODEL_ROLE_LEVELS.every((level) => settings[role][level].provider === "claude"),
+  )
     ? ClaudeAI
-    : roles.every(({ id }) => settings[id].provider === "codex")
+    : THREAD_ROLES.every((role) =>
+          MODEL_ROLE_LEVELS.every((level) => settings[role][level].provider === "codex"),
+        )
       ? OpenAI
       : ShuffleIcon;
   return (
@@ -45,16 +52,24 @@ export function SidebarRoleProvidersItem() {
         <PopoverPopup side="top" align="end" width="md">
           <PopoverTitle>{label}</PopoverTitle>
           <div className="mt-3 grid gap-1.5">
-            {roles.map(({ id, name }) => (
-              <div key={id} className="flex items-center justify-between gap-2 text-sm">
-                <span>{name}</span>
-                <RoleProviderToggle
-                  label={name}
-                  value={settings[id].provider}
-                  onChange={(provider) => updateSettings({ modelRoles: { [id]: { provider } } })}
-                />
-              </div>
-            ))}
+            {THREAD_ROLES.map((role) => {
+              const name = THREAD_ROLE_LABELS[role];
+              const { routine, complex } = settings[role];
+              return (
+                <div key={role} className="flex items-center justify-between gap-2 text-sm">
+                  <span>{name}</span>
+                  <RoleProviderToggle
+                    label={name}
+                    value={routine.provider === complex.provider ? complex.provider : undefined}
+                    onChange={(provider) =>
+                      updateSettings({
+                        modelRoles: { [role]: { routine: { provider }, complex: { provider } } },
+                      })
+                    }
+                  />
+                </div>
+              );
+            })}
           </div>
           <div className="mt-3 grid gap-2 border-t pt-3">
             <p className="text-sm text-muted-foreground">

@@ -287,7 +287,7 @@ it("holds unacknowledged openings out of every open section, then restores their
 });
 
 it("names the first thread in the issue's status, its role and how many more are linked", () => {
-  const thread = (title: string, status: "working" | "idle", role?: "investigator") => ({
+  const thread = (title: string, status: "working" | "idle", role?: "designer") => ({
     ...work(status)[0]!,
     threadId: ThreadId.make(title),
     title,
@@ -297,7 +297,7 @@ it("names the first thread in the issue's status, its role and how many more are
     issue(1, {
       liveWork: [
         thread("Alpha", "idle"),
-        thread("#736 Pahlavanzadeh 2013 MDEA research", "working", "investigator"),
+        thread("#736 Pahlavanzadeh 2013 MDEA research", "working", "designer"),
         thread("Beta", "idle"),
       ],
     }),

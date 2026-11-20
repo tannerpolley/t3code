@@ -10,7 +10,7 @@ export function RoleProviderToggle({
   onChange,
 }: {
   label: string;
-  value: ModelRoleProvider;
+  value: ModelRoleProvider | undefined;
   onChange: (value: ModelRoleProvider) => void;
 }) {
   const gt = useGT();
@@ -18,7 +18,7 @@ export function RoleProviderToggle({
   return (
     <ToggleGroup
       aria-label={label}
-      value={[value]}
+      value={value === undefined ? [] : [value]}
       onValueChange={([next]) => {
         const provider = ModelRoleProvider.literals.find((candidate) => candidate === next);
         if (provider !== undefined) onChange(provider);

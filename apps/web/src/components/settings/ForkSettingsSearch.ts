@@ -374,7 +374,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/providers",
     scope: "environment-defaults",
     searchTerms: [
-      "model roles orchestrator designer writer sprinter implementor delegate subagent builder checker reviewer default model effort provider Claude Both Codex",
+      "model roles orchestrator designer writer implementor delegate subagent builder reviewer routine complex level default model effort provider Claude Both Codex",
     ],
   },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;

@@ -214,11 +214,9 @@ export function describeSidebarBackgroundWork(
   const roleOrder = {
     implementor: 0,
     reviewer: 1,
-    investigator: 2,
-    checker: 3,
-    designer: 4,
-    orchestrator: 5,
-    writer: 6,
+    designer: 2,
+    orchestrator: 3,
+    writer: 4,
   };
   const elsewhere = (child: ChildThread) =>
     ownerWorktreePath !== undefined && child.worktreePath !== ownerWorktreePath ? 1 : 0;

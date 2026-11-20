@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
+  THREAD_ROLE_LABELS,
   isRepositoryOrchestratorEligible,
   resolveModelRoles,
   type IssueRepositoryRef,
@@ -14,6 +15,7 @@ import {
 import { issueWorkPresentation } from "@t3tools/client-runtime/state/issue-work";
 import { useNavigate } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useGT } from "gt-react";
 import { PlayIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -91,6 +93,8 @@ function IssueStartControls({
   const projects = useProjects();
   const thread = useThreadShell(threadRef);
   const settings = useEnvironmentSettings(environmentId);
+  const gt = useGT();
+  const levelLabels = { routine: gt("Routine"), complex: gt("Complex") };
   const roles = resolveModelRoles(settings);
   const statusAtom = repositoryIssueEnvironment.workStatus({ environmentId, input: reference });
   const statusQuery = useEnvironmentQuery(statusAtom);
@@ -309,7 +313,7 @@ function IssueStartControls({
               <SelectContent>
                 {roles.map((entry) => (
                   <SelectItem key={entry.id} value={entry.id}>
-                    {entry.name}
+                    {`${THREAD_ROLE_LABELS[entry.role]} · ${levelLabels[entry.level]}`}
                   </SelectItem>
                 ))}
               </SelectContent>
