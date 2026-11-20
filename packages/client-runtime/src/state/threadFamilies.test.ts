@@ -3,6 +3,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2GetShellSnapshotError,
   ThreadId,
+  type OrchestrationV2GetThreadFamilyInput,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadFamily,
   type OrchestrationV2ThreadShell,
@@ -124,8 +125,14 @@ describe("createThreadFamilyAtoms", () => {
         yield* Queue.unbounded<
           Effect.Effect<OrchestrationV2ThreadFamily, OrchestrationV2GetShellSnapshotError>
         >();
+      const workerRequests = yield* Queue.unbounded<OrchestrationV2GetThreadFamilyInput>();
       const client = {
-        [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: () => Effect.flatten(Queue.take(replies)),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (
+          input: OrchestrationV2GetThreadFamilyInput,
+        ) =>
+          (input.workers === undefined ? Effect.void : Queue.offer(workerRequests, input)).pipe(
+            Effect.andThen(Effect.flatten(Queue.take(replies))),
+          ),
       } as unknown as WsRpcProtocolClient;
       const session = {
         client,
@@ -198,7 +205,7 @@ describe("createThreadFamilyAtoms", () => {
         Effect.tap(() => Effect.yieldNow),
       );
       registry.mount(families.snapshotAtom(TARGET.environmentId));
-      families.mount(registry, TARGET.environmentId, parent.id);
+      const releaseFamily = families.mount(registry, TARGET.environmentId, parent.id);
 
       // A cached shell from before this session's first snapshot reads nothing.
       expect(threadFamilyRead(registry.get(family))).toBe("pending");
@@ -209,7 +216,6 @@ describe("createThreadFamilyAtoms", () => {
       yield* settle;
       expect(threadFamilyRead(registry.get(family))).toBe("settled");
       expect(mergedIds()).toEqual(["parent", "idle-child"]);
-
       // A new authoritative snapshot never reuses the old read, even while the next one waits
       // or fails.
       registry.set(shellState, AsyncResult.success(shellAt(2)));
@@ -228,6 +234,58 @@ describe("createThreadFamilyAtoms", () => {
       yield* Queue.offer(replies, Effect.succeed({ snapshotSequence: 5, threads: [child] }));
       yield* settle;
       expect(threadFamilyRead(registry.get(family))).toBe("settled");
+      expect(mergedIds()).toEqual(["parent", "idle-child"]);
+      releaseFamily();
+
+      const key = JSON.stringify([TARGET.environmentId, parent.id, 2]);
+      const { state, rows } = families.workerPages(key);
+      families.mountRows(registry, TARGET.environmentId, key, rows);
+      const whenSettled = AtomRegistry.toStream(registry, state).pipe(
+        Stream.filter((result) => !result.waiting),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      const cursor = { threadId: child.id, createdAt: "2026-10-01T00:00:00.000Z" };
+      expect((yield* Queue.take(workerRequests)).workers).toEqual({});
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({
+          snapshotSequence: 5,
+          threads: [parent, child],
+          nextWorkerPage: cursor,
+          remainingWorkers: 1,
+        }),
+      );
+      expect((yield* Queue.take(workerRequests)).workers).toEqual({ before: cursor });
+      yield* Queue.offer(
+        replies,
+        Effect.fail(new OrchestrationV2GetShellSnapshotError({ message: "page failed" })),
+      );
+      const failed = yield* whenSettled;
+      expect(failed.pages).toHaveLength(1);
+      expect(mergedIds()).toEqual(["parent", "idle-child"]);
+      expect(failed.failedQuery).not.toBeNull();
+      registry.refresh(failed.failedQuery!);
+      expect((yield* Queue.take(workerRequests)).workers).toEqual({ before: cursor });
+      const unseen = row("unseen");
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({ snapshotSequence: 5, threads: [unseen], remainingWorkers: 0 }),
+      );
+      expect((yield* whenSettled).pages).toHaveLength(2);
+
+      registry.set(
+        shellState,
+        AsyncResult.success({ ...shellAt(2), removedAt: new Map([[unseen.id, 6]]) }),
+      );
+      expect((yield* Queue.take(workerRequests)).workers).toEqual({});
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({ snapshotSequence: 6, threads: [child], remainingWorkers: 0 }),
+      );
+      const refreshed = yield* whenSettled;
+      expect(refreshed.pages).toHaveLength(1);
+      expect(refreshed.pages[0]?.remainingWorkers).toBe(0);
       expect(mergedIds()).toEqual(["parent", "idle-child"]);
     }),
   );
