@@ -565,16 +565,8 @@ export function shouldPublishShellApplicationEvent(
     // Replay and the live tail overlap; keep known IDs so late events stay filtered.
     return true;
   }
-  if (event.type === "turn-item.updated") {
-    const item = event.payload;
-    if (turnItemCanChangeUserWait(item)) return true;
-    if (
-      item.runId !== null &&
-      (item.completedAt != null ||
-        (item.startedAt != null &&
-          DateTime.toEpochMillis(item.startedAt) === DateTime.toEpochMillis(item.updatedAt)))
-    )
-      return true;
+  if (event.type === "turn-item.updated" && turnItemCanChangeUserWait(event.payload)) {
+    return true;
   }
   return !(
     subagentThreadIds.has(event.threadId) &&

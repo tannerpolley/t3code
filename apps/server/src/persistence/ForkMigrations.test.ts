@@ -91,6 +91,7 @@ describe("fork migration ledger", () => {
           { migration_id: 29, name: "IssueWorkQueryPaths" },
           { migration_id: 30, name: "GuardThreadJsonIndexes" },
           { migration_id: 31, name: "QuietDelegateActivity" },
+          { migration_id: 32, name: "QuietRunShell" },
         ],
       );
       const columns = yield* sql<{ name: string }>`PRAGMA table_info(owner_decisions)`;
@@ -303,6 +304,7 @@ describe("fork migration ledger", () => {
           { migration_id: 29, name: "IssueWorkQueryPaths" },
           { migration_id: 30, name: "GuardThreadJsonIndexes" },
           { migration_id: 31, name: "QuietDelegateActivity" },
+          { migration_id: 32, name: "QuietRunShell" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

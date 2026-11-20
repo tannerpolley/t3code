@@ -215,10 +215,12 @@ export function visibleOpenPullRequest(pullRequests: readonly ThreadPullRequestL
 export interface ThreadQuietClock {
   readonly nowMs: number;
   readonly quietMinutes: number;
+  readonly samplingWindowMs?: number;
 }
 
 export function threadQuietMinutes(thread: ThreadActivityInput, clock: ThreadQuietClock) {
   if (
+    clock.quietMinutes === 0 ||
     thread.runtime?.status !== "running" ||
     resolveThreadActivity(thread) !== "working" ||
     thread.hasActiveProviderWork ||
@@ -227,7 +229,9 @@ export function threadQuietMinutes(thread: ThreadActivityInput, clock: ThreadQui
   ) {
     return null;
   }
-  const minutes = Math.floor((clock.nowMs - thread.lastProviderActivityAt) / 60_000);
+  const minutes = Math.floor(
+    (clock.nowMs - thread.lastProviderActivityAt - (clock.samplingWindowMs ?? 0)) / 60_000,
+  );
   return minutes >= clock.quietMinutes ? minutes : null;
 }
 

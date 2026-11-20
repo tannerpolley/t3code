@@ -484,7 +484,9 @@ export const layerProduction = Layer.mergeAll(
     Layer.provide(Layer.mergeAll(layerOrchestratorProvided, ProjectionStore.layer, layerEventSink)),
   ),
   QuietDelegatesWorker.workerLive.pipe(
-    Layer.provide(Layer.merge(ProjectionStore.layer, layerThreadManagementProvided)),
+    Layer.provide(
+      Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided, layerEventSink),
+    ),
   ),
   ThreadTitleRefreshWorker.workerLive.pipe(
     Layer.provide(Layer.merge(ProjectionStore.layer, layerThreadManagementProvided)),

@@ -2747,7 +2747,7 @@ it.effect("a command finishing from an earlier run resets the quiet clock", () =
       parentItemId: null,
       ordinal: 1,
       title: "Long check",
-      startedAt: recordsAt(0),
+      startedAt: recordsAt(1),
       type: "command_execution",
       input: "sleep 1800",
     } as const;
@@ -2767,11 +2767,11 @@ it.effect("a command finishing from an earlier run resets the quiet clock", () =
       });
 
     yield* writeCommand("running", recordsAt(0));
-    assert.isTrue((yield* store.getThreadShell(threadId))?.hasActiveProviderWork);
+    assert.isTrue((yield* store.getQuietActivityCandidates(threadId))[0]?.hasActiveProviderWork);
     yield* writeCommand("completed", recordsAt(1_800));
-    const shell = yield* store.getThreadShell(threadId);
-    assert.isFalse(shell?.hasActiveProviderWork);
-    assert.equal(shell?.lastProviderActivityAt, DateTime.toEpochMillis(recordsAt(1_800)));
+    const [candidate] = yield* store.getQuietActivityCandidates(threadId);
+    assert.isFalse(candidate?.hasActiveProviderWork);
+    assert.equal(candidate?.lastProviderActivityAt, DateTime.toEpochMillis(recordsAt(1_800)));
   }).pipe(Effect.provide(layerTest)),
 );
 

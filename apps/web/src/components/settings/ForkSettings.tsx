@@ -601,10 +601,15 @@ function ForkGeneralBehaviorRows() {
               <SelectValue>
                 {mixedQuietTimeout
                   ? gt("Mixed")
-                  : gt("{minutes} min", { minutes: settings.quietThreadMinutes })}
+                  : settings.quietThreadMinutes === 0
+                    ? gt("Off")
+                    : gt("{minutes} min", { minutes: settings.quietThreadMinutes })}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="0">
+                {gt("Off")}
+              </SelectItem>
               {[1, 5, 10, 15, 20, 30, 60].map((minutes) => (
                 <SelectItem key={minutes} hideIndicator value={String(minutes)}>
                   {gt("{minutes} min", { minutes })}

@@ -26,6 +26,7 @@ it("puts a quiet running thread in Needs you after the configured interval", () 
   expect(threadQuietMinutes({ ...thread, hasPendingUserInput: true }, clock)).toBeNull();
   expect(threadQuietMinutes({ ...thread, hasPendingApprovals: true }, clock)).toBeNull();
   expect(threadQuietMinutes(thread, { ...clock, quietMinutes: 15 })).toBeNull();
+  expect(threadQuietMinutes(thread, { ...clock, quietMinutes: 0 })).toBeNull();
 });
 
 it("leaves linked-environment workers out of quiet detection", () => {

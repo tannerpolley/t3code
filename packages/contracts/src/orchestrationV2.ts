@@ -2168,6 +2168,14 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.quiet-updated"),
+    payload: Schema.Struct({
+      runId: RunId,
+      lastProviderActivityAt: Schema.NullOr(NonNegativeInt),
+    }),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.pull-request-link-updated"),
     payload: ThreadPullRequestLink,
   }),
@@ -3152,6 +3160,14 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.guest-share-updated",
     ]),
     payload: OrchestrationV2AppThreadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.quiet-updated"),
+    payload: Schema.Struct({
+      runId: RunId,
+      lastProviderActivityAt: Schema.NullOr(NonNegativeInt),
+    }),
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,

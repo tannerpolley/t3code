@@ -69,7 +69,7 @@ describe("subagent shell events", () => {
         } as ApplicationStoredEvent,
         subagents,
       ),
-    ).toBe(true);
+    ).toBe(false);
     for (const itemType of ["secret_request", "link_request", "user_message"]) {
       expect(
         shouldPublishShellApplicationEvent(

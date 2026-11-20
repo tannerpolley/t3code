@@ -7,6 +7,7 @@ import { expect, vi } from "vite-plus/test";
 
 import { Scheduler } from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { EventSinkV2 } from "./EventSink.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { workerLive } from "./QuietDelegatesWorker.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
@@ -18,6 +19,7 @@ it.effect("wakes the parent once per quiet stretch using only the quiet candidat
       parentThreadId: ThreadId.make("parent"),
       runId: RunId.make("run"),
       title: "Worker",
+      quietActivityAt: null,
       hasActiveProviderWork: false,
       runtime: { status: "running" as const },
     };
@@ -42,9 +44,10 @@ it.effect("wakes the parent once per quiet stretch using only the quiet candidat
                   Effect.asVoid,
                 ),
             }),
+            Layer.mock(EventSinkV2)({ write: () => Effect.succeed([]) }),
             Layer.mock(ProjectionStoreV2)({
               getShellSnapshot,
-              getQuietDelegateCandidates: () =>
+              getQuietActivityCandidates: () =>
                 Effect.sync(() => [{ ...child, lastProviderActivityAt: latestActivityAt }]),
             }),
             Layer.mock(ThreadManagementService)({ dispatch }),
@@ -57,7 +60,7 @@ it.effect("wakes the parent once per quiet stretch using only the quiet candidat
     yield* sweep;
     expect(dispatch).toHaveBeenCalledTimes(0);
     expect(getShellSnapshot).not.toHaveBeenCalled();
-    yield* TestClock.setTime(600_000);
+    yield* TestClock.setTime(659_999);
     yield* sweep;
     yield* sweep;
     expect(dispatch).toHaveBeenCalledExactlyOnceWith(
@@ -67,11 +70,11 @@ it.effect("wakes the parent once per quiet stretch using only the quiet candidat
         dispatchMode: { type: "queue_after_active" },
       }),
     );
-    latestActivityAt = 600_001;
+    latestActivityAt = 660_000;
     yield* TestClock.setTime(latestActivityAt);
     yield* sweep;
     expect(dispatch).toHaveBeenCalledTimes(1);
-    yield* TestClock.setTime(latestActivityAt + 600_000);
+    yield* TestClock.setTime(latestActivityAt + 659_999);
     yield* sweep;
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(dispatch.mock.calls[0]?.[0].commandId).not.toBe(dispatch.mock.calls[1]?.[0].commandId);

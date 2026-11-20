@@ -1,6 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
+// The first delta in a UTC minute can precede the last one by this much.
+export const quietActivitySamplingWindowMs = 59_999;
+
 export const activeQuietWork = `type IN ('command_execution', 'dynamic_tool', 'subagent')
   AND status IN ('pending', 'running', 'waiting')
   AND CASE WHEN type = 'dynamic_tool' AND json_valid(payload_json)

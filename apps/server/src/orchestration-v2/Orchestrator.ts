@@ -234,6 +234,7 @@ import {
 import { isRegisteredRepositoryRoot, planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { quietActivitySamplingWindowMs } from "../persistence/ForkMigrations/031_QuietDelegateActivity.ts";
 import { makeAutomaticProviderSwitchPolicy } from "./AutomaticProviderSwitchPolicy.ts";
 import {
   usageLimitSwitchResultRun,
@@ -2408,7 +2409,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (source?.kind === "background_task" && source.quietDelegate !== undefined) {
       const stamp = source.quietDelegate;
       const candidates = yield* projectionStore
-        .getQuietDelegateCandidates(stamp.threadId)
+        .getQuietActivityCandidates(stamp.threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       const child = candidates.find(
         (candidate) =>
@@ -2420,6 +2421,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         child === undefined ||
         threadQuietMinutes(child, {
           nowMs: DateTime.toEpochMillis(yield* DateTime.now),
+          samplingWindowMs: quietActivitySamplingWindowMs,
           quietMinutes: (yield* serverSettings.getSettings.pipe(Effect.orDie)).quietThreadMinutes,
         }) === null
       );
