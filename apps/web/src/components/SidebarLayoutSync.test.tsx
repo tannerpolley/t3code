@@ -1,4 +1,10 @@
-import { EMPTY_SIDEBAR_LAYOUT, EnvironmentId, type SidebarLayoutRecord } from "@t3tools/contracts";
+import {
+  EMPTY_SIDEBAR_LAYOUT,
+  EnvironmentId,
+  type SidebarLayoutRecord,
+  type SidebarLayoutUpdate,
+} from "@t3tools/contracts";
+import { applySidebarLayoutMutation } from "@t3tools/shared/sidebarLayout";
 import { AsyncResult } from "effect/reactivity";
 // oxlint-disable-next-line t3code/require-disposable-render -- react-test-renderer unit test without a browser
 import { act } from "react";
@@ -72,6 +78,7 @@ vi.mock("../projectSectionPlacement", () => ({
 vi.mock("./ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
 import { SidebarLayoutSync } from "./SidebarLayoutSync";
+import { SIDEBAR_WRITE_DELAY } from "../sidebarLayoutClient";
 import { useUiStateStore } from "../uiStateStore";
 
 let renderer: ReactTestRenderer | undefined;
@@ -163,3 +170,29 @@ it("a read-only client sees the shared layout and live updates without submittin
   expect(useUiStateStore.getState().sidebarProjectSections[0]?.collapsed).toBe(true);
   expect(fixture.send).not.toHaveBeenCalled();
 });
+
+it.each([true, false])(
+  "reports whether a queued subsection was saved when the parent is deleted before the write: %s",
+  async (parentDeleted) => {
+    await render();
+    const parentId = useUiStateStore.getState().sidebarProjectSections[0]!.id;
+    fixture.send.mockImplementation(async ({ input }: { input: SidebarLayoutUpdate }) =>
+      AsyncResult.success({
+        ...record(2),
+        layout: input.operations.reduce(
+          (layout, operation) => applySidebarLayoutMutation(layout, operation) ?? layout,
+          parentDeleted ? EMPTY_SIDEBAR_LAYOUT : record(1).layout,
+        ),
+      }),
+    );
+    const result = vi.fn();
+    await act(() => {
+      void useUiStateStore
+        .getState()
+        .addSidebarProjectSection("Subsection", parentId, "/work/Subsection")
+        .then(result);
+    });
+    await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_WRITE_DELAY));
+    expect(result).toHaveBeenCalledWith(parentDeleted ? null : expect.any(String));
+  },
+);

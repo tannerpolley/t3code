@@ -24,9 +24,21 @@ describe("sectionFolderPath", () => {
     expect(sectionFolderPath("/", ["Work"])).toBe("/Work");
   });
 
-  it("needs a full root path", () => {
+  it.each([
+    ["~/Workspaces/", "~/Workspaces/Engineering/IDAES"],
+    ["~", "~/Engineering/IDAES"],
+    ["C:\\Workspaces\\", "C:\\Workspaces\\Engineering\\IDAES"],
+    ["C:/", "C:\\Engineering\\IDAES"],
+    ["\\\\host\\share", "\\\\host\\share\\Engineering\\IDAES"],
+  ])("joins the destination environment's %s root", (root, expected) => {
+    expect(sectionFolderPath(root, ["Engineering", "IDAES"])).toBe(expected);
+  });
+
+  it("needs an absolute or home-relative root path", () => {
     expect(sectionFolderPath("", ["Engineering"])).toBeNull();
-    expect(sectionFolderPath("~/Workspaces", ["Engineering"])).toBeNull();
+    expect(sectionFolderPath("Workspaces", ["Engineering"])).toBeNull();
+    expect(sectionFolderPath("C:", ["Engineering"])).toBeNull();
+    expect(sectionFolderPath("C:Workspaces", ["Engineering"])).toBeNull();
   });
 });
 

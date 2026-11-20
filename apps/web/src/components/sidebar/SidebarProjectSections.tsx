@@ -143,7 +143,6 @@ import {
   sectionPlacementInput,
   sectionTarget,
   useProjectSectionPlacementReady,
-  waitForNewSectionPlacement,
 } from "../../projectSectionPlacement";
 import {
   folderSubsectionInput,
@@ -1929,10 +1928,9 @@ function ProjectSectionDialog(props: {
     const selected = candidates.filter((folder) => checkedPaths.includes(folder.fullPath));
     if (selected.length > 0) {
       const sectionId = sidebarSectionKey(environmentId, id);
-      const ready = await waitForNewSectionPlacement(environmentId, sectionId);
       const failed: string[] = [];
       for (const folder of selected) {
-        const placement = ready ? sectionPlacementInput(environmentId, sectionId) : null;
+        const placement = sectionPlacementInput(environmentId, sectionId);
         if (placement === null) {
           failed.push(folder.name);
           continue;
