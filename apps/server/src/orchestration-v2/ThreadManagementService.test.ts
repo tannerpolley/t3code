@@ -1127,24 +1127,21 @@ it.effect(
       const gates = new Map(
         ["a", "b", "c", "d", "e", "f"].map((id) => [
           id,
-          Deferred.makeUnsafe<void, Orchestrator.OrchestratorV2Error>(),
+          Deferred.makeUnsafe<void, Orchestrator.OrchestratorProjectionError>(),
         ]),
       );
       const layerTest = ThreadManagementService.layer.pipe(
         Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
         Layer.provide(
           Layer.mock(Orchestrator.OrchestratorV2)({
-            getThreadSnapshot: (threadId) =>
+            getThreadTranscript: (threadId) =>
               Queue.offer(started, threadId).pipe(
                 Effect.andThen(Deferred.await(gates.get(threadId)!)),
                 Effect.as({
-                  schemaVersion: 1,
-                  snapshotSequence: 1,
-                  projection: {
-                    thread: { id: threadId, title: threadId },
-                    updatedAt: DateTime.makeUnsafe(0),
-                    visibleTurnItems: [],
-                  } as unknown as OrchestrationV2ThreadProjection,
+                  threadId,
+                  title: threadId,
+                  updatedAt: DateTime.makeUnsafe(0),
+                  items: [],
                 }),
               ),
           }),

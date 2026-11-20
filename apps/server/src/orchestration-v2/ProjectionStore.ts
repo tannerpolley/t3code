@@ -25,6 +25,7 @@ import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
+  OrchestrationV2ThreadTranscript,
 } from "@t3tools/contracts";
 import {
   clearSilentWakeAttention,
@@ -590,6 +591,10 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
+  readonly getThreadTranscript: (
+    threadId: ThreadId,
+    maxBytes: number,
+  ) => Effect.Effect<OrchestrationV2ThreadTranscript, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getRunCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
@@ -8023,6 +8028,96 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       }
     });
 
+    const materializeTimelineRows = Effect.fn("ProjectionStore.materializeTimelineRows")(function* (
+      threadId: ThreadId,
+      page: ReadonlyArray<TimelineIndexRow & { readonly position: number }>,
+      maxBytes?: number,
+    ) {
+      const sources = yield* encodeTimelineSources(
+        page
+          .filter((row) => row.synthetic === undefined)
+          .map((row) => ({ threadId: row.sourceThreadId, id: row.sourceItemId })),
+      );
+      const selectedItems = sql`
+          FROM json_each(${sources}) AS wanted
+          CROSS JOIN orchestration_v2_projection_turn_items AS item
+            ON item.thread_id = json_extract(wanted.value, '$.threadId')
+            AND item.turn_item_id = json_extract(wanted.value, '$.id')
+        `;
+      if (maxBytes !== undefined) {
+        const [size] = yield* sql<{ bytes: number }>`
+            SELECT COALESCE(SUM(octet_length(item.payload_json)), 0) AS bytes
+            ${selectedItems}
+          `;
+        if (size!.bytes > maxBytes) {
+          return yield* new ProjectionStoreSnapshotTooLargeError({ threadId });
+        }
+      }
+      const payloads = yield* sql<{
+        thread_id: string;
+        turn_item_id: string;
+        payload_json: string;
+      }>`
+          SELECT item.thread_id, item.turn_item_id, item.payload_json
+          ${selectedItems}
+        `;
+      const byIdentity = new Map(
+        payloads.map((row) => [`${row.thread_id}:${row.turn_item_id}`, row.payload_json]),
+      );
+      return yield* Effect.forEach(page, (row) =>
+        Effect.gen(function* () {
+          const payload = byIdentity.get(`${row.sourceThreadId}:${row.sourceItemId}`);
+          const item =
+            row.synthetic ??
+            (payload === undefined
+              ? yield* new ProjectionStoreReadError({
+                  threadId,
+                  cause: "Timeline item disappeared during snapshot",
+                })
+              : yield* decodeTurnItemPayload(payload).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectionStoreReadError({ threadId: row.sourceThreadId, cause }),
+                  ),
+                ));
+          return {
+            position: row.position,
+            sourceThreadId: row.sourceThreadId,
+            sourceItemId: row.sourceItemId,
+            visibility: row.visibility,
+            item,
+          };
+        }),
+      );
+    });
+
+    const getThreadTranscript = Effect.fn("ProjectionStore.getThreadTranscript")(
+      function* (threadId: ThreadId, maxBytes: number) {
+        const { records, visible } = yield* readTimelineIndex(threadId, new Set());
+        const items = yield* materializeTimelineRows(
+          threadId,
+          visible.map((row, position) => ({ ...row, position })),
+          maxBytes,
+        );
+        return {
+          threadId,
+          title: records.thread.title,
+          updatedAt: records.thread.updatedAt,
+          items,
+        };
+      },
+      (effect, threadId) =>
+        sql
+          .withTransaction(effect)
+          .pipe(
+            Effect.mapError((cause) =>
+              isProjectionStoreSnapshotTooLargeError(cause)
+                ? cause
+                : controlReadError(threadId)(cause),
+            ),
+          ),
+    );
+
     const getTimelinePage: ProjectionStoreV2Shape["getTimelinePage"] = (threadId, options) =>
       sql
         .withTransaction(
@@ -8090,54 +8185,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             });
             const { page, totalItems, hasMore, hasEarlier } =
               local === null ? yield* whole : yield* readLocalTimelinePage(local, options);
-            const sources = yield* encodeTimelineSources(
-              page
-                .filter((row) => row.synthetic === undefined)
-                .map((row) => ({ threadId: row.sourceThreadId, id: row.sourceItemId })),
-            );
-            const payloads = yield* sql<{
-              thread_id: string;
-              turn_item_id: string;
-              payload_json: string;
-            }>`
-          SELECT item.thread_id, item.turn_item_id, item.payload_json
-          FROM orchestration_v2_projection_turn_items item JOIN json_each(${sources}) wanted
-          ON item.thread_id = json_extract(wanted.value, '$.threadId')
-            AND item.turn_item_id = json_extract(wanted.value, '$.id')`;
-            const byIdentity = new Map(
-              payloads.map((row) => [`${row.thread_id}:${row.turn_item_id}`, row.payload_json]),
-            );
-            const items = yield* Effect.forEach(page, (row) =>
-              Effect.gen(function* () {
-                if (row.synthetic !== undefined)
-                  return {
-                    position: row.position,
-                    sourceThreadId: row.sourceThreadId,
-                    sourceItemId: row.sourceItemId,
-                    visibility: row.visibility,
-                    item: row.synthetic,
-                  };
-                const payload = byIdentity.get(`${row.sourceThreadId}:${row.sourceItemId}`);
-                if (payload === undefined)
-                  return yield* new ProjectionStoreReadError({
-                    threadId,
-                    cause: "Timeline item disappeared during snapshot",
-                  });
-                const item = yield* decodeTurnItemPayload(payload).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ProjectionStoreReadError({ threadId: row.sourceThreadId, cause }),
-                  ),
-                );
-                return {
-                  position: row.position,
-                  sourceThreadId: row.sourceThreadId,
-                  sourceItemId: row.sourceItemId,
-                  visibility: row.visibility,
-                  item,
-                };
-              }),
-            );
+            const items = yield* materializeTimelineRows(threadId, page);
             return { items, totalItems, hasMore, hasEarlier };
           }),
         )
@@ -10123,6 +10171,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadSnapshot: readOnReader(getThreadSnapshot),
       getThreadSnapshotWindow: readOnReader(getThreadSnapshotWindow),
       getTimelinePage: readOnReader(getTimelinePage),
+      getThreadTranscript: readOnReader(getThreadTranscript),
       getThreadHistoryPage: readOnReader(getThreadHistoryPage),
       searchThread: readOnReader(searchThread),
       issueWorkRevision: sql<{

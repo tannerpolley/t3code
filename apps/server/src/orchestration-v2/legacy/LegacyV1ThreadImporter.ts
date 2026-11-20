@@ -37,6 +37,7 @@ import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 
 const IMPORT_EVENT_PREFIX = "migration:v1";
 const TRANSCRIPT_MESSAGE_BATCH_SIZE = 50;
+const TRANSCRIPT_MESSAGE_BATCH_BYTES = 8 * 1024 * 1024;
 
 interface LegacyThreadRow {
   readonly thread_id: string;
@@ -345,34 +346,44 @@ const make = Effect.gen(function* () {
   type MessageCursor = Pick<LegacyMessageRow, "created_at" | "message_id">;
   const listMessageBatch = (threadId: ThreadId, after: MessageCursor | undefined) =>
     sql<Omit<LegacyMessageRow, "ordinal"> & { readonly imported: number }>`
+      WITH candidates AS MATERIALIZED (
+        SELECT message_id, created_at,
+          octet_length(text) + COALESCE(octet_length(attachments_json), 0) +
+            COALESCE(octet_length(context_json), 0) AS bytes,
+          EXISTS (
+            SELECT 1
+            FROM orchestration_v2_projection_turn_items AS item
+            WHERE item.turn_item_id = ${`${IMPORT_EVENT_PREFIX}:turn-item:`} || message.message_id
+              AND item.thread_id = message.thread_id
+          ) AS imported
+        FROM projection_thread_messages AS message
+        WHERE thread_id = ${threadId}
+          AND role IN ('user', 'assistant')
+          ${
+            after === undefined
+              ? sql``
+              : sql`AND (created_at, message_id) > (${after.created_at}, ${after.message_id})`
+          }
+        ORDER BY created_at ASC, message_id ASC
+        LIMIT ${TRANSCRIPT_MESSAGE_BATCH_SIZE}
+      ), sized AS (
+        SELECT message_id, imported,
+          ROW_NUMBER() OVER batch AS position,
+          SUM(CASE WHEN imported THEN 0 ELSE bytes END) OVER batch AS batch_bytes
+        FROM candidates
+        WINDOW batch AS (ORDER BY created_at ASC, message_id ASC)
+      )
       SELECT
-        message_id,
-        thread_id,
-        role,
-        text,
-        attachments_json,
-        context_json,
-        is_streaming,
-        created_at,
-        updated_at,
-        EXISTS (
-          SELECT 1
-          FROM orchestration_events AS event
-          WHERE event.event_id = ${`${IMPORT_EVENT_PREFIX}:message:`} || message.message_id
-            AND event.application_event_version = 2
-            AND event.aggregate_kind = 'thread'
-            AND event.stream_id = message.thread_id
-        ) AS imported
-      FROM projection_thread_messages AS message
-      WHERE thread_id = ${threadId}
-        AND role IN ('user', 'assistant')
-        ${
-          after === undefined
-            ? sql``
-            : sql`AND (created_at, message_id) > (${after.created_at}, ${after.message_id})`
-        }
-      ORDER BY created_at ASC, message_id ASC
-      LIMIT ${TRANSCRIPT_MESSAGE_BATCH_SIZE}
+        message.message_id, message.thread_id, message.role, message.is_streaming,
+        message.created_at, message.updated_at, sized.imported,
+        CASE WHEN sized.imported THEN '' ELSE message.text END AS text,
+        CASE WHEN NOT sized.imported THEN message.attachments_json END AS attachments_json,
+        CASE WHEN NOT sized.imported THEN message.context_json END AS context_json
+      FROM sized
+      CROSS JOIN projection_thread_messages AS message ON message.message_id = sized.message_id
+      -- A single message over the budget still needs to make progress.
+      WHERE sized.position = 1 OR sized.batch_bytes <= ${TRANSCRIPT_MESSAGE_BATCH_BYTES}
+      ORDER BY sized.position
     `.pipe(NodeSqliteClient.readOnly);
 
   const listShellMessages = Effect.fn("LegacyV1ThreadImporter.listShellMessages")(function* (

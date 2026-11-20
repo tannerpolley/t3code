@@ -783,8 +783,8 @@ const make = Effect.gen(function* () {
   const getThreadTranscript = Effect.fn("orchestrationV2.threadManagement.getThreadTranscript")(
     function* (threadId: ThreadId) {
       yield* ensureProjectionTranscript(threadId);
-      const { projection } = yield* orchestrator
-        .getThreadSnapshot(threadId, PROVIDER_SEND_TURN_MAX_FILE_BYTES)
+      const transcript = yield* orchestrator
+        .getThreadTranscript(threadId, PROVIDER_SEND_TURN_MAX_FILE_BYTES)
         .pipe(
           Effect.mapError((error) =>
             isThreadSnapshotTooLarge(error)
@@ -793,12 +793,6 @@ const make = Effect.gen(function* () {
           ),
         );
       const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
-      const transcript = {
-        threadId: projection.thread.id,
-        title: projection.thread.title,
-        updatedAt: projection.updatedAt,
-        items: projection.visibleTurnItems,
-      };
       let sizeBytes = Buffer.byteLength(
         threadTranscriptHeader(yield* environment.getEnvironmentId, transcript),
         "utf8",

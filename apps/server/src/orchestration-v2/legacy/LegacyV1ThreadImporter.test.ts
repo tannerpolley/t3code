@@ -174,7 +174,7 @@ it.effect("imports a pending transcript once even when the ensure effect is reus
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("resumes a paged legacy transcript import without gaps or duplicate events", () =>
+it.effect("resumes a paged legacy transcript import after committed events are pruned", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
@@ -208,6 +208,11 @@ it.effect("resumes a paged legacy transcript import without gaps or duplicate ev
     assert.equal(yield* importer.pendingThreadCount, 2);
     assert.lengthOf((yield* projections.getThreadProjection(threadId)).turnItems, 50);
 
+    yield* sql`
+      DELETE FROM orchestration_events
+      WHERE stream_id = ${threadId} AND application_event_version = 2
+        AND event_type IN ('message.updated', 'turn-item.updated')
+    `;
     assert.deepStrictEqual(yield* importer.ensureTranscript(threadId), {
       importedThreadCount: 1,
       importedMessageCount: 53,
@@ -226,6 +231,43 @@ it.effect("resumes a paged legacy transcript import without gaps or duplicate ev
       SELECT imported_message_count FROM orchestration_v2_legacy_imports WHERE thread_id = ${threadId}
     `;
     assert.deepStrictEqual(result, { imported_message_count: ids.length });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("imports a byte-limited batch before reading the next legacy messages", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const threadId = ThreadId.make("thread:first");
+    yield* seedPendingTranscripts;
+    yield* sql`
+      INSERT INTO projection_thread_messages (
+        message_id, thread_id, role, text, is_streaming, created_at, updated_at
+      )
+      SELECT id, ${threadId}, 'assistant', printf('%.*c', ${5 * 1024 * 1024}, 'x'), 0,
+        '2026-01-03T01:00:00.000Z', '2026-01-03T01:00:00.000Z'
+      FROM (SELECT 'large:1' AS id UNION ALL SELECT 'large:2')
+    `;
+    let reads = 0;
+    const firstAttempt = yield* importer.ensureTranscript(threadId).pipe(
+      Effect.provideService(Statement.CurrentTransformer, (statement) =>
+        statement.compile()[0].includes("FROM projection_thread_messages") && ++reads === 2
+          ? Effect.interrupt
+          : Effect.succeed(statement),
+      ),
+      Effect.exit,
+    );
+    assert.isTrue(Exit.hasInterrupts(firstAttempt));
+    const imported = yield* sql`
+      SELECT message_id FROM orchestration_v2_projection_messages
+      WHERE thread_id = ${threadId} AND message_id LIKE 'large:%'
+      ORDER BY message_id
+    `;
+    assert.deepStrictEqual(imported, [{ message_id: "large:1" }]);
+    assert.deepStrictEqual(yield* importer.ensureTranscript(threadId), {
+      importedThreadCount: 1,
+      importedMessageCount: 1,
+    });
   }).pipe(Effect.provide(layerTest)),
 );
 

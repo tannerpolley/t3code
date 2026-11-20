@@ -250,6 +250,95 @@ it.effect("exports full visible history with scope and missing-thread checks", (
 );
 
 it.effect.each([
+  { hidden: false, name: "a duplicate message projection" },
+  { hidden: true, name: "a rolled-back item" },
+])("exports a transcript that fits alongside $name", ({ hidden }) =>
+  Effect.gen(function* () {
+    const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+    const sql = Context.get(services, SqlClient.SqlClient);
+    const messageId = MessageId.make("message:export");
+    const commandItem = items.find((item) => item.type === "command_execution")!;
+    const messageItem = {
+      ...commandItem,
+      type: "assistant_message" as const,
+      messageId,
+      text: "Visible reply",
+      streaming: false,
+    };
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("export-visible"),
+          threadId: thread.id,
+          occurredAt: now,
+          type: "turn-item.updated",
+          payload: messageItem,
+        },
+        ...(hidden
+          ? [
+              {
+                id: EventId.make("export-rolled-back-run"),
+                threadId: thread.id,
+                occurredAt: now,
+                type: "run.created" as const,
+                payload: rolledBackRun,
+              },
+              {
+                id: EventId.make("export-hidden"),
+                threadId: thread.id,
+                occurredAt: now,
+                type: "turn-item.updated" as const,
+                payload: { ...messageItem, id: items[1]!.id, runId: rolledBackRun.id, ordinal: 2 },
+              },
+            ]
+          : [
+              {
+                id: EventId.make("export-message"),
+                threadId: thread.id,
+                occurredAt: now,
+                type: "message.updated" as const,
+                payload: {
+                  id: messageId,
+                  threadId: thread.id,
+                  runId: null,
+                  nodeId: null,
+                  role: "assistant" as const,
+                  text: messageItem.text,
+                  attachments: [],
+                  streaming: false,
+                  createdAt: now,
+                  updatedAt: now,
+                  createdBy: "agent" as const,
+                  creationSource: "provider" as const,
+                },
+              },
+            ]),
+      ],
+    });
+    const textBytes = 26 * 1024 * 1024;
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.text', printf('%.*c', ${textBytes}, 'x'))
+      WHERE thread_id = ${thread.id}
+    `;
+    yield* sql`
+      UPDATE orchestration_v2_projection_messages
+      SET payload_json = json_set(payload_json, '$.text', printf('%.*c', ${textBytes}, 'x'))
+      WHERE message_id = ${messageId}
+    `;
+    const response = yield* Effect.promise(() =>
+      handler(
+        new Request(`http://localhost/api/orchestration/threads/${thread.id}/transcript`, {
+          headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+        }),
+      ),
+    );
+    yield* Effect.promise(() => response.body!.cancel());
+    expect(response.status).toBe(200);
+  }),
+);
+
+it.effect.each([
   { type: "reasoning", inherited: false },
   { type: "assistant_message", inherited: false },
   { type: "reasoning", inherited: true },
@@ -337,11 +426,8 @@ it.effect.each([
             getEnvironmentId: Effect.succeed(environmentId),
           }),
           Effect.provideService(Statement.CurrentTransformer, (statement) => {
-            const [query, parameters] = statement.compile();
-            if (
-              parameters[0] === thread.id &&
-              query.includes("FROM orchestration_v2_projection_turn_items")
-            ) {
+            const [query] = statement.compile();
+            if (query.includes("CROSS JOIN orchestration_v2_projection_turn_items AS item")) {
               reads.push(query);
             }
             return Effect.succeed(statement);
@@ -349,7 +435,7 @@ it.effect.each([
           Effect.flip,
         );
       expect(error).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
-      expect(reads).toEqual([expect.stringContaining("octet_length(payload_json) + 1024")]);
+      expect(reads).toEqual([expect.stringContaining("SUM(octet_length(item.payload_json))")]);
       const largeResponse = yield* read();
       expect(largeResponse.status).toBe(400);
       expect(yield* Effect.promise(() => largeResponse.json())).toMatchObject({
