@@ -145,7 +145,7 @@ const createRoot = Effect.fn("test.createReadOnlyRoot")(function* (registered = 
 const delegate = Effect.fn("test.delegateReadOnly")(function* (
   number: number,
   parentThreadId = rootId,
-  role: ThreadRole = "investigator",
+  role: ThreadRole = "designer",
   isolated = false,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -215,7 +215,7 @@ it.effect(
       const sink = yield* EventSink.EventSinkV2;
       const implementor = yield* delegate(100, rootId, "implementor");
       const first = yield* delegate(1, implementor, "reviewer");
-      yield* delegate(2, first, "checker");
+      yield* delegate(2, first, "reviewer");
       const designer = yield* delegate(3, rootId, "designer");
       yield* delegate(4);
       const fifth = yield* delegate(5, first);
@@ -495,7 +495,7 @@ it.effect("prepares an explicitly isolated read-only child only after it gets a 
       clientRequestId: CommandId.make("isolated-read-only-limit"),
     });
     const first = yield* delegate(1);
-    const isolated = yield* delegate(2, rootId, "checker", true);
+    const isolated = yield* delegate(2, rootId, "reviewer", true);
     assert.equal((yield* lastRun(isolated)).status, "queued");
     assert.equal(harness.createWorktree.mock.calls.length, 0);
     const after = yield* sink.latestSequence();

@@ -1545,6 +1545,7 @@ const make = Effect.gen(function* () {
   const loadRoleDefaultTarget = Effect.fn("OrchestratorMcpService.loadRoleDefaultTarget")(
     function* (
       requestedRole: string,
+      level: OrchestratorMcpDelegateTaskInput["level"],
       target: OrchestratorMcpDelegateTaskInput["target"],
       providers: ReadonlyArray<ServerProvider>,
       usageSprint: RepositoryUsageSprint | undefined,
@@ -1563,6 +1564,7 @@ const make = Effect.gen(function* () {
       return roleDefaultTarget(
         roles,
         requestedRole,
+        level,
         target,
         (id) => providers.find((provider) => provider.instanceId === id)?.driver,
       );
@@ -2809,12 +2811,15 @@ const make = Effect.gen(function* () {
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       const usageSprint = yield* loadUsageSprint(parent.thread);
       const roleDefault =
-        isRetryOfAcceptedDelegation ||
-        input.role === undefined ||
-        input.role === "general" ||
-        input.target?.override === true
+        isRetryOfAcceptedDelegation || input.role === undefined || input.target?.override === true
           ? undefined
-          : yield* loadRoleDefaultTarget(input.role, input.target, providers, usageSprint);
+          : yield* loadRoleDefaultTarget(
+              input.role,
+              input.level,
+              input.target,
+              providers,
+              usageSprint,
+            );
       if (isOrchestratorMcpFailure(roleDefault)) return yield* roleDefault;
       const target = yield* resolveTargetRechecking({
         parent,

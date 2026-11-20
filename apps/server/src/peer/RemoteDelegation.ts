@@ -301,7 +301,7 @@ const make = Effect.gen(function* () {
         });
       }
       let target = input.target;
-      if (input.role !== undefined && input.role !== "general" && target.override !== true) {
+      if (input.role !== undefined && target.override !== true) {
         const { modelRoles, providers } = yield* forwarding.call(
           scope,
           RemoteCapabilitiesTool,
@@ -311,6 +311,7 @@ const make = Effect.gen(function* () {
         const choice = roleDefaultTarget(
           modelRoles,
           input.role,
+          input.level,
           target,
           (id) => providers.find((provider) => provider.providerInstanceId === id)?.driverKind,
         );

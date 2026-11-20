@@ -3,10 +3,10 @@ import {
   TIER_PROVIDERS,
   TIER_PROVIDER_INSTANCES,
   type OrchestratorMcpProviderCredits,
-  modelRoleProfile,
+  resolveModelRoleName,
   type ModelRole,
+  type ModelRoleLevel,
   type ModelRoleTarget,
-  resolveThreadRole,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpModelRole,
@@ -194,26 +194,23 @@ export function checkDelegateTarget(input: {
   return model;
 }
 
-/**
- * The first live role choice that matches the requested fields. Implementors
- * get Implementor unless the name means the fast profile, such as `sprinter`.
- */
 export function roleDefaultTarget(
   roles: ReadonlyArray<OrchestratorMcpModelRole>,
   requestedRole: string,
+  requestedLevel: ModelRoleLevel | undefined,
   target: OrchestratorMcpDelegateTaskInput["target"],
   driverFor: (id: ProviderInstanceId) => ProviderDriverKind | undefined,
 ): ModelRoleTarget | OrchestratorMcpFailure | undefined {
-  const threadRole = resolveThreadRole(requestedRole);
-  const profile =
-    requestedRole === "implementor" || requestedRole === "implementation"
-      ? "thorough"
-      : modelRoleProfile(requestedRole);
-  const role = roles.find(
-    (entry) =>
-      (entry.role ?? resolveThreadRole(entry.id)) === threadRole &&
-      (profile === undefined || (entry.profile ?? modelRoleProfile(entry.id)) === profile),
+  const slot = resolveModelRoleName(requestedRole);
+  if (slot === undefined) return undefined;
+  const [threadRole, defaultLevel] = slot;
+  const level = requestedLevel ?? defaultLevel;
+  const matching = roles.filter(
+    (entry) => (entry.role ?? resolveModelRoleName(entry.id)?.[0]) === threadRole,
   );
+  const role =
+    matching.find((entry) => (entry.level ?? resolveModelRoleName(entry.id)?.[1]) === level) ??
+    matching[0];
   if (role === undefined) return undefined;
   const requestedOptions = target?.options;
   const choice = role.targets.find(

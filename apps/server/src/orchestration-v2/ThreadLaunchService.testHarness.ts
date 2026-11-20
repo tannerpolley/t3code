@@ -507,8 +507,8 @@ function reviewHarness(
     },
     serverSettings: {
       modelRoles: {
-        orchestrator: { provider: "codex", effort: "default" },
-        "implementor-thorough": { effort: "default", tier: 3 },
+        orchestrator: { complex: { provider: "codex", effort: "default" } },
+        implementor: { complex: { effort: "default", tier: 3 } },
       },
       modelTiers: {
         2: { codex: { model: modelSelection.model } },
@@ -568,7 +568,7 @@ const createReviewRoot = Effect.fn("test.createReviewRoot")(function* (
       milestones: [
         {
           number: 1,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
 
           status: "running",
           fingerprint: "",

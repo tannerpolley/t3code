@@ -74,7 +74,7 @@ describe("fresh-thread repository handoff", () => {
   });
   const plan = {
     number: 1,
-    modelRoleId: "implementor-thorough",
+    modelRoleId: "implementor-complex",
 
     status: "running" as const,
     fingerprint: "",
@@ -215,8 +215,8 @@ describe("fresh-thread repository handoff", () => {
             },
             serverSettings: {
               modelRoles: {
-                orchestrator: { provider: "codex", effort: "default" },
-                "implementor-thorough": { effort: "default" },
+                orchestrator: { complex: { provider: "codex", effort: "default" } },
+                implementor: { complex: { effort: "default" } },
               },
               modelTiers: { 2: { codex: { model: modelSelection.model } } },
             },
@@ -348,7 +348,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           projectId,
           number: 9,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
           createOrchestrator: true,
           clientRequestId: CommandId.make("end:first-start"),
         };
@@ -401,7 +401,7 @@ describe("fresh-thread repository handoff", () => {
         ...reference,
         projectId,
         number: 9,
-        modelRoleId: "implementor-thorough",
+        modelRoleId: "implementor-complex",
         createOrchestrator: true,
         clientRequestId: CommandId.make("end:request"),
       };
@@ -642,7 +642,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           number: 9,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
 
           clientRequestId: CommandId.make("managed-panel-duplicate"),
         });
@@ -698,7 +698,7 @@ describe("fresh-thread repository handoff", () => {
         const input = {
           ...reference,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
 
           clientRequestId: CommandId.make(`shared-start:${path}`),
         };
@@ -802,7 +802,7 @@ describe("fresh-thread repository handoff", () => {
         ...reference,
         number: 1,
         projectId,
-        modelRoleId: "implementor-thorough",
+        modelRoleId: "implementor-complex",
         clientRequestId: CommandId.make("sub-race:parent"),
       })).issueThreadId!;
       yield* tracker.stream(parent).pipe(
@@ -816,7 +816,7 @@ describe("fresh-thread repository handoff", () => {
             ...reference,
             number: 2,
             projectId,
-            modelRoleId: "implementor-thorough",
+            modelRoleId: "implementor-complex",
             clientRequestId: CommandId.make("sub-race:panel"),
           }),
           (yield* OrchestratorMcp.OrchestratorMcpService).delegateTask(scope(parent), {
@@ -868,7 +868,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           number: 1,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
           clientRequestId: CommandId.make("continuation-failure:parent"),
         })).issueThreadId!;
         yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(parent).pipe(
@@ -944,7 +944,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           number: 9,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
           clientRequestId: CommandId.make("foreign-reuse:first"),
         })).issueThreadId!;
         yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(child).pipe(
@@ -1084,7 +1084,7 @@ describe("fresh-thread repository handoff", () => {
             ...reference,
             number: 9,
             projectId,
-            modelRoleId: "implementor-thorough",
+            modelRoleId: "implementor-complex",
             clientRequestId: requestId,
           })
           .pipe(Effect.result);
@@ -1122,7 +1122,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           number: 9,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
           clientRequestId: CommandId.make("runless-recovery:start"),
         })).issueThreadId!;
         yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(childId).pipe(
@@ -1189,7 +1189,7 @@ describe("fresh-thread repository handoff", () => {
             ...reference,
             number,
             projectId,
-            modelRoleId: "implementor-thorough",
+            modelRoleId: "implementor-complex",
             clientRequestId: CommandId.make(`stop-mailbox:${number}`),
           });
         const first = (yield* start(9)).issueThreadId!;
@@ -1255,7 +1255,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           number: 9,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
           createOrchestrator: true,
           clientRequestId: CommandId.make("master-root:create"),
         });
@@ -1268,7 +1268,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           number: 10,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
           clientRequestId: CommandId.make("master-root:worker"),
         });
         assert.isNotNull(worker.issueThreadId);
@@ -1310,7 +1310,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           number: 9,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
           clientRequestId: CommandId.make("store-failure:start"),
         })
         .pipe(Effect.result);
@@ -1468,7 +1468,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           number: 9,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
 
           createOrchestrator: true,
         };
@@ -1527,7 +1527,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           number: 2,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
         };
         const noSelection = yield* service
           .start({ ...input, clientRequestId: CommandId.make("start:unselected") })
@@ -1702,7 +1702,7 @@ describe("fresh-thread repository handoff", () => {
             ...reference,
             number: 9,
             projectId,
-            modelRoleId: "implementor-thorough",
+            modelRoleId: "implementor-complex",
 
             clientRequestId: cancelInput.requestId,
           })).status,
@@ -1738,7 +1738,7 @@ describe("fresh-thread repository handoff", () => {
           ...reference,
           number: 9,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
 
           clientRequestId: CommandId.make("original:subsequent-start"),
         });
@@ -2485,7 +2485,7 @@ describe("fresh-thread repository handoff", () => {
         ...reference,
         number: 9,
         projectId,
-        modelRoleId: "implementor-thorough",
+        modelRoleId: "implementor-complex",
 
         orchestratorThreadId: lead,
       };
@@ -2782,7 +2782,7 @@ describe("fresh-thread repository handoff", () => {
           .workMilestone(scope(rootId), {
             ...reference,
             projectId,
-            modelRoleId: "implementor-thorough",
+            modelRoleId: "implementor-complex",
 
             milestoneNumber: 1,
             clientRequestId: CommandId.make("retired:milestone"),

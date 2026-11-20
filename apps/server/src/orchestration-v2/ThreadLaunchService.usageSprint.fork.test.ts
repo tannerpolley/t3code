@@ -524,7 +524,7 @@ it.effect("refuses sent follow-ups on another provider but lets automatic turns 
       parentRunId: parent.id,
       parentNodeId: parent.rootNodeId!,
       task: "Investigate",
-      role: "investigator",
+      role: "designer",
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",

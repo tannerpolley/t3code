@@ -1,4 +1,4 @@
-import { ThreadRoleInput } from "./threadRole.ts";
+import { ModelRoleLevel, ThreadRoleInput } from "./threadRole.ts";
 import { RepositoryUsageSprint, RepositoryWorkTarget } from "./issueWork.ts";
 import { RepositoryIssueRef } from "./repositoryIssue.ts";
 import * as Effect from "effect/Effect";
@@ -186,6 +186,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     description:
       "Thread role: orchestrator, designer, writer, implementor, reviewer, investigator or checker. Legacy role names remain accepted; sprinter maps to implementor and design to designer. Sprinter and Implementor profiles select model targets, not separate thread roles.",
   }),
+  level: Schema.optional(ModelRoleLevel),
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({
       description:

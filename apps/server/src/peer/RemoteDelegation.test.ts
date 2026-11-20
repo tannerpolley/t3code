@@ -594,7 +594,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
     Layer.provide(
       ServerSettings.layerTest({
-        modelRoles: { reviewer: { provider: "claude", effort: "default" } },
+        modelRoles: { reviewer: { complex: { provider: "claude", effort: "default" } } },
         modelTiers: { 1: { claude: { model: "claude-sonnet-4-6" } } },
       }),
     ),

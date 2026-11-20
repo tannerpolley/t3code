@@ -122,8 +122,8 @@ describe("managed issue work", () => {
       },
       serverSettings: {
         modelRoles: {
-          orchestrator: { provider: "codex", effort: "default" },
-          "implementor-thorough": { effort: "default" },
+          orchestrator: { complex: { provider: "codex", effort: "default" } },
+          implementor: { complex: { effort: "default" } },
         },
         modelTiers: { 2: { codex: { model: modelSelection.model } } },
       },
@@ -245,7 +245,7 @@ describe("managed issue work", () => {
         number: issue.number,
         projectId,
         orchestratorThreadId: selectedLeadId,
-        modelRoleId: "implementor-thorough",
+        modelRoleId: "implementor-complex",
       };
       const starts = yield* Effect.all(
         [
@@ -920,7 +920,7 @@ it.effect(
         milestones: [
           {
             number: 1,
-            modelRoleId: "implementor-thorough",
+            modelRoleId: "implementor-complex",
 
             status: "running" as const,
             fingerprint: "",
@@ -1346,8 +1346,8 @@ it.effect(
       },
       serverSettings: {
         modelRoles: {
-          orchestrator: { provider: "codex", effort: "default" },
-          "implementor-thorough": { effort: "default" },
+          orchestrator: { complex: { provider: "codex", effort: "default" } },
+          implementor: { complex: { effort: "default" } },
         },
         modelTiers: { 2: { codex: { model: modelSelection.model } } },
       },
@@ -1367,7 +1367,7 @@ it.effect(
         host: "github.com",
         repository: "tannerpolley/t3code",
         projectId,
-        modelRoleId: "implementor-thorough",
+        modelRoleId: "implementor-complex",
       };
       const emptyPlan = yield* service.workMilestone({
         ...input,
@@ -1587,7 +1587,7 @@ it.effect(
         .start({
           ...childIssue,
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
 
           clientRequestId: CommandId.make("cross-start"),
         })
@@ -1639,7 +1639,7 @@ it.effect(
         .start({
           ...reviewIssue(1),
           projectId,
-          modelRoleId: "implementor-thorough",
+          modelRoleId: "implementor-complex",
 
           clientRequestId: CommandId.make("unsupported-start"),
         })
