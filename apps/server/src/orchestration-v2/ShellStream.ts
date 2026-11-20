@@ -548,7 +548,7 @@ export type ShellApplicationEvent =
       readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId">;
     };
 
-/** Focused subagents receive these updates through their thread subscription. */
+/** Keep transcript-only updates on the focused thread subscription. */
 export function shouldPublishShellApplicationEvent(
   stored: ApplicationStoredEvent,
   subagentThreadIds: Set<string>,

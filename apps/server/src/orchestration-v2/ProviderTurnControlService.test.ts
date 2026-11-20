@@ -228,6 +228,7 @@ it.effect(
           getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
           getAgentAwarenessSnapshot: () => Effect.die("unused awareness snapshot"),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
+          getQuietActivityCandidates: () => Effect.die("unused getQuietActivityCandidates"),
           listActiveSubagentThreadIds: () => Effect.die("unused listActiveSubagentThreadIds"),
           countThreads: () => Effect.die("unused countThreads"),
           listActiveShellIndex: () => Effect.die("unused listActiveShellIndex"),

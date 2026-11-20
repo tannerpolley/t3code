@@ -94,6 +94,7 @@ function shouldPublishAgentAwarenessEvent(
     return false;
   }
   switch (event.type) {
+    case "thread.quiet-updated":
     case "issue.queue.updated":
     case "issue.work.cancelled":
     case "repository.work.restored":

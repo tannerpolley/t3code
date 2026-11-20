@@ -13,6 +13,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadShellSnapshot,
@@ -2691,6 +2692,88 @@ const recordsThreadCreated = (threadId: ThreadId) =>
       deletedAt: null,
     },
   }) as never;
+
+it.effect("a command finishing from an earlier run resets the quiet clock", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:quiet-clock");
+    yield* store.apply(recordsThreadCreated(threadId));
+
+    const run = {
+      id: RunId.make("run:old"),
+      threadId,
+      ordinal: 1,
+      providerInstanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make("message:old"),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "completed",
+      requestedAt: recordsAt(0),
+      startedAt: recordsAt(0),
+      completedAt: recordsAt(1),
+      checkpointId: null,
+      contextHandoffId: null,
+    } as const;
+    const putRun = (payload: OrchestrationV2Run) =>
+      store.apply({
+        id: EventId.make(`event:${payload.id}`),
+        type: "run.created",
+        threadId,
+        runId: payload.id,
+        occurredAt: payload.requestedAt,
+        payload,
+      });
+    yield* putRun(run);
+    yield* putRun({
+      ...run,
+      id: RunId.make("run:current"),
+      ordinal: 2,
+      status: "running",
+      requestedAt: recordsAt(10),
+      startedAt: recordsAt(10),
+      completedAt: null,
+    });
+
+    const command = {
+      id: TurnItemId.make("item:old-command"),
+      threadId,
+      runId: run.id,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      title: "Long check",
+      startedAt: recordsAt(1),
+      type: "command_execution",
+      input: "sleep 1800",
+    } as const;
+    const writeCommand = (status: "running" | "completed", at: DateTime.Utc) =>
+      store.apply({
+        id: EventId.make(`event:old-command:${status}`),
+        type: "turn-item.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: at,
+        payload: {
+          ...command,
+          status,
+          updatedAt: at,
+          completedAt: status === "completed" ? at : null,
+        },
+      });
+
+    yield* writeCommand("running", recordsAt(0));
+    assert.isTrue((yield* store.getQuietActivityCandidates(threadId))[0]?.hasActiveProviderWork);
+    yield* writeCommand("completed", recordsAt(1_800));
+    const [candidate] = yield* store.getQuietActivityCandidates(threadId);
+    assert.isFalse(candidate?.hasActiveProviderWork);
+    assert.equal(candidate?.lastProviderActivityAt, DateTime.toEpochMillis(recordsAt(1_800)));
+  }).pipe(Effect.provide(layerTest)),
+);
 
 const queryPlan = Effect.fn("queryPlan")(function* (statement: string | undefined) {
   assert.isDefined(statement);

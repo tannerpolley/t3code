@@ -5,6 +5,11 @@
   "1915a433d092839d": "Beide",
   "1b7c524fccf06537": "Wartet auf dich",
   "9118979e7d982335": "Bereit zur Prüfung",
+  "90a258fff61fd77e": "Aus",
+  "16cfc2ecead8fcc9": "Inaktivitätsgrenze für Threads",
+  "927de6cb3121b1c5": "Markiert einen laufenden Thread und benachrichtigt seinen übergeordneten Thread, wenn der Anbieter so lange inaktiv war.",
+  "d52b3d6bf9f2a013": "Unterschiedlich",
+  "874249a1962865f1": "{minutes} Min.",
   "dd10f8671d149b28": "Stufe",
   "c8835bc68ac01205": "Aufwand",
   "e40e6d4ec89b5365": "Standard",
@@ -121,5 +126,6 @@
   "3d5fd6670d1e8546": "Verwendet vorhandenen Ordner {path}",
   "4ff59e3efe808734": "Unterordner als Projekte hinzufügen",
   "1a47fae902ee1859": "Anbieter pro Rolle",
-  "b6295e8a6dd8291f": "Guthaben verwenden, wenn das Wochenkontingent knapp wird."
+  "b6295e8a6dd8291f": "Guthaben verwenden, wenn das Wochenkontingent knapp wird.",
+  "408a142fdd1bb20c": "seit {minutes} Min. still"
 }

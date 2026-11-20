@@ -1,8 +1,10 @@
+import { threadQuietMinutes } from "@t3tools/shared/threadActivity";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import { T } from "gt-react";
 import {
   isSidebarActivityGroup,
   resolveSidebarActivityGroup,
+  sidebarQuietClock,
   SIDEBAR_ACTIVITY_GROUPS,
   type SidebarActivityGroup,
 } from "./sidebar/sidebarActivityGroups.logic";
@@ -691,7 +693,21 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     sortActiveBySend,
   } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const nowMs = Date.parse(preciseNow);
+  const quietClock = (thread: EnvironmentThreadShell) =>
+    sidebarQuietClock(
+      thread.environmentId,
+      nowMs,
+      serverConfigs.get(thread.environmentId)?.settings?.quietThreadMinutes,
+    );
+  const isQuiet = (thread: EnvironmentThreadShell) =>
+    threadQuietMinutes(thread, quietClock(thread)) !== null;
+  const visible = filterSidebarV2VisibleThreads(
+    threads,
+    scopedProjectKeys,
+    delegatedUnderParent,
+    activityGroupsEnabled ? isQuiet : undefined,
+  );
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -701,7 +717,9 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     "ready-for-review": [],
   };
   const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) => {
-    const group = activityGroupsEnabled ? resolveSidebarActivityGroup(thread) : null;
+    const group = activityGroupsEnabled
+      ? resolveSidebarActivityGroup(thread, quietClock(thread))
+      : null;
     if (group !== null) return activityGroups[group];
     return workingShelfEnabled &&
       (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
@@ -741,13 +759,15 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
         settled: configLoaded && thread.settledOverride === "settled",
         pinned: thread.pinnedAt != null,
       });
-      (section === "snoozed"
-        ? snoozed
-        : section === "settled"
-          ? settled
-          : section === "pinned"
-            ? pinned
-            : inbox(thread)
+      (activityGroupsEnabled && isQuiet(thread) && section !== "snoozed" && section !== "settled"
+        ? activityGroups["needs-you"]
+        : section === "snoozed"
+          ? snoozed
+          : section === "settled"
+            ? settled
+            : section === "pinned"
+              ? pinned
+              : inbox(thread)
       ).push(thread);
     }
   }

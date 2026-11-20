@@ -1,12 +1,14 @@
 import * as NodeSqlite from "node:sqlite";
 
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   CommandId,
   MessageId,
   EventId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadShell,
   PlanId,
   ProjectId,
   ProviderDriverKind,
@@ -20,6 +22,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { threadActivityFromShell, threadQuietMinutes } from "@t3tools/shared/threadActivity";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -38,6 +41,11 @@ import {
   orchestrationCommandDuration,
   orchestrationCommandsTotal,
 } from "../observability/Metrics.ts";
+import { Scheduler } from "../scheduling/Scheduler.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { workerLive } from "./QuietDelegatesWorker.ts";
+import { shouldPublishShellApplicationEvent } from "./ShellStream.ts";
+import { ThreadManagementService } from "./ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
@@ -1746,6 +1754,264 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       childThreadId: task.childThreadId!,
     });
   }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
+);
+
+const quietWorkerFixture = Effect.fn("test.quietWorkerFixture")(function* () {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const eventSink = yield* EventSink.EventSinkV2;
+  yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+  const parentThreadId = ThreadId.make("thread:stale-quiet-parent");
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make("create-stale-quiet-parent"),
+    threadId: parentThreadId,
+    projectId: ProjectId.make("project:stale-quiet"),
+    title: "Parent",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  yield* orchestrator.dispatch({
+    type: "message.dispatch",
+    commandId: CommandId.make("start-stale-quiet-parent"),
+    threadId: parentThreadId,
+    messageId: MessageId.make("message:stale-quiet-parent"),
+    text: "Delegate the proof",
+    attachments: [],
+    dispatchMode: { type: "start_immediately" },
+    createdBy: "user",
+    creationSource: "web",
+  });
+  const parentRun = (yield* projections.getThreadProjection(parentThreadId)).runs[0]!;
+  yield* orchestrator.dispatch({
+    type: "delegated_task.request",
+    commandId: CommandId.make("delegate-stale-quiet-task"),
+    parentThreadId,
+    parentRunId: parentRun.id,
+    parentNodeId: parentRun.rootNodeId!,
+    task: "Capture the proof",
+    completionWake: "settled_only",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "agent",
+    creationSource: "mcp",
+  });
+  const task = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!;
+  const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs[0]!;
+  const startedAt = yield* DateTime.now;
+  const childThreadId = task.childThreadId!;
+  yield* eventSink.write({
+    events: [
+      {
+        id: EventId.make("event:quiet-worker-started"),
+        type: "run.updated",
+        threadId: childThreadId,
+        runId: childRun.id,
+        occurredAt: startedAt,
+        payload: { ...childRun, status: "running", startedAt },
+      },
+    ],
+  });
+  const streamDelta = (text: string) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      return yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`event:stream:${text}`),
+            type: "turn-item.updated",
+            threadId: childThreadId,
+            runId: childRun.id,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("item:quiet-worker-stream"),
+              threadId: childThreadId,
+              runId: childRun.id,
+              nodeId: childRun.rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              parentItemId: null,
+              nativeItemRef: null,
+              ordinal: 1,
+              startedAt,
+              updatedAt: now,
+              completedAt: null,
+              title: null,
+              type: "reasoning",
+              status: "running",
+              streaming: true,
+              text,
+            },
+          },
+        ],
+      });
+    });
+  return {
+    orchestrator,
+    projections,
+    eventSink,
+    parentThreadId,
+    parentRun,
+    childThreadId,
+    childRun,
+    startedAt,
+    streamDelta,
+  };
+});
+
+const installQuietSweep = Effect.fn("test.installQuietSweep")(function* () {
+  const fixture = yield* quietWorkerFixture();
+  let sweep = Effect.void;
+  yield* Layer.build(
+    workerLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(Scheduler)({
+            register: (_name, work) =>
+              Effect.context<Effect.Services<typeof work>>().pipe(
+                Effect.tap((context) =>
+                  Effect.sync(() => {
+                    sweep = work.pipe(Effect.provideContext(context), Effect.orDie);
+                  }),
+                ),
+                Effect.asVoid,
+              ),
+          }),
+          Layer.mock(ThreadManagementService)({ dispatch: fixture.orchestrator.dispatch }),
+          ServerSettings.layerTest({}),
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+  return { ...fixture, sweep };
+});
+
+it.effect("does not wake a parent early after two reasoning deltas in the same minute", () =>
+  Effect.gen(function* () {
+    const { projections, parentThreadId, streamDelta, sweep } = yield* installQuietSweep();
+    yield* TestClock.adjust("1 second");
+    yield* streamDelta("first");
+    yield* TestClock.adjust("58 seconds");
+    yield* streamDelta("latest");
+    const wakes = () =>
+      projections
+        .getThreadRecords(parentThreadId, ["messages"])
+        .pipe(
+          Effect.map(
+            ({ messages }) =>
+              messages.filter((message) => message.notification?.source.kind === "background_task")
+                .length,
+          ),
+        );
+    yield* TestClock.adjust("542 seconds");
+    yield* sweep;
+    assert.equal(yield* wakes(), 0);
+    yield* TestClock.adjust("1 minute");
+    yield* sweep;
+    assert.equal(yield* wakes(), 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("clears the sidebar quiet flag when reasoning resumes on the same item", () =>
+  Effect.gen(function* () {
+    const { projections, eventSink, childThreadId, streamDelta, sweep } =
+      yield* installQuietSweep();
+    yield* TestClock.adjust("1 second");
+    yield* streamDelta("thinking");
+    yield* TestClock.adjust("11 minutes");
+    yield* sweep;
+    const subagents = new Set<string>([childThreadId]);
+    const label = (shell: OrchestrationV2ThreadShell) =>
+      threadQuietMinutes(threadActivityFromShell(shell), {
+        nowMs: DateTime.toEpochMillis(shellClock),
+        quietMinutes: 10,
+      });
+    let shellClock = yield* DateTime.now;
+    let visible = (yield* projections.getThreadShell(childThreadId))!;
+    assert.isNotNull(label(visible));
+    const beforeResume = yield* eventSink.latestSequence();
+    yield* streamDelta("thinking again");
+    yield* sweep;
+    const afterResume = yield* eventSink.latestSequence();
+    shellClock = yield* DateTime.now;
+    const refreshes = yield* eventSink.stream({ afterSequence: beforeResume }).pipe(
+      Stream.take(afterResume - beforeResume),
+      Stream.filter(
+        (stored) =>
+          stored.event.threadId === childThreadId &&
+          shouldPublishShellApplicationEvent(stored, subagents),
+      ),
+      Stream.runCollect,
+    );
+    if (refreshes.length > 0) visible = (yield* projections.getThreadShell(childThreadId))!;
+    assert.isNull(label(visible));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("drops a persisted quiet wake when the child resumes before queue admission", () =>
+  Effect.gen(function* () {
+    const {
+      orchestrator,
+      projections,
+      parentThreadId,
+      parentRun,
+      childThreadId,
+      childRun,
+      startedAt,
+      streamDelta,
+    } = yield* quietWorkerFixture();
+    yield* TestClock.adjust("11 minutes");
+    const messageId = MessageId.make("message:quiet-worker");
+    // Store the stamp in the message so a fresh queue read can make the same decision.
+    const source = {
+      kind: "background_task",
+      quietDelegate: {
+        threadId: childThreadId,
+        runId: childRun.id,
+        lastProviderActivityAt: DateTime.toEpochMillis(startedAt),
+      },
+    } as const;
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("queue-quiet-worker"),
+      threadId: parentThreadId,
+      messageId,
+      text: "Check the quiet worker",
+      notification: { source, outcome: "updated", summary: "Quiet worker" },
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    const readWake = Effect.map(
+      projections.getThreadRecords(parentThreadId, ["runs"]),
+      ({ runs }) => runs.find((run) => run.userMessageId === messageId),
+    );
+    assert.equal((yield* readWake)?.status, "queued");
+
+    const now = yield* DateTime.now;
+    yield* streamDelta("resumed before parent admission");
+    yield* projections.apply({
+      id: EventId.make("event:stale-quiet-parent-finished"),
+      type: "run.updated",
+      threadId: parentThreadId,
+      occurredAt: now,
+      payload: { ...parentRun, status: "completed", completedAt: now },
+    });
+    yield* orchestrator.dispatch({
+      type: "queue.resume",
+      commandId: CommandId.make("resume-stale-quiet"),
+      threadId: parentThreadId,
+    });
+    assert.equal((yield* readWake)?.status, "cancelled");
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each([false, true])(

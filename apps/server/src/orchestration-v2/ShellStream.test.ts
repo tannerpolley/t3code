@@ -38,8 +38,13 @@ const emptyShellSnapshot = {
 } as OrchestrationV2ShellSnapshot;
 
 describe("subagent shell events", () => {
-  const stored = (threadId: string, type: string, itemType = "command_execution") =>
-    ({ event: { threadId, type, payload: { type: itemType } } }) as ApplicationStoredEvent;
+  const stored = (
+    threadId: string,
+    type: string,
+    itemType = "command_execution",
+    runId: string | null = null,
+  ) =>
+    ({ event: { threadId, type, payload: { type: itemType, runId } } }) as ApplicationStoredEvent;
 
   it("keeps regular threads and subagent state changes while omitting subagent transcript updates", () => {
     const subagents = new Set(["child"]);
@@ -48,6 +53,22 @@ describe("subagent shell events", () => {
     ).toBe(true);
     expect(
       shouldPublishShellApplicationEvent(stored("child", "turn-item.updated"), subagents),
+    ).toBe(false);
+    expect(
+      shouldPublishShellApplicationEvent(
+        {
+          event: {
+            threadId: "child",
+            type: "turn-item.updated",
+            payload: {
+              type: "command_execution",
+              runId: "run",
+              completedAt: DateTime.makeUnsafe(0),
+            },
+          },
+        } as ApplicationStoredEvent,
+        subagents,
+      ),
     ).toBe(false);
     for (const itemType of ["secret_request", "link_request", "user_message"]) {
       expect(
@@ -66,6 +87,33 @@ describe("subagent shell events", () => {
     expect(shouldPublishShellApplicationEvent(stored("child", "run.updated"), subagents)).toBe(
       true,
     );
+  });
+
+  it("keeps delegated text deltas off the shell stream", () => {
+    const subagents = new Set(["child"]);
+    const at = DateTime.makeUnsafe(60_000);
+    const deltas = [
+      { type: "message.updated", payload: { role: "assistant", streaming: true } },
+      ...["assistant_message", "reasoning"].map((type) => ({
+        type: "turn-item.updated",
+        payload: {
+          type,
+          runId: "run",
+          startedAt: DateTime.makeUnsafe(0),
+          updatedAt: at,
+          completedAt: null,
+          streaming: true,
+        },
+      })),
+    ];
+    expect(
+      deltas.map((event) =>
+        shouldPublishShellApplicationEvent(
+          { event: { ...event, threadId: "child" } } as ApplicationStoredEvent,
+          subagents,
+        ),
+      ),
+    ).toEqual([false, false, false]);
   });
 
   it("tracks subagents created after the subscription starts", () => {

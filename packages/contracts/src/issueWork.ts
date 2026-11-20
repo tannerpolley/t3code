@@ -356,6 +356,7 @@ const RepositoryChildStatus = Schema.Struct({
   pullRequestUrl: Schema.NullOr(Schema.String),
   lastSummary: Schema.NullOr(Schema.String),
   elapsedMs: Schema.Number,
+  quietMinutes: Schema.optionalKey(Schema.Number),
 });
 
 export const RepositoryChildrenStatus = Schema.Struct({

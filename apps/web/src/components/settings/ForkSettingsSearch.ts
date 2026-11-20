@@ -341,6 +341,13 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork shimmer animation running activity speed motion"],
   },
   {
+    id: "quiet-thread-minutes",
+    title: "Quiet thread threshold",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["worker quiet stalled timeout inactivity parent wake"],
+  },
+  {
     id: "idle-agent-session",
     title: "Idle agent timeout",
     to: "/settings/general",

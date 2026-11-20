@@ -1473,7 +1473,17 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
       /** The other pull requests one wake covers; outdated ones leave it before it starts. */
       otherPullRequests: Schema.optional(Schema.Array(MonitorPullRequestStamp)),
     }),
-    Schema.Struct({ ...NotificationSourceFields, kind: Schema.Literal("background_task") }),
+    Schema.Struct({
+      ...NotificationSourceFields,
+      kind: Schema.Literal("background_task"),
+      quietDelegate: Schema.optional(
+        Schema.Struct({
+          threadId: ThreadId,
+          runId: RunId,
+          lastProviderActivityAt: NonNegativeInt,
+        }),
+      ),
+    }),
     Schema.Struct({ ...NotificationSourceFields, kind: Schema.Literal("system") }),
   ],
   (kind) => Schema.Struct({ ...NotificationSourceFields, kind }),
@@ -2159,6 +2169,14 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.quiet-updated"),
+    payload: Schema.Struct({
+      runId: RunId,
+      lastProviderActivityAt: Schema.NullOr(NonNegativeInt),
+    }),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.pull-request-link-updated"),
     payload: ThreadPullRequestLink,
   }),
@@ -2378,6 +2396,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   activityRunStatus: Schema.optional(
     Schema.NullOr(Schema.Literals(["preparing", "starting", "running", "waiting"])),
   ),
+  lastProviderActivityAt: Schema.optionalKey(NonNegativeInt),
+  hasActiveProviderWork: Schema.optionalKey(Schema.Boolean),
   blockedOnThreadWait: Schema.optional(Schema.Boolean),
   status: OrchestrationV2ShellThreadStatus,
   lastError: Schema.optional(Schema.NullOr(Schema.String)),
@@ -3141,6 +3161,14 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.guest-share-updated",
     ]),
     payload: OrchestrationV2AppThreadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.quiet-updated"),
+    payload: Schema.Struct({
+      runId: RunId,
+      lastProviderActivityAt: Schema.NullOr(NonNegativeInt),
+    }),
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,

@@ -623,6 +623,7 @@ export function filterSidebarV2VisibleThreads<
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
   delegatedUnderParent: ReadonlySet<string> = new Set(),
+  showInActivity?: (thread: T) => boolean,
 ): T[] {
   const present = new Set(
     threads
@@ -632,11 +633,12 @@ export function filterSidebarV2VisibleThreads<
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
-      (!isShownUnderParent(
-        { environmentId: thread.environmentId, threadId: thread.id },
-        thread.lineage,
-        delegatedUnderParent,
-      ) ||
+      (showInActivity?.(thread) ||
+        !isShownUnderParent(
+          { environmentId: thread.environmentId, threadId: thread.id },
+          thread.lineage,
+          delegatedUnderParent,
+        ) ||
         (isSidebarSubagentThread(thread) &&
           (thread.hasPendingApprovals || thread.hasPendingUserInput) &&
           !present.has(JSON.stringify([thread.environmentId, thread.lineage.parentThreadId])) &&

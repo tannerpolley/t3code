@@ -129,6 +129,8 @@ export interface EnvironmentThreadShell {
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
   readonly blockedOnThreadWait?: boolean;
+  readonly lastProviderActivityAt?: number | undefined;
+  readonly hasActiveProviderWork?: boolean | undefined;
   readonly latestUserMessageAt: string | null;
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
