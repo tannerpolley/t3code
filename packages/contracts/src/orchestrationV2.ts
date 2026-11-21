@@ -562,6 +562,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
       Schema.Struct({ runId: RunId, reason: Schema.String, createdAt: IsoDateTime }),
       Schema.Struct({
         deliveryMessageId: MessageId,
+        resultThreadId: Schema.optional(ThreadId),
+        resultEnvironmentId: Schema.optional(EnvironmentId),
         reason: Schema.String,
         createdAt: IsoDateTime,
       }),

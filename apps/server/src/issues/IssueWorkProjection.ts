@@ -85,8 +85,12 @@ export type IssueWorkThread = typeof workThread.Type &
   > & {
     readonly pendingRuntimeRequest: {
       readonly kind: NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"];
+      readonly routedTo?: ThreadId;
     } | null;
   };
+
+export const pendingRuntimeRequestOrder = (sql: SqlClient.SqlClient) =>
+  sql`(request.kind = 'user_input') ASC, request.created_at DESC, request.runtime_request_id DESC`;
 
 /** The issue pane needs work state, not message previews, timeline counts or fork history. */
 export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(function* (
@@ -106,6 +110,7 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
     activity_status: IssueWorkThread["activityRunStatus"];
     active: number;
     request_kind: NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"] | null;
+    request_routed_to: string | null;
     request_blocking: number | null;
     secret: number;
     native_status: IssueWorkThread["status"] | "pending" | null;
@@ -149,8 +154,9 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
       ORDER BY r.ordinal DESC, r.run_id DESC LIMIT 1) AS activity_status,
     EXISTS(SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id = t.thread_id
       AND r.status IN ('preparing', 'starting', 'running')) AS active,
-    json_extract(request.payload_json, '$.kind') AS request_kind,
-    json_extract(request.payload_json, '$.responseCapability.type') IS NOT 'message' AS request_blocking,
+    json_extract(pending.payload_json, '$.kind') AS request_kind,
+    json_extract(pending.payload_json, '$.routedTo') AS request_routed_to,
+    json_extract(pending.payload_json, '$.responseCapability.type') IS NOT 'message' AS request_blocking,
     EXISTS(SELECT 1 FROM orchestration_v2_projection_runs r
       CROSS JOIN orchestration_v2_projection_turn_items item
         INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
@@ -179,10 +185,10 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
         AND NOT (r.status = 'cancelled' AND json_extract(r.payload_json, '$.startedAt') IS NULL)
       ORDER BY r.completed_at IS NULL DESC, r.completed_at DESC, r.ordinal DESC, r.run_id DESC LIMIT 1
     ) AND blocked.status = 'failed'
-    LEFT JOIN orchestration_v2_projection_runtime_requests request ON request.runtime_request_id = (
-      SELECT pending.runtime_request_id FROM orchestration_v2_projection_runtime_requests pending
-      WHERE pending.thread_id = t.thread_id AND pending.status = 'pending'
-      ORDER BY pending.created_at DESC, pending.runtime_request_id DESC LIMIT 1)
+    LEFT JOIN orchestration_v2_projection_runtime_requests pending ON pending.runtime_request_id = (
+      SELECT request.runtime_request_id FROM orchestration_v2_projection_runtime_requests request
+      WHERE request.thread_id = t.thread_id AND request.status = 'pending'
+      ORDER BY ${pendingRuntimeRequestOrder(sql)} LIMIT 1)
     WHERE t.thread_id IN ${sql.in(threadIds)} AND t.deleted_at IS NULL
     ORDER BY t.thread_id
   `;
@@ -202,10 +208,8 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
           : latest;
       const providers = yield* decodeProviders(row.provider_work);
       const items = yield* decodeItems(row.item_work);
-      const pending =
-        row.secret === 1 && (row.request_kind === null || row.request_blocking === 0)
-          ? "user_input"
-          : row.request_kind;
+      const secret = row.secret === 1 && (row.request_kind === null || row.request_blocking === 0);
+      const pending = secret ? "user_input" : row.request_kind;
       const native = run === null && pending === null ? row.native_status : null;
       const status = run?.status ?? (native === "pending" ? "starting" : native) ?? "idle";
       return {
@@ -221,7 +225,15 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
             : native === "running" || native === "waiting"
               ? native
               : null),
-        pendingRuntimeRequest: pending === null ? null : { kind: pending },
+        pendingRuntimeRequest:
+          pending === null
+            ? null
+            : {
+                kind: pending,
+                ...(secret || row.request_routed_to === null
+                  ? {}
+                  : { routedTo: ThreadId.make(row.request_routed_to) }),
+              },
         pendingBackgroundTasks: derivePendingBackgroundWork({
           latestRun: run,
           providerThreads: providers,

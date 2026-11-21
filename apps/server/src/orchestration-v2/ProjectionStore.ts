@@ -1,5 +1,9 @@
 import { repositoryPhaseSql } from "../issues/RepositoryPhaseSql.ts";
-import { readIssueWorkThreads, type IssueWorkThread } from "../issues/IssueWorkProjection.ts";
+import {
+  pendingRuntimeRequestOrder,
+  readIssueWorkThreads,
+  type IssueWorkThread,
+} from "../issues/IssueWorkProjection.ts";
 import {
   USAGE_LIMIT_SWITCH_RESUME_PREFIX,
   USAGE_LIMIT_SWITCH_HOLD_MS,
@@ -8775,8 +8779,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id
                   AND request.status = 'pending'
-                ORDER BY (request.kind = 'user_input') ASC,
-                  request.created_at DESC, request.runtime_request_id DESC
+                ORDER BY ${pendingRuntimeRequestOrder(sql)}
                 LIMIT 1
               ) AS pending_request_payload_json,
               (

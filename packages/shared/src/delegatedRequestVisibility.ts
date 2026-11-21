@@ -2,8 +2,9 @@ import type { OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 
 export type RoutedRequestParent = Pick<
   OrchestrationV2ThreadShell,
-  "activeRunId" | "activityRunStatus" | "status" | "archivedAt" | "deletedAt"
->;
+  "activityRunStatus" | "status" | "archivedAt" | "deletedAt"
+> &
+  Partial<Pick<OrchestrationV2ThreadShell, "activeRunId">>;
 
 export const ROUTED_REQUEST_ALERT_SETTLE_MS = 3_000;
 
@@ -28,7 +29,7 @@ export function runtimeRequestIsOwnerVisible(
   if (parent == null || parent.archivedAt !== null || parent.deletedAt !== null) return true;
   // Shell status excludes held queues. A blocking tool wait still owns an active run.
   return !(
-    parent.activeRunId !== null ||
+    parent.activeRunId != null ||
     parent.activityRunStatus != null ||
     parent.status === "queued" ||
     parent.status === "preparing" ||

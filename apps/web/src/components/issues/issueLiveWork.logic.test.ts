@@ -93,7 +93,7 @@ const pr: ThreadPullRequestLink = {
 const section = (value: RepositoryIssueListResult) =>
   issueRoadmap(scope, value.issues).find((section) => section.rows.length > 0)?.id;
 
-it("follows a linked parent's sidebar status, including questions and approvals", () => {
+it("follows a linked parent's sidebar status", () => {
   const workingRoot = {
     ...root,
     runtime: running.runtime,
@@ -101,27 +101,6 @@ it("follows a linked parent's sidebar status, including questions and approvals"
   };
   expect(section(withLiveIssueWork(list, [root]))).toBe("ready");
   expect(section(withLiveIssueWork(list, [workingRoot]))).toBe("in-progress");
-  for (const kind of ["approval", "user_input"] as const) {
-    const waiting = {
-      ...running,
-      id: ThreadId.make("waiting-child"),
-      title: "Waiting child",
-      source: {
-        ...running.source,
-        pendingRuntimeRequest: {
-          id: RuntimeRequestId.make("pending"),
-          kind: kind === "approval" ? ("command" as const) : kind,
-          createdAt: running.source.updatedAt,
-        },
-      },
-    };
-    const streamed = withLiveIssueWork(list, [workingRoot, running, waiting]);
-    expect(section(streamed)).toBe("in-progress");
-    const summary = issueLiveWorkSummary(streamed.issues[0]!);
-    expect(summary?.status).toBe(kind === "approval" ? "approval" : "question");
-    expect(summary?.work[0]?.threadId).toBe(waiting.id);
-    expect(summary?.work[0]?.inherited).toBe(true);
-  }
   expect(section(withLiveIssueWork(list, [root, running]))).toBe("ready");
   expect(section(withLiveIssueWork(list, [{ ...workingRoot, archivedAt: root.updatedAt }]))).toBe(
     "ready",
@@ -130,6 +109,60 @@ it("follows a linked parent's sidebar status, including questions and approvals"
   expect(section(stopped)).toBe("ready");
   const foreign = { ...workingRoot, linkedIssue: { ...linkedIssue, host: "enterprise.test" } };
   expect(withLiveIssueWork(list, [foreign])).toBe(stopped);
+});
+
+const waitingChild = (title: string, routedTo?: ThreadId) => ({
+  ...running,
+  id: ThreadId.make(title),
+  title,
+  hasPendingUserInput: true,
+  source: {
+    ...running.source,
+    pendingRuntimeRequest: {
+      id: RuntimeRequestId.make(title),
+      kind: "user_input" as const,
+      createdAt: running.source.updatedAt,
+      ...(routedTo === undefined ? {} : { routedTo }),
+    },
+  },
+});
+
+it("opens the waiting child from the overlay when its sibling is running", () => {
+  const waiting = waitingChild("Waiting child");
+  const workingSibling = { ...running, linkedIssue };
+  const issue = {
+    ...list.issues[0]!,
+    liveWork: [
+      {
+        threadId: waiting.id,
+        title: waiting.title,
+        branch: null,
+        worktreePath: null,
+        pullRequests: [],
+        status: "waiting_on_you" as const,
+        inherited: true,
+      },
+    ],
+  };
+  const streamed = withLiveIssueWork({ ...list, issues: [issue] }, [root, workingSibling, waiting]);
+  expect(issueLiveWorkSummary(streamed.issues[0]!)?.work[0]?.threadId).toBe(waiting.id);
+});
+
+it("opens the owner-routed question before the parent-routed question", () => {
+  const parent = {
+    ...unlinkedRoot,
+    id: ThreadId.make("routing-parent"),
+    runtime: running.runtime,
+    source: { ...unlinkedRoot.source, status: "running" as const },
+  };
+  const alpha = waitingChild("Alpha", parent.id);
+  const beta = waitingChild("Beta");
+  const summary = (parentShell: typeof parent | typeof unlinkedRoot) =>
+    issueLiveWorkSummary(
+      withLiveIssueWork(list, [root, running, alpha, beta, parentShell]).issues[0]!,
+    );
+  expect(summary(parent)?.work[0]?.threadId).toBe(beta.id);
+  expect(summary({ ...unlinkedRoot, id: parent.id })?.work[0]?.threadId).toBe(alpha.id);
 });
 
 it("keeps a managed implementor's issue in progress while its reviewer runs", () => {
@@ -500,6 +533,22 @@ it("overlays compact sidebar status with the same live work and PR observations"
       ),
     ),
   ).toBe("completed");
+});
+
+it("keeps an open compact PR ready for review while its worker is absent", () => {
+  const status = {
+    number: linkedIssue.number,
+    state: "open" as const,
+    closingPullRequests: [],
+    pullRequests: [{ ...scope, number: pr.number, state: "open" as const }],
+    liveWork: [{ threadId: running.id, status: "done" as const, pullRequests: [pr.url] }],
+  };
+  const progress = (index: ReturnType<typeof indexIssueWork>) =>
+    issueProgress(overlay.summary(status, scope, environmentId, index));
+  expect(progress(indexIssueWork([root]))).toBe("ready_for_review");
+  expect(
+    progress(indexIssueWork([root], new Map([[environmentId, new Map([[running.id, 1]])]]))),
+  ).toBe("open");
 });
 
 it("retains archived worker and PR details on closed issues while preserving their closed state", () => {

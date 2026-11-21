@@ -55,7 +55,7 @@ type WorkSummary = Pick<RepositoryIssueSummary, "number"> & {
   readonly liveWork?:
     | readonly (Pick<
         NonNullable<RepositoryIssueSummary["liveWork"]>[number],
-        "threadId" | "inherited" | "status" | "paused" | "worktreeExists"
+        "threadId" | "inherited" | "status" | "paused" | "worktreeExists" | "requestHandledByParent"
       > &
         Partial<
           Pick<
@@ -76,6 +76,7 @@ export function createLiveIssueWorkOverlay() {
       string,
       {
         threads: readonly (EnvironmentThreadShell | undefined | null)[];
+        parents: readonly (EnvironmentThreadShell | undefined)[];
         result: WorkSummary;
       }
     >
@@ -112,10 +113,21 @@ export function createLiveIssueWorkOverlay() {
       (id) =>
         index.threads.get(threadKey(environmentId, id)) ?? (removed?.has(id) ? null : undefined),
     );
+    const parents = threads.map((thread) => {
+      const routedTo = thread?.source.pendingRuntimeRequest?.routedTo;
+      return routedTo === undefined
+        ? undefined
+        : index.threads.get(threadKey(environmentId, routedTo));
+    });
     let cached = summaries.get(issue);
     if (cached === undefined) summaries.set(issue, (cached = new Map()));
     const previous = cached.get(key);
-    if (previous !== undefined && sameItems(previous.threads, threads)) return previous.result as T;
+    if (
+      previous !== undefined &&
+      sameItems(previous.threads, threads) &&
+      sameItems(previous.parents, parents)
+    )
+      return previous.result as T;
     const active = threads
       .filter((thread) => thread != null)
       .filter((thread) => issue.state === "closed" || thread.archivedAt === null);
@@ -124,6 +136,12 @@ export function createLiveIssueWorkOverlay() {
       const work = storedWork.get(id);
       return threads[position] === undefined && work !== undefined ? [work] : [];
     });
+    const parentsByThread = new Map(
+      threads.flatMap((thread, index) => {
+        const parent = parents[index];
+        return thread == null || parent === undefined ? [] : [[thread.id, parent.source] as const];
+      }),
+    );
     const liveWork = active.map((thread) => {
       const stored = storedWork.get(thread.id);
       return {
@@ -138,15 +156,19 @@ export function createLiveIssueWorkOverlay() {
           .filter((pr) => pr.source !== "stack-dismissed")
           .map((pr) => pr.url),
         inherited: !directIds.has(thread.id) && (stored?.inherited ?? stored === undefined),
-        ...classifyIssueWorker(thread.source),
+        ...classifyIssueWorker(thread.source, parentsByThread.get(thread.id)),
       };
     });
-    const omittedPrUrls = new Set(omittedWork.flatMap((work) => work.pullRequests ?? []));
+    const omittedPrUrls = new Set(
+      omittedWork.flatMap((work) => (work.pullRequests ?? []).map((url) => url.toLowerCase())),
+    );
     const pullRequests = issuePullRequests(
       [
         ...issue.closingPullRequests,
-        ...(issue.pullRequests ?? []).filter(
-          (pr) => "url" in pr && typeof pr.url === "string" && omittedPrUrls.has(pr.url),
+        ...(issue.pullRequests ?? []).filter((pr) =>
+          omittedPrUrls.has(
+            (pr.url ?? `https://${pr.host}/${pr.repository}/pull/${pr.number}`).toLowerCase(),
+          ),
         ),
       ],
       active.flatMap((thread) => thread.pullRequests),
@@ -164,7 +186,7 @@ export function createLiveIssueWorkOverlay() {
       JSON.stringify(result) === JSON.stringify(previous?.result ?? issue)
         ? (previous?.result ?? issue)
         : result;
-    cached.set(key, { threads, result: stable });
+    cached.set(key, { threads, parents, result: stable });
     return stable as T;
   };
 
