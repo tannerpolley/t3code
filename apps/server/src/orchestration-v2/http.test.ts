@@ -253,16 +253,41 @@ it.effect("exports full visible history with scope and missing-thread checks", (
 it.effect("exports a transcript with oversized fields dropped by the decoder", () =>
   Effect.gen(function* () {
     const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
-    const item = items.find((item) => item.type === "command_execution")!;
+    const item = {
+      ...items.find((item) => item.type === "command_execution")!,
+      type: "user_message" as const,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      messageId: MessageId.make("message:legacy"),
+      inputIntent: "turn_start" as const,
+      text: "Keep this message",
+      attachments: [],
+    };
+    const followingItem = items[1]!;
+    const queuedItem = {
+      ...item,
+      id: items[2]!.id,
+      ordinal: 2,
+      runId: rolledBackRun.id,
+      inputIntent: "queued_turn" as const,
+      text: "Hide this message",
+    };
     yield* eventSink.write({
       events: [
         {
-          id: EventId.make("legacy-command"),
-          type: "turn-item.updated",
+          id: EventId.make("create-cancelled-run"),
+          type: "run.created",
+          threadId: thread.id,
+          occurredAt: now,
+          payload: { ...rolledBackRun, status: "cancelled" },
+        },
+        ...[item, followingItem, queuedItem].map((item) => ({
+          id: EventId.make(`legacy:${item.id}`),
+          type: "turn-item.updated" as const,
           threadId: thread.id,
           occurredAt: now,
           payload: item,
-        },
+        })),
       ],
     });
     const sql = Context.get(services, SqlClient.SqlClient);
@@ -283,18 +308,35 @@ it.effect("exports a transcript with oversized fields dropped by the decoder", (
     const response = yield* read();
     expect(response.status).toBe(200);
     const body = (yield* Effect.promise(() => response.json())) as {
-      items: Array<{ item: object }>;
+      items: Array<{ sourceItemId: string; item: object }>;
     };
     expect(body.items[0]?.item).not.toHaveProperty("droppedLegacyField");
     const deepField = sql`'"droppedDeepField":' || printf('%.*c', 1001, '[') || printf('%.*c', 1001, ']') || ','`;
     yield* sql`
       UPDATE orchestration_v2_projection_turn_items
-      SET payload_json = replace(payload_json, '"droppedLegacyField":', ${deepField} || '"droppedLegacyField":')
-      WHERE turn_item_id = ${item.id}
+      SET payload_json = '{' || ${deepField} || substr(payload_json, 2)
+      WHERE turn_item_id IN (${item.id}, ${queuedItem.id})
     `;
     const deepResponse = yield* read();
     expect(deepResponse.status).toBe(200);
-    yield* Effect.promise(() => deepResponse.body!.cancel());
+    const deepBody = (yield* Effect.promise(() => deepResponse.json())) as typeof body;
+    expect(deepBody.items.map((row) => row.sourceItemId)).toEqual([item.id, followingItem.id]);
+    expect(deepBody.items[0]?.item).toMatchObject({ text: item.text });
+    expect(deepBody.items[0]?.item).not.toHaveProperty("droppedDeepField");
+
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = '{'
+      WHERE turn_item_id = ${item.id}
+    `;
+    const malformedResponse = yield* read();
+    expect(malformedResponse.status).toBe(200);
+    const malformedTranscript = yield* decodeTranscript(
+      yield* Effect.promise(() => malformedResponse.json()),
+    );
+    expect(malformedTranscript.items).toMatchObject([
+      { sourceItemId: followingItem.id, position: 0 },
+    ]);
   }),
 );
 
