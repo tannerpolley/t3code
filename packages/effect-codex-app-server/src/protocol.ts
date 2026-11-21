@@ -564,24 +564,16 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             // Includes queue/stdin delivery, Codex work and response routing, not just T3 CPU.
             return yield* Deferred.await(deferred).pipe(
               Effect.withSpan("CodexAppServerProtocol.request.awaitResponse", { attributes }),
-              // A live process can stop replying without closing stdout. Retire the
-              // whole connection: its other requests and active event streams share
-              // the same stalled reader, and a late reply cannot make it reusable.
               Effect.timeoutOrElse({
                 duration: REQUEST_TIMEOUT_MS,
-                orElse: () => {
-                  const error = CodexError.CodexAppServerRequestError.fromProtocolError(
-                    {
-                      code: -32000,
-                      message: `Codex request '${method}' (${requestId}) timed out after ${REQUEST_TIMEOUT_MS}ms; closing the transport.`,
-                    },
-                    method,
-                    String(requestId),
-                  );
-                  return handleTermination(() => Effect.succeed(error)).pipe(
-                    Effect.andThen(Effect.fail(error)),
-                  );
-                },
+                orElse: () =>
+                  Effect.fail(
+                    new CodexError.CodexAppServerRequestTimeoutError({
+                      method,
+                      requestId,
+                      timeoutMs: REQUEST_TIMEOUT_MS,
+                    }),
+                  ),
               }),
             );
           }),

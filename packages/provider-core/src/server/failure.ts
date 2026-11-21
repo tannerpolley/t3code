@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
+import * as PlatformError from "effect/PlatformError";
 
 import * as IdAllocator from "./IdAllocator.ts";
 import type { ProviderAdapterFailureReason } from "./ProviderAdapter.ts";
@@ -36,6 +37,7 @@ export class ContextHandoffBackgroundWorkError extends Schema.TaggedError<Contex
 }
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
+export const CODEX_APP_SERVER_DISCONNECTED = "codex_app_server_disconnected";
 const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
@@ -74,6 +76,8 @@ const CODEX_GOAL_VALIDATION_MESSAGE =
 // codex_config::ConstraintError::InvalidValue for a managed requirements.toml or cloud policy.
 const CODEX_ACCESS_REQUIREMENT_REJECTION =
   /invalid value for `(approval_policy|sandbox_mode)`: `([A-Za-z]{1,32})` is not in the allowed set /u;
+const CODEX_PERSISTENT_EXIT =
+  /\b(?:invalid config(?:uration)?|error loading config(?:\.toml)?|failed to (?:load|parse) config(?:uration)?|authentication (?:failed|required)|not logged in|usage limit (?:reached|exceeded))\b/iu;
 
 const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",
@@ -88,6 +92,7 @@ const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
 function curatedCauseMessages(cause: unknown): {
   readonly known: string | undefined;
   readonly category: string | undefined;
+  readonly disconnected?: true;
 } {
   const seen = new Set<unknown>();
   let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
@@ -106,7 +111,8 @@ function curatedCauseMessages(cause: unknown): {
         continue;
       }
       if (typeof cause !== "object") break;
-      const tag = (cause as Record<string, unknown>)._tag;
+      const details = cause as Record<string, unknown>;
+      const tag = details._tag;
       switch (tag) {
         case "ContextHandoffBudgetError":
           return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
@@ -129,6 +135,33 @@ function curatedCauseMessages(cause: unknown): {
         case "ProviderAdapterThreadInUseError":
         case "ProviderCompactionUnsupportedError":
           return { known: stringField(cause, "message"), category: categoryMessage() };
+        case "CodexAppServerRequestTimeoutError":
+          return {
+            known:
+              "Codex timed out waiting for a reply. Check whether the request took effect before retrying.",
+            category: categoryMessage(),
+          };
+        case "CodexAppServerProcessExitedError":
+          if (typeof details.stderr === "string" && CODEX_PERSISTENT_EXIT.test(details.stderr))
+            break;
+          return {
+            known: `Codex App Server process exited${processExitStatus(cause)}.`,
+            category: categoryMessage(),
+            disconnected: true,
+          };
+        case "CodexAppServerTransportError":
+          if (!PlatformError.isPlatformError(details.cause)) break;
+          return {
+            known: "Connection to Codex App Server lost.",
+            category: categoryMessage(),
+            disconnected: true,
+          };
+        case "CodexAppServerInputStreamEndedError":
+          return {
+            known: "Connection to Codex App Server lost.",
+            category: categoryMessage(),
+            disconnected: true,
+          };
         case "CodexAppServerRequestError": {
           // Only Codex's fixed-shape goal validation and managed-requirements
           // text is actionable and safe to show; other request error text stays hidden.
@@ -298,12 +331,15 @@ export function makeProviderFailure(input: {
     ? REQUEST_TOO_LARGE_MESSAGE
     : (input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE);
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
-  const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
+  const rawCode =
+    input.code ??
+    (curated.disconnected ? CODEX_APP_SERVER_DISCONNECTED : stringField(input.cause, "code")) ??
+    null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 
   return {
-    class: input.class ?? "unknown",
+    class: curated.disconnected ? "transport_error" : (input.class ?? "unknown"),
     message: message || DEFAULT_PROVIDER_FAILURE_MESSAGE,
     code,
     retryable: requestTooLarge ? false : (input.retryable ?? null),

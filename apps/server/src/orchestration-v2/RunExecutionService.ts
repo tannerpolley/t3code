@@ -56,6 +56,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import {
+  CODEX_APP_SERVER_DISCONNECTED,
   knownProviderFailureMessage,
   makeProviderFailure,
   makeProviderFailureTurnItem,
@@ -757,7 +758,10 @@ export const layer: Layer.Layer<
         // Stored root tool calls still open when the provider runtime was lost; nothing else ends them.
         readonly lostToolCalls?: ReadonlyArray<OrchestrationV2TurnItem>;
         readonly terminal: ProviderTerminalEvent;
-        readonly retryWorkerFailure?: boolean;
+        readonly shouldRetryFailure?: (
+          failure: OrchestrationV2ProviderFailure,
+          httpStatus?: number,
+        ) => boolean;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
         readonly refreshAfterTurn: Effect.Effect<void>;
@@ -868,9 +872,8 @@ export const layer: Layer.Layer<
         );
         let retry: EffectOutbox.PendingOrchestrationEffectV2 | undefined;
         if (
-          input.retryWorkerFailure &&
           input.terminal.status === "failed" &&
-          isTransientWorkerFailure(input.terminal.failure, input.terminal.httpStatus)
+          input.shouldRetryFailure?.(input.terminal.failure, input.terminal.httpStatus)
         ) {
           const next = ((yield* readTransientFailureAttempt(input.run)) ?? 0) + 1;
           const delayMs = [2_000, 4_000][next - 1];
@@ -1148,8 +1151,14 @@ export const layer: Layer.Layer<
           });
         const retryWorkerFailure =
           isManagedIssueImplementor(input.appThread) &&
-          supportsManagedIssueWork(input.providerThread.driver) &&
-          !isNativeMaintenanceCommand(input.message);
+          supportsManagedIssueWork(input.providerThread.driver);
+        const shouldRetryFailure = isNativeMaintenanceCommand(input.message)
+          ? undefined
+          : (failure: OrchestrationV2ProviderFailure, httpStatus?: number) =>
+              (retryWorkerFailure ||
+                (input.providerThread.driver === "codex" &&
+                  failure.code === CODEX_APP_SERVER_DISCONNECTED)) &&
+              isTransientWorkerFailure(failure, httpStatus);
         const makeFailedTerminalEvent = (
           failure: OrchestrationV2ProviderFailure,
           failureItemOrdinal: number,
@@ -1355,7 +1364,7 @@ export const layer: Layer.Layer<
               openRunOwnedSubagentsTerminal: terminal,
               ...(abandonedProviderTurn === undefined ? {} : { abandonedProviderTurn }),
               terminal: settledTerminal,
-              retryWorkerFailure,
+              ...(shouldRetryFailure === undefined ? {} : { shouldRetryFailure }),
               failureItemPersisted: settledTerminal.status === "failed",
               refreshAfterTurn,
             }).pipe(
@@ -2188,7 +2197,9 @@ export const layer: Layer.Layer<
                     ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
                     lostToolCalls,
                     completedAt,
-                    retryWorkerFailure: retryWorkerFailure && runtimeLost,
+                    ...(runtimeLost && shouldRetryFailure !== undefined
+                      ? { shouldRetryFailure }
+                      : {}),
                     terminal: makeFailedTerminalEvent(
                       makeProviderFailure({
                         cause: squashed,
@@ -2374,7 +2385,7 @@ export const layer: Layer.Layer<
                             expectedStatus: "running",
                           },
                           openRunOwnedSubagents: openSubagents,
-                          retryWorkerFailure,
+                          ...(shouldRetryFailure === undefined ? {} : { shouldRetryFailure }),
                           terminal: makeFailedTerminalEvent(
                             makeProviderFailure({
                               cause: Cause.squash(cause),

@@ -2165,9 +2165,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             context.nativeTurnId,
           ).hasSubagents = true;
         };
-        const pendingRootTurns = yield* Ref.make(
-          new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>(),
-        );
+        type PendingRootTurn = {
+          readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
+          accepted: boolean;
+        };
+        const pendingRootTurns = yield* Ref.make(new Map<string, PendingRootTurn>());
+        const unconfirmedTurnStarts = new Set<string>();
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
         const subagentSelections = new Map<string, Omit<ModelSelection, "instanceId">>();
@@ -2292,6 +2295,29 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         };
         // Serialize native completion and interrupt timeout so only one publishes terminal events.
         const turnTerminalizationPermit = yield* Semaphore.make(1);
+        const clearPendingRootTurn = (
+          threadId: string,
+          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+        ) =>
+          Ref.update(pendingRootTurns, (current) => {
+            if (current.get(threadId)?.input !== turnInput) return current;
+            const next = new Map(current);
+            next.delete(threadId);
+            return next;
+          });
+        const settleStartTimeout = Effect.fn("CodexAdapterV2.settleStartTimeout")(
+          function* (
+            threadId: string,
+            pending: PendingRootTurn,
+            error: CodexErrors.CodexAppServerRequestTimeoutError,
+          ) {
+            if (pending.accepted) return;
+            unconfirmedTurnStarts.add(threadId);
+            yield* clearPendingRootTurn(threadId, pending.input);
+            return yield* error;
+          },
+          (effect) => turnTerminalizationPermit.withPermits(1)(effect),
+        );
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
         const rootProviderThreads = new Map<string, OrchestrationV2ProviderThread>();
         const goalHolds = new Map<string, CodexGoalHold>();
@@ -5220,18 +5246,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               return;
             }
+            // An uncorrelated turn/started could belong to an earlier timed-out request.
+            if (unconfirmedTurnStarts.has(payload.threadId)) return;
             const pendingRootTurn = (yield* Ref.get(pendingRootTurns)).get(payload.threadId);
             if (pendingRootTurn !== undefined) {
               yield* registerRootTurn({
-                turnInput: pendingRootTurn,
+                turnInput: pendingRootTurn.input,
                 nativeTurnId: payload.turn.id,
                 startedAt: codexTimestamp(payload.turn.startedAt),
               });
-              yield* Ref.update(pendingRootTurns, (current) => {
-                const updated = new Map(current);
-                updated.delete(payload.threadId);
-                return updated;
-              });
+              pendingRootTurn.accepted = true;
+              yield* clearPendingRootTurn(payload.threadId, pendingRootTurn.input);
               return;
             }
             const goalHold = goalHolds.get(payload.threadId);
@@ -5473,6 +5498,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // their command items, while the shared provider session stays alive.
         yield* client.handleServerNotification("thread/closed", (payload) =>
           Effect.gen(function* () {
+            if (!(yield* Ref.get(pendingRootTurns)).has(payload.threadId)) {
+              unconfirmedTurnStarts.delete(payload.threadId);
+            }
             const closing = threadClosings.get(payload.threadId);
             threadClosings.delete(payload.threadId);
             if (closing !== undefined) yield* Deferred.succeed(closing, undefined);
@@ -6580,6 +6608,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly failureMessage?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
+            readonly disconnected?: OrchestrationV2ProviderFailure;
           }): Effect.fn.Return<CodexRootTerminalEvent> {
             const terminalStatus = providerTurnStatusToTerminal(input.status);
             if (terminalStatus === "failed") {
@@ -6596,21 +6625,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const completionHasClass =
                 failureCode != null &&
                 !codexTerminalErrorNeedsEvidence(input.failureErrorInfo, failureCode);
-              let failure =
+              const matchesPreviousFailure =
                 previousFailure !== undefined &&
                 (input.failureMessage === undefined ||
                   input.failureMessage === previousFailure.nativeMessage) &&
                 (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
-                (!completionHasClass || previousFailure.failure.class === failureClass)
-                  ? previousFailure.failure
-                  : withCodexManagedFailure(
-                      makeProviderFailure({
-                        message: input.failureMessage,
-                        code: failureCode,
-                        class: failureClass,
-                      }),
-                      input.failureMessage,
-                    );
+                (!completionHasClass || previousFailure.failure.class === failureClass);
+              let failure =
+                input.disconnected !== undefined
+                  ? (input.context.latestProviderFailure?.failure ?? input.disconnected)
+                  : previousFailure !== undefined && matchesPreviousFailure
+                    ? previousFailure.failure
+                    : withCodexManagedFailure(
+                        makeProviderFailure({
+                          message: input.failureMessage,
+                          code: failureCode,
+                          class: failureClass,
+                        }),
+                        input.failureMessage,
+                      );
               const retry = input.providerRetry;
               const notification = input.context.latestProviderFailure;
               const httpStatus =
@@ -6784,6 +6817,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly failureMessage?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
+            readonly disconnected?: OrchestrationV2ProviderFailure;
             readonly goalHoldTurn?: OrchestrationV2ProviderTurn;
           }) {
             const event = yield* makeRootTerminalEvent(input);
@@ -7005,6 +7039,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly completedAt: DateTime.Utc;
           readonly failureMessage?: string;
           readonly failureErrorInfo?: CodexErrorInfo;
+          readonly disconnected?: OrchestrationV2ProviderFailure;
           readonly continueRun?: boolean;
           readonly stalledRetry?: {
             readonly state: ActiveCodexProviderRetry;
@@ -7570,13 +7605,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             Effect.gen(function* () {
               const completedAt = yield* DateTime.now;
               const interrupted = yield* Ref.get(interruptingNativeTurns);
+              const failure = makeProviderFailure({ cause });
               for (const context of (yield* Ref.get(activeTurns)).values()) {
                 yield* finalizeCodexTurn({
                   context,
                   nativeTurnId: context.nativeTurnId,
                   status: interrupted.has(context.nativeTurnId) ? "interrupted" : "failed",
                   completedAt,
-                  failureMessage: cause.message,
+                  failureMessage: context.latestProviderFailure?.nativeMessage ?? cause.message,
+                  ...(failure.class === "transport_error" ? { disconnected: failure } : {}),
                 });
               }
               // A Codex process exit does not prove that its detached terminals
@@ -7860,9 +7897,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
             });
+            const pending = { input: turnInput, accepted: false };
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
-              updated.set(threadId, turnInput);
+              updated.set(threadId, pending);
               return updated;
             });
             yield* Ref.update(additionalContextByThread, (current) => {
@@ -7877,7 +7915,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(yield* Ref.get(settledTurns)),
               ...(yield* Ref.get(activeTurns)),
             ]);
-            const started = yield* client.request("turn/start", turnStartParams);
+            const started = yield* client.request("turn/start", turnStartParams).pipe(
+              Effect.catchTags({
+                CodexAppServerRequestTimeoutError: (error) =>
+                  settleStartTimeout(threadId, pending, error),
+              }),
+            );
+            if (started === undefined) return;
             const previousTurn =
               previousTurns.get(started.turn.id) ??
               (yield* Ref.get(activeTurns)).get(started.turn.id);
@@ -7892,7 +7936,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
             }
             // A turn/started notification may have registered and completed this turn already.
-            if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== turnInput) return;
+            if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== pending) return;
             yield* registerRootTurn({
               turnInput,
               nativeTurnId: started.turn.id,
@@ -7904,12 +7948,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             effect.pipe(
               Effect.ensuring(
                 Effect.flatMap(getNativeThreadId(turnInput.providerThread), (threadId) =>
-                  Ref.update(pendingRootTurns, (current) => {
-                    if (current.get(threadId) !== turnInput) return current;
-                    const updated = new Map(current);
-                    updated.delete(threadId);
-                    return updated;
-                  }),
+                  clearPendingRootTurn(threadId, turnInput),
                 ).pipe(Effect.ignore),
               ),
             ),
@@ -8328,18 +8367,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           compactThread: Effect.fn("CodexAdapterV2.compactThread")(
             function* (turnInput) {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
+              if (unconfirmedTurnStarts.has(threadId)) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CODEX_PROVIDER,
+                  detail:
+                    "Codex did not confirm the previous turn start. Reopen the native thread before compacting",
+                });
+              }
+              const pending = { input: turnInput, accepted: false };
               yield* Ref.update(pendingRootTurns, (current) =>
-                new Map(current).set(threadId, turnInput),
+                new Map(current).set(threadId, pending),
               );
               // Clear on interruption; a late turn/started must not be adopted after an interrupted start.
               yield* client.request("thread/compact/start", { threadId }).pipe(
-                Effect.onError(() =>
-                  Ref.update(pendingRootTurns, (current) => {
-                    const next = new Map(current);
-                    next.delete(threadId);
-                    return next;
-                  }),
-                ),
+                Effect.catchTags({
+                  CodexAppServerRequestTimeoutError: (error) =>
+                    settleStartTimeout(threadId, pending, error),
+                }),
+                Effect.onError(() => clearPendingRootTurn(threadId, turnInput)),
               );
             },
             (effect, turnInput) =>
