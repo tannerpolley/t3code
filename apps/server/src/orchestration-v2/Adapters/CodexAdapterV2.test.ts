@@ -834,8 +834,11 @@ describe("CodexAdapterV2 shared transport", () => {
     { exit: "numeric", active: true },
     { exit: "SIGKILL", active: true },
     { exit: "invalid config", active: true },
+    { exit: "process exit after a stderr warning", active: true },
+    { exit: "disconnect after a terminal auth denial", active: true },
     { exit: "turn/start timeout", active: true },
     { exit: "turn/start reply timeout after notification", active: true },
+    { exit: "late start notification during the next attempt", active: true },
   ] as const)("handles $exit (active turn: $active)", ({ exit, active }) =>
     Effect.gen(function* () {
       const scenario = `process-exit-${exit}-${active}`;
@@ -849,7 +852,7 @@ describe("CodexAdapterV2 shared transport", () => {
       const turnStarted = yield* Deferred.make<void>();
       const stalledTurnStarted = yield* Deferred.make<void>();
       const turnCompleted = yield* Deferred.make<void>();
-      const stalledRequest = yield* Deferred.make<number>();
+      const stalledRequests = yield* Queue.unbounded<number>();
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const preamble = withConfigReadBeforeTurnStart(
         codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" }),
@@ -861,11 +864,17 @@ describe("CodexAdapterV2 shared transport", () => {
       });
       let threadsStarted = 0;
       const terminationError =
-        exit === "numeric" || exit === "invalid config"
+        exit === "numeric" ||
+        exit === "invalid config" ||
+        exit === "process exit after a stderr warning"
           ? new CodexError.CodexAppServerProcessExitedError({
               code: 17,
               pid: 52,
-              ...(exit === "invalid config" ? { stderr: "Error: invalid configuration" } : {}),
+              ...(exit === "invalid config"
+                ? { stderr: "Error: invalid configuration" }
+                : exit === "process exit after a stderr warning"
+                  ? { stderr: "warning: slow request" }
+                  : {}),
             })
           : new CodexError.CodexAppServerTransportError({
               operation: "read-process-exit-status",
@@ -893,7 +902,7 @@ describe("CodexAdapterV2 shared transport", () => {
                 };
                 if (frame.id === undefined) return;
                 if (frame.method === "turn/start" && frame.params?.threadId === stalledThreadId) {
-                  yield* Deferred.succeed(stalledRequest, frame.id);
+                  yield* Queue.offer(stalledRequests, frame.id);
                   return;
                 }
                 const replies =
@@ -977,7 +986,11 @@ describe("CodexAdapterV2 shared transport", () => {
         },
       });
       yield* Deferred.await(turnStarted);
-      if (exit === "turn/start timeout" || exit === "turn/start reply timeout after notification") {
+      if (
+        exit === "turn/start timeout" ||
+        exit === "turn/start reply timeout after notification" ||
+        exit === "late start notification during the next attempt"
+      ) {
         const threadId = ThreadId.make("thread-stalled");
         const providerThread = yield* runtime.ensureThread({
           threadId,
@@ -995,7 +1008,7 @@ describe("CodexAdapterV2 shared transport", () => {
             }),
           )
           .pipe(Effect.result, Effect.forkScoped);
-        const id = yield* Deferred.await(stalledRequest);
+        const id = yield* Queue.take(stalledRequests);
         if (exit === "turn/start reply timeout after notification") {
           yield* emit({
             method: "turn/started",
@@ -1008,11 +1021,56 @@ describe("CodexAdapterV2 shared transport", () => {
         }
         yield* TestClock.adjust("60 seconds");
         const result = yield* Fiber.join(start);
-        if (exit === "turn/start timeout") {
+        if (exit === "late start notification during the next attempt") {
           assert(result._tag === "Failure");
-          assert.instanceOf(result.failure.cause, CodexError.CodexAppServerRequestTimeoutError);
-        } else {
-          assert.equal(result._tag, "Success");
+          const attemptId = RunAttemptId.make("attempt-next");
+          const next = yield* runtime
+            .startTurn(
+              makeCodexTestTurnInput({
+                threadId,
+                providerThread,
+                now: yield* DateTime.now,
+                attemptId,
+                text: "next",
+              }),
+            )
+            .pipe(Effect.forkScoped);
+          const nextId = yield* Queue.take(stalledRequests);
+          for (const status of ["inProgress", "completed"] as const) {
+            yield* emit({
+              method: status === "inProgress" ? "turn/started" : "turn/completed",
+              params: {
+                threadId: stalledThreadId,
+                turn: makeCodexReplayTurn({ id: "turn-stalled", status }),
+              },
+            });
+          }
+          yield* emit({
+            id: nextId,
+            result: { turn: makeCodexReplayTurn({ id: "turn-next", status: "inProgress" }) },
+          });
+          yield* emit({
+            method: "turn/completed",
+            params: {
+              threadId: stalledThreadId,
+              turn: makeCodexReplayTurn({ id: "turn-next", status: "completed" }),
+            },
+          });
+          yield* Fiber.join(next);
+          yield* Deferred.await(turnCompleted);
+          assert.deepEqual(
+            events.flatMap((event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.runAttemptId === attemptId
+                ? [[event.providerTurn.nativeTurnRef?.nativeId, event.providerTurn.status]]
+                : [],
+            ),
+            [
+              ["turn-next", "running"],
+              ["turn-next", "completed"],
+            ],
+          );
+          return;
         }
         yield* emit({
           id,
@@ -1031,6 +1089,12 @@ describe("CodexAdapterV2 shared transport", () => {
           ["completed"],
           "the other turn should complete on the same app-server",
         );
+        if (exit === "turn/start timeout") {
+          assert(result._tag === "Failure");
+          assert.instanceOf(result.failure.cause, CodexError.CodexAppServerRequestTimeoutError);
+        } else {
+          assert.equal(result._tag, "Success");
+        }
         return;
       }
       if (!active) {
@@ -1047,6 +1111,20 @@ describe("CodexAdapterV2 shared transport", () => {
         );
       }
 
+      if (exit === "disconnect after a terminal auth denial") {
+        yield* emit({
+          method: "error",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            willRetry: false,
+            error: {
+              message: "chatpass_v2_scope_not_authorized",
+              codexErrorInfo: "other",
+            },
+          },
+        });
+      }
       yield* Queue.end(input);
       // Output closes only after the protocol records the process termination.
       yield* Deferred.await(outputEnded);
@@ -1063,6 +1141,11 @@ describe("CodexAdapterV2 shared transport", () => {
       if (active) {
         const terminal = events.find((event) => event.type === "turn.terminal");
         assert(terminal?.status === "failed");
+        if (exit === "disconnect after a terminal auth denial") {
+          assert.equal(terminal.failure.code, "chatpass_v2_scope_not_authorized");
+          assert.include(terminal.failure.message, "does not authorize");
+          return;
+        }
         assert.equal(
           terminal.failure.class,
           exit === "invalid config" ? "provider_error" : "transport_error",

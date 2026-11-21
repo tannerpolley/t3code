@@ -76,6 +76,8 @@ const CODEX_GOAL_VALIDATION_MESSAGE =
 // codex_config::ConstraintError::InvalidValue for a managed requirements.toml or cloud policy.
 const CODEX_ACCESS_REQUIREMENT_REJECTION =
   /invalid value for `(approval_policy|sandbox_mode)`: `([A-Za-z]{1,32})` is not in the allowed set /u;
+const CODEX_PERSISTENT_EXIT =
+  /\b(?:invalid config(?:uration)?|error loading config(?:\.toml)?|failed to (?:load|parse) config(?:uration)?|authentication (?:failed|required)|not logged in|usage limit (?:reached|exceeded))\b/iu;
 
 const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",
@@ -140,8 +142,8 @@ function curatedCauseMessages(cause: unknown): {
             category: categoryMessage(),
           };
         case "CodexAppServerProcessExitedError":
-          // A diagnostic exit can indicate a persistent startup or configuration problem.
-          if (details.stderr !== undefined && details.code !== 0) break;
+          if (typeof details.stderr === "string" && CODEX_PERSISTENT_EXIT.test(details.stderr))
+            break;
           return {
             known: `Codex App Server process exited${processExitStatus(cause)}.`,
             category: categoryMessage(),
