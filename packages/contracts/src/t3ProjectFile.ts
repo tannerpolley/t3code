@@ -1,9 +1,11 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { ProjectScriptIcon } from "./project.ts";
 import type { ProjectScopedServerSettingKey, ServerSettings } from "./settings.ts";
+import { ThreadRole } from "./threadRole.ts";
 
 export const T3_PROJECT_FILE_NAME = "t3.json";
 
@@ -11,6 +13,17 @@ export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
+
+export const PROJECT_SKILL_ID_PATTERN =
+  /^[a-zA-Z0-9][a-zA-Z0-9_-]*:[a-zA-Z0-9][a-zA-Z0-9_-]*(?::[a-zA-Z0-9][a-zA-Z0-9_-]*)*$/;
+export const PROJECT_SKILL_ID_MAX_LENGTH = 128;
+export const PROJECT_ROLE_SKILLS_MAX_COUNT = 8;
+const RoleSkills = Schema.Array(
+  Schema.String.check(
+    Schema.isPattern(PROJECT_SKILL_ID_PATTERN),
+    Schema.isMaxLength(PROJECT_SKILL_ID_MAX_LENGTH),
+  ),
+).check(Schema.isMaxLength(PROJECT_ROLE_SKILLS_MAX_COUNT));
 
 // Encoded-side annotations survive into JSON Schema; decoding still trims and rejects empty strings.
 const trimmedNonEmpty = (annotations: { readonly description: string }, maxLength?: number) => {
@@ -111,6 +124,11 @@ export const T3ProjectFile = Schema.Struct({
       T3_PROJECT_FILE_PATH_MAX_LENGTH,
     ),
   ),
+  roleSkills: Schema.optionalKey(
+    Schema.Record(ThreadRole, Schema.optionalKey(RoleSkills)).annotate({
+      description: "Installed plugin skill IDs to preload for delegated children, keyed by role.",
+    }),
+  ).pipe(Schema.catchDecoding(() => Effect.succeedNone)),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
       .annotate({

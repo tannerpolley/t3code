@@ -960,6 +960,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
         environmentId: laptop.environmentId,
         threadId: parentThreadId,
         title: "Laptop parent",
+        role: "designer",
       });
       // A retry with the same key launches nothing new and records nothing new.
       const retried = yield* delegateToBox(a);
@@ -1440,6 +1441,7 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       const result = yield* a.call("delegate_task", {
         task: "Review the diff.",
         role: "review",
+        issue: { host: "github.com", repository: "owner/repo", number: 430 },
         target: { environmentId: box.environmentId },
         clientRequestId: "review-on-box",
       });
@@ -1459,6 +1461,7 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       yield* Ref.set(thread.status, "completed");
       yield* Deferred.succeed(thread.finished, undefined);
       const task = yield* taskResult(a, taskId);
+      expect(task?.remoteChild?.issueSkillsSkipped).toBe("remote");
       expect(task?.status).toBe("completed");
       expect(task?.result).toBe(
         `Requested model claude-sonnet-4-6; the provider reported running gpt-5.4-mini.\n\n${long}`,
@@ -1467,6 +1470,7 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       expect(status.structuredContent).toMatchObject({
         status: "completed",
         executedModel: "gpt-5.4-mini",
+        remoteChild: { issueSkillsSkipped: "remote" },
       });
       // Every wait was for the run the launch started.
       const waits = yield* Ref.get(thread.waitedFor);

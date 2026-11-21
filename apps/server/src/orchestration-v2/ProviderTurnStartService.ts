@@ -39,6 +39,8 @@ import { withTurnStartReservation, withWorkspaceLease } from "../workspace/works
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import { makeRoleSkillTurn } from "./RoleSkillDelivery.ts";
+import { delegatedSkillRole } from "../provider/roleSkills.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeRestoreMissingWorktree } from "../workspace/restoreMissingWorktree.ts";
 import * as EventSink from "./EventSink.ts";
@@ -243,6 +245,7 @@ export const layer: Layer.Layer<
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const projects = yield* ProjectService.ProjectService;
+    const startRoleSkillTurn = yield* makeRoleSkillTurn;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -1681,6 +1684,31 @@ export const layer: Layer.Layer<
         status: "running",
         startedAt: now,
       };
+      const skillBriefRun = projection.runs.find((source) => source.ordinal === 1);
+      const preloadSkills =
+        skillBriefRun !== undefined &&
+        !goalCommand &&
+        session.installedSkillsForPreload !== undefined &&
+        delegatedSkillRole(projection.thread) !== undefined &&
+        !projection.attempts.some(
+          (prior) =>
+            prior.providerInstanceId === runningAttempt.providerInstanceId &&
+            prior.nativeThreadId === runningAttempt.nativeThreadId &&
+            (prior.nativeThreadId !== undefined ||
+              prior.providerThreadId === runningAttempt.providerThreadId) &&
+            prior.skillPreload?.skills.some(
+              (skill) => skill.outcome === "loaded" || skill.outcome === "delivery_unknown",
+            ),
+        );
+      const skillBrief =
+        preloadSkills &&
+        projection.thread.roleSkillSelection === undefined &&
+        (skillBriefRun.id !== (resumeSource ?? run).id ||
+          projection.attempts.some(
+            (prior) => prior.runId === skillBriefRun.id && prior.reason === "steering_restart",
+          ))
+          ? yield* projectionStore.getOriginalRunBrief(projection.thread.id, skillBriefRun.id)
+          : providerMessage.text;
       const runningRootNode: OrchestrationV2ExecutionNode = {
         ...rootNode,
         status: "running",
@@ -1815,7 +1843,18 @@ export const layer: Layer.Layer<
                     compact: message.text.trim().toLowerCase() === "/compact",
                   },
                   (text) =>
-                    session.startTurn({ ...turnInput, message: { ...turnInput.message, text } }),
+                    session.startTurn({
+                      ...turnInput,
+                      message: { ...turnInput.message, text },
+                      ...(turnInput.inlineContextLength === undefined
+                        ? {}
+                        : {
+                            inlineContextLength:
+                              turnInput.inlineContextLength +
+                              text.length -
+                              turnInput.message.text.length,
+                          }),
+                    }),
                 )
                 .pipe(
                   Effect.mapError((cause) =>
@@ -1831,6 +1870,13 @@ export const layer: Layer.Layer<
                   ),
                 ),
           };
+      const skillSession = preloadSkills
+        ? {
+            ...inlineSession,
+            startTurn: (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+              startRoleSkillTurn(inlineSession, turnInput, skillBrief, refusedBeforePrompt),
+          }
+        : inlineSession;
       const persistHandoff = Effect.fn("ProviderTurnStartService.persist")(function* (
         handoff: OrchestrationV2ContextHandoff,
       ) {
@@ -1871,7 +1917,9 @@ export const layer: Layer.Layer<
             persist: persistHandoff,
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
-          const start = compact ? session.compactThread! : inlineSession.startTurn;
+          const start: typeof session.startTurn = compact
+            ? session.compactThread!
+            : skillSession.startTurn;
           // Like history, the side chat context waits for a turn that sends a prompt.
           const sideChatContext =
             sideChatHandoff === undefined || compact || goalCommand
@@ -1970,8 +2018,8 @@ export const layer: Layer.Layer<
         sideChatHandoff === undefined &&
         restartNote === "" &&
         !noteContinuation
-          ? inlineSession
-          : makeDeliverySession(inlineSession, startWithHandoffs);
+          ? skillSession
+          : makeDeliverySession(skillSession, startWithHandoffs);
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
