@@ -995,13 +995,15 @@ const continuationDispatches = (
   });
 
 it.effect.each([
-  [3, "running", undefined],
-  [3, "completed", undefined],
-  [3, "waiting", undefined],
-  [1, "starting", 2],
+  [3, "running", undefined, true],
+  [3, "completed", undefined, true],
+  [3, "waiting", undefined, true],
+  [1, "starting", 2, false],
+  [1, "running", 2, false],
+  [1, "running", 2, true],
 ] as const)(
-  "persists recovery for count %s, %s work, retry %s",
-  ([previousCount, status, transientAttempt]) =>
+  "persists recovery for count %s, %s work, retry %s, provider turn recorded %s",
+  ([previousCount, status, transientAttempt, providerTurnRecorded]) =>
     Effect.gen(function* () {
       const base = makeProjection();
       const source = RunId.make("run:previous-loss");
@@ -1013,18 +1015,17 @@ it.effect.each([
             status,
             restartContinuationOfRunId: source,
             requestedAt: DateTime.subtract(now, { minutes: 22 }),
-            ...(status === "starting" ? { startedAt: null } : {}),
+            startedAt: status === "starting" ? null : now,
           },
         ],
-        providerTurns:
-          status === "starting"
-            ? []
-            : [
-                {
-                  ...base.providerTurns[0]!,
-                  status: status === "running" ? "running" : "completed",
-                },
-              ],
+        providerTurns: providerTurnRecorded
+          ? [
+              {
+                ...base.providerTurns[0]!,
+                status: status === "running" ? "running" : "completed",
+              },
+            ]
+          : [],
         turnItems:
           status === "running" || status === "starting" ? [] : [backgroundSubagent.turnItem],
       } as unknown as OrchestrationV2ThreadProjection;
@@ -1037,6 +1038,7 @@ it.effect.each([
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               getRecoveryThreadIds: () => Effect.succeed([threadId]),
               getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+              getThreadRecords: () => Effect.succeed(projection),
             }),
             Layer.mock(EventSink.EventSinkV2)({
               writeWithEffects: (input) => {
@@ -1074,21 +1076,27 @@ it.effect.each([
         ),
       );
       yield* recovery.reconcile("startup");
-      assert.deepEqual(commits[0]?.effects[0]?.request, {
+      yield* recovery.prepareForShutdown;
+      const expectedRequest = {
         type: "provider-runtime.continue",
         sourceRunId: runId,
-        processLossCount: status === "running" || status === "starting" ? previousCount + 1 : 1,
-        ...(transientAttempt === undefined ? {} : { transientFailureAttempt: transientAttempt }),
-      });
-      if (transientAttempt !== undefined) {
-        yield* recovery.prepareForShutdown;
-        assert.deepEqual(prepared[0]?.effects[0]?.request, {
-          type: "provider-runtime.continue",
-          sourceRunId: runId,
-          processLossCount: 0,
-          transientFailureAttempt: transientAttempt,
-        });
-      }
+        ...(transientAttempt !== undefined && !providerTurnRecorded
+          ? { transientFailureAttempt: transientAttempt }
+          : {}),
+      };
+      assert.deepEqual(
+        {
+          startup: commits[0]?.effects[0]?.request,
+          shutdown: prepared[0]?.effects[0]?.request,
+        },
+        {
+          startup: {
+            ...expectedRequest,
+            processLossCount: status === "running" || status === "starting" ? previousCount + 1 : 1,
+          },
+          shutdown: { ...expectedRequest, processLossCount: 0 },
+        },
+      );
     }),
 );
 
