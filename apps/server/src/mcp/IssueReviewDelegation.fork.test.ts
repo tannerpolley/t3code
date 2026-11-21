@@ -282,11 +282,13 @@ it.effect(
       const sink = yield* EventSink.EventSinkV2;
       const root = yield* createReviewRoot();
       const repository = { host: "github.com", repository: "tannerpolley/t3code" };
-      yield* work.setWorkerLimit({
-        ...repository,
-        workerLimit: 1,
-        expectedRevision: 1,
-        clientRequestId: CommandId.make("limit"),
+      const registration = (yield* store.configuration(root))!;
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        threadId: root,
+        commandId: CommandId.make("limit"),
+        expectedRevision: registration.revision,
+        orchestration: { ...registration, workerLimit: 1 },
       });
       yield* delegateReviewIssue(root, reviewIssue(1), "occupy-slot");
       const scope = scopeFor(root);
@@ -296,6 +298,8 @@ it.effect(
         task: "Implement",
         clientRequestId: "queued-cancel",
       });
+      assert.equal(child.queueNote, "Queued on the workers pool: 1 of 1 slots in use.");
+      assert.lengthOf(harness.repositoryIdentity.mock.calls, 0);
       const before = yield* threads.getThreadRecords(child.childThreadId!, ["turnItems"]);
       assert.isTrue(
         before.turnItems.some(

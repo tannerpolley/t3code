@@ -373,13 +373,16 @@ const RawGitHubCommentSchema = Schema.Struct({
 });
 const RawGitHubCommentListSchema = Schema.Array(RawGitHubCommentSchema);
 const WorkIssueNode = Schema.Struct({
-  id: Schema.String,
-  databaseId: Schema.Int,
+  id: RawIssueIdentitySchema.fields.node_id,
+  databaseId: RawIssueIdentitySchema.fields.id,
   number: IssueNumber,
   title: Schema.String,
   url: GraphQlUrl,
   state: Schema.Literals(["OPEN", "CLOSED"]),
-  repository: Schema.Struct({ databaseId: Schema.Int, nameWithOwner: Schema.String }),
+  repository: Schema.Struct({
+    databaseId: RawRepositoryIdentitySchema.fields.id,
+    nameWithOwner: RawRepositoryIdentitySchema.fields.full_name,
+  }),
 });
 const WorkIssueConnection = Schema.Struct({
   totalCount: NonNegativeInt,
@@ -1049,6 +1052,18 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
                   "detail",
                   "inaccessible",
                   "Issue hierarchy or dependencies could not be read completely.",
+                );
+              if (safeRepository(scope.host, node.repository.nameWithOwner) !== scope.repository)
+                return yield* readError(
+                  "detail",
+                  "invalid-response",
+                  "GitHub returned another repository.",
+                );
+              if (node.number !== input.number)
+                return yield* readError(
+                  "detail",
+                  "invalid-response",
+                  "GitHub returned another issue.",
                 );
               for (const child of node.subIssues.nodes)
                 if (child !== null) children.set(child.id, linked(child));
