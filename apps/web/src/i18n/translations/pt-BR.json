@@ -13,6 +13,7 @@
   "874249a1962865f1": "{minutes} min",
   "da395e0d0098218d": "Rotineiro",
   "70c4417f87f445b2": "Complexo",
+  "143cb1aa9f30dfd2": "Criar ou dividir issues e movê-las entre marcos exige aprovação quando a opção “Ask before agents create, split or move issues” está ativada. Editar a descrição, fechar ou reabrir issues e alterar a issue pai ou os bloqueios exige aprovação quando a conversa do agente está no modo “Approval required”.",
   "dd10f8671d149b28": "Nível",
   "c8835bc68ac01205": "Esforço",
   "e40e6d4ec89b5365": "Padrão",

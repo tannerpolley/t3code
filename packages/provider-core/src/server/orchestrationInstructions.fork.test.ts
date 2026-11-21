@@ -5,6 +5,7 @@ import {
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
   t3ModelNotesInstructions,
   t3ModelRolesInstructions,
+  t3OrchestrationBaseInstructions,
   t3OrchestrationPolicy,
   t3OrchestrationText,
 } from "./orchestrationInstructions.ts";
@@ -21,6 +22,37 @@ describe("T3 orchestration provider instructions", () => {
       T3_CODE_ORCHESTRATION_INSTRUCTIONS,
       "independent Reviewer only when the owner or plan asks.",
     );
+  });
+
+  it.each([
+    [undefined, "- Subagents:"],
+    ["worker", "Native subagent tools are disabled in this repository-managed session"],
+    ["implementor", 'role: "reviewer"'],
+    ["root", "Leave the review loop with the Implementor"],
+  ] as const)("renders complete orchestration instructions for %s", (role, delegation) => {
+    const policy = t3OrchestrationPolicy(role, "");
+    const text = t3OrchestrationText(policy);
+
+    assert.include(text, "## T3 Code orchestration");
+    assert.include(text, delegation);
+    assert.include(text, "Call `orchestrator_capabilities` once per thread");
+    assert.include(text, "independent Reviewer only when the owner or plan asks");
+    assert.include(text, "Multiple selections: use `t3_request_user_input`");
+    assert.include(text, "### Visuals and preview");
+    if (role === undefined) {
+      assert.notInclude(text, "propose_issue_change");
+    } else {
+      assert.include(text, "Submit the typed proposal and follow its returned decision.");
+      assert.include(text, "Reuse its `clientRequestId` on retry.");
+      assert.notInclude(text, "always wait");
+      assert.include(
+        text,
+        "Do not poll task_status or create recurring user schedules to advance a milestone.",
+      );
+      assert.notInclude(text, "milestone..");
+    }
+    assert.isTrue(policy.sections.every((section) => Buffer.byteLength(section, "utf8") <= 4_000));
+    assert.equal(t3OrchestrationBaseInstructions(role), text);
   });
 
   it("lists role defaults and choices, credit approval, and model notes", () => {
