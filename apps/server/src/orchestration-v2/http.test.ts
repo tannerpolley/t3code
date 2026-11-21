@@ -14,6 +14,7 @@ import {
   OrchestrationV2TurnItem,
   OrchestrationV2ThreadTranscript,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -249,6 +250,164 @@ it.effect("exports full visible history with scope and missing-thread checks", (
   }),
 );
 
+it.effect("exports a transcript with oversized fields dropped by the decoder", () =>
+  Effect.gen(function* () {
+    const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+    const item = items.find((item) => item.type === "command_execution")!;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("legacy-command"),
+          type: "turn-item.updated",
+          threadId: thread.id,
+          occurredAt: now,
+          payload: item,
+        },
+      ],
+    });
+    const sql = Context.get(services, SqlClient.SqlClient);
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.droppedLegacyField',
+        printf('%.*c', ${PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1}, 'x'))
+      WHERE turn_item_id = ${item.id}
+    `;
+    const read = () =>
+      Effect.promise(() =>
+        handler(
+          new Request(`http://localhost/api/orchestration/threads/${thread.id}/transcript`, {
+            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+          }),
+        ),
+      );
+    const response = yield* read();
+    expect(response.status).toBe(200);
+    const body = (yield* Effect.promise(() => response.json())) as {
+      items: Array<{ item: object }>;
+    };
+    expect(body.items[0]?.item).not.toHaveProperty("droppedLegacyField");
+    const deepField = sql`'"droppedDeepField":' || printf('%.*c', 1001, '[') || printf('%.*c', 1001, ']') || ','`;
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = replace(payload_json, '"droppedLegacyField":', ${deepField} || '"droppedLegacyField":')
+      WHERE turn_item_id = ${item.id}
+    `;
+    const deepResponse = yield* read();
+    expect(deepResponse.status).toBe(200);
+    yield* Effect.promise(() => deepResponse.body!.cancel());
+  }),
+);
+
+it.effect("stops transcript payload reads at the page that crosses the encoded limit", () =>
+  Effect.gen(function* () {
+    const { services, eventSink } = yield* serveOrchestrationHttp(() => true);
+    const [first, next] = items;
+    yield* eventSink.write({
+      events: [first!, next!].map((item) => ({
+        id: EventId.make(`export:${item.id}`),
+        type: "turn-item.updated" as const,
+        threadId: thread.id,
+        occurredAt: now,
+        payload: item,
+      })),
+    });
+    const sql = Context.get(services, SqlClient.SqlClient);
+    const [size] = yield* sql<{ overhead: number }>`
+      SELECT SUM(octet_length(json_set(payload_json, '$.output', ''))) AS overhead
+      FROM orchestration_v2_projection_turn_items WHERE thread_id = ${thread.id}
+    `;
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.output',
+        printf('%.*c', ${PROVIDER_SEND_TURN_MAX_FILE_BYTES - size!.overhead - 1}, 'x'))
+      WHERE turn_item_id = ${first!.id}
+    `;
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.output', '')
+      WHERE turn_item_id = ${next!.id}
+    `;
+    const reads: unknown[] = [];
+    const error = yield* Context.get(services, ThreadManagementService.ThreadManagementService)
+      .getThreadTranscript(thread.id)
+      .pipe(
+        Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+          getEnvironmentId: Effect.succeed(environmentId),
+        }),
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          const [query, args] = statement.compile();
+          if (query.includes("SELECT item.thread_id, item.turn_item_id, item.payload_json")) {
+            reads.push(JSON.parse(String(args[0])));
+          }
+          return Effect.succeed(statement);
+        }),
+        Effect.flip,
+      );
+    expect(error).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
+    expect(reads).toEqual([[{ threadId: thread.id, id: first!.id }]]);
+  }),
+);
+
+it.effect("exports a fork without reading later runs from its parent", () =>
+  Effect.gen(function* () {
+    const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+    const firstRun = { ...rolledBackRun, status: "completed" as const };
+    const lateRun = { ...firstRun, id: RunId.make("run:late"), ordinal: 2 };
+    const forkId = ThreadId.make("fork");
+    const events = [
+      { type: "run.created" as const, payload: firstRun },
+      { type: "run.created" as const, payload: lateRun },
+      { type: "turn-item.updated" as const, payload: { ...items[0]!, runId: firstRun.id } },
+      { type: "turn-item.updated" as const, payload: { ...items[1]!, runId: lateRun.id } },
+    ].map((event, index) => ({
+      ...event,
+      id: EventId.make(`source:${index}`),
+      threadId: thread.id,
+      occurredAt: now,
+    }));
+    yield* eventSink.write({
+      events: [
+        ...events,
+        {
+          id: EventId.make("create-early-fork"),
+          type: "thread.created",
+          threadId: forkId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            id: forkId,
+            forkedFrom: { type: "run", threadId: thread.id, runId: firstRun.id },
+            lineage: {
+              parentThreadId: thread.id,
+              relationshipToParent: "fork",
+              rootThreadId: thread.id,
+            },
+          },
+        },
+      ],
+    });
+    const sql = Context.get(services, SqlClient.SqlClient);
+    yield* sql`
+      UPDATE orchestration_v2_projection_runs SET payload_json = '{}'
+      WHERE run_id = ${lateRun.id}
+    `;
+    const response = yield* Effect.promise(() =>
+      handler(
+        new Request(`http://localhost/api/orchestration/threads/${forkId}/transcript`, {
+          headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    const transcript = yield* decodeTranscript(yield* Effect.promise(() => response.json()));
+    expect(transcript.items.map(({ item, visibility }) => [item.type, visibility])).toEqual([
+      ["command_execution", "inherited"],
+      ["fork", "synthetic"],
+    ]);
+    expect(transcript.items[0]?.sourceItemId).toBe(items[0]!.id);
+  }),
+);
+
 it.effect.each([
   { hidden: false, name: "a duplicate message projection" },
   { hidden: true, name: "a rolled-back item" },
@@ -435,7 +594,9 @@ it.effect.each([
           Effect.flip,
         );
       expect(error).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
-      expect(reads).toEqual([expect.stringContaining("SUM(octet_length(item.payload_json))")]);
+      expect(reads).toEqual([
+        expect.stringContaining("SELECT item.thread_id, item.turn_item_id, item.payload_json"),
+      ]);
       const largeResponse = yield* read();
       expect(largeResponse.status).toBe(400);
       expect(yield* Effect.promise(() => largeResponse.json())).toMatchObject({

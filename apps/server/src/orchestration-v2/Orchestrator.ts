@@ -77,6 +77,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadTranscript,
+  type EnvironmentId,
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
   parseGoalCommand,
@@ -502,6 +503,7 @@ export interface OrchestratorV2Shape {
   readonly getThreadTranscript: (
     threadId: ThreadId,
     maxBytes: number,
+    environmentId: EnvironmentId,
   ) => Effect.Effect<OrchestrationV2ThreadTranscript, OrchestratorProjectionError>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, OrchestratorV2Error>;
   readonly getRunCount: (threadId: ThreadId) => Effect.Effect<number, OrchestratorV2Error>;
@@ -17283,9 +17285,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
     getThreadTranscript: Effect.fn("OrchestratorV2.getThreadTranscript")(
-      function (threadId, maxBytes) {
+      function (threadId, maxBytes, environmentId) {
         return projectionStore
-          .getThreadTranscript(threadId, maxBytes)
+          .getThreadTranscript(threadId, maxBytes, environmentId)
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       },
     ),
