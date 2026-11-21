@@ -48,6 +48,7 @@ import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts"
 import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import { GUEST_FAILURE } from "../orchestration-v2/GuestShareDecider.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { coalesceThreadLiveStream } from "../orchestration-v2/ThreadLiveEventCoalescer.ts";
 import { buildBoundedThreadStreamSnapshot } from "../orchestration-v2/ThreadStream.ts";
 import {
@@ -220,6 +221,7 @@ const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread |
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
   const commandOutputs = yield* CommandOutputHub.CommandOutputHub;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -528,7 +530,7 @@ const make = Effect.gen(function* () {
    */
   const stream = Effect.fn("GuestShareService.stream")(function* (session: string) {
     const { thread, share } = yield* authorize(session, "session");
-    const snapshot = yield* orchestrator
+    const snapshot = yield* threads
       .getThreadSnapshotWindow(thread.id, {
         rowLimit: SNAPSHOT_ROW_LIMIT,
         userTurnLimit: SNAPSHOT_USER_TURN_LIMIT,

@@ -36,7 +36,8 @@ import * as EventSink from "../EventSink.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 
 const IMPORT_EVENT_PREFIX = "migration:v1";
-const TRANSCRIPT_EVENT_BATCH_SIZE = 100;
+const TRANSCRIPT_MESSAGE_BATCH_SIZE = 50;
+const TRANSCRIPT_MESSAGE_BATCH_BYTES = 8 * 1024 * 1024;
 
 interface LegacyThreadRow {
   readonly thread_id: string;
@@ -337,39 +338,52 @@ function messageEvents(
   ];
 }
 
-function chunks<A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A>> {
-  const result: Array<ReadonlyArray<A>> = [];
-  for (let index = 0; index < items.length; index += size) {
-    result.push(items.slice(index, index + size));
-  }
-  return result;
-}
-
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const eventSink = yield* EventSink.EventSinkV2;
   const transcriptImports = yield* KeyedLock.make<ThreadId>();
 
-  const listMessages = (threadId: ThreadId) =>
-    sql<LegacyMessageRow>`
+  type MessageCursor = Pick<LegacyMessageRow, "created_at" | "message_id">;
+  const listMessageBatch = (threadId: ThreadId, after: MessageCursor | undefined) =>
+    sql<Omit<LegacyMessageRow, "ordinal"> & { readonly imported: number }>`
+      WITH candidates AS MATERIALIZED (
+        SELECT message_id, created_at,
+          octet_length(text) + COALESCE(octet_length(attachments_json), 0) +
+            COALESCE(octet_length(context_json), 0) AS bytes,
+          EXISTS (
+            SELECT 1
+            FROM orchestration_v2_projection_turn_items AS item
+            WHERE item.turn_item_id = ${`${IMPORT_EVENT_PREFIX}:turn-item:`} || message.message_id
+              AND item.thread_id = message.thread_id
+          ) AS imported
+        FROM projection_thread_messages AS message
+        WHERE thread_id = ${threadId}
+          AND role IN ('user', 'assistant')
+          ${
+            after === undefined
+              ? sql``
+              : sql`AND (created_at, message_id) > (${after.created_at}, ${after.message_id})`
+          }
+        ORDER BY created_at ASC, message_id ASC
+        LIMIT ${TRANSCRIPT_MESSAGE_BATCH_SIZE}
+      ), sized AS (
+        SELECT message_id, imported,
+          ROW_NUMBER() OVER batch AS position,
+          SUM(CASE WHEN imported THEN 0 ELSE bytes END) OVER batch AS batch_bytes
+        FROM candidates
+        WINDOW batch AS (ORDER BY created_at ASC, message_id ASC)
+      )
       SELECT
-        message_id,
-        thread_id,
-        role,
-        text,
-        attachments_json,
-        context_json,
-        is_streaming,
-        created_at,
-        updated_at,
-        ROW_NUMBER() OVER (
-          PARTITION BY thread_id
-          ORDER BY created_at ASC, message_id ASC
-        ) AS ordinal
-      FROM projection_thread_messages
-      WHERE thread_id = ${threadId}
-        AND role IN ('user', 'assistant')
-      ORDER BY created_at ASC, message_id ASC
+        message.message_id, message.thread_id, message.role, message.is_streaming,
+        message.created_at, message.updated_at, sized.imported,
+        CASE WHEN sized.imported THEN '' ELSE message.text END AS text,
+        CASE WHEN NOT sized.imported THEN message.attachments_json END AS attachments_json,
+        CASE WHEN NOT sized.imported THEN message.context_json END AS context_json
+      FROM sized
+      CROSS JOIN projection_thread_messages AS message ON message.message_id = sized.message_id
+      -- A single message over the budget still needs to make progress.
+      WHERE sized.position = 1 OR sized.batch_bytes <= ${TRANSCRIPT_MESSAGE_BATCH_BYTES}
+      ORDER BY sized.position
     `.pipe(NodeSqliteClient.readOnly);
 
   const listShellMessages = Effect.fn("LegacyV1ThreadImporter.listShellMessages")(function* (
@@ -720,21 +734,20 @@ const make = Effect.gen(function* () {
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
         const importedAt = yield* DateTime.now;
-        const messages = yield* listMessages(threadId);
-        // Hint the index to skip V1 events without scanning their payloads.
-        const existingRows = yield* sql<{ readonly event_id: string }>`
-          SELECT event_id
-          FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
-          WHERE application_event_version = 2
-            AND aggregate_kind = 'thread'
-            AND stream_id = ${threadId}
-            AND event_id LIKE ${`${IMPORT_EVENT_PREFIX}:message:%`}
-        `.pipe(NodeSqliteClient.readOnly);
-        const existing = new Set(existingRows.map((row) => row.event_id));
-        const missing = messages.filter(
-          (message) => !existing.has(`${IMPORT_EVENT_PREFIX}:message:${message.message_id}`),
-        );
-        for (const batch of chunks(missing, TRANSCRIPT_EVENT_BATCH_SIZE / 2)) {
+        let after: MessageCursor | undefined;
+        let messageCount = 0;
+        let importedMessageCount = 0;
+        while (true) {
+          const messages = yield* listMessageBatch(threadId, after);
+          const last = messages.at(-1);
+          if (last === undefined) break;
+          after = { created_at: last.created_at, message_id: last.message_id };
+          // Shell previews and committed batches still occupy their original ordinals.
+          const batch = messages.flatMap((message, index) =>
+            message.imported ? [] : [{ ...message, ordinal: messageCount + index + 1 }],
+          );
+          messageCount += messages.length;
+          if (batch.length === 0) continue;
           yield* Effect.forEach(
             batch,
             (message) =>
@@ -756,6 +769,7 @@ const make = Effect.gen(function* () {
           yield* eventSink.write({
             events: batch.flatMap((message) => messageEvents(message, importedAt)),
           });
+          importedMessageCount += batch.length;
           yield* Effect.yieldNow;
         }
         const now = DateTime.formatIso(yield* DateTime.now);
@@ -763,14 +777,14 @@ const make = Effect.gen(function* () {
           UPDATE orchestration_v2_legacy_imports
           SET
             transcript_imported_at = ${now},
-            imported_message_count = ${messages.length},
+            imported_message_count = ${messageCount},
             last_error = NULL
           WHERE thread_id = ${threadId}
         `;
         confirmTranscript(threadId);
         return {
           importedThreadCount: 1,
-          importedMessageCount: missing.length,
+          importedMessageCount,
         };
       }),
     );

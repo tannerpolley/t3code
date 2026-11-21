@@ -392,8 +392,12 @@ function IssueStartControls({
           </p>
           <p className="text-xs text-muted-foreground">
             Starting authorizes one updated T3 status comment and one closeout comment per finished
-            attempt. Agents can create and split issues and move milestones. Body edits,
-            close/reopen, and standalone parent changes require your approval of the exact preview.
+            attempt.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {gt(
+              'Creating, splitting, and moving issues between milestones require approval when "Ask before agents create, split or move issues" is on. Body edits, closing or reopening issues, and parent or blocker changes require approval when the agent thread is in Approval required mode.',
+            )}
           </p>
           {statusQuery.error ? (
             <p className="text-xs text-muted-foreground">

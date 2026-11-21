@@ -21,6 +21,7 @@
   "874249a1962865f1": "{minutes} Min.",
   "da395e0d0098218d": "Routine",
   "70c4417f87f445b2": "Komplex",
+  "143cb1aa9f30dfd2": "Das Erstellen und Aufteilen von Issues sowie das Verschieben zwischen Meilensteinen erfordern eine Genehmigung, wenn „Ask before agents create, split or move issues“ aktiviert ist. Änderungen an der Beschreibung, das Schließen oder Wiederöffnen sowie Änderungen an übergeordneten oder blockierenden Issues erfordern eine Genehmigung, wenn der Agenten-Thread im Modus „Approval required“ läuft.",
   "dd10f8671d149b28": "Stufe",
   "c8835bc68ac01205": "Aufwand",
   "e40e6d4ec89b5365": "Standard",

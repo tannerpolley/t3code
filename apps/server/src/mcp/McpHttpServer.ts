@@ -33,6 +33,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as NotebookService from "../notebook/NotebookService.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
@@ -246,6 +247,8 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const markRepositoryManaged = yield* makeRepositoryManagedMark;
+  const notebooks = yield* Effect.serviceOption(NotebookService.NotebookService);
+  const threads = yield* Effect.serviceOption(ThreadManagementService.ThreadManagementService);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
   const linksEnabled = serverSettings.getSettings.pipe(
@@ -285,7 +288,29 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
-    return yield* markRepositoryManaged({ ...limited, linkedEnvironments, origin });
+    const threadId = limited.thread?.threadId;
+    const notebooksConfigured =
+      threadId !== undefined && Option.isSome(notebooks) && Option.isSome(threads)
+        ? yield* Effect.cached(
+            threads.value.getThreadShell(threadId).pipe(
+              Effect.flatMap((thread) =>
+                thread?.deletedAt === null
+                  ? notebooks.value.hasConfiguredWorkspace({
+                      threadId,
+                      projectId: thread.projectId,
+                    })
+                  : Effect.succeed(false),
+              ),
+              Effect.orElseSucceed(() => false),
+            ),
+          )
+        : undefined;
+    return yield* markRepositoryManaged({
+      ...limited,
+      linkedEnvironments,
+      origin,
+      ...(notebooksConfigured === undefined ? {} : { notebooksConfigured }),
+    });
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
@@ -1374,8 +1399,25 @@ const layerToolExposure = Layer.effect(
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     return McpToolExposure.make(
-      () =>
-        server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const request = Option.getOrUndefined(
+          yield* Effect.serviceOption(McpSchema.McpRequestContext),
+        );
+        const profile = {
+          protocolVersion: request?.protocolVersion ?? McpProtocol.v2025_06_18.protocolVersion,
+          capabilities: request?.clientCapabilities ?? {},
+          clientInfo: request?.clientInfo,
+        };
+        const notebooksConfigured = yield* scope.notebooksConfigured ?? Effect.succeed(false);
+        return server.tools.flatMap(({ tool, annotations }) => {
+          const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
+          return (enabledWhen === undefined || enabledWhen(profile)) &&
+            (notebooksConfigured || !Object.hasOwn(NotebookToolkit.tools, tool.name))
+            ? [{ name: tool.name, description: tool.description ?? "" }]
+            : [];
+        });
+      }),
       () => server.notifications["notifications/tools/list_changed"]({}),
     );
   }),
@@ -1383,8 +1425,8 @@ const layerToolExposure = Layer.effect(
 
 /**
  * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER: deferred` lists only
- * the direct tools and what its `tool_search` calls loaded. Calls are never
- * gated, and every other client lists everything but `tool_search`.
+ * the direct tools and what its `tool_search` calls loaded. Deferral affects
+ * discovery. Notebook tools are listed only for configured workspaces.
  */
 const layerDeferredListing = McpServer.visibility(
   Effect.gen(function* () {
@@ -1393,7 +1435,13 @@ const layerDeferredListing = McpServer.visibility(
     return Effect.fnUntraced(function* ({ method, target, headers }: McpServer.MiddlewareOptions) {
       if (method !== "tools/list") return true;
       const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
-      const providerSessionId = Option.getOrUndefined(scope)?.thread?.providerSessionId;
+      const caller = Option.getOrUndefined(scope);
+      if (
+        Object.hasOwn(NotebookToolkit.tools, target) &&
+        !(yield* caller?.notebooksConfigured ?? Effect.succeed(false))
+      )
+        return false;
+      const providerSessionId = caller?.thread?.providerSessionId;
       if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
         return target !== McpToolExposure.TOOL_SEARCH;
       }

@@ -60,21 +60,23 @@ const make = Effect.gen(function* () {
       Effect.mapError(() => new NotebookError({ reason: "unavailable" })),
     );
   });
+  const profileFor = Effect.fn("NotebookConfiguration.profileFor")(function* (root: string) {
+    const configured = yield* read(
+      NodePath.join(server.baseDir, "notebooks.json"),
+      Schema.Array(profile),
+      [],
+    );
+    const [selected, duplicate] = configured.filter((p) => p.root === root);
+    return duplicate === undefined ? selected : undefined;
+  });
   const endpoint = Effect.fn("NotebookConfiguration.endpoint")(function* (root: string) {
     return yield* lock
       .withPermit(
         Effect.gen(function* () {
           if (journalResult._tag === "Failure")
             return yield* new NotebookError({ reason: "unavailable" });
-          const configured = yield* read(
-            NodePath.join(server.baseDir, "notebooks.json"),
-            Schema.Array(profile),
-            [],
-          );
-          const matches = configured.filter((p) => p.root === root);
-          const selected = matches[0];
+          const selected = yield* profileFor(root);
           if (
-            matches.length !== 1 ||
             !selected ||
             !NodePath.isAbsolute(selected.interpreter) ||
             !/^[a-zA-Z0-9_-]{1,100}$/.test(selected.secretName) ||
@@ -113,6 +115,12 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(() => new NotebookError({ reason: "unavailable" })));
   });
   return NotebookService.NotebookConfiguration.of({
+    hasProfile: Effect.fn("NotebookConfiguration.hasProfile")((root: string) =>
+      profileFor(root).pipe(
+        Effect.map((selected) => selected !== undefined),
+        Effect.orElseSucceed(() => false),
+      ),
+    ),
     endpoint,
     owned: Effect.fn("NotebookConfiguration.owned")((root, profileHash, id) =>
       lock.withPermit(Effect.suspend(() => persist([...journal, { root, id, profileHash }]))),

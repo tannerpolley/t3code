@@ -48,6 +48,7 @@ import { ExecutionReducer } from "./executionReducer.ts";
 export class NotebookConfiguration extends Context.Service<
   NotebookConfiguration,
   {
+    readonly hasProfile: (root: string) => Effect.Effect<boolean>;
     readonly endpoint: (
       root: string,
     ) => Effect.Effect<JupyterTransport.Endpoint & { readonly profileHash: string }, NotebookError>;
@@ -64,6 +65,9 @@ type Caller = { readonly scopes: readonly AuthEnvironmentScope[] };
 export class NotebookService extends Context.Service<
   NotebookService,
   {
+    readonly hasConfiguredWorkspace: (
+      input: Pick<NotebookIdentity, "projectId" | "threadId">,
+    ) => Effect.Effect<boolean>;
     readonly editCells: (
       input: NotebookEditCells,
       caller: Caller,
@@ -1133,6 +1137,13 @@ const make = Effect.gen(function* () {
   );
 
   return NotebookService.of({
+    hasConfiguredWorkspace: Effect.fn("NotebookService.hasConfiguredWorkspace")(
+      (input: Pick<NotebookIdentity, "projectId" | "threadId">) =>
+        rootFor(input).pipe(
+          Effect.flatMap(config.hasProfile),
+          Effect.orElseSucceed(() => false),
+        ),
+    ),
     editCells,
     listKernels,
     readOutputs,

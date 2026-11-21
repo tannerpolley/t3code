@@ -6,6 +6,7 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   EventId,
+  MessageId,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   OrchestrationV2AppThread,
@@ -13,10 +14,10 @@ import {
   OrchestrationV2TurnItem,
   OrchestrationV2ThreadTranscript,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
-import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -182,7 +183,7 @@ const serveOrchestrationHttp = (allowed: () => boolean) =>
     return { services, eventSink, handler };
   });
 
-it.effect("exports full history with size, scope, and missing-thread checks", () =>
+it.effect("exports full visible history with scope and missing-thread checks", () =>
   Effect.gen(function* () {
     let allowed = true;
     const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => allowed);
@@ -193,18 +194,6 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
             headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
           }),
         ),
-      );
-
-    const readTranscriptError = Context.get(
-      services,
-      ThreadManagementService.ThreadManagementService,
-    )
-      .getThreadTranscript(thread.id)
-      .pipe(
-        Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
-          getEnvironmentId: Effect.succeed(environmentId),
-        }),
-        Effect.flip,
       );
 
     const emptyResponse = yield* read(thread.id);
@@ -230,89 +219,8 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     expect(transcript.items[0]?.visibility).toBe("local");
     expect(transcript.items[199]?.position).toBe(199);
 
-    const emptyOutputRows = transcript.items.map((row, position) =>
-      position === 0 ? { ...row, item: { ...row.item, output: "" } } : row,
-    );
-    const header = threadTranscriptHeader(environmentId, transcript);
-    const baseSize =
-      Buffer.byteLength(header, "utf8") +
-      emptyOutputRows.reduce(
-        (size, row) => size + Buffer.byteLength(`${JSON.stringify(row)}\n`, "utf8"),
-        0,
-      );
-    const boundaryOutput = "界" + "x".repeat(PROVIDER_SEND_TURN_MAX_FILE_BYTES - baseSize - 3);
-    for (const [suffix, expectedStatus] of [
-      ["", 200],
-      ["x", 400],
-    ] as const) {
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make(`boundary-${expectedStatus}`),
-            type: "turn-item.updated",
-            threadId: thread.id,
-            occurredAt: now,
-            payload: {
-              ...items.find((item) => item.type === "command_execution")!,
-              output: boundaryOutput + suffix,
-            },
-          },
-        ],
-      });
-      const response = yield* read(thread.id);
-      expect(response.status).toBe(expectedStatus);
-      if (expectedStatus === 200) continue;
-      expect(yield* readTranscriptError).toBeInstanceOf(
-        ThreadManagementService.ThreadTranscriptTooLargeError,
-      );
-      expect(yield* Effect.promise(() => response.json())).toMatchObject({
-        _tag: "EnvironmentRequestInvalidError",
-        reason: "thread_transcript_too_large",
-      });
-    }
-
     const sql = Context.get(services, SqlClient.SqlClient);
-    const commandItemId = items.find((item) => item.type === "command_execution")!.id;
-    const setCommandPayload = (payload: Statement.Fragment) => sql`
-      UPDATE orchestration_v2_projection_turn_items SET payload_json = ${payload}
-      WHERE turn_item_id = ${commandItemId}
-    `;
-    const fill = (bytes: number) => sql`printf('%.*c', ${bytes}, 'x')`;
-    // Stored bytes the export drops do not count, and neither does a row SQLite cannot parse:
-    // only what the export keeps can reject it.
-    yield* setCommandPayload(sql`json_set(
-      payload_json, '$.output', 'x',
-      '$.droppedLegacyField', ${fill(PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1)}
-    )`);
-    expect((yield* read(thread.id)).status).toBe(200);
-    const deepField = sql`'"droppedDeepField":' || printf('%.*c', 1001, '[') || printf('%.*c', 1001, ']') || ','`;
-    yield* setCommandPayload(
-      sql`replace(payload_json, '"droppedLegacyField":', ${deepField} || '"droppedLegacyField":')`,
-    );
-    expect((yield* read(thread.id)).status).toBe(200);
-    // Tool output over the limit rejects the export, here as the content array a dynamic tool
-    // stores. Its only read is the size.
-    yield* sql`
-      UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool'
-      WHERE turn_item_id = ${commandItemId}
-    `;
-    yield* setCommandPayload(sql`json_set(
-      replace(payload_json, ${deepField}, ''), '$.type', 'dynamic_tool', '$.toolName', NULL,
-      '$.output',
-      json_array(json_object('type', 'text', 'text', ${fill(PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1)}))
-    )`);
-    const reads: Array<string> = [];
-    expect(
-      yield* readTranscriptError.pipe(
-        Effect.provideService(Statement.CurrentTransformer, (statement) => {
-          reads.push(statement.compile()[0]);
-          return Effect.succeed(statement);
-        }),
-      ),
-    ).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
-    expect(reads).toEqual([expect.stringContaining("octet_length(payload_json)")]);
-    expect((yield* read(thread.id)).status).toBe(400);
-    // The export leaves a rolled back run out, so its output cannot reject it.
+    const commandItemId = items[0]!.id;
     yield* eventSink.write({
       events: [
         {
@@ -325,10 +233,11 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       ],
     });
     yield* sql`
-      UPDATE orchestration_v2_projection_turn_items SET run_id = ${rolledBackRun.id}
+      UPDATE orchestration_v2_projection_turn_items
+      SET run_id = ${rolledBackRun.id},
+        payload_json = json_set(payload_json, '$.runId', ${rolledBackRun.id})
       WHERE turn_item_id = ${commandItemId}
     `;
-    yield* setCommandPayload(sql`json_set(payload_json, '$.runId', ${rolledBackRun.id})`);
     const withoutRolledBackRun = yield* read(thread.id);
     expect(withoutRolledBackRun.status).toBe(200);
     expect(
@@ -339,6 +248,361 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     allowed = false;
     expect((yield* read(thread.id)).status).toBe(403);
   }),
+);
+
+it.effect("exports a transcript with oversized fields dropped by the decoder", () =>
+  Effect.gen(function* () {
+    const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+    const item = items.find((item) => item.type === "command_execution")!;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("legacy-command"),
+          type: "turn-item.updated",
+          threadId: thread.id,
+          occurredAt: now,
+          payload: item,
+        },
+      ],
+    });
+    const sql = Context.get(services, SqlClient.SqlClient);
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.droppedLegacyField',
+        printf('%.*c', ${PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1}, 'x'))
+      WHERE turn_item_id = ${item.id}
+    `;
+    const read = () =>
+      Effect.promise(() =>
+        handler(
+          new Request(`http://localhost/api/orchestration/threads/${thread.id}/transcript`, {
+            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+          }),
+        ),
+      );
+    const response = yield* read();
+    expect(response.status).toBe(200);
+    const body = (yield* Effect.promise(() => response.json())) as {
+      items: Array<{ item: object }>;
+    };
+    expect(body.items[0]?.item).not.toHaveProperty("droppedLegacyField");
+    const deepField = sql`'"droppedDeepField":' || printf('%.*c', 1001, '[') || printf('%.*c', 1001, ']') || ','`;
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = replace(payload_json, '"droppedLegacyField":', ${deepField} || '"droppedLegacyField":')
+      WHERE turn_item_id = ${item.id}
+    `;
+    const deepResponse = yield* read();
+    expect(deepResponse.status).toBe(200);
+    yield* Effect.promise(() => deepResponse.body!.cancel());
+  }),
+);
+
+it.effect("stops transcript payload reads at the page that crosses the encoded limit", () =>
+  Effect.gen(function* () {
+    const { services, eventSink } = yield* serveOrchestrationHttp(() => true);
+    const [first, next] = items;
+    yield* eventSink.write({
+      events: [first!, next!].map((item) => ({
+        id: EventId.make(`export:${item.id}`),
+        type: "turn-item.updated" as const,
+        threadId: thread.id,
+        occurredAt: now,
+        payload: item,
+      })),
+    });
+    const sql = Context.get(services, SqlClient.SqlClient);
+    const [size] = yield* sql<{ overhead: number }>`
+      SELECT SUM(octet_length(json_set(payload_json, '$.output', ''))) AS overhead
+      FROM orchestration_v2_projection_turn_items WHERE thread_id = ${thread.id}
+    `;
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.output',
+        printf('%.*c', ${PROVIDER_SEND_TURN_MAX_FILE_BYTES - size!.overhead - 1}, 'x'))
+      WHERE turn_item_id = ${first!.id}
+    `;
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.output', '')
+      WHERE turn_item_id = ${next!.id}
+    `;
+    const reads: unknown[] = [];
+    const error = yield* Context.get(services, ThreadManagementService.ThreadManagementService)
+      .getThreadTranscript(thread.id)
+      .pipe(
+        Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+          getEnvironmentId: Effect.succeed(environmentId),
+        }),
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          const [query, args] = statement.compile();
+          if (query.includes("SELECT item.thread_id, item.turn_item_id, item.payload_json")) {
+            reads.push(JSON.parse(String(args[0])));
+          }
+          return Effect.succeed(statement);
+        }),
+        Effect.flip,
+      );
+    expect(error).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
+    expect(reads).toEqual([[{ threadId: thread.id, id: first!.id }]]);
+  }),
+);
+
+it.effect("exports a fork without reading later runs from its parent", () =>
+  Effect.gen(function* () {
+    const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+    const firstRun = { ...rolledBackRun, status: "completed" as const };
+    const lateRun = { ...firstRun, id: RunId.make("run:late"), ordinal: 2 };
+    const forkId = ThreadId.make("fork");
+    const events = [
+      { type: "run.created" as const, payload: firstRun },
+      { type: "run.created" as const, payload: lateRun },
+      { type: "turn-item.updated" as const, payload: { ...items[0]!, runId: firstRun.id } },
+      { type: "turn-item.updated" as const, payload: { ...items[1]!, runId: lateRun.id } },
+    ].map((event, index) => ({
+      ...event,
+      id: EventId.make(`source:${index}`),
+      threadId: thread.id,
+      occurredAt: now,
+    }));
+    yield* eventSink.write({
+      events: [
+        ...events,
+        {
+          id: EventId.make("create-early-fork"),
+          type: "thread.created",
+          threadId: forkId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            id: forkId,
+            forkedFrom: { type: "run", threadId: thread.id, runId: firstRun.id },
+            lineage: {
+              parentThreadId: thread.id,
+              relationshipToParent: "fork",
+              rootThreadId: thread.id,
+            },
+          },
+        },
+      ],
+    });
+    const sql = Context.get(services, SqlClient.SqlClient);
+    yield* sql`
+      UPDATE orchestration_v2_projection_runs SET payload_json = '{}'
+      WHERE run_id = ${lateRun.id}
+    `;
+    const response = yield* Effect.promise(() =>
+      handler(
+        new Request(`http://localhost/api/orchestration/threads/${forkId}/transcript`, {
+          headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    const transcript = yield* decodeTranscript(yield* Effect.promise(() => response.json()));
+    expect(transcript.items.map(({ item, visibility }) => [item.type, visibility])).toEqual([
+      ["command_execution", "inherited"],
+      ["fork", "synthetic"],
+    ]);
+    expect(transcript.items[0]?.sourceItemId).toBe(items[0]!.id);
+  }),
+);
+
+it.effect.each([
+  { hidden: false, name: "a duplicate message projection" },
+  { hidden: true, name: "a rolled-back item" },
+])("exports a transcript that fits alongside $name", ({ hidden }) =>
+  Effect.gen(function* () {
+    const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+    const sql = Context.get(services, SqlClient.SqlClient);
+    const messageId = MessageId.make("message:export");
+    const commandItem = items.find((item) => item.type === "command_execution")!;
+    const messageItem = {
+      ...commandItem,
+      type: "assistant_message" as const,
+      messageId,
+      text: "Visible reply",
+      streaming: false,
+    };
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("export-visible"),
+          threadId: thread.id,
+          occurredAt: now,
+          type: "turn-item.updated",
+          payload: messageItem,
+        },
+        ...(hidden
+          ? [
+              {
+                id: EventId.make("export-rolled-back-run"),
+                threadId: thread.id,
+                occurredAt: now,
+                type: "run.created" as const,
+                payload: rolledBackRun,
+              },
+              {
+                id: EventId.make("export-hidden"),
+                threadId: thread.id,
+                occurredAt: now,
+                type: "turn-item.updated" as const,
+                payload: { ...messageItem, id: items[1]!.id, runId: rolledBackRun.id, ordinal: 2 },
+              },
+            ]
+          : [
+              {
+                id: EventId.make("export-message"),
+                threadId: thread.id,
+                occurredAt: now,
+                type: "message.updated" as const,
+                payload: {
+                  id: messageId,
+                  threadId: thread.id,
+                  runId: null,
+                  nodeId: null,
+                  role: "assistant" as const,
+                  text: messageItem.text,
+                  attachments: [],
+                  streaming: false,
+                  createdAt: now,
+                  updatedAt: now,
+                  createdBy: "agent" as const,
+                  creationSource: "provider" as const,
+                },
+              },
+            ]),
+      ],
+    });
+    const textBytes = 26 * 1024 * 1024;
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.text', printf('%.*c', ${textBytes}, 'x'))
+      WHERE thread_id = ${thread.id}
+    `;
+    yield* sql`
+      UPDATE orchestration_v2_projection_messages
+      SET payload_json = json_set(payload_json, '$.text', printf('%.*c', ${textBytes}, 'x'))
+      WHERE message_id = ${messageId}
+    `;
+    const response = yield* Effect.promise(() =>
+      handler(
+        new Request(`http://localhost/api/orchestration/threads/${thread.id}/transcript`, {
+          headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+        }),
+      ),
+    );
+    yield* Effect.promise(() => response.body!.cancel());
+    expect(response.status).toBe(200);
+  }),
+);
+
+it.effect.each([
+  { type: "reasoning", inherited: false },
+  { type: "assistant_message", inherited: false },
+  { type: "reasoning", inherited: true },
+] as const)(
+  "bounds transcript projection reads for $type (inherited: $inherited)",
+  ({ type, inherited }) =>
+    Effect.gen(function* () {
+      const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+      const run = { ...rolledBackRun, status: "completed" as const };
+      const forkId = ThreadId.make("fork");
+      const item = items.find((item) => item.type === "command_execution")!;
+      const textItem = {
+        ...item,
+        runId: run.id,
+        text: "Small transcript",
+        streaming: false,
+      };
+      const events = [
+        {
+          id: EventId.make("create-run"),
+          type: "run.created" as const,
+          threadId: thread.id,
+          occurredAt: now,
+          payload: run,
+        },
+        {
+          id: EventId.make("create-item"),
+          type: "turn-item.updated" as const,
+          threadId: thread.id,
+          occurredAt: now,
+          payload:
+            type === "reasoning"
+              ? { ...textItem, type }
+              : { ...textItem, type, messageId: MessageId.make("message:assistant") },
+        },
+        {
+          id: EventId.make("create-fork"),
+          type: "thread.created" as const,
+          threadId: forkId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            id: forkId,
+            forkedFrom: { type: "run" as const, threadId: thread.id, runId: run.id },
+            lineage: {
+              parentThreadId: thread.id,
+              relationshipToParent: "fork" as const,
+              rootThreadId: thread.id,
+            },
+          },
+        },
+      ];
+      yield* eventSink.write({ events });
+      const threadId = inherited ? forkId : thread.id;
+      const read = () =>
+        Effect.promise(() =>
+          handler(
+            new Request(`http://localhost/api/orchestration/threads/${threadId}/transcript`, {
+              headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+            }),
+          ),
+        );
+      const smallResponse = yield* read();
+      expect(smallResponse.status).toBe(200);
+      expect(
+        (yield* decodeTranscript(yield* Effect.promise(() => smallResponse.json()))).items,
+      ).toContainEqual(
+        expect.objectContaining({
+          visibility: inherited ? "inherited" : "local",
+          item: expect.objectContaining({ type, text: "Small transcript" }),
+        }),
+      );
+
+      const sql = Context.get(services, SqlClient.SqlClient);
+      yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(payload_json, '$.text', printf('%.*c', ${PROVIDER_SEND_TURN_MAX_FILE_BYTES}, 'x'))
+      WHERE turn_item_id = ${item.id}
+    `;
+      const reads: string[] = [];
+      const error = yield* Context.get(services, ThreadManagementService.ThreadManagementService)
+        .getThreadTranscript(threadId)
+        .pipe(
+          Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+            getEnvironmentId: Effect.succeed(environmentId),
+          }),
+          Effect.provideService(Statement.CurrentTransformer, (statement) => {
+            const [query] = statement.compile();
+            if (query.includes("CROSS JOIN orchestration_v2_projection_turn_items AS item")) {
+              reads.push(query);
+            }
+            return Effect.succeed(statement);
+          }),
+          Effect.flip,
+        );
+      expect(error).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
+      expect(reads).toEqual([
+        expect.stringContaining("SELECT item.thread_id, item.turn_item_id, item.payload_json"),
+      ]);
+      const largeResponse = yield* read();
+      expect(largeResponse.status).toBe(400);
+      expect(yield* Effect.promise(() => largeResponse.json())).toMatchObject({
+        reason: "thread_transcript_too_large",
+      });
+    }),
 );
 
 it.effect("rejects an oversized full thread snapshot and still serves bounded history", () =>

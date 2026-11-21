@@ -527,13 +527,18 @@ const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
 const hiddenFromSubagents = new Set([
   ...enabledWhen(McpInvocationContext.hiddenFromSubagents),
   ...enabledWhen(McpInvocationContext.allowsPullRequestUnwatch),
+  ...enabledWhen(McpInvocationContext.topLevelThreadOnly),
 ]);
+const notebookTools = new Set(
+  Object.keys(NotebookToolkit.tools).map((name) => `${T3_PREFIX}${name}`),
+);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
 const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>
   t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      !notebookTools.has(tool.name) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 

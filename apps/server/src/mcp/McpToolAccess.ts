@@ -452,10 +452,11 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
     const tool = toolkit.tools[name];
     if (tool === undefined) continue;
     const remote = remoteCheckOf(declaration);
+    const enabledWhen = Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen);
     if (
       remote === undefined &&
-      Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen) !==
-        McpInvocationContext.hiddenFromOutsideClients
+      enabledWhen !== McpInvocationContext.hiddenFromOutsideClients &&
+      enabledWhen !== McpInvocationContext.topLevelThreadOnly
     )
       return yield* Effect.die(
         `${name} acts as its calling thread, so outside clients must not be offered it.`,

@@ -68,6 +68,7 @@ const setup = Effect.fn("Test.setup")(function* (
   options: {
     readonly worktrees?: readonly string[];
     readonly fileSystem?: (fs: FileSystem.FileSystem) => FileSystem.FileSystem;
+    readonly profiledRoots?: ReadonlySet<string>;
   } = {},
 ) {
   const messages = yield* Queue.unbounded<JupyterTransport.Message, NotebookError>();
@@ -112,6 +113,8 @@ const setup = Effect.fn("Test.setup")(function* (
       Layer.provide(Layer.succeed(JupyterTransport.JupyterTransport, transport)),
       Layer.provide(
         Layer.succeed(NotebookService.NotebookConfiguration, {
+          hasProfile: (workspaceRoot) =>
+            Effect.succeed(options.profiledRoots?.has(workspaceRoot) ?? false),
           owned: Effect.fn("Fake.owned")(() => Effect.void),
           released: Effect.fn("Fake.released")(() => Effect.void),
           endpoint: Effect.fn("Fake.endpoint")(() =>
@@ -1119,6 +1122,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const worktrees: string[] = [];
+      const profiledRoots = new Set<string>();
       const verified: string[] = [];
       const { service, handle, root, fs, sql, requests } = yield* setup(
         {
@@ -1128,7 +1132,7 @@ it.effect(
             }),
           ),
         },
-        { worktrees },
+        { worktrees, profiledRoots },
       );
       const workspace = yield* fs.makeTempDirectoryScoped();
       const alias = `${root}/worktree-alias`;
@@ -1139,6 +1143,10 @@ it.effect(
       yield* fs.writeFileString(`${workspace}/test.ipynb`, JSON.stringify(fixture));
       const payload = JSON.stringify({ worktreePath: alias });
       yield* sql`INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json) VALUES (${threadId}, ${handle.projectId}, 'Worktree', 'codex', 'full-access', 'default', '2026-10-28', '2026-10-28', ${payload})`;
+      profiledRoots.add(root);
+      expect(yield* service.hasConfiguredWorkspace(binding)).toBe(false);
+      profiledRoots.add(workspace);
+      expect(yield* service.hasConfiguredWorkspace(binding)).toBe(true);
       const tree = yield* service.open(binding, caller);
       const artifact = yield* service.open({ ...binding, relativePath: "./test.ipynb" }, caller);
       expect(artifact.handle).toBe(tree.handle);
@@ -1164,6 +1172,7 @@ it.effect(
         yield* service.open({ ...binding, relativePath: "escape.ipynb" }, caller).pipe(Effect.flip),
       ).toMatchObject({ reason: "invalid-path" });
       worktrees.length = 0;
+      expect(yield* service.hasConfiguredWorkspace(binding)).toBe(false);
       expect(yield* service.snapshot(target, caller).pipe(Effect.flip)).toMatchObject({
         reason: "invalid-path",
       });
