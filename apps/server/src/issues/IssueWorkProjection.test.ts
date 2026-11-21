@@ -1,9 +1,10 @@
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import {
   EventId,
   IssueTrackerKind,
   MessageId,
   NodeId,
+  ProviderThreadId,
   RunId,
   RuntimeRequestId,
   ProviderDriverKind,
@@ -52,6 +53,11 @@ it.effect(
       const scenarios = [
         "idle",
         "running",
+        "stopped",
+        "cancelled-after-stop-request",
+        "resumed-before-restart",
+        "system-interrupt",
+        "interrupted",
         "queued",
         "held",
         "completed",
@@ -177,13 +183,30 @@ it.effect(
               ? "queued"
               : name === "running"
                 ? "running"
-                : name === "waiting" || name === "question" || name === "auth" || name === "monitor"
-                  ? "waiting"
-                  : "completed",
+                : name === "cancelled-after-stop-request"
+                  ? "cancelled"
+                  : name === "stopped" ||
+                      name === "resumed-before-restart" ||
+                      name === "interrupted" ||
+                      name === "system-interrupt"
+                    ? "interrupted"
+                    : name === "waiting" ||
+                        name === "question" ||
+                        name === "auth" ||
+                        name === "monitor"
+                      ? "waiting"
+                      : "completed",
           ...(name === "held" ? { queueHeld: true } : {}),
           requestedAt: now,
           startedAt: now,
-          completedAt: null,
+          completedAt:
+            name === "stopped" ||
+            name === "cancelled-after-stop-request" ||
+            name === "resumed-before-restart" ||
+            name === "interrupted" ||
+            name === "system-interrupt"
+              ? now
+              : null,
           checkpointId: null,
           contextHandoffId: null,
         };
@@ -197,6 +220,87 @@ it.effect(
             occurredAt: now,
             payload: name === "limited" ? { ...run, status: "failed", completedAt: now } : run,
           });
+        if (
+          name === "stopped" ||
+          name === "cancelled-after-stop-request" ||
+          name === "resumed-before-restart" ||
+          name === "system-interrupt"
+        ) {
+          yield* apply({
+            id: EventId.make(`stop-request:${name}`),
+            type: "turn-item.updated",
+            threadId: id,
+            runId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`stop-request:${name}`),
+              threadId: id,
+              runId,
+              nodeId,
+              providerThreadId: ProviderThreadId.make("stopped-provider"),
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "completed",
+              type: name === "stopped" ? "run_interrupt_result" : "run_interrupt_request",
+              title: name === "stopped" ? "Interrupted" : "Interrupt requested",
+              message:
+                name === "system-interrupt"
+                  ? "Interrupted by issue work suspension"
+                  : name === "stopped"
+                    ? "Force stopped by user"
+                    : "Stopped by user",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+        }
+        if (name === "resumed-before-restart") {
+          const requestedAt = DateTime.add(now, { seconds: 1 });
+          const resumed: OrchestrationV2Run = {
+            ...run,
+            id: RunId.make("resumed-after-stop"),
+            ordinal: 2,
+            status: "starting",
+            requestedAt,
+            startedAt: null,
+            completedAt: null,
+          };
+          yield* apply({
+            id: EventId.make("requested-after-stop"),
+            type: "run.created",
+            threadId: id,
+            runId: resumed.id,
+            occurredAt: requestedAt,
+            payload: resumed,
+          });
+          const cancelledAt = DateTime.add(requestedAt, { seconds: 1 });
+          yield* apply({
+            id: EventId.make("cancelled-after-resume"),
+            type: "run.updated",
+            threadId: id,
+            runId: resumed.id,
+            occurredAt: cancelledAt,
+            payload: {
+              ...resumed,
+              status: "cancelled",
+              completedAt: cancelledAt,
+            },
+          });
+          const shell = yield* projections.getThreadShell(id);
+          expect
+            .soft(shell?.explicitStopRequested, "a new request cleared the pause")
+            .toBeUndefined();
+        }
+        if (name === "system-interrupt") {
+          const shell = yield* projections.getThreadShell(id);
+          expect
+            .soft(shell?.explicitStopRequested, "system interrupts are not explicit stops")
+            .toBeUndefined();
+        }
         if (name === "limited") {
           yield* apply({
             id: EventId.make("limit-error"),
@@ -330,6 +434,15 @@ it.effect(
       assert.equal(work.find((item) => item.threadId === "inherited")?.inherited, true);
       assert.equal(work.find((item) => item.threadId === "explicit")?.inherited, false);
       assert.equal(work.find((item) => item.threadId === "archived")?.status, "idle");
+      assert.isTrue(work.find((item) => item.threadId === "stopped")?.paused);
+      assert.deepEqual(
+        work
+          .filter((item) => item.paused)
+          .map((item) => item.threadId)
+          .sort(),
+        ["stopped"],
+      );
+      assert.isUndefined(work.find((item) => item.threadId === "interrupted")?.paused);
       assert.deepEqual(work.find((item) => item.threadId === "legacy")?.pullRequests, [pr.url]);
       assert.equal(first.issues[0]!.pullRequestCount, 1);
       assert.equal(

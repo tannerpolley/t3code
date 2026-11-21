@@ -253,6 +253,25 @@ export function resolveThreadActivityGroup(
   return visibleOpenPullRequest(thread.pullRequests) === undefined ? null : "ready-for-review";
 }
 
+export function isExplicitlyPausedThread(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    | "status"
+    | "explicitStopRequested"
+    | "activityRunStatus"
+    | "pendingBackgroundTasks"
+    | "archivedAt"
+  >,
+): boolean {
+  return (
+    thread.archivedAt === null &&
+    thread.status === "interrupted" &&
+    thread.explicitStopRequested === true &&
+    thread.activityRunStatus == null &&
+    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  );
+}
+
 export function threadActivityFromShell(thread: OrchestrationV2ThreadShell, requestVisible = true) {
   const request = requestVisible ? thread.pendingRuntimeRequest : null;
   const latestRun =

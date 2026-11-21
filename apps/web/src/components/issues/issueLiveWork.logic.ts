@@ -5,6 +5,7 @@ import type {
   IssueRepositoryRef,
   RepositoryIssueSummary,
   IssuePullRequestStatus,
+  ThreadId,
 } from "@t3tools/contracts";
 import { managedImplementorAwaitingSubagent } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
@@ -17,7 +18,10 @@ const sameItems = <T>(left: readonly T[], right: readonly T[]) =>
   left.length === right.length && left.every((item, index) => item === right[index]);
 
 /** Built once per shell update, shared by all issue surfaces. No issue-by-thread scans. */
-export function indexIssueWork(shells: readonly EnvironmentThreadShell[]) {
+export function indexIssueWork(
+  shells: readonly EnvironmentThreadShell[],
+  removedAt?: ReadonlyMap<EnvironmentId, ReadonlyMap<ThreadId, number>>,
+) {
   const threads = new Map<string, EnvironmentThreadShell>();
   const issues = new Map<string, Map<number, EnvironmentThreadShell[]>>();
   for (const thread of shells) {
@@ -30,7 +34,7 @@ export function indexIssueWork(shells: readonly EnvironmentThreadShell[]) {
     linked.push(thread);
     repository.set(thread.linkedIssue.number, linked);
   }
-  return { threads, issues };
+  return { threads, issues, removedAt };
 }
 type IssueWorkIndex = ReturnType<typeof indexIssueWork>;
 type WorkSummary = Pick<RepositoryIssueSummary, "number"> & {
@@ -38,9 +42,14 @@ type WorkSummary = Pick<RepositoryIssueSummary, "number"> & {
   readonly liveWork?:
     | readonly (Pick<
         NonNullable<RepositoryIssueSummary["liveWork"]>[number],
-        "threadId" | "inherited" | "status" | "worktreeExists"
+        "threadId" | "inherited" | "status" | "paused" | "worktreeExists"
       > &
-        Partial<Pick<NonNullable<RepositoryIssueSummary["liveWork"]>[number], "worktreePath">>)[]
+        Partial<
+          Pick<
+            NonNullable<RepositoryIssueSummary["liveWork"]>[number],
+            "worktreePath" | "pullRequests"
+          >
+        >)[]
     | undefined;
   readonly closingPullRequests?: readonly IssuePullRequestStatus[] | undefined;
   readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
@@ -53,7 +62,7 @@ export function createLiveIssueWorkOverlay() {
     Map<
       string,
       {
-        threads: readonly (EnvironmentThreadShell | undefined)[];
+        threads: readonly (EnvironmentThreadShell | undefined | null)[];
         result: WorkSummary;
       }
     >
@@ -81,16 +90,26 @@ export function createLiveIssueWorkOverlay() {
     const key = scopeKey(environmentId, scope);
     const ids = new Set((issue.liveWork ?? []).map((work) => work.threadId));
     for (const thread of index.issues.get(key)?.get(issue.number) ?? []) ids.add(thread.id);
-    const threads = [...ids].map((id) => index.threads.get(threadKey(environmentId, id)));
+    const removed = index.removedAt?.get(environmentId);
+    const threads = [...ids].map(
+      (id) =>
+        index.threads.get(threadKey(environmentId, id)) ?? (removed?.has(id) ? null : undefined),
+    );
     let cached = summaries.get(issue);
     if (cached === undefined) summaries.set(issue, (cached = new Map()));
     const previous = cached.get(key);
     if (previous !== undefined && sameItems(previous.threads, threads)) return previous.result as T;
     const active = threads
-      .filter((thread) => thread !== undefined)
+      .filter((thread) => thread != null)
       .filter((thread) => issue.state === "closed" || thread.archivedAt === null);
     const inheritedIds = new Set(
       (issue.liveWork ?? []).filter((work) => work.inherited).map((work) => work.threadId),
+    );
+    const omittedPausedWork = (issue.liveWork ?? []).filter(
+      (work) =>
+        work.paused === true &&
+        !index.threads.has(threadKey(environmentId, work.threadId)) &&
+        !removed?.has(work.threadId),
     );
     const liveWork = active.map((thread) => {
       // An inherited subagent does not make a settled parent blue in the sidebar.
@@ -107,6 +126,7 @@ export function createLiveIssueWorkOverlay() {
         pullRequests: thread.pullRequests
           .filter((pr) => pr.source !== "stack-dismissed")
           .map((pr) => pr.url),
+        ...(status === "paused" ? { paused: true as const } : {}),
         status:
           (status === "working" ||
             (status === "waiting" && managedImplementorAwaitingSubagent(thread.source))) &&
@@ -118,13 +138,21 @@ export function createLiveIssueWorkOverlay() {
               : ("idle" as const),
       };
     });
+    const omittedPrUrls = new Set(omittedPausedWork.flatMap((work) => work.pullRequests ?? []));
     const pullRequests = issuePullRequests(
-      issue.closingPullRequests,
+      [
+        ...issue.closingPullRequests,
+        ...(issue.pullRequests ?? []).filter(
+          (pr) => "url" in pr && typeof pr.url === "string" && omittedPrUrls.has(pr.url),
+        ),
+      ],
       active.flatMap((thread) => thread.pullRequests),
     );
     const result = {
       ...issue,
-      ...(issue.liveWork !== undefined || liveWork.length > 0 ? { liveWork } : {}),
+      ...(issue.liveWork !== undefined || liveWork.length > 0
+        ? { liveWork: [...liveWork, ...omittedPausedWork] }
+        : {}),
       pullRequests,
       pullRequestCount: pullRequests.length,
     };

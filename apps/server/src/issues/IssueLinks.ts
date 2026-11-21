@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type { IssueWorkThread } from "./IssueWorkProjection.ts";
+import { isExplicitlyPausedThread } from "@t3tools/shared/threadActivity";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -257,6 +258,7 @@ const make = Effect.gen(function* () {
         worktreeExists: thread.worktreePath !== null && existingWorktrees.has(thread.worktreePath),
         pullRequests: ownedPr === undefined ? [] : [ownedPr.url],
         status: state,
+        ...(state === "idle" && isExplicitlyPausedThread(thread) ? { paused: true as const } : {}),
       };
       for (const number of refs) {
         const linked = work.get(number) ?? [];

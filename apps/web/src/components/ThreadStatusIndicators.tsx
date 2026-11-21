@@ -17,6 +17,7 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { TerminalIcon } from "lucide-react";
 import { WorktreeIcon } from "./WorktreeIcon";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -642,6 +643,8 @@ function ThreadStatusLabel({
   status: ThreadStatusPill;
   compact?: boolean;
 }) {
+  const gt = useGT();
+  const label = status.label === "Paused" ? gt("Paused") : status.label;
   if (compact) {
     return (
       <Tooltip>
@@ -649,7 +652,7 @@ function ThreadStatusLabel({
           render={
             <span
               role="img"
-              aria-label={status.label}
+              aria-label={label}
               className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
             />
           }
@@ -660,7 +663,7 @@ function ThreadStatusLabel({
             }`}
           />
         </TooltipTrigger>
-        <TooltipPopup side="top">{status.label}</TooltipPopup>
+        <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -671,7 +674,7 @@ function ThreadStatusLabel({
         render={
           <span
             role="img"
-            aria-label={status.label}
+            aria-label={label}
             className={`inline-flex items-center gap-1 text-3xs ${status.colorClass}`}
           />
         }
@@ -681,9 +684,9 @@ function ThreadStatusLabel({
             status.pulse ? "motion-safe:animate-status-pulse" : ""
           }`}
         />
-        <span className="hidden md:inline">{status.label}</span>
+        <span className="hidden md:inline">{label}</span>
       </TooltipTrigger>
-      <TooltipPopup side="top">{status.label}</TooltipPopup>
+      <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
   );
 }

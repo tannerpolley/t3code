@@ -17,6 +17,7 @@ import {
   isOlderSettledThreadShell,
   OrchestrationProjectShell as ProjectShellSchema,
   OrchestrationV2ThreadShell as ThreadShellSchema,
+  workerListParentIds,
 } from "@t3tools/contracts";
 import { turnItemCanChangeUserWait } from "@t3tools/shared/agentAwareness";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -192,6 +193,7 @@ type ShellTrimRow = Pick<
  * store's index, so a snapshot read only for the rows it sends trims the same way.
  */
 interface ShellTrimFacts {
+  readonly threadIds: ReadonlySet<ThreadId>;
   readonly subagentParentIds: ReadonlySet<string>;
   readonly subagentThreadIds: Set<string>;
   /** Only the store's index knows these; shells alone leave it empty. */
@@ -204,11 +206,13 @@ interface ShellTrimFacts {
 const NEWEST_SETTLED_KEPT = 25;
 
 function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
+  const threadIds = new Set<ThreadId>();
   const subagentParentIds = new Set<string>();
   const subagentThreadIds = new Set<string>();
   const remoteTaskParentIds = new Set<string>();
   const settledTimes: Array<number> = [];
   for (const row of rows) {
+    threadIds.add(row.id);
     if (row.hasRemoteTasks === true) remoteTaskParentIds.add(row.id);
     if (row.lineage.relationshipToParent === "subagent") {
       subagentThreadIds.add(row.id);
@@ -233,6 +237,7 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
     }
   }
   return {
+    threadIds,
     subagentParentIds,
     subagentThreadIds,
     remoteTaskParentIds,
@@ -255,7 +260,7 @@ function hiddenChildAncestorIds(
 
 function omitIdleSubagentShellsWith(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
-  facts: Pick<ShellTrimFacts, "subagentParentIds" | "remoteTaskParentIds">,
+  facts: Pick<ShellTrimFacts, "threadIds" | "subagentParentIds" | "remoteTaskParentIds">,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   const keptIds = new Set(facts.subagentParentIds);
   for (const thread of threads) {
@@ -267,6 +272,7 @@ function omitIdleSubagentShellsWith(
   return threads.filter(
     (thread) =>
       thread.lineage.relationshipToParent !== "subagent" ||
+      !facts.threadIds.has(thread.lineage.parentThreadId ?? thread.id) ||
       isLiveSubagentShell(thread) ||
       keptIds.has(thread.id) ||
       facts.remoteTaskParentIds.has(thread.id),
@@ -310,9 +316,7 @@ function omitOlderSettledShellsWith(
 }
 
 /**
- * Idle subagent children have no sidebar row, so clients that opt in read them from their thread
- * family instead. A child stays while it is live, the parent of another child, or named by a
- * pending task (its parent's row lists it), so walks over shell rows never meet a gap. It also stays as the parent of a linked-environment task.
+ * Clients page omitted idle workers by parent, so a child without an active parent stays in the shell.
  */
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
@@ -389,6 +393,7 @@ function shellSubscriberThreadIds(
     (entry) =>
       entry.lineage.relationshipToParent === "subagent" &&
       (!options.omitIdleSubagents ||
+        !facts.threadIds.has(entry.lineage.parentThreadId ?? entry.id) ||
         entry.mayBeLive ||
         entry.hasRemoteTasks ||
         facts.subagentParentIds.has(entry.id)),
@@ -460,8 +465,34 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
       snapshotSequence: read.snapshotSequence,
     });
     const facts = shellTrimFacts(read.index ?? base.threads);
+    const snapshot = trimShellSnapshot(base, facts, { ...input.options, now: yield* DateTime.now });
+    const omittedWorkers = new Map<ThreadId, number>();
+    if (input.options.omitIdleSubagents && read.index !== null) {
+      const sent = new Set(snapshot.threads.map((thread) => thread.id));
+      const lineages = new Map(read.index.map(({ id, lineage }) => [id, lineage]));
+      for (const { id, lineage } of read.index) {
+        if (
+          lineage.relationshipToParent !== "subagent" ||
+          lineage.parentThreadId === null ||
+          sent.has(id)
+        )
+          continue;
+        for (const parent of workerListParentIds(lineage, (id) => lineages.get(id))) {
+          omittedWorkers.set(parent, (omittedWorkers.get(parent) ?? 0) + 1);
+        }
+      }
+    }
     return {
-      snapshot: trimShellSnapshot(base, facts, { ...input.options, now: yield* DateTime.now }),
+      snapshot:
+        omittedWorkers.size === 0
+          ? snapshot
+          : {
+              ...snapshot,
+              omittedWorkers: Array.from(omittedWorkers, ([parentThreadId, count]) => ({
+                parentThreadId,
+                count,
+              })),
+            },
       subagentThreadIds: facts.subagentThreadIds,
     };
   },

@@ -220,6 +220,7 @@ import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import { USER_STOP_REASON } from "./RunInterruptReason.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { isProviderSwitchPlanError, ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
@@ -13265,7 +13266,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "run_interrupt_request",
-        message: command.reason ?? RunExecutionService.USER_STOP_REASON,
+        message: command.reason ?? USER_STOP_REASON,
       },
     });
   });
@@ -13858,7 +13859,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completedAt: now,
       updatedAt: now,
       type: "run_interrupt_request",
-      message: command.reason ?? RunExecutionService.USER_STOP_REASON,
+      message: command.reason ?? USER_STOP_REASON,
     };
 
     const otherProviderInterrupts: Array<PendingOrchestrationEffectV2> = [];

@@ -26,6 +26,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -163,6 +164,141 @@ const threadState = (threadId: ThreadId) =>
         .map((link) => link.number),
     };
   });
+
+const finishLatestRun = Effect.fn("ThreadStopTest.finishLatestRun")(function* (threadId: ThreadId) {
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const { runs } = yield* projections.getThreadRecords(threadId, ["runs"]);
+  const run = runs.at(-1)!;
+  const now = yield* DateTime.now;
+  const sink = yield* EventSink.EventSinkV2;
+  yield* sink.write({
+    events: [
+      {
+        id: EventId.make(`reply:${run.id}`),
+        type: "message.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          id: MessageId.make(`reply:${run.id}`),
+          threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          role: "assistant",
+          text: "Finished.",
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+          createdBy: "agent",
+          creationSource: "provider",
+        },
+      },
+      {
+        id: EventId.make(`complete:${run.id}`),
+        type: "run.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "completed", startedAt: run.startedAt ?? now, completedAt: now },
+      },
+    ],
+  });
+});
+
+it.effect("keeps a finished child unpaused when stopping its parent", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const parent = ThreadId.make("thread:stop-finished-child");
+    yield* createWatchingThread(parent, 1);
+    yield* send(parent, "work", "start_immediately");
+    const child = yield* delegate(parent, "finished child");
+    yield* finishLatestRun(child);
+    const commandId = CommandId.make("stop-with-finished-child");
+    yield* orchestrator.dispatch({ type: "thread.stop", commandId, threadId: parent });
+    yield* threads.stopDelegatedTasks({ threadId: parent, commandId });
+    const shell = yield* orchestrator.getThreadShell(child);
+    assert.equal(shell?.status, "completed");
+    assert.isUndefined(shell?.explicitStopRequested);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("leaves a worker unpaused after its queued successor completes", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:pause-queued-successor");
+    yield* createWatchingThread(threadId, 1);
+    yield* send(threadId, "first", "start_immediately");
+    yield* send(threadId, "successor", "queue_after_active");
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("stop-before-successor"),
+      threadId,
+    });
+    yield* orchestrator.dispatch({
+      type: "queue.resume",
+      commandId: CommandId.make("resume-successor"),
+      threadId,
+    });
+    const before = yield* threadState(threadId);
+    assert.deepEqual(before.runs, ["interrupted", "starting"]);
+    yield* finishLatestRun(threadId);
+    assert.isUndefined((yield* orchestrator.getThreadShell(threadId))?.explicitStopRequested);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("recognizes an owner Stop in history without a thread pause marker", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:legacy-owner-stop");
+    yield* createWatchingThread(threadId, 1);
+    yield* send(threadId, "work", "start_immediately");
+    const run = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("legacy-owner-stop"),
+      threadId,
+      runId: run.id,
+      reason: "Stopped by user",
+    });
+    const shell = yield* orchestrator.getThreadShell(threadId);
+    assert.equal(shell?.status, "interrupted");
+    assert.isTrue(shell?.explicitStopRequested);
+    assert.isTrue(
+      ProjectionStore.threadShellFromProjection(yield* orchestrator.getThreadProjection(threadId))
+        .explicitStopRequested,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("pages an unarchived checker through its archived implementor", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const root = ThreadId.make("thread:archived-implementor");
+    yield* createWatchingThread(root, 1);
+    yield* send(root, "work", "start_immediately");
+    const implementor = yield* delegate(root, "implementor");
+    const checker = yield* delegate(implementor, "checker");
+    yield* finishLatestRun(checker);
+    yield* orchestrator.recoverDelegatedTasks;
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-implementor"),
+      threadId: implementor,
+    });
+    const page = yield* projections.getShellSnapshot({
+      location: "active",
+      workerPage: { parentThreadId: root },
+    });
+    assert.deepEqual(
+      page.threads.map(({ id }) => id),
+      [checker],
+    );
+    assert.equal(page.remainingWorkers, 0);
+  }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect.each([
   ["idle", "thread.stop"],
