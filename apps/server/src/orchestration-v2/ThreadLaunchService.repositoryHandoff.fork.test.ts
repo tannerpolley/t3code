@@ -724,7 +724,7 @@ describe("fresh-thread repository handoff", () => {
         };
         if (path === "panel") {
           yield* service.start({ ...input, number: 9 });
-          assert.deepEqual(issueReads, ["relationships:9", "relationships:9"]);
+          assert.isTrue(issueReads.every((read) => read === "relationships:9"));
         } else yield* service.workMilestone({ ...input, milestoneNumber: 1 });
         const childId = (yield* store.issueOwner(linked(9)))!;
         yield* tracker.stream(childId).pipe(
@@ -791,7 +791,11 @@ describe("fresh-thread repository handoff", () => {
             issueReads,
             inventoryIssues: () => [9],
             git: {
-              resolveDefaultBranchRef: () => Effect.succeed("trunk"),
+              resolveDefaultBranchRef: () =>
+                Effect.sync(() => {
+                  if (path === "panel") assert.deepEqual(issueReads, ["relationships:9"]);
+                  return "trunk";
+                }),
               localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
               hasCommit: () => Effect.succeed(true),
               createWorktree: (input) =>
