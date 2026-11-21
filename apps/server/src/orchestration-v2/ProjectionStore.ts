@@ -1534,6 +1534,8 @@ const decodePlanJson = Schema.decodeUnknownEffect(
 const decodeTurnItemPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
 );
+const decodeTurnItemJson = Schema.decodeUnknownEffect(OrchestrationV2TurnItemJsonSchema);
+const decodeStoredJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeCheckpointScopePayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2CheckpointScopeJsonSchema),
 );
@@ -3557,21 +3559,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
       );
 
+    const hidesQueuedTurn = sql`(
+      COALESCE(run.status IN ('queued', 'cancelled'), 0)
+      OR COALESCE(run.status = 'rolled_back' AND EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_run_attempts AS attempt
+        WHERE attempt.run_id = run.run_id AND attempt.status = 'cancelled'
+      ), 0)
+    )`;
+
     // Share selection so counting discarded ancestry preserves payload-read positions.
     const visibleTimelineItem = (inherited: boolean) => sql`
       (${inherited ? sql`1` : sql`run.status IS NOT 'rolled_back'`})
-      AND NOT (
-        CASE WHEN item.type = 'user_message'
+      AND NOT CASE WHEN item.type = 'user_message' AND ${hidesQueuedTurn}
+        THEN CASE WHEN json_valid(item.payload_json)
           THEN json_extract(item.payload_json, '$.inputIntent') IS 'queued_turn'
           ELSE 0 END
-        AND (
-          COALESCE(run.status IN ('queued', 'cancelled'), 0)
-          OR COALESCE(run.status = 'rolled_back' AND EXISTS (
-            SELECT 1 FROM orchestration_v2_projection_run_attempts AS attempt
-            WHERE attempt.run_id = run.run_id AND attempt.status = 'cancelled'
-          ), 0)
-        )
-      )
+        ELSE 0 END
       AND NOT (
         item.type = 'run_interrupt_result'
         AND EXISTS (
@@ -8100,7 +8103,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const materializeTimelineRows = Effect.fn("ProjectionStore.materializeTimelineRows")(function* (
       threadId: ThreadId,
-      page: ReadonlyArray<Omit<TimelineIndexRow, "item"> & { readonly position: number }>,
+      page: ReadonlyArray<
+        Omit<TimelineIndexRow, "item"> & {
+          readonly position: number;
+          readonly hideQueuedTranscriptTurn?: boolean;
+        }
+      >,
     ) {
       const sources = yield* encodeTimelineSources(
         page
@@ -8124,22 +8132,41 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const byIdentity = new Map(
         payloads.map((row) => [`${row.thread_id}:${row.turn_item_id}`, row.payload_json]),
       );
-      return yield* Effect.forEach(page, (row) =>
+      const rows = yield* Effect.forEach(page, (row) =>
         Effect.gen(function* () {
           const payload = byIdentity.get(`${row.sourceThreadId}:${row.sourceItemId}`);
-          const item =
-            row.synthetic ??
-            (payload === undefined
-              ? yield* new ProjectionStoreReadError({
-                  threadId,
-                  cause: "Timeline item disappeared during snapshot",
-                })
-              : yield* decodeTurnItemPayload(payload).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ProjectionStoreReadError({ threadId: row.sourceThreadId, cause }),
-                  ),
-                ));
+          let item = row.synthetic;
+          if (item === undefined) {
+            if (payload === undefined) {
+              return yield* new ProjectionStoreReadError({
+                threadId,
+                cause: "Timeline item disappeared during snapshot",
+              });
+            }
+            // Export checks intent again for payloads beyond SQLite's JSON depth limit.
+            const decode =
+              row.hideQueuedTranscriptTurn === undefined
+                ? decodeTurnItemPayload(payload)
+                : decodeStoredJson(payload).pipe(
+                    Effect.orElseSucceed(() => undefined),
+                    Effect.flatMap((json) =>
+                      json === undefined ||
+                      (row.hideQueuedTranscriptTurn &&
+                        typeof json === "object" &&
+                        json !== null &&
+                        "inputIntent" in json &&
+                        json.inputIntent === "queued_turn")
+                        ? Effect.undefined
+                        : decodeTurnItemJson(json),
+                    ),
+                  );
+            item = yield* decode.pipe(
+              Effect.mapError(
+                (cause) => new ProjectionStoreReadError({ threadId: row.sourceThreadId, cause }),
+              ),
+            );
+            if (item === undefined) return undefined;
+          }
           return {
             position: row.position,
             sourceThreadId: row.sourceThreadId,
@@ -8149,6 +8176,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           };
         }),
       );
+      return rows.filter((row) => row !== undefined);
     });
 
     type TranscriptSegment = {
@@ -8217,9 +8245,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ${thread.historyOrigin === "v1_import" ? sql`OR item.run_id IS NULL` : sql``}
             )`;
       // Stored lengths bound the read page only. A large row can shrink when decoded.
-      return yield* sql<TranscriptCursor>`
+      return yield* sql<TranscriptCursor & { hideQueuedTurn: 0 | 1 | null }>`
         WITH candidates AS MATERIALIZED (
-          SELECT item.turn_item_id AS itemId, item.ordinal, octet_length(item.payload_json) AS bytes
+          SELECT item.turn_item_id AS itemId, item.ordinal, octet_length(item.payload_json) AS bytes,
+            CASE WHEN item.type = 'user_message' THEN ${hidesQueuedTurn} END AS hideQueuedTurn
           FROM orchestration_v2_projection_turn_items AS item
           LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = item.run_id
           WHERE item.thread_id = ${thread.id}
@@ -8229,11 +8258,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ORDER BY item.ordinal ASC, item.turn_item_id ASC
           LIMIT 64
         ), sized AS (
-          SELECT itemId, ordinal, ROW_NUMBER() OVER page AS position, SUM(bytes) OVER page AS bytes
+          SELECT itemId, ordinal, hideQueuedTurn,
+            ROW_NUMBER() OVER page AS position, SUM(bytes) OVER page AS bytes
           FROM candidates
           WINDOW page AS (ORDER BY ordinal ASC, itemId ASC)
         )
-        SELECT itemId, ordinal FROM sized
+        SELECT itemId, ordinal, hideQueuedTurn FROM sized
         WHERE position = 1 OR bytes <= ${8 * 1024 * 1024}
         ORDER BY position ASC
       `;
@@ -8279,10 +8309,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 sourceThreadId: segment.thread.id,
                 sourceItemId: item.itemId,
                 visibility: inherited ? "inherited" : "local",
+                ...(item.hideQueuedTurn === null
+                  ? {}
+                  : { hideQueuedTranscriptTurn: item.hideQueuedTurn === 1 }),
               })),
             );
             for (const row of rows) {
-              if (!append(row))
+              if (!append({ ...row, position: transcript.items.length }))
                 return yield* new ProjectionStoreSnapshotTooLargeError({ threadId });
             }
           }
