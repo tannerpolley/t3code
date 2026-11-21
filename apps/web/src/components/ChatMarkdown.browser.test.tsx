@@ -71,7 +71,7 @@ vi.mock(import("../state/entities"), async (original) => {
               environmentId,
               { environment: { capabilities: { issues: true } } },
             ]),
-          ) as ReturnType<typeof actual.useServerConfigs>);
+          ) as unknown as ReturnType<typeof actual.useServerConfigs>);
     },
   };
 });
