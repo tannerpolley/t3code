@@ -234,7 +234,7 @@ const finishedWorkerEvents = (
           completedAt: now,
         },
       },
-    ],
+    ] as const,
   };
 };
 
@@ -291,7 +291,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
     );
 
     it.effect.each(cohortOwners)(
-      "records attention once for a current %s-owned delivery and clears it on Stop",
+      "names and links the saved result for a failed %s-owned wake, and clears it on Stop",
       (owner) =>
         Effect.gen(function* () {
           const engine = yield* Orchestrator.OrchestratorV2;
@@ -299,6 +299,29 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             deliveryState: "claimed",
             withDelivery: true,
             parentRunEnded: true,
+          });
+          const sink = yield* EventSink.EventSinkV2;
+          const saved = finishedWorkerEvents(parent, "saved-result", "Review complete");
+          const child = {
+            ...saved.events[0]!,
+            payload: { ...saved.events[0]!.payload, title: "Review the patch" },
+          };
+          yield* sink.write({
+            commandId: reconcileCommandId(`${parent.key}-result-thread`),
+            events: [
+              child,
+              {
+                id: EventId.make(`${parent.key}-task-result-thread`),
+                type: "subagent.updated",
+                threadId: parent.threadId,
+                occurredAt: parent.now,
+                payload: {
+                  ...parent.task,
+                  runId: parent.parentRunId,
+                  childThreadId: child.threadId,
+                },
+              },
+            ],
           });
           const command = {
             type: "delegated_task.completion-delivery.flag" as const,
@@ -320,7 +343,9 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           const flagged = yield* engine.getThreadProjection(parent.threadId);
           assert.include(flagged.thread.silentWakeAttention, {
             deliveryMessageId: parent.messageId,
+            resultThreadId: child.threadId,
           });
+          assert.include(flagged.thread.silentWakeAttention?.reason, child.payload.title);
           assert.isNotNull(flagged.subagents[0]?.result);
           yield* engine.dispatch({
             type: "thread.stop",

@@ -170,7 +170,16 @@ it.effect(
         url: "https://github.com/owner/repo/issues/13",
       },
     };
-    const ordinary = linked(liveThreadShell(threadId));
+    const pr = {
+      ...ref,
+      number: 12,
+      url: "https://github.com/owner/repo/pull/12",
+      linkedAt: "2026-10-01T00:00:00Z",
+      source: "manual" as const,
+      snapshot: null,
+      stack: null,
+    };
+    const ordinary = { ...linked(liveThreadShell(threadId)), pullRequests: [pr] };
     const h = harness([managed, ordinary]);
     const layer = IssueRoadmap.layer.pipe(
       Layer.provide(Layer.mock(TrackerIssueService.IssueService)({})),
@@ -195,16 +204,20 @@ it.effect(
       const roadmap = yield* IssueRoadmap.IssueRoadmap;
       const pane = yield* (yield* IssueLinks.IssueLinks).enrich(list());
       const badge = yield* roadmap.statusBatch({ issues: [{ host: ref.host, nodeId: "I_13" }] });
-      const compact = pane.issues[0]!.liveWork!.map(({ threadId, inherited, status }) => ({
-        threadId,
-        inherited,
-        status,
-      }));
+      const compact = pane.issues[0]!.liveWork!.map(
+        ({ threadId, inherited, status, pullRequests }) => ({
+          threadId,
+          inherited,
+          status,
+          ...(pullRequests.length === 0 ? {} : { pullRequests }),
+        }),
+      );
       assert.deepEqual(badge[0]?.liveWork, compact);
       assert.deepEqual(compact, [
         { threadId: managed.id, inherited: false, status: "idle" },
-        { threadId: ordinary.id, inherited: false, status: "working" },
+        { threadId: ordinary.id, inherited: false, status: "working", pullRequests: [pr.url] },
       ]);
+      assert.equal(badge[0]?.pullRequests[0]?.url, pr.url);
       assert.deepEqual(badge[0]?.closingPullRequests, []);
       assert.notProperty(badge[0]!, "repository");
       assert.notProperty(badge[0]!.liveWork![0]!, "title");

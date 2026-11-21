@@ -3,9 +3,13 @@ import {
   backgroundWorkHoldsCompletion,
   managedImplementorAwaitingSubagent,
 } from "./orchestrationV2PendingBackgroundWork.ts";
+import {
+  runtimeRequestIsOwnerVisible,
+  type RoutedRequestParent,
+} from "./delegatedRequestVisibility.ts";
 
 type Worker = NonNullable<RepositoryIssueSummary["liveWork"]>[number];
-type WorkerState = Pick<Worker, "status">;
+type WorkerState = Pick<Worker, "status" | "requestHandledByParent">;
 
 export function classifyIssueWorker(
   thread: Pick<
@@ -20,15 +24,21 @@ export function classifyIssueWorker(
   > & {
     readonly pendingRuntimeRequest: Pick<
       NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>,
-      "kind"
+      "kind" | "routedTo"
     > | null;
   },
+  parent?: RoutedRequestParent,
 ): WorkerState {
   if (thread.archivedAt !== null) return { status: "idle" };
   const request = thread.pendingRuntimeRequest?.kind;
-  if (request === "user_input") return { status: "question" };
-  if (request !== undefined && request !== "auth_refresh" && request !== "dynamic_tool_call")
-    return { status: "approval" };
+  if (request !== undefined && request !== "auth_refresh" && request !== "dynamic_tool_call") {
+    return {
+      status: request === "user_input" ? "question" : "approval",
+      ...(runtimeRequestIsOwnerVisible(thread.pendingRuntimeRequest, parent)
+        ? {}
+        : { requestHandledByParent: true }),
+    };
+  }
   const status = thread.activityRunStatus ?? thread.status;
   if (status === "queued") return { status: "queued" };
   if (
