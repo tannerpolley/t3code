@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import {
   RunId,
+  RuntimeRequestId,
   EnvironmentId,
   ThreadId,
   type RepositoryIssueListResult,
@@ -11,7 +12,7 @@ import {
 import { makeThreadFixture } from "~/test-fixtures";
 import { createLiveIssueWorkOverlay, indexIssueWork } from "./issueLiveWork.logic";
 import { issueProgress, issueStatePresentation } from "./IssueStateIcon";
-import { issueRoadmap } from "./issueRoadmap.logic";
+import { issueLiveWorkSummary, issueRoadmap } from "./issueRoadmap.logic";
 
 const overlay = createLiveIssueWorkOverlay();
 const environmentId = EnvironmentId.make("environment-test");
@@ -92,19 +93,15 @@ const pr: ThreadPullRequestLink = {
 const section = (value: RepositoryIssueListResult) =>
   issueRoadmap(scope, value.issues).find((section) => section.rows.length > 0)?.id;
 
-it("follows a linked parent's sidebar status, including questions and approvals", () => {
-  const workingRoot = { ...root, runtime: running.runtime };
-  expect(section(withLiveIssueWork(list, [root]))).toBe("paused");
+it("follows a linked parent's sidebar status", () => {
+  const workingRoot = {
+    ...root,
+    runtime: running.runtime,
+    source: { ...root.source, status: "running" as const },
+  };
+  expect(section(withLiveIssueWork(list, [root]))).toBe("ready");
   expect(section(withLiveIssueWork(list, [workingRoot]))).toBe("in-progress");
-  for (const waiting of [
-    { hasPendingApprovals: true },
-    { hasPendingUserInput: true },
-    { pendingSubagentRequest: "user_input" as const },
-  ]) {
-    expect(section(withLiveIssueWork(list, [{ ...workingRoot, ...waiting }]))).toBe("in-progress");
-  }
-  // A settled parent waiting for its subagent is not blue in the sidebar.
-  expect(section(withLiveIssueWork(list, [root, running]))).toBe("paused");
+  expect(section(withLiveIssueWork(list, [root, running]))).toBe("ready");
   expect(section(withLiveIssueWork(list, [{ ...workingRoot, archivedAt: root.updatedAt }]))).toBe(
     "ready",
   );
@@ -112,6 +109,60 @@ it("follows a linked parent's sidebar status, including questions and approvals"
   expect(section(stopped)).toBe("ready");
   const foreign = { ...workingRoot, linkedIssue: { ...linkedIssue, host: "enterprise.test" } };
   expect(withLiveIssueWork(list, [foreign])).toBe(stopped);
+});
+
+const waitingChild = (title: string, routedTo?: ThreadId) => ({
+  ...running,
+  id: ThreadId.make(title),
+  title,
+  hasPendingUserInput: true,
+  source: {
+    ...running.source,
+    pendingRuntimeRequest: {
+      id: RuntimeRequestId.make(title),
+      kind: "user_input" as const,
+      createdAt: running.source.updatedAt,
+      ...(routedTo === undefined ? {} : { routedTo }),
+    },
+  },
+});
+
+it("opens the waiting child from the overlay when its sibling is running", () => {
+  const waiting = waitingChild("Waiting child");
+  const workingSibling = { ...running, linkedIssue };
+  const issue = {
+    ...list.issues[0]!,
+    liveWork: [
+      {
+        threadId: waiting.id,
+        title: waiting.title,
+        branch: null,
+        worktreePath: null,
+        pullRequests: [],
+        status: "waiting_on_you" as const,
+        inherited: true,
+      },
+    ],
+  };
+  const streamed = withLiveIssueWork({ ...list, issues: [issue] }, [root, workingSibling, waiting]);
+  expect(issueLiveWorkSummary(streamed.issues[0]!)?.work[0]?.threadId).toBe(waiting.id);
+});
+
+it("opens the owner-routed question before the parent-routed question", () => {
+  const parent = {
+    ...unlinkedRoot,
+    id: ThreadId.make("routing-parent"),
+    runtime: running.runtime,
+    source: { ...unlinkedRoot.source, status: "running" as const },
+  };
+  const alpha = waitingChild("Alpha", parent.id);
+  const beta = waitingChild("Beta");
+  const summary = (parentShell: typeof parent | typeof unlinkedRoot) =>
+    issueLiveWorkSummary(
+      withLiveIssueWork(list, [root, running, alpha, beta, parentShell]).issues[0]!,
+    );
+  expect(summary(parent)?.work[0]?.threadId).toBe(beta.id);
+  expect(summary({ ...unlinkedRoot, id: parent.id })?.work[0]?.threadId).toBe(alpha.id);
 });
 
 it("keeps a managed implementor's issue in progress while its reviewer runs", () => {
@@ -137,11 +188,11 @@ it("keeps a managed implementor's issue in progress while its reviewer runs", ()
         {
           ...worker,
           pendingBackgroundTasks: [],
-          source: { ...worker.source, pendingBackgroundTasks: [] },
+          source: { ...worker.source, status: "completed", pendingBackgroundTasks: [] },
         },
       ]),
     ),
-  ).toBe("paused");
+  ).toBe("ready");
 });
 
 it("keeps unrelated issue and list objects identical across unrelated shell updates", () => {
@@ -154,7 +205,10 @@ it("keeps unrelated issue and list objects identical across unrelated shell upda
   const second = withLiveIssueWork(many, [root, { ...unrelated, runtime: running.runtime }]);
   expect(second).toBe(first);
   expect(second.issues.every((issue, index) => issue === first.issues[index])).toBe(true);
-  const changed = withLiveIssueWork(many, [{ ...root, runtime: running.runtime }, unrelated]);
+  const changed = withLiveIssueWork(many, [
+    { ...root, runtime: running.runtime, source: { ...root.source, status: "running" as const } },
+    unrelated,
+  ]);
   expect(changed.issues[42]).not.toBe(first.issues[42]);
   expect(changed.issues.filter((issue, index) => issue !== first.issues[index])).toHaveLength(1);
 });
@@ -173,12 +227,16 @@ it("the Linked issue summary derives the same live status as the issue list", ()
       },
     ],
   };
-  const working = { ...root, runtime: running.runtime };
+  const working = {
+    ...root,
+    runtime: running.runtime,
+    source: { ...root.source, status: "running" as const },
+  };
   expect(
     issueProgress(overlay.summary(issue, scope, environmentId, indexIssueWork([working]))),
   ).toBe("in_progress");
   expect(issueProgress(overlay.summary(issue, scope, environmentId, indexIssueWork([root])))).toBe(
-    "paused",
+    "open",
   );
 });
 
@@ -237,12 +295,12 @@ it("leaves older-server inherited work settled when an unlinked child runs", () 
   };
   const result = withLiveIssueWork(old, [root, running]);
   expect(result).toBe(old);
-  expect(section(result)).toBe("paused");
+  expect(section(result)).toBe("ready");
   expect(
     issueProgress(
       overlay.summary(old.issues[0]!, scope, environmentId, indexIssueWork([root, running])),
     ),
-  ).toBe("paused");
+  ).toBe("open");
 });
 
 it("combines closing PRs with linked threads' PRs, deduplicates identity and follows streamed PR state", () => {
@@ -274,14 +332,14 @@ it("combines closing PRs with linked threads' PRs, deduplicates identity and fol
   };
   const review = withLiveIssueWork(closing, [thread]);
   expect(review.issues[0]?.pullRequests?.map((pr) => pr.number)).toEqual([10, 11]);
-  expect(section(review)).toBe("paused");
+  expect(section(review)).toBe("ready-for-review");
   expect(
     section(
       withLiveIssueWork(closing, [
         { ...thread, pullRequests: [{ ...pr, snapshot: { ...pr.snapshot!, state: "merged" } }] },
       ]),
     ),
-  ).toBe("paused");
+  ).toBe("ready");
   const blocked = {
     ...closing,
     issues: [
@@ -318,12 +376,12 @@ it("drops PRs from unlinked, dismissed and archived threads instead of retaining
     ...list,
     issues: [{ ...list.issues[0]!, closingPullRequests: [], pullRequests: [pr] }],
   };
-  expect(section(withLiveIssueWork(source, [thread]))).toBe("paused");
-  // The PR association drops; a still-linked idle thread keeps the issue Paused.
+  expect(section(withLiveIssueWork(source, [thread]))).toBe("ready-for-review");
+  // Dropping the PR association returns idle work to Ready.
   for (const [changed, expected] of [
     [{ ...unlinkedRoot, pullRequests: thread.pullRequests }, "ready"],
     [{ ...thread, archivedAt: root.updatedAt }, "ready"],
-    [{ ...thread, pullRequests: [{ ...link, source: "stack-dismissed" as const }] }, "paused"],
+    [{ ...thread, pullRequests: [{ ...link, source: "stack-dismissed" as const }] }, "ready"],
   ] as const) {
     const result = withLiveIssueWork(source, [changed]);
     expect(result.issues[0]?.pullRequests).toEqual([]);
@@ -332,7 +390,7 @@ it("drops PRs from unlinked, dismissed and archived threads instead of retaining
   // Merely observing a closing PR never associates the observing thread's activity.
   const observed = { ...unlinkedRoot, pullRequests: thread.pullRequests, runtime: running.runtime };
   const closing = { ...source, issues: [{ ...source.issues[0]!, closingPullRequests: [pr] }] };
-  expect(section(withLiveIssueWork(closing, [observed]))).toBe("paused");
+  expect(section(withLiveIssueWork(closing, [observed]))).toBe("ready-for-review");
 });
 
 it("counts a directly linked subagent, but inherited children do not make a settled parent run", () => {
@@ -364,15 +422,20 @@ it("counts a directly linked subagent, but inherited children do not make a sett
       },
     ],
   };
-  expect(section(withLiveIssueWork(inherited, [root, running]))).toBe("paused");
+  expect(section(withLiveIssueWork(inherited, [root, running]))).toBe("ready");
   expect(section(withLiveIssueWork(list, [{ ...running, linkedIssue }]))).toBe("in-progress");
 });
 
 it("keeps identical repository and thread IDs on separate environments apart", () => {
   const otherEnvironment = EnvironmentId.make("ENVIRONMENT-test");
-  const other = { ...root, runtime: running.runtime, environmentId: otherEnvironment };
+  const other = {
+    ...root,
+    runtime: running.runtime,
+    source: { ...root.source, status: "running" as const },
+    environmentId: otherEnvironment,
+  };
   const index = indexIssueWork([root, other]);
-  expect(section(overlay.list(list, environmentId, index))).toBe("paused");
+  expect(section(overlay.list(list, environmentId, index))).toBe("ready");
   expect(section(overlay.list(list, otherEnvironment, index))).toBe("in-progress");
 });
 
@@ -415,8 +478,15 @@ it("overlays ordinary work from compact provenance when the managed thread is id
   expect(issueProgress(badge)).toBe("in_progress");
   expect(issueProgress(badge)).toBe(issueProgress(pane));
   expect(
-    issueProgress(overlay.summary(summary, scope, environmentId, indexIssueWork([root]))),
-  ).toBe("paused");
+    issueProgress(
+      overlay.summary(
+        summary,
+        scope,
+        environmentId,
+        indexIssueWork([root], new Map([[environmentId, new Map([[ordinary.id, 10]])]])),
+      ),
+    ),
+  ).toBe("open");
 });
 
 it("overlays compact sidebar status with the same live work and PR observations", () => {
@@ -431,11 +501,15 @@ it("overlays compact sidebar status with the same live work and PR observations"
     pullRequests: [{ ...scope, number: pr.number, state: "open", updatedAt: list.fetchedAt }],
   };
   const summary = { ...status, closingPullRequests: status.pullRequests };
-  const working = { ...root, runtime: running.runtime };
+  const working = {
+    ...root,
+    runtime: running.runtime,
+    source: { ...root.source, status: "running" as const },
+  };
   const progress = (shells: Parameters<typeof indexIssueWork>[0]) =>
     issueProgress(overlay.summary(summary, scope, environmentId, indexIssueWork(shells)));
   expect(progress([working])).toBe("in_progress");
-  expect(progress([root])).toBe("paused");
+  expect(progress([root])).toBe("ready_for_review");
   expect(
     progress([
       {
@@ -448,7 +522,7 @@ it("overlays compact sidebar status with the same live work and PR observations"
         ],
       },
     ]),
-  ).toBe("paused");
+  ).toBe("open");
   expect(
     issueProgress(
       overlay.summary(
@@ -459,6 +533,22 @@ it("overlays compact sidebar status with the same live work and PR observations"
       ),
     ),
   ).toBe("completed");
+});
+
+it("keeps an open compact PR ready for review while its worker is absent", () => {
+  const status = {
+    number: linkedIssue.number,
+    state: "open" as const,
+    closingPullRequests: [],
+    pullRequests: [{ ...scope, number: pr.number, state: "open" as const }],
+    liveWork: [{ threadId: running.id, status: "done" as const, pullRequests: [pr.url] }],
+  };
+  const progress = (index: ReturnType<typeof indexIssueWork>) =>
+    issueProgress(overlay.summary(status, scope, environmentId, index));
+  expect(progress(indexIssueWork([root]))).toBe("ready_for_review");
+  expect(
+    progress(indexIssueWork([root], new Map([[environmentId, new Map([[running.id, 1]])]]))),
+  ).toBe("open");
 });
 
 it("retains archived worker and PR details on closed issues while preserving their closed state", () => {
@@ -522,7 +612,11 @@ it("preserves server checkout existence for matching paths and drops it when a w
 
 it("shows the server suspension over live working state and clears it after Resume refreshes the issue", () => {
   const reason = "Issue relationships are unreadable. Restore access before resuming.";
-  const working = { ...root, runtime: running.runtime };
+  const working = {
+    ...root,
+    runtime: running.runtime,
+    source: { ...root.source, status: "running" as const },
+  };
   const serverList = { ...list, issues: [{ ...list.issues[0]!, suspensionReason: reason }] };
   const suspended = withLiveIssueWork(serverList, [working]);
   expect(issueProgress(suspended.issues[0]!)).toBe("suspended");

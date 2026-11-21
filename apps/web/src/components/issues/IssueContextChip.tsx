@@ -4,7 +4,7 @@ import { useOpenIssueLink } from "~/lib/openIssueLink";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { IssueLinkPreview, useIssuePreviewTarget } from "./IssueLinkPreview";
 import { ContextChipPopover } from "../contextChipParts";
-import { IssueStateIcon, issueStatePresentation } from "./IssueStateIcon";
+import { IssueStateIcon, issueStatePresentation, useIssueStateLabel } from "./IssueStateIcon";
 
 export function IssueContextChip({
   record,
@@ -18,7 +18,9 @@ export function IssueContextChip({
   const target = useIssuePreviewTarget(threadRef?.environmentId, record.url);
   const openIssue = useOpenIssueLink(threadRef ?? undefined);
   const issue = record.state === null ? null : { ...record, state: record.state };
-  const state = issue === null ? "State unavailable" : issueStatePresentation(issue).label;
+  const state = useIssueStateLabel(
+    issue === null ? "State unavailable" : issueStatePresentation(issue).label,
+  );
   if (target !== null)
     return (
       <IssueLinkPreview

@@ -9,6 +9,7 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2Notification,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -254,6 +255,60 @@ describe("ProviderContinuationService", () => {
       );
     });
   });
+
+  it.effect("flags the current delivery after three dispatch failures and continues retrying", () =>
+    Effect.gen(function* () {
+      const observations = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
+      let attempts = 0;
+      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(delegatedProjection()),
+        dispatch: (command) =>
+          Queue.offer(observations, command).pipe(
+            Effect.andThen(
+              Effect.suspend(() =>
+                command.type === "message.dispatch" && ++attempts <= 3
+                  ? Effect.fail(
+                      new Orchestrator.OrchestratorDispatchError({
+                        commandId: command.commandId,
+                        commandType: command.type,
+                        cause: "Injected dispatch failure",
+                      }),
+                    )
+                  : Effect.succeed({ sequence: 1, storedEvents: [] }),
+              ),
+            ),
+          ),
+      });
+      const layerWorker = ProviderContinuationService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(),
+          delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+        });
+        assert.equal((yield* Queue.take(observations)).type, "message.dispatch");
+        for (const delay of [100, 200]) {
+          yield* TestClock.adjust(delay);
+          assert.equal((yield* Queue.take(observations)).type, "message.dispatch");
+        }
+        yield* TestClock.adjust(400);
+        const attention = yield* Queue.take(observations);
+        assert.include(attention, {
+          type: "delegated_task.completion-delivery.flag",
+          parentRunId,
+          generation: 1,
+          messageId: delegatedMessageId,
+        });
+        assert.equal((yield* Queue.take(observations)).type, "message.dispatch");
+        yield* TestClock.adjust("10 seconds");
+        assert.isTrue(Option.isNone(yield* Queue.poll(observations)));
+      }).pipe(Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)));
+    }),
+  );
 
   it.effect(
     "a project-disabled instance refuses a delegated-completion wake exactly once, disposes it, and never retries",

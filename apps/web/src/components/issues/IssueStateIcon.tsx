@@ -1,3 +1,5 @@
+import { useGT } from "gt-react";
+import { issueWorkerIsLive } from "@t3tools/shared/issueWorkerStatus";
 import type { RepositoryIssueSummary } from "@t3tools/contracts";
 import {
   CircleAlertIcon,
@@ -21,7 +23,10 @@ type IssueStateInput = Pick<RepositoryIssueSummary, "state"> &
     >
   > & {
     readonly liveWork?:
-      | readonly Pick<NonNullable<RepositoryIssueSummary["liveWork"]>[number], "status">[]
+      | readonly Pick<
+          NonNullable<RepositoryIssueSummary["liveWork"]>[number],
+          "status" | "inherited"
+        >[]
       | undefined;
     readonly blockedBy?:
       | readonly Pick<NonNullable<RepositoryIssueSummary["blockedBy"]>[number], "state">[]
@@ -41,10 +46,10 @@ export type IssueProgress =
   | "in_progress"
   | "queued"
   | "suspended"
-  | "paused"
+  | "ready_for_review"
   | "open";
 
-/** Closed, suspended, blocked, active work, queued, paused work, unknown dependencies, then open. */
+/** Closed, suspended, blocked, active work, queued, review, unknown dependencies, then open. */
 export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgress {
   if (issue.state === "closed")
     return issue.stateReason === "not_planned" || issue.stateReason === "duplicate"
@@ -53,10 +58,9 @@ export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgres
   if (issue.suspensionReason !== undefined) return "suspended";
   if (issue.blockedBy?.some((blocker) => blocker.state === "open")) return "blocked";
   const work = issue.liveWork ?? [];
-  if (work.some((entry) => entry.status === "working" || entry.status === "waiting_on_you"))
-    return "in_progress";
-  if (issue.queued) return "queued";
-  if (work.length > 0 || issue.pullRequests?.some((pr) => pr.state === "open")) return "paused";
+  if (work.some(issueWorkerIsLive)) return "in_progress";
+  if (issue.queued || work.some((entry) => entry.status === "queued")) return "queued";
+  if (issue.pullRequests?.some((pr) => pr.state === "open")) return "ready_for_review";
   if (issue.relationshipsComplete === false) return "dependencies_unknown";
   return "open";
 }
@@ -93,11 +97,11 @@ const ISSUE_PROGRESS_PRESENTATION = {
     badgeVariant: "warning",
     Icon: CirclePauseIcon,
   },
-  paused: {
-    label: "Paused",
-    toneClassName: "text-amber-600 dark:text-amber-300/90",
-    badgeVariant: "warning",
-    Icon: CirclePauseIcon,
+  ready_for_review: {
+    label: "Ready for review",
+    toneClassName: "text-violet-600 dark:text-violet-300/90",
+    badgeVariant: "outline",
+    Icon: CircleDotIcon,
   },
   blocked: {
     label: "Blocked",
@@ -128,6 +132,11 @@ export function issueStatePresentation(issue: IssueStateInput) {
     : presentation;
 }
 
+export function useIssueStateLabel(label: string) {
+  const gt = useGT();
+  return label === "Ready for review" ? gt("Ready for review") : label;
+}
+
 /** An issue's state glyph with its name on hover, as the pull request rows draw theirs. */
 export function IssueStateIcon({
   issue,
@@ -137,17 +146,18 @@ export function IssueStateIcon({
   readonly className?: string;
 }) {
   const presentation = issueStatePresentation(issue);
+  const label = useIssueStateLabel(presentation.label);
   return (
     <Tooltip>
       {/* A span trigger: rows are buttons, and a nested control would steal their click. */}
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon
           role="img"
-          aria-label={presentation.label}
+          aria-label={label}
           className={cn("size-4 shrink-0", presentation.toneClassName, className)}
         />
       </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
+      <TooltipPopup>{label}</TooltipPopup>
     </Tooltip>
   );
 }

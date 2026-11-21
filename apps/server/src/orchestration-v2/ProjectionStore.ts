@@ -1,5 +1,9 @@
 import { repositoryPhaseSql } from "../issues/RepositoryPhaseSql.ts";
-import { readIssueWorkThreads, type IssueWorkThread } from "../issues/IssueWorkProjection.ts";
+import {
+  pendingRuntimeRequestOrder,
+  readIssueWorkThreads,
+  type IssueWorkThread,
+} from "../issues/IssueWorkProjection.ts";
 import {
   USAGE_LIMIT_SWITCH_RESUME_PREFIX,
   USAGE_LIMIT_SWITCH_HOLD_MS,
@@ -6734,12 +6738,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const hasPendingDelegatedCompletion: ProjectionStoreV2Shape["hasPendingDelegatedCompletion"] =
       Effect.fn("ProjectionStore.hasPendingDelegatedCompletion")((childThreadId) =>
         sql`SELECT 1 FROM orchestration_v2_projection_subagents AS task
-        LEFT JOIN orchestration_v2_projection_runs AS owner ON owner.run_id = task.run_id
+        LEFT JOIN orchestration_v2_projection_runs AS run_owner ON run_owner.run_id = task.run_id
+        LEFT JOIN orchestration_v2_projection_threads AS thread_owner
+          ON task.run_id IS NULL AND thread_owner.thread_id = task.thread_id
         WHERE task.child_thread_id = ${childThreadId} AND task.origin = 'app_owned'
           AND (json_extract(task.payload_json, '$.result') IS NULL
             OR (task.completion_delivery_state = 'claimed'
-              AND json_extract(owner.payload_json, '$.delegatedCompletion.disposition') = 'open'
-              AND json_type(owner.payload_json, '$.delegatedCompletion.delivery') = 'object'))
+              AND json_extract(coalesce(run_owner.payload_json, thread_owner.payload_json), '$.delegatedCompletion.disposition') = 'open'
+              AND json_type(coalesce(run_owner.payload_json, thread_owner.payload_json), '$.delegatedCompletion.delivery') = 'object'))
         LIMIT 1`.pipe(
           Effect.map((rows) => rows.length > 0),
           Effect.mapError(controlReadError(childThreadId)),
@@ -8598,8 +8604,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id
                   AND request.status = 'pending'
-                ORDER BY (request.kind = 'user_input') ASC,
-                  request.created_at DESC, request.runtime_request_id DESC
+                ORDER BY ${pendingRuntimeRequestOrder(sql)}
                 LIMIT 1
               ) AS pending_request_payload_json,
               (

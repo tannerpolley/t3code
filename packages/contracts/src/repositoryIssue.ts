@@ -72,7 +72,18 @@ const IssueWorkStatus = Schema.Struct({
   threadId: ThreadId,
   /** Descendant work is visible, but only the directly linked thread drives running status. */
   inherited: Schema.optional(Schema.Boolean),
-  status: Schema.Literals(["working", "waiting_on_you", "idle"]),
+  requestHandledByParent: Schema.optional(Schema.Boolean),
+  pullRequests: Schema.optional(Schema.Array(Schema.String)),
+  status: Schema.Literals([
+    "working",
+    "waiting_on_you",
+    "idle",
+    "queued",
+    "question",
+    "approval",
+    "done",
+    "failed",
+  ]),
 });
 
 export const RepositoryIssueSummary = Schema.Struct({
@@ -153,6 +164,7 @@ export type IssueViewer = typeof IssueViewer.Type;
 /** PR identity and observation time keep sidebar status consistent with streamed thread PRs. */
 export const IssuePullRequestStatus = Schema.Struct({
   ...RepositoryIssueRef.fields,
+  url: Schema.optional(IssuePullRequest.fields.url),
   state: IssuePullRequest.fields.state,
   updatedAt: IssuePullRequest.fields.updatedAt,
 });

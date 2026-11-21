@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
   turnError: false,
   limited: false,
   subagent: false,
+  wakeAttention: false,
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
   delegatedChild: null as "running" | "approval" | "idle" | null,
   add: vi.fn(
@@ -62,11 +63,20 @@ function mockThreadShell() {
     creationSource: "web",
     latestRunId: "run-1",
     activeRunId: null,
-    status: state.completedAt
-      ? "completed"
-      : state.sessionError || state.turnError || state.limited
-        ? "failed"
-        : "running",
+    status:
+      state.completedAt || state.wakeAttention
+        ? "completed"
+        : state.sessionError || state.turnError || state.limited
+          ? "failed"
+          : "running",
+    silentWakeAttention: state.wakeAttention
+      ? {
+          deliveryMessageId: "delivery-1",
+          resultThreadId: "child-1",
+          reason: "The completion wake for Review the login form could not be sent.",
+          createdAt: DateTime.formatIso(SHELL_NOW),
+        }
+      : undefined,
     lastErrorClass: state.limited ? "usage_limit" : null,
     pendingRuntimeRequest: state.input
       ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }
@@ -195,6 +205,7 @@ function setup() {
     turnError: false,
     limited: false,
     subagent: false,
+    wakeAttention: false,
     background: [],
     delegatedChild: null,
   });
@@ -292,6 +303,31 @@ describe("thread notifications", () => {
       expect(state.sound).not.toHaveBeenCalled();
       expect(state.add).not.toHaveBeenCalled();
       expect(state.notification).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([true, false])(
+    "opens the child result from a failed wake alert (focused: %s)",
+    async (focused) => {
+      await using app = setup();
+      state.mode = "notifications";
+      state.focused = focused;
+      await app.render();
+      state.wakeAttention = true;
+      await app.render();
+      if (focused) {
+        const toast = state.add.mock.calls[0]?.[0];
+        expect(toast?.description).toContain("Review the login form");
+        toast?.actionProps.onClick();
+      } else {
+        expect(state.notification.mock.calls[0]?.[1].body).toContain("Review the login form");
+        const notification: EventTarget = state.notification.mock.results[0]?.value;
+        notification.dispatchEvent(new Event("click"));
+      }
+      expect(state.navigate).toHaveBeenCalledWith({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: "env-1", threadId: "child-1" },
+      });
     },
   );
 

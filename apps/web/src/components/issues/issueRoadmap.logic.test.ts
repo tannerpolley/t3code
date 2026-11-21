@@ -150,7 +150,7 @@ describe("live roadmap", () => {
       false,
     );
   });
-  it("keeps working or waiting agents In progress, idle work and open PRs Paused, and blockers ahead of both", () => {
+  it("keeps working or waiting agents In progress, open PRs in Ready for review, and blockers ahead of both", () => {
     const first = issueRoadmap(scope, [
       issue(1, { liveWork: work("working"), blockedBy: [ref(99)] }),
       issue(2, { liveWork: work("waiting_on_you") }),
@@ -173,17 +173,17 @@ describe("live roadmap", () => {
       [],
       [2, 7, 11, 12],
       [],
-      [3, 6, 8],
-      [9, 13, 14],
+      [8],
+      [3, 9, 13, 14],
       [1, 5, 10],
-      [4],
+      [4, 6],
       [],
     ]);
     expect(
       issueLiveStatus(
         issue(1, { liveWork: [...work("idle"), ...work("waiting_on_you"), ...work("working")] }),
       ),
-    ).toBe("working");
+    ).toBe("waiting_on_you");
     const refreshed = issueRoadmap(scope, [
       issue(1, { liveWork: work("idle"), blockedBy: [ref(99, "closed")] }),
       issue(2, { liveWork: work("idle") }),
@@ -194,8 +194,7 @@ describe("live roadmap", () => {
       [],
       [],
       [],
-      [1, 2],
-      [3, 4],
+      [1, 2, 3, 4],
       [],
       [],
     ]);
@@ -212,7 +211,6 @@ it("puts queued issues above Ready in insertion order and removes them from thei
     ["Done", []],
     ["In progress", []],
     ["Queued", [2, 1]],
-    ["Paused", []],
     ["Ready", [3]],
     ["Blocked", []],
     ["Closed", [4]],
@@ -302,7 +300,7 @@ it("names the first thread in the issue's status, its role and how many more are
       ],
     }),
   );
-  expect(summary?.label).toBe("Working · Designer: #736 Pahlavanzadeh 2013 MDEA research");
+  expect(summary?.agent).toBe("Designer: #736 Pahlavanzadeh 2013 MDEA research");
   expect(summary?.more).toBe(2);
   expect(summary?.work.map((item) => item.title)).toEqual([
     "#736 Pahlavanzadeh 2013 MDEA research",
@@ -310,7 +308,7 @@ it("names the first thread in the issue's status, its role and how many more are
     "Beta",
   ]);
   const roleless = issueLiveWorkSummary(issue(2, { liveWork: [thread("Gamma", "idle")] }));
-  expect(roleless).toMatchObject({ label: "Idle · Gamma", more: 0 });
+  expect(roleless).toMatchObject({ agent: "Gamma", status: "idle", more: 0 });
   expect(issueLiveWorkSummary(issue(3))).toBeNull();
 });
 

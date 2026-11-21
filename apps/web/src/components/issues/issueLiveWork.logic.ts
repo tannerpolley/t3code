@@ -5,10 +5,10 @@ import type {
   IssueRepositoryRef,
   RepositoryIssueSummary,
   IssuePullRequestStatus,
+  ThreadId,
 } from "@t3tools/contracts";
-import { managedImplementorAwaitingSubagent } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { classifyIssueWorker } from "@t3tools/shared/issueWorkerStatus";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
-import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 
 const scopeKey = (environmentId: EnvironmentId, scope: IssueRepositoryRef) =>
   `${environmentId}:${scope.host.toLowerCase()}/${scope.repository.toLowerCase()}`;
@@ -17,20 +17,37 @@ const sameItems = <T>(left: readonly T[], right: readonly T[]) =>
   left.length === right.length && left.every((item, index) => item === right[index]);
 
 /** Built once per shell update, shared by all issue surfaces. No issue-by-thread scans. */
-export function indexIssueWork(shells: readonly EnvironmentThreadShell[]) {
+export function indexIssueWork(
+  shells: readonly EnvironmentThreadShell[],
+  removedAt?: ReadonlyMap<EnvironmentId, ReadonlyMap<ThreadId, number>>,
+) {
   const threads = new Map<string, EnvironmentThreadShell>();
   const issues = new Map<string, Map<number, EnvironmentThreadShell[]>>();
+  const children = new Map<string, EnvironmentThreadShell[]>();
   for (const thread of shells) {
     threads.set(threadKey(thread.environmentId, thread.id), thread);
-    if (thread.linkedIssue === undefined) continue;
-    const key = scopeKey(thread.environmentId, thread.linkedIssue);
-    let repository = issues.get(key);
-    if (repository === undefined) issues.set(key, (repository = new Map()));
-    const linked = repository.get(thread.linkedIssue.number) ?? [];
-    linked.push(thread);
-    repository.set(thread.linkedIssue.number, linked);
+    if (thread.lineage.parentThreadId !== null) {
+      const key = threadKey(thread.environmentId, thread.lineage.parentThreadId);
+      const siblings = children.get(key);
+      if (siblings === undefined) children.set(key, [thread]);
+      else siblings.push(thread);
+    }
+    const refs = (thread.source.issues ?? []).flatMap((link) =>
+      link.tracker === "github" && /^\d+$/.test(link.key)
+        ? [{ host: link.host, repository: link.scope, number: Number(link.key) }]
+        : [],
+    );
+    if (thread.linkedIssue !== undefined) refs.push(thread.linkedIssue);
+    for (const ref of refs) {
+      const key = scopeKey(thread.environmentId, ref);
+      let repository = issues.get(key);
+      if (repository === undefined) issues.set(key, (repository = new Map()));
+      const linked = repository.get(ref.number) ?? [];
+      if (linked.at(-1) !== thread) linked.push(thread);
+      repository.set(ref.number, linked);
+    }
   }
-  return { threads, issues };
+  return { threads, issues, children, removedAt };
 }
 type IssueWorkIndex = ReturnType<typeof indexIssueWork>;
 type WorkSummary = Pick<RepositoryIssueSummary, "number"> & {
@@ -38,9 +55,14 @@ type WorkSummary = Pick<RepositoryIssueSummary, "number"> & {
   readonly liveWork?:
     | readonly (Pick<
         NonNullable<RepositoryIssueSummary["liveWork"]>[number],
-        "threadId" | "inherited" | "status" | "worktreeExists"
+        "threadId" | "inherited" | "status" | "worktreeExists" | "requestHandledByParent"
       > &
-        Partial<Pick<NonNullable<RepositoryIssueSummary["liveWork"]>[number], "worktreePath">>)[]
+        Partial<
+          Pick<
+            NonNullable<RepositoryIssueSummary["liveWork"]>[number],
+            "worktreePath" | "pullRequests"
+          >
+        >)[]
     | undefined;
   readonly closingPullRequests?: readonly IssuePullRequestStatus[] | undefined;
   readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
@@ -53,7 +75,8 @@ export function createLiveIssueWorkOverlay() {
     Map<
       string,
       {
-        threads: readonly (EnvironmentThreadShell | undefined)[];
+        threads: readonly (EnvironmentThreadShell | undefined | null)[];
+        parents: readonly (EnvironmentThreadShell | undefined)[];
         result: WorkSummary;
       }
     >
@@ -79,52 +102,82 @@ export function createLiveIssueWorkOverlay() {
     // Older servers lack the provenance needed to safely replace their work and PR counts.
     if (issue.closingPullRequests === undefined) return issue;
     const key = scopeKey(environmentId, scope);
-    const ids = new Set((issue.liveWork ?? []).map((work) => work.threadId));
-    for (const thread of index.issues.get(key)?.get(issue.number) ?? []) ids.add(thread.id);
-    const threads = [...ids].map((id) => index.threads.get(threadKey(environmentId, id)));
+    const storedWork = new Map((issue.liveWork ?? []).map((work) => [work.threadId, work]));
+    const direct = index.issues.get(key)?.get(issue.number) ?? [];
+    const ids = new Set([...storedWork.keys(), ...direct.map((thread) => thread.id)]);
+    for (const id of ids) {
+      for (const child of index.children.get(threadKey(environmentId, id)) ?? []) ids.add(child.id);
+    }
+    const removed = index.removedAt?.get(environmentId);
+    const threads = [...ids].map(
+      (id) =>
+        index.threads.get(threadKey(environmentId, id)) ?? (removed?.has(id) ? null : undefined),
+    );
+    const parents = threads.map((thread) => {
+      const routedTo = thread?.source.pendingRuntimeRequest?.routedTo;
+      return routedTo === undefined
+        ? undefined
+        : index.threads.get(threadKey(environmentId, routedTo));
+    });
     let cached = summaries.get(issue);
     if (cached === undefined) summaries.set(issue, (cached = new Map()));
     const previous = cached.get(key);
-    if (previous !== undefined && sameItems(previous.threads, threads)) return previous.result as T;
+    if (
+      previous !== undefined &&
+      sameItems(previous.threads, threads) &&
+      sameItems(previous.parents, parents)
+    )
+      return previous.result as T;
     const active = threads
-      .filter((thread) => thread !== undefined)
+      .filter((thread) => thread != null)
       .filter((thread) => issue.state === "closed" || thread.archivedAt === null);
-    const inheritedIds = new Set(
-      (issue.liveWork ?? []).filter((work) => work.inherited).map((work) => work.threadId),
+    const directIds = new Set(direct.map((thread) => thread.id));
+    const omittedWork = [...ids].flatMap((id, position) => {
+      const work = storedWork.get(id);
+      return threads[position] === undefined && work !== undefined ? [work] : [];
+    });
+    const parentsByThread = new Map(
+      threads.flatMap((thread, index) => {
+        const parent = parents[index];
+        return thread == null || parent === undefined ? [] : [[thread.id, parent.source] as const];
+      }),
     );
     const liveWork = active.map((thread) => {
-      // An inherited subagent does not make a settled parent blue in the sidebar.
-      const status = resolveSidebarThreadStatus(thread);
+      const stored = storedWork.get(thread.id);
       return {
         threadId: thread.id,
         title: thread.title,
         ...(thread.source.role === undefined ? {} : { role: thread.source.role }),
         branch: thread.branch,
         worktreePath: thread.worktreePath,
-        worktreeExists: issue.liveWork?.find(
-          (work) => work.threadId === thread.id && work.worktreePath === thread.worktreePath,
-        )?.worktreeExists,
+        worktreeExists:
+          stored?.worktreePath === thread.worktreePath ? stored?.worktreeExists : undefined,
         pullRequests: thread.pullRequests
           .filter((pr) => pr.source !== "stack-dismissed")
           .map((pr) => pr.url),
-        status:
-          (status === "working" ||
-            (status === "waiting" && managedImplementorAwaitingSubagent(thread.source))) &&
-          thread.archivedAt === null &&
-          !inheritedIds.has(thread.id)
-            ? ("working" as const)
-            : thread.archivedAt === null && (status === "approval" || status === "input")
-              ? ("waiting_on_you" as const)
-              : ("idle" as const),
+        inherited: !directIds.has(thread.id) && (stored?.inherited ?? stored === undefined),
+        ...classifyIssueWorker(thread.source, parentsByThread.get(thread.id)),
       };
     });
+    const omittedPrUrls = new Set(
+      omittedWork.flatMap((work) => (work.pullRequests ?? []).map((url) => url.toLowerCase())),
+    );
     const pullRequests = issuePullRequests(
-      issue.closingPullRequests,
+      [
+        ...issue.closingPullRequests,
+        ...(issue.pullRequests ?? []).filter((pr) =>
+          omittedPrUrls.has(
+            (pr.url ?? `https://${pr.host}/${pr.repository}/pull/${pr.number}`).toLowerCase(),
+          ),
+        ),
+      ],
       active.flatMap((thread) => thread.pullRequests),
     );
     const result = {
       ...issue,
-      ...(issue.liveWork !== undefined || liveWork.length > 0 ? { liveWork } : {}),
+      ...(issue.liveWork !== undefined || liveWork.length > 0
+        ? { liveWork: [...liveWork, ...omittedWork] }
+        : {}),
       pullRequests,
       pullRequestCount: pullRequests.length,
     };
@@ -133,7 +186,7 @@ export function createLiveIssueWorkOverlay() {
       JSON.stringify(result) === JSON.stringify(previous?.result ?? issue)
         ? (previous?.result ?? issue)
         : result;
-    cached.set(key, { threads, result: stable });
+    cached.set(key, { threads, parents, result: stable });
     return stable as T;
   };
 

@@ -24,7 +24,7 @@ import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.test
 import * as IssueLinks from "./IssueLinks.ts";
 
 it.effect(
-  "preserves full-shell liveWork and PR output, memoizes it, and observes the next thread event",
+  "matches full-shell work and PRs when an older approval is pending alongside a newer question",
   () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -265,6 +265,27 @@ it.effect(
               resolvedAt: null,
             },
           });
+        if (name === "question")
+          yield* apply({
+            id: EventId.make("older-approval"),
+            type: "runtime-request.updated",
+            threadId: id,
+            runId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: RuntimeRequestId.make("older-approval"),
+              nodeId,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "command",
+              status: "pending",
+              routedTo: ThreadId.make("running"),
+              responseCapability: { type: "not_resumable", reason: "Test" },
+              createdAt: DateTime.makeUnsafe("2026-10-19T00:00:00Z"),
+              resolvedAt: null,
+            },
+          });
         if (name === "native")
           yield* apply({
             id: EventId.make("native"),
@@ -332,9 +353,12 @@ it.effect(
       assert.equal(work.find((item) => item.threadId === "archived")?.status, "idle");
       assert.deepEqual(work.find((item) => item.threadId === "legacy")?.pullRequests, [pr.url]);
       assert.equal(first.issues[0]!.pullRequestCount, 1);
-      assert.equal(
-        first.issues[0]?.liveWork?.find((work) => work.threadId === "question")?.status,
-        "waiting_on_you",
+      assert.include(
+        work.find((item) => item.threadId === "question"),
+        {
+          status: "approval",
+          requestHandledByParent: true,
+        },
       );
       assert.equal(
         first.issues[0]?.liveWork?.find((work) => work.threadId === "native")?.status,
