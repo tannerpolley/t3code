@@ -45,7 +45,6 @@ import {
   IssueQueueInput,
   RepositoryWorkEndInput,
   RepositoryWorkControlInput,
-  RepositoryUsageSprintInput,
   RepositoryConcurrencyLimitInput,
   RepositoryHandoffRequestInput,
   RepositoryWorkResult,
@@ -481,15 +480,6 @@ export const OrchestratorToolkit = Toolkit.make(
   Tool.make("set_repository_work_paused", {
     description: "Pause new worker admissions or resume after rechecking GitHub eligibility.",
     parameters: RepositoryWorkControlInput,
-    success: RepositoryWorkResult,
-    failure: OrchestratorMcpFailure,
-    failureMode: "return",
-    dependencies,
-  }).annotate(Tool.Destructive, true),
-  Tool.make("set_repository_usage_sprint", {
-    description:
-      "Start a one-time usage sprint on a Codex or Claude providerInstanceId that has a weekly usage window with a known reset, or pass null with the active sprint's startedAt to stop it. Until that window resets, new work in this repository's tree runs on that provider: delegate_task refuses other providers and linked environments, messages sent to children on other providers are refused, and queue and milestone admissions pick its model-role choices. Work already running on another provider continues. Your own model does not change. At the reset, scheduled or early, T3 stops running children (keeping their worktrees and commits), ends the sprint and messages you to return to your normal model roles. get_repository_orchestration and orchestrator_capabilities show the active sprint.",
-    parameters: RepositoryUsageSprintInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
     failureMode: "return",

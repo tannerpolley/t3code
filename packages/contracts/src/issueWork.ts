@@ -26,11 +26,10 @@ export const RepositoryMilestonePlan = Schema.Struct({
   fingerprint: Schema.String,
 });
 
-export const RepositoryUsageSprintEndReason = Schema.Literals(["reset", "early_reset", "stopped"]);
-export type RepositoryUsageSprintEndReason = typeof RepositoryUsageSprintEndReason.Type;
+const RepositoryUsageSprintEndReason = Schema.Literals(["reset", "early_reset", "stopped"]);
 
 /** A one-time run limited to one provider's models until its weekly usage window resets. */
-export const RepositoryUsageSprint = Schema.Struct({
+const RepositoryUsageSprint = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   windowId: TrimmedNonEmptyString,
   /** Highest usage seen during the sprint; a drop from it or a moved reset means an early reset. */
@@ -38,7 +37,6 @@ export const RepositoryUsageSprint = Schema.Struct({
   resetsAt: Schema.String,
   startedAt: Schema.String,
 });
-export type RepositoryUsageSprint = typeof RepositoryUsageSprint.Type;
 
 export const IssueSuspensionKind = Schema.Literals([
   "closed",
@@ -156,6 +154,7 @@ export const RepositoryOrchestration = Schema.Struct({
   ),
   /** Present when retired; null means there is no successor. */
   retiredToThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  // Legacy thread snapshots and metadata events retain sprint records.
   usageSprint: Schema.optional(RepositoryUsageSprint),
   usageSprintHistory: Schema.optional(
     Schema.Array(
@@ -230,15 +229,6 @@ export const RepositoryWorkControlInput = Schema.Struct({
   clientRequestId: CommandId,
 });
 export type RepositoryWorkControlInput = typeof RepositoryWorkControlInput.Type;
-/** Starts a usage sprint on a provider instance, or with null stops the sprint `startedAt` names. */
-export const RepositoryUsageSprintInput = Schema.Struct({
-  ...IssueRepositoryRef.fields,
-  providerInstanceId: Schema.NullOr(ProviderInstanceId),
-  /** Required to stop: the sprint's startedAt, so a late or retried Stop never ends a later sprint. */
-  startedAt: Schema.optional(Schema.String),
-  clientRequestId: CommandId,
-});
-export type RepositoryUsageSprintInput = typeof RepositoryUsageSprintInput.Type;
 export const RepositoryHandoffRequestInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),

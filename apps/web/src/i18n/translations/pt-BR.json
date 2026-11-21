@@ -6,6 +6,14 @@
   "1915a433d092839d": "Ambos",
   "1b7c524fccf06537": "Precisa da sua atenção",
   "9118979e7d982335": "Pronto para revisão",
+  "6899d17239a4b04e": [
+    "aberta ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "16cfc2ecead8fcc9": "Limite de inatividade da conversa",
   "927de6cb3121b1c5": "Sinaliza uma conversa em execução e avisa a conversa pai quando o provedor fica sem atividade por esse tempo.",
   "d52b3d6bf9f2a013": "Misto",

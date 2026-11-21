@@ -339,6 +339,11 @@ function ComposerPreviewAnnotationDetails({
   );
 }
 
+function ComposerIssueContextChip({ record }: { record: IssueContextRecord }) {
+  const { environmentId } = use(ComposerContextActionsContext);
+  return <IssueContextChip record={record} environmentId={environmentId} />;
+}
+
 function ComposerThreadContextChip(props: { record: ThreadContextRecord }) {
   const { environmentId } = use(ComposerContextActionsContext);
   const linkedEnvironments = useLinkedEnvironments(environmentId);
@@ -388,7 +393,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
       canRender: (entry) => entry.kind === "issue",
       render: (entry) =>
         entry.kind === "issue" ? (
-          <IssueContextChip record={entry.record} />
+          <ComposerIssueContextChip record={entry.record} />
         ) : (
           <UnresolvedContextChip label="Issue" />
         ),
