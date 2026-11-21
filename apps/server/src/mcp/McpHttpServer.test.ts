@@ -53,6 +53,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerHttp from "../http.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as NotebookService from "../notebook/NotebookService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -70,6 +71,7 @@ import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import * as IssueService from "../issue/IssueService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import { IssuesToolkit } from "./toolkits/issues/tools.ts";
+import { NotebookToolkit } from "./toolkits/notebook/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -2059,16 +2061,20 @@ it.effect(
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("lists optional tools to a deferring client only after tool_search loads them", () =>
+it.effect("limits child tool listings and defers tools only for clients that opt in", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const scopeFor = (token: string): McpInvocationContext.McpThreadInvocationScope => ({
+      const scopeFor = (
+        token: string,
+        subagent = false,
+      ): McpInvocationContext.McpThreadInvocationScope => ({
         environmentId,
         requestNamespace: token,
         thread: {
           threadId: ThreadId.make(`thread-${token}`),
           providerSessionId: token,
           providerInstanceId: ProviderInstanceId.make("copilot"),
+          subagent,
         },
         client: undefined,
         capabilities: new Set(["orchestration"]),
@@ -2077,8 +2083,10 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       const scopes = new Map([
         ["deferringToken", scopeFor("deferringToken")],
         ["otherToken", scopeFor("otherToken")],
+        ["childToken", scopeFor("childToken", true)],
+        ["ordinaryChildToken", scopeFor("ordinaryChildToken", true)],
       ]);
-      const tool = (name: string, description: string) =>
+      const tool = <Name extends string>(name: Name, description: string) =>
         Tool.make(name, {
           description,
           success: Schema.Struct({}),
@@ -2089,6 +2097,8 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         tool("delegate_task", "Delegates a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
+        NotebookToolkit.tools.notebook_list_kernels,
+        OrchestratorToolkit.tools.create_threads,
       );
       const reads = McpToolAccess.reads(() => Effect.succeed({}));
       const serverLayer = McpHttpServer.layerMcpTransport(
@@ -2099,6 +2109,8 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               delegate_task: reads,
               preview_open: reads,
               schedule_task: reads,
+              notebook_list_kernels: McpToolAccess.readsAsCaller(() => Effect.die("unused")),
+              create_threads: McpToolAccess.actsAsCaller(() => Effect.die("unused")),
             }),
           ),
           McpHttpServer.layerToolSearch,
@@ -2106,6 +2118,13 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({})),
+        Layer.provide(
+          Layer.mock(NotebookService.NotebookService)({
+            hasConfiguredWorkspace: ({ threadId }) =>
+              Effect.succeed(threadId === "thread-childToken"),
+          }),
+        ),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -2171,8 +2190,27 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
 
       const deferring = yield* session("deferringToken", true);
       const other = yield* session("otherToken", false);
+      const child = yield* session("childToken", true);
+      const ordinaryChild = yield* session("ordinaryChildToken", false);
+      const configuredChild = yield* session("childToken", false);
       expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      expect(yield* other.listed).toEqual([
+        "create_threads",
+        "delegate_task",
+        "preview_open",
+        "schedule_task",
+      ]);
+      expect(yield* ordinaryChild.listed).toEqual([
+        "delegate_task",
+        "preview_open",
+        "schedule_task",
+      ]);
+      expect(yield* configuredChild.listed).toEqual([
+        "delegate_task",
+        "notebook_list_kernels",
+        "preview_open",
+        "schedule_task",
+      ]);
       // Unlisted tools stay callable.
       expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
 
@@ -2180,7 +2218,17 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         (yield* deferring.call("tool_search", { query: "browser" })).structuredContent,
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      expect(
+        (yield* child.call("tool_search", { query: "create_threads" })).structuredContent,
+      ).toEqual({ tools: [] });
+      expect(
+        (yield* deferring.call("tool_search", { query: "notebook" })).structuredContent,
+      ).toEqual({ tools: [] });
+      expect(
+        (yield* child.call("tool_search", { query: "notebook" })).structuredContent,
+      ).toMatchObject({ tools: [{ name: "notebook_list_kernels" }] });
+      expect(yield* child.listed).toContain("notebook_list_kernels");
+      expect(yield* deferring.listed).not.toContain("notebook_list_kernels");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

@@ -1,6 +1,8 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
+import type { McpInvocationContext } from "./McpInvocationContext.ts";
+
 export const TOOL_SEARCH = "tool_search";
 
 /** What a deferring client lists before it searches. Pi's extension declares the same three. */
@@ -27,7 +29,7 @@ export class McpToolExposure extends Context.Service<
     readonly search: (
       providerSessionId: string,
       query: string,
-    ) => Effect.Effect<ReadonlyArray<ListedTool>>;
+    ) => Effect.Effect<ReadonlyArray<ListedTool>, never, McpInvocationContext>;
     readonly isListed: (providerSessionId: string, tool: string) => boolean;
   }
 >()("t3/mcp/McpToolExposure") {}
@@ -45,7 +47,7 @@ const score = (tool: ListedTool, terms: ReadonlyArray<string>) => {
 };
 
 export const make = (
-  tools: () => ReadonlyArray<ListedTool>,
+  tools: Effect.Effect<ReadonlyArray<ListedTool>, never, McpInvocationContext>,
   announceListChanged: () => Effect.Effect<void>,
 ) => {
   const loaded = new Map<string, Set<string>>();
@@ -65,7 +67,7 @@ export const make = (
         .toLowerCase()
         .split(/[^a-z0-9_]+/u)
         .filter(Boolean);
-      const found = tools()
+      const found = (yield* tools)
         .filter((tool) => tool.name !== TOOL_SEARCH)
         .map((tool) => ({ tool, score: score(tool, terms) }))
         .filter((match) => match.score > 0)
