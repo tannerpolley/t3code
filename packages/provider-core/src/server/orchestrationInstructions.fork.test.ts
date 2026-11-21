@@ -17,8 +17,10 @@ describe("T3 orchestration provider instructions", () => {
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "another provider");
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "t3_request_user_input");
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "Multiple selections:");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "new `delegate_task`");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "never a `t3_thread_send`");
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "independent Reviewer only when the owner or plan asks.",
+    );
   });
 
   it("lists role defaults and choices, credit approval, and model notes", () => {

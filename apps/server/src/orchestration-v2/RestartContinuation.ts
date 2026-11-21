@@ -6,6 +6,7 @@ import {
   latestProviderTurnForAttempt,
   MessageId,
   type OrchestrationV2Run,
+  type OrchestrationV2ProviderFailure,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -37,6 +38,36 @@ import {
 
 const CONTINUE_PROMPT =
   "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.";
+
+export function isTransientWorkerFailure(
+  failure: OrchestrationV2ProviderFailure,
+  httpStatus?: number,
+) {
+  if (
+    (failure.class !== "provider_error" && failure.class !== "transport_error") ||
+    failure.retryable === false
+  )
+    return false;
+
+  const apiStatus = /^api_error_(\d{3})$/.exec(failure.code ?? "")?.[1];
+  const messageStatus = /\b(?:HTTP(?: status)?|status|API Error:)\s*(\d{3})\b/i.exec(
+    failure.message,
+  )?.[1];
+  const status = httpStatus ?? apiStatus ?? messageStatus;
+  if (status !== undefined) return Number(status) === 502 || Number(status) === 503;
+
+  if (
+    failure.code === "responseStreamDisconnected" ||
+    failure.code === "responseStreamConnectionFailed" ||
+    failure.code === "httpConnectionFailed"
+  )
+    return true;
+
+  return (
+    /stream disconnected before completion|error decoding response body/i.test(failure.message) ||
+    (failure.class === "transport_error" && /^Connection lost\.$/i.test(failure.message))
+  );
+}
 
 const MAX_CONTINUATION_CHAIN = 3;
 const CONTINUATION_LOOP_WINDOW_MS = 5 * 60 * 1_000;
@@ -238,10 +269,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     readonly threadId: ThreadId;
     readonly sourceRunId: RunId;
     readonly processLossCount?: number;
+    readonly transientFailure?: boolean;
   }) {
     const settings = yield* ServerSettings.ServerSettingsService;
-    const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-    if (!enabled) return;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
@@ -249,16 +279,21 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       ["messages", "runs", "providerTurns", "attempts", "runtimeRequests", "turnItems"],
       { messageIds: [messageId], turnItemTypes: ["secret_request"] },
     );
-    if (
-      !resolveProjectSettings(enabled, projection.thread.projectId).settings
-        .continueThreadsAfterServerUpdate
-    )
-      return;
+    if (!input.transientFailure) {
+      const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
+      if (
+        !enabled ||
+        !resolveProjectSettings(enabled, projection.thread.projectId).settings
+          .continueThreadsAfterServerUpdate
+      )
+        return;
+    }
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     if (
       !source ||
       !(
+        (input.transientFailure && source.status === "failed") ||
         isRestartContinuationSource(source, projection.providerTurns) ||
         continuationFailedBeforePrompt(source, projection.providerTurns)
       ) ||
@@ -266,7 +301,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         projection,
         source,
         yield* DateTime.now,
-        isRestartNoteSource(source, projection.providerTurns),
+        input.transientFailure === true || isRestartNoteSource(source, projection.providerTurns),
       )
     )
       return;
@@ -318,8 +353,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
-    const text =
-      noteText === undefined
+    const text = input.transientFailure
+      ? `The provider connection dropped. ${CONTINUE_PROMPT}`
+      : noteText === undefined
         ? CONTINUE_PROMPT
         : note.settled
           ? noteText
@@ -334,9 +370,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         notification: {
           source: { kind: "system" },
           outcome: "updated",
-          summary: note.settled
-            ? "T3 Code restarted and stopped background work"
-            : "T3 Code restarted and resumed this turn",
+          summary: input.transientFailure
+            ? "Resuming after a temporary provider failure"
+            : note.settled
+              ? "T3 Code restarted and stopped background work"
+              : "T3 Code restarted and resumed this turn",
           detail: text,
         },
         attachments: [],

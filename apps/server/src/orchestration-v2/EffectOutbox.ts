@@ -40,6 +40,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
+    transientFailureAttempt: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
     processLossCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   }),
   Schema.Struct({

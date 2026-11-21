@@ -1,14 +1,14 @@
-import type {
-  OrchestrationV2AppThread,
-  OrchestrationV2Notification,
-  PullRequestCheck,
-  PullRequestComment,
-  PullRequestDetail,
-  ThreadPullRequestLink,
-  ThreadPullRequestWatch,
+import {
+  isManagedIssueImplementor,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2Notification,
+  type PullRequestCheck,
+  type PullRequestComment,
+  type PullRequestDetail,
+  type ThreadPullRequestLink,
+  type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { isManagedIssueImplementor } from "../issues/IssueEligibility.ts";
 
 export function needsManagedPullRequestWatch(
   thread: Pick<

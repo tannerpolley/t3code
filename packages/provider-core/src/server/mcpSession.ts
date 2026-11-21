@@ -1,7 +1,7 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
-export type ManagedIssueRole = "root" | "worker";
+export type ManagedIssueRole = "root" | "worker" | "implementor";
 
 /** Composed outside the adapters by `t3OrchestrationPolicy`; adapters only translate it. */
 export interface McpOrchestrationPolicy {
@@ -10,7 +10,7 @@ export interface McpOrchestrationPolicy {
   /** The user's model roles block, refreshed before each turn; empty when there are none. */
   readonly modelRoles: string;
   readonly modelNotes: string;
-  /** False for issue workers, which must delegate through T3. */
+  /** False for managed workers that delegate through T3. */
   readonly nativeSubagents: boolean;
 }
 /**

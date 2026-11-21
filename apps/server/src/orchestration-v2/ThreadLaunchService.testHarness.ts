@@ -448,6 +448,7 @@ function reviewHarness(
   workRead: IssueService.IssueService["Service"]["workRead"],
   unavailableRole = false,
   failInterrupt?: (threadId: ThreadId) => boolean,
+  runContinuationWorker = false,
 ) {
   const openCode = {
     ...adapter,
@@ -490,6 +491,7 @@ function reviewHarness(
     milestoneIssues: () => Effect.succeed({ issues: [], complete: true }),
   });
   const harness = makeHarness({
+    runContinuationWorker,
     adapters: [adapter, openCode, claude],
     providers,
     issueServiceLayer: reads,
@@ -509,6 +511,8 @@ function reviewHarness(
       modelRoles: {
         orchestrator: { complex: { provider: "codex", effort: "default" } },
         implementor: { complex: { effort: "default", tier: 3 } },
+        reviewer: { complex: { effort: "default", tier: 2 } },
+        designer: { complex: { effort: "default", tier: 2 } },
       },
       modelTiers: {
         2: { codex: { model: modelSelection.model } },

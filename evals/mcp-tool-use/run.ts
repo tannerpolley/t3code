@@ -523,8 +523,11 @@ export const savesPastedSecrets = t3Tools.some(
 /** A request_secret call that hands T3 a pasted secret, on a ref that takes one. */
 const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
   savesPastedSecrets && name === "request_secret" && typeof input.value === "string";
-// T3 does not offer these to a delegated child, so its harness never lists them.
-const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
+// Delegated-child cases model ordinary children, which cannot stop managed PR watches.
+const hiddenFromSubagents = new Set([
+  ...enabledWhen(McpInvocationContext.hiddenFromSubagents),
+  ...enabledWhen(McpInvocationContext.allowsPullRequestUnwatch),
+]);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
 const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>

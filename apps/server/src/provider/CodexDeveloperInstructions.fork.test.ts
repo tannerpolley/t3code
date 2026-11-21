@@ -73,7 +73,8 @@ const modelNotes = t3ModelNotesInstructions(resolveModelNotes(worstCase.modelTie
 describe("buildCodexAdditionalContext", () => {
   it.each([
     ["worker", /Native subagent tools are disabled in this repository-managed session/],
-    ["root", /use native subagent tools only for your own work while no issue workers run/],
+    ["implementor", /role: "reviewer"/],
+    ["root", /use native subagent tools only for your own work while no issue workers run/i],
   ] as const)("splits %s managed issue instructions within Codex's context cap", (role, native) => {
     const context = buildCodexAdditionalContext(
       { model: "gpt-5.3-codex", reasoningEffort: "high" },
@@ -100,6 +101,12 @@ describe("buildCodexAdditionalContext", () => {
 
     NodeAssert.match(first, /^Keep issues current through propose_issue_change/);
     NodeAssert.match(orchestration, native);
+    NodeAssert.match(orchestration, /independent Reviewer only when the owner or plan asks/);
+    if (role === "implementor") {
+      NodeAssert.match(orchestration, /before a third fix round/);
+      NodeAssert.match(orchestration, /after material changes/);
+      NodeAssert.match(orchestration, /merge-ready/);
+    }
     const statusInstruction = /Answer status questions with `repository_status`/;
     if (role === "root") NodeAssert.match(orchestration, statusInstruction);
     else NodeAssert.doesNotMatch(orchestration, statusInstruction);
