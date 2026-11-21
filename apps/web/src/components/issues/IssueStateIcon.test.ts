@@ -29,7 +29,7 @@ const project = (status: string | null) => ({
   priority: null,
 });
 
-it("orders closed, then an open blocker, then an agent on it, then queued, then paused work, then open", () => {
+it("orders closed, then an open blocker, then an agent on it, then queued, then review or open", () => {
   expect(issueProgress({ state: "open" })).toBe("open");
   expect(issueProgress({ state: "closed", blockedBy: [blocker("open")] })).toBe("completed");
   expect(
@@ -38,10 +38,10 @@ it("orders closed, then an open blocker, then an agent on it, then queued, then 
   expect(issueProgress({ state: "open", blockedBy: [blocker("closed")] })).toBe("open");
   expect(
     issueProgress({ state: "open", blockedBy: [blocker("closed")], liveWork: [work("idle")] }),
-  ).toBe("paused");
+  ).toBe("open");
   expect(issueProgress({ state: "open", liveWork: [work("waiting_on_you")] })).toBe("in_progress");
   expect(issueProgress({ state: "open", liveWork: [work("working")] })).toBe("in_progress");
-  expect(issueProgress({ state: "open", liveWork: [work("idle")] })).toBe("paused");
+  expect(issueProgress({ state: "open", liveWork: [work("idle")] })).toBe("open");
   expect(issueProgress({ state: "open", liveWork: [work("idle")], queued: true })).toBe("queued");
   expect(issueProgress({ state: "open", liveWork: [work("working")], queued: true })).toBe(
     "in_progress",
@@ -64,7 +64,7 @@ it("splits closed issues the way GitHub closes them", () => {
   expect(issueProgress({ state: "open", stateReason: "reopened" })).toBe("open");
 });
 
-it("pauses open and draft PRs without an agent on them, while blockers and closed issues win", () => {
+it("shows open and draft PRs ready for review without an agent on them, while blockers and closed issues win", () => {
   const pr = {
     host: "github.com",
     repository: "acme/repo",
@@ -74,8 +74,10 @@ it("pauses open and draft PRs without an agent on them, while blockers and close
     state: "open" as const,
     isDraft: false,
   };
-  expect(issueProgress({ state: "open", pullRequests: [pr] })).toBe("paused");
-  expect(issueProgress({ state: "open", pullRequests: [{ ...pr, isDraft: true }] })).toBe("paused");
+  expect(issueProgress({ state: "open", pullRequests: [pr] })).toBe("ready_for_review");
+  expect(issueProgress({ state: "open", pullRequests: [{ ...pr, isDraft: true }] })).toBe(
+    "ready_for_review",
+  );
   expect(issueProgress({ state: "open", pullRequests: [{ ...pr, state: "merged" }] })).toBe("open");
   expect(issueProgress({ state: "open", pullRequests: [{ ...pr, state: "closed" }] })).toBe("open");
   expect(issueProgress({ state: "open", pullRequests: [pr], liveWork: [work("working")] })).toBe(

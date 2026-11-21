@@ -1,9 +1,4 @@
-import {
-  CommandId,
-  type MessageId,
-  type OrchestrationV2ThreadProjection,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { CommandId, type MessageId, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -15,7 +10,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import type * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import { currentDelegatedCompletionDelivery } from "./ForkDelegatedCompletion.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 
@@ -24,37 +19,6 @@ function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
   return taskIds.length === 1
     ? `Delegated task ${taskList} reached a terminal state. Use task_status with taskId ${taskList} to read the result.`
     : `Delegated tasks ${taskList} reached terminal states. Use task_status with each taskId to read the results.`;
-}
-
-function currentDelegatedCompletionDelivery(
-  projection: Pick<
-    OrchestrationV2ThreadProjection,
-    "thread" | "messages" | "runs" | "providerTurns"
-  >,
-  completion: NonNullable<
-    ProviderContinuationRequests.ProviderContinuationRequest["delegatedCompletion"]
-  >,
-) {
-  const sourceRun = projection.runs.find((candidate) => candidate.id === completion.parentRunId);
-  const cohort =
-    completion.parentRunId === null
-      ? projection.thread.delegatedCompletion
-      : sourceRun?.delegatedCompletion;
-  const delivery = cohort?.delivery;
-  const alreadyDispatched = projection.messages.some(
-    (message) => message.id === completion.messageId,
-  );
-  if (
-    cohort?.disposition !== "open" ||
-    delivery === null ||
-    delivery === undefined ||
-    delivery.generation !== completion.generation ||
-    delivery.messageId !== completion.messageId ||
-    (alreadyDispatched && !isUndeliveredMailboxSteer(projection, completion.messageId))
-  ) {
-    return undefined;
-  }
-  return delivery;
 }
 
 function delegatedCompletionRetryKey(
@@ -82,12 +46,15 @@ export const layer = Layer.effectDiscard(
         return updated;
       });
 
-    const nextRetryDelay = (key: string) =>
+    const recordFailedAttempt = (key: string) =>
       Ref.modify(retryAttempts, (current) => {
         const attempt = current.get(key) ?? 0;
         const updated = new Map(current);
         updated.set(key, attempt + 1);
-        return [Math.min(100 * 2 ** Math.min(attempt, 6), 5_000), updated] as const;
+        return [
+          { attempt: attempt + 1, delay: Math.min(100 * 2 ** Math.min(attempt, 6), 5_000) },
+          updated,
+        ] as const;
       });
 
     // Cancelling or stopping a queued continuation ends it unstarted; only the request can release the adapter's wake latch.
@@ -313,20 +280,36 @@ export const layer = Layer.effectDiscard(
               if (request.delegatedCompletion !== undefined) {
                 const completion = request.delegatedCompletion;
                 const retryKey = delegatedCompletionRetryKey(request, completion);
-                const retryDelay = yield* nextRetryDelay(retryKey);
+                const { attempt, delay } = yield* recordFailedAttempt(retryKey);
                 yield* Effect.gen(function* () {
-                  yield* Effect.sleep(`${retryDelay} millis`);
+                  yield* Effect.sleep(`${delay} millis`);
                   const projection = yield* threads.getThreadRecords(
                     request.threadId,
                     ["messages", "runs", "providerTurns"],
                     {
-                      messageIds:
-                        request.delegatedCompletion === undefined
-                          ? []
-                          : [request.delegatedCompletion.messageId],
+                      messageIds: [completion.messageId],
                     },
                   );
                   if (currentDelegatedCompletionDelivery(projection, completion) !== undefined) {
+                    if (attempt >= 3) {
+                      yield* threads
+                        .dispatch({
+                          type: "delegated_task.completion-delivery.flag",
+                          commandId: CommandId.make(
+                            `delegated-completion-dispatch-failed:${retryKey}`,
+                          ),
+                          threadId: request.threadId,
+                          ...completion,
+                        })
+                        .pipe(
+                          Effect.catchCause((cause) =>
+                            Effect.logWarning(
+                              "orchestration-v2.provider-continuation.flag-failed",
+                              { cause },
+                            ),
+                          ),
+                        );
+                    }
                     yield* requests.offer(request);
                   } else {
                     yield* clearRetryAttempt(retryKey);

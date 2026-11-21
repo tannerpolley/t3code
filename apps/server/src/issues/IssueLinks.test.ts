@@ -456,11 +456,11 @@ it.effect(
       assert.deepEqual(
         work.map((item) => [item.threadId, item.status]),
         [
-          [child.id, "idle"],
-          [grandchild.id, "idle"],
+          [child.id, "working"],
+          [grandchild.id, "working"],
           [managed.id, "working"],
           [modern.id, "working"],
-          [threadId, "idle"],
+          [threadId, "done"],
           [pr.id, "working"],
         ],
       );
@@ -489,12 +489,12 @@ it.effect(
         (yield* links.enrich(withPr)).issues[0]!.liveWork?.find(
           (item) => item.threadId === child.id,
         )?.status,
-        "waiting_on_you",
+        "question",
       );
       h.setShells([root, { ...child, status: "completed", activeRunId: null }]);
       assert.deepEqual(
         (yield* links.enrich(withPr)).issues[0]!.liveWork?.map((item) => item.status),
-        ["idle", "idle"],
+        ["done", "done"],
       );
       const { issues: _issues, ...unlinked } = root;
       yield* (yield* SqlClient.SqlClient)`
@@ -638,11 +638,13 @@ it.effect("does not count stale active IDs or parked background work as a runnin
     for (const [thread, expected] of [
       [{ ...base, status: "running" as const }, "working"],
       [{ ...base, status: "completed" as const, activityRunStatus: "running" as const }, "working"],
-      [{ ...base, status: "completed" as const }, "idle"],
+      [{ ...base, status: "completed" as const }, "done"],
+      [{ ...base, status: "queued" as const }, "queued"],
+      [{ ...base, status: "failed" as const }, "failed"],
       [
         {
           ...base,
-          status: "running" as const,
+          status: "waiting" as const,
           pendingBackgroundTasks: [{ kind: "monitor" as const, taskId: "monitor" }],
         },
         "idle",
@@ -894,7 +896,7 @@ it.effect("memoizes unchanged work and invalidates it on the next projected thre
     h.setShells([{ ...thread, title: "Changed", status: "completed", activeRunId: null }]);
     const next = yield* links.enrich(list());
     assert.equal(next.issues[0]?.liveWork?.[0]?.title, "Changed");
-    assert.equal(next.issues[0]?.liveWork?.[0]?.status, "idle");
+    assert.equal(next.issues[0]?.liveWork?.[0]?.status, "done");
   }).pipe(Effect.provide(h.layer));
 });
 

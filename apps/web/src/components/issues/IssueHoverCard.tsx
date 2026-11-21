@@ -1,3 +1,4 @@
+import { useWorkerStatusLabels } from "./IssueLiveWork";
 import type { EnvironmentId, RepositoryIssueRef, RepositoryIssueSummary } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { useState, type ReactElement } from "react";
@@ -11,7 +12,7 @@ import { ThreadPullRequestsMiniList } from "../ThreadStatusIndicators";
 import { PullRequestLabelChip } from "../pullRequest/pullRequestPresentation";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { useIssueQueued } from "./IssueQueueAction";
-import { IssueStateIcon, issueStatePresentation } from "./IssueStateIcon";
+import { IssueStateIcon, issueStatePresentation, useIssueStateLabel } from "./IssueStateIcon";
 import { issueHoverPullRequests } from "./issueHoverCard.logic";
 import { openIssueBlockers } from "./issueRoadmap.logic";
 
@@ -29,9 +30,13 @@ interface IssueHoverContentProps {
 /** Mounted only in an open hover: the detail cache and streamed shell overlay stay shared. */
 export function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverContentProps) {
   const { environmentId, input } = target;
+  const labels = useWorkerStatusLabels();
   const query = useEnvironmentQuery(repositoryIssueEnvironment.detail({ environmentId, input }));
   const issue = useLiveIssueSummary(query.data?.issue ?? fallback, input, environmentId);
   const queued = useIssueQueued(environmentId, input);
+  const label = useIssueStateLabel(
+    issue === undefined ? "" : issueStatePresentation({ ...issue, queued }).label,
+  );
   const openPr = useOpenPrLink();
   const openIssue = useOpenIssueLink();
   const pullRequests =
@@ -60,7 +65,7 @@ export function IssueHoverCardContent({ target, issue: fallback, title }: IssueH
         <>
           <div className="flex items-center gap-2">
             <IssueStateIcon issue={{ ...issue, queued }} />
-            <span>{issueStatePresentation({ ...issue, queued }).label}</span>
+            <span>{label}</span>
           </div>
           {issue.labels.length > 0 ? (
             <div className="flex flex-wrap gap-1" aria-label="Labels">
@@ -112,12 +117,7 @@ export function IssueHoverCardContent({ target, issue: fallback, title }: IssueH
                   params={{ environmentId, threadId: work.threadId }}
                   className="wrap-anywhere hover:underline"
                 >
-                  {work.title} ·{" "}
-                  {work.status === "working"
-                    ? "Working"
-                    : work.status === "waiting_on_you"
-                      ? "Waiting on you"
-                      : "Idle"}
+                  {work.title} · {labels[work.status]}
                 </Link>
               ))}
             </div>

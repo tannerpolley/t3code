@@ -41,6 +41,7 @@ vi.mock("../issues/IssueQueueAction", () => ({
   IssueQueueAction: () => null,
   useIssueQueued: () => false,
 }));
+vi.mock("gt-react", () => ({ useGT: () => (message: string) => message }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -122,6 +123,7 @@ it("updates the linked row and detail glyph from the shell stream while cached d
     expect(displayed()).not.toContain("In progress");
     const working = {
       ...thread,
+      source: { ...thread.source, status: "running" as const },
       runtime: {
         status: "running" as const,
         activeRunId: RunId.make("run"),
