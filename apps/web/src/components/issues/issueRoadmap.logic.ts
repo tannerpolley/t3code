@@ -10,7 +10,9 @@ import { issueProgress } from "./IssueStateIcon";
 export function issueLiveStatus(issue: RepositoryIssueSummary) {
   const work = issue.liveWork ?? [];
   if (work.length > 0 && issue.suspensionReason !== undefined) return "suspended" as const;
-  const waiting = work.find(issueWorkerNeedsOwner);
+  const waiting =
+    work.find((worker) => issueWorkerNeedsOwner(worker) && !worker.requestHandledByParent) ??
+    work.find(issueWorkerNeedsOwner);
   if (waiting !== undefined) return waiting.status;
   if (work.some(issueWorkerIsLive)) return "working" as const;
   for (const status of ["queued", "failed", "paused", "done", "working", "idle"] as const) {
@@ -30,6 +32,7 @@ export function issueLiveWorkSummary(issue: RepositoryIssueSummary) {
   const work = [...(issue.liveWork ?? [])].sort(
     (a, b) =>
       Number(issueWorkerStatus(b) === status) - Number(issueWorkerStatus(a) === status) ||
+      Number(a.requestHandledByParent === true) - Number(b.requestHandledByParent === true) ||
       a.title.localeCompare(b.title),
   );
   const first = work[0]!;

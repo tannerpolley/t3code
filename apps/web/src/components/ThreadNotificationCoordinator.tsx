@@ -140,6 +140,14 @@ export function startThreadNotifications(
       return;
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = activeThread();
+    const attention = thread.runtime?.silentWakeAttention;
+    const target =
+      status === "failed" && attention !== undefined && "deliveryMessageId" in attention
+        ? {
+            environmentId: attention.resultEnvironmentId ?? environmentId,
+            threadId: attention.resultThreadId ?? thread.id,
+          }
+        : { environmentId, threadId: thread.id };
     const title =
       kind === "completion"
         ? "Thread completed"
@@ -152,11 +160,9 @@ export function startThreadNotifications(
               : status === "request"
                 ? "Guest request"
                 : "Input needed";
-    const description =
-      status === "failed" &&
-      (thread.runtime?.silentWakeAttention?.reason ?? thread.runtime?.lastError)
-        ? `${thread.title}: ${thread.runtime?.silentWakeAttention?.reason ?? thread.runtime?.lastError}`
-        : thread.title;
+    const failureReason =
+      status === "failed" ? (attention?.reason ?? thread.runtime?.lastError) : null;
+    const description = failureReason ? `${thread.title}: ${failureReason}` : thread.title;
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind, () =>
         hasNotificationSound(getClientSettings().notificationMode),
@@ -166,7 +172,7 @@ export function startThreadNotifications(
       inAppNotificationsEnabled &&
       document.visibilityState === "visible" &&
       document.hasFocus() &&
-      (active.environmentId !== environmentId || active.threadId !== thread.id)
+      (active.environmentId !== target.environmentId || active.threadId !== target.threadId)
     ) {
       const toastKey = threadKey({ environmentId, threadId: thread.id });
       const toastId: ToastId = toastManager.add({
@@ -195,7 +201,7 @@ export function startThreadNotifications(
             toastManager.close(toastId);
             void router.navigate({
               to: "/$environmentId/$threadId",
-              params: { environmentId, threadId: thread.id },
+              params: target,
             });
           },
         },
@@ -226,7 +232,7 @@ export function startThreadNotifications(
         window.focus();
         void router.navigate({
           to: "/$environmentId/$threadId",
-          params: { environmentId, threadId: thread.id },
+          params: target,
         });
       });
     } catch {

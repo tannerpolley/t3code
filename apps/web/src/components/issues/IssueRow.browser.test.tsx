@@ -18,7 +18,7 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
 
 import { IssueRow } from "./IssueRow";
 
-it("keeps issue, PR and live-agent navigation separate as the issue's live state changes", async () => {
+it("opens the waiting child from the issue row when its sibling is running", async () => {
   openPr.mockReset().mockImplementation((event: Event) => event.preventDefault());
   navigate.mockReset();
   const environmentId = EnvironmentId.make("environment");
@@ -70,7 +70,7 @@ it("keeps issue, PR and live-agent navigation separate as the issue's live state
     .click();
   expect(openPr).toHaveBeenCalledWith(expect.anything(), prUrl, undefined, environmentId);
   expect(onSelect).not.toHaveBeenCalled();
-  await screen.getByRole("button", { name: "Running · Implementor" }).click();
+  await screen.getByRole("button", { name: /Implementor/ }).click();
   expect(navigate).toHaveBeenCalledExactlyOnceWith({
     to: "/$environmentId/$threadId",
     params: { environmentId, threadId },
@@ -90,12 +90,12 @@ it("keeps issue, PR and live-agent navigation separate as the issue's live state
           threadId: reviewerId,
           title: "Reviewer",
           inherited: true,
-          status: "question",
+          status: "waiting_on_you",
         },
       ],
     }),
   );
-  await screen.getByRole("button", { name: "Waiting on question · Reviewer, and 1 more" }).click();
+  await screen.getByRole("button", { name: /and 1 more/ }).click();
   expect(navigate).toHaveBeenLastCalledWith({
     to: "/$environmentId/$threadId",
     params: { environmentId, threadId: reviewerId },

@@ -15615,7 +15615,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageIds: [command.messageId],
         },
       );
-      if (currentDelegatedCompletionDelivery(projection, command) === undefined) return;
+      const delivery = currentDelegatedCompletionDelivery(projection, command);
+      if (delivery === undefined) return;
+      const { subagents } = yield* loadProjectionForCommand(command, ["subagents"], {
+        subagentIds: delivery.taskIds,
+      });
+      let resultTarget:
+        | {
+            readonly title: string;
+            readonly resultThreadId: ThreadId;
+            readonly resultEnvironmentId?: EnvironmentId;
+          }
+        | undefined;
+      for (const task of subagents) {
+        if (task.result === null) continue;
+        if (task.remoteChild !== undefined) {
+          resultTarget = {
+            title: task.remoteChild.title ?? task.title ?? task.remoteChild.label,
+            resultThreadId: task.remoteChild.threadId,
+            resultEnvironmentId: task.remoteChild.environmentId,
+          };
+          break;
+        }
+        if (task.childThreadId === null) continue;
+        const child = yield* findThread(task.childThreadId);
+        if (child !== null && child.deletedAt === null) {
+          resultTarget = { title: child.title, resultThreadId: child.id };
+          break;
+        }
+      }
       const now = yield* DateTime.now;
       yield* emit(
         events,
@@ -15628,8 +15656,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...projection.thread,
           silentWakeAttention: {
             deliveryMessageId: command.messageId,
-            reason:
-              "A child finished, but its completion wake could not be sent. Its result is available in the child thread.",
+            ...(resultTarget === undefined
+              ? {
+                  reason:
+                    "A child's completion wake could not be sent. Its result was saved with the task.",
+                }
+              : {
+                  resultThreadId: resultTarget.resultThreadId,
+                  ...(resultTarget.resultEnvironmentId === undefined
+                    ? {}
+                    : { resultEnvironmentId: resultTarget.resultEnvironmentId }),
+                  reason: `The completion wake for "${resultTarget.title}" could not be sent. Its result is available in that thread.`,
+                }),
             createdAt: DateTime.formatIso(now),
           },
           settledAt: null,

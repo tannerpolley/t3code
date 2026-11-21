@@ -21,6 +21,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
   legacyThreadPullRequestKey,
   threadPullRequestsOf,
+  visibleThreadPullRequests,
 } from "../sourceControl/threadPullRequests.ts";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
 import { classifyIssueWorker } from "@t3tools/shared/issueWorkerStatus";
@@ -74,6 +75,7 @@ const make = Effect.gen(function* () {
           {
             readonly threads: ReadonlyArray<IssueWorkThread>;
             readonly parentById: ReadonlyMap<string, string | null>;
+            readonly routingParents: ReadonlyArray<IssueWorkThread>;
           },
           IssueLinkError
         >
@@ -139,11 +141,21 @@ const make = Effect.gen(function* () {
               deleted_at === null ? [ThreadId.make(thread_id)] : [],
             ),
           );
+          const ids = new Set(threads.map((thread) => thread.id));
+          const parentIds = new Set(
+            threads.flatMap((thread) => {
+              const parentId = thread.pendingRuntimeRequest?.routedTo;
+              return parentId === undefined || ids.has(parentId) ? [] : [parentId];
+            }),
+          );
+          const routingParents =
+            parentIds.size === 0 ? [] : yield* projections.getIssueWorkThreads([...parentIds]);
           return {
             threads,
             parentById: new Map(
               candidates.map(({ thread_id, parent_thread_id }) => [thread_id, parent_thread_id]),
             ),
+            routingParents,
           };
         }).pipe(
           Effect.mapError(storageError),
@@ -154,7 +166,7 @@ const make = Effect.gen(function* () {
       if (memo.queries.size >= 32) memo.queries.delete(memo.queries.keys().next().value!);
       memo.queries.set(queryKey, read);
     }
-    const { threads, parentById } = yield* read;
+    const { threads, parentById, routingParents } = yield* read;
     const issues = new Map(
       list.issues.map((issue) => [key({ ...list.repository, number: issue.number }), issue.number]),
     );
@@ -253,10 +265,14 @@ const make = Effect.gen(function* () {
           : [[thread.linkedIssue.number, reason] as const];
       }),
     );
+    const parentsById = new Map(routingParents.map((thread) => [thread.id, thread]));
     const work = new Map<number, NonNullable<RepositoryIssueSummary["liveWork"]>[number][]>();
     for (const { thread, refs } of linked) {
-      const state = classifyIssueWorker(thread);
-      const ownedPr = ownedPrByThread.get(thread.id);
+      const parentId = thread.pendingRuntimeRequest?.routedTo;
+      const state = classifyIssueWorker(
+        thread,
+        parentId === undefined ? undefined : (byId.get(parentId) ?? parentsById.get(parentId)),
+      );
       const item = {
         threadId: thread.id,
         title: thread.title,
@@ -264,7 +280,7 @@ const make = Effect.gen(function* () {
         branch: thread.branch,
         worktreePath: thread.worktreePath,
         worktreeExists: thread.worktreePath !== null && existingWorktrees.has(thread.worktreePath),
-        pullRequests: ownedPr === undefined ? [] : [ownedPr.url],
+        pullRequests: visibleThreadPullRequests(threadPullRequestsOf(thread)).map((pr) => pr.url),
         ...state,
         ...(state.status === "idle" && isExplicitlyPausedThread(thread)
           ? { paused: true as const }

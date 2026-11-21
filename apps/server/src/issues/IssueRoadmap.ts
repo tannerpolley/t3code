@@ -301,12 +301,14 @@ export const layer = Layer.effect(
               host,
               repository,
               number,
+              url,
               state,
               updatedAt,
             }: (typeof status.pullRequests)[number]) => ({
               host,
               repository,
               number,
+              ...(url === undefined ? {} : { url }),
               state,
               updatedAt,
             });
@@ -321,12 +323,15 @@ export const layer = Layer.effect(
               closingPullRequests: (status.closingPullRequests ?? status.pullRequests).map(
                 compactPr,
               ),
-              liveWork: status.liveWork?.map(({ threadId, inherited, status, paused }) => ({
-                threadId,
-                inherited,
-                status,
-                ...(paused === true ? { paused } : {}),
-              })),
+              liveWork: status.liveWork?.map(
+                ({ threadId, inherited, status, paused, requestHandledByParent, pullRequests }) => ({
+                  threadId,
+                  inherited,
+                  status,
+                  ...(requestHandledByParent ? { requestHandledByParent } : {}),
+                  ...(pullRequests.length === 0 ? {} : { pullRequests }),
+                }),
+              ),
             });
           }
         }
