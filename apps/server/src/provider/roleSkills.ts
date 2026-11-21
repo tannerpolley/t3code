@@ -2,13 +2,17 @@ import {
   PROJECT_ROLE_SKILLS_MAX_COUNT,
   PROJECT_SKILL_ID_MAX_LENGTH,
   PROJECT_SKILL_ID_PATTERN,
+  type IssueRef,
   type OrchestrationV2AppThread,
+  type ProjectId,
   type T3ProjectFile,
   type ThreadRole,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import type * as IssueService from "../issue/IssueService.ts";
+import type * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 
 const declaration = /^Skills:[ \t]+(.+)$/;
 const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/;
@@ -77,7 +81,7 @@ export function selectRoleSkills(
 
 export const readRoleSkillIssue = Effect.fn("roleSkills.readIssue")(function* (
   issues: IssueService.IssueService["Service"] | undefined,
-  thread: Pick<OrchestrationV2AppThread, "issues" | "projectId">,
+  thread: { readonly projectId: ProjectId; readonly issues?: ReadonlyArray<IssueRef> },
 ) {
   const links = thread.issues?.filter((link) => link.projectId === thread.projectId);
   if (!links?.length) return { body: "", issueLookupFailed: false };
@@ -96,3 +100,27 @@ export const readRoleSkillIssue = Effect.fn("roleSkills.readIssue")(function* (
     ? { body: detail.success.body ?? "", issueLookupFailed: false }
     : ({ body: "", issueLookupFailed: true } as const);
 });
+
+export const resolveRoleSkillSelection = Effect.fn("roleSkills.resolveSelection")(
+  function* (input: {
+    readonly projectId: ProjectId;
+    readonly workspaceRoot: string;
+    readonly projectFiles: T3ProjectFileLoader.T3ProjectFileLoader["Service"];
+    readonly issues: IssueService.IssueService["Service"] | undefined;
+    readonly issueRefs: ReadonlyArray<IssueRef>;
+    readonly role: ThreadRole;
+    readonly brief: string;
+  }) {
+    const file = yield* input.projectFiles.load(input.workspaceRoot);
+    const roleSkills = Option.getOrUndefined(file)?.roleSkills;
+    if (roleSkills === undefined) return null;
+    const issue = yield* readRoleSkillIssue(input.issues, {
+      projectId: input.projectId,
+      issues: input.issueRefs,
+    });
+    return {
+      requests: selectRoleSkills(input.role, roleSkills, issue.body, input.brief),
+      ...(issue.issueLookupFailed ? { issueLookupFailed: true as const } : {}),
+    };
+  },
+);

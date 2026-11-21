@@ -78,6 +78,7 @@ function makeLocalCommandHarness(input: {
   readonly fileSystem?: FileSystem.FileSystem;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
+  readonly originalBrief?: string;
   readonly inlineLayer?: Layer.Layer<InlineShellStore.InlineShellStore>;
   readonly startNative?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
   readonly logoutFailure?: string;
@@ -436,6 +437,7 @@ function makeLocalCommandHarness(input: {
   const getTurnStartContext = vi.fn(() =>
     Effect.succeed({
       ...projection,
+      ...(input.originalBrief === undefined ? {} : { originalBrief: input.originalBrief }),
       hasConversation: projection.messages.some(
         (m) =>
           m.role === "user" &&
@@ -568,10 +570,24 @@ effectIt.effect.each([
   { mode: "project without role skills", load: false, ordinal: 1, remote: false, optOut: true },
   { mode: "second message", load: false, ordinal: 2, remote: false },
   { mode: "fresh attempt retry", load: true, ordinal: 1, remote: false, retry: true },
+  {
+    mode: "steering restart after delivery",
+    load: false,
+    ordinal: 1,
+    remote: false,
+    restart: "loaded",
+  },
+  {
+    mode: "steering restart before delivery",
+    load: true,
+    ordinal: 1,
+    remote: false,
+    restart: "refused",
+  },
   { mode: "ambiguous delivery", load: true, ordinal: 1, remote: false, failedStart: true },
 ])(
   "records only the skills sent for $mode",
-  ({ load, ordinal, remote, olderPeer, optOut, retry, failedStart, driver, inline }) =>
+  ({ load, ordinal, remote, olderPeer, optOut, retry, restart, failedStart, driver, inline }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -616,9 +632,11 @@ effectIt.effect.each([
             : Effect.void,
       );
       const skillCatalogue = vi.fn(() => Effect.succeed(catalogue));
-      const text = "Inspect the results.\n\nSkills: cse:build, cse:plot, cse:missing";
+      const brief = "Inspect the results.\n\nSkills: cse:build, cse:plot, cse:missing";
+      const text = restart ? "Inspect the residuals.\n\nSkills: cse:steer" : brief;
       const harness = makeLocalCommandHarness({
         text,
+        ...(restart ? { originalBrief: brief } : {}),
         fileSystem: fs,
         projectRoot,
         worktreePath,
@@ -634,6 +652,7 @@ effectIt.effect.each([
         skillCatalogue,
       });
       const projection = harness.projection();
+      const [initialAttempt] = projection.attempts;
       harness.setProjection({
         ...projection,
         thread: {
@@ -651,9 +670,35 @@ effectIt.effect.each([
             : { lineage: { ...projection.thread.lineage, relationshipToParent: "subagent" } }),
         },
         runs: projection.runs.map((run) => ({ ...run, ordinal })),
-        attempts: projection.attempts.map((attempt) =>
-          retry ? { ...attempt, reason: "retry", attemptOrdinal: 2 } : attempt,
-        ),
+        attempts: [
+          ...(restart
+            ? [
+                {
+                  ...initialAttempt!,
+                  id: RunAttemptId.make("initial-attempt"),
+                  status: "superseded" as const,
+                  skillPreload: {
+                    skills: [
+                      {
+                        id: "cse:build",
+                        source: "role" as const,
+                        ...(restart === "loaded"
+                          ? { outcome: "loaded" as const }
+                          : { outcome: "skipped" as const, reason: "delivery_refused" as const }),
+                      },
+                    ],
+                  },
+                },
+              ]
+            : []),
+          ...projection.attempts.map((attempt) =>
+            restart
+              ? { ...attempt, reason: "steering_restart" as const, attemptOrdinal: 2 }
+              : retry
+                ? { ...attempt, reason: "retry" as const, attemptOrdinal: 2 }
+                : attempt,
+          ),
+        ],
       });
       yield* harness.start;
       const {

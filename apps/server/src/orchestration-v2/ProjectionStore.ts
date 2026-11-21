@@ -794,7 +794,7 @@ export interface ProjectionStoreV2Shape {
       | "contextHandoffs"
       | "contextTransfers"
       | "turnItems"
-    > & { readonly hasConversation: boolean },
+    > & { readonly hasConversation: boolean; readonly originalBrief?: string },
     ProjectionStoreV2Error
   >;
   readonly getTurnStartHistory: (
@@ -5705,6 +5705,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const messageIds = [run, unsentSource].flatMap((source) =>
               source === undefined ? [] : [source.userMessageId],
             );
+            const briefRun = unsentSource ?? run;
+            const originalBrief =
+              briefRun?.ordinal === 1 &&
+              thread.roleSkillSelection === undefined &&
+              attempts.some(
+                (attempt) => attempt.runId === briefRun.id && attempt.reason === "steering_restart",
+              )
+                ? ((yield* sql<{ text: string }>`
+                    SELECT json_extract(payload_json, '$.text') AS text
+                    FROM orchestration_v2_projection_turn_items
+                    WHERE thread_id = ${threadId} AND run_id = ${briefRun.id} AND type = 'user_message'
+                    ORDER BY ordinal ASC LIMIT 1
+                  `)[0]?.text ?? "")
+                : undefined;
             const messages = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_messages
               WHERE thread_id = ${threadId} AND (
@@ -5739,6 +5753,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               contextHandoffs,
               contextTransfers,
               turnItems,
+              ...(originalBrief === undefined ? {} : { originalBrief }),
             };
           }),
         )

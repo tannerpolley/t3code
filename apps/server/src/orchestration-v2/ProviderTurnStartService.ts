@@ -1844,15 +1844,23 @@ export const layer: Layer.Layer<
                   ),
                 ),
           };
+      const skillRun = resumeSource ?? run;
       const skillSession =
-        (resumeSource ?? run).ordinal === 1 && !goalCommand && session.installedSkillsForPreload
+        skillRun.ordinal === 1 &&
+        !goalCommand &&
+        session.installedSkillsForPreload &&
+        !projection.attempts.some(
+          (prior) =>
+            (prior.runId === skillRun.id || prior.runId === run.id) &&
+            prior.skillPreload?.skills.some((skill) => skill.outcome === "loaded"),
+        )
           ? {
               ...inlineSession,
               startTurn: (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
                 startRoleSkillTurn(
                   inlineSession,
                   turnInput,
-                  providerMessage.text,
+                  projection.originalBrief ?? providerMessage.text,
                   refusedBeforePrompt,
                 ),
             }

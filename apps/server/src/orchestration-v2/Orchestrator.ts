@@ -10061,6 +10061,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           creationSource: request.creationSource,
         }),
         ...issueWork.childIssueFields(request, parentProjection.thread.projectId, now),
+        ...(request.roleSkillSelection === undefined
+          ? {}
+          : { roleSkillSelection: request.roleSkillSelection }),
         runtimeMode: request.runtimeMode,
         interactionMode: request.interactionMode,
         ...issueWork.childWorkspaceFields(request),

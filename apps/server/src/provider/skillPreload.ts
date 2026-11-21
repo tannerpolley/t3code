@@ -71,7 +71,7 @@ const renderSkill = (id: string, directory: string, body: string) =>
   `Skill ${id} (directory: ${JSON.stringify(directory)})\n\n${body}`;
 
 export const prepareSkillPreload = Effect.fn("skillPreload.prepare")(function* (
-  requests: ReturnType<typeof selectRoleSkills>,
+  requests: ReadonlyArray<ReturnType<typeof selectRoleSkills>[number]>,
   catalogue: ReadonlyArray<ServerProviderSkill> | undefined,
 ) {
   const path = yield* Path.Path;

@@ -5,7 +5,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { discoverClaudeSkills, discoverClaudeSkillsAndPlugins } from "./ClaudeSkills.ts";
+import { prepareSkillPreload } from "../skillPreload.ts";
+import {
+  discoverClaudeInstalledSkillsForPreload,
+  discoverClaudeSkills,
+  discoverClaudeSkillsAndPlugins,
+} from "./ClaudeSkills.ts";
 
 const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -22,6 +27,51 @@ const writeSkill = Effect.fn(function* (
 });
 
 it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
+  it.effect.each([
+    { test: "CLAUDE_CODE_SIMPLE=1 is bare", bare: true },
+    { test: "preloads single-file skills", bare: false },
+  ])("$test", ({ bare }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-preload-" });
+      const pluginsPath = path.join(homePath, "plugins");
+      const installPath = path.join(pluginsPath, "cse");
+      yield* fs.makeDirectory(path.join(installPath, ".claude-plugin"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(installPath, ".claude-plugin", "plugin.json"),
+        toJson({ name: "cse" }),
+      );
+      yield* fs.writeFileString(
+        path.join(installPath, "SKILL.md"),
+        "---\nname: review\n---\nVerify scientific claims against the source.\n",
+      );
+      yield* fs.writeFileString(
+        path.join(pluginsPath, "installed_plugins.json"),
+        toJson({ plugins: { "cse@mk": [{ scope: "user", installPath }] } }),
+      );
+      yield* fs.writeFileString(
+        path.join(homePath, "settings.json"),
+        toJson({ enabledPlugins: { "cse@mk": true } }),
+      );
+      const catalogue = yield* discoverClaudeInstalledSkillsForPreload(
+        { homePath, launchArgs: "" },
+        homePath,
+        bare ? { CLAUDE_CODE_SIMPLE: "1" } : {},
+      );
+      if (bare) {
+        assert.isUndefined(catalogue);
+      } else {
+        assert.equal(catalogue?.[0]?.name, "cse:review");
+        const { context } = yield* prepareSkillPreload(
+          [{ id: "cse:review", source: "role" }],
+          catalogue,
+        );
+        assert.include(context, "Verify scientific claims against the source.");
+      }
+    }),
+  );
+
   it.effect(
     "shares repository walks and overlaps plugin and skill reads without stale results",
     () =>

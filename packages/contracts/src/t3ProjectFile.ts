@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -127,7 +128,7 @@ export const T3ProjectFile = Schema.Struct({
     Schema.Record(ThreadRole, Schema.optionalKey(RoleSkills)).annotate({
       description: "Installed plugin skill IDs to preload for delegated children, keyed by role.",
     }),
-  ),
+  ).pipe(Schema.catchDecoding(() => Effect.succeedNone)),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
       .annotate({

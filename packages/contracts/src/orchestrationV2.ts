@@ -154,6 +154,15 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
+const SkillPreloadRequest = Schema.Struct({
+  id: Schema.String,
+  source: Schema.Literals(["role", "issue", "brief"]),
+});
+const RoleSkillSelection = Schema.Struct({
+  requests: Schema.Array(SkillPreloadRequest),
+  issueLookupFailed: Schema.optionalKey(Schema.Literal(true)),
+});
+
 /**
  * The thread in a linked environment whose agent sent this message here, and its title
  * then, for a client that cannot reach that environment. `senderThreadId` names only a
@@ -547,6 +556,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  roleSkillSelection: Schema.optionalKey(Schema.NullOr(RoleSkillSelection)),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -848,10 +858,6 @@ export function orchestrationV2RunWorkStartedAt(
   return run.workStartedAt ?? run.startedAt ?? run.requestedAt;
 }
 
-const SkillPreloadRequest = Schema.Struct({
-  id: Schema.String,
-  source: Schema.Literals(["role", "issue", "brief"]),
-});
 export const OrchestrationV2SkillPreload = Schema.Struct({
   skills: Schema.Array(
     Schema.Union([
@@ -1015,6 +1021,7 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   label: Schema.String,
+  issueSkillsSkipped: Schema.optionalKey(Schema.Literal("remote")),
   /** The title it launched with there; absent on tasks recorded before it was kept. */
   title: Schema.optional(Schema.String),
   /** The run there that carries the task; absent on tasks recorded before it was kept. */
@@ -3857,6 +3864,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("delegated_task.request"),
     role: Schema.optional(ThreadRoleInput),
     issue: Schema.optional(ThreadLinkedIssue),
+    roleSkillSelection: Schema.optionalKey(Schema.NullOr(RoleSkillSelection)),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     parentThreadId: ThreadId,

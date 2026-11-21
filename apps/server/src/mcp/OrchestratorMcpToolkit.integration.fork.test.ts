@@ -15,6 +15,7 @@ import {
   EnvironmentId,
   EventId,
   IsoDateTime,
+  IssueTrackerKind,
   MessageId,
   NodeId,
   RunId,
@@ -52,6 +53,8 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
@@ -76,6 +79,9 @@ import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadIssueService from "../orchestration-v2/ThreadIssueService.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -200,6 +206,7 @@ function makeDeterministicAdapter(input: {
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
+  readonly installedSkillsForPreload?: ProviderAdapter.ProviderAdapterV2SessionRuntime["installedSkillsForPreload"];
   readonly shouldComplete: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) => boolean;
   readonly terminalGate?: (
     turn: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -274,6 +281,9 @@ function makeDeterministicAdapter(input: {
               } satisfies OrchestrationV2ProviderThread;
             }),
           resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+          ...(input.installedSkillsForPreload === undefined
+            ? {}
+            : { installedSkillsForPreload: input.installedSkillsForPreload }),
           startTurn: (turnInput) =>
             Effect.gen(function* () {
               yield* Ref.update(input.capturedTurns, (turns) => [
@@ -531,6 +541,15 @@ describe("orchestrator MCP toolkit", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const cwd = yield* checkpointWorkspace("orchestrator-mcp-toolkit");
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const skillPath = path.join(cwd, "SKILL.md");
+          yield* fs.writeFileString(path.join(cwd, "t3.json"), '{"roleSkills":{"reviewer":[]}}');
+          yield* fs.writeFileString(
+            skillPath,
+            "---\nname: review\n---\nCheck claims from the issue.\n",
+          );
+          const issueReviewPrompt = "Review the issue before its link is attached.";
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const approvalResponse =
             yield* Deferred.make<ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput>();
@@ -566,6 +585,10 @@ describe("orchestrator MCP toolkit", () => {
               capabilities: ClaudeProviderCapabilitiesV2,
               capturedTurns,
               shouldComplete: (turn) => turn.message.text !== cancellationPrompt,
+              installedSkillsForPreload: () =>
+                Effect.succeed([
+                  { name: "cse:review", path: skillPath, scope: "plugin", enabled: true },
+                ]),
               terminalGate: (turn) =>
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
@@ -724,6 +747,38 @@ describe("orchestrator MCP toolkit", () => {
             McpHttpServer.layerThreadToolkit,
           ).pipe(
             Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+            Layer.provide(T3ProjectFileLoader.layer),
+            Layer.provide(
+              Layer.mock(TrackerIssueService.IssueService)({
+                projectScope: () =>
+                  Effect.succeed({
+                    projectId,
+                    tracker: IssueTrackerKind.make("github"),
+                    host: "github.com",
+                    scope: "owner/repo",
+                  }),
+                detail: () =>
+                  Effect.succeed({
+                    body: "Skills: cse:review",
+                    url: "https://github.com/owner/repo/issues/430",
+                    displayKey: "#430",
+                    title: "Review",
+                  } as never),
+              }),
+            ),
+            Layer.provide(
+              Layer.effect(
+                ThreadIssueService.ThreadIssueService,
+                Effect.gen(function* () {
+                  const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+                  return ThreadIssueService.ThreadIssueService.of({
+                    link: () =>
+                      worker.drain().pipe(Effect.orDie, Effect.as({ alreadyLinked: false })),
+                    unlink: () => Effect.die("unused in this test"),
+                  });
+                }),
+              ).pipe(Layer.provide(layerOrchestration)),
+            ),
             Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
             Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
             Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -741,7 +796,11 @@ describe("orchestrator MCP toolkit", () => {
                 getById: (id) =>
                   Effect.succeed(
                     id === projectId || id === "project:mcp-foreign"
-                      ? Option.some({ id, defaultModelSelection: null } as never)
+                      ? Option.some({
+                          id,
+                          workspaceRoot: cwd,
+                          defaultModelSelection: null,
+                        } as never)
                       : Option.none(),
                   ),
               }),
@@ -2168,6 +2227,28 @@ describe("orchestrator MCP toolkit", () => {
               { id: "effort", value: "max" },
               { id: "fastMode", value: true },
             ];
+            const issueReview = yield* invoke("delegate_task", {
+              role: "reviewer",
+              task: issueReviewPrompt,
+              issue: { host: "github.com", repository: "owner/repo", number: 430 },
+              isolation: "shared",
+              mode: "wait",
+              target: { override: true, providerInstanceId: claudeInstanceId, model: claudeModel },
+              clientRequestId: "issue-skills-before-link",
+            });
+            const issueChild = yield* decodeDelegateTaskResult(issueReview.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(
+              (yield* Ref.get(capturedTurns)).find(
+                (turn) => turn.threadId === issueChild.childThreadId,
+              )?.text,
+            ).toContain("Check claims from the issue.");
+            expect(
+              (yield* orchestrator.getThreadProjection(issueChild.childThreadId!)).attempts[0]
+                ?.skillPreload?.skills,
+            ).toEqual([{ id: "cse:review", source: "issue", outcome: "loaded" }]);
+
             const delegatedCall = yield* invoke("delegate_task", {
               task: delegatedPrompt,
               target: {
@@ -5009,6 +5090,6 @@ describe("orchestrator MCP toolkit", () => {
             yield* Deferred.succeed(approvalParentGate, undefined);
           }).pipe(Effect.provide(layerTest));
         }),
-      ),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 });

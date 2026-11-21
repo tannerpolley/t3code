@@ -1,4 +1,8 @@
-import type { OrchestrationV2SkillPreload } from "@t3tools/contracts";
+import type {
+  OrchestrationV2AppThread,
+  OrchestrationV2SkillPreload,
+  ThreadRole,
+} from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
@@ -10,11 +14,7 @@ import * as Path from "effect/Path";
 import * as IssueService from "../issue/IssueService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
-import {
-  delegatedSkillRole,
-  readRoleSkillIssue,
-  selectRoleSkills,
-} from "../provider/roleSkills.ts";
+import { delegatedSkillRole, resolveRoleSkillSelection } from "../provider/roleSkills.ts";
 import { prepareSkillPreload } from "../provider/skillPreload.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
 import * as EventSink from "./EventSink.ts";
@@ -27,6 +27,25 @@ export const makeRoleSkillTurn = Effect.gen(function* () {
   const issues = Option.getOrUndefined(yield* Effect.serviceOption(IssueService.IssueService));
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const selectForExistingThread = Effect.fn("RoleSkillDelivery.selectForExistingThread")(function* (
+    thread: OrchestrationV2AppThread,
+    role: ThreadRole,
+    brief: string,
+  ) {
+    const project = yield* projects
+      .getById(thread.projectId)
+      .pipe(Effect.catch(() => Effect.succeedNone));
+    if (Option.isNone(project)) return null;
+    return yield* resolveRoleSkillSelection({
+      projectId: thread.projectId,
+      workspaceRoot: project.value.workspaceRoot,
+      projectFiles,
+      issues,
+      issueRefs: thread.issues ?? [],
+      role,
+      brief,
+    });
+  });
 
   return Effect.fn("RoleSkillDelivery.startTurn")(
     function* (
@@ -41,17 +60,14 @@ export const makeRoleSkillTurn = Effect.gen(function* () {
       if (role === undefined || catalogueForCwd === undefined || runtimePolicy.cwd === null) {
         return yield* session.startTurn(input);
       }
-      const project = yield* projects
-        .getById(appThread.projectId)
-        .pipe(Effect.catch(() => Effect.succeedNone));
-      if (Option.isNone(project)) return yield* session.startTurn(input);
-      const file = yield* projectFiles.load(project.value.workspaceRoot);
-      const roleSkills = Option.getOrUndefined(file)?.roleSkills;
-      if (roleSkills === undefined) return yield* session.startTurn(input);
-
-      const issue = yield* readRoleSkillIssue(issues, appThread);
-      const requests = selectRoleSkills(role, roleSkills, issue.body, brief);
-      if (requests.length === 0 && !issue.issueLookupFailed) return yield* session.startTurn(input);
+      const selection =
+        appThread.roleSkillSelection === undefined
+          ? yield* selectForExistingThread(appThread, role, brief)
+          : appThread.roleSkillSelection;
+      if (selection === null) return yield* session.startTurn(input);
+      const { requests, issueLookupFailed } = selection;
+      if (requests.length === 0 && issueLookupFailed === undefined)
+        return yield* session.startTurn(input);
       const catalogue = requests.length === 0 ? [] : yield* catalogueForCwd(runtimePolicy.cwd);
       const { context, skills } = yield* prepareSkillPreload(requests, catalogue).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -71,7 +87,7 @@ export const makeRoleSkillTurn = Effect.gen(function* () {
             attemptId,
             record: {
               skills: records,
-              ...(issue.issueLookupFailed ? { issueLookupFailed: true as const } : {}),
+              ...(issueLookupFailed === undefined ? {} : { issueLookupFailed }),
             },
           },
         };

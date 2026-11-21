@@ -399,6 +399,7 @@ const make = Effect.gen(function* () {
         threadId: launched.threadId,
         label: link?.label ?? target.environmentId,
         title,
+        ...(input.issue === undefined ? {} : { issueSkillsSkipped: "remote" }),
         ...(launched.runId === null ? {} : { runId: launched.runId }),
       };
       const recorded = yield* threads

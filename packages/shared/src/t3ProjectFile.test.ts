@@ -27,7 +27,7 @@ describe("T3ProjectFileFromJson", () => {
     expect(decodeJson('{"roleSkills":{"designer":["cse:design"]}}').roleSkills).toEqual({
       designer: ["cse:design"],
     });
-    expect(parseT3ProjectFile('{"roleSkills":{"designer":["../../SKILL.md"]}}')).toBeNull();
+    expect(parseT3ProjectFile('{"roleSkills":{"designer":["../../SKILL.md"]}}')).toEqual({});
     expect(buildT3ProjectFileJsonSchema()).toMatchObject({
       properties: { roleSkills: { properties: { designer: { type: "array" } } } },
     });
@@ -35,6 +35,19 @@ describe("T3ProjectFileFromJson", () => {
 });
 
 describe("parseT3ProjectFile", () => {
+  it("preserves worktree settings when role skills are malformed", () => {
+    expect(
+      parseT3ProjectFile(`{
+        "roleSkills": { "reviewer": "cse:review" },
+        "worktreeSparsePatternsPath": ".t3/sparse-checkout",
+        "worktreeSubmodules": "recursive"
+      }`),
+    ).toEqual({
+      worktreeSparsePatternsPath: ".t3/sparse-checkout",
+      worktreeSubmodules: "recursive",
+    });
+  });
+
   it("reads project defaults from JSONC with a URL in a block comment", () => {
     expect(
       parseT3ProjectFile(`{

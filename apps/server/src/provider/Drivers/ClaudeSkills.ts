@@ -71,9 +71,10 @@ function preloadDisabledByEnv(env: unknown): boolean {
   return (
     typeof env === "object" &&
     env !== null &&
-    ["CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SAFE_MODE"].some(
-      (key) => parseFrontmatterBoolean(Reflect.get(env, key)) === true,
-    )
+    ["CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SAFE_MODE"].some((key) => {
+      const value = Reflect.get(env, key);
+      return value === "1" || parseFrontmatterBoolean(value) === true;
+    })
   );
 }
 
@@ -980,7 +981,7 @@ const discoverClaudeSkillData = Effect.fn("discoverClaudeSkillData")(function* (
                   name,
                   path: skillPath,
                   enabled: override?.enabled ?? true,
-                  scope: root.scope,
+                  scope: forPreload ? "plugin" : root.scope,
                   ...(frontmatter.kind === "parsed" && frontmatter.description
                     ? { description: frontmatter.description }
                     : {}),
