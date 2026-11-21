@@ -1,3 +1,4 @@
+import { IssueWorkers } from "./IssueWorkers";
 import type {
   EnvironmentId,
   RepositoryIssueRef,
@@ -23,7 +24,7 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useOpenIssueLink } from "~/lib/openIssueLink";
 import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
-import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
+import { repositoryIssueEnvironment, useLiveIssueSummary } from "~/state/repositoryIssues";
 import { sanitizeNewRefName } from "../BranchToolbar.logic";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -193,7 +194,7 @@ function IssueWorkSection({
   const query = useEnvironmentQuery(
     repositoryIssueEnvironment.detail({ environmentId, input: reference }),
   );
-  const issue = query.data?.issue;
+  const issue = useLiveIssueSummary(query.data?.issue, reference, environmentId);
   const issueKey = `${environmentId}:${reference.host}/${reference.repository}#${reference.number}`;
   return (
     <>
@@ -257,6 +258,7 @@ function IssueWorkFacts({
   return (
     <div className="space-y-1.5 px-4 pb-3 text-xs">
       <LiveIssueStateBadge issue={issue} reference={reference} environmentId={environmentId} />
+      <IssueWorkers issue={issue} environmentId={environmentId} />
       {issue.projects?.length ? (
         <PullRequestMetaRow icon={<FolderKanbanIcon className="size-3.5" />} label="Projects">
           <span className="flex flex-wrap gap-x-3 gap-y-1">

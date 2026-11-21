@@ -6,7 +6,7 @@ import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { IssueLinkPreview } from "../issue/IssueLinkPreview";
 import { ContextChipPopover } from "../contextChipParts";
-import { IssueStateIcon, issueStatePresentation } from "./IssueStateIcon";
+import { IssueStateIcon, issueStatePresentation, useIssueStateLabel } from "./IssueStateIcon";
 
 export function IssueContextChip({
   record,
@@ -31,7 +31,9 @@ export function IssueContextChip({
       : null;
   const openIssue = useOpenIssueLink(threadRef ?? undefined);
   const issue = record.state === null ? null : { ...record, state: record.state };
-  const state = issue === null ? "State unavailable" : issueStatePresentation(issue).label;
+  const state = useIssueStateLabel(
+    issue === null ? "State unavailable" : issueStatePresentation(issue).label,
+  );
   if (target !== null && environmentId != null)
     return (
       <IssueLinkPreview

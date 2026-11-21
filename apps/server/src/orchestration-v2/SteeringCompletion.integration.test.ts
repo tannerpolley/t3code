@@ -1,8 +1,10 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as TestClock from "effect/testing/TestClock";
 import {
   ChatAttachmentId,
   CommandId,
+  DEFAULT_REPOSITORY_WORK_SETTINGS,
   EnvironmentId,
   MessageId,
   EventId,
@@ -25,6 +27,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -36,6 +39,7 @@ import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -514,18 +518,25 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     turn: ProviderAdapter.ProviderAdapterV2SteerInput,
   ) => Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error> = () => Effect.void,
   extraAdapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]> = [],
+  queuedReader?: { readonly provider: "codex" | "claudeAgent"; readonly restart: boolean },
 ) {
-  const driver = ProviderDriverKind.make(nativeGoals === undefined ? "codex" : "opencode");
+  const driver = ProviderDriverKind.make(
+    queuedReader?.provider ?? (nativeGoals === undefined ? "codex" : "opencode"),
+  );
   const cwd = yield* checkpointWorkspace(name);
+  const baseCapabilities =
+    queuedReader?.provider === "claudeAgent"
+      ? ClaudeProviderCapabilitiesV2
+      : CodexProviderCapabilitiesV2;
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
   const steered: string[] = [];
   const steeredSelections: Array<ModelSelection | undefined> = [];
   const interrupted: ProviderTurnId[] = [];
   const capabilities = {
-    ...CodexProviderCapabilitiesV2,
+    ...baseCapabilities,
     turns: {
-      ...CodexProviderCapabilitiesV2.turns,
+      ...baseCapabilities.turns,
       supportsActiveSteering: canSteer,
       supportsSteeringByInterruptRestart: canRestart,
       activeSteeringAcceptsAttachments: steeringAcceptsAttachments,
@@ -648,26 +659,80 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
         };
       }),
   };
-  const layer = ProviderReplayHarness.layerWithRegistry(
-    { name },
-    ProviderAdapterRegistry.layerFromAdapters([adapter, ...extraAdapters]),
-    { runEffectWorker: false },
+  const databaseLayer =
+    queuedReader?.restart === true
+      ? SqlitePersistence.layerFromPath(`${cwd}/.git/queued-reader.sqlite`, {
+          checkpointWorker: false,
+        }).pipe(Layer.provide(NodeServices.layer))
+      : SqlitePersistence.layerMemory;
+  const layer = Layer.merge(
+    ProviderReplayHarness.layerWithRegistry(
+      { name },
+      ProviderAdapterRegistry.layerFromAdapters([adapter, ...extraAdapters]),
+      { runEffectWorker: false, databaseLayer },
+    ),
+    ProjectStore.layer.pipe(Layer.provide(databaseLayer)),
   );
   const startFirstTurn = Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
     const threadId = ThreadId.make(`thread:${name}`);
+    const projectId = ProjectId.make(`project:${name}`);
+    if (queuedReader !== undefined) {
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      const now = DateTime.formatIso(yield* DateTime.now);
+      yield* projects.apply({
+        sequence: 0,
+        eventId: EventId.make(`seed:${projectId}`),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: now,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created",
+        payload: {
+          projectId,
+          title: "Queue test",
+          workspaceRoot: cwd,
+          defaultModelSelection: runSelection,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    }
     yield* orchestrator.dispatch({
       type: "thread.create",
       commandId: CommandId.make("create"),
       threadId,
-      projectId: ProjectId.make(`project:${name}`),
+      projectId,
       title: "Steer with changed options",
+      ...(queuedReader === undefined
+        ? {}
+        : {
+            repositoryOrchestration: {
+              ...DEFAULT_REPOSITORY_WORK_SETTINGS,
+              host: "github.com",
+              repository: "owner/queue-test",
+              repositoryId: "repo:queue-test",
+              projectId,
+              launchCommandId: CommandId.make("create"),
+              revision: 1,
+              paused: false,
+              publishStatusComments: false,
+              publishCloseoutComments: false,
+              milestones: [],
+              suspendedIssues: [],
+              readOnlyLimit: 1,
+            },
+          }),
       modelSelection: runSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
-      worktreePath: cwd,
+      worktreePath: queuedReader === undefined ? cwd : null,
       createdBy: "user",
       creationSource: "web",
     });
@@ -699,6 +764,113 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   });
   return { cwd, events, started, steered, steeredSelections, interrupted, layer, startFirstTurn };
 });
+
+it.effect.each(
+  (["codex", "claudeAgent"] as const).flatMap((provider) =>
+    [false, true].map((restart) => ({ provider, restart })),
+  ),
+)(
+  "starts the queued $provider reader once with its original brief (restart: $restart)",
+  (request) =>
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        `queued-brief-${request.provider}-${request.restart}`,
+        false,
+        true,
+        Effect.void,
+        true,
+        undefined,
+        undefined,
+        [],
+        request,
+      );
+      const brief =
+        "Inspect two files.\n\nReturn line references and preserve the original phrasing.";
+      const arrange = Effect.gen(function* () {
+        const engine = yield* Orchestrator.OrchestratorV2;
+        const parent = yield* startFirstTurn;
+        const run = (yield* engine.getThreadProjection(parent)).runs[0]!;
+        const delegate = (id: string, task: string) =>
+          engine
+            .dispatch({
+              type: "delegated_task.request",
+              commandId: CommandId.make(id),
+              parentThreadId: parent,
+              parentRunId: run.id,
+              parentNodeId: run.rootNodeId!,
+              task,
+              role: "reviewer",
+              modelSelection: runSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdBy: "agent",
+              creationSource: "mcp",
+            })
+            .pipe(
+              Effect.map(
+                (result) =>
+                  result.storedEvents.flatMap(({ event }) =>
+                    event.type === "subagent.updated" && event.payload.childThreadId !== null
+                      ? [event.payload.childThreadId]
+                      : [],
+                  )[0]!,
+              ),
+            );
+        const first = yield* delegate("hold-reader-slot", "Hold the only slot.");
+        const child = yield* delegate("queued-brief", brief);
+        const pending = (yield* engine.getThreadProjection(child)).runs[0]!;
+        assert.equal(pending.status, "queued");
+        assert.isFalse(started.some((input) => input.threadId === child));
+        return { parent, first, child, pending };
+      });
+      const verify = Effect.fn("test.verifyQueuedReaderBrief")(function* ({
+        parent,
+        first,
+        child,
+        pending,
+      }: Effect.Success<typeof arrange>) {
+        const engine = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        assert.equal((yield* engine.getThreadProjection(child)).runs[0]?.status, "queued");
+        const slot = (yield* engine.getThreadProjection(first)).runs[0]!;
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("reader-slot-released"),
+              type: "run.updated",
+              threadId: first,
+              runId: slot.id,
+              occurredAt: now,
+              payload: { ...slot, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* engine.dispatch({
+          type: "repository.work.continue",
+          commandId: CommandId.make("continue-queued-brief"),
+          threadId: parent,
+        });
+        yield* worker.drain();
+        const admissions = started.filter((input) => input.threadId === child);
+        assert.lengthOf(admissions, 1);
+        assert.equal(admissions[0]?.runId, pending.id);
+        assert.equal(admissions[0]?.message.messageId, pending.userMessageId);
+        assert.equal(
+          admissions[0]?.providerThread.driver,
+          ProviderDriverKind.make(request.provider),
+        );
+        assert.equal(admissions[0]?.message.text, brief);
+      });
+      if (request.restart) {
+        const queued = yield* arrange.pipe(Effect.provide(layer));
+        yield* verify(queued).pipe(Effect.provide(Layer.fresh(layer)));
+      } else {
+        yield* arrange.pipe(Effect.flatMap(verify), Effect.provide(layer));
+      }
+    }),
+);
 
 it.effect.each([
   { notice: "delegated task question", goal: null, steers: true },

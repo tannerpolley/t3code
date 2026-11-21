@@ -558,7 +558,14 @@ export const OrchestrationV2AppThread = Schema.Struct({
   linkedIssue: Schema.optional(ThreadLinkedIssue),
   repositoryOrchestration: Schema.optional(RepositoryOrchestration),
   silentWakeAttention: Schema.optional(
-    Schema.Struct({ runId: RunId, reason: Schema.String, createdAt: IsoDateTime }),
+    Schema.Union([
+      Schema.Struct({ runId: RunId, reason: Schema.String, createdAt: IsoDateTime }),
+      Schema.Struct({
+        deliveryMessageId: MessageId,
+        reason: Schema.String,
+        createdAt: IsoDateTime,
+      }),
+    ]),
   ),
   /** Completion mailbox for managed workers launched outside a parent run. */
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
@@ -3950,6 +3957,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("delegated_task.completion-delivery.flag"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    parentRunId: Schema.NullOr(RunId),
+    generation: Schema.Int,
+    messageId: MessageId,
+  }),
   Schema.Struct({
     type: Schema.Literal("run.silence.check"),
     commandId: CommandId,

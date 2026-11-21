@@ -135,6 +135,7 @@ export function clearSilentWakeAttention<
   const attention = thread.silentWakeAttention;
   if (
     attention === undefined ||
+    !("runId" in attention) ||
     run.id === attention.runId ||
     !["starting", "running", "waiting"].includes(run.status) ||
     !DateTime.isGreaterThanOrEqualTo(occurredAt, DateTime.makeUnsafe(attention.createdAt))

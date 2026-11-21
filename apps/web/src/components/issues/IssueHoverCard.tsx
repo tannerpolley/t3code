@@ -1,6 +1,6 @@
+import { useWorkerStatusLabels } from "./IssueLiveWork";
 import type { EnvironmentId, RepositoryIssueRef, RepositoryIssueSummary } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useGT } from "gt-react";
 import { useState, type ReactElement } from "react";
 
 import { useOpenIssueLink } from "~/lib/openIssueLink";
@@ -12,9 +12,9 @@ import { ThreadPullRequestsMiniList } from "../ThreadStatusIndicators";
 import { PullRequestLabelChip } from "../pullRequest/pullRequestPresentation";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { useIssueQueued } from "./IssueQueueAction";
-import { IssueStateIcon, issueStatePresentation } from "./IssueStateIcon";
+import { IssueStateIcon, issueStatePresentation, useIssueStateLabel } from "./IssueStateIcon";
 import { issueHoverPullRequests } from "./issueHoverCard.logic";
-import { openIssueBlockers } from "./issueRoadmap.logic";
+import { issueWorkerStatus, openIssueBlockers } from "./issueRoadmap.logic";
 
 export interface IssueHoverTarget {
   readonly environmentId: EnvironmentId;
@@ -30,10 +30,13 @@ interface IssueHoverContentProps {
 /** Mounted only in an open hover: the detail cache and streamed shell overlay stay shared. */
 function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverContentProps) {
   const { environmentId, input } = target;
-  const gt = useGT();
+  const labels = useWorkerStatusLabels();
   const query = useEnvironmentQuery(repositoryIssueEnvironment.detail({ environmentId, input }));
   const issue = useLiveIssueSummary(query.data?.issue ?? fallback, input, environmentId);
   const queued = useIssueQueued(environmentId, input);
+  const label = useIssueStateLabel(
+    issue === undefined ? "" : issueStatePresentation({ ...issue, queued }).label,
+  );
   const openPr = useOpenPrLink();
   const openIssue = useOpenIssueLink();
   const pullRequests =
@@ -62,7 +65,7 @@ function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverCon
         <>
           <div className="flex items-center gap-2">
             <IssueStateIcon issue={{ ...issue, queued }} />
-            <span>{issueStatePresentation({ ...issue, queued }).label}</span>
+            <span>{label}</span>
           </div>
           {issue.labels.length > 0 ? (
             <div className="flex flex-wrap gap-1" aria-label="Labels">
@@ -114,14 +117,7 @@ function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverCon
                   params={{ environmentId, threadId: work.threadId }}
                   className="wrap-anywhere hover:underline"
                 >
-                  {work.title} ·{" "}
-                  {work.status === "working"
-                    ? "Working"
-                    : work.status === "waiting_on_you"
-                      ? "Waiting on you"
-                      : work.paused === true
-                        ? gt("Paused")
-                        : "Idle"}
+                  {work.title} · {labels[issueWorkerStatus(work)]}
                 </Link>
               ))}
             </div>

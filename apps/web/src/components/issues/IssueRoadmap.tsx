@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { Fragment, useSyncExternalStore, type ReactNode } from "react";
 import { IssueInboxSection, useIssueInbox } from "./IssueInbox";
 import { IssueDoneDetails } from "./IssueDoneDetails";
@@ -30,6 +31,7 @@ export function IssueRoadmap({
   /** Rendered between Blocked and Ready, where the owner triages new activity. */
   inbox?: ReactNode;
 }) {
+  const gt = useGT();
   const clock = createIssueRoadmapClock(issues);
   const now = useSyncExternalStore(clock.subscribe, clock.snapshot, clock.snapshot);
   const queue = useIssueQueue(environmentId, scope);
@@ -64,18 +66,19 @@ export function IssueRoadmap({
       {sections
         .filter((section) => section.id !== "queued" || queue.supported)
         .map((section) => {
+          const title = section.id === "ready-for-review" ? gt("Ready for review") : section.title;
           const rows = section.rows.filter((row) => shown.has(row.issue.number));
           return (
             <Fragment key={section.id}>
               <IssueSection scope={{ ...scope, environmentId }} section={`roadmap:${section.id}`}>
                 {(collapsed, toggleCollapsed) => (
-                  <section aria-label={section.title}>
+                  <section aria-label={title}>
                     <CollapsibleSectionHeader
                       expanded={!collapsed}
                       onClick={toggleCollapsed}
                       accessory={<span className="tabular-nums">{rows.length}</span>}
                     >
-                      {section.title}
+                      {title}
                     </CollapsibleSectionHeader>
                     {!collapsed ? (
                       <ul>
