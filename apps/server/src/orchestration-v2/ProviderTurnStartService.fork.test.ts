@@ -79,6 +79,7 @@ function makeLocalCommandHarness(input: {
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly originalBrief?: string;
+  readonly nativeThreadId?: string;
   readonly inlineLayer?: Layer.Layer<InlineShellStore.InlineShellStore>;
   readonly startNative?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
   readonly logoutFailure?: string;
@@ -354,7 +355,18 @@ function makeLocalCommandHarness(input: {
                   ...(input.skillCatalogue === undefined
                     ? {}
                     : { installedSkillsForPreload: input.skillCatalogue }),
-                  ensureThread: () => Effect.succeed(providerThread),
+                  ensureThread: () =>
+                    Effect.succeed({
+                      ...providerThread,
+                      nativeThreadRef:
+                        input.nativeThreadId === undefined
+                          ? null
+                          : {
+                              driver: providerThread.driver,
+                              nativeId: input.nativeThreadId,
+                              strength: "strong",
+                            },
+                    }),
                 } as never)
               : Effect.die("A local command must not open a native session."),
   );
@@ -437,7 +449,6 @@ function makeLocalCommandHarness(input: {
   const getTurnStartContext = vi.fn(() =>
     Effect.succeed({
       ...projection,
-      ...(input.originalBrief === undefined ? {} : { originalBrief: input.originalBrief }),
       hasConversation: projection.messages.some(
         (m) =>
           m.role === "user" &&
@@ -485,6 +496,7 @@ function makeLocalCommandHarness(input: {
             Effect.succeed(projection.runs.find((run) => run.id === runId)),
           getThreadRecords,
           getTurnStartContext,
+          getOriginalRunBrief: () => Effect.succeed(input.originalBrief ?? ""),
           getRuntimeRecoveryProjection: () =>
             Effect.as(failReadIfRunning, {
               ...projection,
@@ -568,26 +580,72 @@ effectIt.effect.each([
     olderPeer: true,
   },
   { mode: "project without role skills", load: false, ordinal: 1, remote: false, optOut: true },
-  { mode: "second message", load: false, ordinal: 2, remote: false },
+  {
+    mode: "second message in the same conversation",
+    load: false,
+    ordinal: 2,
+    remote: false,
+    delivered: "loaded",
+  },
+  {
+    mode: "first message in a later provider conversation",
+    load: true,
+    ordinal: 2,
+    remote: false,
+    delivered: "loaded",
+    newConversation: true,
+  },
   { mode: "fresh attempt retry", load: true, ordinal: 1, remote: false, retry: true },
   {
     mode: "steering restart after delivery",
     load: false,
     ordinal: 1,
     remote: false,
-    restart: "loaded",
+    restart: true,
+    delivered: "loaded",
   },
   {
     mode: "steering restart before delivery",
     load: true,
     ordinal: 1,
     remote: false,
-    restart: "refused",
+    restart: true,
+    delivered: "refused",
+  },
+  {
+    mode: "steering restart in a new provider conversation",
+    load: true,
+    ordinal: 1,
+    remote: false,
+    restart: true,
+    delivered: "loaded",
+    newConversation: true,
+  },
+  {
+    mode: "steering restart in the same conversation with delivery unknown",
+    load: false,
+    ordinal: 1,
+    remote: false,
+    restart: true,
+    delivered: "delivery_unknown",
   },
   { mode: "ambiguous delivery", load: true, ordinal: 1, remote: false, failedStart: true },
 ])(
   "records only the skills sent for $mode",
-  ({ load, ordinal, remote, olderPeer, optOut, retry, restart, failedStart, driver, inline }) =>
+  ({
+    load,
+    ordinal,
+    remote,
+    olderPeer,
+    optOut,
+    retry,
+    restart,
+    delivered,
+    newConversation,
+    failedStart,
+    driver,
+    inline,
+  }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -633,10 +691,11 @@ effectIt.effect.each([
       );
       const skillCatalogue = vi.fn(() => Effect.succeed(catalogue));
       const brief = "Inspect the results.\n\nSkills: cse:build, cse:plot, cse:missing";
-      const text = restart ? "Inspect the residuals.\n\nSkills: cse:steer" : brief;
+      const text = restart || ordinal > 1 ? "Inspect the residuals.\n\nSkills: cse:steer" : brief;
       const harness = makeLocalCommandHarness({
         text,
-        ...(restart ? { originalBrief: brief } : {}),
+        ...(text === brief ? {} : { originalBrief: brief }),
+        nativeThreadId: newConversation ? "new-conversation" : "original-conversation",
         fileSystem: fs,
         projectRoot,
         worktreePath,
@@ -652,7 +711,9 @@ effectIt.effect.each([
         skillCatalogue,
       });
       const projection = harness.projection();
-      const [initialAttempt] = projection.attempts;
+      const initialAttempt = projection.attempts[0]!;
+      const currentRun = projection.runs.at(-1)!;
+      const briefRunId = ordinal === 1 ? currentRun.id : RunId.make("first-run");
       harness.setProjection({
         ...projection,
         thread: {
@@ -669,22 +730,29 @@ effectIt.effect.each([
               }
             : { lineage: { ...projection.thread.lineage, relationshipToParent: "subagent" } }),
         },
-        runs: projection.runs.map((run) => ({ ...run, ordinal })),
+        runs: [
+          ...(ordinal === 1
+            ? []
+            : [{ ...currentRun, id: briefRunId, ordinal: 1, status: "completed" as const }]),
+          { ...currentRun, ordinal },
+        ],
         attempts: [
-          ...(restart
+          ...(delivered
             ? [
                 {
-                  ...initialAttempt!,
+                  ...initialAttempt,
                   id: RunAttemptId.make("initial-attempt"),
+                  nativeThreadId: "original-conversation",
+                  runId: briefRunId,
                   status: "superseded" as const,
                   skillPreload: {
                     skills: [
                       {
                         id: "cse:build",
                         source: "role" as const,
-                        ...(restart === "loaded"
-                          ? { outcome: "loaded" as const }
-                          : { outcome: "skipped" as const, reason: "delivery_refused" as const }),
+                        ...(delivered === "refused"
+                          ? { outcome: "skipped" as const, reason: "delivery_refused" as const }
+                          : { outcome: delivered as "loaded" | "delivery_unknown" }),
                       },
                     ],
                   },

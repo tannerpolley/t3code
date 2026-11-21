@@ -8,6 +8,7 @@ import {
   RunAttemptId,
   MessageId,
   EventId,
+  IssueTrackerKind,
   TurnItemId,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
@@ -96,10 +97,25 @@ function makeParentThread(): OrchestrationV2AppThread {
   };
 }
 
-it("resets a subagent child's snooze, title job and remote delegation but keeps its workspace", () => {
+it("creates a subagent with its own skill selection and keeps the parent's workspace", () => {
   const parentThread: OrchestrationV2AppThread = {
     ...makeParentThread(),
-    role: "orchestrator",
+    role: "implementor",
+    roleSkillSelection: { requests: [{ id: "cse:build", source: "role" }] },
+    issues: [
+      {
+        projectId: ProjectId.make("project:subagent-snooze"),
+        tracker: IssueTrackerKind.make("github"),
+        host: "github.com",
+        scope: "tannerpolley/t3code",
+        key: "8",
+        url: "https://github.com/tannerpolley/t3code/issues/8",
+        displayKey: "#8",
+        title: "Single issue",
+        source: "agent",
+        linkedAt: DateTime.formatIso(parentCreatedAt),
+      },
+    ],
     titleRegeneration: { requestId: CommandId.make("command:parent-title"), startedAt: snoozedAt },
     delegatedFrom: {
       environmentId: EnvironmentId.make("linked-environment"),
@@ -137,6 +153,8 @@ it("resets a subagent child's snooze, title job and remote delegation but keeps 
   assert.isUndefined(childThread.role);
   assert.isUndefined(childThread.historyOrigin);
   assert.isUndefined(childThread.linkedIssue);
+  assert.isUndefined(childThread.roleSkillSelection);
+  assert.isUndefined(childThread.issues);
   assert.isUndefined(childThread.repositoryOrchestration);
   assert.deepEqual(childThread.lineage, {
     parentThreadId,

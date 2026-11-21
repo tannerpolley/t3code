@@ -40,6 +40,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import { makeRoleSkillTurn } from "./RoleSkillDelivery.ts";
+import { delegatedSkillRole } from "../provider/roleSkills.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeRestoreMissingWorktree } from "../workspace/restoreMissingWorktree.ts";
 import * as EventSink from "./EventSink.ts";
@@ -1683,6 +1684,31 @@ export const layer: Layer.Layer<
         status: "running",
         startedAt: now,
       };
+      const skillBriefRun = projection.runs.find((source) => source.ordinal === 1);
+      const preloadSkills =
+        skillBriefRun !== undefined &&
+        !goalCommand &&
+        session.installedSkillsForPreload !== undefined &&
+        delegatedSkillRole(projection.thread) !== undefined &&
+        !projection.attempts.some(
+          (prior) =>
+            prior.providerInstanceId === runningAttempt.providerInstanceId &&
+            prior.nativeThreadId === runningAttempt.nativeThreadId &&
+            (prior.nativeThreadId !== undefined ||
+              prior.providerThreadId === runningAttempt.providerThreadId) &&
+            prior.skillPreload?.skills.some(
+              (skill) => skill.outcome === "loaded" || skill.outcome === "delivery_unknown",
+            ),
+        );
+      const skillBrief =
+        preloadSkills &&
+        projection.thread.roleSkillSelection === undefined &&
+        (skillBriefRun.id !== (resumeSource ?? run).id ||
+          projection.attempts.some(
+            (prior) => prior.runId === skillBriefRun.id && prior.reason === "steering_restart",
+          ))
+          ? yield* projectionStore.getOriginalRunBrief(projection.thread.id, skillBriefRun.id)
+          : providerMessage.text;
       const runningRootNode: OrchestrationV2ExecutionNode = {
         ...rootNode,
         status: "running",
@@ -1844,27 +1870,13 @@ export const layer: Layer.Layer<
                   ),
                 ),
           };
-      const skillRun = resumeSource ?? run;
-      const skillSession =
-        skillRun.ordinal === 1 &&
-        !goalCommand &&
-        session.installedSkillsForPreload &&
-        !projection.attempts.some(
-          (prior) =>
-            (prior.runId === skillRun.id || prior.runId === run.id) &&
-            prior.skillPreload?.skills.some((skill) => skill.outcome === "loaded"),
-        )
-          ? {
-              ...inlineSession,
-              startTurn: (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-                startRoleSkillTurn(
-                  inlineSession,
-                  turnInput,
-                  projection.originalBrief ?? providerMessage.text,
-                  refusedBeforePrompt,
-                ),
-            }
-          : inlineSession;
+      const skillSession = preloadSkills
+        ? {
+            ...inlineSession,
+            startTurn: (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+              startRoleSkillTurn(inlineSession, turnInput, skillBrief, refusedBeforePrompt),
+          }
+        : inlineSession;
       const persistHandoff = Effect.fn("ProviderTurnStartService.persist")(function* (
         handoff: OrchestrationV2ContextHandoff,
       ) {

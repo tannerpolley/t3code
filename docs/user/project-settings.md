@@ -221,10 +221,10 @@ This needs Git 2.35 or newer.
 
 ### Skills for delegated children
 
-Add a `roleSkills` map to the registered project's root `t3.json` to preload installed
-plugin skills when delegated Codex or Claude children first receive their brief. A
-linked-environment child uses its destination project's map. Children in worktrees
-also use the registered project’s map and resolve the plugin in their own checkout.
+Add a `roleSkills` map to the registered project's root `t3.json`. T3 preloads installed
+plugin skills on the first prompt in each provider conversation for a delegated Codex
+or Claude child. A linked-environment child uses its destination project's map. Children
+in worktrees use the registered project’s map and resolve the plugin in their own checkout.
 
 For example, a project with the CSE plugin enabled on both providers can use this map.
 

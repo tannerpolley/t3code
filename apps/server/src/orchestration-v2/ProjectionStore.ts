@@ -797,9 +797,13 @@ export interface ProjectionStoreV2Shape {
       | "contextHandoffs"
       | "contextTransfers"
       | "turnItems"
-    > & { readonly hasConversation: boolean; readonly originalBrief?: string },
+    > & { readonly hasConversation: boolean },
     ProjectionStoreV2Error
   >;
+  readonly getOriginalRunBrief: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<string, ProjectionStoreV2Error>;
   readonly getTurnStartHistory: (
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
@@ -5699,20 +5703,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const messageIds = [run, unsentSource].flatMap((source) =>
               source === undefined ? [] : [source.userMessageId],
             );
-            const briefRun = unsentSource ?? run;
-            const originalBrief =
-              briefRun?.ordinal === 1 &&
-              thread.roleSkillSelection === undefined &&
-              attempts.some(
-                (attempt) => attempt.runId === briefRun.id && attempt.reason === "steering_restart",
-              )
-                ? ((yield* sql<{ text: string }>`
-                    SELECT json_extract(payload_json, '$.text') AS text
-                    FROM orchestration_v2_projection_turn_items
-                    WHERE thread_id = ${threadId} AND run_id = ${briefRun.id} AND type = 'user_message'
-                    ORDER BY ordinal ASC LIMIT 1
-                  `)[0]?.text ?? "")
-                : undefined;
             const messages = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_messages
               WHERE thread_id = ${threadId} AND (
@@ -5747,7 +5737,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               contextHandoffs,
               contextTransfers,
               turnItems,
-              ...(originalBrief === undefined ? {} : { originalBrief }),
             };
           }),
         )
@@ -5758,6 +5747,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               : new ProjectionStoreReadError({ threadId, cause }),
           ),
         );
+
+    const getOriginalRunBrief: ProjectionStoreV2Shape["getOriginalRunBrief"] = Effect.fn(
+      "ProjectionStore.getOriginalRunBrief",
+    )(
+      function* (threadId, runId) {
+        const [first] = yield* sql<{ text: string }>`
+          SELECT json_extract(payload_json, '$.text') AS text
+          FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND run_id = ${runId} AND type = 'user_message'
+          ORDER BY ordinal ASC, turn_item_id ASC LIMIT 1
+        `;
+        return first?.text ?? "";
+      },
+      (effect, threadId) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
 
     const getTurnStartHistory: ProjectionStoreV2Shape["getTurnStartHistory"] = Effect.fn(
       "ProjectionStore.getTurnStartHistory",
@@ -10287,6 +10292,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
       getThreadProjection: readOnReader(getThreadProjection),
       getTurnStartContext: readOnReader(getTurnStartContext),
+      getOriginalRunBrief: readOnReader(getOriginalRunBrief),
       getTurnStartHistory: readOnReader(getTurnStartHistory),
       getRuntimeRecoveryProjection: readOnReader(getRuntimeRecoveryProjection),
       getRunningTurnContext: readOnReader(getRunningTurnContext),
