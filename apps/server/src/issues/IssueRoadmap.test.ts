@@ -414,22 +414,22 @@ it.effect(
         assert.deepEqual(yield* state, { status: "idle", slots: 0 });
         let revision = 1;
         for (const [status, queueHeld, liveWork, slots] of [
-          ["queued", false, "working", 0],
+          ["queued", false, "queued", 0],
           ["queued", true, "idle", 0],
-          ["queued", false, "working", 0],
+          ["queued", false, "queued", 0],
           ["preparing", false, "working", 1],
           ["starting", false, "working", 1],
           ["running", false, "working", 1],
           ["waiting", false, "working", 1],
-          ["completed", false, "idle", 0],
+          ["completed", false, "done", 0],
           ["running", false, "working", 1],
-          ["failed", false, "idle", 0],
+          ["failed", false, "failed", 0],
           ["running", false, "working", 1],
-          ["interrupted", false, "idle", 0],
+          ["interrupted", false, "done", 0],
           ["running", false, "working", 1],
-          ["cancelled", false, "idle", 0],
+          ["cancelled", false, "done", 0],
           ["running", false, "working", 1],
-          ["rolled_back", false, "idle", 0],
+          ["rolled_back", false, "done", 0],
         ] as const) {
           revision++;
           const event = {
