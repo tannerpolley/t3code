@@ -30,6 +30,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   createAttachmentId,
@@ -44,18 +45,22 @@ import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import * as GuestShareService from "./GuestShareService.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -143,6 +148,18 @@ const layerTest = GuestShareService.layer.pipe(
   Layer.provideMerge(
     CommandOutputHub.layer.pipe(
       Layer.provideMerge(layerOrchestration.pipe(Layer.provide(layerCleanup))),
+    ),
+  ),
+  Layer.provide(
+    ThreadManagementService.layerWithLegacyImporter.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          LegacyV1ThreadImporter.layer,
+          CommandReceiptStore.layer,
+          Layer.mock(ThreadWorktreeRestore)({}),
+        ),
+      ),
+      Layer.provide(layerOrchestration.pipe(Layer.provide(layerCleanup))),
     ),
   ),
   Layer.provide(layerProviders),
@@ -254,6 +271,38 @@ it.effect("streams the owner's thread events after the share and a snapshot", ()
     assert.deepEqual(
       turnItems.flatMap((item) => (item.type === "user_message" ? [item.text] : [])),
       ["Fix the login bug"],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("hydrates legacy messages before the guest's first snapshot", () =>
+  Effect.gen(function* () {
+    const { guestShares, credential } = yield* shareThread;
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_v2_legacy_imports (thread_id, source_updated_at, shell_imported_at)
+      VALUES (${threadId}, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+    `;
+    yield* sql`
+      INSERT INTO projection_thread_messages (
+        message_id, thread_id, role, text, is_streaming, created_at, updated_at
+      ) VALUES (
+        'legacy-reply', ${threadId}, 'assistant', 'Reply before migration', 0,
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      )
+    `;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const [, snapshot] = Array.from(
+      yield* Stream.runCollect(Stream.take(yield* guestShares.stream(session), 2)),
+    );
+    if (snapshot?.type !== "thread" || snapshot.item.kind !== "snapshot") {
+      return assert.fail("Expected the thread snapshot second.");
+    }
+    assert.include(
+      snapshot.item.projection.visibleTurnItems.flatMap(({ item }) =>
+        item.type === "assistant_message" ? [item.text] : [],
+      ),
+      "Reply before migration",
     );
   }).pipe(Effect.provide(layerTest)),
 );

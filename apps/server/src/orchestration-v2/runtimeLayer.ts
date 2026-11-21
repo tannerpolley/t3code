@@ -470,7 +470,13 @@ export const layerProduction = Layer.mergeAll(
     ),
   ),
   GuestShareService.layer.pipe(
-    Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerOrchestratorProvided,
+        layerCommandOutputHubProvided,
+        layerThreadManagementProvided,
+      ),
+    ),
   ),
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(
