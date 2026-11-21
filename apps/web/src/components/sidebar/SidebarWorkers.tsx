@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
-import { SIDEBAR_WORKER_PAGE_SIZE, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import { SIDEBAR_WORKER_PAGE_SIZE, type EnvironmentId } from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
 import { useGT } from "gt-react";
@@ -62,7 +62,7 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   const key = scopedThreadKey(scopeThreadRef(environmentId, id));
   const { idle, running } = useAtomValue(childrenFor(key));
   const omitted = useAtomValue(omittedFamilies(environmentId));
-  const canPage = omitted.has(id) || idle.length > SIDEBAR_WORKER_PAGE_SIZE;
+  const canPage = omitted.has(id);
   const { rowRef, leaseLiveStatus: nearViewport } = useSidebarRowSubscriptionLease(false);
   const listRef = useStableCallback(rowRef);
   const [paging, setPaging] = useState(false);
@@ -70,7 +70,7 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   const [count, setCount] = useState(1);
   const pageKey = JSON.stringify([environmentId, id, paging ? count : 0]);
   const { state, rows } = threadFamilies.workerPages(pageKey);
-  const { pages, waiting, failedQuery } = useAtomValue(state);
+  const { pages, failedQuery } = useAtomValue(state);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- merges the mounted pages with authoritative shell deltas
   useEffect(() => {
     if (paging) return threadFamilies.mountRows(appAtomRegistry, environmentId, pageKey, rows);
@@ -81,31 +81,16 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
     select: (params) => {
       const route = resolveThreadRouteRef(params);
       if (idle.length <= limit || route?.environmentId !== environmentId) return null;
-      const threads = appAtomRegistry.get(
-        environmentThreadShells.environmentThreadIndexAtom(environmentId),
-      );
-      const visited = new Set<ThreadId>();
-      let candidate: ThreadId | null = route.threadId;
-      while (candidate !== null && !visited.has(candidate)) {
-        const index = idle.findIndex((worker) => worker.id === candidate);
-        if (index >= 0) return index >= limit ? candidate : null;
-        visited.add(candidate);
-        candidate = threads.get(candidate)?.lineage.parentThreadId ?? null;
-      }
-      return null;
+      return idle.findIndex((worker) => worker.id === route.threadId) >= limit
+        ? route.threadId
+        : null;
     },
   });
   const workers = [
     ...(props.includeRunning ? running : EMPTY),
-    ...sidebarWorkerPage(
-      idle,
-      limit,
-      selectedOutsidePage === null ? new Set() : new Set([selectedOutsidePage]),
-    ),
+    ...sidebarWorkerPage(idle, limit, selectedOutsidePage),
   ];
-  const lastPage = pages.at(-1);
-  const remaining = lastPage?.remainingWorkers ?? 0;
-  const showMore = !waiting && remaining > 0;
+  const remaining = Math.max(idle.length - limit, pages.at(-1)?.remainingWorkers ?? 0);
   if (workers.length === 0 && !canPage && failedQuery === null) return null;
   return (
     <ul
@@ -125,10 +110,9 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
             onClick={props.onClick}
             onContextMenu={props.onContextMenu}
           />
-          <SidebarWorkerRows {...props} thread={worker} />
         </li>
       ))}
-      {failedQuery !== null || showMore ? (
+      {failedQuery !== null || remaining > 0 ? (
         <li className="list-none">
           <button
             type="button"

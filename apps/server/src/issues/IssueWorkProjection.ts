@@ -13,6 +13,8 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
+import { isExplicitStopReason } from "../orchestration-v2/RunInterruptReason.ts";
+
 const workThread = OrchestrationV2AppThreadJson.mapFields(
   ({
     id,
@@ -24,7 +26,6 @@ const workThread = OrchestrationV2AppThreadJson.mapFields(
     linkedIssue,
     linkedPullRequest,
     pullRequests,
-    paused,
     archivedAt,
     deletedAt,
     activeProviderThreadId,
@@ -38,7 +39,6 @@ const workThread = OrchestrationV2AppThreadJson.mapFields(
     linkedIssue,
     linkedPullRequest,
     pullRequests,
-    paused,
     archivedAt,
     deletedAt,
     activeProviderThreadId,
@@ -93,11 +93,13 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
   sql: SqlClient.SqlClient,
   threadIds: readonly ThreadId[],
   presentedRunId: Statement.Fragment,
+  latestRunInterruptReason: Statement.Fragment,
 ) {
   if (threadIds.length === 0) return [];
   const rows = yield* sql<{
     thread_json: string;
     run_json: string;
+    latest_run_interrupt_reason: string | null;
     blocked_run_json: string;
     blocked_failure: string | null;
     session_error: string | null;
@@ -119,11 +121,11 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
       'activeProviderThreadId', json_extract(t.payload_json, '$.activeProviderThreadId')
     ), json_object(
       'role', json_extract(t.payload_json, '$.role'),
-      'paused', t.payload_json -> '$.paused',
       'linkedIssue', json_extract(t.payload_json, '$.linkedIssue'),
       'linkedPullRequest', json_extract(t.payload_json, '$.linkedPullRequest'),
       'pullRequests', json_extract(t.payload_json, '$.pullRequests')
     )) AS thread_json,
+    ${latestRunInterruptReason} AS latest_run_interrupt_reason,
     CASE WHEN presented.run_id IS NULL THEN 'null' ELSE json_object(
       'id', presented.run_id, 'ordinal', presented.ordinal, 'status', presented.status) END AS run_json,
     CASE WHEN blocked.run_id IS NULL THEN 'null' ELSE json_object(
@@ -209,7 +211,9 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
       return {
         ...thread,
         status,
-        ...(thread.paused === true ? { explicitStopRequested: true as const } : {}),
+        ...(status === "interrupted" && isExplicitStopReason(row.latest_run_interrupt_reason)
+          ? { explicitStopRequested: true as const }
+          : {}),
         activityRunStatus:
           row.activity_status ??
           (native === "pending"

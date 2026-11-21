@@ -31,14 +31,23 @@ vi.mock(import("../../state/threads"), async (original) => {
     },
     remainingWorkers: 1,
   };
-  const pagingFixture = Atom.family((count: number) => {
-    const rows = Atom.make(count === 0 ? [] : [page]);
+  const pagingFixture = Atom.family((key: string) => {
+    const [, parentId, count] = JSON.parse(key) as [string, string, number];
+    const growing = parentId === "Growing parent";
+    const rows = Atom.make(
+      count === 0
+        ? []
+        : growing
+          ? [{ snapshotSequence: 1, threads: [], remainingWorkers: 0 }]
+          : [page],
+    );
     return {
       rows,
       state: Atom.map(rows, (pages) => ({
         pages,
         waiting: false,
-        failedQuery: count === 2 ? Atom.make(AsyncResult.initial<never, never>()) : null,
+        failedQuery:
+          !growing && count === 2 ? Atom.make(AsyncResult.initial<never, never>()) : null,
       })),
     };
   });
@@ -51,9 +60,9 @@ vi.mock(import("../../state/threads"), async (original) => {
     threadFamilies: {
       ...actual.threadFamilies,
       workerPages: (key: string) => {
-        const [, parentId, count] = JSON.parse(key) as [string, string, number];
-        return parentId === "Paged parent"
-          ? pagingFixture(count)
+        const [, parentId] = JSON.parse(key) as [string, string, number];
+        return parentId === "Paged parent" || parentId === "Growing parent"
+          ? pagingFixture(key)
           : actual.threadFamilies.workerPages(key);
       },
     },
@@ -69,7 +78,10 @@ vi.mock(import("../../state/shell"), async (original) => {
     projects: [],
     threads: [],
     archivedThreads: [],
-    omittedWorkers: [{ parentThreadId: ThreadId.make("Paged parent"), count: 1 }],
+    omittedWorkers: ["Paged parent", "Growing parent"].map((id) => ({
+      parentThreadId: ThreadId.make(id),
+      count: 1,
+    })),
   });
   return { ...actual, environmentSnapshotAtom: () => snapshot };
 });
@@ -145,6 +157,7 @@ it("targets the idle checker for clicks and context menus beneath a running impl
         onChildClick={onClick}
         onChildContextMenu={onContextMenu}
       />
+      <SidebarWorkerRows thread={root} onClick={onClick} onContextMenu={onContextMenu} />
     </AppAtomRegistryProvider>,
   );
   const checker = screen.getByRole("button", { name: /Checker/ });
@@ -205,4 +218,21 @@ it("offers a retry after the next worker page fails", async () => {
   );
   await screen.getByRole("button", { name: "Show more workers (1)" }).click();
   await expect.element(screen.getByRole("button", { name: "Retry loading workers" })).toBeVisible();
+});
+
+it("reveals an eleventh worker after the server page is exhausted", async () => {
+  const parent = worker("Growing parent");
+  const children = Array.from({ length: 10 }, (_, index) => worker(`Worker ${index}`, parent));
+  using _rows = setupRows([parent, ...children]);
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <SidebarWorkerRows thread={parent} onClick={vi.fn()} onContextMenu={vi.fn()} />
+    </AppAtomRegistryProvider>,
+  );
+  await expect.element(screen.getByRole("button", { name: /Worker 0$/ })).toBeVisible();
+  using _updated = setupRows([parent, ...children, worker("Worker added", parent)]);
+  await expect.element(screen.getByRole("button", { name: /Worker 0$/ })).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Show more workers (1)" }).click();
+  await expect.element(screen.getByRole("button", { name: /Worker 0$/ })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: /Worker added$/ })).toBeVisible();
 });

@@ -17,6 +17,7 @@ import {
   isOlderSettledThreadShell,
   OrchestrationProjectShell as ProjectShellSchema,
   OrchestrationV2ThreadShell as ThreadShellSchema,
+  workerListParentIds,
 } from "@t3tools/contracts";
 import { turnItemCanChangeUserWait } from "@t3tools/shared/agentAwareness";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -468,6 +469,7 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
     const omittedWorkers = new Map<ThreadId, number>();
     if (input.options.omitIdleSubagents && read.index !== null) {
       const sent = new Set(snapshot.threads.map((thread) => thread.id));
+      const lineages = new Map(read.index.map(({ id, lineage }) => [id, lineage]));
       for (const { id, lineage } of read.index) {
         if (
           lineage.relationshipToParent !== "subagent" ||
@@ -475,10 +477,9 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
           sent.has(id)
         )
           continue;
-        omittedWorkers.set(
-          lineage.parentThreadId,
-          (omittedWorkers.get(lineage.parentThreadId) ?? 0) + 1,
-        );
+        for (const parent of workerListParentIds(lineage, (id) => lineages.get(id))) {
+          omittedWorkers.set(parent, (omittedWorkers.get(parent) ?? 0) + 1);
+        }
       }
     }
     return {

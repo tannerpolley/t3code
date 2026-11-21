@@ -150,6 +150,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("issue.suspension.interrupt"),
     runId: RunId,
+    reason: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("issue.suspension.notify"),
