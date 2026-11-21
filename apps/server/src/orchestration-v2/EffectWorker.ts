@@ -199,6 +199,7 @@ export const layerExecutor: Layer.Layer<
             return continueRestartedRun({
               threadId: effect.threadId,
               sourceRunId,
+              transientFailure: effect.request.transientFailureAttempt !== undefined,
               ...(effect.request.processLossCount === undefined
                 ? {}
                 : { processLossCount: effect.request.processLossCount }),

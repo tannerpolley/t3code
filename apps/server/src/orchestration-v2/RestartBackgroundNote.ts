@@ -270,7 +270,7 @@ export function delegatedTaskResultRun(
   return executing ?? awaited.find((run) => run.status === "queued") ?? awaited[0] ?? taskRuns[0];
 }
 
-/** The provider never accepted this continuation's prompt, so starting it again repeats nothing. */
+/** A continuation without a recorded provider turn follows the startup retry policy. */
 export function continuationFailedBeforePrompt(
   run: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartContinuationOfRunId">,
   providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>,

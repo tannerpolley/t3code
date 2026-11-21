@@ -1,5 +1,6 @@
 import {
   type IssueSuspension,
+  isManagedIssueImplementor,
   resolveThreadRole,
   THREAD_ROLE_NAMES,
   type IssueWorkRead,
@@ -19,13 +20,6 @@ export const readOnlyIssueRoles = THREAD_ROLE_NAMES.filter(isReadOnlyIssueRole);
 export const isUnmanagedIssueRole = (role: string | undefined) =>
   resolveThreadRole(role ?? "") === "writer" || isReadOnlyIssueRole(role);
 
-export const isManagedIssueImplementor = (
-  thread: Pick<OrchestrationV2AppThread, "lineage" | "linkedIssue" | "role">,
-) =>
-  thread.lineage.relationshipToParent === "subagent" &&
-  thread.linkedIssue !== undefined &&
-  (thread.role ?? "implementor") === "implementor";
-
 export const requiresManagedIssueAdmission = (
   role: string | undefined,
   parent: Pick<OrchestrationV2AppThread, "repositoryOrchestration" | "linkedIssue">,
@@ -38,10 +32,15 @@ export const requiresManagedIssueAdmission = (
 
 /** Linked issue workers and the repository root get managed orchestration instructions. */
 export const managedIssueRole = (
-  thread: Pick<OrchestrationV2AppThread, "linkedIssue" | "repositoryOrchestration">,
+  thread: Pick<
+    OrchestrationV2AppThread,
+    "linkedIssue" | "repositoryOrchestration" | "role" | "lineage"
+  >,
 ): ManagedIssueRole | undefined =>
   thread.linkedIssue !== undefined
-    ? "worker"
+    ? isManagedIssueImplementor(thread)
+      ? "implementor"
+      : "worker"
     : thread.repositoryOrchestration !== undefined
       ? "root"
       : undefined;

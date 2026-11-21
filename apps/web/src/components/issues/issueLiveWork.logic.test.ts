@@ -114,6 +114,36 @@ it("follows a linked parent's sidebar status, including questions and approvals"
   expect(withLiveIssueWork(list, [foreign])).toBe(stopped);
 });
 
+it("keeps a managed implementor's issue in progress while its reviewer runs", () => {
+  const pendingBackgroundTasks = [
+    { kind: "subagent" as const, taskId: "review", description: "Review the diff" },
+  ];
+  const worker = {
+    ...running,
+    runtime: null,
+    linkedIssue,
+    pendingBackgroundTasks,
+    source: {
+      ...running.source,
+      linkedIssue,
+      role: "implementor" as const,
+      pendingBackgroundTasks,
+    },
+  };
+  expect(section(withLiveIssueWork(list, [worker]))).toBe("in-progress");
+  expect(
+    section(
+      withLiveIssueWork(list, [
+        {
+          ...worker,
+          pendingBackgroundTasks: [],
+          source: { ...worker.source, pendingBackgroundTasks: [] },
+        },
+      ]),
+    ),
+  ).toBe("paused");
+});
+
 it("keeps unrelated issue and list objects identical across unrelated shell updates", () => {
   const unrelated = { ...unlinkedRoot, id: ThreadId.make("unrelated") };
   const many = {

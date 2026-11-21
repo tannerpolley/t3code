@@ -6,6 +6,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -15,6 +16,10 @@ import * as Fiber from "effect/Fiber";
 import * as CodexProtocol from "effect-codex-app-server/protocol";
 import { makeInMemoryStdio } from "../../../../packages/effect-codex-app-server/src/_internal/stdio.ts";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as EventSink from "./EventSink.ts";
+import * as IssueService from "../issues/IssueService.ts";
+import { reviewIssue, reviewRead } from "./ThreadLaunchService.testHarness.ts";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -31,15 +36,24 @@ const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
 const parentThreadId = ThreadId.make("thread:start-failure-parent");
+const projectId = ProjectId.make("project:start-failure");
+const issue = reviewIssue(1);
 const startError = "required MCP servers failed to initialize: serena: Broken pipe";
 
-const failedChildTest = (stalledTransport: boolean) =>
+const failedChildTest = (
+  mode: "refused" | "stalled" | "recovers" | "exhausted" | "limited" | "persistent",
+) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("provider-turn-start-failure");
       const wake = yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
       const childEnsureEntered = yield* Deferred.make<void>();
       let childEnsureAttempts = 0;
+      let childTurns = 0;
+      let lastChildTurn:
+        | Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>[0]
+        | undefined;
+      const startsNormally = mode !== "refused" && mode !== "stalled";
       const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
         driver,
@@ -48,6 +62,7 @@ const failedChildTest = (stalledTransport: boolean) =>
         openSession: (input) =>
           Effect.gen(function* () {
             const now = yield* DateTime.now;
+            const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
             const { stdio } = yield* makeInMemoryStdio();
             const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
             return {
@@ -66,11 +81,11 @@ const failedChildTest = (stalledTransport: boolean) =>
                 updatedAt: now,
                 lastError: null,
               },
-              events: Stream.never,
+              events: Stream.fromQueue(events),
               ensureThread: ({ threadId }) => {
-                if (threadId !== parentThreadId) {
+                if (threadId !== parentThreadId && !startsNormally) {
                   childEnsureAttempts += 1;
-                  if (stalledTransport)
+                  if (mode === "stalled")
                     return Deferred.succeed(childEnsureEntered, undefined).pipe(
                       Effect.andThen(transport.request("thread/start", { threadId })),
                       Effect.flatMap(() => Effect.die("The stalled peer cannot reply")),
@@ -111,7 +126,64 @@ const failedChildTest = (stalledTransport: boolean) =>
               },
               resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
               // The parent turn stays running for the whole test.
-              startTurn: () => Effect.void,
+              startTurn: (turn) =>
+                Effect.gen(function* () {
+                  if (turn.threadId === parentThreadId) return;
+                  childTurns += 1;
+                  lastChildTurn = turn;
+                  const succeeded = mode === "recovers" && childTurns === 2;
+                  const completedAt = yield* DateTime.now;
+                  const turnId = ProviderTurnId.make(`provider-turn:retry:${turn.runId}`);
+                  const common = {
+                    driver,
+                    providerThreadId: turn.providerThread.id,
+                    providerTurnId: turnId,
+                    runOrdinal: turn.runOrdinal,
+                    threadDisposition: "reusable" as const,
+                  };
+                  const providerTurn = {
+                    id: turnId,
+                    providerThreadId: turn.providerThread.id,
+                    nodeId: turn.rootNodeId,
+                    runAttemptId: turn.attemptId,
+                    nativeTurnRef: null,
+                    ordinal: turn.providerTurnOrdinal,
+                    status: "running" as const,
+                    startedAt: completedAt,
+                    completedAt: null,
+                  };
+                  yield* Queue.offerAll(events, [
+                    { type: "provider_turn.updated", driver, providerTurn },
+                    {
+                      type: "provider_turn.updated",
+                      driver,
+                      providerTurn: {
+                        ...providerTurn,
+                        status: succeeded ? "completed" : "failed",
+                        completedAt,
+                      },
+                    },
+                    succeeded
+                      ? { ...common, type: "turn.terminal", status: "completed", failure: null }
+                      : {
+                          ...common,
+                          type: "turn.terminal",
+                          status: "failed",
+                          failureItemOrdinal: 1,
+                          failure: {
+                            class: mode === "limited" ? "usage_limit" : "provider_error",
+                            message:
+                              mode === "persistent"
+                                ? "Model is unavailable."
+                                : childTurns === 2
+                                  ? "stream disconnected before completion: error decoding response body"
+                                  : "unexpected status 503 Service Unavailable",
+                            code: mode === "recovers" ? "api_error_502" : null,
+                            retryable: null,
+                          },
+                        },
+                  ]);
+                }),
               steerTurn: () => Effect.void,
               interruptTurn: () => Effect.void,
               respondToRuntimeRequest: () => Effect.void,
@@ -129,13 +201,32 @@ const failedChildTest = (stalledTransport: boolean) =>
           type: "thread.create",
           commandId: CommandId.make("command:start-failure:create"),
           threadId: parentThreadId,
-          projectId: ProjectId.make("project:start-failure"),
+          projectId,
           title: "Parent",
           modelSelection,
           runtimeMode: "full-access",
           interactionMode: "default",
           branch: null,
-          worktreePath: cwd,
+          worktreePath: startsNormally ? null : cwd,
+          ...(startsNormally
+            ? {
+                repositoryOrchestration: {
+                  host: issue.host,
+                  repository: issue.repository,
+                  repositoryId: issue.repositoryId,
+                  projectId,
+                  launchCommandId: CommandId.make("command:start-failure:create"),
+                  revision: 1,
+                  paused: false,
+                  workerLimit: 4,
+                  readOnlyLimit: 4,
+                  publishStatusComments: false,
+                  publishCloseoutComments: false,
+                  milestones: [],
+                  suspendedIssues: [],
+                },
+              }
+            : {}),
           createdBy: "user",
           creationSource: "web",
         });
@@ -160,6 +251,7 @@ const failedChildTest = (stalledTransport: boolean) =>
           parentThreadId,
           parentRunId: parentRun.id,
           parentNodeId: parentRun.rootNodeId!,
+          ...(startsNormally ? { issue, role: "implementor" as const } : {}),
           task: "Inspect the migration",
           modelSelection,
           runtimeMode: "full-access",
@@ -171,8 +263,70 @@ const failedChildTest = (stalledTransport: boolean) =>
         const childThreadId = (yield* orchestrator.getThreadProjection(parentThreadId))
           .subagents[0]!.childThreadId!;
 
+        if (startsNormally) {
+          const sink = yield* EventSink.EventSinkV2;
+          const parent = orchestrator.getThreadProjection(parentThreadId);
+          const taskId = (yield* parent).subagents[0]!.id;
+          const wakes = parent.pipe(
+            Effect.map(({ messages }) =>
+              messages.filter((message) => message.delegatedCompletion?.taskIds.includes(taskId)),
+            ),
+          );
+          const beforeFailure = yield* sink.latestSequence();
+          const delays = mode === "recovers" ? [2_000] : mode === "exhausted" ? [2_000, 4_000] : [];
+          const drainTurn = Effect.gen(function* () {
+            const sequence = yield* sink.latestSequence();
+            const previousTurns = childTurns;
+            yield* worker.drain();
+            assert.equal(childTurns, previousTurns + 1);
+            yield* sink.stream({ afterSequence: sequence, eventType: "run.updated" }).pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.threadId === childThreadId &&
+                  (event.payload.status === "failed" || event.payload.status === "waiting"),
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+            );
+          });
+          yield* drainTurn;
+          for (const delay of delays) {
+            yield* orchestrator.recoverDelegatedTasks;
+            assert.isTrue(yield* orchestrator.delegatedTaskResultPending(childThreadId, taskId));
+            assert.lengthOf(yield* wakes, 0);
+            const previousTurns = childTurns;
+            yield* TestClock.adjust(delay - 1);
+            yield* worker.drain();
+            assert.equal(childTurns, previousTurns);
+            yield* TestClock.adjust(1);
+            yield* drainTurn;
+            assert.include(
+              lastChildTurn?.message.text ?? "",
+              "Before you repeat one that changes state",
+            );
+            assert.isUndefined(lastChildTurn?.restartContinuationOfRunId);
+          }
+          yield* worker.drain();
+          yield* sink.stream({ afterSequence: beforeFailure, eventType: "message.updated" }).pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.threadId === parentThreadId &&
+                event.type === "message.updated" &&
+                event.payload.delegatedCompletion?.taskIds.includes(taskId) === true,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+          assert.lengthOf(yield* wakes, 1);
+          assert.equal(childTurns, delays.length + 1);
+          const task = (yield* parent).subagents[0]!;
+          assert.equal(task.status, mode === "recovers" ? "completed" : "failed");
+          return;
+        }
+
         // Every attempt but the last leaves the run starting so the worker retries.
-        if (stalledTransport) {
+        if (mode === "stalled") {
           const drain = yield* worker.drain().pipe(Effect.forkScoped);
           yield* Deferred.await(childEnsureEntered);
           yield* TestClock.adjust("60 seconds");
@@ -202,14 +356,25 @@ const failedChildTest = (stalledTransport: boolean) =>
         assert.equal(request.delegatedCompletion?.parentRunId, parentRun.id);
         const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
         assert.equal(task.status, "failed");
-        if (stalledTransport) assert.include(task.result ?? "", "timed out");
+        if (mode === "stalled") assert.include(task.result ?? "", "timed out");
         else assert.equal(task.result, startError);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
             { name: "provider-turn-start-failure" },
             ProviderAdapterRegistry.layerSingle(adapter),
-            { runEffectWorker: false },
+            {
+              runEffectWorker: false,
+              runContinuationWorker: startsNormally,
+              continueThreadsAfterServerUpdate: false,
+              ...(startsNormally
+                ? {
+                    issueServiceLayer: Layer.mock(IssueService.IssueService)({
+                      workRead: () => Effect.succeed(reviewRead(issue)),
+                    }),
+                  }
+                : {}),
+            },
           ).pipe(
             Layer.provide(
               Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
@@ -223,7 +388,12 @@ const failedChildTest = (stalledTransport: boolean) =>
     }),
   );
 
-it.effect.each([false, true])(
-  "a delegated child fails and wakes its parent (stalled transport: %s)",
+it.effect.each(["refused", "stalled"] as const)(
+  "a delegated child fails and wakes its parent after a %s start",
+  failedChildTest,
+);
+
+it.effect.each(["recovers", "exhausted", "limited", "persistent"] as const)(
+  "publishes one result when the managed worker retry %s",
   failedChildTest,
 );

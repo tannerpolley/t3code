@@ -23,7 +23,10 @@ import {
   threadPullRequestsOf,
 } from "../sourceControl/threadPullRequests.ts";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  managedImplementorAwaitingSubagent,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const key = (issue: RepositoryIssueRef) =>
@@ -314,6 +317,7 @@ function workState(
     runtimeRequestNeedsUser(thread.pendingRuntimeRequest.kind)
   )
     return "waiting_on_you";
+  if (managedImplementorAwaitingSubagent(thread)) return "working";
   if (
     !thread.pendingBackgroundTasks?.some((task) => task.kind === "monitor") &&
     !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&

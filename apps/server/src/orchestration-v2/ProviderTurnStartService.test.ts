@@ -1748,6 +1748,7 @@ effectIt.effect("preserves a replacement committed before exhausted start settle
       ),
     );
     const executionLayer = RunExecutionService.layer.pipe(
+      Layer.provide(Layer.mock(EffectOutbox.EffectOutboxV2)({})),
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,

@@ -142,10 +142,14 @@ they do not block. New continuation intents persist a cumulative process-loss co
 delivery stops before the fourth crash recovery of an unfinished turn, regardless
 of elapsed time. Planned shutdowns and completed turns reset it. A live continuation
 retains its preceding intent past outbox retention so cleanup cannot erase the count.
-Legacy intents without a count keep the five-minute chain guard. Stable
-command and message IDs prevent duplicate submissions after an outbox retry. Codex
+Legacy intents without a count keep the five-minute chain guard. An outbox retry
+reuses the same continuation command and message IDs. Codex
 resumes without adding provider prompt text unless the turn lost background work;
 other adapters receive the continuation message through their normal turn path.
+
+When a managed worker resumes after a temporary provider error, the continuation asks
+the model to verify earlier actions before repeating them. An external action may
+already have taken effect when its result was lost.
 
 Delegated tasks (`delegate_task` child threads) are reconciled as their own threads,
 never as the parent's background work. The orchestrator settles child results and

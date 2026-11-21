@@ -272,6 +272,38 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const continuationRequest = Effect.fn("ProviderRuntimeRecoveryService.continuationRequest")(
+    function* (
+      threadId: ThreadId,
+      run: OrchestrationV2ThreadProjection["runs"][number],
+      planned: boolean,
+    ) {
+      const previous =
+        run.restartContinuationOfRunId === undefined ||
+        run.status === "completed" ||
+        run.status === "waiting"
+          ? undefined
+          : Option.getOrUndefined(
+              yield* outbox
+                .get(`effect:restart-continuation:${run.restartContinuationOfRunId}`)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderRuntimeRecoveryError({ operation: "reconcile", threadId, cause }),
+                  ),
+                ),
+            )?.request;
+      const prior = previous?.type === "provider-runtime.continue" ? previous : undefined;
+      const transientFailureAttempt = prior?.transientFailureAttempt;
+      return {
+        type: "provider-runtime.continue" as const,
+        sourceRunId: run.id,
+        processLossCount: planned ? 0 : 1 + (prior?.processLossCount ?? 0),
+        ...(transientFailureAttempt === undefined ? {} : { transientFailureAttempt }),
+      };
+    },
+  );
+
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
       stored: ProjectionStore.ProjectionRuntimeRecoveryState,
@@ -1046,39 +1078,13 @@ export const make = Effect.gen(function* () {
               now,
             )
           : undefined;
-      let processLossCount = 1;
-      // Normal upgrades must not exhaust an unfinished turn's crash allowance.
-      if (
-        continuationRun?.restartContinuationOfRunId !== undefined &&
-        continuationRun.status !== "completed" &&
-        continuationRun.status !== "waiting"
-      ) {
-        const previous = yield* outbox
-          .get(`effect:restart-continuation:${continuationRun.restartContinuationOfRunId}`)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderRuntimeRecoveryError({
-                  operation: "reconcile",
-                  threadId: projection.thread.id,
-                  cause,
-                }),
-            ),
-          );
-        if (Option.isSome(previous) && previous.value.request.type === "provider-runtime.continue")
-          processLossCount += previous.value.request.processLossCount ?? 0;
-      }
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
             {
               id: `effect:restart-continuation:${continuationRun.id}`,
               commandId,
               threadId: projection.thread.id,
-              request: {
-                type: "provider-runtime.continue",
-                sourceRunId: continuationRun.id,
-                processLossCount,
-              },
+              request: yield* continuationRequest(projection.thread.id, continuationRun, false),
             },
           ]
         : [];
@@ -1270,11 +1276,7 @@ export const make = Effect.gen(function* () {
                 id: `effect:restart-continuation:${run.id}`,
                 commandId,
                 threadId,
-                request: {
-                  type: "provider-runtime.continue",
-                  sourceRunId: run.id,
-                  processLossCount: 0,
-                },
+                request: yield* continuationRequest(threadId, run, true),
               },
             ],
           });

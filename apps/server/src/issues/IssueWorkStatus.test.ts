@@ -1,11 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
-import { RuntimeRequestId, RunId, type OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import {
+  RuntimeRequestId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 
 type StatusShell = NonNullable<Parameters<typeof deriveIssueWorkStatus>[0]["shell"]>;
 const shell = (status: OrchestrationV2ThreadShell["status"]): StatusShell => ({
   status,
+  lineage: {
+    parentThreadId: null,
+    rootThreadId: ThreadId.make("thread"),
+    relationshipToParent: null,
+  },
   deletedAt: null,
   archivedAt: null,
   pendingRuntimeRequest: null,
@@ -38,6 +48,32 @@ describe("deriveIssueWorkStatus", () => {
     expect(
       derive({ ...shell("running"), activeRunId: RunId.make("run") }, { waitingOnSubIssues: true }),
     ).toBe("working");
+  });
+
+  it("keeps a failed implementor failed while a shell command is pending", () => {
+    const failed = shell("failed");
+    expect(
+      derive({
+        ...failed,
+        role: "implementor",
+        lineage: {
+          ...failed.lineage,
+          parentThreadId: failed.lineage.rootThreadId,
+          relationshipToParent: "subagent",
+        },
+        linkedIssue: {
+          host: "github",
+          repository: "acme/app",
+          repositoryId: "repo",
+          id: "1",
+          nodeId: "issue:1",
+          number: 1,
+          title: "Task",
+          url: "https://github.com/acme/app/issues/1",
+        },
+        pendingBackgroundTasks: [{ kind: "command", taskId: "command:unfinished" }],
+      }),
+    ).toBe("failed");
   });
 
   it("keeps queued root completion separate from issue completion and preserves availability", () => {

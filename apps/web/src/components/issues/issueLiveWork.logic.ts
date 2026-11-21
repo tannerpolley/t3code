@@ -6,6 +6,7 @@ import type {
   RepositoryIssueSummary,
   IssuePullRequestStatus,
 } from "@t3tools/contracts";
+import { managedImplementorAwaitingSubagent } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 
@@ -107,7 +108,10 @@ export function createLiveIssueWorkOverlay() {
           .filter((pr) => pr.source !== "stack-dismissed")
           .map((pr) => pr.url),
         status:
-          status === "working" && thread.archivedAt === null && !inheritedIds.has(thread.id)
+          (status === "working" ||
+            (status === "waiting" && managedImplementorAwaitingSubagent(thread.source))) &&
+          thread.archivedAt === null &&
+          !inheritedIds.has(thread.id)
             ? ("working" as const)
             : thread.archivedAt === null && (status === "approval" || status === "input")
               ? ("waiting_on_you" as const)

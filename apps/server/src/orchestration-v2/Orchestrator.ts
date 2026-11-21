@@ -28,7 +28,6 @@ import {
 import { threadIssueKeysEqual } from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
-import { isManagedIssueImplementor } from "../issues/IssueEligibility.ts";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -41,6 +40,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  isManagedIssueImplementor,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -76,6 +76,8 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadTranscript,
+  type EnvironmentId,
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
   parseGoalCommand,
@@ -498,6 +500,11 @@ export interface OrchestratorV2Shape {
     threadId: ThreadId,
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, OrchestratorProjectionError>;
+  readonly getThreadTranscript: (
+    threadId: ThreadId,
+    maxBytes: number,
+    environmentId: EnvironmentId,
+  ) => Effect.Effect<OrchestrationV2ThreadTranscript, OrchestratorProjectionError>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, OrchestratorV2Error>;
   readonly getRunCount: (threadId: ThreadId) => Effect.Effect<number, OrchestratorV2Error>;
   readonly getMessagesById: (
@@ -507,10 +514,6 @@ export interface OrchestratorV2Shape {
     ReadonlyMap<MessageId, OrchestrationV2ConversationMessage>,
     OrchestratorV2Error
   >;
-  readonly getTranscriptByteFloor: (
-    threadId: ThreadId,
-    limit: number,
-  ) => Effect.Effect<number, OrchestratorV2Error>;
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
@@ -3499,6 +3502,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               `effect:restart-continuation:${run.restartContinuationOfRunId}`,
             ),
           )?.request;
+    if (
+      previous?.type === "provider-runtime.continue" &&
+      previous.transientFailureAttempt !== undefined
+    )
+      return;
     const processLossCount =
       previous?.type === "provider-runtime.continue" ? previous.processLossCount : undefined;
     yield* writeSystemEvents(
@@ -7352,9 +7360,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     if (command.restartContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
+      const continuation =
+        source?.status === "failed" &&
+        command.commandId === `command:restart-continuation:${source.id}`
+          ? Option.getOrUndefined(
+              yield* effectOutbox
+                .get(`effect:restart-continuation:${source.id}`)
+                .pipe(mapDispatchError(command)),
+            )
+          : undefined;
+      const retryingTransientFailure =
+        continuation?.status === "running" &&
+        continuation.request.type === "provider-runtime.continue" &&
+        continuation.request.transientFailureAttempt !== undefined;
       if (
         !source ||
         !(
+          retryingTransientFailure ||
           isRestartContinuationSource(source, projection.providerTurns) ||
           continuationFailedBeforePrompt(source, projection.providerTurns)
         ) ||
@@ -10294,20 +10316,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (row) => row.id === message.runId,
       );
     if (run === undefined || run.delegatedTaskId !== undefined) return;
-    // A wake continues the latest follow-up while it is open, as it continues the original task.
-    const latestFollowupId =
-      command.notification === undefined
-        ? undefined
+    const completion = command.delegatedCompletion;
+    const wakeRuns =
+      command.notification === undefined && command.delegatedCompletion === undefined
+        ? []
         : (yield* projectionStore
             .getThreadRecords(command.threadId, ["runs"])
-            .pipe(mapDispatchError(command))).runs
+            .pipe(mapDispatchError(command))).runs;
+    const followupId =
+      completion === undefined
+        ? wakeRuns
             .filter((row) => row.id !== run.id && row.delegatedTaskId !== undefined)
-            .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.delegatedTaskId;
+            .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.delegatedTaskId
+        : wakeRuns.find((row) => row.id === completion.parentRunId)?.delegatedTaskId;
+    if (completion !== undefined && followupId === undefined) return;
     const parent = yield* projectionStore
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
         subagentIds: [
           ...(child.forkedFrom?.type === "node" ? [child.forkedFrom.nodeId] : []),
-          ...(latestFollowupId === undefined ? [] : [latestFollowupId]),
+          ...(followupId === undefined ? [] : [followupId]),
         ],
       })
       .pipe(mapDispatchError(command));
@@ -10320,7 +10347,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (original === undefined || original.result === null) return;
     const openFollowup = parent.subagents.find(
       (task) =>
-        task.id === latestFollowupId &&
+        task.id === followupId &&
         task.origin === "app_owned" &&
         task.childThreadId === child.id &&
         task.cancelledRunId === undefined &&
@@ -17289,6 +17316,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getTimelinePage(threadId, options)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
+    getThreadTranscript: Effect.fn("OrchestratorV2.getThreadTranscript")(
+      function (threadId, maxBytes, environmentId) {
+        return projectionStore
+          .getThreadTranscript(threadId, maxBytes, environmentId)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      },
+    ),
     getMessageCount: Effect.fn("OrchestratorV2.getMessageCount")(function (threadId) {
       return projectionStore
         .getMessageCount(threadId)
@@ -17304,13 +17338,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getMessagesById(threadId, messageIds)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
-    getTranscriptByteFloor: Effect.fn("OrchestratorV2.getTranscriptByteFloor")(
-      function (threadId, limit) {
-        return projectionStore
-          .getTranscriptByteFloor(threadId, limit)
-          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
-      },
-    ),
     getTurnItem: Effect.fn("OrchestratorV2.getTurnItem")(function (input) {
       return projectionStore
         .getTurnItem(input)

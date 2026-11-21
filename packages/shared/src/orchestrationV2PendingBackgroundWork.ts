@@ -7,7 +7,7 @@ import type {
   ThreadId,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { isManagedIssueImplementor, isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
 import { classifyShellCommand } from "./shellCommand.ts";
@@ -377,5 +377,17 @@ function pullRequestWatchTasks(
             ...(link.watch.checksPending === false ? {} : { awaited: true as const }),
           },
         ],
+  );
+}
+
+export function managedImplementorAwaitingSubagent(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "lineage" | "role" | "linkedIssue" | "pendingBackgroundTasks"
+  >,
+): boolean {
+  return (
+    isManagedIssueImplementor(thread) &&
+    (thread.pendingBackgroundTasks?.some((task) => task.kind === "subagent") ?? false)
   );
 }

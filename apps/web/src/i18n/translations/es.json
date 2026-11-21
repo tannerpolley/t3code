@@ -13,6 +13,7 @@
   "874249a1962865f1": "{minutes} min",
   "da395e0d0098218d": "Rutinario",
   "70c4417f87f445b2": "Complejo",
+  "143cb1aa9f30dfd2": "Crear o dividir incidencias y moverlas entre hitos requiere aprobación cuando está activada la opción «Ask before agents create, split or move issues». Editar la descripción, cerrar o reabrir incidencias y cambiar la incidencia superior o las dependencias de bloqueo requiere aprobación cuando el hilo del agente está en modo «Approval required».",
   "dd10f8671d149b28": "Nivel",
   "c8835bc68ac01205": "Esfuerzo",
   "e40e6d4ec89b5365": "Predeterminado",
