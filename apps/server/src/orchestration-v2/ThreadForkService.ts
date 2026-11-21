@@ -102,7 +102,6 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
       // The remote parent delegated the source thread, not its forks.
       const {
         delegatedFrom: _delegatedFrom,
-        paused: _paused,
         silentWakeAttention: _silentWakeAttention,
         ...inherited
       } = input.sourceProjection.thread;

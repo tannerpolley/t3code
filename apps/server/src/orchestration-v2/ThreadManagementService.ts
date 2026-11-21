@@ -65,6 +65,7 @@ import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { FORCE_STOP_REASON } from "./RunInterruptReason.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -670,7 +671,6 @@ function latestSteerableRun(
 }
 
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
-const FORCE_STOP_REASON = "Force stopped by user";
 const FORCE_STOP_RELEASE_WAIT = "10 seconds";
 const isForceStopThreadError = Schema.is(OrchestrationV2ForceStopThreadError);
 
@@ -1478,7 +1478,6 @@ const make = Effect.gen(function* () {
                 threadId: input.threadId,
                 runId: run.id,
                 reason: FORCE_STOP_REASON,
-                markPaused: true,
               })
             : orchestrator.dispatch({
                 type: "thread.background-work.settle",
@@ -1487,7 +1486,6 @@ const make = Effect.gen(function* () {
                 providerThreadId: providerTurn.providerThreadId,
                 providerTurnId: providerTurn.id,
                 reason: FORCE_STOP_REASON,
-                markPaused: true,
               });
       }
       const ownProviderThreadIds = records.providerThreads.flatMap((providerThread) =>

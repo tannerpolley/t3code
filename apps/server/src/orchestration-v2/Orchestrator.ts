@@ -220,6 +220,7 @@ import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import { USER_STOP_REASON } from "./RunInterruptReason.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { isProviderSwitchPlanError, ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
@@ -13265,7 +13266,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "run_interrupt_request",
-        message: command.reason ?? RunExecutionService.USER_STOP_REASON,
+        message: command.reason ?? USER_STOP_REASON,
       },
     });
   });
@@ -13858,7 +13859,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completedAt: now,
       updatedAt: now,
       type: "run_interrupt_request",
-      message: command.reason ?? RunExecutionService.USER_STOP_REASON,
+      message: command.reason ?? USER_STOP_REASON,
     };
 
     const otherProviderInterrupts: Array<PendingOrchestrationEffectV2> = [];
@@ -14362,26 +14363,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  const markThreadPaused = Effect.fn("Orchestrator.markThreadPaused")(function* (
-    command: Extract<
-      OrchestrationV2ServerCommand,
-      {
-        readonly type: "thread.stop" | "run.interrupt" | "thread.background-work.settle";
-      }
-    >,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) {
-    yield* emit(
-      events,
-      command,
-    )({
-      type: "thread.paused",
-      threadId: command.threadId,
-      occurredAt: yield* DateTime.now,
-      payload: {},
-    });
-  });
-
   const dispatchThreadStop = Effect.fn("Orchestrator.dispatchThreadStop")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.stop" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -14398,7 +14379,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     if (projection.thread.deletedAt !== null) return undefined;
-    if (!projection.thread.paused) yield* markThreadPaused(command, events);
     // Queued after the interrupt, since a thread's effects run in order.
     const stopDelegatedTasks =
       command.stopDelegatedTasks === false ||
@@ -16094,8 +16074,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchSubagentStop(command, events, effects);
         break;
       case "run.interrupt":
-        if (command.holdQueue === true || command.markPaused === true)
-          yield* markThreadPaused(command, events);
         cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
         if (command.holdQueue === true) {
           // Stop must still commit when a child can't be read, so a failed repair's
@@ -16239,7 +16217,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchRuntimeRequestDeliveryFail(command, events);
         break;
       case "thread.background-work.settle":
-        if (command.markPaused === true) yield* markThreadPaused(command, events);
         yield* dispatchBackgroundWorkSettle(command, events, effects);
         break;
       case "thread.interrupt.unresponsive":

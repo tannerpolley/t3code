@@ -189,6 +189,23 @@ export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLin
 export const isListedThreadLineage = (lineage: OrchestrationV2AppThreadLineage): boolean =>
   lineage.relationshipToParent !== "subagent" && lineage.sideChat !== true;
 
+export function workerListParentIds(
+  lineage: OrchestrationV2AppThreadLineage,
+  lineageOf: (id: ThreadId) => OrchestrationV2AppThreadLineage | undefined,
+): ReadonlySet<ThreadId> {
+  const parents = new Set<ThreadId>([lineage.rootThreadId]);
+  const visited = new Set(parents);
+  let id = lineage.parentThreadId;
+  while (id !== null && !visited.has(id)) {
+    visited.add(id);
+    const parent = lineageOf(id);
+    if (parent === undefined) break;
+    if (isListedThreadLineage(parent)) parents.add(id);
+    id = parent.parentThreadId;
+  }
+  return parents;
+}
+
 export const OrchestrationV2ContextTransferType = Schema.Literals([
   "fork",
   "provider_handoff",
@@ -561,7 +578,6 @@ export const OrchestrationV2AppThread = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
-  paused: Schema.optional(Schema.Literal(true)),
   workerUnarchivedAt: Schema.optional(IsoDateTime),
   settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -2170,11 +2186,6 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
-    type: Schema.Literal("thread.paused"),
-    payload: Schema.Struct({}),
-  }),
-  Schema.Struct({
-    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.quiet-updated"),
     payload: Schema.Struct({
       runId: RunId,
@@ -3181,11 +3192,6 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
-    type: Schema.Literal("thread.paused"),
-    payload: Schema.Struct({}),
-  }),
-  Schema.Struct({
-    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("thread.quiet-updated"),
     payload: Schema.Struct({
       runId: RunId,
@@ -3725,7 +3731,6 @@ export const OrchestrationV2Command = Schema.Union([
     runId: RunId,
     reason: Schema.optional(Schema.String),
     holdQueue: Schema.optional(Schema.Boolean),
-    markPaused: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),
@@ -4118,7 +4123,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
     providerTurnId: ProviderTurnId,
     /** Replaces the Stop's own reason on the result, as Force stop does. */
     reason: Schema.optional(Schema.String),
-    markPaused: Schema.optional(Schema.Literal(true)),
     subagent: Schema.optional(
       Schema.Struct({
         id: NodeId,

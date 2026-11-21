@@ -6,6 +6,7 @@ import {
   USAGE_LIMIT_SWITCH_RELEASE_MARGIN_MS,
 } from "./usageLimitRecoveryPending.ts";
 import { makeIssueWorkProjection } from "../issues/IssueWorkEventProjection.ts";
+import { FORCE_STOP_REASON, isExplicitStopReason } from "./RunInterruptReason.ts";
 import { pendingRoutedRequestThreadIds } from "./ForkProjectionReads.ts";
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
 import {
@@ -1088,8 +1089,6 @@ export function applyToProjection(
         ...projection,
         thread: applyThreadPullRequestLinkUpdate(projection.thread, event.payload),
       };
-    case "thread.paused":
-      return { ...base, thread: { ...base.thread, paused: true } };
     case "thread.created":
     case "thread.archived":
     case "thread.unarchived":
@@ -1110,7 +1109,7 @@ export function applyToProjection(
     case "thread.guest-share-updated":
       return {
         ...base,
-        thread: { ...event.payload, paused: projection.thread.paused },
+        thread: event.payload,
       };
     // Reordering and PR refreshes preserve the orchestrator's activity timestamp.
     case "thread.active-reordered":
@@ -1119,14 +1118,14 @@ export function applyToProjection(
     case "thread.issue-synced":
       return {
         ...base,
-        thread: { ...event.payload, paused: projection.thread.paused },
+        thread: event.payload,
         updatedAt: event.payload.updatedAt,
       };
     case "thread.visited":
     case "thread.marked-unread":
       return {
         ...projection,
-        thread: { ...event.payload, paused: projection.thread.paused },
+        thread: event.payload,
       };
     case "thread.visit-recorded":
       return {
@@ -1137,13 +1136,7 @@ export function applyToProjection(
     case "run.updated":
       return withLocalVisibleTurnItems({
         ...base,
-        thread: clearSilentWakeAttention(
-          event.type === "run.created" && base.thread.paused
-            ? { ...base.thread, paused: undefined }
-            : base.thread,
-          event.payload,
-          event.occurredAt,
-        ),
+        thread: clearSilentWakeAttention(base.thread, event.payload, event.occurredAt),
         runs: upsertById(
           base.runs,
           preserveRunRecordedFields(
@@ -1305,7 +1298,7 @@ type ShellThreadRow = {
   readonly latest_run_requested_at: string | null;
   readonly latest_run_started_at: string | null;
   readonly latest_run_completed_at: string | null;
-  readonly latest_run_stop_requested: number;
+  readonly latest_run_interrupt_reason: string | null;
   readonly latest_run_background_wake: number;
   readonly active_run_id: string | null;
   readonly active_run_status: string | null;
@@ -1967,6 +1960,20 @@ export function threadShellFromProjection(
     runs,
     pullRequests: projection.thread.pullRequests,
   });
+  const forceStopped =
+    latestRun?.status === "interrupted" &&
+    projection.turnItems.some(
+      (item) =>
+        item.runId === latestRun.id &&
+        item.type === "run_interrupt_result" &&
+        item.message === FORCE_STOP_REASON,
+    );
+  const latestStop = projection.turnItems.find(
+    (item) => item.runId === latestRun?.id && item.type === "run_interrupt_request",
+  );
+  const requestedStopReason =
+    latestStop?.type === "run_interrupt_request" ? latestStop.message : undefined;
+  const stopReason = forceStopped ? FORCE_STOP_REASON : requestedStopReason;
   return {
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
@@ -2013,12 +2020,10 @@ export function threadShellFromProjection(
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
     latestRunCompletedAt: latestRun?.completedAt ?? null,
-    latestRunStopRequested:
-      latestRun != null &&
-      projection.turnItems.some(
-        (item) => item.runId === latestRun.id && item.type === "run_interrupt_request",
-      ),
-    ...(projection.thread.paused === true ? { explicitStopRequested: true as const } : {}),
+    latestRunStopRequested: stopReason !== undefined,
+    ...(latestRun?.status === "interrupted" && isExplicitStopReason(stopReason)
+      ? { explicitStopRequested: true as const }
+      : {}),
     latestRunBackgroundWake:
       latestRun != null && isBackgroundWakeRunForShell(latestRun, projection),
     activeRunId: activeRun?.id ?? null,
@@ -2161,6 +2166,7 @@ type ShellThreadState = {
   readonly latestRunStartedAt: DateTime.Utc | null;
   readonly latestRunCompletedAt: DateTime.Utc | null;
   readonly latestRunStopRequested: boolean;
+  readonly latestRunInterruptReason: string | null;
   readonly latestRunBackgroundWake: boolean;
   readonly activeRunId: RunId | null;
   readonly blockedOnThreadWait: boolean;
@@ -2376,7 +2382,10 @@ function shellFromState(input: {
     latestRunStartedAt: input.state.latestRunStartedAt,
     latestRunCompletedAt: input.state.latestRunCompletedAt,
     latestRunStopRequested: input.state.latestRunStopRequested,
-    ...(input.state.thread.paused === true ? { explicitStopRequested: true as const } : {}),
+    ...(input.state.latestRunStatus === "interrupted" &&
+    isExplicitStopReason(input.state.latestRunInterruptReason)
+      ? { explicitStopRequested: true as const }
+      : {}),
     latestRunBackgroundWake: input.state.latestRunBackgroundWake,
     activeRunId: input.state.activeRunId,
     blockedOnThreadWait: input.state.blockedOnThreadWait,
@@ -2671,17 +2680,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 archived_at = excluded.archived_at,
                 deleted_at = excluded.deleted_at,
-                payload_json = json_patch(excluded.payload_json, json_object(
-                  'paused', orchestration_v2_projection_threads.payload_json -> '$.paused'
-                ))
+                payload_json = excluded.payload_json
             `;
               break;
             }
-            case "thread.paused":
-              yield* sql`UPDATE orchestration_v2_projection_threads
-                SET payload_json = json_set(payload_json, '$.paused', json('true'))
-                WHERE thread_id = ${event.threadId}`;
-              break;
             case "run.created":
             case "run.updated": {
               if (event.payload.status === "running") {
@@ -3503,11 +3505,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             UPDATE orchestration_v2_projection_threads
             SET
               updated_at = ${updatedAt},
-              payload_json = ${
-                event.type === "run.created"
-                  ? sql`json_remove(json_set(payload_json, '$.updatedAt', ${updatedAt}), '$.paused')`
-                  : sql`json_set(payload_json, '$.updatedAt', ${updatedAt})`
-              }
+              payload_json = json_set(payload_json, '$.updatedAt', ${updatedAt})
             WHERE thread_id = ${event.threadId}
           `;
           }
@@ -8496,6 +8494,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       LIMIT 1
     )`;
 
+    const latestRunInterruptReason = sql`coalesce(
+      CASE WHEN presented.status = 'interrupted' AND EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_turn_items result
+          INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx
+        WHERE result.thread_id = t.thread_id AND result.run_id = presented.run_id
+          AND result.type = 'run_interrupt_result'
+          AND json_extract(result.payload_json, '$.message') = ${FORCE_STOP_REASON}
+      ) THEN ${FORCE_STOP_REASON} END,
+      (SELECT json_extract(stop_request.payload_json, '$.message')
+      FROM orchestration_v2_projection_turn_items stop_request
+        INDEXED BY orchestration_v2_projection_turn_items_stop_request_idx
+      WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
+        AND stop_request.type = 'run_interrupt_request'
+      LIMIT 1)
+    )`;
+
     // Mirrors isBackgroundWakeRunForShell. Stored sources keep the legacy encoding, where a
     // command is background_command and a subagent is background_task with work "subagent".
     const isBackgroundWakeShellRun = (alias: string) => {
@@ -8548,11 +8562,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               presented.requested_at AS latest_run_requested_at,
               json_extract(presented.payload_json, '$.startedAt') AS latest_run_started_at,
               presented.completed_at AS latest_run_completed_at,
-              EXISTS (
-                SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
-                WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
-                  AND stop_request.type = 'run_interrupt_request'
-              ) AS latest_run_stop_requested,
+              ${latestRunInterruptReason} AS latest_run_interrupt_reason,
               ${isBackgroundWakeShellRun("presented")} AS latest_run_background_wake,
               active.run_id AS active_run_id,
               active.status AS active_run_status,
@@ -9413,7 +9423,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           row.latest_run_completed_at === null
             ? null
             : DateTime.makeUnsafe(row.latest_run_completed_at);
-        let latestRunStopRequested = row.latest_run_stop_requested === 1;
+        let latestRunStopRequested = row.latest_run_interrupt_reason !== null;
         let latestRunBackgroundWake = row.latest_run_background_wake === 1;
         if (row.blocking_run_id !== null && row.blocking_failure_payload_json !== null) {
           const blockingFailure = yield* decodeTurnItemPayload(
@@ -9469,6 +9479,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           latestRunStartedAt,
           latestRunCompletedAt,
           latestRunStopRequested,
+          latestRunInterruptReason: row.latest_run_interrupt_reason,
           latestRunBackgroundWake,
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
           blockedOnThreadWait: deriveBlockedOnThreadWait({
@@ -9531,37 +9542,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     ) {
       const workerPage = options?.workerPage;
       const pathOf = options?.ancestorPathOf;
-      const workerPageFilter =
-        workerPage === undefined
-          ? null
-          : sql`FROM orchestration_v2_projection_threads
-            WHERE deleted_at IS NULL AND archived_at IS NULL
-              AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.lineage.relationshipToParent') END = 'subagent'
-              AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.lineage.parentThreadId') END = ${workerPage.parentThreadId}
-              ${workerPage.before === undefined ? sql`` : sql`AND (created_at, thread_id) < (${workerPage.before.createdAt}, ${workerPage.before.threadId})`}`;
       const workers =
-        workerPageFilter === null
+        workerPage === undefined
           ? undefined
-          : yield* sql<{ thread_id: ThreadId; created_at: string }>`
-              SELECT thread_id, created_at ${workerPageFilter}
-              ORDER BY created_at DESC, thread_id DESC
-              LIMIT ${SIDEBAR_WORKER_PAGE_SIZE + 1}
-            `;
-      const lastVisible = workers?.[SIDEBAR_WORKER_PAGE_SIZE - 1];
+          : yield* sql<{ thread_id: ThreadId; created_at: string; total: number }>`
+          WITH RECURSIVE descendants(thread_id) AS (
+            VALUES (${workerPage.parentThreadId})
+            UNION
+            SELECT child.thread_id
+            FROM descendants
+            CROSS JOIN orchestration_v2_projection_threads child
+            WHERE child.deleted_at IS NULL
+              AND CASE WHEN json_valid(child.payload_json)
+                THEN json_extract(child.payload_json, '$.lineage.parentThreadId') END = +descendants.thread_id
+          )
+          SELECT thread_id, created_at, count(*) OVER () AS total
+          FROM descendants
+          JOIN orchestration_v2_projection_threads USING (thread_id)
+          WHERE thread_id <> ${workerPage.parentThreadId} AND archived_at IS NULL
+            AND CASE WHEN json_valid(payload_json)
+              THEN json_extract(payload_json, '$.lineage.relationshipToParent') END = 'subagent'
+            ${workerPage.before === undefined ? sql`` : sql`AND (created_at, thread_id) < (${workerPage.before.createdAt}, ${workerPage.before.threadId})`}
+          ORDER BY created_at DESC, thread_id DESC
+          LIMIT ${SIDEBAR_WORKER_PAGE_SIZE}
+        `;
+      const remainingWorkers =
+        workers === undefined ? undefined : (workers[0]?.total ?? 0) - workers.length;
+      const lastVisible = workers?.at(-1);
       const nextWorkerPage =
-        lastVisible !== undefined && workers?.[SIDEBAR_WORKER_PAGE_SIZE] !== undefined
+        lastVisible !== undefined && (remainingWorkers ?? 0) > 0
           ? { createdAt: lastVisible.created_at, threadId: lastVisible.thread_id }
           : undefined;
-      const remainingWorkers =
-        workers === undefined
-          ? undefined
-          : nextWorkerPage === undefined
-            ? 0
-            : (yield* sql<{ count: number }>`SELECT count(*) AS count ${workerPageFilter!}`)[0]!
-                .count - SIDEBAR_WORKER_PAGE_SIZE;
       const selected =
         workers !== undefined
-          ? workers.slice(0, SIDEBAR_WORKER_PAGE_SIZE)
+          ? workers
           : pathOf !== undefined
             ? yield* sql<{ thread_id: ThreadId }>`
               WITH RECURSIVE path(thread_id) AS (
@@ -10381,10 +10395,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(shellSnapshotReadError),
       ),
       getIssueWorkThreads: (ids) =>
-        readIssueWorkThreads(sql, ids, presentedShellRunId(sql`t.thread_id`)).pipe(
-          NodeSqliteClient.readOnly,
-          Effect.mapError(shellSnapshotReadError),
-        ),
+        readIssueWorkThreads(
+          sql,
+          ids,
+          presentedShellRunId(sql`t.thread_id`),
+          latestRunInterruptReason,
+        ).pipe(NodeSqliteClient.readOnly, Effect.mapError(shellSnapshotReadError)),
       getTitleRefreshCandidates: readOnReader(getTitleRefreshCandidates),
       getPendingRoutedRequestThreadIds: readOnReader(getPendingRoutedRequestThreadIds),
       getRecentUsageLimitChildren: readOnReader(getRecentUsageLimitChildren),

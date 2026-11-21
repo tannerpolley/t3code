@@ -70,7 +70,6 @@ import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { workRowProgram } from "./SidebarThreadProcesses.logic";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { SidebarWorkerRows } from "./SidebarWorkers";
 import type { SidebarThreadStatus } from "../Sidebar.logic";
 
 /** A row's label; a command's full command line shows on hover. */
@@ -492,16 +491,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 />
               ) : null}
               {toggle === null || toggle.open ? nested?.children : null}
-              {row.kind === "subagent" &&
-              row.child &&
-              props.onChildClick &&
-              props.onChildContextMenu ? (
-                <SidebarWorkerRows
-                  thread={row.child}
-                  onClick={props.onChildClick}
-                  onContextMenu={props.onChildContextMenu}
-                />
-              ) : null}
             </li>
           );
         };

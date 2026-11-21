@@ -256,11 +256,16 @@ export function resolveThreadActivityGroup(
 export function isExplicitlyPausedThread(
   thread: Pick<
     OrchestrationV2ThreadShell,
-    "explicitStopRequested" | "activityRunStatus" | "pendingBackgroundTasks" | "archivedAt"
+    | "status"
+    | "explicitStopRequested"
+    | "activityRunStatus"
+    | "pendingBackgroundTasks"
+    | "archivedAt"
   >,
 ): boolean {
   return (
     thread.archivedAt === null &&
+    thread.status === "interrupted" &&
     thread.explicitStopRequested === true &&
     thread.activityRunStatus == null &&
     !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])

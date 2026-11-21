@@ -133,6 +133,7 @@ import {
   delegatedTaskRuns,
   runOutcome,
 } from "../orchestration-v2/RestartBackgroundNote.ts";
+import { agentStopReason } from "../orchestration-v2/RunInterruptReason.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { placeholderThreadTitle } from "../orchestration-v2/placeholderThreadTitle.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -296,11 +297,6 @@ export function threadManagementFailure(error: unknown): OrchestratorMcpFailure 
     case "ThreadManagementProviderInstanceDisabledError":
       return failure("invalid_request", error.message);
   }
-}
-
-// Without a reason, a Stop reads as the user's (see RunExecutionService.USER_STOP_REASON).
-function agentStopReason(reason: string | undefined): string {
-  return reason === undefined ? "Stopped by an agent" : `Stopped by an agent: ${reason}`;
 }
 
 function errorMessage(error: unknown): string {

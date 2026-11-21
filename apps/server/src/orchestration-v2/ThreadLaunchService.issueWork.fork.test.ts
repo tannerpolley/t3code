@@ -2555,6 +2555,10 @@ it.effect(
       yield* service.reconcile(root);
       assert.include((yield* store.configuration(root))!.suspendedIssues[0]!.reason, "blocker");
       yield* worker.drain();
+      const { turnItems } = yield* threads.getThreadRecords(child, ["turnItems"]);
+      const interrupt = turnItems.find((item) => item.type === "run_interrupt_request");
+      assert.equal(interrupt?.message, "Interrupted by issue work suspension");
+      assert.isUndefined((yield* threads.getThreadShell(child))?.explicitStopRequested);
       blocked = false;
       yield* service.reconcile(root);
       yield* worker.drain();
