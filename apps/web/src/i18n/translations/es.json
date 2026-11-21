@@ -141,5 +141,17 @@
   "408a142fdd1bb20c": "{minutes} min sin actividad",
   "0a1ab3194d17d5de": "En pausa",
   "4aa825fb9e126e78": "Mostrar más agentes ({count})",
-  "d54039a1d96a0e3c": "Reintentar la carga de agentes"
+  "d54039a1d96a0e3c": "Reintentar la carga de agentes",
+  "a0ab3b91869e52c7": "Suspendido",
+  "7342bfc328008926": "En ejecución",
+  "8fb530f35f7911c1": "Esperando tu intervención",
+  "0d56b26a4db771a0": "Esperando una respuesta",
+  "60a7005770963ca5": "Esperando aprobación",
+  "2a1419da20c2bb27": "En cola",
+  "166661f94b300f5b": "Terminado",
+  "d4d89c139de812a8": "Fallido",
+  "86d60d42f6cb4a40": "Inactivo",
+  "12969a434884d7a0": "Listo para revisión",
+  "066644fe3ef88185": "Agentes de trabajo",
+  "f1575429c821c2b9": "Enviado a {thread}"
 }

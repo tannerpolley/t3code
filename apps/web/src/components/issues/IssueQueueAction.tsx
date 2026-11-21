@@ -76,16 +76,14 @@ export function IssueQueueAction({
   const queued = entry !== undefined;
   const needsAttention = entry?.state === "needs_attention";
   const suspended = issue.suspensionReason !== undefined;
-  const inProgress =
-    !suspended &&
-    issue.liveWork?.some((work) =>
-      ["working", "queued_preparing", "waiting_on_you", "waiting_on_sub_issues", "paused"].includes(
-        work.status,
-      ),
-    ) === true;
-  if (!status.supported || (!queued && (issue.state !== "open" || inProgress))) return null;
+  const progress = issueProgress(issue);
+  if (
+    !status.supported ||
+    (!queued && (issue.state !== "open" || progress === "in_progress" || progress === "queued"))
+  )
+    return null;
   const label = queued ? "Remove from queue" : "Add to queue";
-  const resumable = !queued && (suspended || issueProgress(issue) === "paused");
+  const resumable = !queued && suspended;
   const change = async (remove = queued) => {
     if (busy) return;
     if (request.current?.queued !== remove)

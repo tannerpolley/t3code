@@ -1,3 +1,4 @@
+import { useIssueStateLabel } from "../issues/IssueStateIcon";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -58,11 +59,12 @@ export function ThreadIssueBadge(props: {
   readonly environmentId: EnvironmentId;
 }) {
   const presentation = useSidebarIssuePresentation(props.environmentId, props.issue);
+  const label = useIssueStateLabel(presentation?.label ?? "");
   if (props.issue === undefined) return null;
   return (
     <span
       role="img"
-      aria-label={`Issue #${props.issue.number}: ${props.issue.title}${presentation ? `, ${presentation.label}` : ""}`}
+      aria-label={`Issue #${props.issue.number}: ${props.issue.title}${presentation ? `, ${label}` : ""}`}
       className={cn(
         "inline-flex shrink-0 items-center gap-0.5",
         presentation?.toneClassName ?? "text-muted-foreground",

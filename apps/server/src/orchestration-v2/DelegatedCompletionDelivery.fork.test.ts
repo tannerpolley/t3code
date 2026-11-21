@@ -242,6 +242,104 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "completion recovery for both cohort owners",
   (it) => {
     it.effect.each(cohortOwners)(
+      "reoffers a committed %s-owned completion during targeted checkpoint recovery",
+      (owner) =>
+        Effect.gen(function* () {
+          const engine = yield* Orchestrator.OrchestratorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const parent = yield* seedOwnedParent(owner, "targeted-recovery", {
+            deliveryState: "delivered",
+            withDelivery: false,
+            parentRunEnded: true,
+          });
+          const worker = finishedWorkerEvents(parent, "worker", "Saved result.");
+          yield* sink.write({
+            commandId: reconcileCommandId(`${parent.key}-child-finished`),
+            events: worker.events,
+          });
+          using offer = vi.spyOn(requests, "offer").mockReturnValueOnce(Effect.void);
+          yield* engine.recoverDelegatedTask(worker.task.childThreadId);
+          const before = yield* engine.getThreadProjection(parent.threadId);
+          assert.equal(
+            before.subagents.find((task) => task.id === worker.task.id)?.result,
+            "Saved result.",
+          );
+          assert.lengthOf(offer.mock.calls, 1);
+          assert.isTrue(
+            yield* projections.hasPendingDelegatedCompletion(worker.task.childThreadId),
+          );
+          yield* engine.recoverDelegatedTask(worker.task.childThreadId);
+          assert.lengthOf(offer.mock.calls, 2);
+          const request = yield* requests.take;
+          assert.equal(request.delegatedCompletion?.parentRunId, parent.parentRunId);
+          assert.equal(
+            request.delegatedCompletion?.messageId,
+            parent.cohortOf(before)?.delivery?.messageId,
+          );
+          yield* engine.dispatch({
+            type: "delegated_task.completion-delivery.dispose",
+            commandId: CommandId.make(`dispose:${parent.key}`),
+            parentThreadId: parent.threadId,
+            taskId: worker.task.id,
+          });
+          assert.isFalse(
+            yield* projections.hasPendingDelegatedCompletion(worker.task.childThreadId),
+          );
+        }),
+    );
+
+    it.effect.each(cohortOwners)(
+      "records attention once for a current %s-owned delivery and clears it on Stop",
+      (owner) =>
+        Effect.gen(function* () {
+          const engine = yield* Orchestrator.OrchestratorV2;
+          const parent = yield* seedOwnedParent(owner, "dispatch-attention", {
+            deliveryState: "claimed",
+            withDelivery: true,
+            parentRunEnded: true,
+          });
+          const command = {
+            type: "delegated_task.completion-delivery.flag" as const,
+            commandId: CommandId.make(`flag:${parent.key}`),
+            threadId: parent.threadId,
+            parentRunId: parent.parentRunId,
+            generation: 1,
+            messageId: parent.messageId,
+          };
+          assert.isEmpty(
+            (yield* engine.dispatch({
+              ...command,
+              commandId: CommandId.make(`stale-generation:${parent.key}`),
+              generation: 2,
+            })).storedEvents,
+          );
+          assert.lengthOf((yield* engine.dispatch(command)).storedEvents, 1);
+          assert.isTrue((yield* engine.dispatch(command)).replayed);
+          const flagged = yield* engine.getThreadProjection(parent.threadId);
+          assert.include(flagged.thread.silentWakeAttention, {
+            deliveryMessageId: parent.messageId,
+          });
+          assert.isNotNull(flagged.subagents[0]?.result);
+          yield* engine.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make(`stop:${parent.key}`),
+            threadId: parent.threadId,
+          });
+          assert.isEmpty(
+            (yield* engine.dispatch({
+              ...command,
+              commandId: CommandId.make(`after-stop:${parent.key}`),
+            })).storedEvents,
+          );
+          const stopped = yield* engine.getThreadProjection(parent.threadId);
+          assert.isUndefined(stopped.thread.silentWakeAttention);
+          assert.deepEqual(stopped.subagents[0]?.result, flagged.subagents[0]?.result);
+        }),
+    );
+
+    it.effect.each(cohortOwners)(
       "restart recovery adds a second worker to a queued %s-owned delivery and settles both",
       (owner) =>
         Effect.gen(function* () {
@@ -279,6 +377,14 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             yield* engine.recoverDelegatedTasks;
             assert.equal(offer.mock.calls.length, 1);
             assert.deepEqual(offer.mock.calls[0]![0].delegatedCompletion, {
+              parentRunId,
+              generation: 1,
+              messageId,
+            });
+            yield* engine.dispatch({
+              type: "delegated_task.completion-delivery.flag",
+              commandId: CommandId.make(`flag:${parent.key}`),
+              threadId,
               parentRunId,
               generation: 1,
               messageId,
@@ -339,6 +445,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             yield* engine.recoverDelegatedTasks;
             const settled = yield* engine.getThreadProjection(threadId);
             assert.isNull(parent.cohortOf(settled)?.delivery);
+            assert.isUndefined(settled.thread.silentWakeAttention);
             for (const id of [taskId, second.task.id]) {
               assert.equal(
                 settled.subagents.find((candidate) => candidate.id === id)?.completionDelivery

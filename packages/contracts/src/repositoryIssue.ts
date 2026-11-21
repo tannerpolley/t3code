@@ -72,7 +72,16 @@ const IssueWorkStatus = Schema.Struct({
   threadId: ThreadId,
   /** Descendant work is visible, but only the directly linked thread drives running status. */
   inherited: Schema.optional(Schema.Boolean),
-  status: Schema.Literals(["working", "waiting_on_you", "idle"]),
+  status: Schema.Literals([
+    "working",
+    "waiting_on_you",
+    "idle",
+    "queued",
+    "question",
+    "approval",
+    "done",
+    "failed",
+  ]),
   paused: Schema.optionalKey(Schema.Literal(true)),
 });
 

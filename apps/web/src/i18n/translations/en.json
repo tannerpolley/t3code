@@ -141,5 +141,17 @@
   "408a142fdd1bb20c": "quiet {minutes}m",
   "0a1ab3194d17d5de": "Paused",
   "4aa825fb9e126e78": "Show more workers ({count})",
-  "d54039a1d96a0e3c": "Retry loading workers"
+  "d54039a1d96a0e3c": "Retry loading workers",
+  "a0ab3b91869e52c7": "Suspended",
+  "7342bfc328008926": "Running",
+  "8fb530f35f7911c1": "Waiting on you",
+  "0d56b26a4db771a0": "Waiting on question",
+  "60a7005770963ca5": "Waiting on approval",
+  "2a1419da20c2bb27": "Queued",
+  "166661f94b300f5b": "Done",
+  "d4d89c139de812a8": "Failed",
+  "86d60d42f6cb4a40": "Idle",
+  "12969a434884d7a0": "Ready for review",
+  "066644fe3ef88185": "Workers",
+  "f1575429c821c2b9": "Routed to {thread}"
 }

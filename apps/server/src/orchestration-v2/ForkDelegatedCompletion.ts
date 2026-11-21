@@ -1,9 +1,11 @@
+import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import {
   delegatedTaskAwaitsWork,
   delegatedTaskResultRun as selectTaskResultRun,
   delegatedTaskRuns,
 } from "./RestartBackgroundNote.ts";
 import type {
+  MessageId,
   NodeId,
   OrchestrationV2AppThread,
   OrchestrationV2DelegatedCompletionCohort,
@@ -59,28 +61,70 @@ export const completionCohort = (
     ? projection.thread.delegatedCompletion
     : projection.runs.find((run) => run.id === parentRunId)?.delegatedCompletion;
 
-export const completionCohortEvent = (
+export function currentDelegatedCompletionDelivery(
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "messages" | "runs" | "providerTurns"
+  >,
+  completion: { parentRunId: RunId | null; generation: number; messageId: MessageId },
+) {
+  const cohort = completionCohort(projection, completion.parentRunId);
+  const delivery = cohort?.delivery;
+  const alreadyDispatched = projection.messages.some(
+    (message) => message.id === completion.messageId,
+  );
+  if (
+    projection.thread.archivedAt !== null ||
+    projection.thread.deletedAt !== null ||
+    cohort?.disposition !== "open" ||
+    delivery === null ||
+    delivery === undefined ||
+    delivery.generation !== completion.generation ||
+    delivery.messageId !== completion.messageId ||
+    (alreadyDispatched && !isUndeliveredMailboxSteer(projection, completion.messageId))
+  ) {
+    return undefined;
+  }
+  return delivery;
+}
+
+export function completionCohortEvents(
   thread: OrchestrationV2AppThread,
   run: OrchestrationV2Run | undefined,
   cohort: OrchestrationV2DelegatedCompletionCohort,
   now: DateTime.Utc,
-): Omit<OrchestrationV2DomainEvent, "id"> =>
-  run === undefined
-    ? {
-        type: "thread.metadata-updated",
-        threadId: thread.id,
-        occurredAt: now,
-        payload: { ...thread, delegatedCompletion: cohort },
-      }
-    : {
-        type: "run.updated",
-        threadId: thread.id,
-        runId: run.id,
-        ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: { ...run, delegatedCompletion: cohort },
-      };
+): ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> {
+  const previous = run === undefined ? thread.delegatedCompletion : run.delegatedCompletion;
+  const attention = thread.silentWakeAttention;
+  const clear =
+    attention !== undefined &&
+    "deliveryMessageId" in attention &&
+    attention.deliveryMessageId === previous?.delivery?.messageId &&
+    (cohort.disposition !== "open" ||
+      cohort.delivery?.messageId !== attention.deliveryMessageId ||
+      cohort.delivery.taskIds.length === 0);
+  const threadUpdate = {
+    type: "thread.metadata-updated" as const,
+    threadId: thread.id,
+    occurredAt: now,
+  };
+  const parent = clear ? { ...thread, silentWakeAttention: undefined } : thread;
+  if (run === undefined) {
+    return [{ ...threadUpdate, payload: { ...parent, delegatedCompletion: cohort } }];
+  }
+  return [
+    ...(clear ? [{ ...threadUpdate, payload: parent }] : []),
+    {
+      type: "run.updated",
+      threadId: thread.id,
+      runId: run.id,
+      ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+      payload: { ...run, delegatedCompletion: cohort },
+    },
+  ];
+}
 
 // The orchestrator retains the upstream completion pipeline, reads, locks, and commits.
 export function makeForkDelegatedCompletion<RecoveryError>({

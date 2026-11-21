@@ -18,16 +18,12 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
 import {
   legacyThreadPullRequestKey,
   threadPullRequestsOf,
 } from "../sourceControl/threadPullRequests.ts";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
-import {
-  backgroundWorkHoldsCompletion,
-  managedImplementorAwaitingSubagent,
-} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { classifyIssueWorker } from "@t3tools/shared/issueWorkerStatus";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const key = (issue: RepositoryIssueRef) =>
@@ -259,7 +255,7 @@ const make = Effect.gen(function* () {
     );
     const work = new Map<number, NonNullable<RepositoryIssueSummary["liveWork"]>[number][]>();
     for (const { thread, refs } of linked) {
-      const state = workState(thread);
+      const state = classifyIssueWorker(thread);
       const ownedPr = ownedPrByThread.get(thread.id);
       const item = {
         threadId: thread.id,
@@ -269,8 +265,10 @@ const make = Effect.gen(function* () {
         worktreePath: thread.worktreePath,
         worktreeExists: thread.worktreePath !== null && existingWorktrees.has(thread.worktreePath),
         pullRequests: ownedPr === undefined ? [] : [ownedPr.url],
-        status: state,
-        ...(state === "idle" && isExplicitlyPausedThread(thread) ? { paused: true as const } : {}),
+        ...state,
+        ...(state.status === "idle" && isExplicitlyPausedThread(thread)
+          ? { paused: true as const }
+          : {}),
       };
       for (const number of refs) {
         const linked = work.get(number) ?? [];
@@ -278,7 +276,6 @@ const make = Effect.gen(function* () {
         linked.push({
           ...item,
           inherited,
-          status: inherited && state === "working" ? "idle" : state,
         });
         work.set(number, linked);
       }
@@ -321,26 +318,5 @@ const make = Effect.gen(function* () {
   });
   return IssueLinks.of({ enrich });
 });
-
-function workState(
-  thread: IssueWorkThread,
-): NonNullable<RepositoryIssueSummary["liveWork"]>[number]["status"] {
-  if (thread.archivedAt !== null) return "idle";
-  if (
-    thread.pendingRuntimeRequest !== null &&
-    runtimeRequestNeedsUser(thread.pendingRuntimeRequest.kind)
-  )
-    return "waiting_on_you";
-  if (managedImplementorAwaitingSubagent(thread)) return "working";
-  if (
-    !thread.pendingBackgroundTasks?.some((task) => task.kind === "monitor") &&
-    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
-    ["queued", "preparing", "starting", "running", "waiting"].includes(
-      thread.activityRunStatus ?? thread.status,
-    )
-  )
-    return "working";
-  return "idle";
-}
 
 export const layer = Layer.effect(IssueLinks, make);

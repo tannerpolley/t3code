@@ -9,17 +9,18 @@ import { CirclePauseIcon, CirclePlayIcon, LinkIcon } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
-import {
-  issueLiveWorkSummary,
-  issueWorkerStatus,
-  LIVE_WORK_STATUS_LABELS,
-} from "./issueRoadmap.logic";
+import { issueLiveWorkSummary, issueWorkerStatus } from "./issueRoadmap.logic";
 
 const STATUS_ICONS = {
   suspended: CirclePauseIcon,
   paused: CirclePauseIcon,
   working: CirclePlayIcon,
   waiting_on_you: CirclePauseIcon,
+  question: CirclePauseIcon,
+  approval: CirclePauseIcon,
+  queued: CirclePauseIcon,
+  failed: CirclePauseIcon,
+  done: LinkIcon,
   idle: LinkIcon,
 };
 
@@ -32,10 +33,14 @@ export function IssueLiveWork({
 }) {
   const navigate = useNavigate();
   const gt = useGT();
-  const pausedLabel = gt("Paused");
-  const summary = issueLiveWorkSummary(issue, pausedLabel);
+  const labels = useWorkerStatusLabels();
+  const summary = issueLiveWorkSummary(issue);
   if (summary === null) return null;
-  const { status, work, label, more } = summary;
+  const { status, work, agent, more } = summary;
+  const label =
+    status === "suspended"
+      ? `${gt("Suspended")} · ${issue.suspensionReason}`
+      : `${labels[status]} · ${agent}`;
   const Icon = STATUS_ICONS[status];
   return (
     <Tooltip>
@@ -59,7 +64,8 @@ export function IssueLiveWork({
           className={cn(
             "size-3.5 shrink-0",
             status === "working" && "text-primary",
-            (status === "waiting_on_you" || status === "paused") && "text-warning-foreground",
+            ["question", "approval", "waiting_on_you", "paused"].includes(status) &&
+              "text-warning-foreground",
           )}
         />
         <span className="min-w-0 truncate">{label}</span>
@@ -71,12 +77,7 @@ export function IssueLiveWork({
             <div key={thread.threadId}>
               <p>
                 {thread.role === undefined ? "" : `${THREAD_ROLE_LABELS[thread.role]}: `}
-                {thread.title} ·{" "}
-                {status === "suspended"
-                  ? label
-                  : issueWorkerStatus(thread) === "paused"
-                    ? pausedLabel
-                    : LIVE_WORK_STATUS_LABELS[thread.status]}
+                {thread.title} · {status === "suspended" ? label : labels[issueWorkerStatus(thread)]}
               </p>
               {thread.branch ? <p>Branch: {thread.branch}</p> : null}
               {thread.worktreePath ? <p>Worktree: {thread.worktreePath}</p> : null}
@@ -89,4 +90,20 @@ export function IssueLiveWork({
       </TooltipPopup>
     </Tooltip>
   );
+}
+
+export function useWorkerStatusLabels() {
+  const gt = useGT();
+  return {
+    suspended: gt("Suspended"),
+    paused: gt("Paused"),
+    working: gt("Running"),
+    waiting_on_you: gt("Waiting on you"),
+    question: gt("Waiting on question"),
+    approval: gt("Waiting on approval"),
+    queued: gt("Queued"),
+    done: gt("Done"),
+    failed: gt("Failed"),
+    idle: gt("Idle"),
+  };
 }

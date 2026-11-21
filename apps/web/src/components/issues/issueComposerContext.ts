@@ -7,6 +7,7 @@ import {
   sanitizeComposerContextLabel,
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
+import { issueWorkerIsLive, issueWorkerNeedsOwner } from "@t3tools/shared/issueWorkerStatus";
 import type { DragEvent } from "react";
 import { COMPOSER_ISSUE_DRAG_TYPE, encodeIssueDragPayload } from "./issueComposerDrag";
 
@@ -31,7 +32,13 @@ export function issueContextMetadata(
     state: issue.state ?? null,
     stateReason: issue.stateReason?.slice(0, 2048) ?? null,
     blockedBy: (issue.blockedBy ?? []).slice(0, 200).map(({ state }) => ({ state })),
-    liveWork: (issue.liveWork ?? []).slice(0, 200).map(({ status }) => ({ status })),
+    liveWork: (issue.liveWork ?? []).slice(0, 200).map((worker) => ({
+      status: issueWorkerNeedsOwner(worker)
+        ? "waiting_on_you"
+        : issueWorkerIsLive(worker)
+          ? "working"
+          : "idle",
+    })),
     pullRequests: (issue.pullRequests ?? []).slice(0, 200).map(({ state }) => ({ state })),
   };
 }

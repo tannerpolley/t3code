@@ -1,35 +1,23 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
-import type { RuntimeRequestId } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
 import { MessageCircleQuestionIcon, XIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { useClientSettings } from "../hooks/useSettings";
-import {
-  buildPendingUserInputAnswers,
-  setPendingUserInputCustomAnswer,
-  togglePendingUserInputOptionSelection,
-  type PendingUserInputDraftAnswer,
-} from "@t3tools/client-runtime/state/pending-user-input";
-import { derivePendingUserInputProgress } from "../pendingUserInput";
-import { derivePendingUserInputs } from "../session-logic";
 import { useProject, useThreadShell } from "../state/entities";
-import { environmentThreadDetails, threadEnvironment } from "../state/threads";
-import { useAtomCommand } from "../state/use-atom-command";
+import { threadEnvironment } from "../state/threads";
 import { ComposerBanner } from "./chat/ComposerBanner";
-import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
+import { PendingQuestionForm } from "./PendingQuestionForm";
 import {
   collectPendingQuestions,
   visibleQuestionQueue,
   type PendingQuestion,
 } from "./QuestionPopup.logic";
 import { Button } from "./ui/button";
-import { Textarea } from "./ui/textarea";
 import { useSettledQuestions } from "./useSettledQuestions";
 
 let previousQuestions: ReadonlyArray<PendingQuestion> = [];
@@ -96,58 +84,7 @@ function QuestionPopupCard({
   const threadRef = scopeThreadRef(environmentId, threadId);
   const thread = useThreadShell(threadRef);
   const project = useProject(thread ? scopeProjectRef(environmentId, thread.projectId) : null);
-  const requests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(threadRef));
-  const prompt =
-    derivePendingUserInputs(requests?.userInputs ?? []).find(
-      (input) => input.requestId === requestId,
-    ) ?? null;
   const navigate = useNavigate();
-  // The same commands the thread's own question card sends.
-  const respond = useAtomCommand(threadEnvironment.respondToUserInput, "answer question");
-  const dismiss = useAtomCommand(threadEnvironment.dismissUserInput, "dismiss question");
-  const [answers, setAnswers] = useState<Record<string, PendingUserInputDraftAnswer>>({});
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [responding, setResponding] = useState(false);
-  const inFlight = useRef(false);
-
-  const onToggleOption = (questionId: string, optionValue: string) => {
-    const entry = prompt?.questions.find((candidate) => candidate.id === questionId);
-    if (!entry) return;
-    setAnswers((existing) => ({
-      ...existing,
-      [questionId]: togglePendingUserInputOptionSelection(entry, existing[questionId], optionValue),
-    }));
-  };
-  const onDismiss = (id: RuntimeRequestId) => {
-    void dismiss({ environmentId, input: { threadId, requestId: id } });
-  };
-
-  // Until the thread's detail brings the question, the header and controls still show,
-  // so a question that cannot load never blocks the ones behind it.
-  const canRespond = prompt !== null && prompt.responseCapability !== "not_resumable";
-  const progress = prompt
-    ? derivePendingUserInputProgress(prompt.questions, answers, questionIndex)
-    : null;
-  const activeQuestion = progress?.activeQuestion ?? null;
-
-  const onAdvance = () => {
-    if (!prompt || !progress || !canRespond || !progress.canAdvance || inFlight.current) return;
-    if (!progress.isLastQuestion) {
-      setQuestionIndex(progress.questionIndex + 1);
-      return;
-    }
-    const resolved = buildPendingUserInputAnswers(prompt.questions, answers);
-    if (!resolved) return;
-    inFlight.current = true;
-    setResponding(true);
-    void respond({ environmentId, input: { threadId, requestId, answers: resolved } }).finally(
-      () => {
-        inFlight.current = false;
-        setResponding(false);
-      },
-    );
-  };
-
   return (
     <div
       data-question-popup
@@ -174,54 +111,11 @@ function QuestionPopupCard({
             <XIcon />
           </Button>
         </div>
-        {prompt ? (
-          <ComposerPendingUserInputPanel
-            pendingUserInputs={[prompt]}
-            cwd={
-              project
-                ? projectScriptCwd({
-                    project: { cwd: project.workspaceRoot },
-                    worktreePath: thread?.worktreePath ?? null,
-                  })
-                : undefined
-            }
-            threadRef={threadRef}
-            respondingRequestIds={responding || !canRespond ? [requestId] : []}
-            answers={answers}
-            questionIndex={questionIndex}
-            onToggleOption={onToggleOption}
-            onAdvance={onAdvance}
-            onDismiss={onDismiss}
-            keyboardShortcuts={false}
-          />
-        ) : null}
-        {progress && activeQuestion && activeQuestion.allowCustomAnswer !== false ? (
-          <Textarea
-            className="mt-2"
-            rows={2}
-            placeholder="Or type your own answer"
-            aria-label="Your own answer"
-            value={progress.customAnswer}
-            disabled={responding || !canRespond}
-            onChange={(event) => {
-              const value = event.target.value;
-              setAnswers((existing) => ({
-                ...existing,
-                [activeQuestion.id]: setPendingUserInputCustomAnswer(
-                  activeQuestion,
-                  existing[activeQuestion.id],
-                  value,
-                ),
-              }));
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-              event.preventDefault();
-              onAdvance();
-            }}
-          />
-        ) : null}
-        <div className="mt-2 flex items-center gap-1.5">
+        <PendingQuestionForm
+          environmentId={environmentId}
+          threadId={threadId}
+          requestId={requestId}
+        >
           <Button
             size="xs"
             variant="ghost"
@@ -238,24 +132,7 @@ function QuestionPopupCard({
             Later
           </Button>
           <span className="flex-1" />
-          {progress && progress.questionIndex > 0 ? (
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={responding}
-              onClick={() => setQuestionIndex(progress.questionIndex - 1)}
-            >
-              Back
-            </Button>
-          ) : null}
-          <Button
-            size="xs"
-            disabled={responding || !canRespond || !progress?.canAdvance}
-            onClick={onAdvance}
-          >
-            {progress?.isLastQuestion === false ? "Next" : "Submit"}
-          </Button>
-        </div>
+        </PendingQuestionForm>
       </ComposerBanner.Root>
     </div>
   );

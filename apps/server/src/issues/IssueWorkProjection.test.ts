@@ -447,7 +447,7 @@ it.effect(
       assert.equal(first.issues[0]!.pullRequestCount, 1);
       assert.equal(
         first.issues[0]?.liveWork?.find((work) => work.threadId === "question")?.status,
-        "waiting_on_you",
+        "question",
       );
       assert.equal(
         first.issues[0]?.liveWork?.find((work) => work.threadId === "native")?.status,

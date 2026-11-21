@@ -7,9 +7,8 @@ import type {
   IssuePullRequestStatus,
   ThreadId,
 } from "@t3tools/contracts";
-import { managedImplementorAwaitingSubagent } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { classifyIssueWorker } from "@t3tools/shared/issueWorkerStatus";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
-import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 
 const scopeKey = (environmentId: EnvironmentId, scope: IssueRepositoryRef) =>
   `${environmentId}:${scope.host.toLowerCase()}/${scope.repository.toLowerCase()}`;
@@ -24,17 +23,31 @@ export function indexIssueWork(
 ) {
   const threads = new Map<string, EnvironmentThreadShell>();
   const issues = new Map<string, Map<number, EnvironmentThreadShell[]>>();
+  const children = new Map<string, EnvironmentThreadShell[]>();
   for (const thread of shells) {
     threads.set(threadKey(thread.environmentId, thread.id), thread);
-    if (thread.linkedIssue === undefined) continue;
-    const key = scopeKey(thread.environmentId, thread.linkedIssue);
-    let repository = issues.get(key);
-    if (repository === undefined) issues.set(key, (repository = new Map()));
-    const linked = repository.get(thread.linkedIssue.number) ?? [];
-    linked.push(thread);
-    repository.set(thread.linkedIssue.number, linked);
+    if (thread.lineage.parentThreadId !== null) {
+      const key = threadKey(thread.environmentId, thread.lineage.parentThreadId);
+      const siblings = children.get(key);
+      if (siblings === undefined) children.set(key, [thread]);
+      else siblings.push(thread);
+    }
+    const refs = (thread.source.issues ?? []).flatMap((link) =>
+      link.tracker === "github" && /^\d+$/.test(link.key)
+        ? [{ host: link.host, repository: link.scope, number: Number(link.key) }]
+        : [],
+    );
+    if (thread.linkedIssue !== undefined) refs.push(thread.linkedIssue);
+    for (const ref of refs) {
+      const key = scopeKey(thread.environmentId, ref);
+      let repository = issues.get(key);
+      if (repository === undefined) issues.set(key, (repository = new Map()));
+      const linked = repository.get(ref.number) ?? [];
+      if (linked.at(-1) !== thread) linked.push(thread);
+      repository.set(ref.number, linked);
+    }
   }
-  return { threads, issues, removedAt };
+  return { threads, issues, children, removedAt };
 }
 type IssueWorkIndex = ReturnType<typeof indexIssueWork>;
 type WorkSummary = Pick<RepositoryIssueSummary, "number"> & {
@@ -88,8 +101,12 @@ export function createLiveIssueWorkOverlay() {
     // Older servers lack the provenance needed to safely replace their work and PR counts.
     if (issue.closingPullRequests === undefined) return issue;
     const key = scopeKey(environmentId, scope);
-    const ids = new Set((issue.liveWork ?? []).map((work) => work.threadId));
-    for (const thread of index.issues.get(key)?.get(issue.number) ?? []) ids.add(thread.id);
+    const storedWork = new Map((issue.liveWork ?? []).map((work) => [work.threadId, work]));
+    const direct = index.issues.get(key)?.get(issue.number) ?? [];
+    const ids = new Set([...storedWork.keys(), ...direct.map((thread) => thread.id)]);
+    for (const id of ids) {
+      for (const child of index.children.get(threadKey(environmentId, id)) ?? []) ids.add(child.id);
+    }
     const removed = index.removedAt?.get(environmentId);
     const threads = [...ids].map(
       (id) =>
@@ -102,43 +119,29 @@ export function createLiveIssueWorkOverlay() {
     const active = threads
       .filter((thread) => thread != null)
       .filter((thread) => issue.state === "closed" || thread.archivedAt === null);
-    const inheritedIds = new Set(
-      (issue.liveWork ?? []).filter((work) => work.inherited).map((work) => work.threadId),
-    );
-    const omittedPausedWork = (issue.liveWork ?? []).filter(
-      (work) =>
-        work.paused === true &&
-        !index.threads.has(threadKey(environmentId, work.threadId)) &&
-        !removed?.has(work.threadId),
-    );
+    const directIds = new Set(direct.map((thread) => thread.id));
+    const omittedWork = [...ids].flatMap((id, position) => {
+      const work = storedWork.get(id);
+      return threads[position] === undefined && work !== undefined ? [work] : [];
+    });
     const liveWork = active.map((thread) => {
-      // An inherited subagent does not make a settled parent blue in the sidebar.
-      const status = resolveSidebarThreadStatus(thread);
+      const stored = storedWork.get(thread.id);
       return {
         threadId: thread.id,
         title: thread.title,
         ...(thread.source.role === undefined ? {} : { role: thread.source.role }),
         branch: thread.branch,
         worktreePath: thread.worktreePath,
-        worktreeExists: issue.liveWork?.find(
-          (work) => work.threadId === thread.id && work.worktreePath === thread.worktreePath,
-        )?.worktreeExists,
+        worktreeExists:
+          stored?.worktreePath === thread.worktreePath ? stored?.worktreeExists : undefined,
         pullRequests: thread.pullRequests
           .filter((pr) => pr.source !== "stack-dismissed")
           .map((pr) => pr.url),
-        ...(status === "paused" ? { paused: true as const } : {}),
-        status:
-          (status === "working" ||
-            (status === "waiting" && managedImplementorAwaitingSubagent(thread.source))) &&
-          thread.archivedAt === null &&
-          !inheritedIds.has(thread.id)
-            ? ("working" as const)
-            : thread.archivedAt === null && (status === "approval" || status === "input")
-              ? ("waiting_on_you" as const)
-              : ("idle" as const),
+        inherited: !directIds.has(thread.id) && (stored?.inherited ?? stored === undefined),
+        ...classifyIssueWorker(thread.source),
       };
     });
-    const omittedPrUrls = new Set(omittedPausedWork.flatMap((work) => work.pullRequests ?? []));
+    const omittedPrUrls = new Set(omittedWork.flatMap((work) => work.pullRequests ?? []));
     const pullRequests = issuePullRequests(
       [
         ...issue.closingPullRequests,
@@ -151,7 +154,7 @@ export function createLiveIssueWorkOverlay() {
     const result = {
       ...issue,
       ...(issue.liveWork !== undefined || liveWork.length > 0
-        ? { liveWork: [...liveWork, ...omittedPausedWork] }
+        ? { liveWork: [...liveWork, ...omittedWork] }
         : {}),
       pullRequests,
       pullRequestCount: pullRequests.length,
