@@ -53,6 +53,14 @@ it.each([
   ],
   ["Codex rate limit", "responseStreamDisconnected", "error decoding response body", 429, false],
   ["Codex disconnect", "responseStreamDisconnected", "Connection lost.", undefined, true],
+  ["confirmed generic Codex disconnect", "other", "Connection lost.", undefined, true],
+  [
+    "Codex connection error with HTTP 401 in its message",
+    "httpConnectionFailed",
+    "unexpected status 401 Unauthorized",
+    undefined,
+    false,
+  ],
 ] as const)(
   "classifies %s by structured evidence first",
   (_label, code, message, httpStatus, expected) => {
@@ -987,72 +995,101 @@ const continuationDispatches = (
   });
 
 it.effect.each([
-  [3, "running"],
-  [3, "completed"],
-  [3, "waiting"],
-] as const)("persists recovery after count %s and %s work", ([previousCount, status]) =>
-  Effect.gen(function* () {
-    const base = makeProjection();
-    const source = RunId.make("run:previous-loss");
-    const projection = {
-      ...base,
-      runs: [
-        {
-          ...base.runs[0]!,
-          status,
-          restartContinuationOfRunId: source,
-          requestedAt: DateTime.subtract(now, { minutes: 22 }),
-        },
-      ],
-      providerTurns: [
-        { ...base.providerTurns[0]!, status: status === "running" ? "running" : "completed" },
-      ],
-      turnItems: status === "running" ? [] : [backgroundSubagent.turnItem],
-    } as unknown as OrchestrationV2ThreadProjection;
-    const commits: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0][] = [];
-    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
-          Layer.mock(ProjectionStore.ProjectionStoreV2)({
-            getRecoveryThreadIds: () => Effect.succeed([threadId]),
-            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
-          }),
-          Layer.mock(EventSink.EventSinkV2)({
-            commitCommand: (input) => {
-              commits.push(input);
-              return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
-            },
-          }),
-          IdAllocator.layer,
-          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
-          Layer.mock(EffectOutbox.EffectOutboxV2)({
-            get: (id) => {
-              return Effect.succeed(
-                id === `effect:restart-continuation:${source}`
-                  ? Option.some({
-                      request: {
-                        type: "provider-runtime.continue",
-                        sourceRunId: source,
-                        processLossCount: previousCount,
-                      },
-                    } as EffectOutbox.OrchestrationEffectV2)
-                  : Option.none(),
-              );
-            },
-            listByCommandId: () => Effect.succeed([]),
-            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
-          }),
+  [3, "running", undefined],
+  [3, "completed", undefined],
+  [3, "waiting", undefined],
+  [1, "starting", 2],
+] as const)(
+  "persists recovery for count %s, %s work, retry %s",
+  ([previousCount, status, transientAttempt]) =>
+    Effect.gen(function* () {
+      const base = makeProjection();
+      const source = RunId.make("run:previous-loss");
+      const projection = {
+        ...base,
+        runs: [
+          {
+            ...base.runs[0]!,
+            status,
+            restartContinuationOfRunId: source,
+            requestedAt: DateTime.subtract(now, { minutes: 22 }),
+            ...(status === "starting" ? { startedAt: null } : {}),
+          },
+        ],
+        providerTurns:
+          status === "starting"
+            ? []
+            : [
+                {
+                  ...base.providerTurns[0]!,
+                  status: status === "running" ? "running" : "completed",
+                },
+              ],
+        turnItems:
+          status === "running" || status === "starting" ? [] : [backgroundSubagent.turnItem],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const commits: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0][] = [];
+      const prepared: Parameters<EventSink.EventSinkV2["Service"]["writeWithEffects"]>[0][] = [];
+      const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getRecoveryThreadIds: () => Effect.succeed([threadId]),
+              getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              writeWithEffects: (input) => {
+                prepared.push(input);
+                return Effect.succeed({} as never);
+              },
+              commitCommand: (input) => {
+                commits.push(input);
+                return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+              },
+            }),
+            IdAllocator.layer,
+            Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
+            Layer.mock(EffectOutbox.EffectOutboxV2)({
+              get: (id) => {
+                return Effect.succeed(
+                  id === `effect:restart-continuation:${source}`
+                    ? Option.some({
+                        request: {
+                          type: "provider-runtime.continue",
+                          sourceRunId: source,
+                          processLossCount: previousCount,
+                          ...(transientAttempt === undefined
+                            ? {}
+                            : { transientFailureAttempt: transientAttempt }),
+                        },
+                      } as EffectOutbox.OrchestrationEffectV2)
+                    : Option.none(),
+                );
+              },
+              listByCommandId: () => Effect.succeed([]),
+              reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+            }),
+          ),
         ),
-      ),
-    );
-    yield* recovery.reconcile("startup");
-    assert.deepEqual(commits[0]?.effects[0]?.request, {
-      type: "provider-runtime.continue",
-      sourceRunId: runId,
-      processLossCount: status === "running" ? previousCount + 1 : 1,
-    });
-  }),
+      );
+      yield* recovery.reconcile("startup");
+      assert.deepEqual(commits[0]?.effects[0]?.request, {
+        type: "provider-runtime.continue",
+        sourceRunId: runId,
+        processLossCount: status === "running" || status === "starting" ? previousCount + 1 : 1,
+        ...(transientAttempt === undefined ? {} : { transientFailureAttempt: transientAttempt }),
+      });
+      if (transientAttempt !== undefined) {
+        yield* recovery.prepareForShutdown;
+        assert.deepEqual(prepared[0]?.effects[0]?.request, {
+          type: "provider-runtime.continue",
+          sourceRunId: runId,
+          processLossCount: 0,
+          transientFailureAttempt: transientAttempt,
+        });
+      }
+    }),
 );
 
 const continuationTexts = (projection: OrchestrationV2ThreadProjection) =>

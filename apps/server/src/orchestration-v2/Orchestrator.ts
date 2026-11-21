@@ -10305,20 +10305,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (row) => row.id === message.runId,
       );
     if (run === undefined || run.delegatedTaskId !== undefined) return;
-    // A wake continues the latest follow-up while it is open, as it continues the original task.
-    const latestFollowupId =
+    const completion = command.delegatedCompletion;
+    const wakeRuns =
       command.notification === undefined && command.delegatedCompletion === undefined
-        ? undefined
+        ? []
         : (yield* projectionStore
             .getThreadRecords(command.threadId, ["runs"])
-            .pipe(mapDispatchError(command))).runs
+            .pipe(mapDispatchError(command))).runs;
+    const followupId =
+      completion === undefined
+        ? wakeRuns
             .filter((row) => row.id !== run.id && row.delegatedTaskId !== undefined)
-            .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.delegatedTaskId;
+            .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.delegatedTaskId
+        : wakeRuns.find((row) => row.id === completion.parentRunId)?.delegatedTaskId;
+    if (completion !== undefined && followupId === undefined) return;
     const parent = yield* projectionStore
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
         subagentIds: [
           ...(child.forkedFrom?.type === "node" ? [child.forkedFrom.nodeId] : []),
-          ...(latestFollowupId === undefined ? [] : [latestFollowupId]),
+          ...(followupId === undefined ? [] : [followupId]),
         ],
       })
       .pipe(mapDispatchError(command));
@@ -10331,7 +10336,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (original === undefined || original.result === null) return;
     const openFollowup = parent.subagents.find(
       (task) =>
-        task.id === latestFollowupId &&
+        task.id === followupId &&
         task.origin === "app_owned" &&
         task.childThreadId === child.id &&
         task.cancelledRunId === undefined &&

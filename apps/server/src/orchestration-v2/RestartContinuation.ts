@@ -50,8 +50,11 @@ export function isTransientWorkerFailure(
     return false;
 
   const apiStatus = /^api_error_(\d{3})$/.exec(failure.code ?? "")?.[1];
-  const status = httpStatus ?? (apiStatus === undefined ? undefined : Number(apiStatus));
-  if (status !== undefined) return status === 502 || status === 503;
+  const messageStatus = /\b(?:HTTP(?: status)?|status|API Error:)\s*(\d{3})\b/i.exec(
+    failure.message,
+  )?.[1];
+  const status = httpStatus ?? apiStatus ?? messageStatus;
+  if (status !== undefined) return Number(status) === 502 || Number(status) === 503;
 
   if (
     failure.code === "responseStreamDisconnected" ||
@@ -60,12 +63,10 @@ export function isTransientWorkerFailure(
   )
     return true;
 
-  const messageStatus = /\b(?:HTTP(?: status)?|status|API Error:)\s*(\d{3})\b/i.exec(
-    failure.message,
-  )?.[1];
-  return messageStatus === undefined
-    ? /stream disconnected before completion|error decoding response body/i.test(failure.message)
-    : messageStatus === "502" || messageStatus === "503";
+  return (
+    /stream disconnected before completion|error decoding response body/i.test(failure.message) ||
+    (failure.class === "transport_error" && /^Connection lost\.$/i.test(failure.message))
+  );
 }
 
 const MAX_CONTINUATION_CHAIN = 3;

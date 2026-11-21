@@ -6,6 +6,7 @@ import {
   EventId,
   MessageId,
   RuntimeRequestId,
+  type RunId,
   type NodeId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -53,10 +54,16 @@ const startBuild = Effect.fn("test.startBuild")(function* () {
   return { root, issue, workerId };
 });
 
-const finish = Effect.fn("test.finishReviewTurn")(function* (threadId: ThreadId, report: string) {
+const finish = Effect.fn("test.finishReviewTurn")(function* (
+  threadId: ThreadId,
+  report: string,
+  runId?: RunId,
+) {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const sink = yield* EventSink.EventSinkV2;
-  const active = (yield* threads.getThreadRecords(threadId, ["runs"])).runs.at(-1)!;
+  const active = (yield* threads.getThreadRecords(threadId, ["runs"])).runs.findLast(
+    (run) => runId === undefined || run.id === runId,
+  )!;
   const now = yield* DateTime.now;
   yield* sink.write({
     events: [
@@ -117,7 +124,7 @@ const launchReviewer = Effect.fn("test.launchReviewer")(function* (workerId: Thr
 });
 
 it.effect.each(["original", "follow-up"] as const)(
-  "keeps the %s build task in progress through review and wakes its parent once",
+  "keeps the %s build task open through review and reports the fixed verdict to its parent once",
   (round) => {
     return Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
@@ -180,6 +187,26 @@ it.effect.each(["original", "follow-up"] as const)(
         workerId,
       );
 
+      let statusRun: RunId | undefined;
+      if (round === "follow-up") {
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("review-status"),
+          threadId: workerId,
+          senderThreadId: root,
+          messageId: MessageId.make("message:review-status"),
+          text: "What is the current status?",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        const status = (yield* threads.getThreadRecords(workerId, ["runs"])).runs.at(-1)!;
+        assert.isDefined(status.delegatedTaskId);
+        assert.notEqual(status.delegatedTaskId, openTask.id);
+        statusRun = status.id;
+      }
+
       const beforeReview = yield* sink.latestSequence();
       yield* finish(reviewerId, "One defect needs a fix.");
       yield* sink.stream({ afterSequence: beforeReview, eventType: "message.updated" }).pipe(
@@ -194,6 +221,19 @@ it.effect.each(["original", "follow-up"] as const)(
       );
       const reviewing = (yield* threads.getThreadRecords(workerId, ["runs"])).runs.at(-1)!;
       if (round === "follow-up") assert.equal(reviewing.delegatedTaskId, openTask.id);
+      if (statusRun !== undefined) {
+        yield* finish(workerId, "Review is still underway.", statusRun);
+        yield* sink.stream({ afterSequence: beforeReview, eventType: "run.updated" }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "run.updated" &&
+              event.payload.id === reviewing.id &&
+              event.payload.status === "starting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+      }
       const reviewerTask = (yield* threads.getThreadRecords(workerId, [
         "subagents",
       ])).subagents.find((task) => task.childThreadId === reviewerId)!;
@@ -205,7 +245,10 @@ it.effect.each(["original", "follow-up"] as const)(
         observedByRunId: reviewing.id,
       });
       yield* orchestrator.recoverDelegatedTask(workerId);
-      assert.lengthOf((yield* rootProjection).subagents, round === "original" ? 1 : 2);
+      assert.lengthOf((yield* rootProjection).subagents, round === "original" ? 1 : 3);
+      assert.isNull(
+        (yield* rootProjection).subagents.find((task) => task.id === openTask.id)?.result,
+      );
       assert.lengthOf(yield* rootWakes(openTask.id), 0);
       const beforeReport = yield* sink.latestSequence();
       yield* finish(workerId, "Fixed the review finding. Checks passed. PR is merge-ready.");
