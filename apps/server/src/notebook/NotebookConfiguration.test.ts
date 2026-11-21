@@ -56,6 +56,9 @@ it.effect(
         ),
       );
       const config = yield* NotebookService.NotebookConfiguration.pipe(Effect.provide(services));
+      expect(yield* config.hasProfile(root)).toBe(true);
+      expect(yield* config.hasProfile(`${root}/unconfigured`)).toBe(false);
+      expect(deleted).toEqual([]);
       const endpoint = yield* config.endpoint(root);
       expect(endpoint.interpreter).toBe("/project/python");
       expect(deleted).toEqual(["owned-before-crash"]);

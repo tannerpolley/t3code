@@ -649,9 +649,13 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
     subagent: true,
   });
   assert.notInclude(String(child.system[2]?.text), "mcp__t3-code__watch_pull_request");
-  assert.notInclude(
+  assert.notIncludeMembers(
     child.t3.map((tool) => tool.name),
-    "mcp__t3-code__unwatch_pull_request",
+    [
+      "mcp__t3-code__unwatch_pull_request",
+      "mcp__t3-code__create_threads",
+      "mcp__t3-code__notebook_open",
+    ],
   );
   const reminders = buildMessages(makeSample(childCase, base))[0]?.content.map((b) => b.text);
   assert.equal(reminders?.[0], "<system-reminder>\n# currentDate\n</system-reminder>");

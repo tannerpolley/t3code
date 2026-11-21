@@ -13,7 +13,10 @@ import {
 describe("T3 orchestration provider instructions", () => {
   it("distinguishes delegated subagents from ordinary top-level threads", () => {
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "Use `delegate_task`");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "make new top-level threads");
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "`t3_thread_launch` opens a top-level thread",
+    );
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "never mean one");
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "another provider");
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "t3_request_user_input");

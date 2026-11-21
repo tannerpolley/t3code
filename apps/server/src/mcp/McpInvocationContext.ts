@@ -149,6 +149,8 @@ export interface McpInvocationScope {
   readonly origin?: string | undefined;
   /** The caller thread may propose issue changes, so ungated issue writes are hidden from it. */
   readonly repositoryManaged?: boolean;
+  /** Cached per request so the ten notebook tools share one workspace lookup. */
+  readonly notebooksConfigured?: Effect.Effect<boolean>;
 }
 
 /**
@@ -199,6 +201,9 @@ export const hiddenFromOutsideClients = (): boolean => {
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope === undefined || scope.thread !== undefined;
 };
+
+export const topLevelThreadOnly = (): boolean =>
+  hiddenFromOutsideClients() && hiddenFromSubagents();
 
 /** `McpSchema.EnabledWhen` for issue writes a repository-managed thread makes through `propose_issue_change`. */
 export const hiddenFromRepositoryManaged = (): boolean => {
