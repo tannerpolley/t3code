@@ -13,6 +13,7 @@
   "874249a1962865f1": "{minutes} min",
   "da395e0d0098218d": "Courant",
   "70c4417f87f445b2": "Complexe",
+  "143cb1aa9f30dfd2": "La création, la division et le déplacement de tickets entre des jalons nécessitent une approbation lorsque l’option « Ask before agents create, split or move issues » est activée. La modification du descriptif, la fermeture, la réouverture et les changements de ticket parent ou bloquant nécessitent une approbation lorsque le fil de l’agent est en mode « Approval required ».",
   "dd10f8671d149b28": "Niveau",
   "c8835bc68ac01205": "Effort",
   "e40e6d4ec89b5365": "Par défaut",

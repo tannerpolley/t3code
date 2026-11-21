@@ -780,7 +780,7 @@ export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) 
           <ServerSwitchRow
             settingKey="issueUpkeepRequiresApproval"
             searchId="issue-upkeep-requires-approval"
-            description="Ask before agents create, split or move issues. Body edits and close/reopen always require your approval. Applies to new proposals on this server."
+            description="Ask before agents create, split or move issues. Applies to new proposals on this server."
           />
         </CustomizationsGroup>
       );

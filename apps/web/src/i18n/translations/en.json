@@ -13,6 +13,7 @@
   "874249a1962865f1": "{minutes} min",
   "da395e0d0098218d": "Routine",
   "70c4417f87f445b2": "Complex",
+  "143cb1aa9f30dfd2": "Creating, splitting, and moving issues between milestones require approval when \"Ask before agents create, split or move issues\" is on. Body edits, closing or reopening issues, and parent or blocker changes require approval when the agent thread is in Approval required mode.",
   "dd10f8671d149b28": "Tier",
   "c8835bc68ac01205": "Effort",
   "e40e6d4ec89b5365": "Default",

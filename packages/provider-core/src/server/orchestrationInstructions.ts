@@ -10,18 +10,15 @@ import type { ManagedIssueRole, McpOrchestrationPolicy } from "./mcpSession.ts";
 
 const T3_CODE_NATIVE_SUBAGENT_GUIDANCE = `- Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`. Workflow only when asked.`;
 
-// Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
-const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
-  `## T3 Code orchestration
+const T3_CODE_ORCHESTRATION_INTRO = `## T3 Code orchestration
 
-Ordinary coding tasks need no T3 tools.
-
-${T3_CODE_NATIVE_SUBAGENT_GUIDANCE}
-- Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in \`task\`.
+Ordinary coding tasks need no T3 tools.`;
+const T3_CODE_DELEGATION_TOOLS = `- Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in \`task\`.
 - The orchestrator delegates an independent Reviewer only when the owner or plan asks. Start each review or re-check with \`delegate_task\`. Fix small findings yourself. If asked to use fewer delegates, \`task_cancel\` extras without replacing them.
 - Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
-- If you are a subagent or child, do the work yourself. Start subagents only when your task or role calls for it.`,
-  `- Multiple selections: use \`t3_request_user_input\`. Writers ask the owner directly through their question tool, and the owner can message their thread directly. Parents must not answer Writer questions; final results still return to the parent. Other children ask decisions through their question tool; parents read and respond with \`t3_pending_request\` with action \`read\` or \`respond\` (answers or approval decision). Approve only delegated descendants within task authority. Never message ancestors; final results return automatically.
+- If you are a subagent or child, do the work yourself. Start subagents only when your task or role calls for it.`;
+
+const T3_CODE_THREAD_TOOLS = `- Multiple selections: use \`t3_request_user_input\`. Writers ask the owner directly through their question tool, and the owner can message their thread directly. Parents must not answer Writer questions; final results still return to the parent. Other children ask decisions through their question tool; parents read and respond with \`t3_pending_request\` with action \`read\` or \`respond\` (answers or approval decision). Approve only delegated descendants within task authority. Never message ancestors; final results return automatically.
 - Inherited options apply only to the same provider and model; explicit values override, [] or {} clears. Implementors default to worktree; Writers and read-only roles share.
 - Cross-project issues: \`t3_issue_post\` notifies the repository owner.
 - \`t3_thread_launch\` and \`create_threads\` make new top-level threads, only when the user asks for a new thread. "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`; shell worktrees do not bind it, and no checkout setup in its prompt. No \`workspaceStrategy\`: project root, not your worktree.
@@ -30,11 +27,21 @@ ${T3_CODE_NATIVE_SUBAGENT_GUIDANCE}
 - Unlinked ("delegate this to my vps"): \`t3_environment_link\` with a \`hint\` from the user's words, never a pairing code in chat. No link tools: say to enable Settings → Labs → Linked environments.
 - In your reply, mention a thread by its \`link\`, verbatim, never a plain title or bare id.
 - A login, token, PIN, pairing code or sudo password only the user can give: call \`request_secret\`, not a chat ask or a handoff. Not for access you have. Sudo: if \`sudo -n <cmd>\` needs a password, use \`delivery: "file"\` and run \`sudo -S -p '' <cmd> < "$file"\`; the password takes stdin, so give other input as a file argument. Asked only to schedule: \`schedule_task\` without running its prompt.
-- T3 tools may load late. Try the name once before you call it absent.`,
-  `### Visuals and preview
+- T3 tools may load late. Try the name once before you call it absent.`;
+
+const T3_CODE_VISUAL_GUIDANCE = `### Visuals and preview
 
 - Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
-- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`;
+
+// Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
+const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
+  `${T3_CODE_ORCHESTRATION_INTRO}
+
+${T3_CODE_NATIVE_SUBAGENT_GUIDANCE}
+${T3_CODE_DELEGATION_TOOLS}`,
+  T3_CODE_THREAD_TOOLS,
+  T3_CODE_VISUAL_GUIDANCE,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
@@ -192,43 +199,35 @@ export function t3OrchestrationText(policy: McpOrchestrationPolicy | undefined):
 
 /** Managed issue work has one durable delegation path, including same-provider children. */
 export function t3OrchestrationBaseInstructions(managedIssue?: ManagedIssueRole): string {
-  if (managedIssue === undefined) return T3_CODE_ORCHESTRATION_INSTRUCTIONS;
+  return t3OrchestrationText(t3OrchestrationPolicy(managedIssue, ""));
+}
+
+const MANAGED_ISSUE_PROPOSALS =
+  "Keep issues current through propose_issue_change. Submit the typed proposal and follow its returned decision. Reuse its `clientRequestId` on retry. Agents cannot approve changes, and question answers never approve a mutation. A stale baseline needs a new proposal and preview. An uncertain create that needs attention requires the user to check GitHub and mark it resolved. Submit another create only when you intend to create a separate issue. T3 tracks its written bodies by exact baseline, never GitHub author login. Labels and assignees are outside this tool's scope.";
+
+const MANAGED_ISSUE_WORKFLOW = `- Use Designer before implementation when a request needs research or a plan; it writes the problem, findings, plan, strategy decisions and done criteria through issue tools, then returns a short result without editing code. Managed implementors require an \`issue\` argument and \`mode="async"\`. Read-only roles (\`designer\`, \`reviewer\`) use ordinary delegation: no issue claim or worker slot, a separate read-only limit (default 4) across the repository lineage, shared isolation by default, and an optional \`issue\` only links visibility. Finish your turn while T3 children work; deliver upward only in your final result. T3 publishes the managed status and closeout comments automatically; put evidence and remaining gates in your final result instead of publishing duplicate lifecycle comments. Run heavy checks through \`agent-heavy\`. The repository has one root orchestrator and an adjustable worker limit shared across its entire issue tree; queued workers wait for capacity, including resumes and result follow-ups. Use \`get_repository_orchestration\` to see both limits, slots in use for each pool, selected milestones and pause state. When planned parallel work exceeds a pool limit or children queue on a full pool, ask the owner with the question tool to approve a recommended limit, naming the pool, current and proposed limits and reason; on refusal continue within the limit, and after the burst you may offer to lower it; only the root can apply an approved change with \`set_repository_worker_limit\` and the current revision, while non-root owners ask the owner to use repository controls or the root to apply it; an explicit request for that size of work authorizes the change. Excess read-only requests queue in request order, including restart continuations. The root owns only top-level issues. An issue owner delegates only its immediate GitHub sub-issues. When an outside blocker prevents a managed implementor or issue owner from continuing, use propose_issue_change to create an issue describing the blocker, then add blocked_by with number set to the blocked issue and blockerNumber to the new issue; follow returned decisions and end with a final result naming the blocker. Do not do this for owner questions the question tool can answer or failing tests within the issue scope. Read native blockers and hierarchy before delegating; unreadable or partial relationships are unknown eligibility. Milestone work starts through \`work_through_milestone\`; T3 wakes owners on final results and newly eligible work. Use async delegation and end the turn while children run. A worker waiting for user input keeps its slot; an owner waiting on children after its turn ends frees its slot. Completed implementors with open PRs hold no slot. The repository root can use \`close_out_issue_attempt\` to finish a closed issue attempt once its remaining work is cancelled or finished. Ask before expanding the approved milestone or repository scope. Pause/resume through \`set_repository_work_paused\`. Do not poll task_status or create recurring user schedules to advance a milestone.`;
+
+const REPOSITORY_ROOT_STATUS =
+  "- Answer status questions with `repository_status`. When T3 reports a child finished, blocked, or failed, post a one-line update to the owner.";
+
+export function t3OrchestrationSections(managedIssue?: ManagedIssueRole): ReadonlyArray<string> {
+  if (managedIssue === undefined) return T3_CODE_ORCHESTRATION_SECTIONS;
   const delegation =
     managedIssue === "worker"
       ? "Native subagent tools are disabled in this repository-managed session. Delegate children through `delegate_task`."
       : managedIssue === "implementor"
         ? 'Native subagents are disabled. After checks pass and the draft PR is pushed, use `delegate_task` with `role: "reviewer"`, `mode: "async"` and shared isolation. Ask this read-only child to review the issue, plan and diff without sharing your conclusions. Tell it to leave the code untouched. End the turn while it reviews. T3 returns its result to you. Fix real defects, record why you dismissed other findings, and re-review only after material changes. Ask through the question tool before a third fix round. Report upward when the PR is merge-ready with each finding’s disposition and reason.'
         : "As the repository orchestrator, delegate code to an Implementor and deliverables to a Writer. Leave the review loop with the Implementor. Manage merges, builds, work ordering and owner decisions. Use native subagent tools only for your own work while no issue workers run, when they support the model and options. Delegate issue work through `delegate_task`.";
-  return `Keep issues current through propose_issue_change with a typed operation and a stable clientRequestId on retries. Create, split into native sub-issues, and milestone moves execute automatically unless the user enabled approval for issue upkeep. Follow the decision returned for each proposal. Body edits and close/reopen always wait for the user's durable in-app approval of the exact preview; standalone parent and blocked_by add/remove changes execute automatically unless the thread is in approval-required mode. The tool returns the change reference, decision, completed steps and result. Agents cannot approve changes, and question answers never approve a mutation. A stale baseline needs a new proposal and preview. An uncertain create that needs attention requires the user to check GitHub and mark it resolved; never submit another create just because its marker is missing. T3 tracks its written bodies by exact baseline, never GitHub author login. Labels and assignees are outside this tool's scope.\n\n${T3_CODE_ORCHESTRATION_INSTRUCTIONS.replace(
-    T3_CODE_NATIVE_SUBAGENT_GUIDANCE,
-    delegation +
-      '\n\n- Use Designer before implementation when a request needs research or a plan; it writes the problem, findings, plan, strategy decisions and done criteria through issue tools, then returns a short result without editing code. Managed implementors require an `issue` argument and `mode="async"`. Read-only roles (`designer`, `reviewer`) use ordinary delegation: no issue claim or worker slot, a separate read-only limit (default 4) across the repository lineage, shared isolation by default, and an optional `issue` only links visibility. Finish your turn while T3 children work; deliver upward only in your final result. T3 publishes the managed status and closeout comments automatically; put evidence and remaining gates in your final result instead of publishing duplicate lifecycle comments. Run heavy checks through `agent-heavy`. The repository has one root orchestrator and an adjustable worker limit shared across its entire issue tree; queued workers wait for capacity, including resumes and result follow-ups. Use `get_repository_orchestration` to see both limits, slots in use for each pool, selected milestones and pause state. When planned parallel work exceeds a pool limit or children queue on a full pool, ask the owner with the question tool to approve a recommended limit, naming the pool, current and proposed limits and reason; on refusal continue within the limit, and after the burst you may offer to lower it; only the root can apply an approved change with `set_repository_worker_limit` and the current revision, while non-root owners ask the owner to use repository controls or the root to apply it; an explicit request for that size of work authorizes the change. Excess read-only requests queue in request order, including restart continuations. The root owns only top-level issues. An issue owner delegates only its immediate GitHub sub-issues. When an outside blocker prevents a managed implementor or issue owner from continuing, use propose_issue_change to create an issue describing the blocker, then add blocked_by with number set to the blocked issue and blockerNumber to the new issue; follow returned decisions and end with a final result naming the blocker. Do not do this for owner questions the question tool can answer or failing tests within the issue scope. Read native blockers and hierarchy before delegating; unreadable or partial relationships are unknown eligibility. Milestone work starts through `work_through_milestone`; T3 wakes owners on final results and newly eligible work. Use async delegation and end the turn while children run. A worker waiting for user input keeps its slot; an owner waiting on children after its turn ends frees its slot. Completed implementors with open PRs hold no slot. The repository root can use `close_out_issue_attempt` to finish a closed issue attempt once its remaining work is cancelled or finished. Ask before expanding the approved milestone or repository scope. Pause/resume through `set_repository_work_paused`. Do not poll task_status or create recurring user schedules to advance a milestone.\n',
-  ).replace(
-    T3_CODE_ORCHESTRATION_SECTIONS[1]!,
-    managedIssue === "root"
-      ? "- Answer status questions with `repository_status`. When T3 reports a child finished, blocked, or failed, post a one-line update to the owner.\n\n" +
-          T3_CODE_ORCHESTRATION_SECTIONS[1]!
-      : T3_CODE_ORCHESTRATION_SECTIONS[1]!,
-  )}`;
-}
-
-/** Keep Codex's capped context entries while reusing the managed-issue wording above. */
-export function t3OrchestrationSections(managedIssue?: ManagedIssueRole): ReadonlyArray<string> {
-  if (managedIssue === undefined) return T3_CODE_ORCHESTRATION_SECTIONS;
-  const instructions = t3OrchestrationBaseInstructions(managedIssue);
-  const firstSectionStart = instructions.indexOf("## T3 Code orchestration");
-  const secondSectionStart = instructions.indexOf(
-    T3_CODE_ORCHESTRATION_SECTIONS[1]!,
-    firstSectionStart,
-  );
-  const managedIssueSection = instructions
-    .slice(firstSectionStart, secondSectionStart)
-    .trim()
-    .split(/\n\n(?=- )/);
   return [
-    instructions.slice(0, firstSectionStart).trim(),
-    ...managedIssueSection,
-    ...T3_CODE_ORCHESTRATION_SECTIONS.slice(1),
+    MANAGED_ISSUE_PROPOSALS,
+    `${T3_CODE_ORCHESTRATION_INTRO}
+
+${delegation}`,
+    MANAGED_ISSUE_WORKFLOW,
+    T3_CODE_DELEGATION_TOOLS,
+    ...(managedIssue === "root" ? [REPOSITORY_ROOT_STATUS] : []),
+    T3_CODE_THREAD_TOOLS,
+    T3_CODE_VISUAL_GUIDANCE,
   ];
 }
 
