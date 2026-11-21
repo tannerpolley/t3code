@@ -3931,82 +3931,189 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       }),
   );
 
-  it.effect(
-    "persists shutdown continuation intent through the real event sink without domain events",
-    () =>
-      Effect.gen(function* () {
-        const outbox = yield* EffectOutbox.EffectOutboxV2;
-        const now = yield* DateTime.now;
-        const threadId = ThreadId.make("thread:shutdown-prepare");
-        const runId = RunId.make("run:shutdown-prepare");
-        const providerThreadId = ProviderThreadId.make("provider-thread:shutdown-prepare");
-        const sessionId = ProviderSessionId.make("session:shutdown-prepare");
-        const attemptId = RunAttemptId.make("attempt:shutdown-prepare");
-        const projection = {
-          thread: makeThread(threadId, now),
-          runs: [
-            {
-              id: runId,
-              ordinal: 1,
-              status: "running",
+  it.effect.each([
+    { name: "keeps the retry marker if Codex never accepted the prompt", accepted: false },
+    {
+      name: "drops the retry marker when Codex accepts between the shutdown read and write",
+      accepted: true,
+    },
+  ])("$name", ({ accepted }) =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const suffix = `shutdown-prepare:${accepted}`;
+      const threadId = ThreadId.make(`thread:${suffix}`);
+      const runId = RunId.make(`run:${suffix}`);
+      const sourceRunId = RunId.make(`run:${suffix}:failed`);
+      const providerThreadId = ProviderThreadId.make(`provider-thread:${suffix}`);
+      const sessionId = ProviderSessionId.make(`session:${suffix}`);
+      const attemptId = RunAttemptId.make(`attempt:${suffix}`);
+      const turnId = ProviderTurnId.make(`turn:${suffix}`);
+      const nodeId = NodeId.make(`node:${suffix}`);
+      const priorEffectId = `effect:restart-continuation:${sourceRunId}`;
+      yield* outbox.enqueue([
+        {
+          id: priorEffectId,
+          commandId: CommandId.make(`command:retry:${suffix}`),
+          threadId,
+          request: {
+            type: "provider-runtime.continue",
+            sourceRunId,
+            transientFailureAttempt: 2,
+          },
+        },
+      ]);
+      const workerId = `worker:${suffix}`;
+      assert.equal(Option.getOrUndefined(yield* outbox.claimNext({ workerId }))?.id, priorEffectId);
+      yield* outbox.succeed({ effectId: priorEffectId, workerId });
+      const thread = makeThread(threadId, now);
+      yield* sink.write({
+        events: [
+          threadCreatedEvent({ id: `event:thread:${suffix}`, thread, now }),
+          {
+            id: EventId.make(`event:attempt:${suffix}`),
+            type: "run-attempt.updated",
+            threadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              id: attemptId,
+              runId,
+              attemptOrdinal: 1,
+              rootNodeId: nodeId,
               providerInstanceId,
               providerThreadId,
-              activeAttemptId: attemptId,
+              providerTurnId: null,
+              reason: "initial",
+              status: "running",
+              startedAt: now,
+              completedAt: null,
             },
-          ],
-          providerThreads: [
-            {
-              id: providerThreadId,
-              appThreadId: threadId,
-              ownerNodeId: null,
+          },
+        ],
+      });
+      const projection = {
+        thread,
+        runs: [
+          {
+            id: runId,
+            ordinal: 1,
+            status: "running",
+            providerInstanceId,
+            providerThreadId,
+            activeAttemptId: attemptId,
+            startedAt: now,
+            restartContinuationOfRunId: sourceRunId,
+          },
+        ],
+        providerThreads: [
+          {
+            id: providerThreadId,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            driver: "codex",
+            providerInstanceId,
+            providerSessionId: sessionId,
+            status: "active",
+            nativeThreadRef: {
               driver: "codex",
-              providerInstanceId,
-              providerSessionId: sessionId,
-              status: "active",
-              nativeThreadRef: {
-                driver: "codex",
-                nativeId: "saved-native-thread",
-                strength: "strong",
-              },
+              nativeId: "saved-native-thread",
+              strength: "strong",
             },
-          ],
-          providerSessions: [
-            { id: sessionId, driver: "codex", providerInstanceId, status: "running" },
-          ],
-          providerTurns: [{ providerThreadId, runAttemptId: attemptId, status: "running" }],
-          runtimeRequests: [],
-          turnItems: [],
-        } as unknown as OrchestrationV2ThreadProjection;
-        const recovery = yield* ProviderRuntimeRecovery.make.pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
-              Layer.mock(ProjectionStore.ProjectionStoreV2)({
-                getRecoveryThreadIds: () => Effect.succeed([threadId]),
-                getRuntimeRecoveryProjection: () => Effect.succeed(projection),
-              }),
-              Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
-            ),
+          },
+        ],
+        providerSessions: [
+          { id: sessionId, driver: "codex", providerInstanceId, status: "running" },
+        ],
+        attempts: [],
+        providerTurns: [],
+        runtimeRequests: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      let recordAcceptance = accepted;
+      const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        Effect.provideService(EventSink.EventSinkV2, {
+          ...sink,
+          writeWithEffects: (input) =>
+            Effect.gen(function* () {
+              if (recordAcceptance) {
+                recordAcceptance = false;
+                yield* sink.write({
+                  events: [
+                    {
+                      id: EventId.make(`event:turn:${suffix}`),
+                      type: "provider-turn.updated",
+                      threadId,
+                      runId,
+                      occurredAt: now,
+                      payload: {
+                        id: turnId,
+                        providerThreadId,
+                        nodeId,
+                        runAttemptId: attemptId,
+                        nativeTurnRef: null,
+                        ordinal: 1,
+                        status: "running",
+                        startedAt: now,
+                        completedAt: null,
+                      },
+                    },
+                  ],
+                });
+              }
+              return yield* sink.writeWithEffects(input);
+            }),
+        }),
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getRecoveryThreadIds: () => Effect.succeed([threadId]),
+              getRuntimeRecoveryProjection: () =>
+                projections
+                  .getThreadRecords(threadId, ["providerTurns"])
+                  .pipe(Effect.map(({ providerTurns }) => ({ ...projection, providerTurns }))),
+              getThreadRecords: projections.getThreadRecords,
+            }),
+            Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
           ),
-        );
-        yield* recovery.prepareForShutdown;
-        yield* recovery.prepareForShutdown;
-        const effects = yield* outbox.listByCommandId(
-          CommandId.make(`command:restart-prepare:${runId}`),
-        );
-        assert.lengthOf(effects, 1);
-        assert.equal(effects[0]?.status, "pending");
-        assert.deepEqual(effects[0]?.request, {
-          type: "provider-runtime.continue",
-          sourceRunId: runId,
-          processLossCount: 0,
-        });
-        yield* outbox.cancelUnsettled({
-          threadId,
-          effectTypes: ["provider-runtime.continue"],
-          reason: "fixture complete",
-        });
-      }),
+        ),
+      );
+      yield* recovery.prepareForShutdown;
+      yield* recovery.prepareForShutdown;
+      const effects = yield* outbox.listByCommandId(
+        CommandId.make(`command:restart-prepare:${runId}`),
+      );
+      yield* outbox.reconcileAfterProcessLoss;
+      const effectId = `effect:restart-continuation:${runId}`;
+      assert.lengthOf(effects, 1);
+      assert.equal(effects[0]?.status, "pending");
+      assert.deepEqual(effects[0]?.request, {
+        type: "provider-runtime.continue",
+        sourceRunId: runId,
+        processLossCount: 0,
+        transientFailureAttempt: 2,
+      });
+      const claimed = Option.getOrUndefined(yield* outbox.claimNext({ workerId }));
+      const persisted = Option.getOrUndefined(yield* outbox.get(effectId));
+      const expectedRequest = {
+        type: "provider-runtime.continue",
+        sourceRunId: runId,
+        processLossCount: 0,
+        ...(accepted ? {} : { transientFailureAttempt: 2 }),
+      };
+      assert.equal(claimed?.id, effectId);
+      assert.deepEqual(
+        { claimed: claimed?.request, persisted: persisted?.request },
+        {
+          claimed: expectedRequest,
+          persisted: expectedRequest,
+        },
+      );
+      yield* outbox.succeed({ effectId, workerId });
+    }),
   );
 
   it.effect("leaves restart continuation pending until normal worker claims are enabled", () =>
