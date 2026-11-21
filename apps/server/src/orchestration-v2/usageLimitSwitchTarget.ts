@@ -94,7 +94,6 @@ export function usageLimitSwitchTarget(
     capableIds,
     now,
     providerCreditStatuses(providers, settings.providerCreditsApproved, now),
-    undefined,
     "weekly-headroom",
   );
   const choice = ranked

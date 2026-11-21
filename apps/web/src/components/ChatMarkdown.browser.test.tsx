@@ -1,5 +1,6 @@
 import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { EnvironmentId, ProjectId, SourceControlProviderKind, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
 import remarkGfm from "remark-gfm";
@@ -41,13 +42,72 @@ vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
     family === filesystemEnvironment.getMetadata ? filesystemMetadata : workspaceSearch) as never,
 }));
 
-// Atoms derived from the server config run in the real registry over a missing config.
+const previewState = vi.hoisted(() => ({
+  projects: undefined as ReadonlyArray<EnvironmentProject> | undefined,
+  previewPullRequest: vi.fn(),
+}));
+
+vi.mock(import("../state/entities"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useProjects: () => {
+      const projects = actual.useProjects();
+      return previewState.projects ?? projects;
+    },
+  };
+});
+vi.mock(import("../state/issues"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const detail = Atom.family((title: string) =>
+    Atom.make(
+      AsyncResult.success({
+        scope: "owner/repo",
+        displayKey: "#7",
+        title,
+        state: { category: "open", name: "Open" },
+        author: null,
+        createdAt: "2026-08-01T00:00:00Z",
+      }),
+    ),
+  );
+  return {
+    ...actual,
+    issueEnvironment: {
+      ...actual.issueEnvironment,
+      detail: ({ environmentId, input }: Parameters<typeof actual.issueEnvironment.detail>[0]) =>
+        detail(`Issue from ${environmentId}/${input.projectId}`) as unknown as ReturnType<
+          typeof actual.issueEnvironment.detail
+        >,
+    },
+  };
+});
+vi.mock(import("../state/pullRequests"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const notFound = Atom.make(AsyncResult.fail(new Error("Pull request not found")));
+  return {
+    ...actual,
+    pullRequestEnvironment: {
+      ...actual.pullRequestEnvironment,
+      previewCard: (target: Parameters<typeof actual.pullRequestEnvironment.previewCard>[0]) => {
+        previewState.previewPullRequest(target);
+        return notFound as unknown as ReturnType<typeof actual.pullRequestEnvironment.previewCard>;
+      },
+    },
+  };
+});
 vi.mock(import("../state/server"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");
   const noConfig = Atom.make(null);
+  const previewConfig = Atom.make({
+    environment: { platform: { os: "linux" }, capabilities: { issues: true } },
+    availableEditors: [],
+  });
   const modelsConfig = Atom.make({
-    environment: { platform: { os: "darwin" } },
+    environment: { platform: { os: "darwin" }, capabilities: {} },
     availableEditors: [],
     settings: { providerInstances: {} },
     providers: [
@@ -64,7 +124,11 @@ vi.mock(import("../state/server"), async (original) => {
     serverEnvironment: {
       ...actual.serverEnvironment,
       configValueAtom: ((environmentId: string) =>
-        environmentId === "models" ? modelsConfig : noConfig) as never,
+        environmentId === "models"
+          ? modelsConfig
+          : environmentId === "remote"
+            ? previewConfig
+            : noConfig) as never,
     },
   };
 });
@@ -164,6 +228,8 @@ it("keeps compact audio playback loaded across signed URL renewals", async () =>
 
 function setup() {
   appearance.value = "light";
+  previewState.projects = undefined;
+  previewState.previewPullRequest.mockReset();
   parsedSources.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
   renderDiagram.mockReset();
@@ -180,6 +246,47 @@ function buttonsLabelled(container: HTMLElement, label: string) {
     (button) => button.getAttribute("aria-label") === label,
   );
 }
+
+it("previews an ambiguous issue URL through the chat's own repository environment", async () => {
+  setup();
+  const remoteId = EnvironmentId.make("remote");
+  const projects = [EnvironmentId.make("local"), remoteId].map(
+    (environmentId): EnvironmentProject => ({
+      id: ProjectId.make(`project-${environmentId}`),
+      environmentId,
+      title: "Repo",
+      workspaceRoot: "/work/repo",
+      repositoryIdentity: {
+        canonicalKey: "github.com/owner/repo",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://github.com/owner/repo.git",
+        },
+        provider: SourceControlProviderKind.make("github"),
+        owner: "owner",
+        name: "repo",
+        displayName: "owner/repo",
+      },
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-08-01T00:00:00Z",
+      updatedAt: "2026-08-01T00:00:00Z",
+    }),
+  );
+  previewState.projects = projects;
+
+  await using screen = await renderText("[Issue #7](https://github.com/owner/repo/issues/7)", {
+    environmentId: remoteId,
+  });
+  await userEvent.hover(screen.getByRole("link", { name: "Issue #7" }));
+
+  await expect.element(page.getByText("Issue from remote/project-remote")).toBeVisible();
+  expect(previewState.previewPullRequest).toHaveBeenCalledWith({
+    environmentId: remoteId,
+    input: { host: "github.com", number: 7, repository: "owner/repo", projectId: projects[1]!.id },
+  });
+});
 
 const SOURCE_NUMBER_PLUGINS = [remarkEnableOrderedListNumbers];
 

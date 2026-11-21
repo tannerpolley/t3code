@@ -412,7 +412,7 @@ registered orchestrator, the queue waits. Claimed work is managed through its or
 
 Repository orchestration is managed in **Settings → Projects**, under the project that holds the
 repository's checkout; the section is named **Repository orchestration**. It shows the
-orchestrator, the limits, the usage sprint and the repository **Status**. Until a repository has
+orchestrator, the limits and the repository **Status**. Until a repository has
 an orchestrator the section only says so, because the limits need one. The roadmap keeps no
 such controls. It shows a single status line with a **Project settings** link while repository work
 is paused, a handoff is pending, or issues are on hold.
@@ -430,16 +430,6 @@ queued children; lowering it lets current children finish. Agents can set either
 Read-only children share their parent's checkout unless another isolation is requested; an issue
 link gives visibility without claiming its work.
 
-To spend a provider's weekly usage before it resets, pick the Codex or Claude provider under
-**Usage sprint** and choose **Start**. Until that provider's weekly window resets, every child in
-the repository's tree runs on that provider's models; the orchestrator keeps its own model.
-Messages sent to an existing child on another provider are refused, though work already running
-there continues with its automatic turns, and delegation to a linked environment is refused. The sprint ends at the
-scheduled reset or as soon as the usage resets early, for example after a reset credit. Then T3
-stops running children, keeping their worktrees, branches and commits, and tells the orchestrator
-to resume the stopped work under its normal model roles. **Stop** ends the sprint early without
-stopping anything. Orchestrators can start or stop a sprint with
-`set_repository_usage_sprint`.
 An issue worker paused by an open GitHub blocker resumes by itself within about a minute after
 all its blockers close. Other pauses wait until you resume repository work from **Status** in **Repository orchestration**.
 If an issue closes during work, cancel or finish its remaining work, then use **Close out attempt**

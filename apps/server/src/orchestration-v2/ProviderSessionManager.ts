@@ -57,7 +57,6 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { modelRoleStatuses, providerCreditStatuses } from "../provider/modelRolePolicy.ts";
-import { lineageUsageSprint } from "../issues/usageSprint.ts";
 import { managedIssueRole } from "../issues/IssueEligibility.ts";
 import {
   t3ModelRolesInstructions,
@@ -597,7 +596,6 @@ export const layerWithOptions = (
               capableIds,
               now,
               credits,
-              yield* lineageUsageSprint(thread, projectionStore.getThread),
             );
             return {
               roles: t3ModelRolesInstructions(roles, credits),
