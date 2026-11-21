@@ -1,5 +1,6 @@
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { CODEX_APP_SERVER_DISCONNECTED } from "@t3tools/provider-core/server/failure";
 import {
   CommandId,
   isOrchestrationV2WorkActive,
@@ -57,6 +58,7 @@ export function isTransientWorkerFailure(
   if (status !== undefined) return Number(status) === 502 || Number(status) === 503;
 
   if (
+    failure.code === CODEX_APP_SERVER_DISCONNECTED ||
     failure.code === "responseStreamDisconnected" ||
     failure.code === "responseStreamConnectionFailed" ||
     failure.code === "httpConnectionFailed"

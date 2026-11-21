@@ -2170,7 +2170,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ).hasSubagents = true;
         };
         const pendingRootTurns = yield* Ref.make(
-          new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>(),
+          new Map<
+            string,
+            { readonly input: ProviderAdapter.ProviderAdapterV2TurnInput; accepted: boolean }
+          >(),
         );
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
@@ -5230,10 +5233,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const pendingRootTurn = (yield* Ref.get(pendingRootTurns)).get(payload.threadId);
             if (pendingRootTurn !== undefined) {
               yield* registerRootTurn({
-                turnInput: pendingRootTurn,
+                turnInput: pendingRootTurn.input,
                 nativeTurnId: payload.turn.id,
                 startedAt: codexTimestamp(payload.turn.startedAt),
               });
+              pendingRootTurn.accepted = true;
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);
                 updated.delete(payload.threadId);
@@ -6587,6 +6591,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly failureMessage?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
+            readonly disconnected?: OrchestrationV2ProviderFailure;
           }): Effect.fn.Return<CodexRootTerminalEvent> {
             const terminalStatus = providerTurnStatusToTerminal(input.status);
             if (terminalStatus === "failed") {
@@ -6603,21 +6608,33 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const completionHasClass =
                 failureCode != null &&
                 !codexTerminalErrorNeedsEvidence(input.failureErrorInfo, failureCode);
-              let failure =
+              const previousHttpStatus = codexErrorHttpStatus(previousFailure?.errorInfo);
+              const previousFailureIsPersistent =
+                previousFailure?.failure.class === "usage_limit" ||
+                previousFailure?.failure.retryable === false ||
+                (previousHttpStatus !== null &&
+                  previousHttpStatus >= 400 &&
+                  previousHttpStatus < 500);
+              const matchesPreviousFailure =
                 previousFailure !== undefined &&
                 (input.failureMessage === undefined ||
                   input.failureMessage === previousFailure.nativeMessage) &&
                 (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
-                (!completionHasClass || previousFailure.failure.class === failureClass)
-                  ? previousFailure.failure
-                  : withCodexManagedFailure(
-                      makeProviderFailure({
-                        message: input.failureMessage,
-                        code: failureCode,
-                        class: failureClass,
-                      }),
-                      input.failureMessage,
-                    );
+                (!completionHasClass || previousFailure.failure.class === failureClass);
+              let failure =
+                input.disconnected !== undefined && !previousFailureIsPersistent
+                  ? input.disconnected
+                  : previousFailure !== undefined &&
+                      (input.disconnected !== undefined || matchesPreviousFailure)
+                    ? previousFailure.failure
+                    : withCodexManagedFailure(
+                        makeProviderFailure({
+                          message: input.failureMessage,
+                          code: failureCode,
+                          class: failureClass,
+                        }),
+                        input.failureMessage,
+                      );
               const retry = input.providerRetry;
               const notification = input.context.latestProviderFailure;
               const httpStatus =
@@ -6791,6 +6808,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly failureMessage?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
+            readonly disconnected?: OrchestrationV2ProviderFailure;
             readonly goalHoldTurn?: OrchestrationV2ProviderTurn;
           }) {
             const event = yield* makeRootTerminalEvent(input);
@@ -7012,6 +7030,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly completedAt: DateTime.Utc;
           readonly failureMessage?: string;
           readonly failureErrorInfo?: CodexErrorInfo;
+          readonly disconnected?: OrchestrationV2ProviderFailure;
           readonly continueRun?: boolean;
           readonly stalledRetry?: {
             readonly state: ActiveCodexProviderRetry;
@@ -7577,6 +7596,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             Effect.gen(function* () {
               const completedAt = yield* DateTime.now;
               const interrupted = yield* Ref.get(interruptingNativeTurns);
+              const failure = makeProviderFailure({ cause });
               for (const context of (yield* Ref.get(activeTurns)).values()) {
                 yield* finalizeCodexTurn({
                   context,
@@ -7584,6 +7604,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   status: interrupted.has(context.nativeTurnId) ? "interrupted" : "failed",
                   completedAt,
                   failureMessage: cause.message,
+                  ...(failure.class === "transport_error" ? { disconnected: failure } : {}),
                 });
               }
               // A Codex process exit does not prove that its detached terminals
@@ -7867,9 +7888,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
             });
+            const pending = { input: turnInput, accepted: false };
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
-              updated.set(threadId, turnInput);
+              updated.set(threadId, pending);
               return updated;
             });
             yield* Ref.update(additionalContextByThread, (current) => {
@@ -7884,7 +7906,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(yield* Ref.get(settledTurns)),
               ...(yield* Ref.get(activeTurns)),
             ]);
-            const started = yield* client.request("turn/start", turnStartParams);
+            const started = yield* client.request("turn/start", turnStartParams).pipe(
+              Effect.catchTags({
+                CodexAppServerRequestTimeoutError: (error) =>
+                  turnTerminalizationPermit.withPermits(1)(
+                    Effect.gen(function* () {
+                      if (pending.accepted) return undefined;
+                      yield* Ref.update(pendingRootTurns, (current) => {
+                        if (current.get(threadId) !== pending) return current;
+                        const updated = new Map(current);
+                        updated.delete(threadId);
+                        return updated;
+                      });
+                      return yield* error;
+                    }),
+                  ),
+              }),
+            );
+            if (started === undefined) return;
             const previousTurn =
               previousTurns.get(started.turn.id) ??
               (yield* Ref.get(activeTurns)).get(started.turn.id);
@@ -7899,7 +7938,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
             }
             // A turn/started notification may have registered and completed this turn already.
-            if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== turnInput) return;
+            if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== pending) return;
             yield* registerRootTurn({
               turnInput,
               nativeTurnId: started.turn.id,
@@ -7912,7 +7951,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               Effect.ensuring(
                 Effect.flatMap(getNativeThreadId(turnInput.providerThread), (threadId) =>
                   Ref.update(pendingRootTurns, (current) => {
-                    if (current.get(threadId) !== turnInput) return current;
+                    if (current.get(threadId)?.input !== turnInput) return current;
                     const updated = new Map(current);
                     updated.delete(threadId);
                     return updated;
@@ -8342,13 +8381,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           compactThread: Effect.fn("CodexAdapterV2.compactThread")(
             function* (turnInput) {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
+              const pending = { input: turnInput, accepted: false };
               yield* Ref.update(pendingRootTurns, (current) =>
-                new Map(current).set(threadId, turnInput),
+                new Map(current).set(threadId, pending),
               );
               // Clear on interruption; a late turn/started must not be adopted after an interrupted start.
               yield* client.request("thread/compact/start", { threadId }).pipe(
                 Effect.onError(() =>
                   Ref.update(pendingRootTurns, (current) => {
+                    if (current.get(threadId) !== pending) return current;
                     const next = new Map(current);
                     next.delete(threadId);
                     return next;

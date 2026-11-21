@@ -14,6 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as CodexProtocol from "effect-codex-app-server/protocol";
+import { CodexAppServerInputStreamEndedError } from "effect-codex-app-server/errors";
 import { makeInMemoryStdio } from "../../../../packages/effect-codex-app-server/src/_internal/stdio.ts";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -30,6 +31,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 const driver = ProviderDriverKind.make("codex");
@@ -41,13 +43,13 @@ const issue = reviewIssue(1);
 const startError = "required MCP servers failed to initialize: serena: Broken pipe";
 
 const failedChildTest = (
-  mode: "refused" | "stalled" | "recovers" | "exhausted" | "limited" | "persistent",
+  mode: "refused" | "stalled" | "recovers" | "exhausted" | "limited" | "persistent" | "disconnect",
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("provider-turn-start-failure");
       const wake = yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
-      const childEnsureEntered = yield* Deferred.make<void>();
+      const childStartRequests = yield* Queue.unbounded<string>();
       let childEnsureAttempts = 0;
       let childTurns = 0;
       let lastChildTurn:
@@ -63,7 +65,13 @@ const failedChildTest = (
           Effect.gen(function* () {
             const now = yield* DateTime.now;
             const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-            const { stdio } = yield* makeInMemoryStdio();
+            const { stdio, output } = yield* makeInMemoryStdio();
+            if (mode === "stalled") {
+              yield* Stream.fromQueue(output).pipe(
+                Stream.runForEach((request) => Queue.offer(childStartRequests, request)),
+                Effect.forkScoped,
+              );
+            }
             const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
             return {
               instanceId,
@@ -86,8 +94,7 @@ const failedChildTest = (
                 if (threadId !== parentThreadId && !startsNormally) {
                   childEnsureAttempts += 1;
                   if (mode === "stalled")
-                    return Deferred.succeed(childEnsureEntered, undefined).pipe(
-                      Effect.andThen(transport.request("thread/start", { threadId })),
+                    return transport.request("thread/start", { threadId }).pipe(
                       Effect.flatMap(() => Effect.die("The stalled peer cannot reply")),
                       Effect.mapError(
                         (cause) =>
@@ -131,7 +138,8 @@ const failedChildTest = (
                   if (turn.threadId === parentThreadId) return;
                   childTurns += 1;
                   lastChildTurn = turn;
-                  const succeeded = mode === "recovers" && childTurns === 2;
+                  const succeeded =
+                    (mode === "recovers" || mode === "disconnect") && childTurns === 2;
                   const completedAt = yield* DateTime.now;
                   const turnId = ProviderTurnId.make(`provider-turn:retry:${turn.runId}`);
                   const common = {
@@ -170,17 +178,22 @@ const failedChildTest = (
                           type: "turn.terminal",
                           status: "failed",
                           failureItemOrdinal: 1,
-                          failure: {
-                            class: mode === "limited" ? "usage_limit" : "provider_error",
-                            message:
-                              mode === "persistent"
-                                ? "Model is unavailable."
-                                : childTurns === 2
-                                  ? "stream disconnected before completion: error decoding response body"
-                                  : "unexpected status 503 Service Unavailable",
-                            code: mode === "recovers" ? "api_error_502" : null,
-                            retryable: null,
-                          },
+                          failure:
+                            mode === "disconnect"
+                              ? makeProviderFailure({
+                                  cause: new CodexAppServerInputStreamEndedError(),
+                                })
+                              : {
+                                  class: mode === "limited" ? "usage_limit" : "provider_error",
+                                  message:
+                                    mode === "persistent"
+                                      ? "Model is unavailable."
+                                      : childTurns === 2
+                                        ? "stream disconnected before completion: error decoding response body"
+                                        : "unexpected status 503 Service Unavailable",
+                                  code: mode === "recovers" ? "api_error_502" : null,
+                                  retryable: null,
+                                },
                         },
                   ]);
                 }),
@@ -251,7 +264,11 @@ const failedChildTest = (
           parentThreadId,
           parentRunId: parentRun.id,
           parentNodeId: parentRun.rootNodeId!,
-          ...(startsNormally ? { issue, role: "implementor" as const } : {}),
+          ...(mode === "disconnect"
+            ? { role: "reviewer" as const }
+            : startsNormally
+              ? { issue, role: "implementor" as const }
+              : {}),
           task: "Inspect the migration",
           modelSelection,
           runtimeMode: "full-access",
@@ -273,7 +290,12 @@ const failedChildTest = (
             ),
           );
           const beforeFailure = yield* sink.latestSequence();
-          const delays = mode === "recovers" ? [2_000] : mode === "exhausted" ? [2_000, 4_000] : [];
+          const delays =
+            mode === "recovers" || mode === "disconnect"
+              ? [2_000]
+              : mode === "exhausted"
+                ? [2_000, 4_000]
+                : [];
           const drainTurn = Effect.gen(function* () {
             const sequence = yield* sink.latestSequence();
             const previousTurns = childTurns;
@@ -321,19 +343,22 @@ const failedChildTest = (
           assert.lengthOf(yield* wakes, 1);
           assert.equal(childTurns, delays.length + 1);
           const task = (yield* parent).subagents[0]!;
-          assert.equal(task.status, mode === "recovers" ? "completed" : "failed");
+          assert.equal(
+            task.status,
+            mode === "recovers" || mode === "disconnect" ? "completed" : "failed",
+          );
           return;
         }
 
         // Every attempt but the last leaves the run starting so the worker retries.
-        if (mode === "stalled") {
+        const drainStart = Effect.gen(function* () {
+          if (mode !== "stalled") return yield* worker.drain();
           const drain = yield* worker.drain().pipe(Effect.forkScoped);
-          yield* Deferred.await(childEnsureEntered);
+          assert.include(yield* Queue.take(childStartRequests), '"method":"thread/start"');
           yield* TestClock.adjust("60 seconds");
           yield* Fiber.join(drain);
-        } else {
-          yield* worker.drain();
-        }
+        });
+        yield* drainStart;
         assert.equal(childEnsureAttempts, 1);
         assert.equal(
           (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]?.status,
@@ -341,7 +366,7 @@ const failedChildTest = (
         );
         for (let retry = 0; retry < 4; retry += 1) {
           yield* TestClock.adjust("1 minute");
-          yield* worker.drain();
+          yield* drainStart;
         }
         assert.equal(childEnsureAttempts, 5);
 
@@ -396,4 +421,8 @@ it.effect.each(["refused", "stalled"] as const)(
 it.effect.each(["recovers", "exhausted", "limited", "persistent"] as const)(
   "publishes one result when the managed worker retry %s",
   failedChildTest,
+);
+
+it.effect("retries a delegated reviewer after Codex loses its app-server connection", () =>
+  failedChildTest("disconnect"),
 );
