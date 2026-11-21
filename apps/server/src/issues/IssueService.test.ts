@@ -590,10 +590,53 @@ it.effect(
       };
       const harness = makeHarness({ responses: [httpResponse(payload)] });
       const read = yield* (yield* service(harness)).workRead({ ...listInput, number: 2 });
+      assert.deepEqual(read.issue, {
+        host: HOST,
+        repository: REPOSITORY,
+        repositoryId: "123",
+        id: "2",
+        nodeId: "node:2",
+        number: 2,
+        title: "Issue 2",
+        url: `https://${HOST}/${REPOSITORY}/issues/2`,
+      });
+      assert.deepEqual(
+        harness.calls.map(({ method, url }) => [method, new URL(url).pathname]),
+        [["POST", "/api/graphql"]],
+      );
       assert.equal(read.parent?.number, 1);
       assert.equal(read.subIssues[0]?.number, 3);
       assert.equal(read.blockedBy[0]?.state, "closed");
       assert.isTrue(read.parentComplete && read.blockersComplete && read.subIssuesComplete);
+      const pullRequestNumber = makeHarness({
+        responses: [
+          httpResponse({
+            data: { repository: { issue: null } },
+            errors: [{ type: "NOT_FOUND", path: ["repository", "issue"] }],
+          }),
+        ],
+      });
+      const pullRequestError = yield* (yield* service(pullRequestNumber))
+        .workRead({ ...listInput, number: 8 })
+        .pipe(Effect.flip);
+      assert.equal(pullRequestError.code, "inaccessible");
+      assert.include(pullRequestNumber.calls[0]!.body, "issue(number: $number)");
+      const requestedIssue = payload.data.repository.issue;
+      for (const issue of [
+        { ...requestedIssue, number: 7 },
+        {
+          ...requestedIssue,
+          repository: { ...requestedIssue.repository, nameWithOwner: "acme/other" },
+        },
+      ]) {
+        const mismatched = makeHarness({
+          responses: [httpResponse({ data: { repository: { issue } } })],
+        });
+        const error = yield* (yield* service(mismatched))
+          .workRead({ ...listInput, number: 2 })
+          .pipe(Effect.flip);
+        assert.equal(error.code, "invalid-response");
+      }
       const partial = makeHarness({
         responses: [httpResponse({ ...payload, errors: [{ message: "Forbidden" }] })],
       });

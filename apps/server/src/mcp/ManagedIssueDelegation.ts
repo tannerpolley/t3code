@@ -81,9 +81,7 @@ export const makeManagedIssueDelegation = Effect.fn("ManagedIssueDelegation.make
         .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       if (read.state !== "open")
         return yield* failure("invalid_request", "Only open issues can be delegated.");
-      linkedIssue = yield* issueService.value
-        .resolveLinkedIssue({ ...input.issue, host: input.issue.host ?? "github.com" })
-        .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      linkedIssue = read.issue;
       const repositoryOwner = yield* issueWorkStore.value
         .repositoryOwner(linkedIssue)
         .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
@@ -183,7 +181,7 @@ export const makeManagedIssueDelegation = Effect.fn("ManagedIssueDelegation.make
     const config = root?.repositoryOrchestration;
     if (config === undefined) return taskResult;
     const status = yield* issueWork.value
-      .repositoryStatus(config)
+      .repositoryStatus(config, { verifyIdentity: false })
       .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
     const readers = isReadOnlyIssueRole(taskCommand.role);
     if (!readers && taskCommand.issue === undefined) return taskResult;
