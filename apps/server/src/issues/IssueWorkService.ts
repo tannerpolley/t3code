@@ -2052,6 +2052,11 @@ export const layer = Layer.effect(
         const config = yield* store.configuration(rootThreadId);
         if (config?.usageSprint === undefined) return;
         const { usageSprint, ...rest } = config;
+        const children: Array<{ threadId: ThreadId; issue?: ThreadLinkedIssue }> = [];
+        for (const threadId of yield* store.runningLineageChildren(rootThreadId)) {
+          const issue = (yield* threads.getThreadShell(threadId))?.linkedIssue;
+          children.push({ threadId, ...(issue === undefined ? {} : { issue }) });
+        }
         const now = yield* DateTime.now;
         yield* update(
           rootThreadId,
@@ -2064,7 +2069,7 @@ export const layer = Layer.effect(
                 startedAt: usageSprint.startedAt,
                 endedAt: DateTime.formatIso(now),
                 reason: "stopped",
-                children: [],
+                children,
               },
             ],
           },

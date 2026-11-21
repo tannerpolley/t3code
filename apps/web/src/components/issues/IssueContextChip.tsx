@@ -1,10 +1,9 @@
-import type { IssueContextRecord, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, IssueContextRecord, ScopedThreadRef } from "@t3tools/contracts";
 import { CircleDashedIcon } from "lucide-react";
 import { useOpenIssueLink } from "~/lib/openIssueLink";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
 import { useProjects, useServerConfigs } from "~/state/entities";
-import { usePrimaryEnvironmentId } from "~/state/environments";
 import { IssueLinkPreview } from "../issue/IssueLinkPreview";
 import { ContextChipPopover } from "../contextChipParts";
 import { IssueStateIcon, issueStatePresentation } from "./IssueStateIcon";
@@ -13,25 +12,23 @@ export function IssueContextChip({
   record,
   copyMarkdown,
   threadRef,
+  environmentId: draftEnvironmentId,
 }: {
   record: IssueContextRecord;
   copyMarkdown?: string;
   threadRef?: ScopedThreadRef | null;
+  environmentId?: EnvironmentId | null;
 }) {
+  const environmentId = threadRef?.environmentId ?? draftEnvironmentId;
   const projects = useProjects();
   const configs = useServerConfigs();
-  const primary = usePrimaryEnvironmentId();
-  const candidates = threadRef ? [threadRef.environmentId] : [primary, ...configs.keys()];
-  const environmentId = candidates.find(
-    (id) => id != null && configs.get(id)?.environment.capabilities.issues === true,
-  );
   const target =
-    environmentId == null
-      ? null
-      : resolveIssueLinkTarget({
+    environmentId != null && configs.get(environmentId)?.environment.capabilities.issues === true
+      ? resolveIssueLinkTarget({
           url: record.url,
           projects: projects.filter((project) => project.environmentId === environmentId),
-        });
+        })
+      : null;
   const openIssue = useOpenIssueLink(threadRef ?? undefined);
   const issue = record.state === null ? null : { ...record, state: record.state };
   const state = issue === null ? "State unavailable" : issueStatePresentation(issue).label;

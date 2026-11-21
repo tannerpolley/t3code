@@ -1,16 +1,21 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
+  MessageId,
+  NodeId,
   ProviderInstanceId,
   ThreadId,
   type RepositoryOrchestration,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import {
@@ -87,6 +92,46 @@ it.effect("retires a saved sprint on startup and preserves its history", () => {
       children: [],
     };
     yield* createRoot({ usageSprint: sprint, usageSprintHistory: [prior] });
+    const childId = ThreadId.make("sprint-child");
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const root = (yield* threads.getThreadRecords(rootId, [])).thread;
+    const sink = yield* EventSink.EventSinkV2;
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("sprint-child-created"),
+          type: "thread.created",
+          threadId: childId,
+          occurredAt: yield* DateTime.now,
+          payload: {
+            ...root,
+            id: childId,
+            title: "Review in progress",
+            repositoryOrchestration: undefined,
+            role: "reviewer",
+            lineage: {
+              parentThreadId: rootId,
+              rootThreadId: rootId,
+              relationshipToParent: "subagent",
+            },
+            forkedFrom: { type: "node", nodeId: NodeId.make("sprint-review-task") },
+          },
+        },
+      ],
+    });
+    yield* threads.dispatch({
+      type: "message.dispatch",
+      threadId: childId,
+      commandId: CommandId.make("sprint-child-review"),
+      messageId: MessageId.make("sprint-child-review"),
+      text: "Review the patch",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const activeRunId = (yield* threads.getThreadShell(childId))?.activeRunId;
+    assert.isString(activeRunId);
 
     yield* Effect.service(IssueWorkService.IssueWorkService).pipe(
       Effect.provide(IssueWorkService.layer),
@@ -102,8 +147,9 @@ it.effect("retires a saved sprint on startup and preserves its history", () => {
         startedAt: sprint.startedAt,
         endedAt: sprint.startedAt,
         reason: "stopped",
-        children: [],
+        children: [{ threadId: childId }],
       },
     ]);
+    assert.equal((yield* threads.getThreadShell(childId))?.activeRunId, activeRunId);
   }).pipe(Effect.provide(dependencies));
 });
