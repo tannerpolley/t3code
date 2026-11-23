@@ -111,7 +111,8 @@ const make = Effect.gen(function* () {
     const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps | undefined = runtime.mcpApps;
     if (mcpApps === undefined) return yield* fail(input.threadId, "provider-unsupported");
     const policy =
-      projection.thread.toolProfile === "dry"
+      runtime.driver === "codex" &&
+      RuntimePolicy.delegatedToolPolicy(projection.thread).enableTools !== undefined
         ? yield* runtimePolicy
             .resolve({
               thread: projection.thread,

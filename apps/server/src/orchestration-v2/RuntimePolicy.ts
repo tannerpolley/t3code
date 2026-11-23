@@ -1,4 +1,6 @@
 import {
+  isDelegatedAppThread,
+  isProviderNativeSubagentThread,
   isRuntimeModeAbove,
   managedRuntimeModeCeilingMessage,
   ModelSelection,
@@ -78,13 +80,19 @@ export class RuntimePolicyV2 extends Context.Service<RuntimePolicyV2, RuntimePol
   "t3/orchestration-v2/RuntimePolicy/RuntimePolicyV2",
 ) {}
 
+export function delegatedToolPolicy(thread: OrchestrationV2AppThread) {
+  return isDelegatedAppThread(thread) && !isProviderNativeSubagentThread(thread)
+    ? { enableTools: thread.enableTools ?? thread.delegatedFrom?.enableTools ?? [] }
+    : {};
+}
+
 export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2, {
   resolve: Effect.fn("RuntimePolicyV2.resolve")(function (input) {
     return Effect.succeed({
       runtimeMode: input.thread.runtimeMode,
       interactionMode: input.thread.interactionMode,
       cwd: input.thread.worktreePath,
-      ...(input.thread.toolProfile === undefined ? {} : { toolProfile: input.thread.toolProfile }),
+      ...delegatedToolPolicy(input.thread),
     });
   }),
 });
@@ -189,9 +197,7 @@ export const layerFromProjectStore: Layer.Layer<
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
-          ...(input.thread.toolProfile === undefined
-            ? {}
-            : { toolProfile: input.thread.toolProfile }),
+          ...delegatedToolPolicy(input.thread),
           ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
         });
       }),

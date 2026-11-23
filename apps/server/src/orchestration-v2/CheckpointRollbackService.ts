@@ -340,7 +340,7 @@ export const layer: Layer.Layer<
               providerThread,
               target: rollbackTarget,
               providerThreadTurns,
-              ...(resolvedRuntimePolicy.toolProfile === "dry"
+              ...(resolvedRuntimePolicy.enableTools !== undefined
                 ? { runtimePolicy: resolvedRuntimePolicy }
                 : {}),
             });

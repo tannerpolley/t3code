@@ -79,7 +79,7 @@ import {
   ThreadPullRequestWatch,
 } from "./threadPullRequest.ts";
 import {
-  DelegatedToolProfile,
+  DelegatedToolAdditions,
   ProviderApprovalDecision,
   ProviderApprovalFullAccessOverride,
   ProviderApprovalOption,
@@ -151,6 +151,7 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
   threadId: ThreadId,
   title: Schema.String,
   role: Schema.optionalKey(ThreadRole),
+  enableTools: Schema.optional(DelegatedToolAdditions),
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
@@ -583,7 +584,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
-  toolProfile: Schema.optional(DelegatedToolProfile),
+  enableTools: Schema.optional(DelegatedToolAdditions),
   roleSkillSelection: Schema.optionalKey(Schema.NullOr(RoleSkillSelection)),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
@@ -3906,7 +3907,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("delegated_task.request"),
     role: Schema.optional(ThreadRoleInput),
     issue: Schema.optional(ThreadLinkedIssue),
-    toolProfile: Schema.optional(DelegatedToolProfile),
+    enableTools: Schema.optional(DelegatedToolAdditions),
     roleSkillSelection: Schema.optionalKey(Schema.NullOr(RoleSkillSelection)),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,

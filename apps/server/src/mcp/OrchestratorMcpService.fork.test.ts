@@ -1337,7 +1337,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             candidateDriver: claudeDriver,
           },
           {
-            name: "dry-requires-codex-target",
+            name: "tool-additions-require-codex-target",
             inheritedEnabled: true,
             peerEnabled: true,
             explicit: false,
@@ -1440,12 +1440,12 @@ describe("OrchestratorMcpService provider resolution", () => {
 
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-            if (testCase.name === "dry-requires-codex-target") {
+            if (testCase.name === "tool-additions-require-codex-target") {
               const error = yield* Effect.flip(
                 service.delegateTask(scope, {
                   task: "Summarize the diff.",
                   target: { driverKind: claudeDriver, model: "codex-alt-model" },
-                  toolProfile: "dry",
+                  enableTools: ["apps"],
                 }),
               );
               assert.equal(error.code, "invalid_request");

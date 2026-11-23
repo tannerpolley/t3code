@@ -30,7 +30,7 @@ import {
 } from "./scheduledTask.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import {
-  DelegatedToolProfile,
+  DelegatedToolAdditions,
   ProviderInteractionMode,
   ProviderRequestKind,
   RuntimeMode,
@@ -218,9 +218,9 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     description: "Mode 'wait' only. At most 45 s. A timeout does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-  toolProfile: Schema.optional(DelegatedToolProfile).annotate({
+  enableTools: Schema.optional(DelegatedToolAdditions).annotate({
     description:
-      "Use dry for a new Codex child in this environment when it needs shell, local skills and T3 tools but can skip Codex apps, browser, computer and image tools, auxiliary MCP servers and document plugins. Full uses the provider's normal tools and is the default.",
+      "Restore configured tools for a Codex child. Apps includes remote plugins, browser includes computer and image tools, and documents includes PDF, spreadsheets and presentations. For auxiliary MCP, pass {mcpServer: NAME}.",
   }),
   runtimeMode: Schema.optional(
     OrchestratorMcpRuntimeMode.annotate({

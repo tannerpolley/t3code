@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   type ManagedPolicySummary,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -117,6 +118,44 @@ const layerWithPolicy = (policy?: ManagedPolicySummary) =>
 const layerTest = layerWithPolicy();
 
 it.layer(layerTest)("RuntimePolicyV2", (it) => {
+  it.effect("keeps owner threads full and gives local and linked workers a lean policy", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const owner = makeThread({ now, worktreePath: null });
+      const managedIssueWorker = {
+        ...owner,
+        id: ThreadId.make("thread:managed-issue-worker"),
+        createdBy: "agent",
+        creationSource: "server",
+        lineage: {
+          parentThreadId: owner.id,
+          relationshipToParent: "subagent",
+          rootThreadId: owner.id,
+        },
+      } satisfies OrchestrationV2AppThread;
+      const enableTools = ["browser", { mcpServer: "test-tools" }] as const;
+      const linkedWorker = {
+        ...owner,
+        delegatedFrom: {
+          environmentId: EnvironmentId.make("environment:parent"),
+          threadId: owner.id,
+          title: owner.title,
+          enableTools,
+        },
+      } satisfies OrchestrationV2AppThread;
+      assert.isUndefined((yield* policy.resolve({ thread: owner, modelSelection })).enableTools);
+      assert.deepEqual(
+        (yield* policy.resolve({ thread: managedIssueWorker, modelSelection })).enableTools,
+        [],
+      );
+      assert.deepEqual(
+        (yield* policy.resolve({ thread: linkedWorker, modelSelection })).enableTools,
+        enableTools,
+      );
+    }),
+  );
+
   it.effect("asks for Antigravity command approval when a stored Auto thread falls back", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;

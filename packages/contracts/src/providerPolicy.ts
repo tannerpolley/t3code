@@ -31,8 +31,13 @@ export const RuntimeMode = Schema.Literals([
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
-export const DelegatedToolProfile = Schema.Literals(["full", "dry"]);
-export type DelegatedToolProfile = typeof DelegatedToolProfile.Type;
+export const DelegatedToolAdditions = Schema.Array(
+  Schema.Union([
+    Schema.Literals(["apps", "browser", "documents"]),
+    Schema.Struct({ mcpServer: TrimmedNonEmptyString }),
+  ]),
+);
+export type DelegatedToolAdditions = typeof DelegatedToolAdditions.Type;
 
 const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
   "approval-required": 0,

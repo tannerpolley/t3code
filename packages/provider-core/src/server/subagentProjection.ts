@@ -75,7 +75,7 @@ export function makeSubagentChildThread(input: {
     silentWakeAttention: _silentWakeAttention,
     issues: _issues,
     roleSkillSelection: _roleSkillSelection,
-    toolProfile: _toolProfile,
+    enableTools: _enableTools,
     ...inherited
   } = input.parentThread;
   return {

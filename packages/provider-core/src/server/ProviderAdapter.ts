@@ -2,7 +2,7 @@ import type { OrchestrationV2HistoricalMessage, ServerProviderSkill } from "@t3t
 import {
   ChatAttachment,
   CheckpointId,
-  DelegatedToolProfile,
+  DelegatedToolAdditions,
   MessageId,
   ModelSelection,
   NodeId,
@@ -50,7 +50,7 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   cwd: Schema.NullOr(Schema.String),
-  toolProfile: Schema.optional(DelegatedToolProfile),
+  enableTools: Schema.optional(DelegatedToolAdditions),
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
   /**

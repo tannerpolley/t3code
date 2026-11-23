@@ -2744,11 +2744,6 @@ const make = Effect.gen(function* () {
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
-        if (input.toolProfile === "dry")
-          return yield* failure(
-            "invalid_request",
-            'Tool profile "dry" is available for Codex delegations in this environment only.',
-          );
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         if (Option.isNone(remoteDelegation))
           return yield* failure("invalid_request", "Linked-environment delegation is unavailable.");
@@ -2805,8 +2800,8 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
-      if (!isRetryOfAcceptedDelegation && input.toolProfile === "dry" && target.driver !== "codex")
-        return yield* failure("invalid_request", 'Tool profile "dry" requires a Codex target.');
+      if (!isRetryOfAcceptedDelegation && input.enableTools?.length && target.driver !== "codex")
+        return yield* failure("invalid_request", "enableTools requires a Codex target.");
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
         input.runtimeMode,
@@ -2888,7 +2883,7 @@ const make = Effect.gen(function* () {
         parentNodeId: parentRun.rootNodeId,
         task: brief,
         role,
-        ...(input.toolProfile === undefined ? {} : { toolProfile: input.toolProfile }),
+        ...(input.enableTools === undefined ? {} : { enableTools: input.enableTools }),
         ...(input.title === undefined ? {} : { title: input.title }),
         modelSelection: target.modelSelection,
         runtimeMode,

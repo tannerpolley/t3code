@@ -102,11 +102,17 @@ const delegatedTaskStatusTranscriptFile = new URL(
 );
 
 const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTranscript")(
-  function* (followupResult: string) {
+  function* (followupResult: string, enableBrowser: boolean) {
     const fs = yield* FileSystem.FileSystem;
     const text = yield* fs.readFileString(NodeURL.fileURLToPath(delegatedTaskStatusTranscriptFile));
     const transcript = yield* decodeProviderReplayNdjson(
-      text.replaceAll(queuedFollowupResult, followupResult),
+      (enableBrowser
+        ? text.replace(
+            /,"features\.(?:browser_use(?:_external)?|computer_use|image_generation|in_app_browser)":false/g,
+            "",
+          )
+        : text
+      ).replaceAll(queuedFollowupResult, followupResult),
     );
     // The recording ends when the recorder closes the app-server while the parent
     // turn is still open. This test keeps acting as that parent afterwards, and
@@ -208,7 +214,8 @@ describe("orchestrator MCP toolkit", () => {
   ])("reports $label child results", ({ result, latestSummary }) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("delegated-task-status");
-      const rawTranscript = yield* readDelegatedTaskStatusTranscript(result);
+      const enableBrowser = result === delegatedResult;
+      const rawTranscript = yield* readDelegatedTaskStatusTranscript(result, enableBrowser);
       const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         materializeReplayTranscriptWorkspace(rawTranscript, cwd),
       );
@@ -357,7 +364,7 @@ describe("orchestrator MCP toolkit", () => {
         const delegationStartSequence = yield* orchestrator.getThreadEventSequence(parentThreadId);
         const delegatedCall = yield* invoke("delegate_task", {
           task: delegatedPrompt,
-          toolProfile: "dry",
+          ...(enableBrowser ? { enableTools: ["browser"] } : {}),
           target: {
             providerInstanceId: codexInstanceId,
             model: codexModel,
@@ -371,8 +378,8 @@ describe("orchestrator MCP toolkit", () => {
         expect(delegatedStart.childRunId).not.toBeNull();
         expect(
           (yield* orchestrator.getThreadProjection(localChild(delegatedStart.childThreadId))).thread
-            .toolProfile,
-        ).toBe("dry");
+            .enableTools,
+        ).toEqual(enableBrowser ? ["browser"] : undefined);
         yield* orchestrator
           .streamStoredEventsFrom({
             threadId: parentThreadId,

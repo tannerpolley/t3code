@@ -4452,7 +4452,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect("resumes provider threads without history and restores a dry child's tools", () =>
+  it.effect("resumes without history and restores opted-in tools", () =>
     Effect.gen(function* () {
       const scenario = "codex-resume-metadata";
       const nativeThreadId = `native-${scenario}-thread`;
@@ -4536,9 +4536,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               result: {
                 config: {
                   mcp_servers: {
-                    "external.http": { url: "http://127.0.0.1:43124/mcp", enabled: true },
+                    "external.http": {
+                      url: "http://127.0.0.1:43124/mcp",
+                      enabled: true,
+                      tool_timeout_sec: null,
+                    },
+                    "other-mcp": { command: "echo", enabled: true },
                   },
-                  plugins: { "local@local-marketplace": { enabled: true } },
                 },
                 origins: {},
               },
@@ -4558,16 +4562,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 config: {
                   ...CodexAdapterV2.CODEX_THREAD_CONFIG,
                   "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}-explicit`,
-                  "features.apps": false,
-                  "features.remote_plugin": false,
-                  "features.plugin_sharing": false,
                   "features.browser_use": false,
                   "features.browser_use_external": false,
                   "features.computer_use": false,
                   "features.image_generation": false,
                   "features.in_app_browser": false,
                   mcp_servers: {
-                    "external.http": { url: "http://127.0.0.1:43124/mcp", enabled: false },
+                    "external.http": { url: "http://127.0.0.1:43124/mcp", enabled: true },
+                    "other-mcp": { command: "", enabled: false },
                     "t3-code": {
                       url: "http://127.0.0.1:43123/mcp",
                       tool_timeout_sec: 3_900,
@@ -4581,12 +4583,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       enabled_tools: ["t3_thread_wait", "delegate_task"],
                       omit_tools_from: ["code_mode", "deferred"],
                     },
-                  },
-                  plugins: {
-                    "local@local-marketplace": { enabled: true },
-                    "pdf@openai-primary-runtime": { enabled: false },
-                    "spreadsheets@openai-primary-runtime": { enabled: false },
-                    "presentations@openai-primary-runtime": { enabled: false },
                   },
                 },
               },
@@ -4638,7 +4634,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         threadId: explicitThreadId,
         providerThread: harness.providerThread,
         modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, toolProfile: "dry" },
+        runtimePolicy: {
+          ...CODEX_TEST_RUNTIME_POLICY,
+          enableTools: ["apps", "documents", { mcpServer: "external.http" }],
+        },
       });
 
       assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);

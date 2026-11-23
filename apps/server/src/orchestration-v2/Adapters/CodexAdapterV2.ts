@@ -1549,16 +1549,16 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 const CODEX_T3_DIRECT_MCP_SERVER = "t3-code-direct";
 const CODEX_DIRECT_ONLY_T3_TOOLS = ["t3_thread_wait", "delegate_task"];
 
-const CODEX_DRY_FEATURES = [
-  "apps",
-  "remote_plugin",
-  "plugin_sharing",
-  "browser_use",
-  "browser_use_external",
-  "computer_use",
-  "image_generation",
-  "in_app_browser",
-];
+const CODEX_WORKER_FEATURES = {
+  apps: ["apps", "remote_plugin", "plugin_sharing"],
+  browser: [
+    "browser_use",
+    "browser_use_external",
+    "computer_use",
+    "image_generation",
+    "in_app_browser",
+  ],
+} as const;
 const CODEX_DRY_DISABLED_PLUGINS = [
   "pdf@openai-primary-runtime",
   "spreadsheets@openai-primary-runtime",
@@ -1572,7 +1572,7 @@ function codexThreadRuntimeParams(input: {
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: Pick<
     ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-    "cwd" | "toolProfile"
+    "cwd" | "enableTools"
   >;
   readonly effectiveConfig?: Readonly<Record<string, Schema.Json>>;
 }): {
@@ -1603,31 +1603,58 @@ function codexThreadRuntimeParams(input: {
         };
   const mcpServers = input.effectiveConfig?.mcp_servers;
   const plugins = input.effectiveConfig?.plugins;
+  const additions = input.runtimePolicy?.enableTools ?? [];
+  const extraMcp = new Set(
+    additions.flatMap((group) => (typeof group === "string" ? [] : [group.mcpServer])),
+  );
+  const disabledFeatures = (["apps", "browser"] as const).flatMap((group) =>
+    additions.includes(group) ? [] : CODEX_WORKER_FEATURES[group],
+  );
   const dryConfig =
     input.effectiveConfig === undefined
       ? undefined
       : {
-          ...Object.fromEntries(CODEX_DRY_FEATURES.map((name) => [`features.${name}`, false])),
+          ...Object.fromEntries(disabledFeatures.map((name) => [`features.${name}`, false])),
           // A table handles dotted names. Launch-arg entries need a transport even when disabled.
           mcp_servers: {
             ...Object.fromEntries(
               Object.entries(isCodexConfigTable(mcpServers) ? mcpServers : {}).map(
-                ([name, server]) => [
-                  name,
-                  name === "t3-code" || name === CODEX_T3_DIRECT_MCP_SERVER
-                    ? server
-                    : isCodexConfigTable(server) && typeof server.url === "string"
+                ([name, entry]) => {
+                  const server = isCodexConfigTable(entry) ? entry : {};
+                  if (
+                    name === "t3-code" ||
+                    name === CODEX_T3_DIRECT_MCP_SERVER ||
+                    extraMcp.has(name)
+                  ) {
+                    // Codex translates JSON null to an empty TOML string.
+                    return [
+                      name,
+                      Object.fromEntries(
+                        Object.entries(server).filter(([, value]) => value !== null),
+                      ),
+                    ];
+                  }
+                  return [
+                    name,
+                    typeof server.url === "string"
                       ? { url: server.url, enabled: false }
                       : { command: "", enabled: false },
-                ],
+                  ];
+                },
               ),
             ),
             ...t3Servers,
           },
-          plugins: {
-            ...(isCodexConfigTable(plugins) ? plugins : {}),
-            ...Object.fromEntries(CODEX_DRY_DISABLED_PLUGINS.map((id) => [id, { enabled: false }])),
-          },
+          ...(additions.includes("documents")
+            ? {}
+            : {
+                plugins: {
+                  ...(isCodexConfigTable(plugins) ? plugins : {}),
+                  ...Object.fromEntries(
+                    CODEX_DRY_DISABLED_PLUGINS.map((id) => [id, { enabled: false }]),
+                  ),
+                },
+              }),
         };
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
@@ -2221,7 +2248,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           function* (
             params: Omit<Parameters<typeof codexThreadRuntimeParams>[0], "effectiveConfig">,
           ) {
-            if (params.runtimePolicy?.toolProfile !== "dry")
+            if (params.runtimePolicy?.enableTools === undefined)
               return codexThreadRuntimeParams(params);
             yield* ensureInitialized;
             const { config } = yield* client.request("config/read", {
