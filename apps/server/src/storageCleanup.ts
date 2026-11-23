@@ -1257,6 +1257,18 @@ const make = Effect.gen(function* () {
             })
           )
             return waitForStop("thread activity or shared worktree changed since check");
+          const liveOwner =
+            releaseSlot && !explicit && !deleted
+              ? latestGroup.find((shell) => shell.id === thread.id)
+              : undefined;
+          if (
+            liveOwner?.archivedAt === null &&
+            liveOwner.settledAt === null &&
+            (liveOwner.status === "interrupted" ||
+              liveOwner.status === "cancelled" ||
+              liveOwner.status === "failed")
+          )
+            return "issue worker can still be resumed";
           if (settlementChain.length > 1) {
             const ancestors = yield* Effect.forEach(settlementChain.slice(1), (ancestor) =>
               projections.getThreadShell(ancestor.id),
@@ -1469,12 +1481,7 @@ const make = Effect.gen(function* () {
             allowNonZeroExit: true,
           })).exitCode === 0;
         const issueWorkFinished =
-          deleted ||
-          thread.archivedAt !== null ||
-          thread.settledAt !== null ||
-          thread.status === "cancelled" ||
-          thread.status === "failed" ||
-          thread.status === "interrupted";
+          deleted || thread.archivedAt !== null || thread.settledAt !== null;
         eligible =
           (releaseSlot && explicit) ||
           (integrated && (slot ? issueWorkFinished : !retainedIssue && unchangedApplies));

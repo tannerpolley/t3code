@@ -3310,7 +3310,10 @@ describe("storage cleanup reports and local file policies", () => {
     "interrupted during merged release",
     "was removed explicitly with unmerged commits",
     "received a merge update",
-  ] as const)("returns an issue slot to the pool after the worker %s", (scenario) =>
+    "interrupted",
+    "cancelled",
+    "failed",
+  ] as const)("applies issue slot cleanup for %s", (scenario) =>
     runCleanupTest(
       Effect.gen(function* () {
         const {
@@ -3321,6 +3324,7 @@ describe("storage cleanup reports and local file policies", () => {
           command,
           setThreads,
           getThreads,
+          archivedThreads,
           setBranchPullRequest,
           activate,
         } = yield* cleanupFixture(DEFAULT_SERVER_SETTINGS.storageCleanup);
@@ -3333,7 +3337,11 @@ describe("storage cleanup reports and local file policies", () => {
         yield* fs.makeDirectory(slots);
         yield* command(repo, ["worktree", "move", worktree, slot]);
         yield* command(slot, ["update-ref", "refs/worktree/t3-issue-slot", "HEAD"]);
-        if (scenario !== "finished with no PR") {
+        const unsettledStatus =
+          scenario === "interrupted" || scenario === "cancelled" || scenario === "failed"
+            ? scenario
+            : null;
+        if (unsettledStatus === null && scenario !== "finished with no PR") {
           yield* fs.writeFileString(`${slot}/tracked.txt`, "issue work\n");
           yield* command(slot, ["commit", "-am", "issue work"]);
         }
@@ -3357,7 +3365,8 @@ describe("storage cleanup reports and local file policies", () => {
           shell({
             branch: "feature",
             worktreePath: slot,
-            archivedAt: at(-DAY_MS),
+            archivedAt: unsettledStatus === null ? at(-DAY_MS) : null,
+            status: unsettledStatus ?? "idle",
             linkedIssue: {
               host: "github.com",
               repository: "owner/project",
@@ -3370,6 +3379,18 @@ describe("storage cleanup reports and local file policies", () => {
             },
           }),
         ]);
+        if (unsettledStatus !== null) {
+          for (const pullRequest of [null, merged]) {
+            if (pullRequest !== null) setBranchPullRequest(pullRequest);
+            yield* service.runNow;
+            expect(archivedThreads).toEqual([]);
+            expect(getThreads()[0]).toMatchObject({ worktreePath: slot, branch: "feature" });
+            expect((yield* command(slot, ["branch", "--show-current"])).stdout.trim()).toBe(
+              "feature",
+            );
+          }
+          return;
+        }
         if (scenario === "was removed explicitly with unmerged commits") {
           expect((yield* service.runNow).entries[0]).toMatchObject({
             outcome: "kept",
