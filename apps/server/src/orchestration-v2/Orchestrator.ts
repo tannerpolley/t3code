@@ -116,6 +116,7 @@ import { threadQuietMinutes } from "@t3tools/shared/threadActivity";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -15982,8 +15983,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     dispatchWithReceiptEffect: (command) => dispatchWithReceiptEffect(command),
   });
 
+  const draftPrRepositories = yield* Config.String("T3CODE_ISSUE_DRAFT_PR_REPOSITORIES").pipe(
+    Config.withDefault(""),
+    Config.map(
+      (value) =>
+        new Set(
+          value
+            .toLowerCase()
+            .split(",")
+            .map((key) => key.trim()),
+        ),
+    ),
+    Effect.orDie,
+  );
   const issueWork = makeIssueWorkCommands({
     ...forkCommandHooks,
+    draftPrRepositories,
     providerAdapters,
     dispatchDelegatedTaskRequest,
     dispatchMessage,
