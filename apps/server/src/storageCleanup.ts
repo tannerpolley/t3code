@@ -1609,6 +1609,7 @@ const make = Effect.gen(function* () {
               force: true,
             });
             for (const member of members) {
+              if (member.role === "writer") continue;
               yield* engine.dispatch({
                 type: "thread.archive",
                 commandId: CommandId.make(`storage-cleanup:merged:${member.id}:${head.commitSha}`),
