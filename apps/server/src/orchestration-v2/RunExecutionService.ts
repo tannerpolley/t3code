@@ -38,6 +38,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { supportsManagedIssueWork } from "../issues/IssueEligibility.ts";
@@ -690,7 +691,9 @@ export interface RunExecutionServiceV2Shape {
    * Starts the run's baseline capture on a child fiber so it overlaps provider session startup.
    * Pass the returned effect to `startRootRun`, which awaits it before prompting the provider.
    */
-  readonly forkBaseline: (input: RunBaselineInput) => Effect.Effect<Effect.Effect<void>>;
+  readonly forkBaseline: (
+    input: RunBaselineInput,
+  ) => Effect.Effect<Effect.Effect<void>, never, Scope.Scope>;
 }
 
 export class RunExecutionServiceV2 extends Context.Service<
@@ -1121,7 +1124,7 @@ export const layer: Layer.Layer<
     return RunExecutionServiceV2.of({
       forkBaseline: (input) =>
         captureRunBaseline(input).pipe(
-          Effect.forkChild({ startImmediately: true }),
+          Effect.forkScoped({ startImmediately: true }),
           Effect.map(Fiber.join),
         ),
       startRootRun: Effect.fn("RunExecutionService.startRootRun")(function* (input) {

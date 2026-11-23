@@ -42,6 +42,14 @@ server starts: production and explicitly configured homes use
 `<worktree>/.t3/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
 worktree uses `~/.t3/dev/logs/server.trace.ndjson`.
 
+The server's local file samples one percent of routine spans by span ID. It always keeps failures,
+events, spans lasting at least one second, SQL spans that waited at least 100 ms for a connection,
+thread launch and provider start milestones, heap spike signals, and spans tagged with at least
+64 MiB of heap growth. Interrupted spans and smaller heap-growth spans are sampled unless another
+retention rule applies.
+The policy also applies to renderer spans written to the server file. A retained span may have
+missing parents or children. OTLP export uses the original sampling decision.
+
 Important fields common to both record types:
 
 - `type`: `effect-span` or `otlp-span`
@@ -79,8 +87,8 @@ request.
 #### Summarize the trace file
 
 `t3 trace summary` reads the trace file and its rotated backups directly, so it works while the
-server is stalled or stopped. It prints counts, rates, and latency percentiles per span name. Use
-it to measure background work or to compare two builds.
+server is stalled or stopped. It prints counts, rates, and latency percentiles per span name for
+the records the server retained. Sampling and the exceptions above affect those statistics.
 
 ```bash
 t3 trace summary --since 30m --limit 40

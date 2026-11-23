@@ -1,5 +1,6 @@
 import { RunId, ThreadId, type ThreadProcesses } from "@t3tools/contracts";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { pullRequestWatchTaskId } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 import { expect, it } from "vite-plus/test";
 
@@ -115,6 +116,15 @@ it("overlays known background work in Projects after unseen completion has been 
   );
   expect(workStatus).toBe("waiting");
   expect(resolveSidebarProjectStatusMark(thread, undefined, status, workStatus)).toBe("done");
+  const child = presentThreadShell(fixture.environmentId, {
+    ...thread.source,
+    lineage: {
+      parentThreadId: ThreadId.make("parent"),
+      rootThreadId: ThreadId.make("parent"),
+      relationshipToParent: "fork",
+    },
+  });
+  expect(resolveSidebarProjectStatusMark(child, undefined, status, workStatus)).toBe("done");
   expect(
     resolveSidebarProjectStatusMark(
       { ...thread, lastVisitedAt: "2026-10-20T10:01:00.000Z" },
@@ -168,6 +178,21 @@ it("lists commands directly before agents, deduplicating each program", () => {
     ["t", undefined],
     ["agent", 0],
   ]);
+});
+
+it("lists PR watches separately from each other and other monitors", () => {
+  const tasks = [
+    { taskId: "watch", kind: "monitor" as const },
+    ...[579, 580].map((number) => ({
+      taskId: pullRequestWatchTaskId({ host: "github.com", repository: "acme/app", number }),
+      kind: "monitor" as const,
+    })),
+  ];
+  const rows = describeSidebarBackgroundWork(tasks, []);
+
+  expect(foldThreadWork(rows, []).rows.map((row) => row.taskId)).toEqual(
+    tasks.map((task) => task.taskId),
+  );
 });
 
 it("lists each program once, skipping a command's program before capping the groups", () => {

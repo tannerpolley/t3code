@@ -140,51 +140,56 @@ export function createThreadFamilyAtoms<R, ER, E>(
       },
     ),
   );
-  const EMPTY_WORKER_PAGES = { pages: EMPTY_READS, waiting: false, failedQuery: null };
   const workerPages = Atom.family((key: string) => {
-    const [environmentId, threadId, count] = JSON.parse(key) as [EnvironmentId, ThreadId, number];
-    const state = Atom.make(
-      (
-        get,
-      ): {
-        readonly pages: ReadonlyArray<OrchestrationV2ThreadFamily>;
-        readonly waiting: boolean;
-        readonly failedQuery: ReturnType<typeof familyQueryAtom> | null;
-      } => {
-        if (count === 0) return EMPTY_WORKER_PAGES;
-        const generation = get(generationAtom(environmentId));
-        if (generation === 0) return { ...EMPTY_WORKER_PAGES, waiting: true };
-        const removalSequence = get(removalSequenceAtom(environmentId));
-        const pages: OrchestrationV2ThreadFamily[] = [];
-        let before: OrchestrationV2ThreadFamily["nextWorkerPage"];
-        for (let index = 0; index < count; index++) {
-          const query = familyQueryAtom({
-            environmentId,
-            input: {
-              threadId,
-              generation,
-              removalSequence,
-              workers: before === undefined ? {} : { before },
-            },
-          });
-          const result = get(query);
-          const read = threadFamilyRead(result);
-          const page = selectEnvironmentQueryData(result);
-          if (page === null) {
-            return {
-              pages,
-              waiting: read === "pending",
-              failedQuery: read === "failed" ? query : null,
-            };
-          }
-          pages.push(page);
-          before = page.nextWorkerPage;
-          if (before === undefined) break;
+    const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
+    const count = Atom.make(1);
+    interface WorkerPageState {
+      readonly generation: number;
+      readonly pages: ReadonlyArray<OrchestrationV2ThreadFamily>;
+      readonly waiting: boolean;
+      readonly failedQuery: ReturnType<typeof familyQueryAtom> | null;
+    }
+    const state = Atom.make((get): WorkerPageState => {
+      const generation = get(generationAtom(environmentId));
+      if (generation === 0)
+        return { generation, pages: EMPTY_READS, waiting: true, failedQuery: null };
+      const limit = get(count);
+      const removalSequence = get(removalSequenceAtom(environmentId));
+      const pages: OrchestrationV2ThreadFamily[] = [];
+      let before: OrchestrationV2ThreadFamily["nextWorkerPage"];
+      for (let index = 0; index < limit; index++) {
+        const query = familyQueryAtom({
+          environmentId,
+          input: {
+            threadId,
+            generation,
+            removalSequence,
+            workers: before === undefined ? {} : { before },
+          },
+        });
+        const result = get(query);
+        const read = threadFamilyRead(result);
+        const page = selectEnvironmentQueryData(result);
+        if (page === null) {
+          const previous = Option.getOrUndefined(get.self<WorkerPageState>());
+          // Keep the previous chain while its replacement loads; the shell still applies removals.
+          return {
+            generation,
+            pages:
+              previous?.generation === generation && previous.pages.length > 0
+                ? previous.pages
+                : pages,
+            waiting: read === "pending",
+            failedQuery: read === "failed" ? query : null,
+          };
         }
-        return { pages, waiting: false, failedQuery: null };
-      },
-    );
-    return { state, rows: Atom.map(state, (result) => result.pages) };
+        pages.push(page);
+        before = page.nextWorkerPage;
+        if (before === undefined) break;
+      }
+      return { generation, pages, waiting: false, failedQuery: null };
+    });
+    return { count, state, rows: Atom.map(state, (result) => result.pages) };
   });
 
   const familyAtom = Atom.family((key: string) => {

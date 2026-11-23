@@ -1433,7 +1433,11 @@ it.effect.each([
           );
           assert.include(
             brief,
-            `Push only this issue branch to github.com/tannerpolley/t3code and open or update a draft PR there with Closes #${number}`,
+            "First have a fresh read-only reviewer subagent review this worktree's diff against the issue, and fix its blockers.",
+          );
+          assert.include(
+            brief,
+            `Then push only this issue branch to github.com/tannerpolley/t3code and open the PR there ready for review, or mark an existing draft ready, with Closes #${number} and the review verdict in the body; if blockers remain, keep any PR a draft and report them instead.`,
           );
           assert.include(
             brief,
@@ -1442,7 +1446,8 @@ it.effect.each([
           assert.notInclude(brief, "publishing retain separate approval");
         } else {
           assert.include(brief, "Other GitHub mutations and publishing retain separate approval.");
-          assert.notInclude(brief, "Push only this issue branch");
+          assert.notInclude(brief, "push only this issue branch");
+          assert.notInclude(brief, "reviewer subagent");
         }
       }
       newBlocker = true;

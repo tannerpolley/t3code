@@ -1,3 +1,4 @@
+import { isIssueWorkerChild } from "@t3tools/shared/issueWorkerStatus";
 import type { ThreadProcessGroup, ThreadProcesses } from "@t3tools/contracts";
 import { shellProgramName } from "@t3tools/shared/shellCommand";
 
@@ -25,7 +26,10 @@ export function foldThreadWork(
   const byProgram = new Map<string, BackgroundTaskRow>();
   for (const row of [...rows, ...added]) {
     if (row.kind === "subagent") continue;
-    const key = workRowProgram(row) ?? `${row.kind}:${row.commandKind ?? ""}`;
+    const key =
+      row.pullRequestNumber === undefined
+        ? (workRowProgram(row) ?? `${row.kind}:${row.commandKind ?? ""}`)
+        : row.taskId;
     const first = byProgram.get(key);
     byProgram.set(key, first ? { ...first, sameProgram: (first.sameProgram ?? 1) + 1 } : row);
   }
@@ -105,6 +109,7 @@ export function resolveSidebarProjectStatusMark(
   status: SidebarThreadStatus,
   workStatus: SidebarThreadStatus,
 ) {
+  if (isIssueWorkerChild(thread.source)) return workStatus;
   const completionMark = resolveThreadStatusMark(thread, localLastVisitedAt, status);
   return completionMark === "done" ? completionMark : workStatus;
 }

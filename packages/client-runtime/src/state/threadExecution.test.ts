@@ -19,6 +19,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import { pullRequestWatchTaskId } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
@@ -773,6 +774,19 @@ describe("presentPendingBackgroundWork", () => {
       },
     ]);
     expect(presentation?.items[0]?.label).toBe("mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF");
+  });
+
+  it("leaves a PR watch with finished checks out of the waiting count", () => {
+    const watch = (number: number) => ({
+      taskId: pullRequestWatchTaskId({ host: "github.com", repository: "acme/app", number }),
+      kind: "monitor" as const,
+    });
+    const presentation = presentPendingBackgroundWork([
+      { taskId: "agent", kind: "subagent", description: "Review" },
+      { ...watch(579), awaited: true },
+      watch(580),
+    ]);
+    expect(presentation?.title).toBe("Waiting on 1 subagent and 1 monitor");
   });
 });
 
