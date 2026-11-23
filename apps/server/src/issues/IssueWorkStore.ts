@@ -600,7 +600,14 @@ export const layer = Layer.effect(
               WHERE request.root_thread_id = owner.root_thread_id AND work.owner_thread_id IS NULL AND request.queue_state IS NULL AND json_type(request.payload_json, '$.cancellation') IS NULL)
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads worker JOIN orchestration_v2_projection_runs run ON run.thread_id = worker.thread_id
               WHERE CASE WHEN json_valid(worker.payload_json) THEN json_extract(worker.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id
-                AND json_type(worker.payload_json, '$.linkedIssue') = 'object' AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')))
+                AND json_type(worker.payload_json, '$.linkedIssue') = 'object' AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting'))
+            -- Restart cuts the readers ahead of a queued reader without a promotion event.
+            OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads reader JOIN orchestration_v2_projection_runs run ON run.thread_id = reader.thread_id
+              WHERE CASE WHEN json_valid(reader.payload_json) THEN json_extract(reader.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id
+                AND json_extract(reader.payload_json, '$.role') IN ${sql.in(readOnlyIssueRoles)}
+                AND json_extract(reader.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                AND reader.deleted_at IS NULL AND reader.archived_at IS NULL
+                AND run.status = 'queued' AND coalesce(json_extract(run.payload_json, '$.queueHeld'), 0) <> 1))
 
       `.pipe(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.root_thread_id))),
