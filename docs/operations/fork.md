@@ -75,6 +75,7 @@ PATH=$M/node_modules/.bin:$PATH CI=true T3CODE_PROJECT_ROOT=$M node scripts/setu
   - Run Git tests with `GIT_CONFIG_GLOBAL=/dev/null`, because the owner's global hooks interfere. One failure about binary diff statistics on Git 2.43 comes from the environment, not the code.
   - A branch that adds an MCP tool must also pass `apps/server/src/mcp/toolkits/core.test.ts`, which checks tool labels.
 - GitHub Actions are off on the GitHub copy: every workflow is disabled. Upstream's build and test workflows need its paid Blacksmith runners and would wait in the queue forever, and the rest serve upstream's own repository. A workflow that a sync adds starts out enabled: turn it off with `gh workflow disable -R tannerpolley/t3code <name>`.
+- The owner's launcher sets `T3CODE_PR_WATCH_NO_CHECKS_REPOSITORIES=github.com/tannerpolley/t3code` for the desktop's server. This comma-separated list of `host/owner/repo` keys skips the initial wait for checks on those repositories. Checks that do report, such as review-bot checks, still count. Set the same variable on a standalone server that should use this policy.
 
 ## Dev preview
 
@@ -119,7 +120,20 @@ Restarting T3 stops every running agent turn, so ask before doing it.
 
 When a newer fork build is staged, the in-app update pill offers to install it.
 After confirmation, T3 quits and reopens through the launcher to install the build.
-It checks for staged builds shortly after startup and every four minutes while running.
+It checks for staged builds shortly after startup and every four hours while running.
+
+The owner's launcher passes these settings on both startup paths:
+
+```sh
+export T3CODE_DESKTOP_LAUNCHER_PATH="$HOME/.local/bin/t3-code"
+export T3CODE_STAGED_UPDATE_DIRECTORY="$HOME/.local/opt/t3-code/pending"
+export T3CODE_STAGED_UPDATE_VERSION_PATTERN='^(\d+(?:\.\d+)*)-v(2\.\d+(?:\.\d+)*)$'
+```
+
+The pattern matches the full app version and the version in `T3-Code-<version>-x86_64.AppImage`.
+Its first two captures are the dotted numeric base and staged build versions. Setting either
+staged-update variable selects local staging. If the launcher configuration is incomplete or
+the build is unsupported, automatic updates are disabled for that launch.
 
 ## Upstream syncs
 

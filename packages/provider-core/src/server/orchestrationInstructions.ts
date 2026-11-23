@@ -64,7 +64,7 @@ export function t3OrchestrationBaseInstructions(managedIssue?: ManagedIssueRole)
 const MANAGED_ISSUE_PROPOSALS =
   "Keep issues current through propose_issue_change. Submit the typed proposal and follow its returned decision. Reuse its `clientRequestId` on retry. Agents cannot approve changes, and question answers never approve a mutation. A stale baseline needs a new proposal and preview. An uncertain create that needs attention requires the user to check GitHub and mark it resolved. Submit another create only when you intend to create a separate issue. T3 tracks its written bodies by exact baseline, never GitHub author login. Labels and assignees are outside this tool's scope. Ask before expanding the approved milestone or repository scope.";
 
-const MANAGED_ISSUE_WORKFLOW = `Run heavy checks through \`agent-heavy\`. T3 posts managed status and closeout comments. End the turn while children work and report results and remaining gates in your final message.`;
+const MANAGED_ISSUE_WORKFLOW = `T3 posts managed status and closeout comments. End the turn while children work and report results and remaining gates in your final message.`;
 
 const ISSUE_OWNER_WORKFLOW = `Use Designer for research or planning. Read native hierarchy and blockers before delegation. For an outside blocker, use propose_issue_change to create an issue, add blocked_by with the blocked issue as number and the new issue as blockerNumber, then report it in your final result. Use the question tool for owner decisions and fix failing tests within scope.`;
 

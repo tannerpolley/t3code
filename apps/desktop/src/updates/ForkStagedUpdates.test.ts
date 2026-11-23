@@ -18,11 +18,12 @@ import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { compareForkVersions } from "./ForkStagedUpdates.ts";
 import { makeHarness, type UpdatesHarnessOptions } from "./updatesTestHarness.ts";
 
-const buildName = (version: string) => `T3-Code-0.0.45-v${version}-x86_64.AppImage`;
+const buildName = (version: string) => `T3-Code-0.0.45-build${version}-x86_64.AppImage`;
+const versionPattern = String.raw`^(\d+(?:\.\d+)*)-build(7\.\d+(?:\.\d+)*)$`;
 
 const withForkHarness = <E>(
   test: (fixture: {
-    home: string;
+    launcher: string;
     stage: (version: string) => Effect.Effect<void, PlatformError.PlatformError>;
     clear: () => Effect.Effect<void, PlatformError.PlatformError>;
     chmodLauncher: (mode: number) => Effect.Effect<void, PlatformError.PlatformError>;
@@ -39,15 +40,19 @@ const withForkHarness = <E>(
       const fileSystem = yield* FileSystem.FileSystem;
       const { join } = yield* Path.Path;
       const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fork-updates-" });
-      const pending = join(home, ".local/opt/t3-code/pending");
-      const launcher = join(home, ".local/bin/t3-code");
-      yield* fileSystem.makeDirectory(join(home, ".local/bin"), { recursive: true });
+      const pending = join(home, "staged builds");
+      const launcher = join(home, "test-launcher");
       yield* fileSystem.writeFileString(launcher, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       const harness = makeHarness({
-        appVersion: "0.0.45-v2.12.14",
+        appVersion: "0.0.45-build7.12.14",
         platform: "linux",
         homeDirectory: home,
-        env: { APPIMAGE: "/installed/T3-Code.AppImage" },
+        env: {
+          APPIMAGE: "/installed/T3-Code.AppImage",
+          T3CODE_DESKTOP_LAUNCHER_PATH: launcher,
+          T3CODE_STAGED_UPDATE_DIRECTORY: pending,
+          T3CODE_STAGED_UPDATE_VERSION_PATTERN: versionPattern,
+        },
         fileSystem: {
           readDirectory: fileSystem.readDirectory,
           stat: fileSystem.stat,
@@ -56,7 +61,7 @@ const withForkHarness = <E>(
         ...options,
       });
       yield* test({
-        home,
+        launcher,
         harness,
         stage: (version) =>
           fileSystem
@@ -109,7 +114,22 @@ describe("ForkStagedUpdates", () => {
         { APPIMAGE: "/installed/T3-Code.AppImage", T3CODE_DISABLE_AUTO_UPDATE: "true" },
         { APPIMAGE: undefined, T3CODE_DISABLE_AUTO_UPDATE: "false" },
       ]) {
-        const harness = makeHarness({ appVersion: "0.0.45-v2.12.14", platform: "linux", env });
+        const harness = makeHarness({
+          appVersion: "0.0.45-build7.12.14",
+          platform: "linux",
+          env: {
+            T3CODE_DESKTOP_LAUNCHER_PATH: "/opt/test-launcher",
+            T3CODE_STAGED_UPDATE_DIRECTORY: "/opt/staged",
+            T3CODE_STAGED_UPDATE_VERSION_PATTERN: versionPattern,
+            ...env,
+          },
+          policy: {
+            mode: "auto",
+            allowNightly: true,
+            feedUrl: "https://example.com/updates",
+            message: null,
+          },
+        });
         yield* Effect.scoped(
           Effect.gen(function* () {
             const updates = yield* DesktopUpdates.DesktopUpdates;
@@ -138,13 +158,13 @@ describe("ForkStagedUpdates", () => {
           const absent = yield* updates.check("manual");
           assert.equal(absent.state.status, "up-to-date");
           assert.isNull(absent.state.downloadedVersion);
-          for (const version of ["2.12.13", "2.12.14", "2.12.14.1", "2.12.15"]) {
+          for (const version of ["7.12.13", "7.12.14", "7.12.14.1", "7.12.15"]) {
             yield* clear();
             yield* stage(version);
             const { state } = yield* updates.check("manual");
-            const newer = version === "2.12.14.1" || version === "2.12.15";
+            const newer = version === "7.12.14.1" || version === "7.12.15";
             assert.equal(state.status, newer ? "downloaded" : "up-to-date");
-            assert.equal(state.downloadedVersion, newer ? `0.0.45-v${version}` : null);
+            assert.equal(state.downloadedVersion, newer ? `0.0.45-build${version}` : null);
             assert.equal(state.availableVersion, state.downloadedVersion);
           }
           yield* clear();
@@ -171,17 +191,17 @@ describe("ForkStagedUpdates", () => {
         yield* TestClock.adjust(Duration.seconds(15));
         yield* Fiber.join(startup);
         assert.isNull((yield* updates.getState).downloadedVersion);
-        yield* stage("2.12.14.1");
-        yield* stage("2.12.15");
+        yield* stage("7.12.14.1");
+        yield* stage("7.12.15");
         const { changes: stagedChanges } = yield* updates.subscribe;
         const downloaded = yield* Stream.runHead(
           stagedChanges.pipe(Stream.filter((state) => state.status === "downloaded")),
         ).pipe(Effect.forkChild);
-        yield* TestClock.adjust(Duration.minutes(4));
+        yield* TestClock.adjust(Duration.hours(4));
         yield* Fiber.join(downloaded);
         const state = yield* updates.getState;
         assert.equal(state.status, "downloaded");
-        assert.equal(state.downloadedVersion, "0.0.45-v2.12.15");
+        assert.equal(state.downloadedVersion, "0.0.45-build7.12.15");
         assert.equal(harness.checkCount(), 0);
       }),
     ),
@@ -192,20 +212,20 @@ describe("ForkStagedUpdates", () => {
     () => {
       const steps: string[] = [];
       return withForkHarness(
-        ({ home, stage, harness }) =>
+        ({ launcher, stage, harness }) =>
           Effect.gen(function* () {
-            yield* stage("2.12.15");
+            yield* stage("7.12.15");
             const updates = yield* DesktopUpdates.DesktopUpdates;
             yield* updates.configure;
             yield* updates.check("manual");
-            const result = yield* updates.installPrepared("0.0.45-v2.12.15");
+            const result = yield* updates.installPrepared("0.0.45-build7.12.15");
             assert.isTrue(result.accepted);
             assert.isFalse(result.failed);
             assert.deepEqual(steps, ["relaunch"]);
             assert.deepEqual(harness.installSteps, ["relaunch", "quit"]);
             assert.deepEqual(harness.relaunches, [
               {
-                execPath: `${home}/.local/bin/t3-code`,
+                execPath: launcher,
                 args: ["--update-from-pid", String(process.pid)],
               },
             ]);
@@ -214,7 +234,7 @@ describe("ForkStagedUpdates", () => {
             assert.isTrue(yield* Ref.get(state.quitting));
             assert.deepEqual(
               [...harness.installRecords.values()].map((text) => JSON.parse(text)),
-              [{ fromVersion: "0.0.45-v2.12.14", targetVersion: "0.0.45-v2.12.15" }],
+              [{ fromVersion: "0.0.45-build7.12.14", targetVersion: "0.0.45-build7.12.15" }],
             );
           }),
         {
@@ -232,12 +252,12 @@ describe("ForkStagedUpdates", () => {
   it.effect("recovers instead of quitting when the launcher cannot be executed", () =>
     withForkHarness(({ stage, chmodLauncher, harness }) =>
       Effect.gen(function* () {
-        yield* stage("2.12.15");
+        yield* stage("7.12.15");
         yield* chmodLauncher(0o644);
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
         yield* updates.check("manual");
-        const result = yield* updates.installPrepared("0.0.45-v2.12.15");
+        const result = yield* updates.installPrepared("0.0.45-build7.12.15");
         assert.isTrue(result.failed);
         assert.deepEqual(harness.relaunches, []);
         const state = yield* DesktopState.DesktopState;
@@ -249,14 +269,14 @@ describe("ForkStagedUpdates", () => {
   it.effect("refreshes the offer when the staged build changes before installation", () =>
     withForkHarness(({ stage, harness }) =>
       Effect.gen(function* () {
-        yield* stage("2.12.15");
+        yield* stage("7.12.15");
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
         yield* updates.check("manual");
-        yield* stage("2.12.16");
-        const result = yield* updates.installPrepared("0.0.45-v2.12.15");
+        yield* stage("7.12.16");
+        const result = yield* updates.installPrepared("0.0.45-build7.12.15");
         assert.isFalse(result.failed);
-        assert.equal(result.state.downloadedVersion, "0.0.45-v2.12.16");
+        assert.equal(result.state.downloadedVersion, "0.0.45-build7.12.16");
         assert.equal(result.state.status, "downloaded");
         assert.deepEqual(harness.installSteps, []);
         assert.equal(harness.installRecords.size, 0);
@@ -268,12 +288,12 @@ describe("ForkStagedUpdates", () => {
   it.effect("recovers instead of quitting when the confirmed staged build disappears", () =>
     withForkHarness(({ stage, clear, harness }) =>
       Effect.gen(function* () {
-        yield* stage("2.12.15");
+        yield* stage("7.12.15");
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
         yield* updates.check("manual");
         yield* clear();
-        const result = yield* updates.installPrepared("0.0.45-v2.12.15");
+        const result = yield* updates.installPrepared("0.0.45-build7.12.15");
         assert.isFalse(result.failed);
         assert.equal(result.state.status, "up-to-date");
         assert.deepEqual(harness.installSteps, []);
