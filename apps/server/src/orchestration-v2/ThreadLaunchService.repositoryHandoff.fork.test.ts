@@ -1538,6 +1538,7 @@ describe("fresh-thread repository handoff", () => {
             type: "thread.stop",
             threadId: rootId,
             commandId: CommandId.make("stop-mailbox:stop"),
+            stopDelegatedTasks: false,
           });
         else
           yield* threads.dispatch({
