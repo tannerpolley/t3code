@@ -144,6 +144,15 @@ export const RepositoryOrchestration = Schema.Struct({
       wasPaused: Schema.Boolean,
     }),
   ),
+  automaticHandoff: Schema.optional(
+    Schema.Struct({
+      sourceRunId: RunId,
+      requestId: CommandId,
+      contextTokens: Schema.Int,
+      startedAt: Schema.String,
+      status: Schema.Literals(["verifying", "failed"]),
+    }),
+  ),
   handoffHistory: Schema.optional(
     Schema.Array(
       Schema.Struct({

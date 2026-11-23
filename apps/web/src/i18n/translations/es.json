@@ -145,5 +145,11 @@
   "86d60d42f6cb4a40": "Inactivo",
   "12969a434884d7a0": "Listo para revisión",
   "066644fe3ef88185": "Agentes de trabajo",
-  "f1575429c821c2b9": "Enviado a {thread}"
+  "f1575429c821c2b9": "Enviado a {thread}",
+  "4c3fd3add524da9b": "Traspaso automático del orquestador",
+  "2578ae9180b4292a": "Inicia un orquestador nuevo para el repositorio cuando el contexto alcanza el umbral de tokens y no hay trabajo en curso.",
+  "82e5d02834c683dd": "Umbral de traspaso (tokens)",
+  "50c54e168c9c4ab6": "Predecesor",
+  "759e59bb1b2ed0b6": "Sucesor",
+  "447f20052e59a42d": "Orquestación"
 }

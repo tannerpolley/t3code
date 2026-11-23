@@ -68,7 +68,7 @@ const MANAGED_ISSUE_WORKFLOW = `T3 posts managed status and closeout comments. E
 
 const ISSUE_OWNER_WORKFLOW = `Use Designer for research or planning. Read native hierarchy and blockers before delegation. For an outside blocker, use propose_issue_change to create an issue, add blocked_by with the blocked issue as number and the new issue as blockerNumber, then report it in your final result. Use the question tool for owner decisions and fix failing tests within scope.`;
 
-const ROOT_WORKFLOW = `Own top-level issues. Read complete native hierarchy and blockers before delegation. Use \`work_through_milestone\` for milestones and \`get_repository_orchestration\` for capacity and queue controls. Wait for T3 wakes. Ask before changing worker limits.`;
+const ROOT_WORKFLOW = `Own top-level issues. Read complete native hierarchy and blockers before delegation. Use \`work_through_milestone\` for milestones and \`get_repository_orchestration\` for capacity and queue controls. Wait for T3 wakes. Ask before changing worker limits. When automatic handoff is enabled, T3 uses the configured context threshold to verify a fresh successor at an idle boundary. Continue here until T3 transfers ownership. Use \`request_repository_handoff\` for a manual transfer.`;
 
 const ROLE_GUIDANCE: Partial<Record<ThreadRole, string>> = {
   designer:

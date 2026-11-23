@@ -88,6 +88,8 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
+        if (records.thread.repositoryOrchestration?.automaticHandoff?.status === "verifying")
+          return;
         const latestRun = records.runs
           .filter((run) => run.status !== "cancelled" || run.startedAt !== null)
           .reduce<(typeof records.runs)[number] | undefined>(

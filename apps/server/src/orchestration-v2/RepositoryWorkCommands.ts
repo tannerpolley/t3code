@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
@@ -24,6 +25,12 @@ import type { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type { DelegatedTaskRequest, ForkCommandHooks } from "./IssueWorkCommands.ts";
 import type { OrchestratorV2Error, OrchestratorProjectionError } from "./Orchestrator.ts";
+import {
+  automaticHandoffMessageId,
+  automaticHandoffThreadId,
+  REPOSITORY_HANDOFF_READY,
+  REPOSITORY_HANDOFF_VERIFICATION_TIMEOUT_MS,
+} from "./AutomaticRepositoryHandoff.ts";
 import { isOpenBlockerSuspension, isAutomaticIssueSuspension } from "../issues/IssueEligibility.ts";
 
 interface RepositoryWorkCommandHooks extends ForkCommandHooks {
@@ -190,7 +197,8 @@ export function makeRepositoryWorkCommands({
   ) {
     // Schedules resolve the repository owner before sending; a handoff can commit in between.
     if (
-      command.scheduledTaskId !== undefined &&
+      (command.scheduledTaskId !== undefined ||
+        (thread.handoffToThreadId !== undefined && command.createdBy === "system")) &&
       thread.repositoryOrchestration !== undefined &&
       repositoryPhase(thread.repositoryOrchestration) === "retired"
     )
@@ -460,43 +468,113 @@ export function makeRepositoryWorkCommands({
       .getThread(command.threadId)
       .pipe(mapDispatchError(command));
     const config = shell.repositoryOrchestration;
+    const automatic = command.automatic;
+    const attempt = config?.automaticHandoff;
     if (
       config === undefined ||
-      config.handoff === undefined ||
-      repositoryPhase(config) !== "draining" ||
       config.revision !== command.expectedRevision ||
-      repositoryPhase(config) === "retired"
+      repositoryPhase(config) === "retired" ||
+      (automatic === undefined
+        ? config.handoff?.status !== "draining"
+        : config.handoff !== undefined ||
+          (automatic.type === "verify"
+            ? attempt?.status !== "verifying"
+            : attempt?.status === "verifying" || attempt?.sourceRunId === automatic.sourceRunId))
     )
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
         cause: "Repository ownership or the handoff changed. Refresh before transferring.",
       });
-    const owner = Option.isNone(issueWorkStore)
-      ? null
-      : yield* issueWorkStore.value.repositoryOwner(config).pipe(mapDispatchError(command));
+    const refuse = (cause: string) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
+    if (Option.isNone(issueWorkStore)) return yield* refuse("Repository work is unavailable.");
+    const store = issueWorkStore.value;
+    const owner = yield* store.repositoryOwner(config).pipe(mapDispatchError(command));
     if (owner?.rootThreadId !== command.threadId || owner.revision !== command.expectedRevision)
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "Repository ownership revision conflict during handoff.",
-      });
-    if (
-      Option.isNone(issueWorkStore) ||
-      !(yield* issueWorkStore.value
-        .subtreeDrained(command.threadId)
-        .pipe(mapDispatchError(command)))
-    )
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "Handoff is waiting for the active issue subtree and final deliveries to drain.",
-      });
+      return yield* refuse("Repository ownership revision conflict during handoff.");
+
     const now = yield* DateTime.now;
-    const nextThreadId = config.handoff.nextThreadId;
+    const nextThreadId =
+      automatic === undefined ? config.handoff!.nextThreadId : automaticHandoffThreadId(shell.id);
+    const emitEvent = emit(events, command);
+    const notice = Effect.fn("orchestrationV2.repositoryHandoffNotice")(function* (
+      title: string,
+      message: string,
+    ) {
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: shell.id,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`handoff-notice:${command.commandId}`),
+          type: "system_notice",
+          threadId: shell.id,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* nextTurnItemOrdinal({ thread: shell, turnItems: [] }),
+          status: "completed",
+          title,
+          message,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+    });
+    const failVerification = Effect.fn("orchestrationV2.failRepositoryHandoff")(function* (
+      reason: string,
+    ) {
+      yield* emitEvent({
+        type: "thread.metadata-updated",
+        threadId: shell.id,
+        occurredAt: now,
+        payload: {
+          ...shell,
+          repositoryOrchestration: {
+            ...config,
+            revision: config.revision + 1,
+            automaticHandoff: { ...attempt!, status: "failed" },
+          },
+          updatedAt: now,
+        },
+      });
+      yield* notice(
+        "Automatic handoff deferred",
+        `${reason} This thread still owns the repository.`,
+      );
+    });
+    if (shell.archivedAt !== null || shell.deletedAt !== null)
+      return yield* refuse("Restore the source thread before handing it off.");
+
+    const sourceReady = Effect.gen(function* () {
+      return (
+        (yield* store.subtreeDrained(shell.id).pipe(mapDispatchError(command))) &&
+        (automatic === undefined ||
+          (yield* store.handoffSafe(shell.id).pipe(mapDispatchError(command))))
+      );
+    });
+
+    if (automatic?.type !== "verify" && !(yield* sourceReady))
+      return yield* refuse(
+        "Handoff is waiting for the active issue subtree and final deliveries to drain.",
+      );
     const existing = yield* projectionStore
       .getThreadShell(nextThreadId)
       .pipe(mapDispatchError(command));
+    if (
+      automatic?.type === "verify" &&
+      (existing === null || existing.archivedAt !== null || existing.deletedAt !== null)
+    )
+      return yield* failVerification("The verification thread is unavailable.");
     if (existing === null)
       yield* dispatchThreadCreate(
         {
@@ -505,7 +583,7 @@ export function makeRepositoryWorkCommands({
           threadId: nextThreadId,
           projectId: shell.projectId,
           title: shell.title,
-          modelSelection: config.handoff.modelSelection,
+          modelSelection: config.handoff?.modelSelection ?? shell.modelSelection,
           runtimeMode: shell.runtimeMode,
           interactionMode: shell.interactionMode,
           branch: shell.branch,
@@ -526,15 +604,205 @@ export function makeRepositoryWorkCommands({
         cause:
           "Select an existing active top-level Orchestrator thread in the same repository project using Codex or Claude.",
       });
-    const emitEvent = emit(events, command);
+    const startMessage = Effect.fn("orchestrationV2.repositoryHandoffMessage")(function* (
+      messageId: MessageId,
+      text: string,
+      freshContext = false,
+    ) {
+      yield* dispatchMessage(
+        {
+          type: "message.dispatch",
+          commandId: command.commandId,
+          threadId: nextThreadId,
+          messageId,
+          text,
+          ...(freshContext ? { freshContext } : {}),
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "server",
+        },
+        events,
+        effects,
+      );
+    });
+    if (automatic?.type === "start") {
+      if (
+        (existing !== null && next.handoffFromThreadId !== shell.id) ||
+        !(yield* store.subtreeDrained(nextThreadId).pipe(mapDispatchError(command)))
+      )
+        return yield* refuse("The verification thread is in use.");
+      const source = yield* projectionStore
+        .getThreadRecords(shell.id, ["runs", "providerThreads", "messages"], {
+          latestRunLimit: 1,
+          providerThreadIds:
+            shell.activeProviderThreadId === null ? [] : [shell.activeProviderThreadId],
+          messageRunIds: [automatic.sourceRunId],
+          messageRoles: ["user", "assistant"],
+        })
+        .pipe(mapDispatchError(command));
+      const contextTokens = source.providerThreads[0]?.contextUsage?.usedTokens;
+      if (
+        source.runs[0]?.id !== automatic.sourceRunId ||
+        source.runs[0]?.status !== "completed" ||
+        contextTokens === undefined ||
+        contextTokens < automatic.threshold
+      )
+        return yield* refuse("Source context or its latest turn changed before verification.");
+      yield* emitEvent({
+        type: "thread.metadata-updated",
+        threadId: shell.id,
+        occurredAt: now,
+        payload: {
+          ...shell,
+          repositoryOrchestration: {
+            ...config,
+            revision: config.revision + 1,
+            automaticHandoff: {
+              sourceRunId: automatic.sourceRunId,
+              requestId: command.commandId,
+              contextTokens,
+              startedAt: DateTime.formatIso(now),
+              status: "verifying",
+            },
+          },
+          updatedAt: now,
+        },
+      });
+      yield* emitEvent({
+        type: "thread.metadata-updated",
+        threadId: next.id,
+        occurredAt: now,
+        payload: {
+          ...next,
+          role: "orchestrator",
+          title: shell.title,
+          titleSource: "user",
+          handoffFromThreadId: shell.id,
+          modelSelection: shell.modelSelection,
+          providerInstanceId: shell.providerInstanceId,
+          runtimeMode: shell.runtimeMode,
+          interactionMode: shell.interactionMode,
+          branch: shell.branch,
+          updatedAt: now,
+        },
+      });
+      const recent = source.messages
+        .slice(-8)
+        .map((message) => `${message.role}: ${message.text.slice(-4_000)}`)
+        .join("\n\n");
+      yield* startMessage(
+        automaticHandoffMessageId(command.commandId),
+        `Verify a proposed context handoff for ${config.repository}. The current owner is ${shell.id}. Your first authorized action is read-only: use t3_thread_read to inspect that thread and confirm you can recover its current work from this brief and the source. Make no changes and start no work yet. If you can continue, summarize the current work and your first authorized next step, then end with the exact line "${REPOSITORY_HANDOFF_READY}". Otherwise report the blocker without that line. T3 transfers ownership after verification.
+
+Server recovery inventory:
+${command.inventory}
+
+Recent source messages (historical context):
+${recent}`,
+        existing !== null,
+      );
+      return;
+    }
+
+    if (automatic?.type === "verify") {
+      const verificationId = automaticHandoffMessageId(attempt!.requestId);
+      const target = yield* projectionStore
+        .getThreadRecords(next.id, ["runs"], {
+          latestRunLimit: 1,
+        })
+        .pipe(mapDispatchError(command));
+      const run = target.runs[0];
+      const source = yield* projectionStore
+        .getThreadRecords(shell.id, ["runs"], {
+          latestRunLimit: 1,
+        })
+        .pipe(mapDispatchError(command));
+      const expired =
+        DateTime.toEpochMillis(now) - Date.parse(attempt!.startedAt) >=
+        REPOSITORY_HANDOFF_VERIFICATION_TIMEOUT_MS;
+      const candidateIdle = yield* store.subtreeDrained(next.id).pipe(mapDispatchError(command));
+      if (
+        automatic.enabled &&
+        !candidateIdle &&
+        !expired &&
+        existing?.pendingRuntimeRequest == null
+      )
+        return yield* refuse("The verification turn is still running.");
+      const proof =
+        run?.userMessageId === verificationId && run.status === "completed"
+          ? yield* projectionStore
+              .getThreadRecords(next.id, ["messages", "turnItems"], {
+                messageRoles: ["assistant"],
+                messageRunIds: [run.id],
+                turnItemRunIds: [run.id],
+                turnItemTypes: ["dynamic_tool"],
+              })
+              .pipe(mapDispatchError(command))
+          : undefined;
+      const readSource = proof?.turnItems.some(
+        (item) =>
+          item.type === "dynamic_tool" &&
+          item.status === "completed" &&
+          /(?:^|\.|__)t3_thread_read$/.test(item.toolName ?? "") &&
+          typeof item.input === "object" &&
+          item.input !== null &&
+          "threadId" in item.input &&
+          item.input.threadId === shell.id,
+      );
+      const verified =
+        automatic.enabled &&
+        candidateIdle &&
+        (yield* store.handoffSafe(next.id).pipe(mapDispatchError(command))) &&
+        readSource &&
+        proof?.messages.at(-1)?.text.trimEnd().split("\n").at(-1) === REPOSITORY_HANDOFF_READY;
+      const sourceChanged =
+        source.runs[0]?.id !== attempt!.sourceRunId ||
+        !Equal.equals(next.modelSelection, shell.modelSelection) ||
+        next.runtimeMode !== shell.runtimeMode ||
+        next.interactionMode !== shell.interactionMode ||
+        next.branch !== shell.branch ||
+        next.worktreePath !== shell.worktreePath;
+      if (!verified || sourceChanged)
+        return yield* failVerification(
+          !automatic.enabled
+            ? "Automatic handoff was turned off."
+            : sourceChanged
+              ? "The source changed during verification."
+              : "The successor did not verify the handoff.",
+        );
+      if (!(yield* sourceReady)) return yield* refuse("The source is no longer idle.");
+      yield* notice(
+        "Automatic handoff complete",
+        `Handed off to ${next.title} at ${new Intl.NumberFormat("en", {
+          notation: "compact",
+        })
+          .format(attempt!.contextTokens)
+          .toLowerCase()} context.`,
+      );
+    }
+
+    const paused = config.handoff?.wasPaused ?? config.paused;
     yield* emitEvent({
-      type: "thread.metadata-updated",
+      type: automatic === undefined ? "thread.metadata-updated" : "thread.archived",
       threadId: command.threadId,
       occurredAt: now,
       payload: {
         ...shell,
+        ...(automatic === undefined
+          ? {}
+          : {
+              archivedAt: now,
+              titleRegeneration: null,
+              guestShare: null,
+              handoffToThreadId: next.id,
+              pullRequests: shell.pullRequests?.map(({ watch, ...link }) =>
+                watch === undefined ? link : { ...link, endedWatch: watch },
+              ),
+            }),
         repositoryOrchestration: {
           ...config,
+          automaticHandoff: undefined,
           handoff: undefined,
           retiredToThreadId: nextThreadId,
         },
@@ -548,10 +816,17 @@ export function makeRepositoryWorkCommands({
       payload: {
         ...next,
         role: "orchestrator",
+        ...(automatic === undefined
+          ? {}
+          : {
+              pullRequests: shell.pullRequests,
+              issues: shell.issues,
+            }),
         repositoryOrchestration: {
           ...config,
           handoff: undefined,
-          paused: config.handoff.wasPaused,
+          automaticHandoff: undefined,
+          paused,
           revision: config.revision + 1,
           launchCommandId: command.commandId,
           handoffHistory: [
@@ -562,20 +837,11 @@ export function makeRepositoryWorkCommands({
         updatedAt: now,
       },
     });
-    yield* dispatchMessage(
-      {
-        type: "message.dispatch",
-        commandId: command.commandId,
-        threadId: nextThreadId,
-        messageId: idAllocator.derive.delegatedTaskMessage({ commandId: command.commandId }),
-        text: `You now own repository orchestration for ${config.repository}. The previous root ${command.threadId} has drained; its children and history retain their original lineage.\n\nHandoff summary:\n${config.handoff.summary}\n\nServer recovery inventory:\n${command.inventory}\n\nContinue the approved repository work through the existing issue tools. Review completed attempts and pending changes before admitting successors. ${config.handoff.wasPaused ? "Repository work remains paused until the user resumes it." : "Repository admissions may resume under this root."}`,
-        attachments: [],
-        dispatchMode: { type: "queue_after_active" },
-        createdBy: "user",
-        creationSource: "server",
-      },
-      events,
-      effects,
+    yield* startMessage(
+      idAllocator.derive.delegatedTaskMessage({ commandId: command.commandId }),
+      automatic === undefined
+        ? `You now own repository orchestration for ${config.repository}. The previous root ${command.threadId} has drained; its children and history retain their original lineage.\n\nHandoff summary:\n${config.handoff!.summary}\n\nServer recovery inventory:\n${command.inventory}\n\nContinue the approved repository work through the existing issue tools. Review completed attempts and pending changes before admitting successors. ${paused ? "Repository work remains paused until the user resumes it." : "Repository admissions may resume under this root."}`
+        : `Verification succeeded. You now own repository orchestration for ${config.repository}. Continue the approved work from the handoff brief. ${paused ? "Repository work remains paused until the user resumes it." : "Repository admissions may resume under this root."}`,
     );
   });
 
@@ -592,7 +858,10 @@ export function makeRepositoryWorkCommands({
       const root = yield* projectionStore
         .getThread(command.threadId)
         .pipe(mapDispatchError(command));
-      const targetId = root.repositoryOrchestration?.handoff?.nextThreadId;
+      const targetId =
+        command.automatic === undefined
+          ? root.repositoryOrchestration?.handoff?.nextThreadId
+          : automaticHandoffThreadId(root.id);
       if (targetId !== undefined) {
         const target = yield* projectionStore
           .getThreadShell(targetId)

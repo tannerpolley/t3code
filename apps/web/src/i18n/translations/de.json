@@ -145,5 +145,11 @@
   "86d60d42f6cb4a40": "Inaktiv",
   "12969a434884d7a0": "Bereit zur Überprüfung",
   "066644fe3ef88185": "Worker",
-  "f1575429c821c2b9": "Weitergeleitet an {thread}"
+  "f1575429c821c2b9": "Weitergeleitet an {thread}",
+  "4c3fd3add524da9b": "Automatische Orchestrator-Übergabe",
+  "2578ae9180b4292a": "Startet einen neuen Repository-Orchestrator, sobald der Kontext die Token-Schwelle erreicht und keine Arbeit läuft.",
+  "82e5d02834c683dd": "Übergabeschwelle (Token)",
+  "50c54e168c9c4ab6": "Vorgänger",
+  "759e59bb1b2ed0b6": "Nachfolger",
+  "447f20052e59a42d": "Orchestrierung"
 }

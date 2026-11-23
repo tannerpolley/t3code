@@ -447,7 +447,12 @@ preview, the agent must propose a new change. If GitHub may have created an issu
 recover it, the change needs your attention. Check GitHub, then choose **Mark resolved** to stop
 its remaining writes. Propose another create only when you intend to create another issue.
 
-To replace the orchestrator's conversation, open **Repository orchestration** in the project's
+Repository orchestrators automatically hand off when their reported context reaches 200,000
+tokens and their work is idle. T3 archives the old thread after the successor verifies it can
+continue. Both threads link to each other in the sidebar. To turn this off or change the token
+threshold, open **Settings → Threads → Orchestration**. A project can use its own setting.
+
+To replace the orchestrator's conversation manually, open **Repository orchestration** in the project's
 settings, choose **Hand off to a fresh thread** from the menu beside its orchestrator, and provide a summary. Your approval pauses new issue admissions until existing
 workers and their final results finish; the fresh thread receives your summary and a recovery
 inventory. You can cancel a pending handoff there too, and the same menu opens previous
