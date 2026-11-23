@@ -587,6 +587,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
   enableTools: Schema.optional(DelegatedToolAdditions),
+  /** The outside agent's MCP sign-in that launched this thread. Only the server sets it. */
+  mcpClientSessionId: Schema.optional(TrimmedNonEmptyString),
   roleSkillSelection: Schema.optionalKey(Schema.NullOr(RoleSkillSelection)),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
@@ -3454,8 +3456,14 @@ export const OrchestrationV2Command = Schema.Union([
     repositoryOrchestration: Schema.optional(RepositoryOrchestration),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
-    /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
+    /**
+     * Only the server sets this: with `linkOrigin` for a linked environment's delegated task, or
+     * with `mcpClientSessionId` for an outside agent's launch nested under its own thread here.
+     */
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+    /** Only the server sets this, for a launch by an outside agent's MCP sign-in. */
+    mcpClientSessionId: Schema.optional(TrimmedNonEmptyString),
+    role: Schema.optional(ThreadRole),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({

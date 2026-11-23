@@ -1,8 +1,10 @@
 import {
   CommandId,
   MessageId,
+  type ModelRoleLevel,
   ThreadId,
   OrchestratorMcpFailure,
+  resolveThreadRole,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   T3_PROJECT_FILE_NAME,
@@ -36,7 +38,13 @@ import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
-import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import {
+  type Caller,
+  newCommandId,
+  readCaller,
+  resolveProjectId,
+  unavailable,
+} from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
@@ -165,6 +173,53 @@ const launchCommandId = Effect.fn("mcp.launchCommandId")(function* (
   return CommandId.make(`mcp:launch:${Hex.encode(digest)}`);
 });
 
+const roleModelSelection = Effect.fn("mcp.launchRoleModel")(function* (
+  role: string,
+  level: ModelRoleLevel | undefined,
+) {
+  const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+  const choice = yield* OrchestrationMcp.loadRoleDefaultTargetFrom(
+    role,
+    level,
+    undefined,
+    providers,
+  );
+  if (choice instanceof OrchestratorMcpFailure) return yield* choice;
+  if (choice === undefined) return undefined;
+  const { providerInstanceId: instanceId, model, options } = choice;
+  return { instanceId, model, ...(options === undefined ? {} : { options }) };
+});
+
+/** An outside agent nests launches only under a top-level thread an outside agent started. */
+const nestingParent = Effect.fn("mcp.launchNestingParent")(function* (
+  context: Caller,
+  parentThreadId: ThreadId,
+  outsideSessionId: string | undefined,
+) {
+  if (outsideSessionId === undefined)
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message:
+        "parentThreadId is for outside agents. Inside a thread, hand off work with delegate_task.",
+    });
+  const parent = yield* context.threads
+    .getThreadShell(parentThreadId)
+    .pipe(Effect.mapError(unavailable));
+  if (
+    parent === null ||
+    parent.deletedAt !== null ||
+    parent.creationSource !== "mcp" ||
+    parent.lineage.parentThreadId !== null ||
+    parent.delegatedFrom !== undefined
+  )
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message:
+        "parentThreadId must be a top-level thread an outside agent started with t3_thread_launch.",
+    });
+  return parent;
+});
+
 const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;
@@ -264,6 +319,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               );
         if (project !== undefined && input.workspaceStrategy?.type === "existing_worktree")
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
+        // An outside agent's sign-in, which its threads record so the owner can let it answer
+        // their approvals. A linked environment carries its own origin instead.
+        const outsideSessionId =
+          caller === undefined && context.scope.client?.linked !== true
+            ? context.scope.client?.sessionId
+            : undefined;
+        const parent =
+          input.parentThreadId === undefined
+            ? undefined
+            : yield* nestingParent(context, input.parentThreadId, outsideSessionId);
+        const role = input.role === undefined ? undefined : resolveThreadRole(input.role);
+        const roleModel =
+          replaying || input.role === undefined || input.modelSelection !== undefined
+            ? undefined
+            : yield* roleModelSelection(input.role, input.level);
         if (!replaying && input.modelSelection !== undefined) {
           const { instanceId, model } = input.modelSelection;
           const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
@@ -324,6 +394,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const modelSelection =
           input.modelSelection ??
           launchedModel ??
+          roleModel ??
           caller?.modelSelection ??
           (projectDefaults
             ? resolveNewThreadModelSelection({
@@ -391,8 +462,20 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           createdBy: "agent",
           creationSource: "mcp",
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
-          // Kept only alongside linkOrigin: thread.create drops it otherwise.
-          ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
+          ...(parent !== undefined
+            ? {
+                delegatedFrom: {
+                  environmentId: scope.environmentId,
+                  threadId: parent.id,
+                  title: parent.title,
+                  ...(role === undefined ? {} : { role }),
+                },
+              }
+            : linkOrigin === undefined || input.delegatedFrom === undefined
+              ? {}
+              : { delegatedFrom: input.delegatedFrom }),
+          ...(outsideSessionId === undefined ? {} : { mcpClientSessionId: outsideSessionId }),
+          ...(role === undefined ? {} : { role }),
         }).pipe(
           Effect.mapError((error) => {
             if (error._tag === "AttachmentClaimError") {

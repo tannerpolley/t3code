@@ -1,6 +1,7 @@
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   GitCommandError,
   ProjectId,
@@ -31,6 +32,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -62,6 +64,7 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -76,7 +79,11 @@ const clientLaunchHarness = (input: {
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
     }),
+    Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+      list: () => Effect.succeed((input.providers ?? []).map((provider) => provider.instanceId)),
+    }),
     ServerSettings.layerTest({
+      ...input.settings,
       fallbackModelSelection: input.fallbackModel ?? null,
       ...(input.defaultRuntimeMode === undefined
         ? {}
@@ -119,7 +126,11 @@ const clientLaunchHarness = (input: {
             : ({
                 id: launch.threadId,
                 projectId: launch.projectId,
+                title: launch.title,
                 modelSelection: launch.modelSelection,
+                creationSource: launch.creationSource,
+                lineage: { parentThreadId: null },
+                delegatedFrom: launch.delegatedFrom,
                 deletedAt: null,
               } as unknown as OrchestrationV2ThreadShell),
         );
@@ -347,6 +358,83 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
 
     const offered = yield* launchPi("approval-required");
     expect(offered.launched[0]?.runtimeMode).toBe("approval-required");
+  }),
+);
+
+it.effect("an outside agent launches by role, nested under its own thread", () =>
+  Effect.gen(function* () {
+    const { tier } = DEFAULT_SERVER_SETTINGS.modelRoles.implementor.routine;
+    const roleModel = DEFAULT_SERVER_SETTINGS.modelTiers[tier].codex.model;
+    const codex = ProviderInstanceId.make("codex");
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      settings: {
+        modelRoles: { implementor: { routine: { provider: "codex", effort: "default" } } },
+      },
+      providers: [
+        {
+          instanceId: codex,
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          status: "ready",
+          version: null,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00Z",
+          models: [{ slug: roleModel, name: "Role model", isCustom: false, capabilities: null }],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launch = (params: {
+      readonly title: string;
+      readonly role?: "implementor";
+      readonly level?: "routine";
+      readonly parentThreadId?: ThreadId;
+    }) =>
+      toolkit.handle("t3_thread_launch", { projectId, ...params }).pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.map((result) => result.at(-1)?.result),
+        Effect.provide(dependencies),
+      );
+
+    yield* launch({ title: "[FM] Financial Manager" });
+    const parent = launched[0]!;
+    expect(parent.mcpClientSessionId).toBe("session-1");
+    expect(parent.delegatedFrom).toBeUndefined();
+
+    yield* launch({
+      title: "[FM] Fix the import",
+      role: "implementor",
+      level: "routine",
+      parentThreadId: parent.threadId!,
+    });
+    expect(launched[1]).toMatchObject({
+      modelSelection: { instanceId: codex, model: roleModel },
+      role: "implementor",
+      mcpClientSessionId: "session-1",
+      delegatedFrom: {
+        environmentId: "environment",
+        threadId: parent.threadId,
+        title: "[FM] Financial Manager",
+        role: "implementor",
+      },
+    });
+
+    // A nested thread cannot parent another, so nesting stays one level deep.
+    expect(
+      yield* launch({ title: "[FM] Deeper", parentThreadId: launched[1]!.threadId! }),
+    ).toMatchObject({ code: "invalid_request" });
+    expect(launched).toHaveLength(2);
   }),
 );
 

@@ -513,6 +513,18 @@ describe("v2 thread shell lists", () => {
       threads: [root, { ...returningTask, pendingRuntimeRequest: approval }],
     });
     expect(registry.get(threads.threadShellAtom(rootRef))?.pendingSubagentRequest).toBe("approval");
+
+    // So does a task nested under a thread in its own environment, as an outside agent nests one.
+    const localTask = {
+      ...task,
+      id: ThreadId.make("local-task"),
+      pendingRuntimeRequest: approval,
+    };
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, localTask],
+    });
+    expect(registry.get(threads.threadShellAtom(rootRef))?.pendingSubagentRequest).toBe("approval");
     disposeTask();
     disposeRoot();
     registry.dispose();

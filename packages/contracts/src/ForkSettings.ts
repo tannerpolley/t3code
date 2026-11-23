@@ -370,6 +370,13 @@ export const ForkServerSettingsFields = {
   ),
   /** User-only: the server answers every pending agent question and approval while on. */
   dontAskMode: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Outside agents' MCP sign-ins the owner lets answer approvals, as well as questions, in
+   * threads that sign-in started and their subagents. Set in Settings → Sharing & access.
+   */
+  mcpApprovalRelaySessionIds: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   modelRoles: defaulted(ModelRoles, {}),
   modelTiers: defaulted(ModelTiers, {}),
   providerCreditsApproved: defaulted(CreditsApproved, {}),
@@ -448,6 +455,7 @@ export const ForkServerSettingsPatchFields = {
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
   issueUpkeepRequiresApproval: Schema.optionalKey(Schema.Boolean),
   dontAskMode: Schema.optionalKey(Schema.Boolean),
+  mcpApprovalRelaySessionIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   modelRoles: Schema.optionalKey(ModelRolesPatch),
   modelTiers: Schema.optionalKey(ModelTiersPatch),
   providerCreditsApproved: Schema.optionalKey(

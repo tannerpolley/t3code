@@ -198,5 +198,7 @@
   "4dccb48528cb04d2": "Blocked",
   "d25661576338fcf0": "Needs you",
   "626069229ac7aa1a": "Dependencies unknown",
-  "bd19196b43a87b29": "Dependency cycle"
+  "bd19196b43a87b29": "Dependency cycle",
+  "9a177023bb38a981": "Answers approvals",
+  "9f7af9830925ca2c": "Lets this agent accept or decline command approvals in threads it started and their subagents. It can always answer questions."
 }

@@ -208,6 +208,8 @@ export const delegatedRequestResponse = Effect.fn("delegatedRequestResponse")(fu
   orchestrator: Threads<E>,
   input: Parameters<ThreadManagementServiceShape["respondToPendingRequest"]>[0],
   runtimeRequests: ReadonlyArray<OrchestrationV2RuntimeRequest>,
+  /** An outside agent the owner lets answer approvals in this thread. */
+  relaysApprovals = false,
 ) {
   const request = runtimeRequests.find(
     (request) => request.id === input.requestId && request.status === "pending",
@@ -232,7 +234,7 @@ export const delegatedRequestResponse = Effect.fn("delegatedRequestResponse")(fu
     input.callerThreadId !== input.threadId &&
     (yield* isDelegatedDescendant(orchestrator, input.callerThreadId, input.threadId));
   if (
-    (!question && !descendant) ||
+    (!question && !descendant && !relaysApprovals) ||
     (input.callerThreadId !== undefined && input.callerThreadId !== input.threadId && !descendant)
   )
     return yield* fail("outside-descendants");
