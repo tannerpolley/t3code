@@ -13729,7 +13729,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const dispatchRunInterrupt = Effect.fn("Orchestrator.dispatchRunInterrupt")(function* (
-    command: Extract<OrchestrationV2ServerCommand, { readonly type: "run.interrupt" }>,
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "run.interrupt" }> & {
+      readonly reason: string;
+    },
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
@@ -13859,7 +13861,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completedAt: now,
       updatedAt: now,
       type: "run_interrupt_request",
-      message: command.reason ?? USER_STOP_REASON,
+      message: command.reason,
     };
 
     const otherProviderInterrupts: Array<PendingOrchestrationEffectV2> = [];
@@ -14413,7 +14415,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
             runId: target.id,
             holdQueue: true,
-            ...(command.reason === undefined ? {} : { reason: command.reason }),
+            reason: command.reason ?? USER_STOP_REASON,
           },
           interruptEvents,
           interruptEffects,
@@ -16074,7 +16076,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchSubagentStop(command, events, effects);
         break;
       case "run.interrupt":
-        cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
+        cancelUnsettledEffects = yield* dispatchRunInterrupt(
+          {
+            ...command,
+            // Older clients identify the Stop button by holding the queue.
+            reason:
+              command.reason ?? (command.holdQueue === true ? USER_STOP_REASON : "Interrupted"),
+          },
+          events,
+          effects,
+        );
         if (command.holdQueue === true) {
           // Stop must still commit when a child can't be read, so a failed repair's
           // partial events are dropped.

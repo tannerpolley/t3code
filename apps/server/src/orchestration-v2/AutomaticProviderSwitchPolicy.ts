@@ -266,7 +266,13 @@ export function makeAutomaticProviderSwitchPolicy<RestartError>({
     )
       return;
     yield* dispatchWithReceiptEffect({
-      type: continuation.status === "queued" ? "queued-run.cancel" : "run.interrupt",
+      ...(continuation.status === "queued"
+        ? { type: "queued-run.cancel" }
+        : {
+            type: "run.interrupt",
+            reason:
+              "Automatic provider switch cancelled because the usage-limit failure was already reported",
+          }),
       commandId: CommandId.make(`limit-switch-withdraw:${continuation.id}`),
       threadId,
       runId: continuation.id,
