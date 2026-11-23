@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import type * as PlatformError from "effect/PlatformError";
 
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -22,6 +23,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 
 const slotName = /^slot-[1-9]\d*$/;
 const marker = "refs/worktree/t3-issue-slot";
+const isGitCommandError = Schema.is(GitCommandError);
 
 export function isIssueWorktreeSlot(path: Path.Path, worktree: string): boolean {
   return (
@@ -62,6 +64,7 @@ export class IssueWorktreeSlots extends Context.Service<
       readonly branch: string;
       readonly head: string;
       readonly defaultRef: string;
+      readonly preserveBranch?: boolean;
       readonly unbind: Effect.Effect<void, E, R>;
     }) => Effect.Effect<string | null, SlotError | E, R>;
     readonly localChanges: (
@@ -169,6 +172,7 @@ const make = Effect.gen(function* () {
   const localChanges = Effect.fn("IssueWorktreeSlots.localChanges")(function* (
     target: string,
     base: SlotBase,
+    includeIgnored = false,
   ) {
     const tracked = yield* run(target, [
       "status",
@@ -182,11 +186,13 @@ const make = Effect.gen(function* () {
       "ls-files",
       "-z",
       "--others",
-      "--exclude-standard",
+      ...(includeIgnored ? [] : ["--exclude-standard"]),
       ...exclusions(base.keep).map((pattern) => `--exclude=${pattern}`),
     ]);
     if (untracked.stdout || untracked.stdoutTruncated)
-      return "has untracked files outside the keep paths";
+      return includeIgnored
+        ? "has local files outside the keep paths"
+        : "has untracked files outside the keep paths";
     return yield* hiddenTrackedChange(target);
   });
 
@@ -202,9 +208,17 @@ const make = Effect.gen(function* () {
       "--others",
       ...exclusions(base.keep).map((pattern) => `--exclude=${pattern}`),
     ]);
-    if (remaining.stdout || remaining.stdoutTruncated)
-      return yield* failure(target, "The slot still contains local files after git clean.");
+    if (remaining.stdout || remaining.stdoutTruncated) {
+      const [firstPath = ""] = remaining.stdout.split("\0", 1);
+      return yield* failure(
+        target,
+        `Git could not clean "${firstPath.slice(0, 180).replace(/[\p{Cc}\p{Cf}]/gu, "?")}". Move it out of the slot or add a keep path in t3.json.`,
+      );
+    }
   });
+
+  const preparationReason = (cause: unknown, fallback: string) =>
+    isGitCommandError(cause) && cause.operation === "IssueWorktreeSlots" ? cause.detail : fallback;
 
   const currentBranch = Effect.fn("IssueWorktreeSlots.currentBranch")(function* (target: string) {
     const result = yield* run(target, ["symbolic-ref", "--quiet", "HEAD"], true);
@@ -249,7 +263,7 @@ const make = Effect.gen(function* () {
     yield* run(target, ["update-ref", marker, "HEAD"]);
   });
 
-  const reset = Effect.fn("IssueWorktreeSlots.reset")(function* (target: string, base: SlotBase) {
+  const detach = Effect.fn("IssueWorktreeSlots.detach")(function* (target: string, base: SlotBase) {
     yield* run(target, [
       "switch",
       "--detach",
@@ -257,6 +271,9 @@ const make = Effect.gen(function* () {
       "--no-overwrite-ignore",
       base.ref,
     ]);
+  });
+  const reset = Effect.fn("IssueWorktreeSlots.reset")(function* (target: string, base: SlotBase) {
+    yield* detach(target, base);
     yield* clean(target, base);
   });
 
@@ -320,7 +337,10 @@ const make = Effect.gen(function* () {
                         path: target,
                         cause: checkout.failure,
                       });
-                      return "could not be switched or cleaned";
+                      return preparationReason(
+                        checkout.failure,
+                        "could not be switched or cleaned",
+                      );
                     }
                     yield* input.bind(target, branch).pipe(Effect.onError(() => rollback));
                     return null;
@@ -397,7 +417,12 @@ const make = Effect.gen(function* () {
           Effect.catch((cause) =>
             Effect.logWarning("Issue worktree slot upkeep failed", { path: target, cause }).pipe(
               Effect.andThen(
-                Effect.sync(() => input.report({ path: target, reason: "could not be refreshed" })),
+                Effect.sync(() =>
+                  input.report({
+                    path: target,
+                    reason: preparationReason(cause, "could not be refreshed"),
+                  }),
+                ),
               ),
             ),
           ),
@@ -411,7 +436,7 @@ const make = Effect.gen(function* () {
       if (!(yield* markedSlot(input.cwd, input.path)))
         return "is not a registered issue worktree slot";
       const base = yield* readBase(input.cwd, input.defaultRef);
-      const reason = yield* localChanges(input.path, base);
+      const reason = yield* localChanges(input.path, base, input.preserveBranch);
       if (reason !== null) return reason;
       const checkedOut = yield* currentBranch(input.path);
       const branchRef = `refs/heads/${input.branch}`;
@@ -420,11 +445,13 @@ const make = Effect.gen(function* () {
         return "detached slot has commits outside the default branch";
       const head = yield* git.resolveCommit({ cwd: input.path, revision: branchRef });
       if (head.commitSha !== input.head) return "commit changed since check";
-      yield* reset(input.path, base);
+      if (input.preserveBranch) yield* detach(input.path, base);
+      else yield* reset(input.path, base);
       yield* input.unbind;
-      yield* git
-        .deleteLocalBranch({ cwd: input.cwd, refName: input.branch, force: true })
-        .pipe(Effect.ignore({ log: true }));
+      if (!input.preserveBranch)
+        yield* git
+          .deleteLocalBranch({ cwd: input.cwd, refName: input.branch, force: true })
+          .pipe(Effect.ignore({ log: true }));
       return null;
     },
   );

@@ -1105,11 +1105,7 @@ const make = Effect.gen(function* () {
       !deleted &&
       members.some((member) => member.archivedAt === null && keepIssueWorktree(member));
     const releaseSlot =
-      slot &&
-      !explicit &&
-      maintainIssueSlots &&
-      thread.linkedIssue !== undefined &&
-      issueSlots !== undefined;
+      slot && maintainIssueSlots && thread.linkedIssue !== undefined && issueSlots !== undefined;
     let releaseSlotBase: string | null = null;
     let issueMerged = false;
     const entries: StorageCleanupReportEntry[] = [];
@@ -1143,15 +1139,22 @@ const make = Effect.gen(function* () {
         return keep("a subagent thread's branch differs from this worktree's branch");
       if (yield* hasTerminal(worktreeIdentity, canonicalPath))
         return keep(waitForStop("open terminal"));
-      if (
-        [...group, ...settlementChain.slice(1)].some(
-          (member) =>
-            member.settledAt !== null &&
-            now - Math.max(DateTime.toEpochMillis(member.updatedAt), activityAt) <
-              SETTLE_SCRIPT_GRACE_MS,
-        )
-      )
+      const settleGrace = Math.max(
+        0,
+        ...[...group, ...settlementChain.slice(1)]
+          .filter((member) => member.settledAt !== null)
+          .map(
+            (member) =>
+              Math.max(DateTime.toEpochMillis(member.updatedAt), activityAt) +
+              SETTLE_SCRIPT_GRACE_MS -
+              now,
+          ),
+      );
+      if (settleGrace > 0) {
+        if (releaseSlot && !explicit && config.devUrl === undefined)
+          yield* requestSlotSweepAfterGrace(settleGrace);
         return keep(waitForStop("settled moments ago"));
+      }
       const old =
         !deleted &&
         settings.worktreeAfterDays !== null &&
@@ -1449,7 +1452,7 @@ const make = Effect.gen(function* () {
             refreshedDefaultRefs.set(repositoryCwd, refreshed);
           }
         }
-        if (releaseSlot) {
+        if (releaseSlot && !explicit) {
           const changes = yield* issueSlots.localChanges(repositoryCwd, worktreePath, defaultRef);
           if (changes !== null) return keep(changes);
         }
@@ -1457,13 +1460,14 @@ const make = Effect.gen(function* () {
           cwd: worktreePath,
           revision: defaultRef,
         });
-        const ancestor = yield* git.execute({
-          operation: "StorageCleanup.integratedBranch",
-          cwd: worktreePath,
-          args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
-          allowNonZeroExit: true,
-        });
-        const integrated = ancestor.exitCode === 0;
+        const integrated =
+          !explicit &&
+          (yield* git.execute({
+            operation: "StorageCleanup.integratedBranch",
+            cwd: worktreePath,
+            args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
+            allowNonZeroExit: true,
+          })).exitCode === 0;
         const issueWorkFinished =
           deleted ||
           thread.archivedAt !== null ||
@@ -1471,8 +1475,10 @@ const make = Effect.gen(function* () {
           thread.status === "cancelled" ||
           thread.status === "failed" ||
           thread.status === "interrupted";
-        eligible = integrated && (slot ? issueWorkFinished : !retainedIssue && unchangedApplies);
-        if (eligible)
+        eligible =
+          (releaseSlot && explicit) ||
+          (integrated && (slot ? issueWorkFinished : !retainedIssue && unchangedApplies));
+        if (eligible && !explicit)
           removalReason =
             remote === null
               ? "no commits beyond the project branch"
@@ -1538,13 +1544,14 @@ const make = Effect.gen(function* () {
               branch: thread.branch!,
               head: head.commitSha,
               defaultRef,
+              preserveBranch: explicit,
               unbind: Effect.gen(function* () {
                 // Keep the owner's binding until all sharing threads have been unbound.
                 const ordered = group.toSorted(
                   (a, b) => Number(a.id === thread.id) - Number(b.id === thread.id),
                 );
                 for (const member of ordered) {
-                  if (member.archivedAt === null && member.role !== "writer")
+                  if (!explicit && member.archivedAt === null && member.role !== "writer")
                     yield* engine.dispatch({
                       type: "thread.archive",
                       commandId: CommandId.make(
@@ -1561,14 +1568,18 @@ const make = Effect.gen(function* () {
                     expectedWorktreePath: member.worktreePath,
                     expectedBranch: member.branch,
                     worktreePath: null,
-                    branch: null,
+                    branch: explicit ? member.branch : null,
                   });
                 }
               }),
             });
             if (released !== null) return keep(released);
             yield* gitManager.invalidateStatus(project.workspaceRoot);
-            keep("returned to the issue worktree pool");
+            entries.push({
+              ...entry,
+              outcome: explicit ? "removed" : "kept",
+              reason: "Returned to the issue worktree pool",
+            });
           }).pipe(Effect.uninterruptible),
         );
       }
@@ -2201,6 +2212,21 @@ const make = Effect.gen(function* () {
   const requestSweep = Ref.getAndSet(automaticSweepQueued, true).pipe(
     Effect.flatMap((queued) => (queued ? Effect.void : worker.enqueue(undefined))),
   );
+  const slotGraceSweepQueued = yield* Ref.make(false);
+  const cleanupScope = yield* Effect.scope;
+  const requestSlotSweepAfterGrace = (remainingMs: number): Effect.Effect<void> =>
+    Ref.getAndSet(slotGraceSweepQueued, true).pipe(
+      Effect.flatMap((queued) =>
+        queued
+          ? Effect.void
+          : Effect.sleep(remainingMs).pipe(
+              Effect.andThen(Ref.set(slotGraceSweepQueued, false)),
+              Effect.andThen(requestSweep),
+              Effect.forkIn(cleanupScope),
+              Effect.asVoid,
+            ),
+      ),
+    );
   const runNow = Effect.gen(function* () {
     const completion = yield* Deferred.make<StorageCleanupReport, ServerSettingsError>();
     yield* worker.enqueue(completion);
@@ -2208,18 +2234,39 @@ const make = Effect.gen(function* () {
   });
 
   const start = Effect.fn("StorageCleanup.start")(function* () {
+    const watchIssueSlots = issueSlots !== undefined && config.devUrl === undefined;
+    const inSlot = (cwd: string) => {
+      for (let current = cwd; ; current = path.dirname(current)) {
+        if (IssueWorktreeSlots.isIssueWorktreeSlot(path, current)) return true;
+        if (path.dirname(current) === current) return false;
+      }
+    };
     const unsubscribe = yield* terminals.subscribeMetadata((event) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         if (event.type === "snapshot") {
           liveTerminals.clear();
           for (const terminal of event.terminals) noteTerminal(terminal);
-        } else if (event.type === "upsert") {
+          return;
+        }
+        const { threadId, terminalId } = event.type === "upsert" ? event.terminal : event;
+        const threadTerminals = liveTerminals.get(threadId);
+        const previous = threadTerminals?.get(terminalId);
+        if (event.type === "upsert") {
           noteTerminal(event.terminal);
         } else {
-          const threadTerminals = liveTerminals.get(event.threadId);
-          threadTerminals?.delete(event.terminalId);
-          if (threadTerminals?.size === 0) liveTerminals.delete(event.threadId);
+          threadTerminals?.delete(terminalId);
+          if (threadTerminals?.size === 0) liveTerminals.delete(threadId);
         }
+        if (
+          watchIssueSlots &&
+          previous !== undefined &&
+          (previous.status === "running" || previous.status === "starting") &&
+          (event.type === "remove" ||
+            (event.terminal.status !== "running" && event.terminal.status !== "starting")) &&
+          (inSlot(previous.cwd) ||
+            (previous.worktreePath !== null && inSlot(previous.worktreePath)))
+        )
+          yield* requestSweep;
       }),
     );
     yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
@@ -2248,8 +2295,7 @@ const make = Effect.gen(function* () {
     yield* forkParked(
       Stream.runForEach(events, (event) => {
         if (
-          issueSlots !== undefined &&
-          config.devUrl === undefined &&
+          watchIssueSlots &&
           (event.type === "thread.created" || event.type === "thread.metadata-updated") &&
           event.payload.repositoryOrchestration !== undefined &&
           lastPoolUpkeep.get(event.threadId)?.workerLimit !==
@@ -2257,6 +2303,37 @@ const make = Effect.gen(function* () {
           repositoryPhase(event.payload.repositoryOrchestration) !== "retired"
         )
           return requestSweep;
+        if (watchIssueSlots) {
+          if (
+            (event.type === "thread.settled" ||
+              event.type === "thread.archived" ||
+              (event.type === "thread.pull-request-synced" &&
+                event.payload.pullRequests?.some((link) => link.snapshot?.state === "merged"))) &&
+            event.payload.worktreePath !== null &&
+            inSlot(event.payload.worktreePath)
+          )
+            return requestSweep;
+          if (
+            event.type === "thread.pull-request-link-updated" &&
+            event.payload.snapshot?.state === "merged"
+          )
+            return projections.getThreadShell(event.threadId).pipe(
+              Effect.orElseSucceed(() => null),
+              Effect.flatMap((thread) =>
+                thread?.worktreePath && inSlot(thread.worktreePath) ? requestSweep : Effect.void,
+              ),
+            );
+          if (
+            event.type === "provider-session.updated" &&
+            (event.payload.status === "stopped" || event.payload.status === "error") &&
+            inSlot(event.payload.cwd)
+          )
+            return event.payload.status === "stopped"
+              ? requestSweep
+              : providerSessions
+                  .isLive(event.payload.id)
+                  .pipe(Effect.flatMap((live) => (live ? Effect.void : requestSweep)));
+        }
         if (event.type === "thread.deleted") deletions++;
         else if (
           event.type !== "provider-session.updated" ||

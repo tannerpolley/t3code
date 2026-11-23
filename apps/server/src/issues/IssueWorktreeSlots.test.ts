@@ -156,6 +156,15 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
       detachedHead,
     );
     yield* run(slot, "switch", "--detach", "origin/main");
+    const nested = path.join(slot, "generated");
+    yield* run(slot, "init", nested);
+    const reason =
+      'Git could not clean "generated/". Move it out of the slot or add a keep path in t3.json.';
+    assert.deepEqual(yield* claim("issue-3"), [{ path: slot, reason }]);
+    yield* maintain();
+    assert.equal(reports.at(-1), reason);
+    assert.isTrue(yield* fs.exists(path.join(nested, ".git")));
+    yield* fs.rename(nested, path.join(slot, ".venv", "nested"));
     yield* fs.makeDirectory(path.join(slot, "generated"));
     yield* fs.writeFileString(path.join(slot, "generated", "stale"), "recreated during upkeep");
     yield* fs.writeFileString(path.join(remote, "tracked"), "current default");
