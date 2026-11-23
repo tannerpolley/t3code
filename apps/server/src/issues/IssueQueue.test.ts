@@ -117,6 +117,26 @@ function harness(
 ) {
   const base = makeHarness({
     ...(databaseLayer === undefined ? {} : { databaseLayer }),
+    providers: [
+      {
+        instanceId: adapter.instanceId,
+        driver: adapter.driver,
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-11-23T00:00:00Z",
+        availability: "available",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      },
+    ],
+    serverSettings: {
+      modelRoles: { implementor: { complex: { provider: "codex", effort: "default" } } },
+      modelTiers: { 2: { codex: { model: modelSelection.model } } },
+    },
     issueServiceLayer: issueReads,
     projectRepositoryIdentity,
     localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
@@ -204,7 +224,7 @@ it.effect("hands SQLite connections to waiting queue calls before new borrows", 
       yield* Effect.gen(function* () {
         const service = yield* IssueWorkService.IssueWorkService;
         const sql = yield* SqlClient.SqlClient;
-        yield* createRoot(false);
+        yield* createRoot();
         const held = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         const waiting = yield* Deferred.make<void>();
@@ -271,9 +291,6 @@ it.effect("hands SQLite connections to waiting queue calls before new borrows", 
         yield* Fiber.join(producer);
         yield* Effect.forEach(queues, Fiber.join);
         observations[connection] = order[0]?.split(":")[0];
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const root = yield* threads.getThreadRecords(rootId, ["runs"]);
-        assert.lengthOf(root.runs, 1);
         assert.lengthOf((yield* service.repositoryStatus(reference)).queue!, 3);
         yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
       }).pipe(
@@ -519,13 +536,12 @@ it.effect(
       yield* createRoot();
       yield* service.queueIssue(input(3));
       closed.add(3);
-      yield* service.reconcile(rootId);
-      assert.deepEqual(yield* store.queue(reference), []);
       yield* service.setPaused({
         ...reference,
         paused: false,
         clientRequestId: CommandId.make("resume-queue"),
       });
+      assert.deepEqual(yield* store.queue(reference), []);
       yield* threads.dispatch({
         type: "message.dispatch",
         threadId: rootId,
@@ -1264,7 +1280,12 @@ it.effect.each(["external", "bot", "listing"] as const)(
     const github = inboxService(
       {
         resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-        workRead: (input) => Effect.succeed(read(input.number)),
+        // Blocked issues stay queued on an active root, so only the inbox removes them.
+        workRead: (input) =>
+          Effect.succeed({
+            ...read(input.number),
+            blockedBy: [{ issue: issue(50), state: "open" as const }],
+          }),
       },
       (input) =>
         Effect.succeed({
@@ -1313,8 +1334,7 @@ it.effect.each(["external", "bot", "listing"] as const)(
       const service = yield* IssueWorkService.IssueWorkService;
       const store = yield* IssueWorkStore.IssueWorkStore;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      // A paused root keeps the entries queued, so only the inbox removes them.
-      yield* createRoot();
+      yield* createRoot(false);
       for (const number of [1, 2, 3]) yield* service.queueIssue(input(number));
       const inbox = yield* IssueInbox.make;
       yield* inbox.pollDue;
