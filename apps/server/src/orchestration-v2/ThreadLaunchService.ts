@@ -1,3 +1,5 @@
+import * as IssueWorktreeSlots from "../issues/IssueWorktreeSlots.ts";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
@@ -125,6 +127,7 @@ type PreparationInput = Pick<
   "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
 > & {
   readonly reusedWorktree?: { readonly baseRef: string };
+  readonly managedIssue?: ThreadLinkedIssue;
   /** Names the worktree folder when the branch is temporary. */
   readonly threadTitle?: string;
 };
@@ -293,6 +296,12 @@ function failureDetail(error: unknown): string {
 
 const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
+  const issueSlots = Option.getOrUndefined(
+    yield* Effect.serviceOption(IssueWorktreeSlots.IssueWorktreeSlots),
+  );
+  const issueWork = Option.getOrUndefined(
+    yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore),
+  );
   const setupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
@@ -574,6 +583,8 @@ const make = Effect.gen(function* () {
     );
 
     const reused = input.reusedWorktree;
+    const usesSlot =
+      input.managedIssue !== undefined && issueSlots !== undefined && issueWork !== undefined;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
     let createdWorktreePath: string | null = null;
     let createdBranch: string | null = null;
@@ -673,7 +684,69 @@ const make = Effect.gen(function* () {
         input.workspaceStrategy.type === "existing_worktree"
           ? input.workspaceStrategy.worktreePath
           : null;
-      if (input.workspaceStrategy.type === "worktree") {
+      if (input.workspaceStrategy.type === "worktree" && usesSlot) {
+        yield* setupTracker.stageStatus(threadId, "fetch", "running");
+        const requestedBranch =
+          branch ?? agentWorktreeName(input.managedIssue.title, input.managedIssue.number);
+        const claim = Effect.fn("ThreadLaunchService.claimIssueSlot")(function* () {
+          return yield* issueSlots
+            .claim({
+              cwd: project.workspaceRoot,
+              branch: requestedBranch,
+              limit: () =>
+                issueWork.repositoryOwner(input.managedIssue!).pipe(
+                  Effect.flatMap((owner) =>
+                    owner?.projectId === input.projectId && !owner.paused
+                      ? issueWork.configuration(owner.rootThreadId)
+                      : Effect.succeed(null),
+                  ),
+                  Effect.map((config) => config?.workerLimit ?? 0),
+                  Effect.mapError(mapError(input, "provision-worktree", threadId)),
+                ),
+              occupied: (target) =>
+                threads.getShellSnapshot({ worktreePath: target }).pipe(
+                  Effect.map(
+                    (snapshot) => snapshot.threads.length + snapshot.archivedThreads.length > 0,
+                  ),
+                  Effect.mapError(mapError(input, "provision-worktree", threadId)),
+                ),
+              bind: (target, name) =>
+                threads
+                  .dispatch({
+                    type: "thread.metadata.update",
+                    commandId: CommandId.make(`${input.commandId}:workspace`),
+                    threadId,
+                    expectedWorktreePath: null,
+                    worktreePath: target,
+                    branch: name,
+                  })
+                  .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))),
+            })
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        });
+        for (;;) {
+          const result = yield* claim();
+          if ("branch" in result) {
+            worktreePath = result.path;
+            branch = result.branch;
+            workspaceRecorded = true;
+            break;
+          }
+          const detail = result.map(({ path, reason }) => `${path} ${reason}`).join("; ");
+          yield* setupTracker.stageStatus(
+            threadId,
+            "checkout",
+            "pending",
+            detail || "Waiting for a repository issue worktree slot.",
+          );
+          // The reservation can also be cleared by a Git repair outside T3.
+          yield* Effect.sleep("30 seconds");
+        }
+        yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        yield* setupTracker.stageStatus(threadId, "checkout", "done", null);
+        yield* setupTracker.stageStatus(threadId, "submodules", "skipped");
+        yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
+      } else if (input.workspaceStrategy.type === "worktree") {
         if (runId !== null) {
           yield* threads
             .dispatch({
@@ -862,7 +935,7 @@ const make = Effect.gen(function* () {
       }
 
       // Do not rewrite reused worktrees; that could undo the original branch rename.
-      if (reused === undefined) {
+      if (reused === undefined && !workspaceRecorded) {
         yield* threads
           .dispatch({
             type: "thread.metadata.update",
@@ -1020,6 +1093,8 @@ const make = Effect.gen(function* () {
             terminalId: setup.terminalId,
           },
         }));
+        const waitsForSetup =
+          usesSlot || (reused !== undefined && input.managedIssue !== undefined);
         if (setup.completion) {
           const awaitCompletion = Effect.gen(function* () {
             const completion = yield* setup.completion!;
@@ -1029,14 +1104,14 @@ const make = Effect.gen(function* () {
               completion.exitCode === 0 ? "done" : "failed",
               `exited with ${completion.exitCode ?? "no exit code"}`,
             );
-            if (completion.exitCode !== 0 && !setup.async)
+            if (completion.exitCode !== 0 && (!setup.async || waitsForSetup))
               return yield* mapError(
                 input,
                 "run-setup-script",
                 threadId,
               )(`Setup script exited with ${completion.exitCode ?? "no exit code"}.`);
           });
-          if (setup.async) {
+          if (setup.async && !waitsForSetup) {
             // Record the result when the script ends, not after the agent starts.
             const asyncSetup = yield* awaitCompletion.pipe(
               Effect.catchCause((cause) =>
@@ -1668,6 +1743,7 @@ const make = Effect.gen(function* () {
         commandId: input.commandId,
         projectId: thread.projectId,
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
+        ...(thread.linkedIssue === undefined ? {} : { managedIssue: thread.linkedIssue }),
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
         ...(message === undefined
           ? {}

@@ -389,8 +389,12 @@ is selected for you. A thread becomes the repository orchestrator only from the 
 default branch. While no issue workers run, it may switch that checkout to its own branch and use
 native subagents for its own work; issue work still goes to workers.
 Start agent registers the selected lead and starts or queues an issue worker, following the issue
-parent tree. Later starts use that orchestrator's project. Every worker gets a new worktree and
-branch named after the issue, created from the default branch; there is no checkout choice.
+parent tree. Later starts use that orchestrator's project. Managed issue workers share a pool
+of reusable worktrees at `.worktrees/slot-1`, `.worktrees/slot-2`, and so on, with one slot per
+allowed worker. Each worker starts on its own issue branch from the freshly fetched remote
+default branch. When every slot is reserved, new workers wait for a slot during workspace
+preparation. A settled worker keeps its slot until T3 verifies that its pull request merged and
+the checkout is safe to clean.
 Starting allows T3 to update one status comment and publish a closeout comment for each finished
 attempt; the publishing policy is shown before you start. When a worker has been created, select
 its name to open its conversation with the issue beside it. A queued start can appear before a

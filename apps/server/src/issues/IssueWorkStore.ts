@@ -95,6 +95,10 @@ export class IssueWorkStore extends Context.Service<
     readonly isRepositoryOrchestrator: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<boolean, IssueWorkError>;
+    readonly worktreePools: () => Effect.Effect<
+      ReadonlyArray<{ rootThreadId: ThreadId; projectId: ProjectId; workerLimit: number }>,
+      IssueWorkError
+    >;
     readonly slotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
     readonly readOnlySlotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
     readonly admissionThreads: (
@@ -331,6 +335,23 @@ export const layer = Layer.effect(
       ),
       queue: Effect.fn("IssueWorkStore.queue")((input) =>
         readIssueQueue(input).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+      ),
+      worktreePools: Effect.fn("IssueWorkStore.worktreePools")(() =>
+        sql<{ root_thread_id: string; project_id: string; worker_limit: number }>`
+          SELECT owner.root_thread_id, owner.project_id, owner.worker_limit
+          FROM orchestration_v2_projection_repository_orchestration owner
+          JOIN orchestration_v2_projection_threads root ON root.thread_id = owner.root_thread_id
+          WHERE root.archived_at IS NULL AND root.deleted_at IS NULL
+        `.pipe(
+          Effect.map((rows) =>
+            rows.map((row) => ({
+              rootThreadId: ThreadId.make(row.root_thread_id),
+              projectId: ProjectId.make(row.project_id),
+              workerLimit: row.worker_limit,
+            })),
+          ),
+          Effect.mapError(mapError),
+        ),
       ),
       slotsInUse: Effect.fn("IssueWorkStore.slotsInUse")((rootThreadId) =>
         sql<{ active: number }>`
