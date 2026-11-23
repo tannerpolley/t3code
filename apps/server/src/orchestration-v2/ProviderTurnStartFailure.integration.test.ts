@@ -317,7 +317,7 @@ const failedChildTest = (
           );
           assert.equal(yield* slots, 1);
 
-          yield* TestClock.adjust("119 seconds");
+          yield* TestClock.adjust("599 seconds");
           assert.equal((yield* child).runs[0]?.status, "starting");
           yield* TestClock.adjust("1 second");
           assert.equal((yield* child).runs[0]?.status, "failed");
@@ -327,7 +327,7 @@ const failedChildTest = (
           assert.equal(request.delegatedCompletion?.parentRunId, parentRun.id);
           const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
           assert.equal(task.status, "failed");
-          assert.include(task.result ?? "", "timed out");
+          assert.include(task.result ?? "", "timed out after 10 minutes");
           assert.equal(yield* slots, 0);
 
           yield* TestClock.adjust("5 minutes");
