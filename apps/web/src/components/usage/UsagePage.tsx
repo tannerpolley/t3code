@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useResetCreditUsageNavigation } from "../ResetCreditUsageNavigation";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
@@ -78,6 +79,7 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
+import { UsageBudget } from "./UsageBudget";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
@@ -108,8 +110,10 @@ import {
   type UsagePagePreferences,
 } from "./usagePagePreferences";
 
+const USAGE_VIEWS = [...METRIC_OPTIONS, { value: "budget", command: undefined }] as const;
+
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
-  return METRIC_OPTIONS.some((option) => option.value === value);
+  return USAGE_VIEWS.some((option) => option.value === value);
 }
 
 function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
@@ -176,12 +180,15 @@ function UsageModelDialogHost({
 }
 
 export function UsagePage() {
+  const gt = useGT();
+  const budgetLabel = gt("Budget");
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
   const shortcutTitle = (
-    option: (typeof METRIC_OPTIONS)[number] | (typeof WINDOW_OPTIONS)[number],
+    option: (typeof USAGE_VIEWS)[number] | (typeof WINDOW_OPTIONS)[number],
   ) => {
+    if (option.command === undefined) return budgetLabel;
     const shortcut = shortcutLabelForCommand(keybindings, option.command, {
       context: { usagePageOpen: true },
     });
@@ -196,7 +203,8 @@ export function UsagePage() {
     ),
   }));
   const metric = preferences.metric;
-  const showingLimits = metric === "limits";
+  const showingBudget = metric === "budget";
+  const showingLimits = metric === "limits" || showingBudget;
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
@@ -204,6 +212,10 @@ export function UsagePage() {
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const hiddenProviders = new Set(preferences.hiddenProviders);
+  const hiddenBudgetProviders = new Set<UsageProviderKind>(hiddenProviders);
+  for (const provider of Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[]) {
+    if (provider !== "claude" && provider !== "codex") hiddenBudgetProviders.add(provider);
+  }
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const {
@@ -213,7 +225,7 @@ export function UsagePage() {
     shown,
     isPartial,
     refresh,
-  } = useUsage(window, selectedEnvironmentIds, hiddenProviders);
+  } = useUsage(window, selectedEnvironmentIds, hiddenProviders, !showingBudget);
   const merged = shown?.merged ?? answeredUsage;
   const shownWindow = shown?.window ?? window;
   const shownHourly = shownWindow.resolution === "hour";
@@ -250,7 +262,7 @@ export function UsagePage() {
     });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
-    if (nextMetric === "limits") setLimitsNow(Date.now());
+    if (nextMetric === "limits" || nextMetric === "budget") setLimitsNow(Date.now());
     updatePreferences({ metric: nextMetric });
   };
   const refreshLimits = (automatic = false) =>
@@ -303,6 +315,18 @@ export function UsagePage() {
     if (refreshingRef.current) return;
 
     if (showingLimits) {
+      if (showingBudget) {
+        for (const environment of selectedEnvironments) {
+          if (environment.canReadDiagnostics && environment.isConnected) {
+            appAtomRegistry.refresh(
+              serverEnvironment.usageBudget({
+                environmentId: environment.environmentId,
+                input: {},
+              }),
+            );
+          }
+        }
+      }
       refreshingRef.current = true;
       setIsRefreshing(true);
       void refreshLimits().finally(() => {
@@ -425,15 +449,21 @@ export function UsagePage() {
             if (isUsageMetric(value)) selectMetric(value);
           }}
         >
-          {METRIC_OPTIONS.map((option) => (
+          {USAGE_VIEWS.map((option) => (
             <Toggle key={option.value} value={option.value} title={shortcutTitle(option)}>
-              {option.label}
+              {option.value === "budget" ? budgetLabel : option.label}
             </Toggle>
           ))}
         </ToggleGroup>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={
+            showingBudget
+              ? gt("Refresh budget")
+              : showingLimits
+                ? "Refresh limits"
+                : "Refresh usage"
+          }
           aria-busy={isRefreshing}
           disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
           size="icon-sm"
@@ -481,20 +511,28 @@ export function UsagePage() {
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {METRIC_OPTIONS.find((option) => option.value === metric)?.label}
+              {showingBudget
+                ? budgetLabel
+                : METRIC_OPTIONS.find((option) => option.value === metric)?.label}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
-            {METRIC_OPTIONS.map((option) => (
+            {USAGE_VIEWS.map((option) => (
               <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
-                {option.label}
+                {option.value === "budget" ? budgetLabel : option.label}
               </SelectItem>
             ))}
           </SelectPopup>
         </Select>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={
+            showingBudget
+              ? gt("Refresh budget")
+              : showingLimits
+                ? "Refresh limits"
+                : "Refresh usage"
+          }
           aria-busy={isRefreshing}
           disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
           size="icon-sm"
@@ -523,11 +561,20 @@ export function UsagePage() {
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
             ) : showingLimits ? (
-              <UsageLimitsSection
-                selectedEnvironmentIds={selectedEnvironmentIds}
-                hiddenProviders={hiddenProviders}
-                now={limitsNow}
-              />
+              <>
+                <UsageLimitsSection
+                  selectedEnvironmentIds={selectedEnvironmentIds}
+                  hiddenProviders={showingBudget ? hiddenBudgetProviders : hiddenProviders}
+                  now={limitsNow}
+                  showFreshness={showingBudget}
+                />
+                {showingBudget ? (
+                  <UsageBudget
+                    environments={selectedEnvironments}
+                    hiddenProviders={hiddenProviders}
+                  />
+                ) : null}
+              </>
             ) : shown === null ? (
               <UsageSkeleton />
             ) : !canReadDiagnostics ? (

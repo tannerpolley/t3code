@@ -370,7 +370,10 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         messageId,
         text,
         notification: {
-          source: { kind: "system" },
+          source: {
+            kind: "system",
+            ...(input.transientFailure ? { wakeReason: "provider_retry" as const } : {}),
+          },
           outcome: "updated",
           summary: input.transientFailure
             ? "Resuming after a temporary provider failure"

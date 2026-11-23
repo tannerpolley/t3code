@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type ScheduledUsageBudgetReport,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProjectId,
@@ -61,6 +62,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as UsageBudget from "../usage/UsageBudget.ts";
 import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
@@ -216,6 +218,7 @@ function resolveThreadMode(
 
 interface ScheduledTaskRow {
   readonly task_id: string;
+  readonly action: string;
   readonly title: string;
   readonly prompt: string;
   readonly enabled: number;
@@ -406,6 +409,7 @@ const decodeRow = Effect.fnUntraced(
     const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
     return yield* decodeTask({
       id: row.task_id,
+      ...(row.action === "prompt" ? {} : { action: row.action }),
       title: row.title,
       prompt: row.prompt,
       enabled: row.enabled === 1,
@@ -482,6 +486,7 @@ export const layer = Layer.effect(
   ScheduledTaskService,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const usageBudget = yield* UsageBudget.UsageBudget;
     const random = yield* SecureRandom.SecureRandom;
     const digest = yield* Digest.Digest;
     const mac = yield* Mac.Mac;
@@ -535,6 +540,7 @@ export const layer = Layer.effect(
       sql<ScheduledTaskRow>`
       SELECT
         task_id,
+        action,
         title,
         prompt,
         enabled,
@@ -578,6 +584,7 @@ export const layer = Layer.effect(
       sql<ScheduledTaskRow>`
       SELECT
         task_id,
+        action,
         title,
         prompt,
         enabled,
@@ -657,6 +664,7 @@ export const layer = Layer.effect(
       sql<{ task_id: string }>`
         INSERT INTO scheduled_tasks (
           task_id,
+          action,
           title,
           prompt,
           enabled,
@@ -683,6 +691,7 @@ export const layer = Layer.effect(
         )
         SELECT
           ${task.id},
+          ${task.action ?? "prompt"},
           ${task.title},
           ${task.prompt},
           ${task.enabled ? 1 : 0},
@@ -711,6 +720,8 @@ export const layer = Layer.effect(
         ON CONFLICT (task_id)
         DO UPDATE SET
           title = excluded.title,
+          usage_budget_report_json = CASE WHEN action = excluded.action THEN usage_budget_report_json END,
+          action = excluded.action,
           prompt = excluded.prompt,
           enabled = excluded.enabled,
           schedule_json = excluded.schedule_json,
@@ -803,6 +814,7 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
+      readonly usageBudgetReport: ScheduledUsageBudgetReport | null;
     }) =>
       sql`
         UPDATE scheduled_tasks
@@ -810,6 +822,9 @@ export const layer = Layer.effect(
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
+            usage_budget_report_json = CASE WHEN action = 'usage_budget'
+              THEN coalesce(${input.usageBudgetReport === null ? null : JSON.stringify(input.usageBudgetReport)}, usage_budget_report_json)
+              ELSE NULL END,
             run_count = run_count + 1
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
@@ -1003,6 +1018,7 @@ export const layer = Layer.effect(
         if (
           trigger === "scheduled" &&
           active.schedule.type !== "once" &&
+          active.action !== "usage_budget" &&
           active.threadId !== null &&
           (yield* hasQueuedOccurrence(active.id, ThreadId.make(active.threadId)).pipe(
             Effect.orElseSucceed(() => false),
@@ -1171,14 +1187,24 @@ export const layer = Layer.effect(
                 Effect.as(ThreadId.make(active.threadId)),
               );
         });
-        const result = yield* Effect.exit(dispatch);
+        const occurrenceAt = (trigger === "scheduled" ? active.nextRunAt : null) ?? startedAtIso;
+        const result = yield* Effect.exit(
+          Effect.gen(function* () {
+            if (active.action === "usage_budget") {
+              const report = yield* usageBudget.report(occurrenceAt);
+              return { threadId: null, report };
+            }
+            return { threadId: yield* dispatch, report: null };
+          }),
+        );
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
         const completedAt = yield* localNow;
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         const lastRunError = runSucceeded ? null : dispatchErrorMessage(result.cause);
-        const threadId = runSucceeded ? result.value : null;
+        const threadId = runSucceeded ? result.value.threadId : null;
+        const usageBudgetReport = runSucceeded ? result.value.report : null;
         // One transaction, so an edit cannot land between reading the schedule and
         // writing the next run computed from it. The origin is read first: it reads
         // files, and the transaction holds SQLite's writer lock.
@@ -1211,6 +1237,7 @@ export const layer = Layer.effect(
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
+            usageBudgetReport,
           });
           let written = false;
           if (webhook === undefined) written = yield* completion;
@@ -1499,7 +1526,14 @@ export const layer = Layer.effect(
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
-      const threadMode = resolveThreadMode(input, existingTask);
+      const action = input.action ?? existingTask?.action ?? "prompt";
+      if (action === "usage_budget" && input.schedule.type === "webhook") {
+        return yield* taskError("Usage budget reports require a time-based schedule.", {
+          taskId: id,
+        });
+      }
+      const threadMode =
+        action === "usage_budget" ? "new_thread" : resolveThreadMode(input, existingTask);
       const keptThreadId = input.threadId ?? existingTask?.threadId ?? null;
       // A bound thread belongs to its project, so moving the task leaves it for a new one.
       const movedOffThread =
@@ -1516,7 +1550,7 @@ export const layer = Layer.effect(
       // thread runs in that thread's mode, which the orchestrator checks instead. Checked before
       // the save consumes a webhook secret.
       const modeDenial =
-        input.enabled && threadId === null
+        action === "prompt" && input.enabled && threadId === null
           ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
           : undefined;
       if (modeDenial !== undefined) return yield* taskError(modeDenial, { taskId: id });
@@ -1606,17 +1640,20 @@ export const layer = Layer.effect(
       const task: ScheduledTask = {
         id,
         title: input.title,
-        prompt: input.prompt,
+        ...(action === "prompt" ? {} : { action }),
+        prompt: action === "usage_budget" ? "Usage budget report" : input.prompt,
         enabled: input.enabled,
         schedule,
         projectId: input.projectId,
         threadId,
         threadMode,
         repositoryTarget:
-          input.repositoryTarget === undefined
-            ? (existingTask?.repositoryTarget ?? null)
-            : input.repositoryTarget,
-        workspaceStrategy,
+          action === "usage_budget"
+            ? null
+            : input.repositoryTarget === undefined
+              ? (existingTask?.repositoryTarget ?? null)
+              : input.repositoryTarget,
+        workspaceStrategy: action === "usage_budget" ? { type: "root" } : workspaceStrategy,
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,
         interactionMode: input.interactionMode,
@@ -1655,7 +1692,7 @@ export const layer = Layer.effect(
         return yield* taskError(webhookPolicyBlock, { taskId: input.id });
       }
       const modeDenial =
-        input.enabled && existing.threadId === null
+        existing.action !== "usage_budget" && input.enabled && existing.threadId === null
           ? managedRuntimeModeDenial(managedPolicy.summary, existing.runtimeMode)
           : undefined;
       if (modeDenial !== undefined) {
@@ -2713,4 +2750,4 @@ export const layer = Layer.effect(
       triggerWebhook,
     });
   }),
-);
+).pipe(Layer.provide(UsageBudget.layer));

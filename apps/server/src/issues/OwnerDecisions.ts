@@ -540,7 +540,7 @@ const make = Effect.gen(function* () {
           threadId: destination,
           text,
           notification: {
-            source: { kind: "system" },
+            source: { kind: "system", wakeReason: "owner_decision" },
             outcome: "updated",
             summary: "Owner decision answered",
             detail: text,

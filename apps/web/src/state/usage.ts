@@ -31,7 +31,7 @@ export interface EnvironmentUsageStatus {
 
 const usageByWindowAtom = Atom.family((windowKey: string) =>
   Atom.make((get): readonly EnvironmentUsageStatus[] => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
+    const input = windowKey === "" ? null : (JSON.parse(windowKey) as UsageSummaryInput);
     const presentations = get(environmentPresentations.presentationsAtom);
 
     const statuses: EnvironmentUsageStatus[] = [];
@@ -43,7 +43,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         session: AsyncResult.getOrElse(sessionResult, () => null),
         hasSessionError: sessionResult._tag === "Failure",
       });
-      if (!access.canReadDiagnostics) {
+      if (!access.canReadDiagnostics || input === null) {
         statuses.push({
           environmentId,
           label: presentation.entry.target.label,
@@ -155,6 +155,7 @@ export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
   hiddenProviders: ReadonlySet<UsageProviderKind> = NO_HIDDEN_PROVIDERS,
+  readHistory = true,
 ): UsageView {
   const windowKey = JSON.stringify({
     sinceDay: input.sinceDay,
@@ -164,7 +165,7 @@ export function useUsage(
     sinceTime: input.sinceTime,
     untilTime: input.untilTime,
   });
-  const atom = usageByWindowAtom(windowKey);
+  const atom = usageByWindowAtom(readHistory ? windowKey : "");
   const environments = useAtomValue(atom);
   // Identity-based render sync needs a derivation retained by inputs across renders.
   const [derived, setDerived] = useState(() =>

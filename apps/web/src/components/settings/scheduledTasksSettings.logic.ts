@@ -93,6 +93,7 @@ export type ScheduleMode = "fixed" | "once" | "interval" | "webhook";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
+  readonly action?: ScheduledTask["action"];
   readonly editingId: string | null;
   readonly title: string;
   readonly prompt: string;
@@ -310,6 +311,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
     baseModelSelection: task.modelSelection,
+    ...(task.action === undefined ? {} : { action: task.action }),
     ...(schedule.type === "webhook" && schedule.signature !== null
       ? {
           signatureEnabled: true,
