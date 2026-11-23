@@ -245,8 +245,9 @@ export function createEnvironmentThreadShellAtoms(input: {
   });
 
   // Flags for environments whose threads delegated tasks, counting what each task
-  // or anything it delegated on asks. Each pass settles one more hop of a chain;
-  // flags only grow, so environments delegating to each other settle too.
+  // or anything it delegated on asks. A task may run in its parent's own environment,
+  // as an outside agent's nested launch does. Each pass settles one more hop of a
+  // chain; flags only grow, so environments delegating to each other settle too.
   const delegatedSubagentRequestsAtom = Atom.make((get) => {
     const tasksByDelegator = new Map<
       EnvironmentId,
@@ -259,7 +260,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     for (const runsIn of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       for (const thread of get(environmentThreadsAtom(runsIn))) {
         const from = thread.delegatedFrom;
-        if (from === undefined || from.environmentId === runsIn) continue;
+        if (from === undefined) continue;
         const task = { runsIn, thread, parentThreadId: from.threadId };
         const tasks = tasksByDelegator.get(from.environmentId);
         if (tasks === undefined) tasksByDelegator.set(from.environmentId, [task]);

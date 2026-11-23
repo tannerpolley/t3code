@@ -198,5 +198,7 @@
   "4dccb48528cb04d2": "Bloquée",
   "d25661576338fcf0": "Nécessite votre attention",
   "626069229ac7aa1a": "Dépendances inconnues",
-  "bd19196b43a87b29": "Cycle de dépendances"
+  "bd19196b43a87b29": "Cycle de dépendances",
+  "9a177023bb38a981": "Répond aux approbations",
+  "9f7af9830925ca2c": "Permet à cet agent d'accepter ou de refuser les approbations de commandes dans les fils qu'il a lancés et leurs sous-agents. Il peut toujours répondre aux questions."
 }

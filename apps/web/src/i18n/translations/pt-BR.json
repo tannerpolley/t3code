@@ -198,5 +198,7 @@
   "4dccb48528cb04d2": "Bloqueada",
   "d25661576338fcf0": "Precisa da sua atenção",
   "626069229ac7aa1a": "Dependências desconhecidas",
-  "bd19196b43a87b29": "Ciclo de dependências"
+  "bd19196b43a87b29": "Ciclo de dependências",
+  "9a177023bb38a981": "Responde aprovações",
+  "9f7af9830925ca2c": "Permite que este agente aceite ou recuse aprovações de comandos nas conversas que iniciou e em seus subagentes. Ele sempre pode responder perguntas."
 }

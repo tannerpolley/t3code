@@ -108,6 +108,7 @@ export function withCreationProvenance(
       const {
         linkOrigin: _linkOrigin,
         delegatedFrom: _delegatedFrom,
+        mcpClientSessionId: _mcpClientSessionId,
         initialMessage: _initialMessage,
         ...rest
       } = command;
@@ -551,6 +552,8 @@ export interface ThreadManagementServiceShape {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
     readonly callerThreadId?: ThreadId;
+    /** An outside agent's MCP sign-in, which may answer approvals if the owner allowed it. */
+    readonly callerClientSessionId?: string;
     readonly requestId: RuntimeRequestId;
     readonly commandId: CommandId;
     readonly answers?: ProviderUserInputAnswers;
@@ -1408,10 +1411,26 @@ const make = Effect.gen(function* () {
   const respondToPendingRequest: ThreadManagementServiceShape["respondToPendingRequest"] =
     Effect.fn("orchestrationV2.threadManagement.respondToPendingRequest")(function* (input) {
       const projection = yield* getProjectThreadRecords(input, ["runtimeRequests"]);
+      const sessionId = input.callerClientSessionId;
+      const rootThreadId = projection.thread.lineage.rootThreadId;
+      // The owner's grant covers threads the sign-in started and their subagents.
+      const relaysApprovals =
+        sessionId !== undefined &&
+        (yield* serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.mcpApprovalRelaySessionIds.includes(sessionId)),
+          Effect.orElseSucceed(() => false),
+        )) &&
+        (rootThreadId === projection.thread.id
+          ? projection.thread.mcpClientSessionId
+          : yield* orchestrator.getThreadRecords(rootThreadId, []).pipe(
+              Effect.map((root) => root.thread.mcpClientSessionId),
+              Effect.orElseSucceed(() => undefined),
+            )) === sessionId;
       const command = yield* delegatedRequestResponse(
         orchestrator,
         input,
         projection.runtimeRequests,
+        relaysApprovals,
       );
       return yield* dispatch(command);
     });
