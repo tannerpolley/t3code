@@ -1,4 +1,4 @@
-import { repositoryPhase, isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type {
   IssueWorkRead,
   OrchestrationV2ServerCommand,
@@ -9,7 +9,6 @@ import type {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import { sameIssueRepository, isUnmanagedIssueRole } from "../issues/IssueEligibility.ts";
 import * as IssueService from "../issues/IssueService.ts";
@@ -27,23 +26,6 @@ export class IssueReadSnapshots extends Context.Reference<ReadonlyArray<IssueWor
     defaultValue: (): ReadonlyArray<IssueWorkRead> => [],
   },
 ) {}
-
-type IssueQueueRead = {
-  readonly issue: ThreadLinkedIssue;
-  readonly outcome: "open" | "closed" | "worked" | "refresh-failed";
-};
-
-export class IssueQueueReads extends Context.Reference<ReadonlyArray<IssueQueueRead>>(
-  "t3/issues/QueuePlanningReads",
-  { defaultValue: () => [] },
-) {}
-
-export class IssueQueueRefreshRequired extends Schema.TaggedError<IssueQueueRefreshRequired>()(
-  "IssueQueueRefreshRequired",
-  {},
-) {}
-
-const isIssueQueueRefreshRequired = Schema.is(IssueQueueRefreshRequired);
 
 /** Dispatch lock keys the current fiber already holds. */
 class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
@@ -174,45 +156,6 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     return reads;
   });
 
-  const readIssueQueueSnapshots = Effect.fn("IssueWorkDispatch.readIssueQueueSnapshots")(function* (
-    threadId: ThreadId,
-  ) {
-    if (Option.isNone(issueReads) || Option.isNone(issueWorkStore))
-      return { reads: [], queueLength: 0 };
-    const store = issueWorkStore.value;
-    const config = yield* store.configuration(threadId);
-    if (
-      config === null ||
-      repositoryPhase(config) !== "active" ||
-      (yield* store.slotsInUse(threadId)) >= config.workerLimit ||
-      !(yield* store.queueRootIdle(threadId))
-    )
-      return { reads: [], queueLength: 0 };
-    const reads: IssueQueueRead[] = [];
-    const queue = yield* store.queue(config);
-    if (queue.some((entry) => entry.noticeRunId !== undefined))
-      return { reads, queueLength: queue.length };
-    for (const entry of queue) {
-      if (entry.state !== "queued") continue;
-      const workState = yield* store.queueWorkState(entry.issue);
-      if (workState === "suspending") continue;
-      if (workState === "working") {
-        reads.push({ issue: entry.issue, outcome: "worked" });
-        continue;
-      }
-      const read = yield* issueReads.value.workRead(entry.issue).pipe(Effect.option);
-      const outcome =
-        Option.isSome(read) &&
-        sameIssueRepository(read.value.issue, entry.issue) &&
-        read.value.issue.id === entry.issue.id
-          ? read.value.state
-          : "refresh-failed";
-      reads.push({ issue: entry.issue, outcome });
-      if (outcome !== "closed") break;
-    }
-    return { reads, queueLength: queue.length };
-  });
-
   const promoteOtherIssueQueues = Effect.fn("Orchestrator.promoteOtherIssueQueues")(function* <
     E,
     R,
@@ -239,19 +182,16 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
   const withAdmissionReads = Effect.fnUntraced(function* <A, E extends OrchestratorV2Error, R>(
     command: OrchestrationV2ServerCommand,
     dispatch: (command: OrchestrationV2ServerCommand) => Effect.Effect<A, E, R>,
-    dispatchUnderLock: (command: OrchestrationV2ServerCommand) => Effect.Effect<A, E, R>,
     {
       commandThreadId,
       mapDispatchError,
-      OrchestratorDispatchError,
-    }: Pick<ForkCommandHooks, "mapDispatchError" | "OrchestratorDispatchError"> & {
+    }: Pick<ForkCommandHooks, "mapDispatchError"> & {
       readonly commandThreadId: (command: OrchestrationV2ServerCommand) => ThreadId;
     },
   ) {
     const needsReads =
       command.type === "issue.work.start" ||
       command.type === "issue.work.close-out" ||
-      command.type === "issue.queue.deliver" ||
       command.type === "delegated_task.request" ||
       command.type === "message.dispatch" ||
       (command.type === "thread.pull-request-watch.sync" && command.wake !== undefined) ||
@@ -261,34 +201,6 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     const receipt = needsReads
       ? yield* commandReceipts.getByCommandId(command.commandId).pipe(mapDispatchError(command))
       : Option.none();
-    if (command.type === "issue.queue.deliver" && Option.isNone(receipt)) {
-      let attempts = 1;
-      for (let attempt = 0; attempt < attempts; attempt++) {
-        const preflight = yield* readIssueQueueSnapshots(command.threadId).pipe(
-          mapDispatchError(command),
-        );
-        if (attempt === 0) attempts = Math.max(1, preflight.queueLength);
-        const result = yield* threadDispatch
-          .withLock(
-            command.threadId,
-            dispatchUnderLock(command).pipe(
-              Effect.provideService(IssueQueueReads, preflight.reads),
-            ),
-          )
-          .pipe(Effect.result);
-        if (result._tag === "Success") return result.success;
-        if (
-          result.failure._tag !== "OrchestratorDispatchError" ||
-          !isIssueQueueRefreshRequired(result.failure.cause)
-        )
-          return yield* result.failure;
-      }
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "The issue queue kept changing during refresh. Retry delivery.",
-      });
-    }
     const issueReads =
       needsReads &&
       (Option.isNone(receipt) ||

@@ -823,17 +823,13 @@ const make = Effect.gen(function* () {
                 }),
               ),
             );
-      case "issue.queue.deliver":
       case "message.dispatch":
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
           Effect.flatMap((projection) =>
             assertProviderInstanceEnabled({
               projectId: projection.thread.projectId,
               commandId: command.commandId,
-              instanceId: (command.type === "message.dispatch"
-                ? (command.modelSelection ?? projection.thread.modelSelection)
-                : projection.thread.modelSelection
-              ).instanceId,
+              instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
             }),
           ),
         );

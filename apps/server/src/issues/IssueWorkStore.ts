@@ -6,7 +6,7 @@ import {
   ProjectId,
   RunId,
   ThreadId,
-  type CommandId,
+  CommandId,
   type RepositoryIssueRef,
   type OrchestrationV2RunAdmissionWait,
   type ThreadLinkedIssue,
@@ -19,8 +19,9 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { readIssueQueue, readIssueQueueNotice, isIssueQueueNoticeRun } from "./IssueQueueStore.ts";
+import { readIssueQueue, QUEUED_ISSUE_START_PREFIX } from "./IssueQueueStore.ts";
 import { readOnlyIssueRoles } from "./IssueEligibility.ts";
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
 
 import { repositoryPhaseSql, repositoryAdmissionSql } from "./RepositoryPhaseSql.ts";
 
@@ -60,23 +61,18 @@ interface RemoteChildTask {
   readonly completedAt: string | null;
 }
 
+// Workers started from the issue queue wait for a slot ahead of milestone workers.
+const queuedIssueWorker = derive.delegatedTaskThread({
+  commandId: CommandId.make(QUEUED_ISSUE_START_PREFIX),
+});
+
 /** Reads ownership projected by committed orchestration events. Never claims outside the event sink. */
 export class IssueWorkStore extends Context.Service<
   IssueWorkStore,
   {
-    readonly isQueueNoticeRun: (
-      threadId: ThreadId,
-      runId: import("@t3tools/contracts").RunId,
-    ) => Effect.Effect<boolean, IssueWorkError>;
-    readonly queueNotice: (
-      threadId: ThreadId,
-      runId: import("@t3tools/contracts").RunId,
-    ) => Effect.Effect<import("@t3tools/contracts").IssueQueueEntry | null, IssueWorkError>;
     readonly queueWorkState: (
       issue: ThreadLinkedIssue,
     ) => Effect.Effect<"available" | "working" | "suspending", IssueWorkError>;
-    readonly queueRootIdle: (threadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
-    readonly queuedRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly queue: (
       input: import("@t3tools/contracts").IssueRepositoryRef,
     ) => Effect.Effect<ReadonlyArray<import("@t3tools/contracts").IssueQueueEntry>, IssueWorkError>;
@@ -285,45 +281,11 @@ export const layer = Layer.effect(
               JOIN orchestration_v2_projection_repository_orchestration owner
                 ON owner.host = work.host AND owner.repository_id = work.repository_id
               WHERE work.owner_thread_id = thread.thread_id AND owner.root_thread_id = ${rootThreadId}))
-          ORDER BY queued.position, thread.created_at, thread.thread_id
+          ORDER BY queued.position,
+            substr(thread.thread_id, 1, ${queuedIssueWorker.length}) = ${queuedIssueWorker} DESC,
+            thread.created_at, thread.thread_id
         `.pipe(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
-          Effect.mapError(mapError),
-        ),
-      ),
-      isQueueNoticeRun: Effect.fn("IssueWorkStore.isQueueNoticeRun")((threadId, runId) =>
-        isIssueQueueNoticeRun(threadId, runId).pipe(
-          Effect.provideService(SqlClient.SqlClient, sql),
-          Effect.mapError(mapError),
-        ),
-      ),
-      queueNotice: Effect.fn("IssueWorkStore.queueNotice")((threadId, runId) =>
-        readIssueQueueNotice(threadId, runId).pipe(
-          Effect.provideService(SqlClient.SqlClient, sql),
-          Effect.mapError(mapError),
-        ),
-      ),
-      queueRootIdle: Effect.fn("IssueWorkStore.queueRootIdle")((threadId) =>
-        sql`
-        SELECT 1 FROM orchestration_v2_projection_threads thread
-        WHERE thread.thread_id = ${threadId} AND thread.archived_at IS NULL AND thread.deleted_at IS NULL
-          AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs run
-            WHERE run.thread_id = ${threadId} AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting'))
-          AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runtime_requests request
-            WHERE request.thread_id = ${threadId} AND request.status = 'pending')
-      `.pipe(
-          Effect.map((rows) => rows.length > 0),
-          Effect.mapError(mapError),
-        ),
-      ),
-      queuedRoots: Effect.fn("IssueWorkStore.queuedRoots")(() =>
-        sql<{ root_thread_id: string }>`
-        SELECT DISTINCT owner.root_thread_id FROM orchestration_v2_projection_repository_orchestration owner
-        JOIN orchestration_v2_projection_issue_work_requests request
-          ON request.host = owner.host AND request.repository_id = owner.repository_id
-        WHERE request.queue_state = 'queued'
-      `.pipe(
-          Effect.map((rows) => rows.map((row) => ThreadId.make(row.root_thread_id))),
           Effect.mapError(mapError),
         ),
       ),

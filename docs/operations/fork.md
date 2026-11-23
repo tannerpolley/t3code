@@ -35,7 +35,9 @@ content: its `/issues` page, its detail panel and its agent tools (`list_issues`
 
 The fork adds the work on top: the roadmap at `/roadmap` and in the per-repository Issues panel
 beside a thread, with Ready / Paused / Queued / In progress / Done, and a work section inside
-upstream's issue panel. Its issue rows, and the issues, edits, state changes and comments that
+upstream's issue panel. Queued and milestone issues share one admission path: the repository's
+periodic reconcile starts a managed worker for each unblocked queued issue, then for milestone
+issues, and the worker limit admits queued issues' workers first. Its issue rows, and the issues, edits, state changes and comments that
 `propose_issue_change` and status comments write, go through upstream's service. A fork-owned
 GitHub extension (`apps/server/src/issues/IssueGitHubExtension.ts`) supplies relationships,
 milestones, Project fields, marked-comment updates, and the identity and activity needed for

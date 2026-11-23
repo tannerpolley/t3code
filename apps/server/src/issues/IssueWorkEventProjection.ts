@@ -9,11 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import {
-  applyIssueQueueEvent,
-  claimQueuedIssue,
-  finishIssueQueueNotice,
-} from "./IssueQueueStore.ts";
+import { applyIssueQueueEvent, claimQueuedIssue } from "./IssueQueueStore.ts";
 import type { ProjectionStoreApplyEventError } from "../orchestration-v2/ProjectionStore.ts";
 
 const encodeIssueCancellation = Schema.encodeEffect(Schema.fromJsonString(IssueWorkCancelled));
@@ -46,12 +42,6 @@ export const makeIssueWorkProjection = (
   /** Returns true for issue-only events, which leave nothing for the shared projection. */
   const applyEvent = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
     switch (event.type) {
-      case "run.created":
-      case "run.updated":
-        yield* finishIssueQueueNotice(event.payload).pipe(
-          Effect.provideService(SqlClient.SqlClient, sql),
-        );
-        return false;
       case "repository.work.restored":
         // Existing roots have no thread.created event to register their first owner.
         if (event.payload.previousRootThreadId === null) {
@@ -190,7 +180,7 @@ export const makeIssueWorkProjection = (
         WHERE root_thread_id = ${event.threadId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_issue_work_requests
         WHERE root_thread_id = ${event.threadId}
-          AND (queue_state IN ('queued', 'needs_attention')
+          AND (queue_state = 'queued'
             OR (queue_state IS NULL AND json_type(payload_json, '$.cancellation') IS NULL
               AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work work
                 WHERE work.host = orchestration_v2_projection_issue_work_requests.host

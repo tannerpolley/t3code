@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Effect from "effect/Effect";
 
-import { CommandId, ProjectId, RunId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { CommandId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelRoleId } from "./threadRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
@@ -307,9 +307,7 @@ export type IssueQueueInput = typeof IssueQueueInput.Type;
 export const IssueQueueEntry = Schema.Struct({
   requestId: CommandId,
   issue: ThreadLinkedIssue,
-  state: Schema.Literals(["queued", "needs_attention", "removed"]),
-  noticeRunId: Schema.optional(RunId),
-  notifiedAt: Schema.optional(Schema.String),
+  state: Schema.Literals(["queued", "removed"]),
 });
 export type IssueQueueEntry = typeof IssueQueueEntry.Type;
 

@@ -11,6 +11,7 @@ import GuardThreadJsonIndexes from "./ForkMigrations/030_GuardThreadJsonIndexes.
 import WorkerArchiveBacklog from "./ForkMigrations/031_WorkerArchiveBacklog.ts";
 import QuietThreadActivity from "./ForkMigrations/032_QuietThreadActivity.ts";
 import ThreadLineageIndex from "./ForkMigrations/033_ThreadLineageIndex.ts";
+import RequeueQueueNotices from "./ForkMigrations/034_RequeueQueueNotices.ts";
 import DeduplicateThreadReferences from "./ForkMigrations/027_DeduplicateThreadReferences.ts";
 import IssueWorkQueryPaths from "./ForkMigrations/029_IssueWorkQueryPaths.ts";
 import OpenProviderTurns from "./ForkMigrations/028_OpenProviderTurns.ts";
@@ -78,6 +79,7 @@ export const forkMigrationEntries = [
   [31, "WorkerArchiveBacklog", WorkerArchiveBacklog],
   [32, "QuietThreadActivity", QuietThreadActivity],
   [33, "ThreadLineageIndex", ThreadLineageIndex],
+  [34, "RequeueQueueNotices", RequeueQueueNotices],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.
