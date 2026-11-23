@@ -535,6 +535,7 @@ const CODEX_DESKTOP_APP_PLUGIN_IDS: ReadonlySet<string> = new Set([
 export function applyCodexInstalledPlugins(
   skills: ReadonlyArray<ServerProviderSkill>,
   installed: CodexSchema.V2PluginInstalledResponse,
+  installedCache?: string,
 ): { skills: ServerProviderSkill[]; plugins: ServerProviderPlugin[] } {
   const installedPlugins = installed.marketplaces.flatMap((marketplace) =>
     marketplace.plugins
@@ -542,7 +543,10 @@ export function applyCodexInstalledPlugins(
       .map((plugin) => ({
         name: plugin.name,
         marketplace: marketplace.name,
-        enabled: plugin.enabled && plugin.availability !== "DISABLED_BY_ADMIN",
+        enabled:
+          plugin.enabled &&
+          plugin.availability !== "DISABLED_BY_ADMIN" &&
+          (installedCache === undefined || plugin.disabledReason == null),
       })),
   );
   const ownerOf = (skill: ServerProviderSkill) => {
@@ -560,6 +564,19 @@ export function applyCodexInstalledPlugins(
 
   const counts = new Map<(typeof installedPlugins)[number], number>();
   const taggedSkills = skills.flatMap((skill) => {
+    if (installedCache !== undefined) {
+      const owners = installedPlugins.filter(
+        (plugin) =>
+          skill.name.startsWith(`${plugin.name}:`) &&
+          skill.path
+            .replaceAll("\\", "/")
+            .startsWith(`${installedCache}/${plugin.marketplace}/${plugin.name}/`),
+      );
+      const [owner] = owners;
+      return owner?.enabled && owners.length === 1
+        ? [{ ...skill, scope: "plugin" as const, pluginName: owner.name }]
+        : [];
+    }
     const owner = ownerOf(skill);
     if (!owner) return [skill];
     if (!owner.enabled) return [];
@@ -588,6 +605,7 @@ const requestCodexSkillsAndPlugins = Effect.fn("requestCodexSkillsAndPlugins")(f
   client: CodexClient.CodexAppServerClient["Service"],
   cwd: string,
   deadlineMs?: number,
+  installedCache?: string,
 ) {
   const skillsRequest = client.request("skills/list", { cwds: [cwd] });
   const installedRequest = client.request("plugin/installed", { cwds: [cwd] }).pipe(
@@ -610,11 +628,44 @@ const requestCodexSkillsAndPlugins = Effect.fn("requestCodexSkillsAndPlugins")(f
     { concurrency: "unbounded" },
   );
   const skills = skillsResponse ? parseCodexSkillsListResponse(skillsResponse, cwd) : [];
+  if (installedCache !== undefined && skillsResponse === undefined)
+    return { skills, plugins: undefined };
   const installed = installedResponse ?? Option.none<CodexSchema.V2PluginInstalledResponse>();
   return Option.isSome(installed)
-    ? applyCodexInstalledPlugins(skills, installed.value)
+    ? applyCodexInstalledPlugins(skills, installed.value, installedCache)
     : { skills, plugins: undefined };
 });
+
+export const codexInstalledSkillsForPreload = Effect.fn("codexInstalledSkillsForPreload")(
+  function* (client: CodexClient.CodexAppServerClient["Service"], cwd: string, codexHome: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cache = path.join(codexHome, "plugins", "cache");
+    const deadline = DateTime.toEpochMillis(yield* DateTime.now) + 5_000;
+    const result = yield* requestCodexSkillsAndPlugins(
+      client,
+      cwd,
+      deadline,
+      cache.replaceAll("\\", "/"),
+    );
+    if (result.plugins === undefined) return undefined;
+    if (result.skills.length === 0) return [];
+    return yield* Effect.flatMap(fs.realPath(cache), (canonicalCache) =>
+      Effect.forEach(result.skills, (skill) =>
+        fs.realPath(skill.path).pipe(
+          Effect.map((canonicalSkill) => {
+            const relative = path.relative(canonicalCache, canonicalSkill);
+            const outside =
+              relative === "" || path.isAbsolute(relative) || relative.split(path.sep)[0] === "..";
+            return outside ? [] : [{ ...skill, path: canonicalSkill }];
+          }),
+          Effect.orElseSucceed((): ServerProviderSkill[] => []),
+        ),
+      ).pipe(Effect.map((skills) => skills.flat())),
+    );
+  },
+  Effect.orElseSucceed(() => undefined),
+);
 
 const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   client: CodexClient.CodexAppServerClient["Service"],

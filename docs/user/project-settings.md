@@ -219,6 +219,34 @@ Submodules still follow **Submodules** above, also under excluded paths; set it 
 them empty. The first sparse worktree turns on Git's `extensions.worktreeConfig` for the repository.
 This needs Git 2.35 or newer.
 
+### Skills for delegated children
+
+Add a `roleSkills` map to the registered project's root `t3.json`. T3 preloads installed
+plugin skills on the first prompt in each provider conversation for a delegated Codex
+or Claude child. A linked-environment child uses its destination project's map. Children
+in worktrees use the registered project’s map and resolve the plugin in their own checkout.
+
+For example, a project with the CSE plugin enabled on both providers can use this map.
+
+```json
+{
+  "roleSkills": {
+    "designer": ["cse:design"],
+    "implementor": ["cse:build"],
+    "reviewer": ["cse:review"],
+    "writer": ["cse:write"]
+  }
+}
+```
+
+Routine and complex assignments share their role's defaults. To add task-specific
+skills, put a line such as `Skills: cse:plot, cse:latex` in the linked project issue's
+body or the delegation brief. Use the exact plugin skill IDs. T3 adds issue skills
+first, then brief skills, and includes each skill once.
+
+Preloading is for plain Markdown instruction skills. Use the provider's normal skill
+invocation for skills that require features like a forked context or argument expansion.
+
 ## Worktree location
 
 Choose **T3 home**, **One custom folder** (such as `D:\worktrees` or `~/worktrees`), or **Inside each project** in **Settings → Worktrees → Worktree location**; project-local worktrees use `.worktrees` at the Git repository root, even when the project is a subfolder. The setting is per machine; existing worktrees stay in place and remain eligible for cleanup, and T3 excludes `.worktrees` from Git and workspace scans (external tools must honor Git ignores or exclude it themselves).

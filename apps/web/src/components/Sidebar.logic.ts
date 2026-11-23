@@ -54,6 +54,7 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
+import { isExplicitlyPausedThread } from "@t3tools/shared/threadActivity";
 import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
@@ -684,6 +685,7 @@ export interface ThreadStatusPill {
     | "Awaiting Input"
     | "Guest Request"
     | "Waiting"
+    | "Paused"
     | "Plan Ready";
   colorClass: string;
   dotClass: string;
@@ -701,6 +703,7 @@ type ThreadStatusInput = Pick<
   | "latestRun"
   | "runtime"
 > & {
+  source?: Parameters<typeof isExplicitlyPausedThread>[0] | undefined;
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
   blockedOnThreadWait?: boolean | undefined;
@@ -947,6 +950,7 @@ export type SidebarThreadStatus =
   | "waiting"
   | "failed"
   | "limited"
+  | "paused"
   | "ready";
 
 export function shouldRecedeSidebarThread(input: {
@@ -984,8 +988,16 @@ type SidebarThreadStatusInput = Pick<
 > &
   Partial<Pick<SidebarThreadSummary, "latestRun" | "pendingBackgroundTasks">>;
 
-export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+export function resolveSidebarThreadStatus(
+  thread: SidebarThreadStatusInput & Pick<ThreadStatusInput, "source">,
+): SidebarThreadStatus {
   const activity = resolveThreadActivity(thread);
+  if (
+    activity === "ready" &&
+    thread.source !== undefined &&
+    isExplicitlyPausedThread(thread.source)
+  )
+    return "paused";
   return activity === "connecting"
     ? thread.runtime?.status === "preparing"
       ? "preparing"
@@ -1010,7 +1022,9 @@ export function groupRunningSubagentsByParent<
     | "hasPendingUserInput"
     | "hasPendingApprovals"
     | "pendingBackgroundTasks"
-  > & { readonly source: Pick<SidebarThreadSummary["source"], "creationSource"> },
+  > & {
+    readonly source: Pick<SidebarThreadSummary["source"], "creationSource" | "workerAncestorIds">;
+  },
 >(threads: readonly TThread[]): ReadonlyMap<string, TThread[]> {
   const pendingTaskChildIds = new Set(
     threads.flatMap((thread) =>
@@ -1089,10 +1103,12 @@ export function groupRunningSubagentsByParent<
           };
     const parentKey = keyOf(thread, thread.lineage.parentThreadId!);
     add(parentKey, thread);
-    // A subagent whose direct parent has no row still reaches the root row.
-    const rootKey = keyOf(thread, thread.lineage.rootThreadId);
-    if (!listed.has(parentKey) && !threadRows.has(parentKey) && rootKey !== parentKey)
-      add(rootKey, thread);
+    if (!listed.has(parentKey) && !threadRows.has(parentKey)) {
+      for (const id of [thread.lineage.rootThreadId, ...(thread.source.workerAncestorIds ?? [])]) {
+        const ancestorKey = keyOf(thread, id);
+        if (ancestorKey !== parentKey) add(ancestorKey, thread);
+      }
+    }
   }
   return byParent;
 }
@@ -1401,6 +1417,19 @@ export function resolveThreadStatusPill(input: {
 }): ThreadStatusPill | null {
   const { thread } = input;
   const activity = resolveThreadActivity(thread);
+
+  if (
+    activity === "ready" &&
+    thread.source !== undefined &&
+    isExplicitlyPausedThread(thread.source)
+  ) {
+    return {
+      label: "Paused",
+      colorClass: "text-warning-foreground",
+      dotClass: "bg-warning",
+      pulse: false,
+    };
+  }
 
   if (activity === "approval") {
     return {

@@ -45,8 +45,6 @@ export function buildCodexAdditionalContext(
   orchestration?: McpOrchestrationPolicy,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
-  const roles = orchestration?.modelRoles.trim();
-  const notes = orchestration?.modelNotes.trim();
   const orchestrationSections = orchestration?.sections ?? t3OrchestrationSections();
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
@@ -61,7 +59,5 @@ export function buildCodexAdditionalContext(
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
-    ...(roles ? { t3_code_model_roles: { kind: "application", value: roles } } : {}),
-    ...(notes ? { t3_code_model_notes: { kind: "application", value: notes } } : {}),
   };
 }

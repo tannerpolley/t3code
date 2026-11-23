@@ -11,7 +11,7 @@ import {
 import { makeThreadFixture } from "~/test-fixtures";
 import { createLiveIssueWorkOverlay, indexIssueWork } from "./issueLiveWork.logic";
 import { issueProgress, issueStatePresentation } from "./IssueStateIcon";
-import { issueRoadmap } from "./issueRoadmap.logic";
+import { issueLiveWorkSummary, issueRoadmap } from "./issueRoadmap.logic";
 
 const overlay = createLiveIssueWorkOverlay();
 const environmentId = EnvironmentId.make("environment-test");
@@ -531,4 +531,35 @@ it("shows the server suspension over live working state and clears it after Resu
   const resumed = withLiveIssueWork(list, [working]);
   expect(issueProgress(resumed.issues[0]!)).toBe("in_progress");
   expect(issueStatePresentation(resumed.issues[0]!).label).toBe("In progress");
+});
+
+it("keeps a paused worker from the server while its family is unloaded and clears it on restart", () => {
+  const worker = { ...running, linkedIssue };
+  const source = {
+    ...list.issues[0]!,
+    liveWork: [
+      {
+        threadId: worker.id,
+        title: worker.title,
+        branch: null,
+        worktreePath: null,
+        pullRequests: [],
+        status: "idle" as const,
+        paused: true as const,
+      },
+    ],
+  };
+  const summary = (
+    shells: Parameters<typeof indexIssueWork>[0],
+    removed = new Map<ThreadId, number>(),
+  ) =>
+    overlay.summary(
+      source,
+      scope,
+      environmentId,
+      indexIssueWork(shells, new Map([[environmentId, removed]])),
+    );
+  expect(issueLiveWorkSummary(summary([]))?.status).toBe("paused");
+  expect(issueLiveWorkSummary(summary([worker]))?.status).toBe("working");
+  expect(issueLiveWorkSummary(summary([], new Map([[worker.id, 10]])))).toBeNull();
 });

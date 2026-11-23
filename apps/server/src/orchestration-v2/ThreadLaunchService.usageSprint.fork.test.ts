@@ -150,6 +150,8 @@ it.effect("retires a saved sprint on startup and preserves its history", () => {
         children: [{ threadId: childId }],
       },
     ]);
-    assert.equal((yield* threads.getThreadShell(childId))?.activeRunId, activeRunId);
+    const child = yield* threads.getThreadShell(childId);
+    assert.equal(child?.activeRunId, activeRunId);
+    assert.isUndefined(child?.explicitStopRequested);
   }).pipe(Effect.provide(dependencies));
 });

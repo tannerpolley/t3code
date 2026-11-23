@@ -321,10 +321,11 @@ export const layer = Layer.effect(
               closingPullRequests: (status.closingPullRequests ?? status.pullRequests).map(
                 compactPr,
               ),
-              liveWork: status.liveWork?.map(({ threadId, inherited, status }) => ({
+              liveWork: status.liveWork?.map(({ threadId, inherited, status, paused }) => ({
                 threadId,
                 inherited,
                 status,
+                ...(paused === true ? { paused } : {}),
               })),
             });
           }

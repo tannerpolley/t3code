@@ -1,5 +1,6 @@
 import type { EnvironmentId, RepositoryIssueRef, RepositoryIssueSummary } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 import { useState, type ReactElement } from "react";
 
 import { useOpenIssueLink } from "~/lib/openIssueLink";
@@ -29,6 +30,7 @@ interface IssueHoverContentProps {
 /** Mounted only in an open hover: the detail cache and streamed shell overlay stay shared. */
 function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverContentProps) {
   const { environmentId, input } = target;
+  const gt = useGT();
   const query = useEnvironmentQuery(repositoryIssueEnvironment.detail({ environmentId, input }));
   const issue = useLiveIssueSummary(query.data?.issue ?? fallback, input, environmentId);
   const queued = useIssueQueued(environmentId, input);
@@ -117,7 +119,9 @@ function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverCon
                     ? "Working"
                     : work.status === "waiting_on_you"
                       ? "Waiting on you"
-                      : "Idle"}
+                      : work.paused === true
+                        ? gt("Paused")
+                        : "Idle"}
                 </Link>
               ))}
             </div>

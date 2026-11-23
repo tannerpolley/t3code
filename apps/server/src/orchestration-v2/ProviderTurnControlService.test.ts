@@ -248,6 +248,7 @@ it.effect(
           getThreadWorktreePaths: () => Effect.die("unused getThreadWorktreePaths"),
           getThreadProjection: () => Effect.die("control effects must not load transcript"),
           getTurnStartContext: () => Effect.die("unused"),
+          getOriginalRunBrief: () => Effect.die("unused"),
           getTurnStartHistory: () => Effect.die("unused"),
           getRuntimeRecoveryProjection: () => Effect.die("unused getRuntimeRecoveryProjection"),
           getPlan: () => Effect.die("unused"),

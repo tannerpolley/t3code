@@ -142,6 +142,9 @@ describe("fresh-thread repository handoff", () => {
         threads: ThreadManagement.ThreadManagementService["Service"],
       ) => ThreadManagement.ThreadManagementService["Service"];
       inventoryIssues?: () => number[];
+      issueReads?: string[];
+      repositoryId?: () => string;
+      issueState?: (number: number) => "open" | "closed";
       /** Runs first in the provider check, which the handoff command makes under the root's lock. */
       beforeCapabilities?: () => Effect.Effect<
         void,
@@ -154,19 +157,33 @@ describe("fresh-thread repository handoff", () => {
     } = {},
   ) => {
     const reads = Layer.mock(IssueService.IssueService)({
-      repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: config.repositoryId }),
-      resolveLinkedIssue: (input) => Effect.succeed(linked(input.number)),
+      repositoryIdentity: () =>
+        Effect.sync(() => {
+          options.issueReads?.push("repository identity");
+          return { ...reference, repositoryId: options.repositoryId?.() ?? config.repositoryId };
+        }),
+      resolveLinkedIssue: (input) =>
+        Effect.sync(() => {
+          options.issueReads?.push(`issue identity:${input.number}`);
+          return linked(input.number);
+        }),
       workRead: (input) =>
-        Effect.succeed({
-          issue: linked(input.number),
-          state: "open" as const,
-          milestoneNumber: 1,
-          parent: input.number === 2 ? linked(1) : null,
-          subIssues: input.number === 1 ? [linked(2)] : [],
-          blockedBy: [],
-          parentComplete: true,
-          subIssuesComplete: true,
-          blockersComplete: true,
+        Effect.sync(() => {
+          options.issueReads?.push(`relationships:${input.number}`);
+          return {
+            issue: {
+              ...linked(input.number),
+              repositoryId: options.repositoryId?.() ?? config.repositoryId,
+            },
+            state: options.issueState?.(input.number) ?? "open",
+            milestoneNumber: 1,
+            parent: input.number === 2 ? linked(1) : null,
+            subIssues: input.number === 1 ? [linked(2)] : [],
+            blockedBy: [],
+            parentComplete: true,
+            subIssuesComplete: true,
+            blockersComplete: true,
+          };
         }),
       capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
       milestoneIssues: () =>
@@ -582,6 +599,7 @@ describe("fresh-thread repository handoff", () => {
   it.effect.each([{}, { isolation: "shared" }, { isolation: "worktree" }] as const)(
     "delegate_task starts an unstarted issue in the repository worktree regardless of caller isolation (%j)",
     (choice) => {
+      const issueReads: string[] = [];
       const created: Array<
         Parameters<GitWorkflow.GitWorkflowService["Service"]["createWorktree"]>[0]
       > = [];
@@ -618,6 +636,7 @@ describe("fresh-thread repository handoff", () => {
           clientRequestId: "managed-worktree",
         };
         const task = yield* mcp.delegateTask(scope(rootId), input);
+        assert.deepEqual(issueReads, ["relationships:9", "relationships:9"]);
         yield* tracker.stream(task.childThreadId!).pipe(
           Stream.filter((snapshot) => snapshot?.phase === "done"),
           Stream.runHead,
@@ -638,15 +657,18 @@ describe("fresh-thread repository handoff", () => {
           clientRequestId: "managed-worktree-duplicate",
         });
         assert.equal(duplicate.childThreadId, task.childThreadId);
-        const panelDuplicate = yield* service.start({
+        const panelInput = {
           ...reference,
           number: 9,
           projectId,
           modelRoleId: "implementor-complex",
-
           clientRequestId: CommandId.make("managed-panel-duplicate"),
-        });
+        };
+        const panelDuplicate = yield* service.start(panelInput);
         assert.equal(panelDuplicate.issueThreadId, task.childThreadId);
+        issueReads.length = 0;
+        assert.equal((yield* service.start(panelInput)).issueThreadId, task.childThreadId);
+        assert.isEmpty(issueReads);
         assert.lengthOf(created, 1);
         assert.lengthOf((yield* threads.getThreadRecords(rootId, ["subagents"])).subagents, 1);
         assert.lengthOf((yield* threads.getThreadRecords(rootId, ["messages"])).messages, 1);
@@ -654,6 +676,7 @@ describe("fresh-thread repository handoff", () => {
         Effect.provide(
           fixture({
             recovery: true,
+            issueReads,
             git: {
               resolveDefaultBranchRef: () => Effect.succeed("trunk"),
               localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
@@ -679,6 +702,7 @@ describe("fresh-thread repository handoff", () => {
   it.effect.each(["panel", "milestone"] as const)(
     "%s creates a worktree child without queuing the idle root, then delivers completion to it",
     (path) => {
+      const issueReads: string[] = [];
       const created: Array<
         Parameters<GitWorkflow.GitWorkflowService["Service"]["createWorktree"]>[0]
       > = [];
@@ -702,8 +726,10 @@ describe("fresh-thread repository handoff", () => {
 
           clientRequestId: CommandId.make(`shared-start:${path}`),
         };
-        if (path === "panel") yield* service.start({ ...input, number: 9 });
-        else yield* service.workMilestone({ ...input, milestoneNumber: 1 });
+        if (path === "panel") {
+          yield* service.start({ ...input, number: 9 });
+          assert.isTrue(issueReads.every((read) => read === "relationships:9"));
+        } else yield* service.workMilestone({ ...input, milestoneNumber: 1 });
         const childId = (yield* store.issueOwner(linked(9)))!;
         yield* tracker.stream(childId).pipe(
           Stream.filter((snapshot) => snapshot?.phase === "done"),
@@ -766,9 +792,14 @@ describe("fresh-thread repository handoff", () => {
           fixture({
             recovery: true,
             continuation: true,
+            issueReads,
             inventoryIssues: () => [9],
             git: {
-              resolveDefaultBranchRef: () => Effect.succeed("trunk"),
+              resolveDefaultBranchRef: () =>
+                Effect.sync(() => {
+                  if (path === "panel") assert.deepEqual(issueReads, ["relationships:9"]);
+                  return "trunk";
+                }),
               localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
               hasCommit: () => Effect.succeed(true),
               createWorktree: (input) =>
@@ -788,6 +819,47 @@ describe("fresh-thread repository handoff", () => {
       );
     },
   );
+
+  it.effect("refreshes a child that closes while Start admits its missing ancestor", () => {
+    const issueReads: string[] = [];
+    let childClosed = false;
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      yield* createRoot;
+      const error = yield* service
+        .start({
+          ...reference,
+          number: 2,
+          projectId,
+          modelRoleId: "implementor-complex",
+          clientRequestId: CommandId.make("ancestor-refresh"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(error.message, "Only open issues can start work.");
+      assert.isNotNull(yield* store.issueOwner(linked(1)));
+      assert.isNull(yield* store.latestRequest(linked(2)));
+      assert.deepEqual(
+        issueReads.filter((read) => read.endsWith(":2")),
+        ["relationships:2", "relationships:2"],
+      );
+    }).pipe(
+      Effect.provide(
+        fixture({
+          recovery: true,
+          issueReads,
+          issueState: (number) => (number === 2 && childClosed ? "closed" : "open"),
+          git: {
+            resolveDefaultBranchRef: () =>
+              Effect.sync(() => {
+                childClosed = true;
+                return "main";
+              }),
+          },
+        }),
+      ),
+    );
+  });
 
   it.effect("serializes a panel sub-issue start with its parent's simultaneous delegate", () => {
     let gate: Deferred.Deferred<void> | undefined;
@@ -1516,8 +1588,9 @@ describe("fresh-thread repository handoff", () => {
 
   it.effect(
     "Start agent requires an explicit existing lead, registers it once and creates workers following the issue tree",
-    () =>
-      Effect.gen(function* () {
+    () => {
+      const issueReads: string[] = [];
+      return Effect.gen(function* () {
         const service = yield* IssueWorkService.IssueWorkService;
         const threads = yield* ThreadManagement.ThreadManagementService;
         const store = yield* IssueWorkStore.IssueWorkStore;
@@ -1549,11 +1622,16 @@ describe("fresh-thread repository handoff", () => {
           "Failure",
         );
 
+        issueReads.length = 0;
         const accepted = yield* service.start({
           ...input,
           orchestratorThreadId: originalLeadId,
           clientRequestId: CommandId.make("start:selected"),
         });
+        assert.deepEqual(
+          issueReads.filter((read) => !read.startsWith("relationships:")),
+          ["repository identity"],
+        );
         assert.equal(accepted.rootThreadId, originalLeadId);
         assert.isFalse(accepted.createdRoot);
         assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, originalLeadId);
@@ -1598,7 +1676,51 @@ describe("fresh-thread repository handoff", () => {
         );
         yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
         assert.equal((yield* store.repositoryOwner(config))!.rootThreadId, originalLeadId);
-      }).pipe(Effect.provide(fixture({ recovery: true }))),
+      }).pipe(Effect.provide(fixture({ recovery: true, issueReads })));
+    },
+  );
+
+  it.effect(
+    "Start leaves the selected lead unregistered when the repository ID changes during checkout validation",
+    () => {
+      let repositoryId = config.repositoryId;
+      let recreateOnCheckout = false;
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        yield* createOriginalLead;
+        recreateOnCheckout = true;
+        const requestId = CommandId.make("start:repository-recreated");
+        const error = yield* service
+          .start({
+            ...reference,
+            number: 9,
+            projectId,
+            modelRoleId: "implementor-complex",
+            orchestratorThreadId: originalLeadId,
+            clientRequestId: requestId,
+          })
+          .pipe(Effect.flip);
+        assert.equal(repositoryId, "repo:replacement");
+        assert.isNull(yield* store.configuration(originalLeadId));
+        assert.isNull(yield* store.request(requestId));
+        assert.include(error.message, "repository identity does not match");
+      }).pipe(
+        Effect.provide(
+          fixture({
+            recovery: true,
+            repositoryId: () => repositoryId,
+            git: {
+              localStatus: () =>
+                Effect.sync(() => {
+                  if (recreateOnCheckout) repositoryId = "repo:replacement";
+                  return { isRepo: true, refName: "main" } as never;
+                }),
+            },
+          }),
+        ),
+      );
+    },
   );
 
   it.effect(

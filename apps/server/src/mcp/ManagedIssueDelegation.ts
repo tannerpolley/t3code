@@ -5,6 +5,7 @@ import {
   type OrchestratorMcpDelegateTaskResult,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2AppThread,
+  type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -19,6 +20,17 @@ import {
   isUnmanagedIssueRole,
   requiresManagedIssueAdmission,
 } from "../issues/IssueEligibility.ts";
+
+export const delegatedIssueRef = (
+  projectId: ProjectId,
+  issue: NonNullable<OrchestratorMcpDelegateTaskInput["issue"]>,
+) => ({
+  projectId,
+  tracker: IssueTrackerKind.make("github"),
+  host: (issue.host ?? "github.com").toLowerCase(),
+  scope: issue.repository,
+  key: String(issue.number),
+});
 
 export const makeManagedIssueDelegation = Effect.fn("ManagedIssueDelegation.make")(function* (
   loadThread: (id: ThreadId) => Effect.Effect<OrchestrationV2AppThread, OrchestratorMcpFailure>,
@@ -69,9 +81,7 @@ export const makeManagedIssueDelegation = Effect.fn("ManagedIssueDelegation.make
         .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       if (read.state !== "open")
         return yield* failure("invalid_request", "Only open issues can be delegated.");
-      linkedIssue = yield* issueService.value
-        .resolveLinkedIssue({ ...input.issue, host: input.issue.host ?? "github.com" })
-        .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      linkedIssue = read.issue;
       const repositoryOwner = yield* issueWorkStore.value
         .repositoryOwner(linkedIssue)
         .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
@@ -125,14 +135,7 @@ export const makeManagedIssueDelegation = Effect.fn("ManagedIssueDelegation.make
       Option.isNone(threadIssues)
     )
       return;
-    const host = (issue.host ?? "github.com").toLowerCase();
-    const ref = {
-      projectId: parent.projectId,
-      tracker: IssueTrackerKind.make("github"),
-      host,
-      scope: issue.repository,
-      key: String(issue.number),
-    };
+    const ref = delegatedIssueRef(parent.projectId, issue);
     const detail = yield* trackerIssues.value.detail(ref).pipe(
       Effect.tapError((error) =>
         Effect.logWarning("delegated child linked without reading its issue", {
@@ -141,7 +144,7 @@ export const makeManagedIssueDelegation = Effect.fn("ManagedIssueDelegation.make
         }),
       ),
       Effect.orElseSucceed(() => ({
-        url: `https://${host}/${issue.repository}/issues/${issue.number}`,
+        url: `https://${ref.host}/${ref.scope}/issues/${ref.key}`,
         displayKey: `#${issue.number}`,
         title: `#${issue.number}`,
       })),
@@ -178,7 +181,7 @@ export const makeManagedIssueDelegation = Effect.fn("ManagedIssueDelegation.make
     const config = root?.repositoryOrchestration;
     if (config === undefined) return taskResult;
     const status = yield* issueWork.value
-      .repositoryStatus(config)
+      .repositoryStatus(config, { verifyIdentity: false })
       .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
     const readers = isReadOnlyIssueRole(taskCommand.role);
     if (!readers && taskCommand.issue === undefined) return taskResult;

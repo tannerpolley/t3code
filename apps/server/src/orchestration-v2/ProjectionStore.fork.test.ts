@@ -4,7 +4,7 @@ import { ProviderSessionId } from "@t3tools/contracts";
 import { ProviderTurnId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -369,6 +369,71 @@ it.effect.each([
     }).pipe(Effect.provide(layer)),
 );
 
+it.effect.each(["archivedAt", "deletedAt"] as const)(
+  "keeps fork worker rows and paging reachable through an ancestor with %s",
+  (inactiveField) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const root = yield* addRolledBackRecoveryCandidate(`worker-lineage:${inactiveField}`);
+      const thread = yield* store.getThread(root);
+      const now = yield* DateTime.now;
+      const fork = ThreadId.make("worker-fork");
+      const implementor = ThreadId.make("worker-implementor");
+      const reviewer = ThreadId.make("worker-reviewer");
+      const checker = ThreadId.make("worker-checker");
+      for (const [id, parentThreadId, relationshipToParent] of [
+        [fork, root, "fork"],
+        [implementor, fork, "subagent"],
+        [reviewer, implementor, "subagent"],
+        [checker, reviewer, "subagent"],
+      ] as const) {
+        yield* store.apply({
+          id: EventId.make(`created:${id}`),
+          type: "thread.created",
+          threadId: id,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            id,
+            lineage: { rootThreadId: root, parentThreadId, relationshipToParent },
+            ...(id === implementor ? { [inactiveField]: now } : {}),
+          },
+        });
+      }
+      const { snapshot } = yield* loadSubscriberShellSnapshot({
+        sql,
+        listShellIndex: store.listActiveShellIndex(),
+        readThreads: (threadIds) =>
+          store.readShellSnapshot({
+            location: "active",
+            ...(threadIds === undefined ? {} : { threadIds }),
+          }),
+        listProjects: Effect.succeed([]),
+        latestSequence: Effect.succeed(0),
+        options: { omitIdleSubagents: true, omitOlderSettled: false },
+      });
+      expect
+        .soft(snapshot.omittedWorkers)
+        .toEqual(expect.arrayContaining([{ parentThreadId: fork, count: 1 }]));
+      expect
+        .soft(snapshot.threads.find(({ id }) => id === reviewer)?.workerAncestorIds)
+        .toEqual([fork]);
+      expect.soft((yield* store.getThreadShell(checker))?.workerAncestorIds).toEqual([fork]);
+      for (const parentThreadId of [root, fork]) {
+        const page = yield* store.getShellSnapshot({
+          location: "active",
+          workerPage: { parentThreadId },
+        });
+        expect.soft(page.threads.map(({ id }) => id).toSorted()).toEqual([checker, reviewer]);
+        expect
+          .soft(page.threads.find(({ id }) => id === checker)?.workerAncestorIds)
+          .toEqual([fork]);
+        expect.soft(page.remainingWorkers).toBe(0);
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "subscriber snapshots retain idle children referenced by pending tasks after restart",
@@ -453,10 +518,72 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           latestSequence: Effect.succeed(0),
           options: { omitIdleSubagents: true, omitOlderSettled: false },
         });
+        assert.deepEqual(snapshot.omittedWorkers, [{ parentThreadId: root, count: 1 }]);
         assert.deepEqual(requested?.toSorted(), [root, delegated].toSorted());
         assert.deepEqual(
           snapshot.threads.map((shell) => shell.id).toSorted(),
           [root, delegated].toSorted(),
+        );
+        const ids = Array.from({ length: 12 }, (_, index) => ThreadId.make(`page-worker:${index}`));
+        for (const [index, id] of ids.entries()) {
+          const createdAt = DateTime.add(now, { seconds: index + 1 });
+          yield* store.apply({
+            id: EventId.make(`created:${id}`),
+            type: "thread.created",
+            threadId: id,
+            occurredAt: createdAt,
+            payload: {
+              ...thread,
+              id,
+              createdAt,
+              lineage: {
+                rootThreadId: root,
+                parentThreadId: root,
+                relationshipToParent: "subagent",
+              },
+            },
+          });
+        }
+        const pageOptions = { parentThreadId: root, exclude: [delegated, unrelated] };
+        const page = yield* store.getShellSnapshot({ location: "active", workerPage: pageOptions });
+        expect
+          .soft(page.threads.map((shell) => shell.id).toSorted())
+          .toEqual(ids.slice(2).toSorted());
+        expect.soft(page.remainingWorkers).toBe(4);
+        const lastVisible = page.threads.find((shell) => shell.id === ids[2])!;
+        const next = yield* store.getShellSnapshot({
+          location: "active",
+          workerPage: {
+            ...pageOptions,
+            before: {
+              threadId: lastVisible.id,
+              createdAt: DateTime.formatIso(lastVisible.createdAt),
+            },
+          },
+        });
+        expect
+          .soft(
+            next.threads.map((shell) => shell.id).toSorted(),
+            "formerly live children are pageable",
+          )
+          .toEqual([...ids.slice(0, 2), delegated, unrelated].toSorted());
+        const { thread: unseen } = yield* store.getThreadRecords(unrelated, []);
+        yield* store.apply({
+          id: EventId.make("archive-unseen-child"),
+          type: "thread.archived",
+          threadId: unrelated,
+          occurredAt: now,
+          payload: { ...unseen, archivedAt: now },
+        });
+        const fresh = yield* store.getShellSnapshot({
+          location: "active",
+          workerPage: pageOptions,
+        });
+        expect.soft(fresh.remainingWorkers, "the server count reflects an unseen archive").toBe(3);
+        const path = yield* store.getShellSnapshot({ location: "active", ancestorPathOf: ids[0]! });
+        assert.sameMembers(
+          path.threads.map((shell) => shell.id),
+          [root, ids[0]!],
         );
       }),
   );

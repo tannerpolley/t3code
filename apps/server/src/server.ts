@@ -925,6 +925,7 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(PreviewFileUrls.layer),
+    Layer.provide(T3ProjectFileLoader.layer),
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),

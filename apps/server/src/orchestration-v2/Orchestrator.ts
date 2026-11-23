@@ -220,6 +220,7 @@ import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import { USER_STOP_REASON } from "./RunInterruptReason.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { isProviderSwitchPlanError, ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
@@ -4010,7 +4011,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Only stamped work names a remote parent, so a client cannot claim one.
       ...(command.linkOrigin === undefined || command.delegatedFrom === undefined
         ? {}
-        : { delegatedFrom: command.delegatedFrom }),
+        : {
+            delegatedFrom: command.delegatedFrom,
+            ...(command.delegatedFrom.role === undefined
+              ? {}
+              : { role: command.delegatedFrom.role }),
+          }),
       lineage: {
         parentThreadId: null,
         relationshipToParent: null,
@@ -10076,6 +10082,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           creationSource: request.creationSource,
         }),
         ...issueWork.childIssueFields(request, parentProjection.thread.projectId, now),
+        ...(request.roleSkillSelection === undefined
+          ? {}
+          : { roleSkillSelection: request.roleSkillSelection }),
         runtimeMode: request.runtimeMode,
         interactionMode: request.interactionMode,
         ...issueWork.childWorkspaceFields(request),
@@ -13263,7 +13272,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "run_interrupt_request",
-        message: command.reason ?? RunExecutionService.USER_STOP_REASON,
+        message: command.reason ?? USER_STOP_REASON,
       },
     });
   });
@@ -13726,7 +13735,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const dispatchRunInterrupt = Effect.fn("Orchestrator.dispatchRunInterrupt")(function* (
-    command: Extract<OrchestrationV2ServerCommand, { readonly type: "run.interrupt" }>,
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "run.interrupt" }> & {
+      readonly reason: string;
+    },
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
@@ -13856,7 +13867,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completedAt: now,
       updatedAt: now,
       type: "run_interrupt_request",
-      message: command.reason ?? RunExecutionService.USER_STOP_REASON,
+      message: command.reason,
     };
 
     const otherProviderInterrupts: Array<PendingOrchestrationEffectV2> = [];
@@ -14410,7 +14421,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
             runId: target.id,
             holdQueue: true,
-            ...(command.reason === undefined ? {} : { reason: command.reason }),
+            reason: command.reason ?? USER_STOP_REASON,
           },
           interruptEvents,
           interruptEffects,
@@ -16071,7 +16082,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchSubagentStop(command, events, effects);
         break;
       case "run.interrupt":
-        cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
+        cancelUnsettledEffects = yield* dispatchRunInterrupt(
+          {
+            ...command,
+            // Older clients identify the Stop button by holding the queue.
+            reason:
+              command.reason ?? (command.holdQueue === true ? USER_STOP_REASON : "Interrupted"),
+          },
+          events,
+          effects,
+        );
         if (command.holdQueue === true) {
           // Stop must still commit when a child can't be read, so a failed repair's
           // partial events are dropped.

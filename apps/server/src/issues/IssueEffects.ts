@@ -251,6 +251,7 @@ export const make = Effect.gen(function* () {
           threadId: effect.threadId,
           runId: request.runId,
           retryInterruptUntilDone: true,
+          reason: request.reason ?? "Interrupted by issue work suspension",
           // A failed command has a rejected receipt. A new outbox attempt
           // may retry it; the recorded run guards against stopping later work.
           commandId: CommandId.make(`${effect.id}:attempt:${effect.attemptCount}`),

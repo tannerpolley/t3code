@@ -147,6 +147,7 @@ export class IssueWorkService extends Context.Service<
     ) => Effect.Effect<RepositoryChildrenStatus, IssueWorkError>;
     readonly repositoryStatus: (
       input: Pick<RepositoryIssueRef, "host" | "repository">,
+      options?: { readonly verifyIdentity?: boolean },
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly setWorkerLimit: (
       input: RepositoryWorkerLimitInput,
@@ -363,15 +364,18 @@ export const layer = Layer.effect(
       if (root === null && input.orchestratorThreadId !== undefined) {
         const selectedLead = input.orchestratorThreadId;
         // Scoped to this Start request, so a fresh request re-checks a corrected lead.
-        yield* restoreRoot({
-          ...issue,
-          projectId: input.projectId,
-          expectedRootThreadId: null,
-          expectedRevision: null,
-          targetThreadId: selectedLead,
-          reason: "User selected this existing lead for issue work",
-          clientRequestId: CommandId.make(`${input.clientRequestId}:adopt-root`),
-        }).pipe(
+        yield* restoreRoot(
+          {
+            ...issue,
+            projectId: input.projectId,
+            expectedRootThreadId: null,
+            expectedRevision: null,
+            targetThreadId: selectedLead,
+            reason: "User selected this existing lead for issue work",
+            clientRequestId: CommandId.make(`${input.clientRequestId}:adopt-root`),
+          },
+          { verifyStatusIdentity: false },
+        ).pipe(
           // A concurrent Start that registered the same lead is this request's success too.
           Effect.catch((error) =>
             store
@@ -542,8 +546,9 @@ export const layer = Layer.effect(
     ): Effect.fn.Return<IssueWorkStartResult, IssueWorkError> {
       // An accepted operation remains replayable even if GitHub changed afterward.
       const accepted = yield* store.request(input.clientRequestId);
+      let read: IssueWorkRead | undefined;
       if (accepted === null) {
-        const read = yield* issues.workRead(input).pipe(Effect.mapError(mapError));
+        read = yield* issues.workRead(input).pipe(Effect.mapError(mapError));
         if (issueEligibility(read) !== "eligible")
           return yield* new IssueWorkError({
             code: "issue-unavailable",
@@ -581,11 +586,14 @@ export const layer = Layer.effect(
             number: parent.issue.number,
             clientRequestId: CommandId.make(`${input.clientRequestId}:ancestor:${parent.issue.id}`),
           });
+        // Starting an ancestor can leave enough time for the requested issue to change.
+        if (ancestors.length > 0) read = undefined;
       }
-      return yield* startAccepted(input);
+      return yield* startAccepted(input, read);
     });
     const startAccepted = Effect.fn("IssueWorkService.startAccepted")(function* (
       input: IssueWorkStartInput,
+      verifiedRead: IssueWorkRead | undefined,
     ): Effect.fn.Return<IssueWorkStartResult, IssueWorkError> {
       const accepted = yield* store.request(input.clientRequestId);
       if (accepted !== null) {
@@ -612,13 +620,13 @@ export const layer = Layer.effect(
           createdRoot: false,
         };
       }
-      const read = yield* issues.workRead(input).pipe(Effect.mapError(mapError));
+      const read = verifiedRead ?? (yield* issues.workRead(input).pipe(Effect.mapError(mapError)));
       if (read.state !== "open")
         return yield* new IssueWorkError({
           code: "invalid-request",
           message: "Only open issues can start work.",
         });
-      const issue = yield* issues.resolveLinkedIssue(input).pipe(Effect.mapError(mapError));
+      const { issue } = read;
       const { root, selection, createdRoot } = yield* ensureRoot(input, issue, true);
       const rootShell = yield* threads
         .getThreadShell(root.rootThreadId)
@@ -680,9 +688,9 @@ export const layer = Layer.effect(
     );
     const repositoryStatus: IssueWorkService["Service"]["repositoryStatus"] = Effect.fn(
       "IssueWorkService.repositoryStatus",
-    )(function* (input) {
+    )(function* (input, options) {
       const status = yield* readRepositoryStatus(input);
-      if (status.orchestration === null) return status;
+      if (status.orchestration === null || options?.verifyIdentity === false) return status;
       // A host that cannot answer must not hide the registration, so only a successful read can report a mismatch.
       const live = yield* Effect.exit(
         liveIdentity(
@@ -1777,9 +1785,13 @@ export const layer = Layer.effect(
 
     const restoreRoot = Effect.fn("IssueWorkService.restoreRoot")(function* (
       input: Parameters<IssueWorkService["Service"]["restoreRoot"]>[0],
-      // No screen shows a project's previous repository, so a user assignment cannot pause it first.
-      moveUnpaused = false,
+      options?: {
+        readonly verifyStatusIdentity?: boolean;
+        // No screen shows a project's previous repository, so a user assignment cannot pause it first.
+        readonly moveUnpaused?: boolean;
+      },
     ) {
+      const moveUnpaused = options?.moveUnpaused ?? false;
       yield* validateLead(
         input,
         input.expectedRootThreadId === null ? input : undefined,
@@ -1826,7 +1838,9 @@ export const layer = Layer.effect(
           code: "invalid-request",
           message: "This command id was already used for another recovery operation.",
         });
-      return yield* repositoryStatus(input);
+      return yield* repositoryStatus(input, {
+        verifyIdentity: options?.verifyStatusIdentity ?? true,
+      });
     });
 
     const assignOrchestrator = Effect.fn("IssueWorkService.assignOrchestrator")(
@@ -1858,7 +1872,7 @@ export const layer = Layer.effect(
             expectedRevision: null,
             reason: "User selected this existing lead for repository orchestration",
           },
-          true,
+          { moveUnpaused: true },
         );
       },
       (effect, input) =>

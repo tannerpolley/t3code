@@ -138,5 +138,8 @@
   "4ff59e3efe808734": "Ajouter les sous-dossiers comme projets",
   "1a47fae902ee1859": "Fournisseurs par rôle",
   "b6295e8a6dd8291f": "Autoriser l’utilisation de crédits quand le quota hebdomadaire est presque épuisé.",
-  "408a142fdd1bb20c": "inactif depuis {minutes} min"
+  "408a142fdd1bb20c": "inactif depuis {minutes} min",
+  "0a1ab3194d17d5de": "En pause",
+  "4aa825fb9e126e78": "Afficher plus d’agents ({count})",
+  "d54039a1d96a0e3c": "Réessayer de charger les agents"
 }

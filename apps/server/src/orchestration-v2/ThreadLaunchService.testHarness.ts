@@ -483,8 +483,12 @@ function reviewHarness(
     slashCommands: [],
     skills: [],
   }));
+  const repositoryIdentity = vi.fn<IssueService.IssueService["Service"]["repositoryIdentity"]>(
+    (input) => Effect.succeed({ ...reviewIssue(1, input.repository), host: input.host }),
+  );
   const reads = Layer.mock(IssueService.IssueService)({
     workRead,
+    repositoryIdentity,
     resolveLinkedIssue: (input) => Effect.succeed(reviewIssue(input.number, input.repository)),
     capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
     milestoneIssues: () => Effect.succeed({ issues: [], complete: true }),
@@ -528,6 +532,7 @@ function reviewHarness(
   );
   return {
     ...harness,
+    repositoryIdentity,
     dependencies,
     layer: Layer.mergeAll(
       IssueWorkService.layer.pipe(Layer.provide(dependencies)),

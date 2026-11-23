@@ -137,6 +137,7 @@ function shouldPublishAgentAwarenessEvent(
     case "run.background-work-cancelled":
     case "run-attempt.created":
     case "run-attempt.updated":
+    case "run-attempt.skill-preload-recorded":
     case "node.updated":
     case "provider-session.attached":
     case "provider-session.updated":

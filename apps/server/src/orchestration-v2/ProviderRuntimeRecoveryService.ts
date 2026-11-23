@@ -294,7 +294,11 @@ export const make = Effect.gen(function* () {
                 ),
             )?.request;
       const prior = previous?.type === "provider-runtime.continue" ? previous : undefined;
-      const transientFailureAttempt = prior?.transientFailureAttempt;
+      // Recovery rewinds runs with no recorded provider turn to starting with no start time.
+      const transientFailureAttempt =
+        run.status === "starting" && run.startedAt === null
+          ? prior?.transientFailureAttempt
+          : undefined;
       return {
         type: "provider-runtime.continue" as const,
         sourceRunId: run.id,

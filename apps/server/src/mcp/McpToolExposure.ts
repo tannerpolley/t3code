@@ -5,11 +5,16 @@ import type { McpInvocationContext } from "./McpInvocationContext.ts";
 
 export const TOOL_SEARCH = "tool_search";
 
-/** What a deferring client lists before it searches. Pi's extension declares the same three. */
-const DIRECT_TOOLS: ReadonlySet<string> = new Set([
+/** Tools a fresh deferring client needs to discover work or act before discovery. */
+export const DIRECT_TOOLS: ReadonlySet<string> = new Set([
   "orchestrator_capabilities",
   "delegate_task",
   "task_status",
+  "request_secret",
+  "send_to_user",
+  "t3_request_user_input",
+  "t3_background_wait",
+  "t3_thread_wait",
   TOOL_SEARCH,
 ]);
 
@@ -46,6 +51,20 @@ const score = (tool: ListedTool, terms: ReadonlyArray<string>) => {
   return total;
 };
 
+export function searchCatalog(tools: ReadonlyArray<ListedTool>, query: string) {
+  const terms = query
+    .toLowerCase()
+    .split(/[^a-z0-9_]+/u)
+    .filter(Boolean);
+  return tools
+    .filter((tool) => tool.name !== TOOL_SEARCH)
+    .map((tool) => ({ tool, score: score(tool, terms) }))
+    .filter((match) => match.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_RESULTS)
+    .map((match) => match.tool);
+}
+
 export const make = (
   tools: Effect.Effect<ReadonlyArray<ListedTool>, never, McpInvocationContext>,
   announceListChanged: () => Effect.Effect<void>,
@@ -63,17 +82,7 @@ export const make = (
   };
   return McpToolExposure.of({
     search: Effect.fn("McpToolExposure.search")(function* (providerSessionId, query) {
-      const terms = query
-        .toLowerCase()
-        .split(/[^a-z0-9_]+/u)
-        .filter(Boolean);
-      const found = (yield* tools)
-        .filter((tool) => tool.name !== TOOL_SEARCH)
-        .map((tool) => ({ tool, score: score(tool, terms) }))
-        .filter((match) => match.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, MAX_RESULTS)
-        .map((match) => match.tool);
+      const found = searchCatalog(yield* tools, query);
       if (found.length > 0) {
         load(
           providerSessionId,
