@@ -368,9 +368,27 @@ export function applyOrchestrationV2ProjectionEvent(
       };
     case "run-attempt.created":
     case "run-attempt.updated": {
-      const next = { ...base, attempts: upsertEntity(base.attempts, event.payload) };
+      const skillPreload = base.attempts.find(
+        (attempt) => attempt.id === event.payload.id,
+      )?.skillPreload;
+      const next = {
+        ...base,
+        attempts: upsertEntity(base.attempts, {
+          ...event.payload,
+          ...(skillPreload === undefined ? {} : { skillPreload }),
+        }),
+      };
       return { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
     }
+    case "run-attempt.skill-preload-recorded":
+      return {
+        ...base,
+        attempts: base.attempts.map((attempt) =>
+          attempt.id === event.payload.attemptId
+            ? { ...attempt, skillPreload: event.payload.record }
+            : attempt,
+        ),
+      };
     case "node.updated":
       return { ...base, nodes: upsertEntity(base.nodes, event.payload) };
     case "subagent.updated":

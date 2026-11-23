@@ -43,6 +43,7 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2DelegatedFrom,
+  OrchestrationV2RemoteTaskChild,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
@@ -240,7 +241,12 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   childThreadId: Schema.NullOr(ThreadId),
   /** The linked environment and thread a remote task runs as. */
   remoteChild: Schema.optional(
-    Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId, label: Schema.String }),
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      threadId: ThreadId,
+      label: Schema.String,
+      issueSkillsSkipped: OrchestrationV2RemoteTaskChild.fields.issueSkillsSkipped,
+    }),
   ),
   link: Schema.optional(Schema.String),
   childRunId: Schema.NullOr(RunId),

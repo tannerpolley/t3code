@@ -15,6 +15,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   ProjectId,
@@ -2347,6 +2348,78 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         assert.equal(storedEffect.value.status, "succeeded");
       }
     }),
+  );
+
+  it.effect("keeps acknowledged skill preloads through stale attempt updates and replay", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const replay = yield* ProjectionReplay.ProjectionReplay;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:role-skill-record");
+      const runId = RunId.make("run:role-skill-record");
+      const attempt: OrchestrationV2RunAttempt = {
+        id: RunAttemptId.make("attempt:role-skill-record"),
+        runId,
+        attemptOrdinal: 1,
+        rootNodeId: NodeId.make("node:role-skill-record"),
+        providerInstanceId,
+        providerThreadId: ProviderThreadId.make("provider-thread:role-skill-record"),
+        providerTurnId: null,
+        reason: "initial",
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      };
+      const common = { threadId, runId, occurredAt: now, providerInstanceId };
+      const skill = { id: "cse:review", source: "role" } as const;
+      yield* sink.write({
+        events: [
+          threadCreatedEvent({ id: "role-skill:thread", thread: makeThread(threadId, now), now }),
+          {
+            ...common,
+            id: EventId.make("role-skill:attempt"),
+            type: "run-attempt.created",
+            payload: attempt,
+          },
+          {
+            ...common,
+            id: EventId.make("role-skill:pending"),
+            type: "run-attempt.skill-preload-recorded",
+            payload: {
+              attemptId: attempt.id,
+              record: { skills: [{ ...skill, outcome: "delivery_unknown" }] },
+            },
+          },
+          {
+            ...common,
+            id: EventId.make("role-skill:loaded"),
+            type: "run-attempt.skill-preload-recorded",
+            payload: {
+              attemptId: attempt.id,
+              record: { skills: [{ ...skill, outcome: "loaded" }] },
+            },
+          },
+          {
+            ...common,
+            id: EventId.make("role-skill:completed"),
+            type: "run-attempt.updated",
+            payload: {
+              ...attempt,
+              status: "completed",
+              completedAt: now,
+            },
+          },
+        ],
+      });
+      const stored = (yield* store.getThreadProjection(threadId)).attempts;
+      assert.deepInclude(stored[0], {
+        status: "completed",
+        skillPreload: { skills: [{ ...skill, outcome: "loaded" }] },
+      });
+      assert.isTrue((yield* replay.rebuild).valid);
+      assert.deepEqual((yield* store.getThreadProjection(threadId)).attempts, stored);
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("does not publish a stale provider start after an interrupt wins", () =>

@@ -50,6 +50,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
@@ -81,6 +82,8 @@ import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ModelManifest from "../../provider/ModelManifest.ts";
+import { prepareSkillPreload } from "../../provider/skillPreload.ts";
+import { withInlineContext } from "../ContextHandoffDelivery.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
@@ -670,6 +673,7 @@ function codexReplayPreamble(input: {
   readonly nativeTurnId: string;
   readonly prompt: string;
   readonly sentPrompt?: string;
+  readonly codexHome?: string;
   readonly effort?: string;
   readonly turnPolicy?: Pick<
     typeof CodexClient.V2TurnStartParams.Type,
@@ -702,7 +706,7 @@ function codexReplayPreamble(input: {
         id: 1,
         result: {
           userAgent: "T3 Code/0.156.1",
-          codexHome: "/tmp/codex-home",
+          codexHome: input.codexHome ?? "/tmp/codex-home",
           platformFamily: "unix",
           platformOs: "macos",
         },
@@ -1557,6 +1561,132 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
       };
     });
+
+  it.effect("sends two installed role skills as ordinary Codex input", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const codexHome = yield* fs.makeTempDirectoryScoped({ prefix: "codex-role-skills-" });
+      const roleSkills = [
+        { id: "cse:build", source: "role", body: "Build with €currency left as written." },
+        { id: "cse:plot", source: "brief", body: "Plot the observations." },
+      ] as const;
+      const installed = yield* Effect.forEach(
+        roleSkills,
+        Effect.fn("createInstalledSkill")(function* (skill) {
+          const directory = path.join(
+            codexHome,
+            "plugins",
+            "cache",
+            "cse",
+            "cse",
+            "local",
+            skill.id.split(":")[1]!,
+          );
+          yield* fs.makeDirectory(directory, { recursive: true });
+          const skillPath = path.join(directory, "SKILL.md");
+          yield* fs.writeFileString(skillPath, skill.body);
+          return {
+            name: skill.id,
+            description: "Fixture skill",
+            enabled: true,
+            path: skillPath,
+            scope: "user",
+          };
+        }),
+      );
+      const brief = "Check the results.";
+      const sentPrompt = withInlineContext(
+        roleSkills
+          .map(
+            (skill, index) =>
+              `Skill ${skill.id} (directory: ${encodeUnknownJson(path.dirname(installed[index]!.path))})\n\n${skill.body}`,
+          )
+          .join("\n\n"),
+        brief,
+      );
+      const preamble = codexReplayPreamble({
+        nativeThreadId: "role-skills",
+        nativeTurnId: "role-skills-turn",
+        prompt: brief,
+        sentPrompt,
+        codexHome,
+      });
+      const cwd = CODEX_TEST_RUNTIME_POLICY.cwd!;
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-role-skills",
+          entries: [
+            ...preamble.slice(0, 5),
+            {
+              type: "expect_outbound",
+              frame: { id: 3, method: "skills/list", params: { cwds: [cwd] } },
+            },
+            {
+              type: "expect_outbound",
+              frame: { id: 4, method: "plugin/installed", params: { cwds: [cwd] } },
+            },
+            {
+              type: "emit_inbound",
+              frame: { id: 3, result: { data: [{ cwd, skills: installed, errors: [] }] } },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                id: 4,
+                result: {
+                  marketplaces: [
+                    {
+                      name: "cse",
+                      plugins: [
+                        {
+                          id: "cse@cse",
+                          name: "cse",
+                          authPolicy: "ON_USE",
+                          installPolicy: "AVAILABLE",
+                          enabled: true,
+                          installed: true,
+                          source: { type: "local", path: codexHome },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+            ...preamble.slice(5, 7).map((entry) => withReplayRequestId(entry, 5)),
+            ...preamble.slice(7),
+          ],
+        }),
+      );
+      const inventory = yield* harness.runtime.installedSkillsForPreload!(cwd);
+      const { context } = yield* prepareSkillPreload(
+        roleSkills.map(({ id, source }) => ({ id, source })),
+        inventory,
+      );
+      const prompt = withInlineContext(context, brief);
+      yield* harness.runtime.startTurn({
+        ...makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("codex-role-skills"),
+          text: prompt,
+        }),
+        inlineContextLength: prompt.length - brief.length,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect.each([
     { runtimeMode: "full-access", turnIdKind: "present" },

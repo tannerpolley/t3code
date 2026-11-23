@@ -64,6 +64,8 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import { prepareSkillPreload } from "../../provider/skillPreload.ts";
+import { discoverClaudeInstalledSkillsForPreload } from "../../provider/Drivers/ClaudeSkills.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -6072,6 +6074,92 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
     }).pipe(
       Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("sends two plain installed role skills in the first Claude SDK message", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "claude-role-skills-" });
+      const pluginHome = path.join(homePath, "plugins", "cache", "cse");
+      for (const [name, body] of [
+        ["design", "Define the scientific question."],
+        ["plot", "Plot the observations."],
+        ["fork", "---\ncontext: fork\n---\nNative-only body."],
+      ]) {
+        const directory = path.join(pluginHome, "skills", name!);
+        yield* fs.makeDirectory(directory, { recursive: true });
+        yield* fs.writeFileString(path.join(directory, "SKILL.md"), body!);
+      }
+      yield* fs.writeFileString(
+        path.join(homePath, "settings.json"),
+        '{"enabledPlugins":{"cse@local":true}}',
+      );
+      const installed = encodeJsonString({
+        plugins: { "cse@local": [{ scope: "user", installPath: pluginHome }] },
+      });
+      yield* fs.writeFileString(
+        path.join(homePath, "plugins", "installed_plugins.json"),
+        installed,
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath },
+        environment: {},
+      });
+      const inventory = yield* harness.runtime.installedSkillsForPreload!(homePath);
+      const { context, skills } = yield* prepareSkillPreload(
+        [
+          { id: "cse:design", source: "role" },
+          { id: "cse:plot", source: "brief" },
+          { id: "cse:fork", source: "brief" },
+        ],
+        inventory,
+      );
+      assert.deepInclude(skills, {
+        id: "cse:fork",
+        source: "brief",
+        outcome: "skipped",
+        reason: "unsupported",
+      });
+      const brief = "Check the results.";
+      const text = withInlineContext(context, brief);
+      yield* harness.runtime.startTurn({
+        ...makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("claude-role-skills"),
+          text,
+          attachments: [],
+          runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: homePath },
+        }),
+        inlineContextLength: text.length - brief.length,
+      });
+      const content = harness.offeredMessages[0]?.message.content;
+      const blocks =
+        typeof content === "string"
+          ? [content]
+          : (content ?? []).flatMap((block) => (block.type === "text" ? [block.text] : []));
+      assert.include(blocks.join("\n"), "Define the scientific question.");
+      assert.include(blocks.join("\n"), "Plot the observations.");
+      assert.include(blocks.join("\n"), brief);
+      assert.notInclude(blocks.join("\n"), "Native-only body.");
+      const disabled = yield* discoverClaudeInstalledSkillsForPreload(
+        { homePath, launchArgs: "--disable-slash-commands" },
+        homePath,
+        {},
+      );
+      assert.isUndefined(disabled);
+    }).pipe(
       Effect.provide(
         Layer.mergeAll(
           IdAllocator.layer,

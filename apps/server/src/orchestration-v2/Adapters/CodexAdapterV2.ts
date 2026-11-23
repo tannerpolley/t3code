@@ -22,6 +22,7 @@ import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
   codexDefaultReasoningEffortOverride,
+  codexInstalledSkillsForPreload,
 } from "../../provider/CodexProvider.ts";
 import {
   codexRateLimitsToUpdate,
@@ -1958,6 +1959,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const path = yield* Path.Path;
   const readMcpSession = (threadId: ThreadId | null) =>
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
@@ -2041,6 +2043,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ProviderAdapter.ProviderAdapterEventStreamError
         >();
         const initialized = yield* Ref.make(false);
+        let codexHome: string | undefined;
         // After a timeout the session is retiring; waiters must not re-send to the hung app-server.
         const initializeTimeout = yield* Ref.make<
           ProviderAdapter.ProviderAdapterEventStreamError | undefined
@@ -2056,13 +2059,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const timedOut = yield* Ref.get(initializeTimeout);
             if (timedOut !== undefined) return yield* timedOut;
 
-            const userAgent = yield* client
+            const initialize = yield* client
               .request("initialize", {
                 clientInfo: buildCodexInitializeParams().clientInfo,
                 capabilities: CODEX_CLIENT_CAPABILITIES,
               })
               .pipe(
-                Effect.map((response) => response.userAgent),
                 Effect.catchTags({
                   // Interruption can leave Codex initialized before the local flag is set.
                   CodexAppServerRequestError: (error) =>
@@ -2088,6 +2090,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   },
                 }),
               );
+            codexHome = initialize?.codexHome;
+            const userAgent = initialize?.userAgent;
             const version = userAgent && /\/(\S+)/u.exec(userAgent)?.[1];
             const advisory =
               version && adapterOptions.compatibility
@@ -3792,11 +3796,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             | ProviderAdapter.ProviderAdapterV2TurnInput
             | ProviderAdapter.ProviderAdapterV2SteerInput,
             "message"
-          >,
+          > &
+            Pick<ProviderAdapter.ProviderAdapterV2TurnInput, "inlineContextLength">,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
+          const { text: messageText } = turnInput.message;
+          const offset = turnInput.inlineContextLength ?? 0;
           const text = yield* providerMessageTextWithAttachmentPaths({
-            text: codexSkillMentionText(turnInput.message.text),
+            text: messageText.slice(0, offset) + codexSkillMentionText(messageText.slice(offset)),
             attachments: turnInput.message.attachments,
             resolveExtractedTextPath: (path) =>
               DocumentText.resolveExtractedTextPath(path).pipe(
@@ -8186,6 +8193,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
+          installedSkillsForPreload: (cwd) =>
+            codexHome === undefined
+              ? Effect.undefined
+              : codexInstalledSkillsForPreload(client, cwd, codexHome).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                ),
           events: Stream.fromQueue(events),
           canReuseContextUsage: canReuseCodexContextUsage,
           normalizeThreadLoadModelSelection: normalizeCodexThreadLoadModelSelection,

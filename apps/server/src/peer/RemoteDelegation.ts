@@ -42,6 +42,7 @@ import {
   resolveRuntimeMode,
   taskPrompt,
 } from "../mcp/delegatedTaskModes.ts";
+import { delegatedTaskRole } from "../mcp/delegateTaskWorkspace.ts";
 import { followUpOwnerRun } from "../orchestration-v2/CommandPolicy.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -382,6 +383,7 @@ const make = Effect.gen(function* () {
             environmentId: hereId,
             threadId: parent.thread.id,
             title: parent.thread.title,
+            role: delegatedTaskRole(input.role, false),
           },
         },
       );
@@ -397,6 +399,7 @@ const make = Effect.gen(function* () {
         threadId: launched.threadId,
         label: link?.label ?? target.environmentId,
         title,
+        ...(input.issue === undefined ? {} : { issueSkillsSkipped: "remote" }),
         ...(launched.runId === null ? {} : { runId: launched.runId }),
       };
       const recorded = yield* threads

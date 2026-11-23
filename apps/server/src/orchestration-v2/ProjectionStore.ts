@@ -83,6 +83,7 @@ import {
   OrchestrationV2ProviderThreadJson as OrchestrationV2ProviderThreadJsonSchema,
   OrchestrationV2ProviderTurnJson as OrchestrationV2ProviderTurnJsonSchema,
   OrchestrationV2RunAttemptJson as OrchestrationV2RunAttemptJsonSchema,
+  OrchestrationV2SkillPreload,
   OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
@@ -806,6 +807,10 @@ export interface ProjectionStoreV2Shape {
     > & { readonly hasConversation: boolean },
     ProjectionStoreV2Error
   >;
+  readonly getOriginalRunBrief: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<string, ProjectionStoreV2Error>;
   readonly getTurnStartHistory: (
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
@@ -1158,11 +1163,27 @@ export function applyToProjection(
         ),
       };
     case "run-attempt.created":
-    case "run-attempt.updated":
+    case "run-attempt.updated": {
+      const skillPreload = base.attempts.find(
+        (attempt) => attempt.id === event.payload.id,
+      )?.skillPreload;
       return withLocalVisibleTurnItems({
         ...base,
-        attempts: upsertById(base.attempts, event.payload),
+        attempts: upsertById(base.attempts, {
+          ...event.payload,
+          ...(skillPreload === undefined ? {} : { skillPreload }),
+        }),
       });
+    }
+    case "run-attempt.skill-preload-recorded":
+      return {
+        ...base,
+        attempts: base.attempts.map((attempt) =>
+          attempt.id === event.payload.attemptId
+            ? { ...attempt, skillPreload: event.payload.record }
+            : attempt,
+        ),
+      };
     case "node.updated":
       return {
         ...base,
@@ -1399,6 +1420,7 @@ const encodeRestartCancelledBackgroundWork = Schema.encodeEffect(
 const encodeRunAttemptPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema),
 );
+const encodeSkillPreload = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2SkillPreload));
 const encodeNodePayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ExecutionNodeJsonSchema),
 );
@@ -2803,8 +2825,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 provider_thread_id = excluded.provider_thread_id,
                 provider_turn_id = excluded.provider_turn_id,
                 status = excluded.status,
-                payload_json = excluded.payload_json
+                payload_json = CASE
+                  WHEN json_type(payload_json, '$.skillPreload') IS NOT NULL
+                  THEN json_set(excluded.payload_json, '$.skillPreload', json_extract(payload_json, '$.skillPreload'))
+                  ELSE excluded.payload_json
+                END
             `;
+              break;
+            }
+            case "run-attempt.skill-preload-recorded": {
+              const record = yield* encodeSkillPreload(event.payload.record);
+              yield* sql`
+                UPDATE orchestration_v2_projection_run_attempts
+                SET payload_json = json_set(payload_json, '$.skillPreload', json(${record}))
+                WHERE thread_id = ${event.threadId} AND attempt_id = ${event.payload.attemptId}
+              `;
               break;
             }
             case "node.updated": {
@@ -5737,6 +5772,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               : new ProjectionStoreReadError({ threadId, cause }),
           ),
         );
+
+    const getOriginalRunBrief: ProjectionStoreV2Shape["getOriginalRunBrief"] = Effect.fn(
+      "ProjectionStore.getOriginalRunBrief",
+    )(
+      function* (threadId, runId) {
+        const [first] = yield* sql<{ text: string }>`
+          SELECT json_extract(payload_json, '$.text') AS text
+          FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND run_id = ${runId} AND type = 'user_message'
+          ORDER BY ordinal ASC, turn_item_id ASC LIMIT 1
+        `;
+        return first?.text ?? "";
+      },
+      (effect, threadId) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
 
     const getTurnStartHistory: ProjectionStoreV2Shape["getTurnStartHistory"] = Effect.fn(
       "ProjectionStore.getTurnStartHistory",
@@ -10347,6 +10398,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
       getThreadProjection: readOnReader(getThreadProjection),
       getTurnStartContext: readOnReader(getTurnStartContext),
+      getOriginalRunBrief: readOnReader(getOriginalRunBrief),
       getTurnStartHistory: readOnReader(getTurnStartHistory),
       getRuntimeRecoveryProjection: readOnReader(getRuntimeRecoveryProjection),
       getRunningTurnContext: readOnReader(getRunningTurnContext),

@@ -1,4 +1,4 @@
-import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import type { OrchestrationV2HistoricalMessage, ServerProviderSkill } from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -702,6 +702,9 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly driver: ProviderDriverKind;
   readonly providerSessionId: ProviderSessionId;
   readonly providerSession: OrchestrationV2ProviderSession;
+  readonly installedSkillsForPreload?: (
+    cwd: string,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSkill> | undefined>;
   /** False keeps conversations alive when the provider cannot restore them after a restart. */
   readonly canResumeAfterRestart?: boolean;
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
