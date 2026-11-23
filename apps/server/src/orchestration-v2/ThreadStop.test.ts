@@ -2145,6 +2145,7 @@ it.effect.each([
   ({ startedBeforeRelease, switchesInstance = false, freshContext = false }) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("thread-stop-force-stop-follow-up");
+      const threadId = ThreadId.make("thread:force-stop-follow-up");
       const driver = adapter.driver;
       const otherInstanceId = ProviderInstanceId.make("codex-other");
       const eventQueues = new Map<
@@ -2254,10 +2255,27 @@ it.effect.each([
         Effect.gen(function* () {
           const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const promoted = orchestrator
+            .streamStoredEventsFrom({ threadId, eventType: "run.updated" })
+            .pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === 2 &&
+                  event.payload.status === "starting",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.orDie,
+            );
           return ProviderSessionManager.ProviderSessionManagerV2.of({
             ...sessions,
             releaseUnlessBusy: (input) =>
-              (startedBeforeRelease ? worker.drain().pipe(Effect.orDie) : Effect.void).pipe(
+              promoted.pipe(
+                Effect.andThen(
+                  startedBeforeRelease ? worker.drain().pipe(Effect.orDie) : Effect.void,
+                ),
                 Effect.andThen(sessions.releaseUnlessBusy(input)),
               ),
           });
@@ -2281,7 +2299,7 @@ it.effect.each([
             ),
           ),
         ),
-        Layer.provideMerge(ServerSettings.layerTest()),
+        Layer.provideMerge(ServerSettings.layerTest({ idleAgentSessionMinutes: 30 })),
         Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
       );
 
@@ -2290,7 +2308,6 @@ it.effect.each([
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const threads = yield* ThreadManagementService.ThreadManagementService;
-        const threadId = ThreadId.make("thread:force-stop-follow-up");
         const runningTurn = orchestrator.streamDomainEvents.pipe(
           Stream.filter(
             (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
@@ -2380,6 +2397,17 @@ it.effect.each([
           failure: null,
           threadDisposition: "reusable",
         });
+        // A successful provider turn waits for checkpoint capture before the run completes.
+        yield* orchestrator.streamStoredEventsFrom({ threadId, eventType: "run.updated" }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "run.updated" &&
+              event.payload.id === followUp.runId &&
+              event.payload.status === "waiting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
         yield* worker.drain();
         yield* TestClock.adjust("31 minutes");
         assert.isFalse(

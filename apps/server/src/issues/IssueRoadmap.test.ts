@@ -342,6 +342,44 @@ it.effect("gives an issue's detail the overlay and live work its row has", () =>
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("reports live work in issue status batches when it has no pull requests", () => {
+  const work = { threadId: ThreadId.make("worker"), status: "working" as const };
+  const layer = roadmapLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        tracker([]),
+        Layer.mock(IssueService.IssueService)({
+          statusBatch: () =>
+            Effect.succeed([
+              {
+                ...input,
+                number: 13,
+                nodeId: "I_13",
+                state: "open",
+                stateReason: null,
+                suspensionReason: null,
+                blockedBy: [],
+                pullRequests: [],
+              },
+            ]),
+        }),
+        Layer.mock(IssueLinks.IssueLinks)({
+          enrich: (list) =>
+            Effect.succeed({
+              ...list,
+              issues: list.issues.map((issue) => ({ ...issue, liveWork: [work] })),
+            }),
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const roadmap = yield* IssueRoadmap.IssueRoadmap;
+    const [status] = yield* roadmap.statusBatch({ issues: [{ host: input.host, nodeId: "I_13" }] });
+    assert.deepEqual(status?.liveWork, [work]);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect(
   "live work follows held queue release and every run admission and activity transition",
   () =>
