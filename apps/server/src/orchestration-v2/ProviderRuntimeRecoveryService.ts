@@ -2,6 +2,7 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  isManagedIssueImplementor,
   isProviderNativeSubagentThread,
   type OrchestrationV2DomainEvent,
   type ProviderThreadId,
@@ -23,6 +24,7 @@ import * as Schema from "effect/Schema";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
@@ -495,10 +497,14 @@ export const make = Effect.gen(function* () {
           )
           .map((message) => message.id),
       );
-      // A saved user message the provider never accepted stays available through the held queue.
-      const retryableRuns = unstartedRuns.filter((run) =>
+      const unsentUserRuns = unstartedRuns.filter((run) =>
         retryableMessageIds.has(run.userMessageId),
       );
+      const managedWorker =
+        projection.thread.lineage !== undefined && isManagedIssueImplementor(projection.thread);
+      const failedStartIds = new Set(managedWorker ? unsentUserRuns.map((run) => run.id) : []);
+      // A held prompt needs user input to resume. Report a failed worker start to the parent instead.
+      const retryableRuns = managedWorker ? [] : unsentUserRuns;
       // Nobody reviews a delegated, agent-sent or scheduled prompt, so it is sent again instead.
       const unattendedRuns = continueAfterRestart
         ? unstartedRuns.filter((run) =>
@@ -758,6 +764,8 @@ export const make = Effect.gen(function* () {
         });
       }
       for (const run of runs) {
+        const failedStart = failedStartIds.has(run.id);
+        const status = failedStart ? "failed" : "cancelled";
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -765,7 +773,7 @@ export const make = Effect.gen(function* () {
           runId: run.id,
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
-          payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
+          payload: { ...run, status, queuePosition: null, completedAt: now },
         });
         for (const attempt of projection.attempts.filter(
           (candidate) =>
@@ -780,7 +788,7 @@ export const make = Effect.gen(function* () {
             nodeId: attempt.rootNodeId,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...attempt, status: "cancelled", completedAt: now },
+            payload: { ...attempt, status, completedAt: now },
           });
         }
         for (const node of projection.nodes.filter(
@@ -800,7 +808,7 @@ export const make = Effect.gen(function* () {
             nodeId: node.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...node, status: "cancelled", completedAt: now },
+            payload: { ...node, status, completedAt: now },
           });
         }
         for (const message of projection.messages.filter(
@@ -865,13 +873,25 @@ export const make = Effect.gen(function* () {
             parentItemId: null,
             // EventSink allocates the real position, after the run's existing items.
             ordinal: 0,
-            status: "completed",
-            title: trigger === "startup" ? "Server restarted" : "Server shut down",
             startedAt: now,
             completedAt: now,
             updatedAt: now,
-            type: "system_notice",
-            message: detail,
+            ...(failedStart
+              ? {
+                  type: "error",
+                  status: "failed",
+                  title: "Turn failed to start",
+                  failure: makeProviderFailure({
+                    message: `The server ${trigger === "startup" ? "restarted" : "shut down"} before the provider confirmed the turn.`,
+                    retryable: false,
+                  }),
+                }
+              : {
+                  type: "system_notice",
+                  status: "completed",
+                  title: trigger === "startup" ? "Server restarted" : "Server shut down",
+                  message: detail,
+                }),
           },
         });
       }
