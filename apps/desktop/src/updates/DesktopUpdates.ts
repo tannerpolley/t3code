@@ -475,10 +475,7 @@ export const make = Effect.gen(function* () {
 
   const resolveDisabledReason = Effect.gen(function* () {
     if (forkUpdates) return Option.none<string>();
-    if (
-      Option.isSome(config.stagedUpdateDirectory) ||
-      Option.isSome(config.stagedUpdateVersionPattern)
-    ) {
+    if (forkUpdates === null) {
       return Option.some(
         "Staged updates are unavailable for this build or launcher configuration.",
       );

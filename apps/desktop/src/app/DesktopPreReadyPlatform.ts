@@ -12,7 +12,7 @@ import * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
-import { trimmedString } from "./DesktopConfig.ts";
+import { stagedUpdateVariables, trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import {
   renderUrlHandlerDesktopEntry,
@@ -57,7 +57,7 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
 
 const LinuxDesktopEntryConfig = Config.all({
   xdgDataHome: trimmedString("XDG_DATA_HOME"),
-  launcherPath: trimmedString("T3CODE_DESKTOP_LAUNCHER_PATH"),
+  launcherPath: trimmedString(stagedUpdateVariables.launcher),
   appImagePath: trimmedString("APPIMAGE"),
   // electron-updater sets this on the AppImage it relaunches after installing an update.
   relaunchedByUpdater: trimmedString("APPIMAGE_SILENT_INSTALL"),
