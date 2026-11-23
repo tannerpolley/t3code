@@ -504,6 +504,7 @@ export const OrchestrationV2DelegatedCompletionDelivery = Schema.Struct({
   generation: PositiveInt,
   messageId: MessageId,
   taskIds: Schema.Array(NodeId),
+  dispatchAfterMs: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2DelegatedCompletionDelivery =
   typeof OrchestrationV2DelegatedCompletionDelivery.Type;
@@ -1085,6 +1086,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   executedModel: Schema.optional(Schema.String),
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+  batchCompletion: Schema.optional(Schema.Boolean),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
   // The run whose unfinished task was cancelled, committed with its Stop.
   cancelledRunId: Schema.optional(RunId),
@@ -3914,6 +3916,7 @@ export const OrchestrationV2Command = Schema.Union([
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    batchCompletion: Schema.optional(Schema.Boolean),
     // Defaults to settled_only; fire-and-forget wakes require always.
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
     createdAt: Schema.optional(Schema.DateTimeUtc),
@@ -4119,6 +4122,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     driver: ProviderDriverKind,
     modelSelection: ModelSelection,
     remoteChild: OrchestrationV2RemoteTaskChild,
+    batchCompletion: Schema.optional(Schema.Boolean),
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   }),
   /**

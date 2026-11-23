@@ -30,6 +30,7 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { completionCohort } from "./ForkDelegatedCompletion.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
+import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -154,6 +155,7 @@ const finishedWorkerEvents = (
   parent: Effect.Success<ReturnType<typeof seedOwnedParent>>,
   name: string,
   text: string,
+  options?: { readonly status?: "failed"; readonly routine?: boolean },
 ) => {
   const childThreadId = ThreadId.make(`thread:${parent.key}-${name}`);
   const childRunId = RunId.make(`run:${parent.key}-${name}`);
@@ -165,6 +167,7 @@ const finishedWorkerEvents = (
     status: "running" as const,
     result: null,
     completedAt: null,
+    ...(options?.routine === true ? { batchCompletion: true } : {}),
     completionDelivery: { state: "pending" as const, observedByRunId: null },
   };
   const { now } = parent;
@@ -230,13 +233,146 @@ const finishedWorkerEvents = (
           rootNodeId: null,
           delegatedTaskId: task.id,
           delegatedCompletion: { disposition: "open" as const, nextGeneration: 1, delivery: null },
-          status: "completed" as const,
+          status: options?.status ?? ("completed" as const),
           completedAt: now,
         },
       },
     ] as const,
   };
 };
+
+it.layer(
+  ProviderContinuationService.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(layerTest, IdAllocator.layer, ProviderContinuationRequests.layer),
+    ),
+  ),
+)("routine delegated completion batching", (it) => {
+  it.effect.each(["deadline", "failure", "immediate result", "stop"] as const)(
+    "uses one delivery when the batch ends by %s",
+    (end) =>
+      Effect.gen(function* () {
+        const engine = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const parent = yield* seedOwnedParent("run", `batch-${end}`, {
+          deliveryState: "delivered",
+          withDelivery: false,
+          parentRunEnded: true,
+        });
+        const first = finishedWorkerEvents(parent, "first", "First check passed.", {
+          routine: true,
+        });
+        yield* sink.write({ events: first.events });
+        yield* engine.recoverDelegatedTask(first.task.childThreadId);
+
+        yield* TestClock.adjust("10 seconds");
+        const second = finishedWorkerEvents(parent, "second", "Second check reported.", {
+          ...(end === "failure" ? { status: "failed" } : {}),
+          routine: end !== "immediate result",
+        });
+        const before = yield* engine.getThreadProjection(parent.threadId);
+        assert.isEmpty(
+          before.messages.filter((message) => message.delegatedCompletion !== undefined),
+        );
+        const delivery = parent.cohortOf(before)?.delivery;
+        assert.isDefined(delivery?.dispatchAfterMs);
+        const stored = yield* sink.write({ events: second.events });
+        const sequence = stored.at(-1)!.sequence;
+        yield* engine.recoverDelegatedTask(second.task.childThreadId);
+
+        if (end === "stop") {
+          yield* engine.dispatch({
+            type: "thread.stop",
+            commandId: reconcileCommandId(`${parent.key}-stop`),
+            threadId: parent.threadId,
+          });
+          yield* TestClock.adjust("15 seconds");
+          const stopped = yield* engine.getThreadProjection(parent.threadId);
+          assert.isEmpty(
+            stopped.messages.filter((message) => message.delegatedCompletion !== undefined),
+          );
+          return;
+        }
+        if (end === "deadline") {
+          yield* engine.recoverDelegatedTasks;
+          yield* TestClock.adjust("4999 millis");
+          const waiting = yield* engine.getThreadProjection(parent.threadId);
+          assert.isEmpty(
+            waiting.messages.filter((message) => message.delegatedCompletion !== undefined),
+          );
+          yield* TestClock.adjust("1 millis");
+        }
+        yield* sink.stream({ afterSequence: sequence, eventType: "run.created" }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "run.created" && event.payload.userMessageId === delivery?.messageId,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* TestClock.adjust("15 seconds");
+        const after = yield* engine.getThreadProjection(parent.threadId);
+        const wakes = after.messages.filter((message) => message.delegatedCompletion !== undefined);
+        assert.lengthOf(wakes, 1);
+        assert.deepEqual(wakes[0]?.delegatedCompletion?.taskIds, [first.task.id, second.task.id]);
+        assert.include(wakes[0]?.text, "First check passed.");
+        assert.include(wakes[0]?.text, "Second check reported.");
+        const wakeRuns = after.runs.filter((run) => run.userMessageId === wakes[0]?.id);
+        assert.lengthOf(wakeRuns, 1);
+        if (end !== "deadline") return;
+
+        const wake = wakeRuns[0]!;
+        const now = yield* DateTime.now;
+        const replyId = MessageId.make(`message:${parent.key}-batch-reply`);
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(replyId),
+              type: "message.updated",
+              threadId: parent.threadId,
+              runId: wake.id,
+              occurredAt: now,
+              payload: {
+                id: replyId,
+                threadId: parent.threadId,
+                runId: wake.id,
+                nodeId: wake.rootNodeId,
+                role: "assistant",
+                text: "Both checks completed.",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "provider",
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make(`event:${parent.key}-batch-ended`),
+              type: "run.updated",
+              threadId: parent.threadId,
+              runId: wake.id,
+              occurredAt: now,
+              payload: { ...wake, status: "completed", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        yield* engine.recoverDelegatedTasks;
+        yield* engine.dispatch({
+          type: "run.silence.check",
+          commandId: reconcileCommandId(`${parent.key}-silence-check`),
+          threadId: parent.threadId,
+          runId: wake.id,
+        });
+        const settled = yield* engine.getThreadProjection(parent.threadId);
+        assert.isNull(parent.cohortOf(settled)?.delivery);
+        assert.equal(settled.runs.length, after.runs.length);
+        assert.isFalse(
+          settled.messages.some((message) => message.silentWakeFollowupOfRunId !== undefined),
+        );
+      }),
+  );
+});
 
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "completion recovery for both cohort owners",

@@ -96,6 +96,7 @@ export class RemoteDelegation extends Context.Service<
     readonly delegate: (
       scope: ThreadScope,
       input: OrchestratorMcpDelegateTaskInput & {
+        readonly batchCompletion?: boolean;
         readonly target: NonNullable<OrchestratorMcpDelegateTaskInput["target"]> & {
           readonly environmentId: EnvironmentId;
         };
@@ -415,6 +416,7 @@ const make = Effect.gen(function* () {
           driver: ProviderDriverKind.make("remote"),
           modelSelection: launched.modelSelection,
           remoteChild,
+          ...(input.batchCompletion === true ? { batchCompletion: true } : {}),
           completionWake: input.mode === "wait" ? "settled_only" : "always",
         })
         .pipe(
