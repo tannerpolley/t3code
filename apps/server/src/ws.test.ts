@@ -1,6 +1,5 @@
 import * as CommandReceiptStore from "./orchestration-v2/CommandReceiptStore.ts";
 import * as NotebookService from "./notebook/NotebookService.ts";
-import * as WorkerRetention from "./orchestration-v2/WorkerRetention.ts";
 import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
@@ -871,7 +870,6 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(SidebarLayout.SidebarLayoutService)({}),
   Layer.mock(ProjectArtifacts.ProjectArtifacts)({}),
   Layer.mock(NotebookService.NotebookService)({}),
-  Layer.mock(WorkerRetention.WorkerRetention)({}),
   Layer.mock(ThreadWorkspaceService.ThreadWorkspaceService)({}),
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),

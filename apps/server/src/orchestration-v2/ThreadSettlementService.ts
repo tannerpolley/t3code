@@ -793,10 +793,16 @@ export const make = Effect.gen(function* () {
       case "run.background-work-cancelled":
         return enqueueThread(event.threadId);
       // Sweep only when the work can have ended: progress updates cannot settle anything.
-      case "subagent.updated":
-        return isOrchestrationV2WorkActive(event.payload.status)
-          ? Effect.void
-          : enqueueThread(event.threadId);
+      case "subagent.updated": {
+        const { childThreadId, completionDelivery, status } = event.payload;
+        if (isOrchestrationV2WorkActive(status)) return Effect.void;
+        const sweepParent = enqueueThread(event.threadId);
+        return childThreadId !== null &&
+          (completionDelivery?.state === "delivered" ||
+            completionDelivery?.state === "acknowledged")
+          ? sweepParent.pipe(Effect.andThen(enqueueThread(childThreadId)))
+          : sweepParent;
+      }
       case "provider-thread.updated":
         return backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])
           ? Effect.void

@@ -300,7 +300,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "pendingGuestMessageCount"
 > &
   Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt" | "issues" | "workerUnarchivedAt"> & {
-    readonly title?: string;
+    readonly workerTemporaryCompletedAt?: number | null;
     readonly workerArchiveBlocked?: boolean;
     readonly workerArchiveSequence?: number;
     readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
@@ -9137,6 +9137,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
 
+    const temporaryWorkerRoles = THREAD_ROLE_NAMES.filter((name) => {
+      const [role] = resolveModelRoleName(name)!;
+      return role === "reviewer" || role === "designer";
+    });
+    const isTemporaryWorker = sql`json_extract(t.payload_json, '$.role') IN ${sql.in(temporaryWorkerRoles)}`;
+
     const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (
       threadId,
       workers,
@@ -9149,6 +9155,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 readonly worker_archive_sequence: number;
                 readonly parent_thread_id: string | null;
                 readonly prior_restore_at: string | null;
+                readonly temporary_worker: number | null;
+                readonly parent_archived_at: string | null;
+                readonly delivered_at: string | null;
               }
             >`
             SELECT t.thread_id, t.payload_json,
@@ -9160,6 +9169,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT restored_at FROM worker_archive_prior_restores WHERE thread_id = t.thread_id
               )`
               } AS prior_restore_at,
+              ${workers === undefined ? sql`0` : isTemporaryWorker} AS temporary_worker,
+              ${
+                workers === undefined
+                  ? sql`NULL`
+                  : sql`CASE WHEN ${isTemporaryWorker} THEN (
+                SELECT parent.archived_at FROM orchestration_v2_projection_threads parent
+                WHERE parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                  AND parent.deleted_at IS NULL
+              ) END`
+              } AS parent_archived_at,
+              ${
+                workers === undefined
+                  ? sql`NULL`
+                  : sql`CASE WHEN ${isTemporaryWorker} THEN (
+                SELECT MAX(task.completed_at) FROM orchestration_v2_projection_subagents task
+                WHERE task.child_thread_id = t.thread_id AND task.origin = 'app_owned'
+                  AND task.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                  AND task.status IN ('completed', 'failed', 'cancelled', 'interrupted')
+                  AND task.completion_delivery_state IN ('acknowledged', 'delivered')
+                  AND json_extract(task.payload_json, '$.result') IS NOT NULL
+              ) END`
+              } AS delivered_at,
               ${nativeSubagentPayload} AS native_subagent_payload_json,
               ${
                 workers === undefined
@@ -9230,6 +9261,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     OR json_type(t.payload_json, '$.linkedPullRequest') = 'object'
                     OR json_type(t.payload_json, '$.branchPullRequest') = 'object'
                     OR json_extract(t.payload_json, '$.branch') IS NOT NULL
+                    OR ${isTemporaryWorker}
                   )`
                   : sql`t.archived_at <= ${DateTime.formatIso(workers.archivedBefore)}`
               }
@@ -9261,7 +9293,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_subagents task
                 WHERE task.thread_id = t.thread_id
-                  AND task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+                  AND (task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+                    OR (${isTemporaryWorker} AND task.origin = 'app_owned'
+                      AND COALESCE(task.completion_delivery_state, '') NOT IN ('acknowledged', 'delivered', 'disposed')))
+              )
+              AND (
+                (${isTemporaryWorker}) IS NOT 1 OR NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_subagents task
+                  WHERE task.child_thread_id = t.thread_id AND task.origin = 'app_owned'
+                    AND task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+                )
               )
               `
               }
@@ -9359,6 +9400,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     ? {}
                     : {
                         workerArchiveSequence: row.worker_archive_sequence,
+                        ...(row.temporary_worker === 1
+                          ? {
+                              workerTemporaryCompletedAt:
+                                row.delivered_at === null && row.parent_archived_at === null
+                                  ? null
+                                  : Math.max(
+                                      row.delivered_at === null
+                                        ? -Infinity
+                                        : Date.parse(row.delivered_at),
+                                      row.parent_archived_at === null
+                                        ? -Infinity
+                                        : Date.parse(row.parent_archived_at),
+                                    ),
+                            }
+                          : {}),
                         workerArchiveBlocked:
                           (thread.pullRequests ?? []).some((link) => link.watch !== undefined) ||
                           (row.parent_thread_id !== null &&
@@ -9373,7 +9429,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                                   parent.pendingBackgroundTasks,
                                 ).length > 0,
                             )) ||
-                          (yield* hasPendingDelegatedCompletion(thread.id)),
+                          (row.parent_archived_at === null &&
+                            (yield* hasPendingDelegatedCompletion(thread.id))),
                       }),
                   pendingBackgroundTasks: derivePendingBackgroundWork({
                     latestRun:

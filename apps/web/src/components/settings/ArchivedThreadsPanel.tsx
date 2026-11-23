@@ -196,7 +196,6 @@ export function ArchivedThreadsPanel() {
             key={environment.environmentId}
             environmentId={environment.environmentId}
             environmentLabel={settingsScopeEnvironmentLabels(environment, environments).primary}
-            onArchived={refreshArchivedThreads}
           />
         ))}
       {archivedGroups.length === 0 ? (
