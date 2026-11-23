@@ -842,11 +842,23 @@ export const layer = Layer.effect(
       rootThreadId: ThreadId,
     ) {
       const config = yield* store.configuration(rootThreadId);
-      if (config === null || repositoryPhase(config) !== "active") return;
+      // The same phases that admit milestone issues; a draining root takes no new work.
+      if (
+        config === null ||
+        !repositoryAdmitsWork(config) ||
+        repositoryPhase(config) === "draining"
+      )
+        return;
       const suspended = new Set(config.suspendedIssues.map((entry) => entry.id));
       const modelRoleId =
-        config.milestones.find((plan) => plan.status !== "complete")?.modelRoleId ??
+        config.milestones.find((plan) => plan.status === "running")?.modelRoleId ??
         "implementor-complex";
+      // shortcut: the entry is re-read after the slow issue-host read, not checked inside the
+      // start command, so a withdrawal in the last moment can still start; cancel that worker.
+      const stillQueued = (requestId: CommandId) =>
+        Effect.map(store.queue(config), (queue) =>
+          queue.some((current) => current.requestId === requestId),
+        );
       for (const entry of yield* store.queue(config)) {
         if (suspended.has(entry.issue.id)) continue;
         const workState = yield* store.queueWorkState(entry.issue);
@@ -861,16 +873,25 @@ export const layer = Layer.effect(
           read.value.issue.id === entry.issue.id
             ? issueEligibility(read.value)
             : "unknown";
+        if (!(yield* stillQueued(entry.requestId))) continue;
         if (workState === "working" || eligibility === "closed") {
           yield* threads
             .dispatch({
               type: "issue.queue.change",
-              commandId: CommandId.make(`issue-queue-settled:${entry.requestId}`),
+              // Keyed by root, so a removal rejected under a former root is not replayed here.
+              commandId: CommandId.make(`issue-queue-settled:${rootThreadId}:${entry.requestId}`),
               threadId: rootThreadId,
               issue: entry.issue,
               queued: false,
             })
-            .pipe(Effect.mapError(mapError));
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not remove a settled queued issue", {
+                  issue: entry.issue.number,
+                  cause,
+                }),
+              ),
+            );
           continue;
         }
         if (eligibility !== "eligible") continue;
@@ -1296,8 +1317,13 @@ export const layer = Layer.effect(
         );
         config = (yield* store.configuration(rootThreadId))!;
       }
+      // Queued issues start before continueLocal promotes waiting milestone workers into free slots.
+      yield* startQueuedIssues(rootThreadId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Queued issue starts failed", { rootThreadId, cause }),
+        ),
+      );
       yield* continueLocal(rootThreadId, true);
-      yield* startQueuedIssues(rootThreadId);
       if (repositoryPhase(config) === "draining" || config.milestones.length === 0) return;
       const plans: RepositoryOrchestration["milestones"][number][] = [];
       for (const plan of config.milestones) {
@@ -2227,9 +2253,12 @@ export const layer = Layer.effect(
             if (repository == null) return;
             if (
               stored.event.type === "issue.queue.updated" &&
-              (yield* store.queue(repository)).length > 0
-            )
-              yield* ensureOrchestrator(repository);
+              (yield* store.queue(repository)).length > 0 &&
+              (yield* store.repositoryOwner(repository)) === null
+            ) {
+              const adopted = (yield* ensureOrchestrator(repository)).rootThreadId;
+              if (adopted !== null) yield* reconcile(adopted);
+            }
             const owner = yield* store.repositoryOwner(repository);
             if (
               owner !== null &&

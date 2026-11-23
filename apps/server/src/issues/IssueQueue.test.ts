@@ -575,51 +575,69 @@ it.effect(
   },
 );
 
-it.effect("queued issue workers take a free slot ahead of earlier waiting workers", () =>
-  Effect.gen(function* () {
-    const service = yield* IssueWorkService.IssueWorkService;
-    const threads = yield* ThreadManagement.ThreadManagementService;
-    const store = yield* IssueWorkStore.IssueWorkStore;
-    const sink = yield* EventSink.EventSinkV2;
-    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-    yield* createRoot(false);
-    const startIssue = (number: number, key: string) =>
-      service.start({
-        ...input(number, key),
-        projectId,
-        modelRoleId: "implementor-complex",
-      });
-    yield* startIssue(3, "a-running-worker");
-    yield* TestClock.adjust("1 second");
-    // Sorts before the queue's request ids, so only the admission order can put issue 5 first.
-    yield* startIssue(4, "a-waiting-worker");
-    yield* TestClock.adjust("1 second");
-    yield* service.queueIssue(input(5));
-    yield* worker.drain();
-    const running = (yield* store.issueOwner(issue(3)))!;
-    const earlier = (yield* store.issueOwner(issue(4)))!;
-    const queued = (yield* store.issueOwner(issue(5)))!;
-    const runOf = (threadId: ThreadId) =>
-      threads.getThreadRecords(threadId, ["runs"]).pipe(Effect.map(({ runs }) => runs[0]!));
-    assert.equal(yield* store.slotsInUse(rootId), 1);
-    assert.equal((yield* runOf(earlier)).status, "queued");
-    assert.equal((yield* runOf(queued)).status, "queued");
-    const sequence = yield* sink.latestSequence();
-    yield* finish(yield* runOf(running), "running-worker-finished");
-    yield* sink.stream({ afterSequence: sequence }).pipe(
-      Stream.filter(
-        (stored) =>
-          stored.event.type === "run.updated" &&
-          stored.event.threadId === queued &&
-          stored.event.payload.status !== "queued",
-      ),
-      Stream.take(1),
-      Stream.runCollect,
-    );
-    yield* worker.drain();
-    assert.equal((yield* runOf(earlier)).status, "queued");
-    assert.equal(yield* store.slotsInUse(rootId), 1);
-  }).pipe(Effect.provide(harness())),
+it.effect.each([false, true])(
+  "queued issue workers take a free slot ahead of earlier waiting workers (queued while paused: %s)",
+  (pausedWhileQueued) =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const sink = yield* EventSink.EventSinkV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* createRoot(false);
+      const startIssue = (number: number, key: string) =>
+        service.start({
+          ...input(number, key),
+          projectId,
+          modelRoleId: "implementor-complex",
+        });
+      const setPaused = (paused: boolean) =>
+        service.setPaused({
+          ...reference,
+          paused,
+          clientRequestId: CommandId.make(`ordering-paused:${paused}`),
+        });
+      const runOf = (threadId: ThreadId) =>
+        threads.getThreadRecords(threadId, ["runs"]).pipe(Effect.map(({ runs }) => runs[0]!));
+      yield* startIssue(3, "a-running-worker");
+      yield* TestClock.adjust("1 second");
+      // Sorts before the queue's request ids, so only the admission order can put issue 5 first.
+      yield* startIssue(4, "a-waiting-worker");
+      yield* TestClock.adjust("1 second");
+      yield* worker.drain();
+      const running = (yield* store.issueOwner(issue(3)))!;
+      const earlier = (yield* store.issueOwner(issue(4)))!;
+      assert.equal(yield* store.slotsInUse(rootId), 1);
+      assert.equal((yield* runOf(earlier)).status, "queued");
+      const sequence = yield* sink.latestSequence();
+      if (pausedWhileQueued) {
+        // The slot frees while paused; resuming must offer it to the queue entry first.
+        yield* setPaused(true);
+        yield* service.queueIssue(input(5));
+        yield* finish(yield* runOf(running), "running-worker-finished");
+        yield* worker.drain();
+        assert.isNull(yield* store.issueOwner(issue(5)));
+        yield* setPaused(false);
+      } else {
+        yield* service.queueIssue(input(5));
+        assert.equal((yield* runOf((yield* store.issueOwner(issue(5)))!)).status, "queued");
+        yield* finish(yield* runOf(running), "running-worker-finished");
+      }
+      const queued = (yield* store.issueOwner(issue(5)))!;
+      yield* sink.stream({ afterSequence: sequence }).pipe(
+        Stream.filter(
+          (stored) =>
+            (stored.event.type === "run.updated" || stored.event.type === "run.created") &&
+            stored.event.threadId === queued &&
+            stored.event.payload.status !== "queued",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      yield* worker.drain();
+      assert.equal((yield* runOf(earlier)).status, "queued");
+      assert.equal(yield* store.slotsInUse(rootId), 1);
+    }).pipe(Effect.provide(harness())),
 );
 
 const createRoot = (paused = true) =>
@@ -1478,6 +1496,18 @@ it.effect.each([false, true])(
         yield* sql`SELECT * FROM orchestration_events WHERE event_type = 'repository.work.restored'`;
       assert.lengthOf(registrations, noCandidate ? 0 : 1);
       if (!noCandidate) {
+        // Adopting the root starts the issues that were already queued.
+        const started = yield* sink.stream({ afterSequence: sequence }).pipe(
+          Stream.filter((stored) => stored.event.type === "issue.work.requested"),
+          Stream.take(2),
+          Stream.runCollect,
+        );
+        assert.sameMembers(
+          started.map((stored) =>
+            stored.event.type === "issue.work.requested" ? stored.event.payload.issue.number : 0,
+          ),
+          [1, 2],
+        );
         assert.isUndefined(
           (yield* threads.getThreadRecords(ThreadId.make("older-orchestrator"), [])).thread
             .repositoryOrchestration,

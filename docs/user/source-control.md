@@ -403,7 +403,8 @@ ordered **Queued** section. A queued issue starts its own managed worker, the sa
 issue does, even while the orchestrator is busy. Queued issues go first, in queue order, ahead of
 milestone issues, and each worker runs as soon as a **Workers** slot is free. The worker uses the
 model role of the repository's running milestone, or the complex Implementor role when no milestone
-is running. A blocked issue stays queued until its blockers close, and a closed issue leaves the
+is running. A worker that has to wait for a slot usually keeps its queue position, but an issue
+that was blocked can start after a later queued issue that was not. A blocked issue stays queued until its blockers close, and a closed issue leaves the
 queue. Repository pause and paused issues apply. Without a registered orchestrator, the queue
 waits. Once its worker starts, the issue leaves the queue and is managed through its orchestrator
 or worker; use **Remove from queue** to withdraw it before then.
