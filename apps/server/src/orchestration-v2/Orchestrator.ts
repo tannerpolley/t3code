@@ -2232,6 +2232,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
         : [];
     const pendingTaskIds = pendingTasks.map((task) => task.id);
+    const dispatchAfterMs = delegatedCompletionBatchDeadline(projection.thread, pendingTasks);
     const nextDelivery =
       pendingTaskIds.length === 0
         ? null
@@ -2246,7 +2247,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
             ),
             taskIds: pendingTaskIds,
-            dispatchAfterMs: delegatedCompletionBatchDeadline(projection.thread, pendingTasks),
+            ...(dispatchAfterMs === undefined ? {} : { dispatchAfterMs }),
           };
     const emitEvent = emit(input.events, input.command);
     const acceptedIds = new Set(delivery.taskIds);
@@ -14940,12 +14941,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
       }
       const taskIds = Array.from(new Set([...delivery.taskIds, input.task.id]));
+      const { dispatchAfterMs: previousDeadline, ...pendingDelivery } = delivery;
       const nextCohort = {
         ...cohort!,
         delivery: {
-          ...delivery,
+          ...pendingDelivery,
           taskIds,
-          dispatchAfterMs: dispatchAfterMs === undefined ? undefined : delivery.dispatchAfterMs,
+          ...(dispatchAfterMs !== undefined && previousDeadline !== undefined
+            ? { dispatchAfterMs: previousDeadline }
+            : {}),
         },
       };
       return {
@@ -14980,7 +14984,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         generation,
         messageId,
         taskIds: [input.task.id],
-        dispatchAfterMs,
+        ...(dispatchAfterMs === undefined ? {} : { dispatchAfterMs }),
       },
     };
     return {
@@ -15565,6 +15569,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           nextTaskStates.get(task.id)?.state === "pending"),
     );
     const pendingTaskIds = pendingTasks.map((task) => task.id);
+    const dispatchAfterMs = delegatedCompletionBatchDeadline(projection.thread, pendingTasks);
     const canReserveFollowUp =
       cohort.disposition === "open" &&
       projection.thread.archivedAt === null &&
@@ -15583,7 +15588,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
           ),
           taskIds: pendingTaskIds,
-          dispatchAfterMs: delegatedCompletionBatchDeadline(projection.thread, pendingTasks),
+          ...(dispatchAfterMs === undefined ? {} : { dispatchAfterMs }),
         }
       : null;
     if (nextDelivery !== null) {
