@@ -1294,6 +1294,26 @@ it.layer(layerTest)("delegated request routing", (it) => {
         yield* refused("session-other", "relay-not-launched"),
         "ThreadManagementPendingRequestError",
       );
+      // A fork of the bot's thread keeps its root but is not the bot's own work.
+      const forked = (yield* orchestrator.getThreadProjection(child.childThreadId)).thread;
+      const setLineage = (name: string, lineage: typeof forked.lineage) =>
+        sink.write({
+          events: [
+            {
+              id: EventId.make(`event:outside-relay-${name}`),
+              type: "thread.metadata-updated",
+              threadId: child.childThreadId,
+              occurredAt: forked.updatedAt,
+              payload: { ...forked, lineage },
+            },
+          ],
+        });
+      yield* setLineage("fork", { ...forked.lineage, relationshipToParent: "fork" });
+      assert.equal(
+        yield* refused("session-bot", "relay-fork"),
+        "ThreadManagementPendingRequestError",
+      );
+      yield* setLineage("subagent", forked.lineage);
       yield* respond("session-bot", "relay-granted");
       assert.equal(
         (yield* orchestrator.getThreadProjection(child.childThreadId)).runtimeRequests[0]?.decision,
