@@ -1288,7 +1288,7 @@ it.layer(layerTest)("delegated request routing", (it) => {
         "ThreadManagementPendingRequestError",
       );
       yield* settings.updateSettings({
-        mcpApprovalRelaySessionIds: ["session-bot", "session-other"],
+        mcpApprovalRelaySessions: { "session-bot": true, "session-other": true },
       });
       assert.equal(
         yield* refused("session-other", "relay-not-launched"),

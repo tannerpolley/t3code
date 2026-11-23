@@ -1416,7 +1416,7 @@ const make = Effect.gen(function* () {
       const granted =
         sessionId !== undefined &&
         (yield* serverSettings.getSettings.pipe(
-          Effect.map((settings) => settings.mcpApprovalRelaySessionIds.includes(sessionId)),
+          Effect.map((settings) => settings.mcpApprovalRelaySessions[sessionId] === true),
           Effect.orElseSucceed(() => false),
         ));
       // The owner's grant covers threads the sign-in launched and their subagents, found by

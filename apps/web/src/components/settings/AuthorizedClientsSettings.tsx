@@ -51,9 +51,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
-import { useAtomValue } from "@effect/atom-react";
-import { serverEnvironment } from "~/state/server";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { useGT } from "gt-react";
 import { Textarea } from "../ui/textarea";
 import {
@@ -502,11 +500,10 @@ function ApprovalRelaySwitch({
   readonly disabled: boolean;
 }) {
   const gt = useGT();
-  // The write replaces the whole list, so it waits for this environment's list and one save.
-  const relaySessionIds = useAtomValue(
-    serverEnvironment.settingsValueAtom(environmentId),
-  )?.mcpApprovalRelaySessionIds;
-  const [saving, setSaving] = useState(false);
+  const granted = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.mcpApprovalRelaySessions[sessionId] === true,
+  );
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   return (
     <Tooltip>
@@ -515,21 +512,11 @@ function ApprovalRelaySwitch({
       >
         <Switch
           size="sm"
-          checked={relaySessionIds?.includes(sessionId) ?? false}
-          disabled={disabled || saving || relaySessionIds === undefined}
-          onCheckedChange={(allowed) => {
-            if (relaySessionIds === undefined) return;
-            setSaving(true);
-            const done = () => setSaving(false);
-            updateSettings(
-              {
-                mcpApprovalRelaySessionIds: allowed
-                  ? [...relaySessionIds, sessionId]
-                  : relaySessionIds.filter((id) => id !== sessionId),
-              },
-              { onSaved: done, onFailed: done },
-            );
-          }}
+          checked={granted}
+          disabled={disabled}
+          onCheckedChange={(allowed) =>
+            updateSettings({ mcpApprovalRelaySessions: { [sessionId]: allowed } })
+          }
         />
         {gt("Answers approvals")}
       </TooltipTrigger>
