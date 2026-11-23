@@ -17,7 +17,6 @@ import {
   type RepositoryIssueSummary as IssueSummaryType,
   ThreadLinkedIssue,
   type IssueWorkRead,
-  type IssueDetailInput as IssueDetailInputType,
   type IssueHostCapabilities,
   type IssueChangeBaseline,
   type IssueRepositoryRef,
@@ -213,7 +212,10 @@ export interface IssueGitHubExtension {
     scope: IssueRepositoryScope,
     numbers: ReadonlyArray<number>,
   ) => Effect.Effect<ReadonlyMap<number, IssueWorkRead>, IssueReadError>;
-  readonly workRead: (input: IssueDetailInputType) => Effect.Effect<IssueWorkRead, IssueReadError>;
+  readonly workRead: (
+    scope: IssueRepositoryScope,
+    number: number,
+  ) => Effect.Effect<IssueWorkRead, IssueReadError>;
   readonly repositoryIdentity: (input: {
     readonly host: string;
     readonly repository: string;
@@ -1136,99 +1138,82 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
     return statuses;
   });
 
-  const workRead: IssueGitHubExtension["workRead"] = Effect.fn("IssueService.workRead")(
-    function* (input) {
-      const scope = yield* resolveScope("detail", input);
-      return yield* githubPullRequests
-        .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
-          Effect.gen(function* () {
-            const [owner, name] = scope.repository.split("/");
-            const children = new Map<string, ThreadLinkedIssueType>();
-            const blockers = new Map<string, IssueWorkRead["blockedBy"][number]>();
-            let subCursor: string | undefined;
-            let blockerCursor: string | undefined;
-            let result: IssueWorkRead | undefined;
-            // Bounded reads fail closed if GitHub changes connections during pagination.
-            for (let page = 0; page < 10; page++) {
-              const response = yield* executeApi({
-                operation: "detail",
-                scope,
-                endpoint: "graphql",
-                maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-                graphql: {
-                  query: `query($owner: String!, $name: String!, $number: Int!, $sub: String, $block: String) {
-              repository(owner: $owner, name: $name) { issue(number: $number) {
-                ${workIssueFields(true)}
-              } }
-            }`,
-                  variables: {
-                    owner: owner!,
-                    name: name!,
-                    number: input.number,
-                    ...(subCursor === undefined ? {} : { sub: subCursor }),
-                    ...(blockerCursor === undefined ? {} : { block: blockerCursor }),
-                  },
-                },
-              });
-              const decoded = yield* decodeApiResponse(
-                "detail",
-                WorkIssueResponse,
-                response,
-                "Issue hierarchy or dependencies could not be read.",
-              );
-              const node = decoded.data.repository?.issue;
-              if ((decoded.errors?.length ?? 0) > 0)
-                return yield* readError(
-                  "detail",
-                  "invalid-response",
-                  "Issue hierarchy or dependencies could not be read completely.",
-                );
-              if (node == null)
-                return yield* readError(
-                  "detail",
-                  "inaccessible",
-                  "Issue hierarchy or dependencies could not be read completely.",
-                );
-              if (safeRepository(scope.host, node.repository.nameWithOwner) !== scope.repository)
-                return yield* readError(
-                  "detail",
-                  "invalid-response",
-                  "GitHub returned another repository.",
-                );
-              if (node.number !== input.number)
-                return yield* readError(
-                  "detail",
-                  "invalid-response",
-                  "GitHub returned another issue.",
-                );
-              result = workIssuePage(scope.host, node, children, blockers);
-              if (result.subIssuesComplete && result.blockersComplete) break;
-              if (!node.subIssues.pageInfo.hasNextPage && !node.blockedBy.pageInfo.hasNextPage)
-                break;
-              const nextSub = node.subIssues.pageInfo.hasNextPage
-                ? node.subIssues.pageInfo.endCursor
-                : subCursor;
-              const nextBlock = node.blockedBy.pageInfo.hasNextPage
-                ? node.blockedBy.pageInfo.endCursor
-                : blockerCursor;
-              if (
-                (node.subIssues.pageInfo.hasNextPage &&
-                  (nextSub == null || nextSub === subCursor)) ||
-                (node.blockedBy.pageInfo.hasNextPage &&
-                  (nextBlock == null || nextBlock === blockerCursor))
-              )
-                break;
-              subCursor = nextSub ?? undefined;
-              blockerCursor = nextBlock ?? undefined;
-            }
-            return result!;
-          }),
-        )
-        .pipe(
-          Effect.mapError((error) =>
-            isIssueReadError(error) ? error : mapGitHubError("detail", error),
-          ),
+  const workRead: IssueGitHubExtension["workRead"] = Effect.fn("IssueService.readWorkIssue")(
+    function* (scope, number) {
+      const [owner, name] = scope.repository.split("/");
+      const children = new Map<string, ThreadLinkedIssueType>();
+      const blockers = new Map<string, IssueWorkRead["blockedBy"][number]>();
+      let subCursor: string | undefined;
+      let blockerCursor: string | undefined;
+      let result: IssueWorkRead | undefined;
+      // Bounded reads fail closed if GitHub changes connections during pagination.
+      for (let page = 0; page < 10; page++) {
+        const response = yield* executeApi({
+          operation: "detail",
+          scope,
+          endpoint: "graphql",
+          maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+          graphql: {
+            query: `query($owner: String!, $name: String!, $number: Int!, $sub: String, $block: String) {
+      repository(owner: $owner, name: $name) { issue(number: $number) {
+        ${workIssueFields(true)}
+      } }
+    }`,
+            variables: {
+              owner: owner!,
+              name: name!,
+              number,
+              ...(subCursor === undefined ? {} : { sub: subCursor }),
+              ...(blockerCursor === undefined ? {} : { block: blockerCursor }),
+            },
+          },
+        });
+        const decoded = yield* decodeApiResponse(
+          "detail",
+          WorkIssueResponse,
+          response,
+          "Issue hierarchy or dependencies could not be read.",
         );
+        const node = decoded.data.repository?.issue;
+        if ((decoded.errors?.length ?? 0) > 0)
+          return yield* readError(
+            "detail",
+            "invalid-response",
+            "Issue hierarchy or dependencies could not be read completely.",
+          );
+        if (node == null)
+          return yield* readError(
+            "detail",
+            "inaccessible",
+            "Issue hierarchy or dependencies could not be read completely.",
+          );
+        if (safeRepository(scope.host, node.repository.nameWithOwner) !== scope.repository)
+          return yield* readError(
+            "detail",
+            "invalid-response",
+            "GitHub returned another repository.",
+          );
+        if (node.number !== number)
+          return yield* readError("detail", "invalid-response", "GitHub returned another issue.");
+        result = workIssuePage(scope.host, node, children, blockers);
+        if (result.subIssuesComplete && result.blockersComplete) break;
+        if (!node.subIssues.pageInfo.hasNextPage && !node.blockedBy.pageInfo.hasNextPage) break;
+        const nextSub = node.subIssues.pageInfo.hasNextPage
+          ? node.subIssues.pageInfo.endCursor
+          : subCursor;
+        const nextBlock = node.blockedBy.pageInfo.hasNextPage
+          ? node.blockedBy.pageInfo.endCursor
+          : blockerCursor;
+        if (
+          (node.subIssues.pageInfo.hasNextPage && (nextSub == null || nextSub === subCursor)) ||
+          (node.blockedBy.pageInfo.hasNextPage &&
+            (nextBlock == null || nextBlock === blockerCursor))
+        )
+          break;
+        subCursor = nextSub ?? undefined;
+        blockerCursor = nextBlock ?? undefined;
+      }
+      return result!;
     },
   );
 
@@ -1252,7 +1237,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
           )
             continue;
           if (node.subIssues.pageInfo.hasNextPage || node.blockedBy.pageInfo.hasNextPage) {
-            const read = yield* workRead(ref).pipe(Effect.option);
+            const read = yield* workRead(scope, ref.number).pipe(Effect.option);
             if (read._tag === "Some") results.set(ref.number, read.value);
             continue;
           }

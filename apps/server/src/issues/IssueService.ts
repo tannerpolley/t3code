@@ -548,16 +548,18 @@ export const make = Effect.fn("IssueService.make")(function* () {
       afterWrite(input, github.setMilestone(input)),
     ),
     workRead: Effect.fn("IssueService.workRead")(function* (input, options) {
-      if (options?.cached !== true) return yield* github.workRead(input);
       const scope = yield* resolveScope("detail", input);
-      return yield* github.withIdentity(scope, "detail", ({ credentialFingerprint }) =>
-        liveWorkRead(
-          JSON.stringify([repositoryKey(scope), credentialFingerprint, input.number]),
-          github.workRead(input),
-          false,
-          repositoryGeneration(scope),
-        ),
-      );
+      return yield* github.withIdentity(scope, "detail", ({ credentialFingerprint }) => {
+        const read = github.workRead(scope, input.number);
+        return options?.cached !== true
+          ? read
+          : liveWorkRead(
+              JSON.stringify([repositoryKey(scope), credentialFingerprint, input.number]),
+              read,
+              false,
+              repositoryGeneration(scope),
+            );
+      });
     }),
     workReads: Effect.fn("IssueService.workReads")(function* (input, numbers) {
       if (numbers.length === 0) return new Map();
