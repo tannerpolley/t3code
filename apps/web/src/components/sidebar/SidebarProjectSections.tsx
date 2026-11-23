@@ -79,6 +79,7 @@ import {
 import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { SidebarBackgroundWorkRows, type NestedWork } from "./SidebarBackgroundWorkRows";
+import { SidebarWorkerRows } from "./SidebarWorkers";
 import {
   SidebarProcessGroupRows,
   useSidebarThreadProcesses,
@@ -1807,10 +1808,20 @@ function SidebarSubagentRow(
     status,
     ref: lease.rowRef,
     toggle: workCount > 0 ? { count: workCount, open, onToggle } : null,
-    children:
-      workCount > 0 ? (
-        <SidebarSubagentTree {...tree} rows={workRows} processRows={processRows} />
-      ) : null,
+    children: (
+      <>
+        {workCount > 0 ? (
+          <SidebarSubagentTree {...tree} rows={workRows} processRows={processRows} />
+        ) : null}
+        <SidebarWorkerRows
+          thread={thread}
+          columns
+          providerEntries={tree.providerEntries}
+          onClick={tree.onChildClick}
+          onContextMenu={tree.onChildContextMenu}
+        />
+      </>
+    ),
   });
 }
 

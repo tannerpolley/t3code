@@ -301,6 +301,8 @@ export type ProjectionSettlementCandidate = Pick<
 > &
   Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt" | "issues" | "workerUnarchivedAt"> & {
     readonly workerTemporaryCompletedAt?: number | null;
+    /** A temporary worker in its parent's checkout, whose branch links belong to the parent. */
+    readonly workerSharesParentCheckout?: boolean;
     readonly workerArchiveBlocked?: boolean;
     readonly workerArchiveSequence?: number;
     readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
@@ -9157,6 +9159,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 readonly prior_restore_at: string | null;
                 readonly temporary_worker: number | null;
                 readonly parent_archived_at: string | null;
+                readonly shares_parent_checkout: number | null;
                 readonly delivered_at: string | null;
               }
             >`
@@ -9179,6 +9182,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND parent.deleted_at IS NULL
               ) END`
               } AS parent_archived_at,
+              ${
+                workers === undefined
+                  ? sql`NULL`
+                  : sql`CASE WHEN ${isTemporaryWorker} THEN EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_threads parent
+                WHERE parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                  AND json_extract(parent.payload_json, '$.worktreePath')
+                    IS json_extract(t.payload_json, '$.worktreePath')
+              ) END`
+              } AS shares_parent_checkout,
               ${
                 workers === undefined
                   ? sql`NULL`
@@ -9413,6 +9426,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                                         ? -Infinity
                                         : Date.parse(row.parent_archived_at),
                                     ),
+                              workerSharesParentCheckout: row.shares_parent_checkout === 1,
                             }
                           : {}),
                         workerArchiveBlocked:

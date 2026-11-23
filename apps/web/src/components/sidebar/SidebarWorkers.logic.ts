@@ -1,4 +1,4 @@
-import { workerListParentIds } from "@t3tools/contracts";
+import { type ThreadId, workerListParentIds } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import type { SidebarThreadSummary } from "../../types";
@@ -11,17 +11,24 @@ export function indexSidebarWorkers(threads: readonly SidebarThreadSummary[]) {
   for (const children of groupRunningSubagentsByParent(threads).values()) {
     for (const child of children) running.add(keyOf(child));
   }
-  const lineages = new Map(threads.map((thread) => [keyOf(thread), thread.lineage]));
+  const isWorker = (thread: SidebarThreadSummary | undefined) =>
+    thread !== undefined &&
+    thread.archivedAt === null &&
+    thread.lineage.relationshipToParent === "subagent";
+  const byKey = new Map(threads.map((thread) => [keyOf(thread), thread]));
   const children = new Map<string, SidebarThreadSummary[]>();
   for (const thread of threads) {
     const { environmentId, lineage } = thread;
-    if (thread.archivedAt !== null || lineage.relationshipToParent !== "subagent") continue;
+    if (!isWorker(thread)) continue;
+    const threadOf = (id: ThreadId) =>
+      byKey.get(scopedThreadKey(scopeThreadRef(environmentId, id)));
+    // A worker's own children nest under its row; others list under the listed rows above them.
     const parents =
-      thread.source.workerAncestorIds === undefined
-        ? workerListParentIds(lineage, (id) =>
-            lineages.get(scopedThreadKey(scopeThreadRef(environmentId, id))),
-          )
-        : [lineage.rootThreadId, ...thread.source.workerAncestorIds];
+      lineage.parentThreadId !== null && isWorker(threadOf(lineage.parentThreadId))
+        ? [lineage.parentThreadId]
+        : thread.source.workerAncestorIds === undefined
+          ? workerListParentIds(lineage, (id) => threadOf(id)?.lineage)
+          : [lineage.rootThreadId, ...thread.source.workerAncestorIds];
     for (const id of parents) {
       const parent = scopedThreadKey(scopeThreadRef(environmentId, id));
       const siblings = children.get(parent);

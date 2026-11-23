@@ -49,6 +49,7 @@ const make = Effect.gen(function* () {
   ) {
     if (!isIdleWorker(worker, now)) return null;
     const temporary = worker.workerTemporaryCompletedAt !== undefined;
+    const ownsBranchLinks = !(temporary && worker.workerSharesParentCheckout === true);
     const preserveOpenWork = worker.archivedAt === null || temporary;
     let completedAt = worker.workerTemporaryCompletedAt ?? null;
     if (completedAt !== null && !workerCompletionIsCurrent(worker, completedAt)) completedAt = null;
@@ -86,7 +87,10 @@ const make = Effect.gen(function* () {
       if (decision !== undefined) return decision;
     }
 
-    for (const reference of [worker.linkedPullRequest, worker.branchPullRequest]) {
+    for (const reference of [
+      worker.linkedPullRequest,
+      ownsBranchLinks ? worker.branchPullRequest : null,
+    ]) {
       if (
         reference == null ||
         allLinks.some(
@@ -101,6 +105,7 @@ const make = Effect.gen(function* () {
       if (decision !== undefined) return decision;
     }
     if (
+      ownsBranchLinks &&
       (!temporary || worker.worktreePath !== null) &&
       worker.linkedPullRequest == null &&
       worker.branchPullRequest == null &&
@@ -122,7 +127,7 @@ const make = Effect.gen(function* () {
         if (decision !== undefined) return decision;
       }
     }
-    for (const link of worker.issues ?? []) {
+    for (const link of ownsBranchLinks ? (worker.issues ?? []) : []) {
       const issue = yield* issues.detail(link).pipe(Effect.option);
       const endedAt =
         issue._tag === "Some" && issue.value.state.category === "closed"

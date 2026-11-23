@@ -390,12 +390,49 @@ it.effect("archives temporary workers after delivery or parent archive when they
   Effect.gen(function* () {
     const { service, projections, orchestrator, sink, sql, parent, createdAt, seed } =
       yield* makeFixture();
+    const worktreePath = "/workspace/worktree";
     yield* seed(parent, "open", {
       lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+      worktreePath,
     });
     const delivered = yield* seed("reviewer-delivered", "open", {
       role: "reviewer",
       pullRequests: [],
+    });
+    // The parent's open PR and issue reach a child in its checkout through the shared branch.
+    const branchLinks = {
+      branch: "feature",
+      pullRequests: [],
+      branchPullRequest: {
+        projectId,
+        repository: "owner/project",
+        number: 42,
+        url: "https://github.com/owner/project/pull/42",
+      },
+      issues: [
+        {
+          tracker: IssueTrackerKind.make("github"),
+          host: "github.com",
+          scope: "owner/project",
+          key: "44",
+          projectId,
+          displayKey: "#44",
+          title: "Issue",
+          url: "https://github.com/owner/project/issues/44",
+          source: "agent" as const,
+          linkedAt: DateTime.formatIso(createdAt),
+        },
+      ],
+    };
+    const sharedCheckout = yield* seed("reviewer-shared-checkout", "open", {
+      role: "reviewer",
+      worktreePath,
+      ...branchLinks,
+    });
+    const ownCheckout = yield* seed("reviewer-own-checkout", "open", {
+      role: "reviewer",
+      worktreePath: "/workspace/own",
+      ...branchLinks,
     });
     const pending = yield* seed("checker-pending", "open", { role: "reviewer", pullRequests: [] });
     yield* sql`UPDATE orchestration_v2_projection_threads
@@ -452,7 +489,7 @@ it.effect("archives temporary workers after delivery or parent archive when they
       });
     });
 
-    for (const child of [delivered, question, openPr, writer]) {
+    for (const child of [delivered, sharedCheckout, ownCheckout, question, openPr, writer]) {
       yield* recordTask(parent, child, "delivered");
     }
     yield* recordTask(parent, pending, "pending");
@@ -469,7 +506,8 @@ it.effect("archives temporary workers after delivery or parent archive when they
 
     yield* service.autoArchive();
     assert.isNotNull((yield* projections.getThread(delivered)).archivedAt);
-    for (const child of [pending, question, openPr, writer, withOpenChild]) {
+    assert.isNotNull((yield* projections.getThread(sharedCheckout)).archivedAt);
+    for (const child of [pending, ownCheckout, question, openPr, writer, withOpenChild]) {
       assert.isNull((yield* projections.getThread(child)).archivedAt, child);
     }
 
@@ -480,7 +518,7 @@ it.effect("archives temporary workers after delivery or parent archive when they
     });
     yield* service.autoArchive();
     assert.isNotNull((yield* projections.getThread(pending)).archivedAt);
-    for (const child of [question, openPr, writer, withOpenChild]) {
+    for (const child of [ownCheckout, question, openPr, writer, withOpenChild]) {
       assert.isNull((yield* projections.getThread(child)).archivedAt, child);
     }
 

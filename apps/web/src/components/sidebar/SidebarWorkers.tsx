@@ -108,7 +108,12 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   return (
     <ul
       ref={canPage && !paging ? listRef : undefined}
-      className={cn("min-h-px", !props.columns && "ms-3 border-s border-sidebar-border/60 ps-1")}
+      className={cn(
+        "min-h-px",
+        props.columns
+          ? props.thread.lineage.relationshipToParent === "subagent" && "ps-3"
+          : "ms-3 border-s border-sidebar-border/60 ps-1",
+      )}
       onPointerDown={(event) => event.stopPropagation()}
     >
       {workers.map((worker) => (
@@ -125,6 +130,7 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
             onClick={props.onClick}
             onContextMenu={props.onContextMenu}
           />
+          <SidebarWorkerRows {...props} thread={worker} />
         </li>
       ))}
       {failedQuery !== null || remaining > 0 ? (
