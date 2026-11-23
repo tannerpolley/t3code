@@ -71,6 +71,8 @@ export function makeSubagentChildThread(input: {
 }): OrchestrationV2AppThread {
   const {
     delegatedFrom: _delegatedFrom,
+    delegatedCompletion: _delegatedCompletion,
+    silentWakeAttention: _silentWakeAttention,
     issues: _issues,
     roleSkillSelection: _roleSkillSelection,
     ...inherited

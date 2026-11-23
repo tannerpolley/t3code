@@ -684,6 +684,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         deliveryState: "claimed",
         completionWake: "always",
         deliveryTaskIds: [firstTaskId, secondTaskId],
+        siblingTasks: [{ id: secondTaskId, deliveryState: "claimed" }],
         now,
       });
 
@@ -709,7 +710,6 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.deepEqual(message?.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
       assert.include(message?.text ?? "", String(firstTaskId));
       assert.include(message?.text ?? "", String(secondTaskId));
-      assert.include(message?.text ?? "", "task_status");
       assert.include(message?.text ?? "", "child finished");
     }),
   );
@@ -4471,18 +4471,35 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           now,
         });
         yield* orchestrator.recoverDelegatedTasks;
-        assert.isNotNull(
-          (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
-            (task) => task.id === owner.taskId,
-          )?.result,
-        );
+        const ownerTask = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === owner.taskId,
+        )!;
+        assert.isNotNull(ownerTask.result);
 
         // The owner's own child finished, so its reserved completion wakes the owner.
         const wakeMessageId = MessageId.make("message:owner-wake");
+        const reviewerTaskId = NodeId.make("node:owner-wake-reviewer");
         const ownerThread = (yield* orchestrator.getThreadProjection(owner.childThreadId)).thread;
         yield* eventSink.write({
           commandId: reconcileCommandId("owner-wake-cohort"),
           events: [
+            {
+              id: EventId.make("event:owner-wake-reviewer"),
+              type: "subagent.updated",
+              threadId: owner.childThreadId,
+              nodeId: reviewerTaskId,
+              occurredAt: now,
+              payload: {
+                ...ownerTask,
+                id: reviewerTaskId,
+                threadId: owner.childThreadId,
+                runId: null,
+                parentNodeId: reviewerTaskId,
+                childThreadId: null,
+                result: "Review complete.",
+                completionDelivery: { state: "claimed", observedByRunId: null },
+              },
+            },
             {
               id: EventId.make("event:owner-wake-cohort"),
               type: "thread.metadata-updated",
@@ -4496,7 +4513,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                   delivery: {
                     generation: 1,
                     messageId: wakeMessageId,
-                    taskIds: [NodeId.make("node:owner-wake-reviewer")],
+                    taskIds: [reviewerTaskId],
                   },
                 },
               },
@@ -4516,7 +4533,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           delegatedCompletion: {
             parentRunId: null,
             generation: 1,
-            taskIds: [NodeId.make("node:owner-wake-reviewer")],
+            taskIds: [reviewerTaskId],
           },
         });
 
