@@ -146,6 +146,8 @@ keep its threads together and wait on them without a shell on your computer.
    example at **Auto**.
 2. The bot starts one idle thread for itself with `t3_thread_launch` and no
    `message`. Move that thread into a sidebar section of its own if you like.
+   Jobs nest only under a thread the same sign-in started, so after you
+   approve the bot again it starts a new one.
 3. For each job, the bot calls `t3_thread_launch` with `role`, the project, a
    self-contained `message`, and its own thread as `parentThreadId`. The job
    shows under the bot's thread, titled by role, and an approval it waits on

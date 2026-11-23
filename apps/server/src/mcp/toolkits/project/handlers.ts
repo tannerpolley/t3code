@@ -48,6 +48,7 @@ import {
 import { ProjectToolkit } from "./tools.ts";
 
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
+const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 
 function projectFailure(error: Project.ProjectServiceError) {
   if (error._tag === "ProjectOperationError") {
@@ -184,13 +185,13 @@ const roleModelSelection = Effect.fn("mcp.launchRoleModel")(function* (
     undefined,
     providers,
   );
-  if (choice instanceof OrchestratorMcpFailure) return yield* choice;
+  if (isOrchestratorMcpFailure(choice)) return yield* choice;
   if (choice === undefined) return undefined;
   const { providerInstanceId: instanceId, model, options } = choice;
   return { instanceId, model, ...(options === undefined ? {} : { options }) };
 });
 
-/** An outside agent nests launches only under a top-level thread an outside agent started. */
+/** An outside agent nests launches only under a top-level thread its own sign-in launched. */
 const nestingParent = Effect.fn("mcp.launchNestingParent")(function* (
   context: Caller,
   parentThreadId: ThreadId,
@@ -202,20 +203,21 @@ const nestingParent = Effect.fn("mcp.launchNestingParent")(function* (
       message:
         "parentThreadId is for outside agents. Inside a thread, hand off work with delegate_task.",
     });
-  const parent = yield* context.threads
-    .getThreadShell(parentThreadId)
-    .pipe(Effect.mapError(unavailable));
+  const parent = yield* context.threads.getThreadRecords(parentThreadId, []).pipe(
+    Effect.map(({ thread }) => thread),
+    Effect.orElseSucceed(() => null),
+  );
   if (
     parent === null ||
     parent.deletedAt !== null ||
-    parent.creationSource !== "mcp" ||
+    parent.mcpClientSessionId !== outsideSessionId ||
     parent.lineage.parentThreadId !== null ||
     parent.delegatedFrom !== undefined
   )
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
       message:
-        "parentThreadId must be a top-level thread an outside agent started with t3_thread_launch.",
+        "parentThreadId must be a top-level thread you started with t3_thread_launch since you last signed in.",
     });
   return parent;
 });

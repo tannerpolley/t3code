@@ -2,6 +2,7 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  OrchestratorMcpFailure,
   EnvironmentId,
   GitCommandError,
   ProjectId,
@@ -48,6 +49,8 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
+
+const OTHER_AGENT_THREAD = ThreadId.make("thread:other-agent");
 
 const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
@@ -126,14 +129,32 @@ const clientLaunchHarness = (input: {
             : ({
                 id: launch.threadId,
                 projectId: launch.projectId,
-                title: launch.title,
                 modelSelection: launch.modelSelection,
-                creationSource: launch.creationSource,
-                lineage: { parentThreadId: null },
-                delegatedFrom: launch.delegatedFrom,
                 deletedAt: null,
               } as unknown as OrchestrationV2ThreadShell),
         );
+      },
+      // A launched thread's records, plus one another agent's sign-in launched.
+      getThreadRecords: (threadId) => {
+        const launch = input.launched.find((candidate) => candidate.threadId === threadId);
+        const thread =
+          launch !== undefined
+            ? {
+                id: launch.threadId,
+                title: launch.title,
+                mcpClientSessionId: launch.mcpClientSessionId,
+                delegatedFrom: launch.delegatedFrom,
+              }
+            : threadId === OTHER_AGENT_THREAD
+              ? { id: threadId, title: "Other bot", mcpClientSessionId: "session-other" }
+              : undefined;
+        return thread === undefined
+          ? (Effect.fail(
+              new OrchestratorMcpFailure({ code: "thread_not_found", message: "Not found." }),
+            ) as never)
+          : Effect.succeed({
+              thread: { ...thread, lineage: { parentThreadId: null }, deletedAt: null },
+            } as never);
       },
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
@@ -430,10 +451,13 @@ it.effect("an outside agent launches by role, nested under its own thread", () =
       },
     });
 
-    // A nested thread cannot parent another, so nesting stays one level deep.
-    expect(
-      yield* launch({ title: "[FM] Deeper", parentThreadId: launched[1]!.threadId! }),
-    ).toMatchObject({ code: "invalid_request" });
+    // A nested thread cannot parent another, so nesting stays one level deep, and an agent
+    // nests only under its own sign-in's threads.
+    for (const parentThreadId of [launched[1]!.threadId!, OTHER_AGENT_THREAD]) {
+      expect(yield* launch({ title: "[FM] Refused", parentThreadId })).toMatchObject({
+        code: "invalid_request",
+      });
+    }
     expect(launched).toHaveLength(2);
   }),
 );
