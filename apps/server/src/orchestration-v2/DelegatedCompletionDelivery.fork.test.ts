@@ -315,6 +315,8 @@ it.layer(
         const wakes = after.messages.filter((message) => message.delegatedCompletion !== undefined);
         assert.lengthOf(wakes, 1);
         assert.deepEqual(wakes[0]?.delegatedCompletion?.taskIds, [first.task.id, second.task.id]);
+        assert.equal(wakes[0]?.delegatedCompletion?.containsFailure, end === "failure");
+        if (end === "deadline") assert.equal(wakes[0]?.delegatedCompletion?.batched, true);
         assert.include(wakes[0]?.text, "First check passed.");
         assert.include(wakes[0]?.text, "Second check reported.");
         const wakeRuns = after.runs.filter((run) => run.userMessageId === wakes[0]?.id);

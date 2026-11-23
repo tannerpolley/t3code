@@ -112,11 +112,11 @@ function addTurn(bucket: Bucket, row: TurnRow, usage: TurnTokenUsage | undefined
   if (
     row.status !== "completed" ||
     usage?.usageStatus !== "complete" ||
-    usage.requestCount === undefined ||
     usage.firstInputContext === undefined ||
     usage.peakInputContext === undefined ||
     usage.cachedInputTokens === undefined ||
-    usage.cacheCreationTokens === undefined ||
+    (row.driver === "claudeAgent" &&
+      (usage.requestCount === undefined || usage.cacheCreationTokens === undefined)) ||
     usage.hasSubagents ||
     (usage.otherUsage !== undefined &&
       (usage.otherUsage.inputTokens > 0 || usage.otherUsage.outputTokens > 0))
@@ -170,7 +170,14 @@ function addTurn(bucket: Bucket, row: TurnRow, usage: TurnTokenUsage | undefined
 
 function wakeReason(row: TurnRow): string {
   if (row.native_child !== 0) return "Native child";
-  if (row.attempt_reason !== null && row.attempt_reason !== "initial") return "Retry";
+  switch (row.attempt_reason) {
+    case "retry":
+      return "Retry";
+    case "steering_restart":
+      return "Steering restart";
+    case "provider_recovery":
+      return "Provider recovery";
+  }
   switch (row.wake_reason) {
     case "provider_retry":
       return "Provider retry";

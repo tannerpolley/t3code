@@ -5,8 +5,11 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
   MessageId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   RunId,
   ScheduledTaskUpsertInput,
+  UsageLimitSourceId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -21,7 +24,9 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as UsageBudget from "../usage/UsageBudget.ts";
+import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -567,6 +572,7 @@ it.effect(
         { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
       );
       const dueAt = DateTime.formatIso(DateTime.toUtc(due));
+      const resetsAt = DateTime.formatIso(DateTime.addDuration(due, "1 hour"));
       yield* TestClock.setTime(DateTime.toEpochMillis(due) - 1_000);
       const tick = yield* Ref.make(Effect.void);
       const launches = yield* Ref.make(0);
@@ -638,11 +644,70 @@ it.effect(
         const report = yield* budget.latestReport(before.id);
         expect(report?.occurrenceAt).toBe(dueAt);
         expect(report?.text).toBe((yield* budget.report(dueAt)).text);
+        expect(report?.text).toContain(`Weekly: 75% left, reset ${resetsAt}`);
+        expect(report?.text).toContain("Purchased credits: 12");
+        expect(report?.text).toContain("Banked resets: 2");
       }).pipe(
         Effect.provide(
           Layer.merge(
             ScheduledTaskService.layer.pipe(Layer.provide(dependencies)),
             UsageBudget.layer,
+          ).pipe(
+            Layer.provide(
+              Layer.merge(
+                Layer.mock(ProviderRegistry.ProviderRegistry)({
+                  getProviders: Effect.succeed([
+                    {
+                      instanceId: ProviderInstanceId.make("codex"),
+                      driver: ProviderDriverKind.make("codex"),
+                      enabled: true,
+                      installed: true,
+                      version: null,
+                      status: "ready",
+                      auth: { status: "authenticated" },
+                      checkedAt: dueAt,
+                      models: [],
+                      slashCommands: [],
+                      skills: [],
+                      usageLimits: {
+                        checkedAt: dueAt,
+                        windows: [],
+                        credits: { hasCredits: true, unlimited: false, balance: "12" },
+                      },
+                    },
+                  ]),
+                }),
+                Layer.mock(UsageLimitSources.UsageLimitSources)({
+                  current: Effect.succeed([
+                    {
+                      id: UsageLimitSourceId.make("test-hub"),
+                      kind: "cliproxy",
+                      label: "Test hub",
+                      checkedAt: dueAt,
+                      accounts: [
+                        {
+                          id: "claude",
+                          driver: ProviderDriverKind.make("claudeAgent"),
+                          usageLimits: {
+                            checkedAt: dueAt,
+                            windows: [
+                              {
+                                id: "weekly",
+                                kind: "weekly",
+                                label: "Weekly",
+                                usedPercent: 25,
+                                resetsAt,
+                              },
+                            ],
+                            resetCredits: { availableCount: 2 },
+                          },
+                        },
+                      ],
+                    },
+                  ]),
+                }),
+              ),
+            ),
           ),
         ),
       );
