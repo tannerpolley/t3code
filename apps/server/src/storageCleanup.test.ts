@@ -371,6 +371,8 @@ const cleanupFixture = (
     let fullStatusCalls = 0;
     let gitInspections = 0;
     let snapshotReads = 0;
+    const archivedThreads: ThreadId[] = [];
+    let branchPullRequest: GitManager.GitBranchPullRequest | null = null;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
@@ -471,6 +473,11 @@ const cleanupFixture = (
       } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),
       Effect.provideService(Orchestrator.OrchestratorV2, {
         streamDomainEvents: Stream.suspend(() => events),
+        dispatch: (command: OrchestrationV2ServerCommand) =>
+          Effect.sync(() => {
+            if (command.type === "thread.archive") archivedThreads.push(command.threadId);
+            return { sequence: 0, storedEvents: [] };
+          }),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
       Effect.provideService(
         SqlClient.SqlClient,
@@ -519,6 +526,7 @@ const cleanupFixture = (
       ),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
+        branchPullRequest: () => Effect.sync(() => branchPullRequest),
       } as unknown as GitManager.GitManager["Service"]),
       Effect.provideService(TerminalManager.TerminalManager, {
         subscribeMetadata: (
@@ -543,6 +551,10 @@ const cleanupFixture = (
       worktree,
       config,
       command,
+      archivedThreads,
+      setBranchPullRequest: (next: GitManager.GitBranchPullRequest) => {
+        branchPullRequest = next;
+      },
       enableFiles: () => {
         settings = {
           ...settings,
@@ -3280,6 +3292,67 @@ describe("storage cleanup reports and local file policies", () => {
         expect(
           (yield* command(repo, ["show-ref", "--verify", "refs/heads/feature"])).stdout,
         ).not.toBe("");
+      }),
+    ),
+  );
+  it.live("keeps a Writer unarchived when cleanup removes the shared issue worktree", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const {
+          service,
+          fs,
+          repo,
+          worktree,
+          command,
+          setThreads,
+          setBranchPullRequest,
+          archivedThreads,
+        } = yield* cleanupFixture();
+        const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
+        yield* command(remote, ["init", "--bare", "-b", "main"]);
+        yield* command(repo, ["remote", "add", "origin", remote]);
+        yield* command(repo, ["push", "origin", "main"]);
+        const head = yield* command(worktree, ["rev-parse", "HEAD"]);
+        setBranchPullRequest({
+          number: 2,
+          title: "Merged work",
+          url: "https://github.com/owner/project/pull/2",
+          state: "merged",
+          headRef: "feature",
+          baseRef: "main",
+          headSha: head.stdout.trim(),
+          repositoryKey: "github.com/owner/project",
+          updatedAt: null,
+        });
+        const owner = shell({
+          branch: "feature",
+          worktreePath: worktree,
+          linkedIssue: {
+            host: "github.com",
+            repository: "owner/project",
+            repositoryId: "repo",
+            id: "issue",
+            nodeId: "issue-node",
+            number: 1,
+            title: "Issue",
+            url: "https://github.com/owner/project/issues/1",
+          },
+        });
+        const writer = shell({
+          id: ThreadId.make("writer"),
+          role: "writer",
+          branch: owner.branch,
+          worktreePath: worktree,
+          lineage: {
+            parentThreadId: owner.id,
+            rootThreadId: owner.id,
+            relationshipToParent: "subagent",
+          },
+        });
+        setThreads([owner, writer]);
+
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        expect(archivedThreads).toEqual([owner.id]);
       }),
     ),
   );

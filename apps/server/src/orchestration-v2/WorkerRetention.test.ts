@@ -256,6 +256,7 @@ it.effect("previews and archives only finished workers and leaves restored worke
       VALUES ('queued-run', ${queued}, 1, 'codex', 'queued', ${DateTime.formatIso(createdAt)}, '{}')`;
     yield* seed("owner-child", "merged", { createdBy: "user" });
     yield* seed("orchestrator", "merged", { role: "orchestrator" });
+    const writer = yield* seed("backlog-writer", "merged", { role: "writer" });
     yield* service.autoArchive(done);
     assert.isNull((yield* projections.getThread(done)).archivedAt);
     const preview = yield* service.archiveBacklog({ kind: "preview" });
@@ -271,6 +272,7 @@ it.effect("previews and archives only finished workers and leaves restored worke
     assert.equal(result.kind === "archived" ? result.archived : -1, 1);
     assert.isNotNull((yield* projections.getThread(done)).archivedAt);
     assert.isNull((yield* projections.getThread(open)).archivedAt);
+    assert.isNull((yield* projections.getThread(writer)).archivedAt);
 
     yield* TestClock.adjust("1 second");
     const freshAt = yield* DateTime.now;
@@ -318,11 +320,15 @@ it.effect("previews and archives only finished workers and leaves restored worke
   }).pipe(Effect.provide(layerRetention)),
 );
 
-it.effect("keeps expired unfinished workers during the sweep and direct delete planning", () =>
+it.effect("keeps expired Writers and unfinished workers", () =>
   Effect.gen(function* () {
     const { service, orchestrator, projections, createdAt, seed, sql } = yield* makeFixture();
     const sweep = yield* seed("open-sweep", "open", { archivedAt: createdAt });
     const locked = yield* seed("open-locked", "open", { archivedAt: createdAt });
+    const writer = yield* seed("expired-writer", "merged", {
+      role: "writer",
+      archivedAt: createdAt,
+    });
     yield* TestClock.adjust("15 days");
     const [event] = yield* sql<{ sequence: number }>`
       SELECT MAX(sequence) AS sequence FROM orchestration_events WHERE stream_id = ${locked}
@@ -339,8 +345,9 @@ it.effect("keeps expired unfinished workers during the sweep and direct delete p
       [
         (yield* projections.getThread(locked)).deletedAt === null,
         (yield* projections.getThread(sweep)).deletedAt === null,
+        (yield* projections.getThread(writer)).deletedAt === null,
       ],
-      [true, true],
+      [true, true, true],
     );
   }).pipe(Effect.provide(layerRetention)),
 );
@@ -518,7 +525,8 @@ it.effect("archives an older worker automatically when new work finishes after t
       source: "agent",
     });
     yield* TestClock.adjust("1 second");
-    const completedAt = DateTime.formatIso(yield* DateTime.now);
+    const completedAt = yield* DateTime.now;
+    const completedAtIso = DateTime.formatIso(completedAt);
     const [previous] = (yield* projections.getThread(id)).pullRequests!;
     yield* orchestrator.dispatch({
       type: "thread.pull-request-link.sync",
@@ -527,14 +535,16 @@ it.effect("archives an older worker automatically when new work finishes after t
       ...key,
       snapshot: {
         ...previous!.snapshot!,
-        mergedAt: completedAt,
-        updatedAt: completedAt,
-        syncedAt: completedAt,
+        mergedAt: completedAtIso,
+        updatedAt: completedAtIso,
+        syncedAt: completedAtIso,
       },
       stack: null,
     });
-    yield* service.autoArchive(id);
+    const writer = yield* seed("automatic-writer", "merged", { role: "writer" }, completedAt);
+    yield* service.autoArchive();
     assert.isNotNull((yield* projections.getThread(id)).archivedAt);
+    assert.isNull((yield* projections.getThread(writer)).archivedAt);
   }).pipe(Effect.provide(layerRetention)),
 );
 

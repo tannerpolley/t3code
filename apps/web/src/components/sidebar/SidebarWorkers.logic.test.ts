@@ -22,8 +22,9 @@ it("keeps settled workers under their parent, bounds the initial page, and revea
   );
   const [oldest, ...rest] = children;
   const newest = children.at(-1)!;
+  const writer = { ...oldest!, source: { ...oldest!.source, role: "writer" as const } };
   const key = scopedThreadKey(scopeThreadRef(parent.environmentId, parent.id));
-  const indexed = indexSidebarWorkers([parent, { ...oldest!, archivedAt }, ...rest]);
+  const indexed = indexSidebarWorkers([parent, { ...writer, archivedAt }, ...rest]);
   expect(indexed.running.size).toBe(0);
   const idle = indexed.children.get(key)!;
   expect(idle).toHaveLength(234);
@@ -32,9 +33,9 @@ it("keeps settled workers under their parent, bounds the initial page, and revea
   expect(page[0]).toBe(newest);
   expect(sidebarWorkerPage(idle, SIDEBAR_WORKER_PAGE_SIZE * 2, null)).toHaveLength(20);
 
-  const restored = indexSidebarWorkers([parent, ...children]).children.get(key)!;
+  const restored = indexSidebarWorkers([parent, writer, ...rest]).children.get(key)!;
   expect(restored).toHaveLength(235);
-  const revealed = sidebarWorkerPage(restored, SIDEBAR_WORKER_PAGE_SIZE, oldest!.id);
+  const revealed = sidebarWorkerPage(restored, SIDEBAR_WORKER_PAGE_SIZE, writer.id);
   expect(revealed).toHaveLength(10);
-  expect(revealed).toContain(oldest);
+  expect(revealed).toContain(writer);
 });
