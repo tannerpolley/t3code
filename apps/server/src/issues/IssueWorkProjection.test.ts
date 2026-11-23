@@ -455,7 +455,13 @@ it.effect(
       assert.equal(work.find((item) => item.threadId === "inherited")?.inherited, true);
       assert.equal(work.find((item) => item.threadId === "explicit")?.inherited, false);
       assert.equal(work.find((item) => item.threadId === "archived")?.status, "idle");
-      assert.isTrue(work.find((item) => item.threadId === "stopped")?.paused);
+      assert.include(
+        work.find((item) => item.threadId === "stopped"),
+        {
+          status: "idle",
+          paused: true,
+        },
+      );
       assert.deepEqual(
         work
           .filter((item) => item.paused)

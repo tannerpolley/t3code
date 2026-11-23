@@ -324,10 +324,18 @@ export const layer = Layer.effect(
                 compactPr,
               ),
               liveWork: status.liveWork?.map(
-                ({ threadId, inherited, status, paused, requestHandledByParent, pullRequests }) => ({
+                ({
                   threadId,
                   inherited,
                   status,
+                  paused,
+                  requestHandledByParent,
+                  pullRequests,
+                }) => ({
+                  threadId,
+                  inherited,
+                  status,
+                  ...(paused === true ? { paused } : {}),
                   ...(requestHandledByParent ? { requestHandledByParent } : {}),
                   ...(pullRequests.length === 0 ? {} : { pullRequests }),
                 }),

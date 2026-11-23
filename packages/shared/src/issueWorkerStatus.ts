@@ -7,15 +7,17 @@ import {
   runtimeRequestIsOwnerVisible,
   type RoutedRequestParent,
 } from "./delegatedRequestVisibility.ts";
+import { isExplicitlyPausedThread } from "./threadActivity.ts";
 
 type Worker = NonNullable<RepositoryIssueSummary["liveWork"]>[number];
-type WorkerState = Pick<Worker, "status" | "requestHandledByParent">;
+type WorkerState = Pick<Worker, "status" | "requestHandledByParent" | "paused">;
 
 export function classifyIssueWorker(
   thread: Pick<
     OrchestrationV2ThreadShell,
     | "status"
     | "activityRunStatus"
+    | "explicitStopRequested"
     | "archivedAt"
     | "role"
     | "lineage"
@@ -52,14 +54,8 @@ export function classifyIssueWorker(
   )
     return { status: "working" };
   if (status === "failed") return { status: "failed" };
-  if (
-    status === "completed" ||
-    status === "interrupted" ||
-    status === "cancelled" ||
-    status === "rolled_back"
-  )
-    return { status: "done" };
-  return { status: "idle" };
+  if (status === "completed") return { status: "done" };
+  return isExplicitlyPausedThread(thread) ? { status: "idle", paused: true } : { status: "idle" };
 }
 
 export function issueWorkerNeedsOwner({ status }: WorkerState) {

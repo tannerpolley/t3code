@@ -627,6 +627,19 @@ it("shows the server suspension over live working state and clears it after Resu
   expect(issueStatePresentation(resumed.issues[0]!).label).toBe("In progress");
 });
 
+it("shows Paused for an owner-stopped worker from the live shell", () => {
+  const stopped = {
+    ...root,
+    source: {
+      ...root.source,
+      status: "interrupted" as const,
+      explicitStopRequested: true as const,
+    },
+  };
+  const issue = withLiveIssueWork(list, [stopped]).issues[0]!;
+  expect(issueLiveWorkSummary(issue)?.status).toBe("paused");
+});
+
 it("keeps a paused worker from the server while its family is unloaded and clears it on restart", () => {
   const worker = { ...running, linkedIssue };
   const source = {

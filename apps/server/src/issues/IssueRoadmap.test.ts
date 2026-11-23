@@ -425,11 +425,11 @@ it.effect(
           ["running", false, "working", 1],
           ["failed", false, "failed", 0],
           ["running", false, "working", 1],
-          ["interrupted", false, "done", 0],
+          ["interrupted", false, "idle", 0],
           ["running", false, "working", 1],
-          ["cancelled", false, "done", 0],
+          ["cancelled", false, "idle", 0],
           ["running", false, "working", 1],
-          ["rolled_back", false, "done", 0],
+          ["rolled_back", false, "idle", 0],
         ] as const) {
           revision++;
           const event = {
