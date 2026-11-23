@@ -451,7 +451,7 @@ it.effect(
           ["starting", false, "working", 1],
           ["running", false, "working", 1],
           ["waiting", false, "working", 1],
-          ["completed", false, "done", 0],
+          ["completed", false, "idle", 0],
           ["running", false, "working", 1],
           ["failed", false, "failed", 0],
           ["running", false, "working", 1],
