@@ -352,11 +352,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             : runtimeMode;
         if (!replaying) {
           const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          const provider = providers.find(
+            (provider) => provider.instanceId === modelSelection.instanceId,
+          );
+          if (
+            linkOrigin !== undefined &&
+            input.delegatedFrom?.enableTools?.length &&
+            provider?.driver !== "codex"
+          )
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "enableTools requires a Codex target.",
+            });
           startedRuntimeMode = yield* resolveRuntimeMode(startedRuntimeMode, input.runtimeMode, {
             modelSelection,
-            supportedRuntimeModes: providers.find(
-              (provider) => provider.instanceId === modelSelection.instanceId,
-            )?.supportedRuntimeModes,
+            supportedRuntimeModes: provider?.supportedRuntimeModes,
           });
         }
         const result = yield* ThreadMessageIntake.launchThread({
