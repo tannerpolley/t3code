@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import { SIDEBAR_WORKER_PAGE_SIZE, type EnvironmentId } from "@t3tools/contracts";
@@ -37,6 +37,7 @@ const omittedFamilies = Atom.family((environmentId: EnvironmentId) =>
   ),
 );
 const EMPTY: readonly SidebarThreadSummary[] = [];
+const unpagedWorkers = Atom.make({ generation: 0, pages: [], waiting: false, failedQuery: null });
 const childrenFor = Atom.family((key: string) =>
   Atom.map(sidebarWorkers, ({ children, running }) => {
     const siblings = children.get(key) ?? EMPTY;
@@ -77,10 +78,10 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   const listRef = useStableCallback(rowRef);
   const [paging, setPaging] = useState(false);
   if (!paging && canPage && nearViewport) setPaging(true);
-  const [count, setCount] = useState(1);
-  const pageKey = JSON.stringify([environmentId, id, paging ? count : 0]);
-  const { state, rows } = threadFamilies.workerPages(pageKey);
-  const { pages, failedQuery } = useAtomValue(state);
+  const pageKey = JSON.stringify([environmentId, id]);
+  const { count: pageCount, state, rows } = threadFamilies.workerPages(pageKey);
+  const [count, setCount] = useAtom(pageCount);
+  const { pages, failedQuery } = useAtomValue(paging ? state : unpagedWorkers);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- merges the mounted pages with authoritative shell deltas
   useEffect(() => {
     if (paging) return threadFamilies.mountRows(appAtomRegistry, environmentId, pageKey, rows);
