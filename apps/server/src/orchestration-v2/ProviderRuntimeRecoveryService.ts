@@ -651,8 +651,9 @@ export const make = Effect.gen(function* () {
         // fresh managed queues recover through the shared eligibility/admission gate.
         if (
           run.queueHeld === true ||
-          projection.thread.linkedIssue !== undefined ||
-          projection.thread.repositoryOrchestration !== undefined
+          (run.status === "queued" &&
+            (projection.thread.linkedIssue !== undefined ||
+              projection.thread.repositoryOrchestration !== undefined))
         )
           continue;
         events.push({
