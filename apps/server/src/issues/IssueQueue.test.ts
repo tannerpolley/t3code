@@ -620,20 +620,24 @@ it.effect.each([false, true])(
         yield* setPaused(false);
       } else {
         yield* service.queueIssue(input(5));
-        assert.equal((yield* runOf((yield* store.issueOwner(issue(5)))!)).status, "queued");
+        const waiting = (yield* store.issueOwner(issue(5)))!;
+        assert.equal((yield* runOf(waiting)).status, "queued");
+        assert.deepEqual(yield* store.admissionThreads(rootId), [waiting, earlier]);
         yield* finish(yield* runOf(running), "running-worker-finished");
       }
       const queued = (yield* store.issueOwner(issue(5)))!;
-      yield* sink.stream({ afterSequence: sequence }).pipe(
+      // Workspace preparation runs before admission; the first run to start took the freed slot.
+      const [admitted] = yield* sink.stream({ afterSequence: sequence }).pipe(
         Stream.filter(
           (stored) =>
             (stored.event.type === "run.updated" || stored.event.type === "run.created") &&
-            stored.event.threadId === queued &&
-            stored.event.payload.status !== "queued",
+            (stored.event.threadId === queued || stored.event.threadId === earlier) &&
+            stored.event.payload.status === "starting",
         ),
         Stream.take(1),
         Stream.runCollect,
       );
+      assert.equal(admitted!.event.threadId, queued);
       yield* worker.drain();
       assert.equal((yield* runOf(earlier)).status, "queued");
       assert.equal(yield* store.slotsInUse(rootId), 1);
