@@ -238,6 +238,50 @@ describe("pools", () => {
   };
   const laptop = { entry: { target: { label: "Laptop" } } };
 
+  it("shows a credits-only account where supported without replacing its quota windows", () => {
+    const meter = provider({
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        credentialFingerprint: "same-codex-account",
+        windows: [window],
+      },
+    });
+    const balance = { hasCredits: true, unlimited: false, balance: "12" };
+    const creditsOnly = provider({
+      instanceId: ProviderInstanceId.make("codex-credits"),
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        credentialFingerprint: "same-codex-account",
+        windows: [],
+        credits: balance,
+      },
+    });
+    const presentations = (...providers: ServerProvider[]) =>
+      new Map([
+        [
+          EnvironmentId.make("desktop"),
+          { entry: { target: { label: "Desktop" } }, serverConfig: { providers } },
+        ],
+      ]);
+
+    expect(collectLimitAccounts(presentations(creditsOnly))).toEqual([]);
+    expect(collectLimitNotices(presentations(creditsOnly))).toEqual(["codex: No limits reported."]);
+    const options = { includeCreditOnly: true };
+    expect(collectLimitAccounts(presentations(creditsOnly), options)).toMatchObject([
+      { limits: { windows: [], credits: balance } },
+    ]);
+    for (const providers of [
+      [meter, creditsOnly],
+      [creditsOnly, meter],
+    ]) {
+      expect(collectLimitAccounts(presentations(...providers), options)).toMatchObject([
+        {
+          limits: { checkedAt: meter.usageLimits!.checkedAt, windows: [window], credits: balance },
+        },
+      ]);
+    }
+  });
+
   it("merges one account reported natively on two environments and by a hub into one entry", () => {
     const native = provider({
       driver: claude,

@@ -432,6 +432,7 @@ const make = Effect.gen(function* () {
           },
         ],
       ]),
+      { includeCreditOnly: true },
     ).filter((account) => account.driver === "claudeAgent" || account.driver === "codex");
     const checkedAt = yield* DateTime.now;
     const recordedAt = DateTime.formatIso(checkedAt);
