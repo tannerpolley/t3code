@@ -1,3 +1,5 @@
+import { useWorkerStatusLabels } from "../issues/IssueLiveWork";
+import { useSidebarIssueWorkerStatus } from "../../state/repositoryIssues";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
@@ -164,6 +166,9 @@ function SidebarWorkerButton(
   const key = scopedThreadKey(ref);
   const selected = useThreadSelectionStore((store) => store.selectedThreadKeys.has(key));
   const status = resolveSidebarThreadStatus(thread);
+  const workerStatus = useSidebarIssueWorkerStatus(thread, status === "ready");
+  const labels = useWorkerStatusLabels();
+  const workerLabel = workerStatus == null ? workerStatus : labels[workerStatus];
   const provider = sidebarThreadProvider(props.providerEntries, thread.providerInstanceId);
   const button = (
     <button
@@ -178,7 +183,7 @@ function SidebarWorkerButton(
               role: sidebarRoleLabel(thread.source),
               title: thread.title,
               issueNumber: thread.source.linkedIssue?.number,
-              status,
+              status: workerLabel ?? status,
               links: thread.pullRequests,
             })
           : undefined
@@ -202,13 +207,24 @@ function SidebarWorkerButton(
       }}
     >
       {props.columns ? (
-        <SidebarIdleWorkerColumns thread={thread} provider={provider} status={status} />
+        <SidebarIdleWorkerColumns
+          thread={thread}
+          provider={provider}
+          status={status}
+          workerLabel={workerLabel}
+        />
       ) : (
         <>
           <CornerDownRightIcon aria-hidden className="size-3 shrink-0" />
           <ThreadRoleIcon thread={thread.source} />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-          {status !== "ready" ? <ThreadStatusMark status={status} /> : null}
+          {workerLabel === undefined ? (
+            status !== "ready" ? (
+              <ThreadStatusMark status={status} />
+            ) : null
+          ) : workerLabel === null ? null : (
+            <span className="shrink-0">{workerLabel}</span>
+          )}
         </>
       )}
     </button>
@@ -221,7 +237,10 @@ function SidebarWorkerButton(
 }
 
 function SidebarIdleWorkerColumns(
-  props: Pick<ComponentProps<typeof SidebarChildThreadColumns>, "thread" | "provider" | "status">,
+  props: Pick<
+    ComponentProps<typeof SidebarChildThreadColumns>,
+    "thread" | "provider" | "status" | "workerLabel"
+  >,
 ) {
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const locationStyle = useClientSettings((settings) => settings.sidebarLocationIconStyle);

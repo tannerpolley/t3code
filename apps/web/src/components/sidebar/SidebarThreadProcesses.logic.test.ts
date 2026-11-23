@@ -116,6 +116,15 @@ it("overlays known background work in Projects after unseen completion has been 
   );
   expect(workStatus).toBe("waiting");
   expect(resolveSidebarProjectStatusMark(thread, undefined, status, workStatus)).toBe("done");
+  const child = presentThreadShell(fixture.environmentId, {
+    ...thread.source,
+    lineage: {
+      parentThreadId: ThreadId.make("parent"),
+      rootThreadId: ThreadId.make("parent"),
+      relationshipToParent: "fork",
+    },
+  });
+  expect(resolveSidebarProjectStatusMark(child, undefined, status, workStatus)).toBe("done");
   expect(
     resolveSidebarProjectStatusMark(
       { ...thread, lastVisitedAt: "2026-10-20T10:01:00.000Z" },

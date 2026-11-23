@@ -81,6 +81,7 @@ export function SidebarChildThreadColumns(props: {
   readonly location: ReactNode;
   readonly status: SidebarThreadStatus;
   readonly shortModelNames: boolean;
+  readonly workerLabel?: string | null | undefined;
 }) {
   const { thread, provider, status } = props;
   const role = sidebarRoleLabel(thread.source);
@@ -115,8 +116,13 @@ export function SidebarChildThreadColumns(props: {
         <ThreadIssueBadge environmentId={thread.environmentId} issue={thread.source.linkedIssue} />
       }
       pr={<ThreadPullRequestBadge thread={thread} />}
-      time={<SidebarThreadTime thread={thread} status={status} />}
-      status={<ThreadStatusMark status={status} />}
+      time={
+        <>
+          {props.workerLabel && <span className="me-1.5">{props.workerLabel}</span>}
+          <SidebarThreadTime thread={thread} status={status} />
+        </>
+      }
+      status={props.workerLabel === undefined ? <ThreadStatusMark status={status} /> : null}
     />
   );
 }

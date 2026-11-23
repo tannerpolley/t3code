@@ -1,3 +1,4 @@
+import { issueWorkerStatus } from "@t3tools/shared/issueWorkerStatus";
 import { useNavigate } from "@tanstack/react-router";
 import {
   THREAD_ROLE_LABELS,
@@ -9,7 +10,9 @@ import { CirclePauseIcon, CirclePlayIcon, LinkIcon } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
-import { issueLiveWorkSummary, issueWorkerStatus } from "./issueRoadmap.logic";
+import { issueLiveWorkSummary } from "./issueRoadmap.logic";
+
+import { useIssueStateLabel } from "./IssueStateIcon";
 
 const STATUS_ICONS = {
   suspended: CirclePauseIcon,
@@ -20,6 +23,7 @@ const STATUS_ICONS = {
   approval: CirclePauseIcon,
   queued: CirclePauseIcon,
   failed: CirclePauseIcon,
+  ready_for_review: LinkIcon,
   done: LinkIcon,
   idle: LinkIcon,
 };
@@ -78,7 +82,7 @@ export function IssueLiveWork({
               <p>
                 {thread.role === undefined ? "" : `${THREAD_ROLE_LABELS[thread.role]}: `}
                 {thread.title} ·{" "}
-                {status === "suspended" ? label : labels[issueWorkerStatus(thread)]}
+                {status === "suspended" ? label : labels[issueWorkerStatus(thread, issue)]}
               </p>
               {thread.branch ? <p>Branch: {thread.branch}</p> : null}
               {thread.worktreePath ? <p>Worktree: {thread.worktreePath}</p> : null}
@@ -103,6 +107,7 @@ export function useWorkerStatusLabels() {
     question: gt("Waiting on question"),
     approval: gt("Waiting on approval"),
     queued: gt("Queued"),
+    ready_for_review: useIssueStateLabel("Ready for review"),
     done: gt("Done"),
     failed: gt("Failed"),
     idle: gt("Idle"),

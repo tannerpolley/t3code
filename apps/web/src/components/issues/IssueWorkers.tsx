@@ -7,7 +7,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
-import { issueWorkerNeedsOwner } from "@t3tools/shared/issueWorkerStatus";
+import { issueWorkerNeedsOwner, issueWorkerStatus } from "@t3tools/shared/issueWorkerStatus";
 import { Link } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 
@@ -16,7 +16,7 @@ import { environmentThreadDetails } from "~/state/threads";
 import { ChildApproval } from "../chat/ChildThreadApprovals";
 import { PendingQuestionForm } from "../PendingQuestionForm";
 import { useWorkerStatusLabels } from "./IssueLiveWork";
-import { issueLiveWorkSummary, issueWorkerStatus } from "./issueRoadmap.logic";
+import { issueLiveWorkSummary } from "./issueRoadmap.logic";
 
 export function IssueWorkers({
   issue,
@@ -44,7 +44,7 @@ export function IssueWorkers({
                 {worker.title}
               </Link>
               <span className="shrink-0 text-muted-foreground">
-                {labels[issueWorkerStatus(worker)]}
+                {labels[issueWorkerStatus(worker, issue)]}
               </span>
             </div>
             {worker.branch ? (

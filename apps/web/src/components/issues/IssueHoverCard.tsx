@@ -1,3 +1,4 @@
+import { issueWorkerStatus } from "@t3tools/shared/issueWorkerStatus";
 import { useWorkerStatusLabels } from "./IssueLiveWork";
 import type { EnvironmentId, RepositoryIssueRef, RepositoryIssueSummary } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -14,7 +15,7 @@ import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { useIssueQueued } from "./IssueQueueAction";
 import { IssueStateIcon, issueStatePresentation, useIssueStateLabel } from "./IssueStateIcon";
 import { issueHoverPullRequests } from "./issueHoverCard.logic";
-import { issueWorkerStatus, openIssueBlockers } from "./issueRoadmap.logic";
+import { openIssueBlockers } from "./issueRoadmap.logic";
 
 export interface IssueHoverTarget {
   readonly environmentId: EnvironmentId;
@@ -117,7 +118,7 @@ function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverCon
                   params={{ environmentId, threadId: work.threadId }}
                   className="wrap-anywhere hover:underline"
                 >
-                  {work.title} · {labels[issueWorkerStatus(work)]}
+                  {work.title} · {labels[issueWorkerStatus(work, issue)]}
                 </Link>
               ))}
             </div>
