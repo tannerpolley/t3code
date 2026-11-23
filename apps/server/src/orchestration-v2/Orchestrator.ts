@@ -115,6 +115,7 @@ import {
 import { threadQuietMinutes } from "@t3tools/shared/threadActivity";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1039,6 +1040,24 @@ function legacyPullRequestLink(
 }
 
 const DELEGATED_RESULT_INLINE_BYTES = 16_000;
+const DELEGATED_COMPLETION_BATCH_SECONDS = 15;
+
+function delegatedCompletionBatchDeadline(
+  thread: OrchestrationV2AppThread,
+  tasks: ReadonlyArray<OrchestrationV2Subagent>,
+): number | undefined {
+  if (effectiveThreadRole(thread) !== "orchestrator") return undefined;
+  let first: DateTime.Utc | undefined;
+  for (const task of tasks) {
+    if (task.batchCompletion !== true || task.status !== "completed" || task.completedAt === null)
+      return undefined;
+    if (first === undefined || DateTime.isLessThan(task.completedAt, first))
+      first = task.completedAt;
+  }
+  return first === undefined
+    ? undefined
+    : DateTime.toEpochMillis(first) + DELEGATED_COMPLETION_BATCH_SECONDS * 1000;
+}
 
 function delegatedCompletionWakeDetail(
   taskIds: ReadonlyArray<string>,
@@ -2201,19 +2220,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const threadId = projection.thread.id;
     const parentIsLive = parentRun !== undefined && hasLiveRun({ runs: [parentRun] });
-    const pendingTaskIds =
+    const pendingTasks =
       projection.thread.archivedAt === null && projection.thread.deletedAt === null
-        ? projection.subagents
-            .filter(
-              (task) =>
-                task.origin === "app_owned" &&
-                task.runId === ownership.parentRunId &&
-                task.completionDelivery?.state === "pending" &&
-                isTerminalDelegatedTaskStatus(task.status) &&
-                (!parentIsLive || task.completionWake === "always"),
-            )
-            .map((task) => task.id)
+        ? projection.subagents.filter(
+            (task) =>
+              task.origin === "app_owned" &&
+              task.runId === ownership.parentRunId &&
+              task.completionDelivery?.state === "pending" &&
+              isTerminalDelegatedTaskStatus(task.status) &&
+              (!parentIsLive || task.completionWake === "always"),
+          )
         : [];
+    const pendingTaskIds = pendingTasks.map((task) => task.id);
     const nextDelivery =
       pendingTaskIds.length === 0
         ? null
@@ -2228,6 +2246,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
             ),
             taskIds: pendingTaskIds,
+            dispatchAfterMs: delegatedCompletionBatchDeadline(projection.thread, pendingTasks),
           };
     const emitEvent = emit(input.events, input.command);
     const acceptedIds = new Set(delivery.taskIds);
@@ -7709,7 +7728,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...requestedCompletion,
         messageId: command.messageId,
       });
-      if (delivery === undefined) {
+      if (
+        delivery === undefined ||
+        (delivery.dispatchAfterMs !== undefined &&
+          delivery.dispatchAfterMs > (yield* Clock.currentTimeMillis))
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -10111,6 +10134,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         model: request.modelSelection.model,
         modelSelection: request.modelSelection,
         ...(request.completionWake === undefined ? {} : { completionWake: request.completionWake }),
+        ...(request.batchCompletion === true ? { batchCompletion: true } : {}),
         status: "running",
         result: null,
         startedAt: now,
@@ -10581,6 +10605,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         model: command.modelSelection.model,
         modelSelection: command.modelSelection,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        ...(command.batchCompletion === true ? { batchCompletion: true } : {}),
         status: "running",
         result: null,
         startedAt: now,
@@ -14851,6 +14876,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
     }
 
+    const dispatchAfterMs = delegatedCompletionBatchDeadline(input.parentProjection.thread, [
+      input.updatedTask,
+    ]);
     const delivery = cohort?.delivery ?? null;
     const deliveryRun = completionDeliveryRun(input.parentProjection, delivery);
     if (delivery !== null) {
@@ -14917,6 +14945,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         delivery: {
           ...delivery,
           taskIds,
+          dispatchAfterMs: dispatchAfterMs === undefined ? undefined : delivery.dispatchAfterMs,
         },
       };
       return {
@@ -14951,6 +14980,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         generation,
         messageId,
         taskIds: [input.task.id],
+        dispatchAfterMs,
       },
     };
     return {
@@ -15526,16 +15556,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         observedByRunId: null,
       });
     }
-    const pendingTaskIds = projection.subagents
-      .filter(
-        (task) =>
-          task.origin === "app_owned" &&
-          task.runId === messageOwnership.parentRunId &&
-          isTerminalDelegatedTaskStatus(task.status) &&
-          (task.completionDelivery?.state === "pending" ||
-            nextTaskStates.get(task.id)?.state === "pending"),
-      )
-      .map((task) => task.id);
+    const pendingTasks = projection.subagents.filter(
+      (task) =>
+        task.origin === "app_owned" &&
+        task.runId === messageOwnership.parentRunId &&
+        isTerminalDelegatedTaskStatus(task.status) &&
+        (task.completionDelivery?.state === "pending" ||
+          nextTaskStates.get(task.id)?.state === "pending"),
+    );
+    const pendingTaskIds = pendingTasks.map((task) => task.id);
     const canReserveFollowUp =
       cohort.disposition === "open" &&
       projection.thread.archivedAt === null &&
@@ -15554,6 +15583,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
           ),
           taskIds: pendingTaskIds,
+          dispatchAfterMs: delegatedCompletionBatchDeadline(projection.thread, pendingTasks),
         }
       : null;
     if (nextDelivery !== null) {

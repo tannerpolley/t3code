@@ -19,6 +19,7 @@ import {
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
   resolveModelNotes,
+  resolveModelRoleName,
   resolveModelRoles,
   type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
@@ -2728,6 +2729,11 @@ const make = Effect.gen(function* () {
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
+      const batchCompletion =
+        input.mode !== "wait" &&
+        (input.level ??
+          (input.role === undefined ? undefined : resolveModelRoleName(input.role)?.[1])) ===
+          "routine";
       const environmentId =
         input.target === undefined
           ? undefined
@@ -2740,6 +2746,7 @@ const make = Effect.gen(function* () {
           return yield* failure("invalid_request", "Linked-environment delegation is unavailable.");
         const { taskId } = yield* remoteDelegation.value.delegate(scope, {
           ...input,
+          batchCompletion,
           target: { ...input.target, environmentId },
         });
         return yield* input.mode === "wait"
@@ -2875,9 +2882,8 @@ const make = Effect.gen(function* () {
         modelSelection: target.modelSelection,
         runtimeMode,
         interactionMode,
-        // Async delegations wake the parent on every child terminal; wait
-        // delegations deliver through the blocking tool call, so a wake is
-        // only needed if the parent settled first (timeout, disconnect).
+        // Managed issue results advance repository work and can unlock other issues.
+        ...(batchCompletion && linkedIssue === undefined ? { batchCompletion } : {}),
         completionWake: input.mode === "wait" ? "settled_only" : "always",
         ...(workspace.workspaceStrategy === undefined
           ? {}

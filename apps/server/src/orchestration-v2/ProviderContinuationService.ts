@@ -1,4 +1,5 @@
 import { CommandId, type MessageId, type ThreadId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -36,6 +37,7 @@ export const layer = Layer.effectDiscard(
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
+    const scheduledBatches = new Set<string>();
     const continuations = yield* KeyedLock.makeRunner<ThreadId>();
 
     const clearRetryAttempt = (key: string) =>
@@ -144,6 +146,25 @@ export const layer = Layer.effectDiscard(
             yield* clearRetryAttempt(retryKey);
             return;
           }
+          const remainingMs =
+            delivery.dispatchAfterMs === undefined
+              ? 0
+              : delivery.dispatchAfterMs - (yield* Clock.currentTimeMillis);
+          if (remainingMs > 0) {
+            if (!scheduledBatches.has(retryKey)) {
+              scheduledBatches.add(retryKey);
+              yield* Effect.sleep(remainingMs).pipe(
+                Effect.andThen(
+                  Effect.suspend(() =>
+                    scheduledBatches.delete(retryKey) ? requests.offer(request) : Effect.void,
+                  ),
+                ),
+                Effect.forkScoped,
+              );
+            }
+            return;
+          }
+          scheduledBatches.delete(retryKey);
           const commandId = yield* ids.allocate.command({
             fixtureName: "delegated-completion",
             commandName: "dispatch",
