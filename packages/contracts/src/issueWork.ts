@@ -84,6 +84,7 @@ export const RepositoryPhase = Schema.Literals([
   "active",
   "paused",
   "handoff_awaiting_approval",
+  "handoff_verifying",
   "draining",
   "retired",
 ]);
@@ -91,17 +92,23 @@ export type RepositoryPhase = typeof RepositoryPhase.Type;
 type RepositoryPhaseFields = {
   readonly paused: boolean;
   readonly handoff?: { readonly status: "awaiting_approval" | "draining" } | undefined;
+  readonly automaticHandoff?: { readonly status: "verifying" | "failed" } | undefined;
   readonly retiredToThreadId?: string | null | undefined;
 };
 
 export const repositoryPhase = (config: RepositoryPhaseFields): RepositoryPhase => {
   if (config.retiredToThreadId !== undefined) return "retired";
+  if (config.automaticHandoff?.status === "verifying") return "handoff_verifying";
   if (config.handoff?.status === "draining") return "draining";
   if (config.handoff !== undefined) return "handoff_awaiting_approval";
   return config.paused ? "paused" : "active";
 };
 export const isValidRepositoryPhase = (config: RepositoryPhaseFields) =>
   !(config.retiredToThreadId !== undefined && config.handoff !== undefined) &&
+  !(
+    config.automaticHandoff?.status === "verifying" &&
+    (config.handoff !== undefined || config.retiredToThreadId !== undefined)
+  ) &&
   !(config.handoff?.status === "draining" && !config.paused);
 
 // Awaiting approval preserves the existing pause state; draining admits already queued work.

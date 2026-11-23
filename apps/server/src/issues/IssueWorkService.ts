@@ -1075,11 +1075,6 @@ export const layer = Layer.effect(
             !(yield* store.subtreeDrained(targetId))
           )
             return;
-          if (
-            !(yield* store.subtreeDrained(rootThreadId)) ||
-            !(yield* store.handoffSafe(rootThreadId))
-          )
-            return;
           automatic = { type: "verify", enabled: threshold !== null };
         } else {
           if (threshold == null) return;
@@ -1107,6 +1102,9 @@ export const layer = Layer.effect(
             !(yield* store.handoffSafe(rootThreadId)) ||
             !(yield* store.subtreeDrained(targetId))
           )
+            return;
+          const successor = yield* threads.getThreadShell(targetId).pipe(Effect.mapError(mapError));
+          if (successor !== null && (successor.archivedAt !== null || successor.deletedAt !== null))
             return;
           automatic = { type: "start", sourceRunId: root.latestRunId, threshold };
           brief = yield* inventory(config);
@@ -1335,7 +1333,13 @@ export const layer = Layer.effect(
         config = (yield* store.configuration(rootThreadId))!;
       }
       yield* continueLocal(rootThreadId, true);
-      if (repositoryPhase(config) === "draining" || config.milestones.length === 0) return;
+      config = (yield* store.configuration(rootThreadId))!;
+      if (
+        !repositoryAdmitsWork(config) ||
+        repositoryPhase(config) === "draining" ||
+        config.milestones.length === 0
+      )
+        return;
       const plans: RepositoryOrchestration["milestones"][number][] = [];
       for (const plan of config.milestones) {
         const listing = yield* issues
@@ -2245,6 +2249,8 @@ export const layer = Layer.effect(
               (stored.event.type === "thread.metadata-updated" &&
                 stored.event.payload.repositoryOrchestration !== undefined) ||
               stored.event.type === "thread.unarchived" ||
+              stored.event.type === "thread.archived" ||
+              stored.event.type === "thread.deleted" ||
               stored.event.type === "thread.settled" ||
               stored.event.type === "repository.work.restored" ||
               (stored.event.type === "issue.queue.updated" &&
@@ -2334,7 +2340,10 @@ export const layer = Layer.effect(
             if (
               predecessor !== undefined &&
               (stored.event.type === "run.updated" ||
-                stored.event.type === "runtime-request.updated")
+                stored.event.type === "runtime-request.updated" ||
+                stored.event.type === "thread.archived" ||
+                stored.event.type === "thread.unarchived" ||
+                stored.event.type === "thread.deleted")
             ) {
               yield* queueHandoffCheck(predecessor);
             }

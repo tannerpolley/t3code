@@ -45,6 +45,7 @@ import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as OrchestratorMcp from "../mcp/OrchestratorMcpService.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -625,13 +626,15 @@ describe("fresh-thread repository handoff", () => {
         ],
       });
     });
-  it.effect("rolls over only after context, a safe boundary and verified continuation", () =>
-    Effect.gen(function* () {
+  it.effect("rolls over only after context, a safe boundary and verified continuation", () => {
+    let verificationStarts = 0;
+    return Effect.gen(function* () {
       yield* createRoot;
       const service = yield* IssueWorkService.IssueWorkService;
       const store = yield* IssueWorkStore.IssueWorkStore;
       const threads = yield* ThreadManagement.ThreadManagementService;
       const sink = yield* EventSink.EventSinkV2;
+      const settings = yield* ServerSettingsService;
       const nextId = automaticHandoffThreadId(rootId);
       yield* threads.dispatch({
         type: "thread.pull-request.watch",
@@ -735,8 +738,72 @@ describe("fresh-thread repository handoff", () => {
       yield* approval(true);
       yield* service.reconcile(rootId);
       assert.isNull(yield* threads.getThreadShell(nextId));
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { orchestratorHandoffTokens: null } },
+      });
       yield* usage(200_000, "idle-threshold");
       yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      const taskId = NodeId.make("auto:late-remote");
+      const remoteTask = (status: "running" | "cancelled") =>
+        sink.write({
+          events: [
+            {
+              id: EventId.make(`auto:late-remote:${status}`),
+              type: "subagent.updated",
+              threadId: rootId,
+              nodeId: taskId,
+              occurredAt: now,
+              payload: {
+                id: taskId,
+                threadId: rootId,
+                runId: run.id,
+                parentNodeId: run.rootNodeId!,
+                origin: "app_owned",
+                createdBy: "agent",
+                driver: ProviderDriverKind.make("codex"),
+                providerInstanceId: modelSelection.instanceId,
+                providerThreadId: null,
+                childThreadId: null,
+                remoteChild: {
+                  threadId: ThreadId.make("auto:remote-child"),
+                  environmentId: EnvironmentId.make("auto:remote-environment"),
+                  label: "Remote child",
+                },
+                nativeTaskRef: null,
+                prompt: "Review the retained change.",
+                title: "Review",
+                model: null,
+                status,
+                result: null,
+                startedAt: now,
+                completedAt: status === "cancelled" ? now : null,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+      yield* remoteTask("running");
+      yield* settings.updateSettings({ projectSettingsOverrides: { [projectId]: null } });
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO owner_decisions
+        (id, requesting_thread_id, requesting_project_id, client_request_id, host,
+          repository, issue_number, request_json, state, created_at, updated_at)
+        VALUES ('auto:decision', ${rootId}, ${projectId}, 'auto:decision', ${reference.host},
+          ${reference.repository}, 9, '{}', 'open', '2026-11-23', '2026-11-23')`;
+      yield* remoteTask("cancelled");
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      yield* sql`UPDATE owner_decisions SET chosen_option_id = 'continue', pending_delivery = 1
+        WHERE id = 'auto:decision'`;
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      yield* sql`UPDATE owner_decisions SET pending_delivery = 0 WHERE id = 'auto:decision'`;
+      const afterSequence = yield* sink.latestSequence();
+      yield* usage(200_000, "idle-inherited-threshold");
+      yield* awaitFollowup(nextId, afterSequence);
       assert.equal((yield* store.configuration(rootId))?.automaticHandoff?.status, "verifying");
       assert.equal((yield* store.repositoryOwnerByRef(reference))?.rootThreadId, rootId);
       assert.isNull((yield* threads.getThreadShell(rootId))?.archivedAt);
@@ -748,19 +815,59 @@ describe("fresh-thread repository handoff", () => {
       yield* service.reconcile(rootId);
       assert.lengthOf((yield* threads.getThreadRecords(nextId, ["runs"])).runs, 1);
 
+      const archive = (type: "thread.archive" | "thread.unarchive") =>
+        threads.dispatch({
+          type,
+          threadId: nextId,
+          commandId: CommandId.make(`auto:${type}`),
+        });
+      yield* archive("thread.archive");
       yield* send("auto:retry");
       yield* finish(rootId, "auto:retry");
+      const previousAttempt = (yield* store.configuration(rootId))?.automaticHandoff;
+      yield* service.reconcile(rootId);
+      assert.deepEqual((yield* store.configuration(rootId))?.automaticHandoff, previousAttempt);
+      assert.equal(verificationStarts, 1);
+      yield* archive("thread.unarchive");
+
+      yield* service.queueIssue({
+        ...reference,
+        number: 9,
+        clientRequestId: CommandId.make("auto:queue"),
+      });
       yield* service.reconcile(rootId);
       assert.lengthOf((yield* threads.getThreadRecords(nextId, ["runs"])).runs, 2);
+      yield* service.setPaused({
+        ...reference,
+        paused: false,
+        clientRequestId: CommandId.make("auto:resume-issue-admissions"),
+      });
+      const start = yield* threads
+        .dispatch({
+          type: "issue.work.start",
+          commandId: CommandId.make("auto:start-during-verification"),
+          threadId: rootId,
+          issue: linked(9),
+          workerModelSelection: modelSelection,
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.result);
+      assert.equal(start._tag, "Failure");
+      if (start._tag === "Failure") assert.include(start.failure.message, "verifying a handoff");
+      const queue = yield* store.queue(config);
+      assert.equal(queue[0]?.issue.number, 9);
+      assert.isUndefined(queue[0]?.noticeRunId);
+      assert.isNull((yield* threads.getThreadShell(rootId))?.activeRunId);
       yield* finish(nextId, "auto:verified", true);
       yield* service.reconcile(rootId);
 
       assert.equal((yield* store.repositoryOwnerByRef(reference))?.rootThreadId, nextId);
-      assert.isTrue((yield* store.configuration(nextId))?.paused);
+      assert.isFalse((yield* store.configuration(nextId))?.paused);
       const old = yield* threads.getThreadShell(rootId);
       assert.isNotNull(old?.archivedAt);
       assert.equal(old?.handoffToThreadId, nextId);
-      const successor = yield* threads.getThreadRecords(nextId, ["messages"]);
+      const successor = yield* threads.getThreadRecords(nextId, ["messages", "turnItems"]);
       assert.equal(successor.thread.handoffFromThreadId, rootId);
       assert.deepEqual(successor.thread.modelSelection, old?.modelSelection);
       assert.equal(successor.thread.runtimeMode, old?.runtimeMode);
@@ -770,47 +877,14 @@ describe("fresh-thread repository handoff", () => {
           message.text.includes("You now own repository orchestration"),
         ),
       );
+      assert.isTrue(
+        successor.turnItems.some(
+          (item) => item.type === "system_notice" && item.message?.includes("at 200k context"),
+        ),
+      );
       assert.isUndefined(old?.pullRequests?.[0]?.watch);
       assert.deepEqual(successor.thread.pullRequests?.[0]?.watch, watch);
 
-      const taskId = NodeId.make("auto:late-remote");
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make("auto:late-remote:cancelled"),
-            type: "subagent.updated",
-            threadId: rootId,
-            nodeId: taskId,
-            occurredAt: now,
-            payload: {
-              id: taskId,
-              threadId: rootId,
-              runId: run.id,
-              parentNodeId: run.rootNodeId!,
-              origin: "app_owned",
-              createdBy: "agent",
-              driver: ProviderDriverKind.make("codex"),
-              providerInstanceId: modelSelection.instanceId,
-              providerThreadId: null,
-              childThreadId: null,
-              remoteChild: {
-                threadId: ThreadId.make("auto:remote-child"),
-                environmentId: EnvironmentId.make("auto:remote-environment"),
-                label: "Remote child",
-              },
-              nativeTaskRef: null,
-              prompt: "Review the retained change.",
-              title: "Review",
-              model: null,
-              status: "cancelled",
-              result: null,
-              startedAt: now,
-              completedAt: now,
-              updatedAt: now,
-            },
-          },
-        ],
-      });
       const completed = {
         type: "delegated_task.remote.complete",
         commandId: CommandId.make("auto:late-result"),
@@ -833,8 +907,22 @@ describe("fresh-thread repository handoff", () => {
           );
       assert.equal(yield* reportCount(rootId), 0);
       assert.equal(yield* reportCount(nextId), 1);
-    }).pipe(Effect.provide(fixture({ handoffWake: true }))),
-  );
+    }).pipe(
+      Effect.provide(
+        fixture({
+          handoffWake: true,
+          wrapThreads: (threads) => ({
+            ...threads,
+            dispatch: (command) => {
+              if (command.type === "repository.work.handoff" && command.automatic?.type === "start")
+                verificationStarts++;
+              return threads.dispatch(command);
+            },
+          }),
+        }),
+      ),
+    );
+  });
   const awaitFollowup = (threadId: ThreadId, afterSequence: number) =>
     EventSink.EventSinkV2.use((sink) =>
       sink.stream({ afterSequence }).pipe(

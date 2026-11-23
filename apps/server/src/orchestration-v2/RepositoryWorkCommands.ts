@@ -55,6 +55,12 @@ interface RepositoryWorkCommandHooks extends ForkCommandHooks {
     threadId: ThreadId,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorProjectionError>;
+  readonly archiveRetiredRoot: (
+    commandId: CommandId,
+    thread: OrchestrationV2AppThread,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) => Effect.Effect<void, OrchestratorV2Error>;
 }
 
 export const planRepositoryWorkEnd = Effect.fn("orchestrationV2.planRepositoryWorkEnd")(function* (
@@ -106,6 +112,7 @@ export function makeRepositoryWorkCommands({
   recordSubagentFollowup,
   getProjectionWithPendingEvents,
   nextTurnItemOrdinal,
+  archiveRetiredRoot,
 }: RepositoryWorkCommandHooks) {
   const guardRootLifecycle = Effect.fn("orchestrationV2.guardRepositoryRootLifecycle")(function* (
     command: Extract<
@@ -167,6 +174,8 @@ export function makeRepositoryWorkCommands({
       activePlan && "an unpaused milestone plan (pause the repository)",
       subtreeActive && "active issue workers",
       thread.repositoryOrchestration.handoff !== undefined && "a pending handoff",
+      thread.repositoryOrchestration.automaticHandoff?.status === "verifying" &&
+        "an automatic handoff being verified",
     ].filter((blocker) => blocker !== false);
     if (blockers.length > 0)
       return yield* new OrchestratorDispatchError({
@@ -503,24 +512,25 @@ export function makeRepositoryWorkCommands({
       automatic === undefined ? config.handoff!.nextThreadId : automaticHandoffThreadId(shell.id);
     const emitEvent = emit(events, command);
     const notice = Effect.fn("orchestrationV2.repositoryHandoffNotice")(function* (
+      thread: OrchestrationV2AppThread,
       title: string,
       message: string,
     ) {
       yield* emitEvent({
         type: "turn-item.updated",
-        threadId: shell.id,
+        threadId: thread.id,
         occurredAt: now,
         payload: {
           id: TurnItemId.make(`handoff-notice:${command.commandId}`),
           type: "system_notice",
-          threadId: shell.id,
+          threadId: thread.id,
           runId: null,
           nodeId: null,
           providerThreadId: null,
           providerTurnId: null,
           nativeItemRef: null,
           parentItemId: null,
-          ordinal: yield* nextTurnItemOrdinal({ thread: shell, turnItems: [] }),
+          ordinal: yield* nextTurnItemOrdinal({ thread, turnItems: [] }),
           status: "completed",
           title,
           message,
@@ -548,6 +558,7 @@ export function makeRepositoryWorkCommands({
         },
       });
       yield* notice(
+        shell,
         "Automatic handoff deferred",
         `${reason} This thread still owns the repository.`,
       );
@@ -693,13 +704,25 @@ export function makeRepositoryWorkCommands({
         .join("\n\n");
       yield* startMessage(
         automaticHandoffMessageId(command.commandId),
-        `Verify a proposed context handoff for ${config.repository}. The current owner is ${shell.id}. Your first authorized action is read-only: use t3_thread_read to inspect that thread and confirm you can recover its current work from this brief and the source. Make no changes and start no work yet. If you can continue, summarize the current work and your first authorized next step, then end with the exact line "${REPOSITORY_HANDOFF_READY}". Otherwise report the blocker without that line. T3 transfers ownership after verification.
+        `# Verify a repository handoff
 
-Server recovery inventory:
+## Objective
+Continue the current approved work for ${config.repository} after T3 transfers ownership.
+
+## Source thread and workspace
+Thread: ${shell.id}
+Project: ${shell.projectId}
+Checkout: ${shell.worktreePath ?? "Project directory"}
+Branch: ${shell.branch ?? "Current checkout branch"}
+
+## Current state
 ${command.inventory}
 
-Recent source messages (historical context):
-${recent}`,
+## Recent source messages
+${recent}
+
+## Verification and next action
+Your first authorized action is read-only. Use t3_thread_read on the source to recover the owner's standing constraints, approvals, unresolved decisions, and known-good checks. Read older pages as needed. Verify the workspace and identify the next action within the owner's existing authorization. Start no work and make no changes during verification. If you can continue, summarize the recovered state and first authorized next step, then end with the exact line "${REPOSITORY_HANDOFF_READY}". If you cannot verify continuation, report the blocker. T3 transfers ownership after verification.`,
         existing !== null,
       );
       return;
@@ -752,6 +775,7 @@ ${recent}`,
       );
       const verified =
         automatic.enabled &&
+        !expired &&
         candidateIdle &&
         (yield* store.handoffSafe(next.id).pipe(mapDispatchError(command))) &&
         readSource &&
@@ -767,12 +791,16 @@ ${recent}`,
         return yield* failVerification(
           !automatic.enabled
             ? "Automatic handoff was turned off."
-            : sourceChanged
-              ? "The source changed during verification."
-              : "The successor did not verify the handoff.",
+            : expired
+              ? "The verification timed out."
+              : sourceChanged
+                ? "The source changed during verification."
+                : "The successor did not verify the handoff.",
         );
-      if (!(yield* sourceReady)) return yield* refuse("The source is no longer idle.");
+      if (!(yield* sourceReady))
+        return yield* failVerification("The source is no longer at a safe idle boundary.");
       yield* notice(
+        next,
         "Automatic handoff complete",
         `Handed off to ${next.title} at ${new Intl.NumberFormat("en", {
           notation: "compact",
@@ -783,32 +811,25 @@ ${recent}`,
     }
 
     const paused = config.handoff?.wasPaused ?? config.paused;
+    const retiredRoot = {
+      ...shell,
+      ...(automatic === undefined ? {} : { handoffToThreadId: next.id }),
+      repositoryOrchestration: {
+        ...config,
+        automaticHandoff: undefined,
+        handoff: undefined,
+        retiredToThreadId: nextThreadId,
+      },
+      updatedAt: now,
+    };
     yield* emitEvent({
-      type: automatic === undefined ? "thread.metadata-updated" : "thread.archived",
+      type: "thread.metadata-updated",
       threadId: command.threadId,
       occurredAt: now,
-      payload: {
-        ...shell,
-        ...(automatic === undefined
-          ? {}
-          : {
-              archivedAt: now,
-              titleRegeneration: null,
-              guestShare: null,
-              handoffToThreadId: next.id,
-              pullRequests: shell.pullRequests?.map(({ watch, ...link }) =>
-                watch === undefined ? link : { ...link, endedWatch: watch },
-              ),
-            }),
-        repositoryOrchestration: {
-          ...config,
-          automaticHandoff: undefined,
-          handoff: undefined,
-          retiredToThreadId: nextThreadId,
-        },
-        updatedAt: now,
-      },
+      payload: retiredRoot,
     });
+    if (automatic !== undefined)
+      yield* archiveRetiredRoot(command.commandId, retiredRoot, events, effects);
     yield* emitEvent({
       type: "thread.metadata-updated",
       threadId: nextThreadId,

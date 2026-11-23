@@ -216,6 +216,18 @@ it.effect("admission visits only read-only threads with queued or preparing work
 it.effect("SQL phase and admission agree with contracts for every stored field combination", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    for (const status of ["verifying", "failed"] as const) {
+      const config = { paused: false, automaticHandoff: { status } };
+      const payload = JSON.stringify({ repositoryOrchestration: config });
+      const [row] = yield* sql<{ phase: string; allowed: number }>`SELECT
+        ${sql.unsafe(repositoryPhaseSql("payload"))} AS phase,
+        ${sql.unsafe(repositoryAdmissionSql("payload"))} AS allowed
+        FROM (SELECT ${payload} AS payload)`;
+      assert.equal(row?.phase, status === "verifying" ? "handoff_verifying" : "active");
+      assert.equal(row?.phase, repositoryPhase(config));
+      assert.equal(row?.allowed === 1, status === "failed");
+      assert.equal(row?.allowed === 1, repositoryAdmitsWork(config));
+    }
     for (const paused of [false, true]) {
       for (const status of [undefined, "awaiting_approval", "draining"] as const) {
         for (const retired of [undefined, null, ThreadId.make("next")]) {

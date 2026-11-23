@@ -4480,16 +4480,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    retiredRoot?: OrchestrationV2AppThread,
   ) {
-    let thread = yield* projectionStore.getThread(command.threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestratorProjectionError({
-            threadId: command.threadId,
-            cause,
-          }),
-      ),
-    );
+    let thread =
+      retiredRoot ??
+      (yield* projectionStore.getThread(command.threadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProjectionError({
+              threadId: command.threadId,
+              cause,
+            }),
+        ),
+      ));
     if (command.type === "thread.settle" && keepIssueWorktree(thread)) return;
     if (command.type === "thread.archive" && isRegisteredRepositoryRoot(thread)) {
       yield* repositoryWork.end(
@@ -16034,6 +16037,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     dispatchThreadCreate,
     dispatchMessage,
     getProjectionWithPendingEvents,
+    archiveRetiredRoot: (commandId, thread, events, effects) =>
+      dispatchThreadMutation(
+        { type: "thread.archive", commandId, threadId: thread.id },
+        events,
+        effects,
+        thread,
+      ),
   });
 
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
