@@ -775,7 +775,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   Layer.provideMerge(
     WorkerRetention.layer.pipe(
-      Layer.provide(Layer.merge(layerIssueService, layerPullRequestService)),
+      Layer.provide(
+        Layer.mergeAll(
+          layerIssueService,
+          IssueServerLayers.layerIssueService,
+          layerPullRequestService,
+        ),
+      ),
     ),
   ),
   Layer.provideMerge(layerOrchestrationApplication),

@@ -1171,7 +1171,9 @@ export const layer = Layer.effect(
         // Closed and re-parented attempts still require an explicit Resume decision.
         const priorReason = suspended.get(shell.linkedIssue.id);
         if (priorReason !== undefined && !isAutomaticIssueSuspension(priorReason)) continue;
-        const read = yield* issues.workRead(shell.linkedIssue).pipe(Effect.result);
+        const read = yield* issues
+          .workRead(shell.linkedIssue, { cached: true })
+          .pipe(Effect.result);
         let reason: string | null = null;
         let kind: IssueSuspensionKind = "reparented";
         if (read._tag === "Failure") {
@@ -1264,25 +1266,24 @@ export const layer = Layer.effect(
         const selected = listing.success.issues.filter(
           (issue) => issue.milestone?.number === plan.number && issue.state === "open",
         );
+        const reads = yield* issues
+          .workReads(
+            config,
+            selected.map((issue) => issue.number),
+          )
+          .pipe(Effect.option);
         let unreadable = false,
           blocked = false,
           awaiting = false,
           running = false;
         const fingerprint: string[] = [];
         for (const issue of selected) {
-          const readResult = yield* issues
-            .workRead({
-              host: config.host,
-              repository: config.repository,
-              number: issue.number,
-            })
-            .pipe(Effect.result);
-          if (readResult._tag === "Failure") {
+          const read = reads._tag === "Some" ? reads.value.get(issue.number) : undefined;
+          if (read === undefined) {
             unreadable = true;
             fingerprint.push(`${issue.number}:unknown`);
             continue;
           }
-          const read = readResult.success;
           const eligibility = issueEligibility(read);
           const owner = yield* store.issueOwner(read.issue);
           fingerprint.push(
