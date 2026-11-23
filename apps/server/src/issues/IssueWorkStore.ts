@@ -1,5 +1,6 @@
 import {
   DEFAULT_REPOSITORY_WORK_SETTINGS,
+  PROJECT_WORKTREES_FOLDER,
   IssueWorkError,
   IssueWorkRequested,
   EnvironmentId,
@@ -192,7 +193,6 @@ export const layer = Layer.effect(
     const mapError = (cause: unknown) =>
       new IssueWorkError({ code: "orchestration-error", message: String(cause) });
     // A slot covers a managed worker preparing/running/waiting or awaiting a person's response.
-    // Queued and completed workers (even with open PRs) hold no worker slot; read-only children use their own pool.
     // Keep displayed occupancy and admission identical; `thread` is the worker alias.
     const usesWorkerSlot = sql`(EXISTS (
       SELECT 1 FROM orchestration_v2_projection_runs run
@@ -203,6 +203,25 @@ export const layer = Layer.effect(
       WHERE request.thread_id = thread.thread_id AND request.status = 'pending'
         AND request.kind NOT IN ('auth_refresh', 'dynamic_tool_call')
     ))`;
+    const workerCheckout = sql`replace(json_extract(thread.payload_json, '$.worktreePath'), char(92), '/')`;
+    // The linked-issue index includes past owners whose slots have not been released.
+    const occupiedWorkerCount = (exclude?: ThreadId) => sql`(
+      SELECT count(*) FROM (
+        SELECT thread.thread_id FROM orchestration_v2_projection_issue_work work
+        JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
+        WHERE work.host = owner.host AND work.repository_id = owner.repository_id
+          AND ${usesWorkerSlot}
+        UNION
+        SELECT thread.thread_id FROM orchestration_v2_projection_threads thread
+        WHERE thread.deleted_at IS NULL
+          AND lower(CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.linkedIssue.host') END) = lower(owner.host)
+          AND lower(CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.linkedIssue.repository') END) = lower(owner.repository)
+          AND json_extract(thread.payload_json, '$.linkedIssue.repositoryId') = owner.repository_id
+          AND ${workerCheckout} GLOB ${`*/${PROJECT_WORKTREES_FOLDER}/slot-[1-9]*`}
+          AND rtrim(${workerCheckout}, '0123456789') GLOB ${`*/${PROJECT_WORKTREES_FOLDER}/slot-`}
+      ) occupied
+      ${exclude === undefined ? sql`` : sql`WHERE occupied.thread_id <> ${exclude}`}
+    )`;
     // A restart cancels the cut run before its continuation dispatches; other
     // provider lifecycle effects belong to runs that are still active.
     const unsettledRestartContinuations = sql`
@@ -340,6 +359,7 @@ export const layer = Layer.effect(
           FROM orchestration_v2_projection_repository_orchestration owner
           JOIN orchestration_v2_projection_threads root ON root.thread_id = owner.root_thread_id
           WHERE root.archived_at IS NULL AND root.deleted_at IS NULL
+            AND ${sql.unsafe(repositoryPhaseSql("root.payload_json"))} <> 'retired'
         `.pipe(
           Effect.map((rows) =>
             rows.map((row) => ({
@@ -353,13 +373,11 @@ export const layer = Layer.effect(
       ),
       slotsInUse: Effect.fn("IssueWorkStore.slotsInUse")((rootThreadId) =>
         sql<{ active: number }>`
-          SELECT count(*) AS active FROM orchestration_v2_projection_issue_work work
-          JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
-          JOIN orchestration_v2_projection_repository_orchestration owner
-            ON owner.host = work.host AND owner.repository_id = work.repository_id
-          WHERE owner.root_thread_id = ${rootThreadId} AND ${usesWorkerSlot}
+          SELECT ${occupiedWorkerCount()} AS active
+          FROM orchestration_v2_projection_repository_orchestration owner
+          WHERE owner.root_thread_id = ${rootThreadId}
         `.pipe(
-          Effect.map((rows) => rows[0]!.active),
+          Effect.map((rows) => rows[0]?.active ?? 0),
           Effect.mapError(mapError),
         ),
       ),
@@ -684,11 +702,7 @@ export const layer = Layer.effect(
             EXISTS (SELECT 1 FROM orchestration_v2_projection_threads candidate
               WHERE candidate.thread_id = ${threadId}
                 AND CASE WHEN json_valid(candidate.payload_json) THEN json_extract(candidate.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id) AS lineage_valid,
-            (SELECT count(*) FROM orchestration_v2_projection_issue_work work
-              JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
-              WHERE work.host = ${issue.host} AND work.repository_id = ${issue.repositoryId}
-                AND thread.thread_id <> ${threadId}
-                AND ${usesWorkerSlot}) AS active,
+            ${occupiedWorkerCount(threadId)} AS active,
             (WITH RECURSIVE ancestors(id, parent, payload) AS (
               SELECT thread_id, json_extract(payload_json, '$.lineage.parentThreadId'), payload_json
                 FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}

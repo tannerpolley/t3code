@@ -392,9 +392,9 @@ Start agent registers the selected lead and starts or queues an issue worker, fo
 parent tree. Later starts use that orchestrator's project. Managed issue workers share a pool
 of reusable worktrees at `.worktrees/slot-1`, `.worktrees/slot-2`, and so on, with one slot per
 allowed worker. Each worker starts on its own issue branch from the freshly fetched remote
-default branch. When every slot is reserved, new workers wait for a slot during workspace
-preparation. A settled worker keeps its slot until T3 verifies that its pull request merged and
-the checkout is safe to clean.
+default branch. When existing workers hold every slot, new workers wait in the queue. A settled
+worker's slot can return to the pool once the checkout is safe to clean and its work is included in
+the default branch or its pull request has merged.
 Starting allows T3 to update one status comment and publish a closeout comment for each finished
 attempt; the publishing policy is shown before you start. When a worker has been created, select
 its name to open its conversation with the issue beside it. A queued start can appear before a

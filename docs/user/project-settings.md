@@ -297,7 +297,8 @@ Existing prompts for deleting a worktree manually remain available when this pol
 
 Reusable issue worktrees follow the repository's worker limit. T3 refreshes idle slots from the
 remote default branch and runs the project setup action during hourly cleanup. The same sweep
-releases safe slots after the worker's pull request merges and removes idle surplus slots after
+releases safe slots after a worker's pull request merges or their work is included in the default
+branch, and removes idle surplus slots after
 the limit is lowered. T3 keeps slots with uncommitted changes, untracked files outside the keep
 paths, or unmerged commits and reports why it kept them.
 
