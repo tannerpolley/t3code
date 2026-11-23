@@ -129,6 +129,19 @@ protection takes effect at once. The server's protection from the kernel's
 out-of-memory killer takes effect after `t3 service restart`. `t3 service status` reports whether
 the protection is in place, and `t3 service protect --undo` removes it.
 
+### Share an existing systemd memory budget
+
+On Linux, set `T3CODE_AGENT_SLICE=agents-t3code.slice` in `service.env` to put
+T3's agents and terminals under your existing `agents.slice` budget. Use the
+same variable in the launch environment for the desktop app or a manually
+started server. systemd uses the dashes in slice names to determine their
+parents. T3 applies its own limits to a child slice and inherits the limits
+on the slices above it.
+
+Restart T3 to apply the setting. Existing terminals keep their original slice
+until you close and reopen them. Remove the variable and restart to return to
+the default `app-t3code.slice` hierarchy.
+
 ## Troubleshooting
 
 Start with `t3 service status` on the host. It prints the log path and, on Linux,

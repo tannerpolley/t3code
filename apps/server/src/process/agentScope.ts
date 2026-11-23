@@ -20,17 +20,15 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProviderProcesses from "./providerProcesses.ts";
 
-const AGENT_SLICE = "app-t3code-agents.slice";
-// Owns every agent slice and competes with the server's unit or scope under app.slice.
-const AGENTS_PARENT_SLICE = "app-t3code.slice";
+const DEFAULT_AGENTS_PARENT = "app-t3code";
 // Low weights yield CPU and disk to the server under contention, where the user manager
 // has those controllers: current systemd delegates cpu, rarely io. TasksMax keeps agents
 // below logind's 33% per-user task limit, leaving forks for the server.
 const AGENTS_PARENT_PROPERTIES = ["CPUWeight=10", "IOWeight=10", "TasksMax=25%"];
 
-export function ownedAgentSlice(stateDir: string): string {
+export function ownedAgentSlice(stateDir: string, parent = DEFAULT_AGENTS_PARENT): string {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
-  return `app-t3code-agents-${hash}.slice`;
+  return `${parent}-agents-${hash}.slice`;
 }
 
 const GiB = 1024 ** 3;
@@ -108,7 +106,23 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const { hasOtherLiveOwner } = yield* ProviderProcesses.ProviderProcesses;
-  const ownedSlice = ownedAgentSlice(stateDir);
+  const configuredParent = hostEnvironment.T3CODE_AGENT_SLICE?.trim();
+  let agentsParent = DEFAULT_AGENTS_PARENT;
+  if (configuredParent) {
+    const parent = configuredParent.slice(0, -".slice".length);
+    if (
+      /^[\w.:]+(?:-[\w.:]+)*\.slice$/.test(configuredParent) &&
+      ownedAgentSlice(stateDir, parent).length <= 255
+    ) {
+      agentsParent = parent;
+    } else {
+      yield* Effect.logWarning(
+        "Using the default agent slice parent because T3CODE_AGENT_SLICE is invalid",
+      );
+    }
+  }
+  const agentSlice = `${agentsParent}-agents.slice`;
+  const ownedSlice = ownedAgentSlice(stateDir, agentsParent);
   const layerScope = yield* Effect.scope;
 
   const resolve = (command: string, env: NodeJS.ProcessEnv) =>
@@ -129,14 +143,14 @@ export const make = Effect.gen(function* () {
   // Old agents keep their scopes when the server is killed, and the restarted
   // server resumes their sessions. Stop them first, so two copies of one
   // session never work in the same worktree.
-  const stopLeftoverAgents = Effect.fn("agentScope.stopLeftoverAgents")(function* (
+  const stopLeftoverSlice = Effect.fn("agentScope.stopLeftoverSlice")(function* (
     systemctl: string,
+    slice: string,
   ) {
-    if (hasOtherLiveOwner) return;
     const shown = yield* run(systemctl, [
       "--user",
       "show",
-      ownedSlice,
+      slice,
       "--property=ActiveState,ControlGroup",
     ]);
     if (shown._tag === "None") return;
@@ -145,13 +159,13 @@ export const make = Effect.gen(function* () {
     const controlGroup = values.get("ControlGroup") ?? "";
     const events = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
     if (parseCgroupCounter(events, "populated") === 0) return;
-    yield* Effect.logWarning("Stopping agents left by a previous server", { slice: ownedSlice });
+    yield* Effect.logWarning("Stopping agents left by a previous server", { slice });
     const stopped = yield* runner
-      .run({ command: systemctl, args: ["--user", "stop", ownedSlice], timeout: "30 seconds" })
+      .run({ command: systemctl, args: ["--user", "stop", slice], timeout: "30 seconds" })
       .pipe(Effect.option);
     if (stopped._tag === "None" || stopped.value.code !== 0) {
       yield* Effect.logWarning("Could not stop agents left by a previous server", {
-        slice: ownedSlice,
+        slice,
         stderr: stopped._tag === "Some" ? stopped.value.stderr.trim() : undefined,
       });
     }
@@ -164,14 +178,35 @@ export const make = Effect.gen(function* () {
       const systemdRun = yield* resolve("systemd-run", hostEnvironment);
       const systemctl = yield* resolve("systemctl", hostEnvironment);
       if (systemdRun === null || systemctl === null) return undefined;
-      yield* stopLeftoverAgents(systemctl);
+      if (!hasOtherLiveOwner) {
+        // The home hash also identifies scopes left behind under a previous parent.
+        const suffix = ownedSlice.slice(agentsParent.length);
+        const listed = yield* run(systemctl, [
+          "--user",
+          "list-units",
+          "--type=slice",
+          "--state=active",
+          "--plain",
+          "--no-legend",
+          "--full",
+          `*${suffix}`,
+        ]);
+        const slices = new Set([ownedSlice]);
+        if (listed._tag === "Some" && listed.value.code === 0) {
+          for (const line of listed.value.stdout.split("\n")) {
+            const slice = line.trimStart().split(/\s+/, 1)[0];
+            if (slice?.endsWith(suffix)) slices.add(slice);
+          }
+        }
+        for (const slice of slices) yield* stopLeftoverSlice(systemctl, slice);
+      }
       const probe = (options: ReadonlyArray<string>) =>
         run(systemdRun, [
           "--user",
           "--scope",
           "--quiet",
           "--collect",
-          `--slice=${AGENT_SLICE}`,
+          `--slice=${agentSlice}`,
           ...options,
           "--",
           "true",
@@ -179,7 +214,9 @@ export const make = Effect.gen(function* () {
       // Scopes take OOMPolicy from systemd 253; older managers still get scopes.
       const supportsOomPolicy = yield* probe([...SCOPE_OPTIONS, "--property=OOMPolicy=stop"]);
       if (!supportsOomPolicy && !(yield* probe(SCOPE_OPTIONS))) {
-        yield* Effect.logInfo("Agent scopes are off: no systemd user manager");
+        yield* Effect.logInfo("Agent scopes are off: systemd could not start a scope", {
+          slice: agentSlice,
+        });
         return undefined;
       }
       const setProperties = Effect.fn("agentScope.setProperties")(function* (
@@ -217,14 +254,14 @@ export const make = Effect.gen(function* () {
           const hasSwap = yield* readHasSwap;
           if (total === appliedTotal && hasSwap === appliedHasSwap) return;
           const limits = agentSliceMemoryLimits(total, hasSwap);
-          const applied = yield* setProperties(AGENT_SLICE, [
+          const applied = yield* setProperties(agentSlice, [
             `MemoryHigh=${limits.high}`,
             `MemoryMax=${limits.max}`,
           ]);
           if (!applied) return;
           if (appliedTotal !== undefined) {
             yield* Effect.logInfo("Agent memory limits follow a memory change", {
-              slice: AGENT_SLICE,
+              slice: agentSlice,
               previousTotal: appliedTotal,
               total,
               ...limits,
@@ -235,9 +272,12 @@ export const make = Effect.gen(function* () {
         }),
       );
       yield* applyMemoryLimits;
-      yield* setProperties(AGENTS_PARENT_SLICE, AGENTS_PARENT_PROPERTIES);
+      // Apply weights and task limits only to T3's own slice when the parent is shared.
+      const weightSlice =
+        agentsParent === DEFAULT_AGENTS_PARENT ? `${agentsParent}.slice` : agentSlice;
+      yield* setProperties(weightSlice, AGENTS_PARENT_PROPERTIES);
       yield* Effect.logInfo("Agent scopes are on", {
-        slice: AGENT_SLICE,
+        slice: agentSlice,
         ...agentSliceMemoryLimits(NodeOS.totalmem(), yield* readHasSwap),
         oomPolicy: supportsOomPolicy,
       });
@@ -447,7 +487,7 @@ export const make = Effect.gen(function* () {
       const systemdScope: AgentSystemdScope = {
         systemdRun: scope.systemdRun,
         runtimeDir: scope.runtimeDir,
-        slice: survivesRestart === true ? AGENT_SLICE : ownedSlice,
+        slice: survivesRestart === true ? agentSlice : ownedSlice,
         unit,
         // Without an owning thread nothing reads the result, so let systemd
         // unload the unit even when it fails.

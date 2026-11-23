@@ -67,11 +67,15 @@ const withFakeSystemd = <A, E>(
     stopFails = false,
     leftovers = false,
     liveOwner = false,
+    parentSlice,
+    previousParents = [],
   }: {
     readonly oomPolicy?: boolean;
     readonly stopFails?: boolean;
     readonly leftovers?: boolean;
     readonly liveOwner?: boolean;
+    readonly parentSlice?: string;
+    readonly previousParents?: ReadonlyArray<string>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -110,6 +114,11 @@ const withFakeSystemd = <A, E>(
             };
           }
           if (verb === "reset-failed") units.delete(unit);
+          if (verb === "list-units") {
+            return output(
+              [...units.keys()].map((name) => `${name} loaded active active\n`).join(""),
+            );
+          }
           if (verb !== "show") return output("");
           const state = units.get(unit);
           return output(
@@ -125,11 +134,22 @@ const withFakeSystemd = <A, E>(
     if (leftovers) {
       units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
     }
+    for (const parent of previousParents) {
+      units.set(ownedAgentSlice(stateDir).replace("app-t3code", parent), {
+        activeState: "active",
+        result: "success",
+      });
+    }
+    units.set("other-agents-0123456789ab.slice", { activeState: "active", result: "success" });
     const scope = yield* make.pipe(
       Effect.provideService(ProviderProcesses.ProviderProcesses, { hasOtherLiveOwner: liveOwner }),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
+      Effect.provideService(HostProcess.Environment, {
+        PATH: bin,
+        XDG_RUNTIME_DIR: "/run/user/1",
+        T3CODE_AGENT_SLICE: parentSlice,
+      }),
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
         readFileString: (path, encoding) =>
@@ -158,8 +178,11 @@ const unitOf = (launch: Pick<ChildProcess.StandardCommand, "args">) =>
     .find((arg) => arg.startsWith("--unit="))
     ?.slice("--unit=".length) ?? "";
 
-const sliceOf = (launch: { readonly args: ReadonlyArray<string> }) =>
-  launch.args.find((arg) => arg.startsWith("--slice="))?.slice("--slice=".length) ?? "";
+const sliceOf = (launch: Pick<ChildProcess.StandardCommand, "args">) =>
+  launch.args
+    .map(String)
+    .find((arg) => arg.startsWith("--slice="))
+    ?.slice("--slice=".length) ?? "";
 
 /** An active scope as systemd and the kernel report it, with the agent itself gone. */
 const exitedAgent = (
@@ -374,6 +397,47 @@ describe("AgentScope service", () => {
     );
   });
 
+  it.effect("places agent and terminal scopes under the configured parent", () =>
+    withFakeSystemd(
+      ({ scope, calls, stateDir }) =>
+        Effect.gen(function* () {
+          const terminal = yield* scope.wrap({
+            command: "agent",
+            args: [],
+            name: "terminal",
+            survivesRestart: true,
+          });
+          expect(sliceOf(terminal)).toBe("agents-t3code-agents.slice");
+          expect(sliceOf(yield* launchCodex(scope, "a"))).toBe(
+            ownedAgentSlice(stateDir).replace("app-t3code", "agents-t3code"),
+          );
+          expect(calls.find((args) => args.includes("--scope"))).toContain(
+            "--slice=agents-t3code-agents.slice",
+          );
+          const updates = calls.filter(([, verb]) => verb === "set-property");
+          expect(updates.map((args) => args.slice(3))).toEqual([
+            [
+              "agents-t3code-agents.slice",
+              expect.stringMatching(/^MemoryHigh=\d+$/),
+              expect.stringMatching(/^MemoryMax=\d+$/),
+            ],
+            ["agents-t3code-agents.slice", "CPUWeight=10", "IOWeight=10", "TasksMax=25%"],
+          ]);
+        }),
+      { parentSlice: "agents-t3code.slice" },
+    ),
+  );
+
+  it.effect("keeps the default slice for an invalid configured parent", () =>
+    withFakeSystemd(
+      ({ scope, stateDir }) =>
+        Effect.gen(function* () {
+          expect(sliceOf(yield* launchCodex(scope, "a"))).toBe(ownedAgentSlice(stateDir));
+        }),
+      { parentSlice: "/agents.slice" },
+    ),
+  );
+
   it.effect("stops agents a killed server left before startup completes", () =>
     withFakeSystemd(
       ({ scope, calls, stateDir }) =>
@@ -398,8 +462,24 @@ describe("AgentScope service", () => {
   it.effect("leaves the slice to another live server sharing this home", () =>
     withFakeSystemd(({ calls }) => Effect.sync(() => expect(stopsOf(calls)).toEqual([])), {
       leftovers: true,
+      previousParents: ["agents-t3code"],
       liveOwner: true,
     }),
+  );
+
+  it.effect("cleans up the same home's agent scopes after changing the slice", () =>
+    withFakeSystemd(
+      ({ calls, stateDir }) =>
+        Effect.sync(() => {
+          const legacy = ownedAgentSlice(stateDir);
+          expect(
+            stopsOf(calls)
+              .map((args) => args.at(-1))
+              .sort(),
+          ).toEqual([legacy, legacy.replace("app-t3code", "previous-t3code")].sort());
+        }),
+      { parentSlice: "agents-t3code.slice", leftovers: true, previousParents: ["previous-t3code"] },
+    ),
   );
 
   it.effect("stops leftover processes only in an active agent scope", () =>
