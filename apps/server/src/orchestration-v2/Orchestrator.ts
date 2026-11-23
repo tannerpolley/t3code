@@ -16,6 +16,7 @@ import {
 } from "./DelegatedRequestWake.ts";
 import { makeIssueQueueCommands } from "../issues/IssueQueueCommands.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import { IssueDraftPrRepositories } from "../issues/IssueWorkerBrief.ts";
 import { makeAppOwnedUserInputCommands } from "./AppOwnedUserInputCommands.ts";
 import { effectiveThreadRole, issueThreadTitle, worktreeRole } from "@t3tools/contracts";
 import {
@@ -116,7 +117,6 @@ import { threadQuietMinutes } from "@t3tools/shared/threadActivity";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1660,6 +1660,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const projectionStore = yield* ProjectionStoreV2;
   const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
+  const draftPrRepositories = yield* IssueDraftPrRepositories.pipe(Effect.orDie);
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
       Partial<Pick<OrchestrationV2ThreadProjection, "turnItems">>,
@@ -5683,7 +5684,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (link) =>
           (command.type !== "thread.pull-request-link.sync" ||
             threadPullRequestKeysEqual(link, command)) &&
-          needsManagedPullRequestWatch(updatedThread, link),
+          needsManagedPullRequestWatch(updatedThread, link, draftPrRepositories),
       );
       if (candidates.length > 0) {
         const { runs } = yield* projectionStore
@@ -15997,19 +15998,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     dispatchWithReceiptEffect: (command) => dispatchWithReceiptEffect(command),
   });
 
-  const draftPrRepositories = yield* Config.String("T3CODE_ISSUE_DRAFT_PR_REPOSITORIES").pipe(
-    Config.withDefault(""),
-    Config.map(
-      (value) =>
-        new Set(
-          value
-            .toLowerCase()
-            .split(",")
-            .map((key) => key.trim()),
-        ),
-    ),
-    Effect.orDie,
-  );
   const issueWork = makeIssueWorkCommands({
     ...forkCommandHooks,
     draftPrRepositories,

@@ -1,5 +1,5 @@
 import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
-import { issueWorkerBrief } from "../issues/IssueWorkerBrief.ts";
+import { isDraftPrRepository, issueWorkerBrief } from "../issues/IssueWorkerBrief.ts";
 import { IssueTrackerKind, MessageId } from "@t3tools/contracts";
 import type {
   DelegatedToolAdditions,
@@ -328,9 +328,7 @@ export function makeIssueWorkCommands({
         task: issueWorkerBrief(
           command.issue,
           command.issueWorktree !== undefined &&
-            draftPrRepositories.has(
-              `${command.issue.host}/${command.issue.repository}`.toLowerCase(),
-            ),
+            isDraftPrRepository(draftPrRepositories, command.issue),
         ),
         modelSelection: command.workerModelSelection,
         runtimeMode: recipient.runtimeMode,
