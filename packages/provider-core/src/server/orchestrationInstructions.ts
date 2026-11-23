@@ -1,10 +1,4 @@
-import { THREAD_ROLES, THREAD_ROLE_LABELS } from "@t3tools/contracts";
-import type {
-  OrchestratorMcpModelNote,
-  OrchestratorMcpModelRole,
-  OrchestratorMcpProviderCredits,
-  ProviderInteractionMode,
-} from "@t3tools/contracts";
+import type { ProviderInteractionMode, ThreadRole } from "@t3tools/contracts";
 
 import type { ManagedIssueRole, McpOrchestrationPolicy } from "./mcpSession.ts";
 
@@ -12,27 +6,19 @@ const T3_CODE_NATIVE_SUBAGENT_GUIDANCE = `- Subagents: use your native tool when
 
 const T3_CODE_ORCHESTRATION_INTRO = `## T3 Code orchestration
 
-Ordinary coding tasks need no T3 tools.`;
-const T3_CODE_DELEGATION_TOOLS = `- Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in \`task\`.
+Ordinary coding tasks need no T3 tools. Use tool discovery when the task calls for T3.`;
+const T3_CODE_DELEGATION_TOOLS = `- Before the first \`delegate_task\`, read \`orchestrator_capabilities\` for ranked role choices, model notes and credit approval. Refresh after an error or provider change. Ask before switching an unavailable choice. Use the tool’s isolation argument for child checkouts.
 - The orchestrator delegates an independent Reviewer only when the owner or plan asks. Start each review or re-check with \`delegate_task\`. Fix small findings yourself. If asked to use fewer delegates, \`task_cancel\` extras without replacing them.
 - Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
 - If you are a subagent or child, do the work yourself. Start subagents only when your task or role calls for it.`;
 
-const T3_CODE_THREAD_TOOLS = `- Multiple selections: use \`t3_request_user_input\`. Writers ask the owner directly through their question tool, and the owner can message their thread directly. Parents must not answer Writer questions; final results still return to the parent. Other children ask decisions through their question tool; parents read and respond with \`t3_pending_request\` with action \`read\` or \`respond\` (answers or approval decision). Approve only delegated descendants within task authority. Never message ancestors; final results return automatically.
-- Inherited options apply only to the same provider and model; explicit values override, [] or {} clears. Implementors default to worktree; Writers and read-only roles share.
-- Cross-project issues: \`t3_issue_post\` notifies the repository owner.
-- \`t3_thread_launch\` opens a top-level thread only at the user's request. "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`; shell worktrees do not bind it, and no checkout setup in its prompt. Without \`workspaceStrategy\`, the thread opens at the project root.
-- Given a thread id, \`t3_thread_read\` it before you answer about it. Asked to settle a thread, this one too: \`t3_thread_organize\`.
-- Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` and that machine's \`threadId\` to T3 tools.
-- Unlinked ("delegate this to my vps"): \`t3_environment_link\` with a \`hint\` from the user's words, never a pairing code in chat. No link tools: say to enable Settings → Labs → Linked environments.
-- In your reply, mention a thread by its \`link\`, verbatim, never a plain title or bare id.
-- A login, token, PIN, pairing code or sudo password only the user can give: call \`request_secret\`, not a chat ask or a handoff. Not for access you have. Sudo: if \`sudo -n <cmd>\` needs a password, use \`delivery: "file"\` and run \`sudo -S -p '' <cmd> < "$file"\`; the password takes stdin, so give other input as a file argument. Asked only to schedule: \`schedule_task\` without running its prompt.
-- T3 tools may load late. Try the name once before you call it absent.`;
+const T3_CODE_THREAD_TOOLS = `- Multiple selections: use \`t3_request_user_input\`. Parents use \`t3_pending_request\` for child decisions and approve only delegated descendants within task authority. Writer questions go to the owner. Never message ancestors, whose results arrive automatically.
+- Launch top-level threads only on explicit request, using \`t3_thread_launch\` for one thread. Read a given thread id with \`t3_thread_read\` and use its returned link verbatim. Discover environment-link tools for another machine.
+- Ask for credentials only through \`request_secret\`. Keep pairing codes and passwords out of chat. For sudo, use file delivery and read it with \`sudo -S\`. Asked only to schedule: use \`schedule_task\` without running its prompt.`;
 
 const T3_CODE_VISUAL_GUIDANCE = `### Visuals and preview
 
-- Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
-- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`;
+Show requested visuals and data comparisons with \`html_preview\` then \`html_render\`, without starting a server. For an image to use elsewhere, deliver a PNG path. Use preview for requested browser work. Use web fetch or search for public pages unless browser work was requested. Page tools write only on user request. Close tabs you opened unless the user uses them or asks to keep them.`;
 
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
 const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
@@ -49,174 +35,65 @@ export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 ${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
 `;
 
-// Codex caps each additional-context entry at 4,000 UTF-8 bytes.
-const MODEL_INSTRUCTIONS_MAX_BYTES = 4_000;
-
-const MODEL_ROLES_HEADER = `
-
-### Model roles
-
-Read \`orchestrator_capabilities\` for current choices. Each role has two levels. Pass \`level: "routine"\` for bounded, well-specified work, evidence gathering or sanity checks. Use \`complex\` (the default) for broad changes, correctness-critical work or decisions.
-
-Pass \`role\` and omit \`target\` to use the first choice at that level. To use another choice at the same level, pass only \`target.providerInstanceId\`. Choices below 0.8 weekly headroom are demoted, ordered by headroom. Unknown usage keeps its place and unavailable choices go last.
-
-`;
-
-const byteLength = (text: string) => Buffer.byteLength(text, "utf8");
-
-function oneLine(text: string, maxBytes: number): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  if (byteLength(flat) <= maxBytes) return flat;
-  let shortened = "";
-  let remaining = maxBytes - byteLength("…");
-  for (const character of flat) {
-    remaining -= byteLength(character);
-    if (remaining < 0) break;
-    shortened += character;
-  }
-  return shortened + "…";
-}
-
-function modelChoiceLabel(
-  {
-    providerInstanceId,
-    model,
-    options,
-    unavailableReason,
-  }: OrchestratorMcpModelRole["targets"][number],
-  compact: boolean,
-) {
-  const traits = options?.map((option) => option.value).join(" ");
-  const modelLabel = `${model}${traits ? ` ${traits}` : ""}`;
-  const label = compact ? oneLine(modelLabel, 105) : modelLabel;
-  const provider = compact ? oneLine(providerInstanceId, 40) : providerInstanceId;
-  return `${label} (${provider}).${
-    unavailableReason === null
-      ? ""
-      : compact
-        ? " Unavailable."
-        : ` Unavailable: ${oneLine(unavailableReason, 200)}`
-  }`;
-}
-
-export function t3ModelRolesInstructions(
-  roles: ReadonlyArray<OrchestratorMcpModelRole>,
-  providerCredits: ReadonlyArray<OrchestratorMcpProviderCredits> = [],
-): string {
-  if (roles.length === 0) return "";
-  const creditLines = providerCredits.map(
-    ({ providerInstanceId, approved, resetCreditCount, balance, extraUsageRemainingPercent }) =>
-      [
-        `${providerInstanceId} credits ${approved ? "approved" : "require approval"}.`,
-        resetCreditCount === undefined ? "" : `Banked resets: ${resetCreditCount}.`,
-        balance === undefined ? "" : `Balance: ${oneLine(balance, 48)}.`,
-        extraUsageRemainingPercent === undefined
-          ? ""
-          : `Extra usage: ${extraUsageRemainingPercent}% left.`,
-      ]
-        .filter(Boolean)
-        .join(" "),
-  );
-  const credits =
-    creditLines.length === 0
-      ? ""
-      : `Approved credits keep a choice in its usual order even when weekly usage is low. In that case, use the provider without asking. Ask if the role's choice is unavailable. ${creditLines.join(" ")}\n\n`;
-  const header = MODEL_ROLES_HEADER + credits;
-  const byRole = THREAD_ROLES.map((role) => ({
-    role,
-    levels: roles.filter((entry) => entry.role === role),
-  })).filter(({ levels }) => levels.length > 0);
-  const lines = (mode: "full" | "first" | "compact") =>
-    byRole
-      .map(({ role, levels }) => {
-        const summaries = levels.map(({ level, description, targets }) => {
-          const choices =
-            mode === "full"
-              ? targets.map((target) => modelChoiceLabel(target, false)).join(" or ")
-              : modelChoiceLabel(targets[0], mode === "compact");
-          const detail = mode === "full" && description ? `${oneLine(description, 600)} → ` : "";
-          return `${level ?? "complex"}: ${detail}${choices}`;
-        });
-        return `- ${THREAD_ROLE_LABELS[role]} (${role}): ${summaries.join(" | ")}`;
-      })
-      .join("\n");
-
-  const usage = new Map<string, string>();
-  for (const role of roles) {
-    for (const { providerInstanceId, model, weeklyUsage } of role.targets) {
-      if (weeklyUsage === undefined) continue;
-      const label = `${model} (${providerInstanceId})`;
-      usage.set(
-        label,
-        `${label}: ${weeklyUsage.remainingPercent}% left, resets ${weeklyUsage.resetsAt ?? "unknown"}, pace ${weeklyUsage.pace ?? "unknown"}`,
-      );
-    }
-  }
-  const weekly = usage.size === 0 ? "" : `\n\nWeekly usage\n${[...usage.values()].join("\n")}`;
-  const full = `${header}${lines("full")}${weekly}\n`;
-  if (byteLength(full) <= MODEL_INSTRUCTIONS_MAX_BYTES) return full;
-  const firstChoices = `${header}${lines("first")}${weekly}\n`;
-  if (byteLength(firstChoices) <= MODEL_INSTRUCTIONS_MAX_BYTES) return firstChoices;
-  return `${header}${lines("compact")}\nSee orchestrator_capabilities for full choices and weekly usage.\n`;
-}
-
-export function t3ModelNotesInstructions(notes: ReadonlyArray<OrchestratorMcpModelNote>): string {
-  if (notes.length === 0) return "";
-  const header =
-    "\n\n### Model notes\n\nThe owner's notes on each model. Weigh them when you pick a role or ask the owner for a model outside a role.\n\n";
-  const lines = notes.map(({ model, note }) => `- ${model}: ${note.replace(/\s+/g, " ").trim()}`);
-  const full = lines.join("\n");
-  const budget = MODEL_INSTRUCTIONS_MAX_BYTES - byteLength(header) - notes.length;
-  return (
-    header +
-    (byteLength(full) <= budget
-      ? full
-      : lines.map((line) => oneLine(line, Math.floor(budget / notes.length))).join("\n"))
-  );
-}
-
 /** The one place a managed role decides a session's instructions and native subagents. */
 export function t3OrchestrationPolicy(
-  managedIssue: ManagedIssueRole | undefined,
-  modelRoles: string,
-  modelNotes = "",
+  managedIssue?: ManagedIssueRole,
+  role?: ThreadRole,
 ): McpOrchestrationPolicy {
   return {
-    sections: t3OrchestrationSections(managedIssue),
-    modelRoles,
-    modelNotes,
+    sections: t3OrchestrationSections(managedIssue, role),
     // The repository root keeps native subagents for its own work between orchestration runs.
     nativeSubagents: managedIssue === undefined || managedIssue === "root",
   };
 }
 
-/** Orchestration instructions as one block, followed by the user's model roles. */
+/** Orchestration instructions as one block for providers without separate entries. */
 export function t3OrchestrationText(policy: McpOrchestrationPolicy | undefined): string {
   return policy === undefined
     ? T3_CODE_ORCHESTRATION_INSTRUCTIONS
-    : `\n\n${policy.sections.join("\n\n")}\n${policy.modelRoles}${policy.modelNotes}`;
+    : `\n\n${policy.sections.join("\n\n")}\n`;
 }
 
 /** Managed issue work has one durable delegation path, including same-provider children. */
 export function t3OrchestrationBaseInstructions(managedIssue?: ManagedIssueRole): string {
-  return t3OrchestrationText(t3OrchestrationPolicy(managedIssue, ""));
+  return t3OrchestrationText(t3OrchestrationPolicy(managedIssue));
 }
 
 const MANAGED_ISSUE_PROPOSALS =
   "Keep issues current through propose_issue_change. Submit the typed proposal and follow its returned decision. Reuse its `clientRequestId` on retry. Agents cannot approve changes, and question answers never approve a mutation. A stale baseline needs a new proposal and preview. An uncertain create that needs attention requires the user to check GitHub and mark it resolved. Submit another create only when you intend to create a separate issue. T3 tracks its written bodies by exact baseline, never GitHub author login. Labels and assignees are outside this tool's scope.";
 
-const MANAGED_ISSUE_WORKFLOW = `- Use Designer before implementation when a request needs research or a plan; it writes the problem, findings, plan, strategy decisions and done criteria through issue tools, then returns a short result without editing code. Managed implementors require an \`issue\` argument and \`mode="async"\`. Read-only roles (\`designer\`, \`reviewer\`) use ordinary delegation: no issue claim or worker slot, a separate read-only limit (default 4) across the repository lineage, shared isolation by default, and an optional \`issue\` only links visibility. Finish your turn while T3 children work; deliver upward only in your final result. T3 publishes the managed status and closeout comments automatically; put evidence and remaining gates in your final result instead of publishing duplicate lifecycle comments. Run heavy checks through \`agent-heavy\`. The repository has one root orchestrator and an adjustable worker limit shared across its entire issue tree; queued workers wait for capacity, including resumes and result follow-ups. Use \`get_repository_orchestration\` to see both limits, slots in use for each pool, selected milestones and pause state. When planned parallel work exceeds a pool limit or children queue on a full pool, ask the owner with the question tool to approve a recommended limit, naming the pool, current and proposed limits and reason; on refusal continue within the limit, and after the burst you may offer to lower it; only the root can apply an approved change with \`set_repository_worker_limit\` and the current revision, while non-root owners ask the owner to use repository controls or the root to apply it; an explicit request for that size of work authorizes the change. Excess read-only requests queue in request order, including restart continuations. The root owns only top-level issues. An issue owner delegates only its immediate GitHub sub-issues. When an outside blocker prevents a managed implementor or issue owner from continuing, use propose_issue_change to create an issue describing the blocker, then add blocked_by with number set to the blocked issue and blockerNumber to the new issue; follow returned decisions and end with a final result naming the blocker. Do not do this for owner questions the question tool can answer or failing tests within the issue scope. Read native blockers and hierarchy before delegating; unreadable or partial relationships are unknown eligibility. Milestone work starts through \`work_through_milestone\`; T3 wakes owners on final results and newly eligible work. Use async delegation and end the turn while children run. A worker waiting for user input keeps its slot; an owner waiting on children after its turn ends frees its slot. Completed implementors with open PRs hold no slot. The repository root can use \`close_out_issue_attempt\` to finish a closed issue attempt once its remaining work is cancelled or finished. Ask before expanding the approved milestone or repository scope. Pause/resume through \`set_repository_work_paused\`. Do not poll task_status or create recurring user schedules to advance a milestone.`;
+const MANAGED_ISSUE_WORKFLOW = `Run heavy checks through \`agent-heavy\`. T3 posts managed status and closeout comments. End the turn while children work and report results and remaining gates in your final message.`;
+
+const ISSUE_OWNER_WORKFLOW = `Use Designer for research or planning. Read native hierarchy and blockers before delegation. For an outside blocker, use propose_issue_change to create an issue, add blocked_by with the blocked issue as number and the new issue as blockerNumber, then report it in your final result. Use the question tool for owner decisions and fix failing tests within scope.`;
+
+const ROOT_WORKFLOW = `Own top-level issues. Read complete native hierarchy and blockers before delegation. Use \`work_through_milestone\` for milestones and \`get_repository_orchestration\` for capacity and queue controls. Wait for T3 wakes. Ask before expanding milestone or repository scope or changing worker limits.`;
+
+const ROLE_GUIDANCE: Partial<Record<ThreadRole, string>> = {
+  designer:
+    "Research or plan the issue without editing code. Record the problem, findings, strategy, and done criteria through the issue tools within the owner's authority. Return a short result.",
+  reviewer: "Review the requested scope without editing code and return findings to your parent.",
+  writer:
+    "Write in the assigned checkout. Ask the owner directly through your question tool. Return your final result to your parent.",
+};
 
 const REPOSITORY_ROOT_STATUS =
   "- Answer status questions with `repository_status`. When T3 reports a child finished, blocked, or failed, post a one-line update to the owner.";
 
-export function t3OrchestrationSections(managedIssue?: ManagedIssueRole): ReadonlyArray<string> {
-  if (managedIssue === undefined) return T3_CODE_ORCHESTRATION_SECTIONS;
+export function t3OrchestrationSections(
+  managedIssue?: ManagedIssueRole,
+  role?: ThreadRole,
+): ReadonlyArray<string> {
+  if (managedIssue === undefined) {
+    const guidance = role === undefined ? undefined : ROLE_GUIDANCE[role];
+    return guidance === undefined
+      ? T3_CODE_ORCHESTRATION_SECTIONS
+      : [T3_CODE_ORCHESTRATION_INTRO, guidance, T3_CODE_THREAD_TOOLS, T3_CODE_VISUAL_GUIDANCE];
+  }
   const delegation =
     managedIssue === "worker"
-      ? "Native subagent tools are disabled in this repository-managed session. Delegate children through `delegate_task`."
+      ? "Native subagent tools are disabled in this repository-managed session. Delegate only immediate sub-issues through `delegate_task` after reading their complete native hierarchy and blockers."
       : managedIssue === "implementor"
-        ? 'Native subagents are disabled. After checks pass and the draft PR is pushed, use `delegate_task` with `role: "reviewer"`, `mode: "async"` and shared isolation. Ask this read-only child to review the issue, plan and diff without sharing your conclusions. Tell it to leave the code untouched. End the turn while it reviews. T3 returns its result to you. Fix real defects, record why you dismissed other findings, and re-review only after material changes. Ask through the question tool before a third fix round. Report upward when the PR is merge-ready with each finding’s disposition and reason.'
+        ? 'Native subagents are disabled. After checks pass and authorized draft publication, use `delegate_task` with `role: "reviewer"`, `mode: "async"` and shared isolation. Ask this read-only child to review the issue, plan and diff without sharing your conclusions. Tell it to leave the code untouched. End the turn while it reviews. T3 returns its result to you. Fix real defects, record why you dismissed other findings, and re-review only after material changes. Ask through the question tool before a third fix round. Report upward when the PR is merge-ready with each finding’s disposition and reason.'
         : "As the repository orchestrator, delegate code to an Implementor and deliverables to a Writer. Leave the review loop with the Implementor. Manage merges, builds, work ordering and owner decisions. Use native subagent tools only for your own work while no issue workers run, when they support the model and options. Delegate issue work through `delegate_task`.";
   return [
     MANAGED_ISSUE_PROPOSALS,
@@ -225,7 +102,7 @@ export function t3OrchestrationSections(managedIssue?: ManagedIssueRole): Readon
 ${delegation}`,
     MANAGED_ISSUE_WORKFLOW,
     T3_CODE_DELEGATION_TOOLS,
-    ...(managedIssue === "root" ? [REPOSITORY_ROOT_STATUS] : []),
+    ...(managedIssue === "root" ? [REPOSITORY_ROOT_STATUS, ROOT_WORKFLOW] : [ISSUE_OWNER_WORKFLOW]),
     T3_CODE_THREAD_TOOLS,
     T3_CODE_VISUAL_GUIDANCE,
   ];
@@ -237,8 +114,6 @@ export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
 When browser work was asked, \`preview_*\` is the browser you share with the user: \`preview_status\` first, then \`preview_open\` if no tab can be automated. Prefer snapshot locators over coordinates. Switch browsers only if the tools are absent or \`preview_open\` says unsupported, the user asks, or two preview calls fail on one step. Then quote the error and switch.
 `;
-
-const T3_CODE_DEVICE_TOOLS = ["device_list", "device_open", "device_screenshot", "device_close"];
 
 const deviceToolInstructions = (loadTools: string) => `## T3 Code devices
 
@@ -254,7 +129,7 @@ export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = deviceToolInstructions("");
 
 /** Claude Code defers MCP tools behind ToolSearch, so Claude's copy says how to load them. */
 export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstructions(
-  ` Load them with ToolSearch \`select:${T3_CODE_DEVICE_TOOLS.map((tool) => `mcp__t3-code__${tool}`).join(",")}\`.`,
+  " Discover missing tools with mcp__t3-code__tool_search (query device_list device_open device_screenshot device_close), then use ToolSearch when available.",
 );
 
 // ACP only: some ACP agents accept the injected MCP server but never expose

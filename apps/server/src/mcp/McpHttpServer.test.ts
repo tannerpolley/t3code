@@ -2095,6 +2095,8 @@ it.effect("limits child tool listings and defers tools only for clients that opt
         });
       const OptionalToolkit = Toolkit.make(
         tool("delegate_task", "Delegates a task."),
+        tool("request_secret", "Requests a secret."),
+        tool("t3_background_wait", "Waits for a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
         NotebookToolkit.tools.notebook_list_kernels,
@@ -2107,6 +2109,8 @@ it.effect("limits child tool listings and defers tools only for clients that opt
             OptionalToolkit,
             McpToolAccess.toLayer(OptionalToolkit, {
               delegate_task: reads,
+              request_secret: reads,
+              t3_background_wait: reads,
               preview_open: reads,
               schedule_task: reads,
               notebook_list_kernels: McpToolAccess.readsAsCaller(() => Effect.die("unused")),
@@ -2193,23 +2197,34 @@ it.effect("limits child tool listings and defers tools only for clients that opt
       const child = yield* session("childToken", true);
       const ordinaryChild = yield* session("ordinaryChildToken", false);
       const configuredChild = yield* session("childToken", false);
-      expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
+      expect(yield* deferring.listed).toEqual([
+        "delegate_task",
+        "request_secret",
+        "t3_background_wait",
+        "tool_search",
+      ]);
       expect(yield* other.listed).toEqual([
         "create_threads",
         "delegate_task",
         "preview_open",
+        "request_secret",
         "schedule_task",
+        "t3_background_wait",
       ]);
       expect(yield* ordinaryChild.listed).toEqual([
         "delegate_task",
         "preview_open",
+        "request_secret",
         "schedule_task",
+        "t3_background_wait",
       ]);
       expect(yield* configuredChild.listed).toEqual([
         "delegate_task",
         "notebook_list_kernels",
         "preview_open",
+        "request_secret",
         "schedule_task",
+        "t3_background_wait",
       ]);
       // Unlisted tools stay callable.
       expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
@@ -2217,7 +2232,13 @@ it.effect("limits child tool listings and defers tools only for clients that opt
       expect(
         (yield* deferring.call("tool_search", { query: "browser" })).structuredContent,
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
-      expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
+      expect(yield* deferring.listed).toEqual([
+        "delegate_task",
+        "preview_open",
+        "request_secret",
+        "t3_background_wait",
+        "tool_search",
+      ]);
       expect(
         (yield* child.call("tool_search", { query: "create_threads" })).structuredContent,
       ).toEqual({ tools: [] });

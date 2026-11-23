@@ -258,7 +258,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer test-token",
         browserToolsAvailable: false,
-        orchestration: t3OrchestrationPolicy(role, ""),
+        orchestration: t3OrchestrationPolicy(role),
       });
       const requests: Array<unknown> = [];
       const entries = codexReplayPreamble({

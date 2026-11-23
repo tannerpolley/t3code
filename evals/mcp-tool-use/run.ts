@@ -45,6 +45,8 @@ import { openBlockerSuspensionReason } from "../../apps/server/src/issues/IssueE
 import { CommandId } from "@t3tools/contracts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
+import { DIRECT_TOOLS, searchCatalog } from "../../apps/server/src/mcp/McpToolExposure.ts";
+import { ToolSearchToolkit } from "../../apps/server/src/mcp/toolkits/toolSearch/tools.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import * as Contracts from "@t3tools/contracts";
 import {
@@ -472,6 +474,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   HtmlToolkit,
   NotebookToolkit,
   MessageToolkit,
+  ToolSearchToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -658,6 +661,7 @@ export const buildBase = (
   },
 ) => {
   const t3 = visibleT3Tools(options);
+  const initialT3 = t3.filter((tool) => DIRECT_TOOLS.has(normalizeToolName(tool.name)));
   const firstAssistant = template.messages.findIndex((message) => message.role === "assistant");
   const head = template.messages.slice(0, firstAssistant === -1 ? undefined : firstAssistant);
   const systemTexts = [
@@ -673,7 +677,7 @@ export const buildBase = (
   const nativeDeferred = deferredList.split("\n").filter((name) => name && !isT3Name(name));
   const names = [
     ...nativeDeferred,
-    ...t3.filter((tool) => !alwaysLoaded.has(tool.name)).map((tool) => tool.name),
+    ...initialT3.filter((tool) => !alwaysLoaded.has(tool.name)).map((tool) => tool.name),
   ]
     .toSorted()
     .join("\n");
@@ -722,7 +726,7 @@ export const buildBase = (
     },
     nativeTools: [
       ...template.tools.filter((tool) => !isT3Name(tool.name)),
-      ...t3.filter((tool) => alwaysLoaded.has(tool.name)),
+      ...initialT3.filter((tool) => alwaysLoaded.has(tool.name)),
     ],
     /** Tools ToolSearch loads: T3 tools from source, and native tools the template only names. */
     t3,
@@ -751,7 +755,9 @@ const buildCodexBase = (
     readonly browserAccess?: boolean;
   },
 ): Base => {
-  const t3 = visibleT3Tools(options);
+  const t3 = visibleT3Tools(options).filter(
+    (tool) => normalizeToolName(tool.name) !== "tool_search",
+  );
   const contentText = (item: Block) =>
     Array.isArray(item.content)
       ? item.content.map((block: Block) => valueText(block.text)).join("\n")
@@ -878,6 +884,7 @@ type Sample = {
   readonly testCase: McpToolUseCase;
   readonly base: Base;
   readonly tools: Array<ApiTool>;
+  readonly discovered?: Set<string>;
   readonly repo: string;
   readonly shell: Array<ShellEntry>;
   readonly shellUsage: Usage;
@@ -933,6 +940,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     testCase,
     base,
     tools: [...base.nativeTools],
+    ...(base.codex ? {} : { discovered: new Set(DIRECT_TOOLS) }),
     repo: testCase.setup.world?.repo ?? "acme/app",
     shell,
     shellUsage: emptyUsage(),
@@ -1119,6 +1127,21 @@ export const buildMessages = (sample: Sample) => {
       (tool) => !hasTool(tools, tool.name),
     );
     if (unloaded.length > 0 && !base.codex) {
+      const missing = unloaded
+        .filter((tool) => isT3Name(tool.name))
+        .map((tool) => normalizeToolName(tool.name))
+        .filter((name) => !sample.discovered?.has(name));
+      if (missing.length > 0) {
+        const id = `toolu_prior_${nextId++}`;
+        const query = missing.join(" ");
+        push("assistant", {
+          type: "tool_use",
+          id,
+          name: `${T3_PREFIX}tool_search`,
+          input: { query },
+        });
+        push("user", toolResult(id, discoverT3Tools(sample, query)));
+      }
       const id = `toolu_prior_${nextId++}`;
       const query = `select:${unloaded.map((tool) => tool.name).join(",")}`;
       const input = { query, max_results: unloaded.length };
@@ -1478,11 +1501,26 @@ const capabilities = ({ base }: Sample, value: unknown) =>
       }
     : value;
 
+const discoverT3Tools = (sample: Sample, query: string) => {
+  const found = searchCatalog(
+    sample.base.t3.map((tool) => ({
+      name: normalizeToolName(tool.name),
+      description: valueText(tool.description),
+    })),
+    query,
+  );
+  for (const { name } of found) sample.discovered?.add(name);
+  return { tools: found };
+};
+
 /** ToolSearch: `select:a,b` loads those tools. Other queries load tools whose name has a word. */
-const searchTools = (base: Base, query: string, max: number) => {
+const searchTools = ({ base, discovered }: Sample, query: string, max: number) => {
+  const deferred = base.deferred.filter(
+    (tool) => !isT3Name(tool.name) || discovered?.has(normalizeToolName(tool.name)),
+  );
   if (query.startsWith("select:")) {
     const wanted = query.slice("select:".length).split(",");
-    return base.deferred.filter((tool) =>
+    return deferred.filter((tool) =>
       wanted.some((name) => [tool.name, normalizeToolName(tool.name)].includes(name.trim())),
     );
   }
@@ -1491,7 +1529,7 @@ const searchTools = (base: Base, query: string, max: number) => {
     .split(/[\s+]+/)
     .filter(Boolean);
   const hits = (tool: ApiTool) => words.filter((word) => tool.name.toLowerCase().includes(word));
-  const found = base.deferred.filter((tool) => hits(tool).length > 0);
+  const found = deferred.filter((tool) => hits(tool).length > 0);
   return found.toSorted((a, b) => hits(b).length - hits(a).length).slice(0, max);
 };
 
@@ -1699,9 +1737,12 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     const error = `InputValidationError: ${call.name} is deferred. Load it with ToolSearch first.`;
     return failed(`<tool_use_error>${error}</tool_use_error>`);
   }
+  if (name === "tool_search") {
+    return toolResult(call.id, discoverT3Tools(sample, valueText(input.query)));
+  }
   if (name === "ToolSearch") {
     const max = typeof input.max_results === "number" ? input.max_results : 5;
-    const found = searchTools(base, valueText(input.query), max);
+    const found = searchTools(sample, valueText(input.query), max);
     if (found.length === 0) return toolResult(call.id, "No matching deferred tools found");
     return loadTools(tools, call.id, found);
   }

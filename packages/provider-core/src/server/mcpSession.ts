@@ -7,14 +7,11 @@ export type ManagedIssueRole = "root" | "worker" | "implementor";
 export interface McpOrchestrationPolicy {
   /** Instruction sections in order, each within Codex's per-entry context cap. */
   readonly sections: ReadonlyArray<string>;
-  /** The user's model roles block, refreshed before each turn; empty when there are none. */
-  readonly modelRoles: string;
-  readonly modelNotes: string;
   /** False for managed workers that delegate through T3. */
   readonly nativeSubagents: boolean;
 }
 /**
- * Sent by MCP clients that cannot defer tools themselves. The T3 MCP server then
+ * Opt-in for MCP clients that discover T3 tools on demand. The T3 MCP server then
  * lists only a core set plus `tool_search`, which lists the rest on demand.
  */
 export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
