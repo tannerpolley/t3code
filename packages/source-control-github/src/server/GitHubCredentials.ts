@@ -4,7 +4,6 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -17,6 +16,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
 import {
+  isSecretReference,
   requireSettingsSecretLiteral,
   type ServerSettings,
   type SettingsSecretUnresolvedError,
@@ -144,11 +144,13 @@ export const make = Effect.gen(function* () {
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
 
+  const tokenDigests = yield* Cache.makeWith(
+    (token: Redacted.Redacted<string>) =>
+      crypto.digestHex(Digest.sha256, new TextEncoder().encode(Redacted.value(token))),
+    { capacity: 32, timeToLive: () => TOKEN_TTL },
+  );
   const fingerprintOf = (host: string, token: string) =>
-    crypto.digest(Digest.sha256, new TextEncoder().encode(token)).pipe(
-      Effect.map((digest) => `${host}:${Hex.encode(digest)}`),
-      Effect.orDie,
-    );
+    Cache.get(tokenDigests, Redacted.make(token)).pipe(Effect.map((digest) => `${host}:${digest}`));
 
   const fromGh = (host: string, account: string | undefined) =>
     process
@@ -186,17 +188,23 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  const readSettings = (settings: ServerSettings) =>
-    readSourceControlHostSettings(
+  const decodedSettings = new WeakMap<ServerSettings, GitHubClient.GitHubSettings>();
+  const readSettings = (settings: ServerSettings) => {
+    const cached = decodedSettings.get(settings);
+    if (cached !== undefined) return cached;
+    const decoded = readSourceControlHostSettings(
       GitHubClient.settings,
       settings.sourceControlHosts[GitHubClient.definition.kind],
     );
+    decodedSettings.set(settings, decoded);
+    return decoded;
+  };
+  const settings = sourceControlHost.settings.get.pipe(
+    Effect.map(readSettings),
+    Effect.orElseSucceed(() => undefined),
+  );
 
-  const hostChoice = (host: string) =>
-    sourceControlHost.settings.get.pipe(
-      Effect.map((settings) => readSettings(settings).hosts[host]),
-      Effect.orElseSucceed(() => undefined),
-    );
+  const hostChoice = (host: string) => settings.pipe(Effect.map((current) => current?.hosts[host]));
 
   const savedToken = (host: string) =>
     sourceControlHost.settings.getWithSecrets(GitHubClient.definition.kind).pipe(
@@ -248,11 +256,13 @@ export const make = Effect.gen(function* () {
   const saved = Effect.fn("GitHubCredentials.saved")(function* (rawHost: string) {
     const host = normalizeHost(rawHost);
     if (!isGitHubHost(host)) return yield* new GitHubNotSignedInError({ host });
-    if ((yield* hostChoice(host))?.enabled === false) {
+    const githubSettings = yield* settings;
+    if (githubSettings?.hosts[host]?.enabled === false) {
       return yield* new GitHubHostDisabledError({ host });
     }
-    const token = yield* savedToken(host);
-    if (token === null) return Option.none<GitHubCredential>();
+    const configured = githubSettings?.tokens[host];
+    const token = isSecretReference(configured) ? yield* savedToken(host) : configured?.trim();
+    if (!token) return Option.none<GitHubCredential>();
     return Option.some<GitHubCredential>({
       host,
       token: Redacted.make(token),

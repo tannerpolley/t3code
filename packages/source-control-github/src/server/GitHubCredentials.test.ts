@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -7,7 +8,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import { DEFAULT_SERVER_SETTINGS, SecretProviderId, SecretProviderKind } from "@t3tools/contracts";
-import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
@@ -32,6 +33,8 @@ function harness(
   tokens: Record<string, string> = {},
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
+  const readSecrets = vi.fn();
+  const digestToken = vi.fn();
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
     Effect.sync(() => {
       calls.push(input.args);
@@ -53,7 +56,17 @@ function harness(
         stderrTruncated: false,
       };
     });
-  const layer = GitHubCredentials.layer.pipe(
+  const hostLayer = Layer.effect(
+    SourceControlHost.SourceControlHost,
+    Effect.map(SourceControlHost.SourceControlHost, (host) => ({
+      ...host,
+      settings: {
+        ...host.settings,
+        getWithSecrets: (kind) =>
+          Effect.sync(readSecrets).pipe(Effect.andThen(host.settings.getWithSecrets(kind))),
+      },
+    })),
+  ).pipe(
     Layer.provideMerge(
       TestSourceControlHost.layer({
         settings: applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
@@ -62,7 +75,18 @@ function harness(
         process: { run },
       }),
     ),
-    Layer.provide(NodeCrypto.layer),
+  );
+  const cryptoLayer = Layer.effect(
+    Digest.Digest,
+    Effect.map(Digest.Digest, (digest) => ({
+      ...digest,
+      digestHex: (algorithm, data) =>
+        Effect.sync(digestToken).pipe(Effect.andThen(digest.digestHex(algorithm, data))),
+    })),
+  ).pipe(Layer.provide(NodeCrypto.layer));
+  const layer = GitHubCredentials.layer.pipe(
+    Layer.provideMerge(hostLayer),
+    Layer.provide(cryptoLayer),
     Layer.provide(
       Layer.succeed(
         HttpClient.HttpClient,
@@ -70,7 +94,7 @@ function harness(
       ),
     ),
   );
-  return { layer, calls };
+  return { layer, calls, readSecrets, digestToken };
 }
 
 describe("GitHubCredentials", () => {
@@ -134,13 +158,25 @@ describe("GitHubCredentials", () => {
 
   it.effect("uses a token saved in Settings before GH_TOKEN and gh", () => {
     vi.stubEnv("GH_TOKEN", "env-token");
-    const { layer, calls } = harness({}, [], { "github.com": "saved-token" });
+    const { layer, calls, readSecrets, digestToken } = harness({}, [], {
+      "github.com": "saved-token",
+    });
     return Effect.gen(function* () {
       const credentials = yield* GitHubCredentials.GitHubCredentials;
       const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
       const credential = yield* credentials.get("github.com");
       expect(Redacted.value(credential.token)).toBe("saved-token");
       expect(credential.source).toBe("settings");
+      expect((yield* credentials.get("github.com")).fingerprint).toBe(credential.fingerprint);
+      expect(readSecrets).not.toHaveBeenCalled();
+      expect(digestToken).toHaveBeenCalledTimes(1);
+
+      yield* settings.update({
+        sourceControlHosts: { github: { tokens: { "github.com": "new-token" } } },
+      });
+      const updated = yield* credentials.get("github.com");
+      expect(Redacted.value(updated.token)).toBe("new-token");
+      expect(updated.fingerprint).not.toBe(credential.fingerprint);
 
       // A reference left in place by getWithSecrets is one its secret provider could not read.
       yield* settings.update({
@@ -162,6 +198,7 @@ describe("GitHubCredentials", () => {
       const error = yield* Effect.flip(credentials.get("github.com"));
       expect(error._tag).toBe("SettingsSecretUnresolvedError");
       expect(error.message).toContain('"Work vault"');
+      expect(readSecrets).toHaveBeenCalledTimes(1);
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
