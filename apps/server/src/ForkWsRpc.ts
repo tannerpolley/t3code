@@ -14,6 +14,7 @@ import {
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
@@ -29,6 +30,7 @@ import * as IssueWorkService from "./issues/IssueWorkService.ts";
 import { RpcInstrumentation } from "./observability/RpcInstrumentation.ts";
 import * as ThreadWorkspaceService from "./orchestration-v2/ThreadWorkspaceService.ts";
 import * as BackgroundTasks from "./orchestration-v2/backgroundTaskOutput.ts";
+import * as UsageBudget from "./usage/UsageBudget.ts";
 import { InlineShellRuns } from "./terminal/InlineShellRuns.ts";
 
 const UpstreamServerWsRpcGroup = UpstreamWsRpcGroup.middleware(RpcInstrumentation);
@@ -58,7 +60,14 @@ const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const inbox = yield* IssueInbox.IssueInbox;
       const artifacts = yield* ProjectArtifacts.ProjectArtifacts;
       const notebook = yield* NotebookService.NotebookService;
+      const sharedBudget = yield* Effect.serviceOption(UsageBudget.UsageBudget);
+      const usageBudget = Option.isSome(sharedBudget)
+        ? sharedBudget.value
+        : yield* UsageBudget.UsageBudget.pipe(Effect.provide(UsageBudget.layer));
       return {
+        [WS_METHODS.serverGetUsageBudget]: () => usageBudget.read(),
+        [WS_METHODS.scheduledTasksGetUsageBudgetReport]: ({ taskId }) =>
+          usageBudget.latestReport(taskId),
         [NOTEBOOK_METHODS.reload]: (input) => notebook.reload(input, currentSession),
         [NOTEBOOK_METHODS.save]: (input) => notebook.save(input, currentSession),
         [NOTEBOOK_METHODS.edit]: (input) => notebook.edit(input, currentSession),

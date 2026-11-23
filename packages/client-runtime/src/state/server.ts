@@ -1507,6 +1507,16 @@ export function createServerEnvironmentAtoms<R, E>(
     // long enough that switching windows or re-rendering does not rescan. With
     // nothing to show yet, the server's last scan answers first, then a plain
     // read, then a read that waits for slow sources.
+    usageBudget: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:usage-budget",
+      tag: WS_METHODS.serverGetUsageBudget,
+      idleTtlMs: 0,
+    }),
+    scheduledUsageBudgetReport: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:scheduled-usage-budget",
+      tag: WS_METHODS.scheduledTasksGetUsageBudgetReport,
+      idleTtlMs: 0,
+    }),
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:usage-summary",
       tag: WS_METHODS.serverGetUsageSummary,

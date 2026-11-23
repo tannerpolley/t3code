@@ -3918,6 +3918,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               parentRunId: task.runId,
               generation: delivery.generation,
               taskIds: remainingTaskIds,
+              ...(message.delegatedCompletion?.batched === undefined
+                ? {}
+                : { batched: message.delegatedCompletion.batched }),
+              containsFailure: remainingTasks.some((task) => task.status === "failed"),
             },
             updatedAt: now,
           },
@@ -7824,6 +7828,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         parentRunId: requestedCompletion.parentRunId,
         generation: delivery.generation,
         taskIds: delivery.taskIds,
+        batched: delivery.dispatchAfterMs !== undefined,
+        containsFailure: projection.subagents.some(
+          (task) => delivery.taskIds.includes(task.id) && task.status === "failed",
+        ),
       };
     }
     // A steer that switches provider needs a new turn. A provider that cannot restart its
@@ -14998,6 +15006,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     parentRunId: input.task.runId,
                     generation: delivery.generation,
                     taskIds,
+                    batched:
+                      dispatchAfterMs !== undefined && delivery.dispatchAfterMs !== undefined,
+                    containsFailure:
+                      message.delegatedCompletion?.containsFailure === true ||
+                      input.updatedTask.status === "failed",
                   },
                   updatedAt: input.now,
                 },
