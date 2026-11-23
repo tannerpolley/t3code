@@ -143,6 +143,7 @@ describe("fresh-thread repository handoff", () => {
       ) => ThreadManagement.ThreadManagementService["Service"];
       inventoryIssues?: () => number[];
       issueReads?: string[];
+      repositoryId?: () => string;
       issueState?: (number: number) => "open" | "closed";
       /** Runs first in the provider check, which the handoff command makes under the root's lock. */
       beforeCapabilities?: () => Effect.Effect<
@@ -159,7 +160,7 @@ describe("fresh-thread repository handoff", () => {
       repositoryIdentity: () =>
         Effect.sync(() => {
           options.issueReads?.push("repository identity");
-          return { ...reference, repositoryId: config.repositoryId };
+          return { ...reference, repositoryId: options.repositoryId?.() ?? config.repositoryId };
         }),
       resolveLinkedIssue: (input) =>
         Effect.sync(() => {
@@ -170,7 +171,10 @@ describe("fresh-thread repository handoff", () => {
         Effect.sync(() => {
           options.issueReads?.push(`relationships:${input.number}`);
           return {
-            issue: linked(input.number),
+            issue: {
+              ...linked(input.number),
+              repositoryId: options.repositoryId?.() ?? config.repositoryId,
+            },
             state: options.issueState?.(input.number) ?? "open",
             milestoneNumber: 1,
             parent: input.number === 2 ? linked(1) : null,
@@ -1624,7 +1628,10 @@ describe("fresh-thread repository handoff", () => {
           orchestratorThreadId: originalLeadId,
           clientRequestId: CommandId.make("start:selected"),
         });
-        assert.isTrue(issueReads.every((read) => read.startsWith("relationships:")));
+        assert.deepEqual(
+          issueReads.filter((read) => !read.startsWith("relationships:")),
+          ["repository identity"],
+        );
         assert.equal(accepted.rootThreadId, originalLeadId);
         assert.isFalse(accepted.createdRoot);
         assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, originalLeadId);
@@ -1670,6 +1677,49 @@ describe("fresh-thread repository handoff", () => {
         yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
         assert.equal((yield* store.repositoryOwner(config))!.rootThreadId, originalLeadId);
       }).pipe(Effect.provide(fixture({ recovery: true, issueReads })));
+    },
+  );
+
+  it.effect(
+    "Start leaves the selected lead unregistered when the repository ID changes during checkout validation",
+    () => {
+      let repositoryId = config.repositoryId;
+      let recreateOnCheckout = false;
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        yield* createOriginalLead;
+        recreateOnCheckout = true;
+        const requestId = CommandId.make("start:repository-recreated");
+        const error = yield* service
+          .start({
+            ...reference,
+            number: 9,
+            projectId,
+            modelRoleId: "implementor-complex",
+            orchestratorThreadId: originalLeadId,
+            clientRequestId: requestId,
+          })
+          .pipe(Effect.flip);
+        assert.equal(repositoryId, "repo:replacement");
+        assert.isNull(yield* store.configuration(originalLeadId));
+        assert.isNull(yield* store.request(requestId));
+        assert.include(error.message, "repository identity does not match");
+      }).pipe(
+        Effect.provide(
+          fixture({
+            recovery: true,
+            repositoryId: () => repositoryId,
+            git: {
+              localStatus: () =>
+                Effect.sync(() => {
+                  if (recreateOnCheckout) repositoryId = "repo:replacement";
+                  return { isRepo: true, refName: "main" } as never;
+                }),
+            },
+          }),
+        ),
+      );
     },
   );
 

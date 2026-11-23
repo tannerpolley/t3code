@@ -385,7 +385,7 @@ export const layer = Layer.effect(
             reason: "User selected this existing lead for issue work",
             clientRequestId: CommandId.make(`${input.clientRequestId}:adopt-root`),
           },
-          { verifiedIdentity: issue },
+          { verifyStatusIdentity: false },
         ).pipe(
           // A concurrent Start that registered the same lead is this request's success too.
           Effect.catch((error) =>
@@ -1914,7 +1914,7 @@ export const layer = Layer.effect(
     const restoreRoot = Effect.fn("IssueWorkService.restoreRoot")(function* (
       input: Parameters<IssueWorkService["Service"]["restoreRoot"]>[0],
       options?: {
-        readonly verifiedIdentity?: Pick<ThreadLinkedIssue, "host" | "repository" | "repositoryId">;
+        readonly verifyStatusIdentity?: boolean;
         // No screen shows a project's previous repository, so a user assignment cannot pause it first.
         readonly moveUnpaused?: boolean;
       },
@@ -1926,9 +1926,7 @@ export const layer = Layer.effect(
         moveUnpaused,
       );
       if (input.expectedRootThreadId === null) {
-        const identity =
-          options?.verifiedIdentity ??
-          (yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError)));
+        const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
         if (
           identity.host !== input.host ||
           identity.repositoryId !== input.repositoryId ||
@@ -1969,7 +1967,7 @@ export const layer = Layer.effect(
           message: "This command id was already used for another recovery operation.",
         });
       return yield* repositoryStatus(input, {
-        verifyIdentity: options?.verifiedIdentity === undefined,
+        verifyIdentity: options?.verifyStatusIdentity ?? true,
       });
     });
 
