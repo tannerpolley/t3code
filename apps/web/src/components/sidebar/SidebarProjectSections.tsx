@@ -1,3 +1,5 @@
+import { useWorkerStatusLabels } from "../issues/IssueLiveWork";
+import { useSidebarIssueWorkerStatus } from "../../state/repositoryIssues";
 import { sidebarBadgeKind } from "./SidebarColumns.logic";
 import { sidebarSectionChildOrder } from "@t3tools/shared/sidebarLayout";
 import { useSidebarWorkExpansion } from "./useSidebarWorkExpansion";
@@ -1433,6 +1435,9 @@ const SidebarProjectThreadRow = memo(
       lease.leaseLiveStatus,
     );
     const status = codexStyle ? workStatus : threadStatus;
+    const workerStatus = useSidebarIssueWorkerStatus(thread, status === "ready");
+    const workerLabels = useWorkerStatusLabels();
+    const workerLabel = workerStatus === null ? undefined : workerLabels[workerStatus];
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
     const hasWork = workCount > 0;
     const { open: workOpen, onToggle: toggleWork } = useSidebarWorkExpansion(
@@ -1472,20 +1477,24 @@ const SidebarProjectThreadRow = memo(
       if (!codexStyle) {
         return (
           <>
-            {status === "paused" ? (
-              <ThreadStatusMark status={status} />
-            ) : (
-              <span
-                aria-hidden
-                className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
-              />
-            )}
+            {workerLabel === undefined &&
+              (status === "paused" ? (
+                <ThreadStatusMark status={status} />
+              ) : (
+                <span
+                  aria-hidden
+                  className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
+                />
+              ))}
             <ThreadLocationIcon thread={thread} tooltip={false} />
             <ThreadRoleIcon thread={thread.source} />
             <span className="min-w-0 flex-1">
               <SidebarProjectThreadName thread={thread}>{thread.title}</SidebarProjectThreadName>
             </span>
             {parts.pin}
+            {workerLabel && (
+              <span className="shrink-0 text-xs text-muted-foreground">{workerLabel}</span>
+            )}
             {workCount > 0 ? (
               <span aria-hidden className="w-8 shrink-0" />
             ) : (
@@ -1538,8 +1547,13 @@ const SidebarProjectThreadRow = memo(
             />
           }
           pr={<ThreadPullRequestBadge thread={thread} />}
-          time={<SidebarThreadTime thread={thread} status={status} />}
-          status={<ThreadStatusMark status={statusMark} />}
+          time={
+            <>
+              {workerLabel && <span className="me-1.5">{workerLabel}</span>}
+              <SidebarThreadTime thread={thread} status={status} />
+            </>
+          }
+          status={workerLabel === undefined ? <ThreadStatusMark status={statusMark} /> : null}
         />
       );
     };
@@ -1623,7 +1637,7 @@ const SidebarProjectThreadRow = memo(
             role: codexStyle ? role : undefined,
             title: thread.title,
             issueNumber: thread.source.linkedIssue?.number,
-            status: status === "paused" ? gt("Paused") : status,
+            status: workerLabel ?? (status === "paused" ? gt("Paused") : status),
             links: thread.pullRequests,
           }),
           className: cn(

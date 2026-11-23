@@ -105,6 +105,7 @@ export function resolveSidebarProjectStatusMark(
   status: SidebarThreadStatus,
   workStatus: SidebarThreadStatus,
 ) {
+  if (thread.lineage.parentThreadId !== null) return workStatus;
   const completionMark = resolveThreadStatusMark(thread, localLastVisitedAt, status);
   return completionMark === "done" ? completionMark : workStatus;
 }

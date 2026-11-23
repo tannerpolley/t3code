@@ -1,4 +1,8 @@
-import { issueWorkerIsLive, issueWorkerNeedsOwner } from "@t3tools/shared/issueWorkerStatus";
+import {
+  issueWorkerIsLive,
+  issueWorkerNeedsOwner,
+  issueWorkerStatus,
+} from "@t3tools/shared/issueWorkerStatus";
 import {
   THREAD_ROLE_LABELS,
   type IssueRepositoryRef,
@@ -15,14 +19,19 @@ export function issueLiveStatus(issue: RepositoryIssueSummary) {
     work.find(issueWorkerNeedsOwner);
   if (waiting !== undefined) return waiting.status;
   if (work.some(issueWorkerIsLive)) return "working" as const;
-  for (const status of ["queued", "failed", "paused", "done", "working", "idle"] as const) {
-    if (work.some((thread) => issueWorkerStatus(thread) === status)) return status;
+  const statuses = new Set(work.map((thread) => issueWorkerStatus(thread, issue)));
+  for (const status of [
+    "queued",
+    "failed",
+    "paused",
+    "ready_for_review",
+    "done",
+    "working",
+    "idle",
+  ] as const) {
+    if (statuses.has(status)) return status;
   }
   return null;
-}
-
-export function issueWorkerStatus(work: NonNullable<RepositoryIssueSummary["liveWork"]>[number]) {
-  return work.paused === true ? "paused" : work.status;
 }
 
 /** Put the actionable worker first so the compact row opens the right thread. */
@@ -31,7 +40,8 @@ export function issueLiveWorkSummary(issue: RepositoryIssueSummary) {
   if (status === null) return null;
   const work = [...(issue.liveWork ?? [])].sort(
     (a, b) =>
-      Number(issueWorkerStatus(b) === status) - Number(issueWorkerStatus(a) === status) ||
+      Number(issueWorkerStatus(b, issue) === status) -
+        Number(issueWorkerStatus(a, issue) === status) ||
       Number(a.requestHandledByParent === true) - Number(b.requestHandledByParent === true) ||
       a.title.localeCompare(b.title),
   );

@@ -1,3 +1,7 @@
+import { classifyIssueWorker, issueWorkerStatus } from "@t3tools/shared/issueWorkerStatus";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { environmentCatalog } from "../connection/catalog";
 import { useAtomValue } from "@effect/atom-react";
@@ -87,26 +91,30 @@ const sidebarIssueStatuses = Atom.family((environmentId: EnvironmentId) =>
       repositoryIssueEnvironment.statusBatch({ environmentId, input: { issues } }),
     );
     if (!AsyncResult.isSuccess(result)) return EMPTY_ISSUE_STATUSES;
-    return new Map(
-      result.value.map((issue) => [
-        JSON.stringify([issue.host.toLowerCase(), issue.nodeId]),
-        issue,
-      ]),
-    );
+    return new Map(result.value.map((issue) => [issueStatusKey(issue.host, issue.nodeId), issue]));
   }),
 );
+
+type SidebarIssueKey = Pick<ThreadLinkedIssue, "host" | "repository" | "nodeId" | "number">;
+const issueStatusKey = (host: string, nodeId: string) =>
+  JSON.stringify([host.toLowerCase(), nodeId]);
+const sidebarIssueStatus = Atom.family((key: string) => {
+  const [environmentId, host, nodeId] = JSON.parse(key) as [EnvironmentId, string, string];
+  return Atom.map(sidebarIssueStatuses(environmentId), (statuses) =>
+    statuses.get(issueStatusKey(host, nodeId)),
+  );
+});
 
 /** Each row observes only its own presentation, including streamed work between GitHub refreshes. */
 const sidebarIssuePresentation = Atom.family((key: string) => {
   const { environmentId, issue } = JSON.parse(key) as {
     environmentId: EnvironmentId;
-    issue: Pick<ThreadLinkedIssue, "host" | "repository" | "nodeId" | "number">;
+    issue: SidebarIssueKey;
   };
+  const statusAtom = sidebarIssueStatus(JSON.stringify([environmentId, issue.host, issue.nodeId]));
   const overlay = createLiveIssueWorkOverlay();
   return Atom.make((get) => {
-    const status = get(sidebarIssueStatuses(environmentId)).get(
-      JSON.stringify([issue.host.toLowerCase(), issue.nodeId]),
-    );
+    const status = get(statusAtom);
     if (status === undefined) return null;
     const summary = {
       ...status,
@@ -125,6 +133,7 @@ const sidebarIssuePresentation = Atom.family((key: string) => {
   );
 });
 const UNKNOWN_ISSUE_PRESENTATION = Atom.make(null);
+const UNKNOWN_ISSUE_STATUS = Atom.make(undefined);
 
 export function useSidebarIssuePresentation(
   environmentId: EnvironmentId,
@@ -144,6 +153,22 @@ export function useSidebarIssuePresentation(
             },
           }),
         ),
+  );
+}
+
+export function useSidebarIssueWorkerStatus(thread: EnvironmentThreadShell, idle: boolean) {
+  const issue =
+    idle && thread.lineage.parentThreadId !== null ? thread.source.linkedIssue : undefined;
+  const status = useAtomValue(
+    issue === undefined
+      ? UNKNOWN_ISSUE_STATUS
+      : sidebarIssueStatus(JSON.stringify([thread.environmentId, issue.host, issue.nodeId])),
+  );
+  if (issue === undefined) return null;
+  const links = visibleThreadPullRequests(thread.pullRequests);
+  return issueWorkerStatus(
+    { ...classifyIssueWorker(thread.source), pullRequests: links.map((pr) => pr.url) },
+    { state: status?.state, pullRequests: issuePullRequests(status?.pullRequests ?? [], links) },
   );
 }
 

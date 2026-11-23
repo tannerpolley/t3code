@@ -1,4 +1,8 @@
-import type { OrchestrationV2ThreadShell, RepositoryIssueSummary } from "@t3tools/contracts";
+import type {
+  IssuePullRequestStatus,
+  OrchestrationV2ThreadShell,
+  RepositoryIssueSummary,
+} from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   managedImplementorAwaitingSubagent,
@@ -54,8 +58,28 @@ export function classifyIssueWorker(
   )
     return { status: "working" };
   if (status === "failed") return { status: "failed" };
-  if (status === "completed") return { status: "done" };
   return isExplicitlyPausedThread(thread) ? { status: "idle", paused: true } : { status: "idle" };
+}
+
+export function issueWorkerStatus(
+  worker: WorkerState & { readonly pullRequests?: readonly string[] | undefined },
+  issue: {
+    readonly state?: RepositoryIssueSummary["state"] | undefined;
+    readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
+  },
+) {
+  if (worker.paused) return "paused";
+  if (worker.status !== "idle" && worker.status !== "done") return worker.status;
+  if (issue.state === "closed") return "done";
+  const urls = worker.pullRequests?.map((url) => url.toLowerCase());
+  let open = false;
+  for (const pr of issue.pullRequests ?? []) {
+    const url = pr.url ?? `https://${pr.host}/${pr.repository}/pull/${pr.number}`;
+    if (!urls?.includes(url.toLowerCase())) continue;
+    if (pr.state === "merged") return "done";
+    if (pr.state === "open") open = true;
+  }
+  return open ? "ready_for_review" : "idle";
 }
 
 export function issueWorkerNeedsOwner({ status }: WorkerState) {
