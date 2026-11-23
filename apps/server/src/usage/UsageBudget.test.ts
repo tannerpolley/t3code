@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Sqlite from "../persistence/Sqlite.ts";
@@ -183,5 +184,5 @@ it.effect(
         report.text,
         "owner/repo #508 Usage: 360 tokens, 1 run starts, 3 child results",
       );
-    }).pipe(Effect.provide(UsageBudget.layer), Effect.provide(Sqlite.layerMemory)),
+    }).pipe(Effect.provide(UsageBudget.layer.pipe(Layer.provideMerge(Sqlite.layerMemory)))),
 );
