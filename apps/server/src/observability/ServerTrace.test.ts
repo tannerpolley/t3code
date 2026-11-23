@@ -12,8 +12,61 @@ import type { OtlpTracer } from "effect/observability";
 import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
 import { makeServerTraceSink } from "./ServerTrace.ts";
 
-const unsampledTrace = "00000000000000000000000000000001";
-const sampledTrace = "00000000000000000000000000000064";
+const workerTraceId = "00000000000000000000000000000001";
+const commitTraceId = "00000000000000000000000000000064";
+const spanId = (n: number) => n.toString(16).padStart(16, "0");
+const fastSpan = {
+  sampled: true,
+  kind: "internal",
+  startTimeUnixNano: "1",
+  endTimeUnixNano: "1000001",
+  durationMs: 1,
+  attributes: {},
+  events: [],
+  links: [],
+};
+
+it.effect("samples worker and commit spans independently of their boot-wide trace IDs", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped();
+    const sink = yield* makeServerTraceSink({
+      filePath: path.join(dir, "server.trace.ndjson"),
+      maxBytes: 1_024 * 1_024,
+      maxFiles: 1,
+      batchWindowMs: 1_000,
+    });
+    for (let n = 1; n <= 100; n++) {
+      sink.push({
+        ...fastSpan,
+        type: "effect-span",
+        exit: { _tag: "Success" },
+        name: "OrchestrationEffectWorkerV2.runOnceInLane",
+        traceId: workerTraceId,
+        spanId: spanId(n),
+      });
+      sink.push({
+        ...fastSpan,
+        type: "effect-span",
+        exit: { _tag: "Success" },
+        name: "orchestrationV2.ProviderCommitBatch.flush",
+        traceId: commitTraceId,
+        spanId: spanId(n + 100),
+      });
+    }
+    yield* sink.flush;
+    const written = yield* fs.readFileString(sink.filePath);
+    const records = written
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(records.map((record) => [record.name, record.spanId])).toEqual([
+      ["OrchestrationEffectWorkerV2.runOnceInLane", spanId(100)],
+      ["orchestrationV2.ProviderCommitBatch.flush", spanId(200)],
+    ]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect("samples the local server and renderer traces while forwarding every server span", () =>
   Effect.gen(function* () {
@@ -34,6 +87,7 @@ it.effect("samples the local server and renderer traces while forwarding every s
       delegate: Tracer.make({
         span: (options) => {
           const span = new Tracer.NativeSpan(options);
+          Object.defineProperty(span, "spanId", { value: spanId(forwarded.length + 1) });
           forwarded.push(span);
           return span;
         },
@@ -46,48 +100,38 @@ it.effect("samples the local server and renderer traces while forwarding every s
         Effect.withSpan("contended query"),
       );
       yield* Effect.fail("failed").pipe(Effect.withSpan("failed query"), Effect.ignore);
+      yield* Effect.void.pipe(Effect.withSpan("server.heap.spike", { root: true }));
+      yield* Effect.annotateCurrentSpan("memory.heap_growth_bytes", 200 * 1_024 * 1_024).pipe(
+        Effect.withSpan("heap growth"),
+      );
     }).pipe(
-      Effect.withParentSpan(Tracer.externalSpan({ traceId: unsampledTrace, spanId: "1" })),
+      Effect.withParentSpan(Tracer.externalSpan({ traceId: workerTraceId, spanId: "1" })),
       Effect.withTracer(tracer),
     );
     yield* effect;
 
     const rendererRecord: OtlpTraceRecord = {
+      ...fastSpan,
       type: "otlp-span",
-      traceId: unsampledTrace,
-      spanId: "2",
-      sampled: true,
-      kind: "internal",
+      traceId: workerTraceId,
+      spanId: spanId(2),
       name: "EnvironmentRpc.currentSession",
-      startTimeUnixNano: "1",
-      endTimeUnixNano: "1000001",
-      durationMs: 1,
-      attributes: {},
       resourceAttributes: {},
       scope: { attributes: {} },
-      events: [],
-      links: [],
     };
     yield* BrowserTraceCollector.make(sink).record([
       rendererRecord,
       ...decodeOtlpTraceRecords(
         cast<unknown, OtlpTracer.TraceData>({
-          resourceSpans: [{ scopeSpans: [{ spans: [{ name: "missing trace ID" }] }] }],
+          resourceSpans: [{ scopeSpans: [{ spans: [{ name: "missing span ID" }] }] }],
         }),
       ),
-      { ...rendererRecord, spanId: "3", name: "slow request", durationMs: 1_000 },
-      { ...rendererRecord, spanId: "4", name: "failed request", status: { code: "2" } },
-      { ...rendererRecord, spanId: "5", name: "sampled request", traceId: sampledTrace },
+      { ...rendererRecord, spanId: spanId(3), name: "slow request", durationMs: 1_000 },
+      { ...rendererRecord, spanId: spanId(4), name: "failed request", status: { code: "2" } },
+      { ...rendererRecord, spanId: spanId(100), name: "sampled request" },
       {
         ...rendererRecord,
-        spanId: "6",
-        name: "sampled child",
-        traceId: sampledTrace,
-        parentSpanId: "5",
-      },
-      {
-        ...rendererRecord,
-        spanId: "7",
+        spanId: spanId(5),
         name: "request with event",
         events: [{ name: "logged", timeUnixNano: "1", attributes: {} }],
       },
@@ -104,16 +148,19 @@ it.effect("samples the local server and renderer traces while forwarding every s
       "ProviderTurnStartService.start",
       "contended query",
       "failed query",
+      "server.heap.spike",
+      "heap growth",
     ]);
     expect(forwarded.every((span) => span.status._tag === "Ended")).toBe(true);
     expect(names).toEqual([
       "ProviderTurnStartService.start",
       "contended query",
       "failed query",
+      "server.heap.spike",
+      "heap growth",
       "slow request",
       "failed request",
       "sampled request",
-      "sampled child",
       "request with event",
     ]);
   }).pipe(Effect.provide(NodeServices.layer)),
