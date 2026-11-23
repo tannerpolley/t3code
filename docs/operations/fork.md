@@ -110,7 +110,8 @@ The dock icon's **Build & install update** action runs `~/.local/bin/t3-update`.
 
 An agent can run the same steps without the dialogs.
 
-The launcher `~/.local/bin/t3-code` installs a staged build the next time T3 opens:
+The launcher `~/.local/bin/t3-code` handles staged installs on ordinary launches and in-app update restarts.
+For `t3code://` links, it passes the URL straight to the installed AppImage, bypassing the install lock and database wait.
 
 - It waits up to 20 s for a quitting T3 to release the database.
 - It keeps no backup and deletes every older AppImage.
@@ -133,7 +134,7 @@ export T3CODE_STAGED_UPDATE_VERSION_PATTERN='^(\d+(?:\.\d+)*)-v(2\.\d+(?:\.\d+)*
 The pattern matches the full app version and the version in `T3-Code-<version>-x86_64.AppImage`.
 Its first two captures are the dotted numeric base and staged build versions. Setting either
 staged-update variable selects local staging. If the launcher configuration is incomplete or
-the build is unsupported, automatic updates are disabled for that launch.
+invalid, the desktop log identifies the variable, its value, and why staging was disabled.
 
 ## Upstream syncs
 

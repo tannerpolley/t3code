@@ -1,4 +1,5 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -6,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import {
@@ -35,31 +37,64 @@ export function compareForkVersions(left: string, right: string): number {
 }
 
 const dottedVersion = /^\d+(?:\.\d+)*$/;
+const { logWarning } = makeComponentLogger("desktop-fork-staged-updates");
+const reject = (variable: string, value: string | undefined, reason: string) =>
+  logWarning("staged updates disabled", { variable, value: value ?? null, reason }).pipe(
+    Effect.as(null),
+  );
 
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const config = yield* DesktopConfig.DesktopConfig;
-  const pendingDirectory = Option.getOrUndefined(config.stagedUpdateDirectory);
-  const launcher = Option.getOrUndefined(config.desktopLauncherPath);
-  const versionPattern = Option.getOrUndefined(config.stagedUpdateVersionPattern);
+  const env = yield* HostProcess.Environment;
+  const variables = DesktopConfig.stagedUpdateVariables;
+  const rawDirectory = env[variables.directory];
+  const rawPattern = env[variables.versionPattern];
+  if (rawDirectory === undefined && rawPattern === undefined) return undefined;
+
+  const pendingDirectory = rawDirectory?.trim();
+  if (!pendingDirectory || !environment.path.isAbsolute(pendingDirectory)) {
+    return yield* reject(variables.directory, rawDirectory, "expected an absolute path");
+  }
+  const launcher = Option.getOrUndefined(environment.desktopLauncherPath);
+  if (!launcher || !environment.path.isAbsolute(launcher)) {
+    return yield* reject(variables.launcher, env[variables.launcher], "expected an absolute path");
+  }
+  const versionPattern = rawPattern?.trim();
+  if (!versionPattern) {
+    return yield* reject(variables.versionPattern, rawPattern, "expected a version pattern");
+  }
   if (
-    !pendingDirectory ||
-    !environment.path.isAbsolute(pendingDirectory) ||
-    !launcher ||
-    !environment.path.isAbsolute(launcher) ||
-    !versionPattern ||
     environment.platform !== "linux" ||
     environment.processArch !== "x64" ||
     !environment.isPackaged ||
-    environment.isDevelopment ||
-    config.disableAutoUpdate ||
-    Option.isNone(config.appImagePath)
+    environment.isDevelopment
   ) {
-    return undefined;
+    yield* logWarning("staged updates require a packaged Linux x64 build", {
+      [variables.directory]: rawDirectory,
+      [variables.versionPattern]: rawPattern,
+      platform: environment.platform,
+      arch: environment.processArch,
+      isPackaged: environment.isPackaged,
+      isDevelopment: environment.isDevelopment,
+    });
+    return null;
+  }
+  if (config.disableAutoUpdate) {
+    return yield* reject(
+      "T3CODE_DISABLE_AUTO_UPDATE",
+      env.T3CODE_DISABLE_AUTO_UPDATE,
+      "automatic updates are disabled",
+    );
+  }
+  if (Option.isNone(config.appImagePath)) {
+    return yield* reject("APPIMAGE", env.APPIMAGE, "staged updates require an AppImage");
   }
 
   const compiled = Option.liftThrowable(RegExp)(versionPattern);
-  if (Option.isNone(compiled)) return undefined;
+  if (Option.isNone(compiled)) {
+    return yield* reject(variables.versionPattern, rawPattern, "invalid regular expression");
+  }
   const parseVersion = (version: string) => {
     const match = compiled.value.exec(version);
     if (match?.[0] !== version) return undefined;
@@ -69,7 +104,13 @@ export const make = Effect.gen(function* () {
       : undefined;
   };
   const installed = parseVersion(environment.appVersion);
-  if (!installed) return undefined;
+  if (!installed) {
+    return yield* reject(
+      variables.versionPattern,
+      rawPattern,
+      `expected two dotted numeric captures matching the app version ${environment.appVersion}`,
+    );
+  }
 
   const fileSystem = yield* FileSystem.FileSystem;
   const app = yield* ElectronApp.ElectronApp;

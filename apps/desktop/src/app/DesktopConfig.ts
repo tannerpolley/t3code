@@ -33,6 +33,12 @@ const compactEnv = (env: Readonly<Record<string, string | undefined>>): Record<s
     Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
 
+export const stagedUpdateVariables = {
+  directory: "T3CODE_STAGED_UPDATE_DIRECTORY",
+  launcher: "T3CODE_DESKTOP_LAUNCHER_PATH",
+  versionPattern: "T3CODE_STAGED_UPDATE_VERSION_PATTERN",
+} as const;
+
 export const DesktopConfig = Config.all({
   appDataDirectory: trimmedString("APPDATA"),
   xdgConfigHome: trimmedString("XDG_CONFIG_HOME"),
@@ -55,9 +61,7 @@ export const DesktopConfig = Config.all({
   otlpProtocol: Config.schema(OtlpProtocol, "T3CODE_OTLP_PROTOCOL").pipe(
     Config.withDefault("http/json"),
   ),
-  desktopLauncherPath: trimmedString("T3CODE_DESKTOP_LAUNCHER_PATH"),
-  stagedUpdateDirectory: trimmedString("T3CODE_STAGED_UPDATE_DIRECTORY"),
-  stagedUpdateVersionPattern: trimmedString("T3CODE_STAGED_UPDATE_VERSION_PATTERN"),
+  desktopLauncherPath: trimmedString(stagedUpdateVariables.launcher),
   appImagePath: trimmedString("APPIMAGE"),
   disableAutoUpdate: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
   mockUpdates: optionalBoolean("T3CODE_DESKTOP_MOCK_UPDATES"),
