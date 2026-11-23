@@ -59,6 +59,7 @@ export function resolveProjectIconGlyph(
       return { kind: "monogram", text: projectIcon.text, color: projectIcon.color };
     case "lucide":
       return { kind: "monogram", text: projectMonogram(projectTitle), color: projectIcon.color };
+    case "folder":
     case undefined:
       return null;
   }

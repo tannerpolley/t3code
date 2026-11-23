@@ -20,6 +20,8 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as EventSink from "./EventSink.ts";
 import * as IssueService from "../issues/IssueService.ts";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { reviewIssue, reviewRead } from "./ThreadLaunchService.testHarness.ts";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -43,13 +45,22 @@ const issue = reviewIssue(1);
 const startError = "required MCP servers failed to initialize: serena: Broken pipe";
 
 const failedChildTest = (
-  mode: "refused" | "stalled" | "recovers" | "exhausted" | "limited" | "persistent" | "disconnect",
+  mode:
+    | "refused"
+    | "stalled"
+    | "wedged"
+    | "recovers"
+    | "exhausted"
+    | "limited"
+    | "persistent"
+    | "disconnect",
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("provider-turn-start-failure");
       const wake = yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
       const childStartRequests = yield* Queue.unbounded<string>();
+      const ensureEntered = yield* Deferred.make<void>();
       let childEnsureAttempts = 0;
       let childTurns = 0;
       let lastChildTurn:
@@ -91,6 +102,12 @@ const failedChildTest = (
               },
               events: Stream.fromQueue(events),
               ensureThread: ({ threadId }) => {
+                if (threadId !== parentThreadId && mode === "wedged") {
+                  childEnsureAttempts += 1;
+                  return Deferred.succeed(ensureEntered, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                  );
+                }
                 if (threadId !== parentThreadId && !startsNormally) {
                   childEnsureAttempts += 1;
                   if (mode === "stalled")
@@ -274,11 +291,51 @@ const failedChildTest = (
           runtimeMode: "full-access",
           interactionMode: "default",
           completionWake: "always",
+          ...(mode === "wedged" ? { workspaceStrategy: { type: "root" as const } } : {}),
           createdBy: "agent",
           creationSource: "mcp",
         });
         const childThreadId = (yield* orchestrator.getThreadProjection(parentThreadId))
           .subagents[0]!.childThreadId!;
+
+        if (mode === "wedged") {
+          const slots = (yield* IssueWorkStore.IssueWorkStore).slotsInUse(parentThreadId);
+          const child = orchestrator.getThreadProjection(childThreadId);
+          yield* orchestrator.dispatch({
+            type: "prepared-run.release",
+            commandId: CommandId.make("command:start-failure:workspace-ready"),
+            threadId: childThreadId,
+            runId: (yield* child).runs[0]!.id,
+          });
+          const drain = yield* worker.drain().pipe(Effect.forkScoped);
+          yield* Deferred.await(ensureEntered);
+          const starting = yield* child;
+          assert.equal(starting.runs[0]?.status, "starting");
+          assert.isNull(starting.runs[0]?.startedAt);
+          assert.isTrue(
+            starting.turnItems.some((item) => "title" in item && item.title === "Workspace ready"),
+          );
+          assert.equal(yield* slots, 1);
+
+          yield* TestClock.adjust("599 seconds");
+          assert.equal((yield* child).runs[0]?.status, "starting");
+          yield* TestClock.adjust("1 second");
+          assert.equal((yield* child).runs[0]?.status, "failed");
+          yield* Fiber.join(drain);
+          const request = yield* Deferred.await(wake);
+          assert.equal(request.threadId, parentThreadId);
+          assert.equal(request.delegatedCompletion?.parentRunId, parentRun.id);
+          const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+          assert.equal(task.status, "failed");
+          assert.include(task.result ?? "", "timed out after 10 minutes");
+          assert.equal(yield* slots, 0);
+
+          yield* TestClock.adjust("5 minutes");
+          yield* worker.drain();
+          assert.equal(childEnsureAttempts, 1);
+          assert.equal(childTurns, 0);
+          return;
+        }
 
         if (startsNormally) {
           const sink = yield* EventSink.EventSinkV2;
@@ -390,7 +447,8 @@ const failedChildTest = (
             ProviderAdapterRegistry.layerSingle(adapter),
             {
               runEffectWorker: false,
-              runContinuationWorker: startsNormally,
+              databaseLayer: SqlitePersistence.layerMemory,
+              runContinuationWorker: startsNormally && mode !== "wedged",
               continueThreadsAfterServerUpdate: false,
               ...(startsNormally
                 ? {
@@ -401,6 +459,7 @@ const failedChildTest = (
                 : {}),
             },
           ).pipe(
+            Layer.merge(IssueWorkStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
             Layer.provide(
               Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
                 offer: (request) => Deferred.succeed(wake, request).pipe(Effect.asVoid),
@@ -416,6 +475,10 @@ const failedChildTest = (
 it.effect.each(["refused", "stalled"] as const)(
   "a delegated child fails and wakes its parent after a %s start",
   failedChildTest,
+);
+
+it.effect("fails a wedged startup, wakes its parent, and releases the worker slot", () =>
+  failedChildTest("wedged"),
 );
 
 it.effect.each(["recovers", "exhausted", "limited", "persistent"] as const)(

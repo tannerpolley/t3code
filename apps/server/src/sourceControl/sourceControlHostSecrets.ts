@@ -82,20 +82,18 @@ export function collectSourceControlHostSecretReferences(
   );
 }
 
-/** Replaces each secret provider reference in one host kind's credential fields with the secret it names. */
-export const resolveSourceControlHostSecrets = Effect.fn("SourceControlHost.resolveSecrets")(
-  function* (
-    resolver: SecretResolver.SecretResolver["Service"],
-    hosts: SourceControlHostsSettings,
-    kind: string,
-  ) {
-    const schema = hostSettingsSchemas.get(kind);
-    const fields = hosts[kind];
-    if (schema === undefined || fields === undefined) return hosts;
-    const resolved = yield* resolveSettingsSecrets(resolver, schema, fields);
-    return resolved === fields ? hosts : { ...hosts, [kind]: resolved };
-  },
-);
+// SettingsSecrets.resolve traces the actual lookup.
+export const resolveSourceControlHostSecrets = Effect.fnUntraced(function* (
+  resolver: SecretResolver.SecretResolver["Service"],
+  hosts: SourceControlHostsSettings,
+  kind: string,
+) {
+  const schema = hostSettingsSchemas.get(kind);
+  const fields = hosts[kind];
+  if (schema === undefined || fields === undefined) return hosts;
+  const resolved = yield* resolveSettingsSecrets(resolver, schema, fields);
+  return resolved === fields ? hosts : { ...hosts, [kind]: resolved };
+});
 
 const collectUsageLimitSecretReferences = (
   sources: ServerSettings["usageLimitSources"],

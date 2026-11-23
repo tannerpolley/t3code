@@ -18,7 +18,10 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
-import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  pendingBackgroundWorkOfThread,
+  pullRequestWatchTaskNumber,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import { threadRoleDisplay, type RoleDisplayThread } from "../threadRoleDisplay";
 import { resolveEffortGlyph } from "../chat/EffortGlyph";
@@ -51,6 +54,7 @@ export type BackgroundWorkTaskRow =
     })
   | (BackgroundWorkRowBase & {
       readonly kind: "command" | "monitor" | "background_task";
+      readonly pullRequestNumber?: string;
       readonly commandKind?: string;
       readonly ownerThreadId?: ThreadId;
       /** The command that started it, for its output popup. */
@@ -271,11 +275,16 @@ export function describeSidebarBackgroundWork(
     })
     .map((task) => {
       const taskOwner = task.ownerThreadId ?? task.childThreadId ?? ownerThreadId;
+      const pullRequestNumber =
+        task.kind === "monitor" ? pullRequestWatchTaskNumber(task) : undefined;
       return {
         taskId: task.taskId,
         label: task.description ?? task.taskId,
         kind: task.kind,
         startedAt: task.startedAt ? DateTime.formatIso(task.startedAt) : null,
+        ...(pullRequestNumber === undefined
+          ? {}
+          : { pullRequestNumber, status: task.awaited ? "working" : "ready" }),
         ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
         ...(task.command === undefined ? {} : { command: task.command }),
         ...(taskOwner === undefined ? {} : { ownerThreadId: taskOwner }),
