@@ -270,7 +270,7 @@ describe("resolveSidebarThreadModelLabel", () => {
       ],
     } satisfies Pick<ServerProvider, "driver" | "models">;
 
-    expect(resolveSidebarThreadModelLabel(thread, provider)).toBe("Codex 6 · High");
+    expect(resolveSidebarThreadModelLabel(thread, provider, true)).toBe("Codex 6 · High");
   });
 
   it("follows the short model names switch", () => {
@@ -280,6 +280,7 @@ describe("resolveSidebarThreadModelLabel", () => {
         {
           slug: "claude-sonnet-5-5",
           name: "Claude Sonnet 5.5",
+          shortName: "Sonnet 5.5",
           isCustom: false,
           capabilities: {
             optionDescriptors: [

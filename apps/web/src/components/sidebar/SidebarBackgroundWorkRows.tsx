@@ -63,6 +63,7 @@ import {
   sidebarRoleLabel,
   sidebarThreadProvider,
   type BackgroundWorkTaskRow,
+  type SidebarThreadProvider,
 } from "./SidebarBackgroundWork.logic";
 import type { SidebarProviderEntry } from "./SidebarThreadRow";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
@@ -71,6 +72,52 @@ import { workRowProgram } from "./SidebarThreadProcesses.logic";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { SidebarThreadStatus } from "../Sidebar.logic";
+
+export function SidebarChildThreadColumns(props: {
+  readonly thread: SidebarThreadSummary;
+  readonly provider: SidebarThreadProvider | undefined;
+  readonly location: ReactNode;
+  readonly status: SidebarThreadStatus;
+  readonly shortModelNames: boolean;
+}) {
+  const { thread, provider, status } = props;
+  const role = sidebarRoleLabel(thread.source);
+  return (
+    <SidebarThreadColumns
+      location={props.location}
+      role={<ThreadRoleIcon thread={thread.source} />}
+      provider={
+        <ThreadRelationshipIcon
+          driver={provider?.driver}
+          provider={provider}
+          fallbackIcon={CornerDownRightIcon}
+        />
+      }
+      model={resolveSidebarThreadModelLabel(thread, provider, props.shortModelNames, false)}
+      effort={sidebarEffortGlyph(provider, thread.modelSelection)}
+      name={
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="fork-sidebar-title min-w-0 flex-1 truncate">
+            <SidebarProjectThreadName thread={thread} badges={false}>
+              <SidebarThreadTitle role={role} title={thread.title} />
+            </SidebarProjectThreadName>
+          </span>
+        </span>
+      }
+      badgeKind={sidebarBadgeKind(
+        role,
+        !!thread.source.linkedIssue,
+        thread.pullRequests.length > 0,
+      )}
+      issue={
+        <ThreadIssueBadge environmentId={thread.environmentId} issue={thread.source.linkedIssue} />
+      }
+      pr={<ThreadPullRequestBadge thread={thread} />}
+      time={<SidebarThreadTime thread={thread} status={status} />}
+      status={<ThreadStatusMark status={status} />}
+    />
+  );
+}
 
 /** A row's label; a command's full command line shows on hover. */
 function RowLabel(props: {
@@ -253,93 +300,59 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 <BackgroundShellElapsed startedAt={row.startedAt} commandKind={row.commandKind} />
               )
             ) : null;
-          const content = props.columns ? (
-            <SidebarThreadColumns
-              caret={sameProgram ? <SidebarCaretSlot count={sameProgram} /> : undefined}
-              location={locationIcon}
-              role={roleIcon}
-              provider={icon}
-              model={
-                row.kind === "subagent" && row.child
-                  ? resolveSidebarThreadModelLabel(row.child, provider, true, false)
-                  : undefined
-              }
-              effort={
-                row.kind === "subagent" && row.child
-                  ? sidebarEffortGlyph(provider, row.child.modelSelection)
-                  : undefined
-              }
-              name={
-                <span className="flex min-w-0 items-center gap-2">
-                  <RowLabel
-                    className="fork-sidebar-title min-w-0 flex-1 truncate"
-                    command={nameDetail}
-                  >
-                    {row.kind === "subagent" && row.child ? (
-                      <SidebarProjectThreadName thread={row.child} badges={false}>
-                        <SidebarThreadTitle
-                          role={sidebarRoleLabel(row.child.source)}
-                          title={row.child.title}
-                        />
-                      </SidebarProjectThreadName>
-                    ) : (
-                      name
-                    )}
-                  </RowLabel>
-                </span>
-              }
-              badgeKind={
-                row.kind === "subagent" && row.child
-                  ? sidebarBadgeKind(
-                      sidebarRoleLabel(row.child.source),
-                      !!row.child.source.linkedIssue,
-                      row.child.pullRequests.length > 0,
-                    )
-                  : undefined
-              }
-              issue={
-                row.kind === "subagent" && row.child ? (
-                  <ThreadIssueBadge
-                    environmentId={row.child.environmentId}
-                    issue={row.child.source.linkedIssue}
-                  />
-                ) : undefined
-              }
-              pr={
-                row.kind === "subagent" && row.child ? (
-                  <ThreadPullRequestBadge thread={row.child} />
-                ) : undefined
-              }
-              time={time}
-              status={<ThreadStatusMark status={status} />}
-            />
-          ) : (
-            <>
-              {locationIcon}
-              {roleIcon}
-              {icon}
-              <RowLabel
-                className="fork-sidebar-title min-w-0 flex-1 truncate text-foreground/85"
-                command={nameDetail}
-              >
-                {name}
-              </RowLabel>
-              {sameProgram ? <span className="shrink-0">×{sameProgram}</span> : null}
-              {props.compact ? null : (
-                <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
-              )}
-              {status === "approval" || status === "input" || status === "paused" ? (
-                <span className="flex w-12 shrink-0 justify-end">
-                  <ThreadStatusMark status={status} />
-                </span>
-              ) : row.kind === "subagent" && row.child ? (
-                <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
-              ) : row.startedAt ? (
-                <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
-              ) : null}
-              {row.kind !== "subagent" ? <ThreadStatusMark status="working" /> : null}
-            </>
-          );
+          const content =
+            props.columns && row.kind === "subagent" && row.child ? (
+              <SidebarChildThreadColumns
+                thread={row.child}
+                provider={provider}
+                location={locationIcon}
+                status={status}
+                shortModelNames
+              />
+            ) : props.columns ? (
+              <SidebarThreadColumns
+                caret={sameProgram ? <SidebarCaretSlot count={sameProgram} /> : undefined}
+                provider={icon}
+                name={
+                  <span className="flex min-w-0 items-center gap-2">
+                    <RowLabel
+                      className="fork-sidebar-title min-w-0 flex-1 truncate"
+                      command={nameDetail}
+                    >
+                      {name}
+                    </RowLabel>
+                  </span>
+                }
+                time={time}
+                status={<ThreadStatusMark status={status} />}
+              />
+            ) : (
+              <>
+                {locationIcon}
+                {roleIcon}
+                {icon}
+                <RowLabel
+                  className="fork-sidebar-title min-w-0 flex-1 truncate text-foreground/85"
+                  command={nameDetail}
+                >
+                  {name}
+                </RowLabel>
+                {sameProgram ? <span className="shrink-0">×{sameProgram}</span> : null}
+                {props.compact ? null : (
+                  <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
+                )}
+                {status === "approval" || status === "input" || status === "paused" ? (
+                  <span className="flex w-12 shrink-0 justify-end">
+                    <ThreadStatusMark status={status} />
+                  </span>
+                ) : row.kind === "subagent" && row.child ? (
+                  <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
+                ) : row.startedAt ? (
+                  <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
+                ) : null}
+                {row.kind !== "subagent" ? <ThreadStatusMark status="working" /> : null}
+              </>
+            );
           const element =
             row.kind === "subagent" && childThreadId ? (
               <SidebarChildWorkButton

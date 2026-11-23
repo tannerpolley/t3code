@@ -157,7 +157,7 @@ it("targets the idle checker for clicks and context menus beneath a running impl
         onChildClick={onClick}
         onChildContextMenu={onContextMenu}
       />
-      <SidebarWorkerRows thread={root} onClick={onClick} onContextMenu={onContextMenu} />
+      <SidebarWorkerRows columns thread={root} onClick={onClick} onContextMenu={onContextMenu} />
     </AppAtomRegistryProvider>,
   );
   const checker = screen.getByRole("button", { name: /Checker/ });
