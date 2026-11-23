@@ -84,12 +84,9 @@ const make = Effect.gen(function* () {
     NodeFS.renameSync(pendingPath, recordPath);
     return () => NodeFS.rmSync(recordPath, { force: true });
   };
-  // Publish the server identity even before its first provider. Another server
-  // using this home must not stop the shared systemd slice while we are alive.
+  // Publish the server identity before it can launch a provider scope.
   const forgetOwner = writeRecord([]);
   yield* Effect.addFinalizer(() => Effect.sync(forgetOwner));
-  let hasOtherLiveOwner = false;
-
   // Only immutable per-launch records are shared between server instances. A
   // live owner's records belong to that server, even when it uses this home.
   for (const file of NodeFS.readdirSync(directory)) {
@@ -98,10 +95,7 @@ const make = Effect.gen(function* () {
     const record = readRecord(recordPath);
     if (record === undefined) continue;
     if (record.hostname !== hostname || record.stateDir !== stateDir) continue;
-    if (matches(record.owner)) {
-      if (record.owner.pid !== process.pid) hasOtherLiveOwner = true;
-      continue;
-    }
+    if (matches(record.owner)) continue;
     let survived = false;
     for (const survivor of record.processes) {
       if (survivor.pid === process.pid || !matches(survivor)) continue;
@@ -124,7 +118,19 @@ const make = Effect.gen(function* () {
   }
 
   return {
-    hasOtherLiveOwner,
+    get hasOtherLiveOwner() {
+      return NodeFS.readdirSync(directory).some((file) => {
+        if (!file.endsWith(".json")) return false;
+        const record = readRecord(NodePath.join(directory, file));
+        return (
+          record !== undefined &&
+          record.hostname === hostname &&
+          record.stateDir === stateDir &&
+          record.owner.pid !== process.pid &&
+          matches(record.owner)
+        );
+      });
+    },
     register: (pid: number) => {
       const provider = identity(pid);
       if (provider === undefined || provider.ppid !== process.pid) {

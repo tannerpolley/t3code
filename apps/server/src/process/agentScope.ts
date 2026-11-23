@@ -105,7 +105,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const hostEnvironment = yield* HostProcess.Environment;
   const { stateDir } = yield* ServerConfig.ServerConfig;
-  const { hasOtherLiveOwner } = yield* ProviderProcesses.ProviderProcesses;
+  const providerProcesses = yield* ProviderProcesses.ProviderProcesses;
   const configuredParent = hostEnvironment.T3CODE_AGENT_SLICE?.trim();
   let agentsParent = DEFAULT_AGENTS_PARENT;
   if (configuredParent) {
@@ -143,29 +143,41 @@ export const make = Effect.gen(function* () {
   // Old agents keep their scopes when the server is killed, and the restarted
   // server resumes their sessions. Stop them first, so two copies of one
   // session never work in the same worktree.
-  const stopLeftoverSlice = Effect.fn("agentScope.stopLeftoverSlice")(function* (
+  const stopLeftoverAgents = Effect.fn("agentScope.stopLeftoverAgents")(function* (
     systemctl: string,
-    slice: string,
   ) {
     const shown = yield* run(systemctl, [
       "--user",
       "show",
-      slice,
-      "--property=ActiveState,ControlGroup",
+      "t3code-*.scope",
+      "--property=Id,Slice,ActiveState,ControlGroup",
     ]);
-    if (shown._tag === "None") return;
-    const values = parseKeyValues(shown.value.stdout);
-    if (values.get("ActiveState") !== "active") return;
-    const controlGroup = values.get("ControlGroup") ?? "";
-    const events = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
-    if (parseCgroupCounter(events, "populated") === 0) return;
-    yield* Effect.logWarning("Stopping agents left by a previous server", { slice });
+    if (shown._tag === "None" || shown.value.code !== 0) return;
+    const suffix = ownedSlice.slice(agentsParent.length);
+    const units: string[] = [];
+    for (const block of shown.value.stdout.split("\n\n")) {
+      const values = parseKeyValues(block);
+      const unit = values.get("Id");
+      if (
+        unit === undefined ||
+        !/^t3code-.+-[a-f0-9]{8}\.scope$/.test(unit) ||
+        !values.get("Slice")?.endsWith(suffix) ||
+        values.get("ActiveState") !== "active"
+      )
+        continue;
+      const controlGroup = values.get("ControlGroup");
+      const events = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
+      if (parseCgroupCounter(events, "populated") !== 0) units.push(unit);
+    }
+    // Check live owners after taking the scope snapshot so a concurrent startup cannot add a stop target.
+    if (units.length === 0 || providerProcesses.hasOtherLiveOwner) return;
+    yield* Effect.logWarning("Stopping agents left by a previous server", { units });
     const stopped = yield* runner
-      .run({ command: systemctl, args: ["--user", "stop", slice], timeout: "30 seconds" })
+      .run({ command: systemctl, args: ["--user", "stop", ...units], timeout: "30 seconds" })
       .pipe(Effect.option);
     if (stopped._tag === "None" || stopped.value.code !== 0) {
       yield* Effect.logWarning("Could not stop agents left by a previous server", {
-        slice,
+        units,
         stderr: stopped._tag === "Some" ? stopped.value.stderr.trim() : undefined,
       });
     }
@@ -178,28 +190,7 @@ export const make = Effect.gen(function* () {
       const systemdRun = yield* resolve("systemd-run", hostEnvironment);
       const systemctl = yield* resolve("systemctl", hostEnvironment);
       if (systemdRun === null || systemctl === null) return undefined;
-      if (!hasOtherLiveOwner) {
-        // The home hash also identifies scopes left behind under a previous parent.
-        const suffix = ownedSlice.slice(agentsParent.length);
-        const listed = yield* run(systemctl, [
-          "--user",
-          "list-units",
-          "--type=slice",
-          "--state=active",
-          "--plain",
-          "--no-legend",
-          "--full",
-          `*${suffix}`,
-        ]);
-        const slices = new Set([ownedSlice]);
-        if (listed._tag === "Some" && listed.value.code === 0) {
-          for (const line of listed.value.stdout.split("\n")) {
-            const slice = line.trimStart().split(/\s+/, 1)[0];
-            if (slice?.endsWith(suffix)) slices.add(slice);
-          }
-        }
-        for (const slice of slices) yield* stopLeftoverSlice(systemctl, slice);
-      }
+      yield* stopLeftoverAgents(systemctl);
       const probe = (options: ReadonlyArray<string>) =>
         run(systemdRun, [
           "--user",
