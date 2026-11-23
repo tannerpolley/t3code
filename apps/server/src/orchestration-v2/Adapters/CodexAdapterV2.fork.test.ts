@@ -153,9 +153,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
-                      request: (method, params) =>
+                      request: (method, params, onResult) =>
                         onRequest(method, params).pipe(
-                          Effect.andThen(client.request(method, params)),
+                          Effect.andThen(client.request(method, params, onResult)),
                         ),
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
                 ),

@@ -834,11 +834,15 @@ describe("CodexAdapterV2 shared transport", () => {
     { exit: "numeric", active: true },
     { exit: "SIGKILL", active: true },
     { exit: "invalid config", active: true },
+    { exit: "process exit after reaching the usage limit", active: true },
     { exit: "process exit after a stderr warning", active: true },
     { exit: "disconnect after a terminal auth denial", active: true },
     { exit: "turn/start timeout", active: true },
-    { exit: "turn/start reply timeout after notification", active: true },
+    { exit: "turn/start timeout discards early events", active: true },
     { exit: "late start notification during the next attempt", active: true },
+    { exit: "completion before the next start reply", active: true },
+    { exit: "Codex starts its own goal continuation", active: true },
+    { exit: "compaction after archive and resume", active: true },
   ] as const)("handles $exit (active turn: $active)", ({ exit, active }) =>
     Effect.gen(function* () {
       const scenario = `process-exit-${exit}-${active}`;
@@ -850,7 +854,6 @@ describe("CodexAdapterV2 shared transport", () => {
         Queue.offer(input, new TextEncoder().encode(JSON.stringify(frame) + "\n"));
       const outputEnded = yield* Deferred.make<void>();
       const turnStarted = yield* Deferred.make<void>();
-      const stalledTurnStarted = yield* Deferred.make<void>();
       const turnCompleted = yield* Deferred.make<void>();
       const stalledRequests = yield* Queue.unbounded<number>();
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
@@ -863,18 +866,20 @@ describe("CodexAdapterV2 shared transport", () => {
         prompt: "stall",
       });
       let threadsStarted = 0;
+      const stderr =
+        exit === "invalid config"
+          ? "Error: invalid configuration"
+          : exit === "process exit after a stderr warning"
+            ? "warning: slow request"
+            : exit === "process exit after reaching the usage limit"
+              ? "You’ve hit your usage limit."
+              : undefined;
       const terminationError =
-        exit === "numeric" ||
-        exit === "invalid config" ||
-        exit === "process exit after a stderr warning"
+        exit === "numeric" || stderr !== undefined
           ? new CodexError.CodexAppServerProcessExitedError({
               code: 17,
               pid: 52,
-              ...(exit === "invalid config"
-                ? { stderr: "Error: invalid configuration" }
-                : exit === "process exit after a stderr warning"
-                  ? { stderr: "warning: slow request" }
-                  : {}),
+              ...(stderr === undefined ? {} : { stderr }),
             })
           : new CodexError.CodexAppServerTransportError({
               operation: "read-process-exit-status",
@@ -905,14 +910,19 @@ describe("CodexAdapterV2 shared transport", () => {
                   yield* Queue.offer(stalledRequests, frame.id);
                   return;
                 }
+                if (frame.method === "thread/archive" || frame.method === "thread/compact/start") {
+                  yield* emit({ id: frame.id, result: {} });
+                  return;
+                }
+                const resuming = frame.method === "thread/resume";
                 const replies =
-                  frame.method === "thread/start" && ++threadsStarted === 2
+                  resuming || (frame.method === "thread/start" && ++threadsStarted === 2)
                     ? stalledPreamble
                     : preamble;
                 const response = replies.find(
                   (entry) =>
                     entry.type === "emit_inbound" &&
-                    entry.label === frame.method &&
+                    entry.label === (resuming ? "thread/start" : frame.method) &&
                     Predicate.isObject(entry.frame) &&
                     "id" in entry.frame,
                 );
@@ -950,12 +960,7 @@ describe("CodexAdapterV2 shared transport", () => {
           Effect.sync(() => events.push(event)).pipe(
             Effect.andThen(
               event.type === "provider_turn.updated" && event.providerTurn.status === "running"
-                ? Deferred.succeed(
-                    event.providerTurn.nativeTurnRef?.nativeId === "turn-stalled"
-                      ? stalledTurnStarted
-                      : turnStarted,
-                    undefined,
-                  )
+                ? Deferred.succeed(turnStarted, undefined)
                 : event.type === "turn.terminal"
                   ? Deferred.succeed(turnCompleted, undefined)
                   : Effect.void,
@@ -988,8 +993,11 @@ describe("CodexAdapterV2 shared transport", () => {
       yield* Deferred.await(turnStarted);
       if (
         exit === "turn/start timeout" ||
-        exit === "turn/start reply timeout after notification" ||
-        exit === "late start notification during the next attempt"
+        exit === "turn/start timeout discards early events" ||
+        exit === "late start notification during the next attempt" ||
+        exit === "completion before the next start reply" ||
+        exit === "Codex starts its own goal continuation" ||
+        exit === "compaction after archive and resume"
       ) {
         const threadId = ThreadId.make("thread-stalled");
         const providerThread = yield* runtime.ensureThread({
@@ -1009,7 +1017,11 @@ describe("CodexAdapterV2 shared transport", () => {
           )
           .pipe(Effect.result, Effect.forkScoped);
         const id = yield* Queue.take(stalledRequests);
-        if (exit === "turn/start reply timeout after notification") {
+        if (exit === "turn/start timeout discards early events") {
+          const receivedStart = yield* Deferred.make<void>();
+          yield* client.handleServerNotification("turn/started", ({ threadId }) =>
+            threadId === stalledThreadId ? Deferred.succeed(receivedStart, undefined) : Effect.void,
+          );
           yield* emit({
             method: "turn/started",
             params: {
@@ -1017,11 +1029,50 @@ describe("CodexAdapterV2 shared transport", () => {
               turn: makeCodexReplayTurn({ id: "turn-stalled", status: "inProgress" }),
             },
           });
-          yield* Deferred.await(stalledTurnStarted);
+          yield* Deferred.await(receivedStart);
         }
         yield* TestClock.adjust("60 seconds");
         const result = yield* Fiber.join(start);
-        if (exit === "late start notification during the next attempt") {
+        const notifyTurn = (turnId: string, status: "inProgress" | "completed") =>
+          emit({
+            method: status === "inProgress" ? "turn/started" : "turn/completed",
+            params: {
+              threadId: stalledThreadId,
+              turn: makeCodexReplayTurn({ id: turnId, status }),
+            },
+          });
+        if (exit === "compaction after archive and resume") {
+          assert(result._tag === "Failure");
+          yield* runtime.unloadThread!({ providerThread, archive: true });
+          const resumed = yield* runtime.resumeThread({ providerThread });
+          const attemptId = RunAttemptId.make("attempt-compact");
+          yield* runtime.compactThread!(
+            makeCodexTestTurnInput({
+              threadId,
+              providerThread: resumed,
+              now: yield* DateTime.now,
+              attemptId,
+              text: "/compact",
+            }),
+          );
+          yield* notifyTurn("turn-compact", "inProgress");
+          yield* notifyTurn("turn-compact", "completed");
+          yield* Deferred.await(turnCompleted);
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.runAttemptId === attemptId &&
+                event.providerTurn.status === "completed",
+            ),
+          );
+          return;
+        }
+        if (
+          exit === "late start notification during the next attempt" ||
+          exit === "completion before the next start reply" ||
+          exit === "Codex starts its own goal continuation"
+        ) {
           assert(result._tag === "Failure");
           const attemptId = RunAttemptId.make("attempt-next");
           const next = yield* runtime
@@ -1036,28 +1087,59 @@ describe("CodexAdapterV2 shared transport", () => {
             )
             .pipe(Effect.forkScoped);
           const nextId = yield* Queue.take(stalledRequests);
-          for (const status of ["inProgress", "completed"] as const) {
-            yield* emit({
-              method: status === "inProgress" ? "turn/started" : "turn/completed",
-              params: {
-                threadId: stalledThreadId,
-                turn: makeCodexReplayTurn({ id: "turn-stalled", status }),
-              },
-            });
+          const earlyCompletion = exit === "completion before the next start reply";
+          if (exit !== "Codex starts its own goal continuation") {
+            const earlyTurnId = earlyCompletion ? "turn-next" : "turn-stalled";
+            yield* notifyTurn(earlyTurnId, "inProgress");
+            yield* notifyTurn(earlyTurnId, "completed");
           }
           yield* emit({
             id: nextId,
             result: { turn: makeCodexReplayTurn({ id: "turn-next", status: "inProgress" }) },
           });
-          yield* emit({
-            method: "turn/completed",
-            params: {
-              threadId: stalledThreadId,
-              turn: makeCodexReplayTurn({ id: "turn-next", status: "completed" }),
-            },
-          });
           yield* Fiber.join(next);
-          yield* Deferred.await(turnCompleted);
+          if (exit === "Codex starts its own goal continuation") {
+            const updateGoal = (turnId: string, status: "active" | "complete") =>
+              emit({
+                method: "thread/goal/updated",
+                params: {
+                  threadId: stalledThreadId,
+                  turnId,
+                  goal: {
+                    threadId: stalledThreadId,
+                    objective: "Ship the feature",
+                    status,
+                    tokenBudget: null,
+                    tokensUsed: 0,
+                    timeUsedSeconds: 0,
+                    createdAt: 1782622440,
+                    updatedAt: 1782622450,
+                  },
+                },
+              });
+            yield* updateGoal("turn-next", "active");
+            yield* notifyTurn("turn-next", "completed");
+            yield* notifyTurn("turn-goal", "inProgress");
+            yield* updateGoal("turn-goal", "complete");
+            yield* notifyTurn("turn-goal", "completed");
+            yield* Deferred.await(turnCompleted);
+            assert.isTrue(
+              events.some(
+                (event) =>
+                  event.type === "provider_turn.updated" &&
+                  event.providerTurn.nativeTurnRef?.nativeId === "turn-goal" &&
+                  event.providerTurn.status === "completed",
+              ),
+            );
+            return;
+          }
+          if (!earlyCompletion) yield* notifyTurn("turn-next", "completed");
+          if (earlyCompletion) {
+            yield* Queue.end(input);
+            yield* Fiber.await(eventReader);
+          } else {
+            yield* Deferred.await(turnCompleted);
+          }
           assert.deepEqual(
             events.flatMap((event) =>
               event.type === "provider_turn.updated" &&
@@ -1089,12 +1171,15 @@ describe("CodexAdapterV2 shared transport", () => {
           ["completed"],
           "the other turn should complete on the same app-server",
         );
-        if (exit === "turn/start timeout") {
-          assert(result._tag === "Failure");
-          assert.instanceOf(result.failure.cause, CodexError.CodexAppServerRequestTimeoutError);
-        } else {
-          assert.equal(result._tag, "Success");
-        }
+        assert(result._tag === "Failure");
+        assert.instanceOf(result.failure.cause, CodexError.CodexAppServerRequestTimeoutError);
+        assert.isFalse(
+          events.some(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.nativeTurnRef?.nativeId === "turn-stalled",
+          ),
+        );
         return;
       }
       if (!active) {
@@ -1146,14 +1231,10 @@ describe("CodexAdapterV2 shared transport", () => {
           assert.include(terminal.failure.message, "does not authorize");
           return;
         }
-        assert.equal(
-          terminal.failure.class,
-          exit === "invalid config" ? "provider_error" : "transport_error",
-        );
-        assert.equal(
-          terminal.failure.code,
-          exit === "invalid config" ? null : CODEX_APP_SERVER_DISCONNECTED,
-        );
+        const persistent =
+          exit === "invalid config" || exit === "process exit after reaching the usage limit";
+        assert.equal(terminal.failure.class, persistent ? "provider_error" : "transport_error");
+        assert.equal(terminal.failure.code, persistent ? null : CODEX_APP_SERVER_DISCONNECTED);
       }
     }).pipe(
       Effect.scoped,
@@ -1256,10 +1337,10 @@ describe("CodexAdapterV2 session initialize", () => {
                 (client) =>
                   ({
                     ...client,
-                    request: (method, params) =>
+                    request: (method, params, onResult) =>
                       Effect.sync(() => {
                         if (method === "initialize") initializeRequests++;
-                      }).pipe(Effect.andThen(client.request(method, params))),
+                      }).pipe(Effect.andThen(client.request(method, params, onResult))),
                   }) satisfies CodexClient.CodexAppServerClient["Service"],
               ),
               Effect.mapError(
@@ -1638,9 +1719,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
-                      request: (method, params) =>
+                      request: (method, params, onResult) =>
                         onRequest(method, params).pipe(
-                          Effect.andThen(client.request(method, params)),
+                          Effect.andThen(client.request(method, params, onResult)),
                         ),
                       handleServerNotification: (method, handler) =>
                         client.handleServerNotification(method, (payload) =>
@@ -1648,9 +1729,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                         ),
                       raw: {
                         ...client.raw,
-                        request: (method, params) =>
+                        request: (method, params, onResult) =>
                           onRequest(method, params).pipe(
-                            Effect.andThen(client.raw.request(method, params)),
+                            Effect.andThen(client.raw.request(method, params, onResult)),
                           ),
                       },
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
@@ -4840,6 +4921,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 },
               });
+            entries.push(
+              outcome === "start-fails"
+                ? {
+                    type: "emit_inbound",
+                    frame: {
+                      id: 3 + attempt,
+                      error: { code: -32603, message: "Start failed" },
+                    },
+                  }
+                : withReplayRequestId(entry, retryRequestId(attempt)),
+            );
             if (outcome === "new-run") {
               entries.push(
                 ...codexReplayPreamble({
@@ -4852,23 +4944,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 ...failureEntries(2),
               );
             }
-            entries.push(
-              outcome === "start-fails"
-                ? {
-                    type: "emit_inbound",
-                    frame: {
-                      id: 3 + attempt,
-                      error: { code: -32603, message: "Start failed" },
-                    },
-                  }
-                : withReplayRequestId(entry, retryRequestId(attempt)),
-            );
-          } else if (outcome !== "start-fails") {
-            entries.push(
-              outcome === "stop-starting" && entry.type === "emit_inbound"
-                ? { ...entry, afterMs: 1_000 }
-                : entry,
-            );
             if (outcome === "stop-starting") {
               entries.push(
                 {
@@ -4882,6 +4957,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 { type: "emit_inbound", frame: { id: 5, result: {} } },
               );
             }
+          } else if (outcome !== "start-fails") {
+            entries.push(
+              outcome === "stop-starting" && entry.type === "emit_inbound"
+                ? { ...entry, afterMs: 1_000 }
+                : entry,
+            );
           }
         }
         if (outcome === "exhaust") entries.push(...failureEntries(attempt));
@@ -9983,13 +10064,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             text: "CAPACITY_CHILD_DONE",
             turnId: RESUME_CHILD_TURN_1,
             completedAtMs: 1782622480000,
-            // The late RPC response must still arrive within the transport deadline.
-            afterMs: parentStatus === "replied-last" ? 30_000 : 60_000,
+            afterMs: 60_000,
           }),
           childTurnCompleted(RESUME_CHILD_TURN_1),
         ];
         if (parentStatus === "replied-last") {
-          entries.push(...entries.splice(lateChildPrefix().spawned.length + 2, 1));
+          const [reply] = entries.splice(lateChildPrefix().spawned.length + 2, 1);
+          entries.splice(-2, 0, reply!);
         }
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({ scenario: "capacity-late-child", entries }),

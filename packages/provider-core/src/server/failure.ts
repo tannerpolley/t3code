@@ -77,7 +77,7 @@ const CODEX_GOAL_VALIDATION_MESSAGE =
 const CODEX_ACCESS_REQUIREMENT_REJECTION =
   /invalid value for `(approval_policy|sandbox_mode)`: `([A-Za-z]{1,32})` is not in the allowed set /u;
 const CODEX_PERSISTENT_EXIT =
-  /\b(?:invalid config(?:uration)?|error loading config(?:\.toml)?|failed to (?:load|parse) config(?:uration)?|authentication (?:failed|required)|not logged in|usage limit (?:reached|exceeded))\b/iu;
+  /\b(?:invalid config(?:uration)?|error loading config(?:\.toml)?|failed to (?:load|parse) config(?:uration)?|authentication (?:failed|required)|not logged in|you['’]ve hit your usage limit|usage limit (?:reached|exceeded))\b/iu;
 
 const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",

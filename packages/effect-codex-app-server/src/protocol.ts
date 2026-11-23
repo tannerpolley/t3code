@@ -64,6 +64,7 @@ export interface CodexAppServerPatchedProtocol {
   readonly request: (
     method: string,
     payload?: unknown,
+    onResult?: CodexAppServerPendingRequest["onResult"],
   ) => Effect.Effect<unknown, CodexError.CodexAppServerError>;
   readonly notify: (
     method: string,
@@ -80,8 +81,12 @@ export interface CodexAppServerPatchedProtocol {
 }
 
 interface CodexAppServerPendingRequest {
-  readonly deferred: Deferred.Deferred<unknown, CodexError.CodexAppServerError>;
+  readonly deferred: Deferred.Deferred<
+    Effect.Effect<unknown, CodexError.CodexAppServerError>,
+    CodexError.CodexAppServerError
+  >;
   readonly method: string;
+  readonly onResult?: (result: unknown) => Effect.Effect<void, CodexError.CodexAppServerError>;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -325,8 +330,18 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
           ),
         );
       }
-      return resolvePending(requestId, ({ deferred }) =>
-        Deferred.succeed(deferred, response.result),
+      return resolvePending(requestId, ({ deferred, onResult }) =>
+        onResult === undefined
+          ? Deferred.succeed(deferred, Effect.succeed(response.result))
+          : Effect.gen(function* () {
+              const handled = yield* Deferred.make<void, CodexError.CodexAppServerError>();
+              // Stop the wire deadline on receipt, then finish registration before reading more events.
+              yield* Deferred.succeed(
+                deferred,
+                Deferred.await(handled).pipe(Effect.as(response.result)),
+              );
+              yield* Deferred.complete(handled, onResult(response.result));
+            }),
       );
     };
 
@@ -538,6 +553,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const request = Effect.fn("CodexAppServerProtocol.request")(function* (
       method: string,
       payload?: unknown,
+      onResult?: CodexAppServerPendingRequest["onResult"],
     ) {
       const requestId = yield* Ref.modify(
         nextRequestId,
@@ -549,10 +565,17 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         "rpc.request_id": requestId,
       };
       yield* Effect.annotateCurrentSpan(attributes);
-      const deferred = yield* Deferred.make<unknown, CodexError.CodexAppServerError>();
+      const deferred = yield* Deferred.make<
+        Effect.Effect<unknown, CodexError.CodexAppServerError>,
+        CodexError.CodexAppServerError
+      >();
       return yield* Effect.acquireUseRelease(
         Ref.update(pending, (current) =>
-          new Map(current).set(String(requestId), { deferred, method }),
+          new Map(current).set(String(requestId), {
+            deferred,
+            method,
+            ...(onResult === undefined ? {} : { onResult }),
+          }),
         ),
         () =>
           Effect.gen(function* () {
@@ -575,6 +598,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
                     }),
                   ),
               }),
+              Effect.flatten,
             );
           }),
         () => removePending(String(requestId)),
