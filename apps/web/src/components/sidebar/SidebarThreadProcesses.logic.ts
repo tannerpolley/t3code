@@ -1,3 +1,4 @@
+import { isIssueWorkerChild } from "@t3tools/shared/issueWorkerStatus";
 import type { ThreadProcessGroup, ThreadProcesses } from "@t3tools/contracts";
 import { shellProgramName } from "@t3tools/shared/shellCommand";
 
@@ -105,7 +106,7 @@ export function resolveSidebarProjectStatusMark(
   status: SidebarThreadStatus,
   workStatus: SidebarThreadStatus,
 ) {
-  if (thread.lineage.parentThreadId !== null) return workStatus;
+  if (isIssueWorkerChild(thread.source)) return workStatus;
   const completionMark = resolveThreadStatusMark(thread, localLastVisitedAt, status);
   return completionMark === "done" ? completionMark : workStatus;
 }

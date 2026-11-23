@@ -16,6 +16,12 @@ import { isExplicitlyPausedThread } from "./threadActivity.ts";
 type Worker = NonNullable<RepositoryIssueSummary["liveWork"]>[number];
 type WorkerState = Pick<Worker, "status" | "requestHandledByParent" | "paused">;
 
+export function isIssueWorkerChild(
+  thread: Pick<OrchestrationV2ThreadShell, "lineage" | "linkedIssue">,
+) {
+  return thread.lineage.parentThreadId !== null && thread.linkedIssue !== undefined;
+}
+
 export function classifyIssueWorker(
   thread: Pick<
     OrchestrationV2ThreadShell,

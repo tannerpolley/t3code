@@ -1,4 +1,8 @@
-import { classifyIssueWorker, issueWorkerStatus } from "@t3tools/shared/issueWorkerStatus";
+import {
+  classifyIssueWorker,
+  isIssueWorkerChild,
+  issueWorkerStatus,
+} from "@t3tools/shared/issueWorkerStatus";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -157,19 +161,19 @@ export function useSidebarIssuePresentation(
 }
 
 export function useSidebarIssueWorkerStatus(thread: EnvironmentThreadShell, idle: boolean) {
-  const issue =
-    idle && thread.lineage.parentThreadId !== null ? thread.source.linkedIssue : undefined;
+  const issue = idle && isIssueWorkerChild(thread.source) ? thread.source.linkedIssue : undefined;
   const status = useAtomValue(
     issue === undefined
       ? UNKNOWN_ISSUE_STATUS
       : sidebarIssueStatus(JSON.stringify([thread.environmentId, issue.host, issue.nodeId])),
   );
-  if (issue === undefined) return null;
+  if (issue === undefined) return undefined;
   const links = visibleThreadPullRequests(thread.pullRequests);
-  return issueWorkerStatus(
+  const workerStatus = issueWorkerStatus(
     { ...classifyIssueWorker(thread.source), pullRequests: links.map((pr) => pr.url) },
     { state: status?.state, pullRequests: issuePullRequests(status?.pullRequests ?? [], links) },
   );
+  return status === undefined && workerStatus === "idle" ? null : workerStatus;
 }
 
 /** Apply streamed work after GitHub paging, whose freshness is keyed by fetchedAt. */

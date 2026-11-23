@@ -1437,7 +1437,7 @@ const SidebarProjectThreadRow = memo(
     const status = codexStyle ? workStatus : threadStatus;
     const workerStatus = useSidebarIssueWorkerStatus(thread, status === "ready");
     const workerLabels = useWorkerStatusLabels();
-    const workerLabel = workerStatus === null ? undefined : workerLabels[workerStatus];
+    const workerLabel = workerStatus == null ? workerStatus : workerLabels[workerStatus];
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
     const hasWork = workCount > 0;
     const { open: workOpen, onToggle: toggleWork } = useSidebarWorkExpansion(

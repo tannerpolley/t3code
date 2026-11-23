@@ -1,3 +1,4 @@
+import { isIssueWorkerChild } from "@t3tools/shared/issueWorkerStatus";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { useWorkerStatusLabels } from "../issues/IssueLiveWork";
 import { useSidebarIssueWorkerStatus } from "../../state/repositoryIssues";
@@ -786,7 +787,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     variant !== "columns" && status === "ready",
   );
   const workerLabels = useWorkerStatusLabels();
-  const isChild = thread.lineage.parentThreadId !== null;
+  const isManagedWorker = isIssueWorkerChild(thread.source);
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -871,7 +872,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                                 ? "text-success-foreground"
                                 : "text-muted-foreground",
                           } as const)
-                        : isUnread && !isChild
+                        : isUnread && !isManagedWorker
                           ? {
                               label: "Done",
                               icon: "done" as const,

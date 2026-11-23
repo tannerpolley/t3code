@@ -79,7 +79,7 @@ export function SidebarChildThreadColumns(props: {
   readonly location: ReactNode;
   readonly status: SidebarThreadStatus;
   readonly shortModelNames: boolean;
-  readonly workerLabel?: string | undefined;
+  readonly workerLabel?: string | null | undefined;
 }) {
   const { thread, provider, status } = props;
   const role = sidebarRoleLabel(thread.source);

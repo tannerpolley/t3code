@@ -167,7 +167,7 @@ function SidebarWorkerButton(
   const status = resolveSidebarThreadStatus(thread);
   const workerStatus = useSidebarIssueWorkerStatus(thread, status === "ready");
   const labels = useWorkerStatusLabels();
-  const workerLabel = workerStatus === null ? undefined : labels[workerStatus];
+  const workerLabel = workerStatus == null ? workerStatus : labels[workerStatus];
   const provider = sidebarThreadProvider(props.providerEntries, thread.providerInstanceId);
   const button = (
     <button
@@ -221,7 +221,7 @@ function SidebarWorkerButton(
             status !== "ready" ? (
               <ThreadStatusMark status={status} />
             ) : null
-          ) : (
+          ) : workerLabel === null ? null : (
             <span className="shrink-0">{workerLabel}</span>
           )}
         </>
