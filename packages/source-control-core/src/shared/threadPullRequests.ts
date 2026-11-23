@@ -11,7 +11,7 @@ import type { SourceControlDefinitionRegistry } from "./definition.ts";
 
 type ThreadPullRequestKeySource = ThreadPullRequestKey & {
   readonly authority?: string;
-  readonly url?: string;
+  readonly url?: string | undefined;
 };
 
 function isOpen(link: ThreadPullRequestLink): boolean {

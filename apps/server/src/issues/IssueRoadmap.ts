@@ -330,7 +330,7 @@ export const layer = Layer.effect(
                   status,
                   paused,
                   requestHandledByParent,
-                  pullRequests,
+                  pullRequests = [],
                 }) => ({
                   threadId,
                   inherited,
