@@ -1214,6 +1214,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     <SidebarWorkerRows
       thread={thread}
       includeRunning={variant !== "columns"}
+      columns={variant === "columns"}
+      providerEntries={props.providerEntryByInstanceId}
       onClick={(event, worker) =>
         props.onThreadClick(event, scopeThreadRef(worker.environmentId, worker.id))
       }

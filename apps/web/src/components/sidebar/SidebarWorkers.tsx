@@ -6,8 +6,9 @@ import { useParams } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
 import { useGT } from "gt-react";
 import { CornerDownRightIcon } from "lucide-react";
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useState, type ComponentProps, type MouseEvent } from "react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { cn } from "../../lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -17,8 +18,15 @@ import { environmentThreadShells, threadFamilies } from "../../state/threads";
 import type { SidebarThreadSummary } from "../../types";
 import { resolveThreadRouteRef } from "../../threadRoutes";
 import { resolveSidebarThreadStatus, useSidebarRowSubscriptionLease } from "../Sidebar.logic";
+import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { ThreadStatusMark } from "../ThreadStatusMark";
+import { sidebarRoleLabel, sidebarThreadProvider } from "./SidebarBackgroundWork.logic";
+import { SidebarChildThreadColumns } from "./SidebarBackgroundWorkRows";
+import { PROJECTS_WORK_ROW_HEIGHT } from "./SidebarColumns";
+import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
+import { SidebarProjectThreadTooltip } from "./SidebarProjectThreadTooltip";
+import type { SidebarProviderEntry } from "./SidebarThreadRow";
 import { indexSidebarWorkers, sidebarWorkerPage } from "./SidebarWorkers.logic";
 
 const sidebarWorkers = Atom.map(environmentThreadShells.quietThreadShellsAtom, indexSidebarWorkers);
@@ -49,6 +57,8 @@ const childrenFor = Atom.family((key: string) =>
 type WorkerRowsProps = {
   readonly thread: SidebarThreadSummary;
   readonly includeRunning?: boolean;
+  readonly columns?: boolean | undefined;
+  readonly providerEntries?: ReadonlyMap<string, SidebarProviderEntry> | undefined;
   readonly onClick: (event: MouseEvent<HTMLButtonElement>, thread: SidebarThreadSummary) => void;
   readonly onContextMenu: (
     thread: SidebarThreadSummary,
@@ -95,18 +105,20 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   return (
     <ul
       ref={canPage && !paging ? listRef : undefined}
-      className="ms-3 min-h-px border-s border-sidebar-border/60 ps-1"
+      className={cn("min-h-px", !props.columns && "ms-3 border-s border-sidebar-border/60 ps-1")}
       onPointerDown={(event) => event.stopPropagation()}
     >
       {workers.map((worker) => (
         <li
           key={worker.id}
           data-thread-item={scopedThreadKey(scopeThreadRef(worker.environmentId, worker.id))}
-          className="list-none"
+          className={cn("list-none", props.columns && "fork-sidebar-agent-item")}
         >
           <SidebarWorkerButton
             thread={worker}
             parent={key}
+            columns={props.columns}
+            providerEntries={props.providerEntries}
             onClick={props.onClick}
             onContextMenu={props.onContextMenu}
           />
@@ -134,7 +146,10 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
 }
 
 function SidebarWorkerButton(
-  props: Pick<WorkerRowsProps, "thread" | "onClick" | "onContextMenu"> & {
+  props: Pick<
+    WorkerRowsProps,
+    "thread" | "columns" | "providerEntries" | "onClick" | "onContextMenu"
+  > & {
     readonly parent: string;
   },
 ) {
@@ -148,15 +163,34 @@ function SidebarWorkerButton(
   const key = scopedThreadKey(ref);
   const selected = useThreadSelectionStore((store) => store.selectedThreadKeys.has(key));
   const status = resolveSidebarThreadStatus(thread);
-  return (
+  const provider = sidebarThreadProvider(props.providerEntries, thread.providerInstanceId);
+  const button = (
     <button
       type="button"
       ref={active ? revealWorker : undefined}
       data-sidebar-row={key}
       data-sidebar-parent={props.parent}
       aria-current={active || undefined}
+      aria-label={
+        props.columns
+          ? sidebarProjectThreadAccessibleName({
+              role: sidebarRoleLabel(thread.source),
+              title: thread.title,
+              issueNumber: thread.source.linkedIssue?.number,
+              status,
+              links: thread.pullRequests,
+            })
+          : undefined
+      }
       className={cn(
-        "flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-0.5 text-start text-xs text-muted-foreground hover:bg-sidebar-row-hover hover:text-foreground",
+        "flex w-full min-w-0 cursor-pointer items-center rounded-md px-2 text-start hover:bg-sidebar-row-hover hover:text-foreground",
+        props.columns
+          ? cn(
+              "fork-sidebar-agent gap-2 text-2xs text-foreground/85",
+              PROJECTS_WORK_ROW_HEIGHT,
+              !active && !selected && "opacity-70 hover:opacity-100 focus-visible:opacity-100",
+            )
+          : "gap-1.5 py-0.5 text-xs text-muted-foreground",
         selected && "bg-sidebar-row-selected",
         active && "bg-sidebar-row-active text-sidebar-foreground",
       )}
@@ -166,11 +200,38 @@ function SidebarWorkerButton(
         props.onContextMenu(thread, { x: event.clientX, y: event.clientY });
       }}
     >
-      <CornerDownRightIcon aria-hidden className="size-3 shrink-0" />
-      <ThreadRoleIcon thread={thread.source} />
-      <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-      {status !== "ready" ? <ThreadStatusMark status={status} /> : null}
+      {props.columns ? (
+        <SidebarIdleWorkerColumns thread={thread} provider={provider} status={status} />
+      ) : (
+        <>
+          <CornerDownRightIcon aria-hidden className="size-3 shrink-0" />
+          <ThreadRoleIcon thread={thread.source} />
+          <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+          {status !== "ready" ? <ThreadStatusMark status={status} /> : null}
+        </>
+      )}
     </button>
+  );
+  return props.columns ? (
+    <SidebarProjectThreadTooltip thread={thread} provider={provider} render={button} />
+  ) : (
+    button
+  );
+}
+
+function SidebarIdleWorkerColumns(
+  props: Pick<ComponentProps<typeof SidebarChildThreadColumns>, "thread" | "provider" | "status">,
+) {
+  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
+  const locationStyle = useClientSettings((settings) => settings.sidebarLocationIconStyle);
+  return (
+    <SidebarChildThreadColumns
+      {...props}
+      shortModelNames={shortModelNames}
+      location={
+        <ThreadLocationIcon thread={props.thread} tooltip={false} worktreeStyle={locationStyle} />
+      }
+    />
   );
 }
 

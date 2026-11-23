@@ -27,6 +27,7 @@ import type { SidebarThreadSummary } from "../../types";
 import type { SidebarProviderEntry } from "./SidebarThreadRow";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
 import { shortModelName } from "../chat/ForkModelNames";
+import { getDisplayModelName } from "../chat/providerIconUtils";
 
 type ChildThread = SidebarThreadSummary;
 type LinkedSubagentTask = Extract<OrchestrationV2PendingBackgroundTask, { kind: "subagent" }> & {
@@ -94,13 +95,17 @@ export function resolveSidebarThreadModelLabel(
   const modelSlug = provider
     ? resolveSelectableModel(provider.driver, model, provider.models)
     : model;
-  const fullLabel = resolveForkSubagentMetadata({ model, provider }).modelLabel;
+  const catalogModel = provider?.models.find((candidate) => candidate.slug === modelSlug);
+  const fullLabel = catalogModel
+    ? getDisplayModelName(catalogModel, { preferShortName: short })
+    : resolveForkSubagentMetadata({ model }).modelLabel;
   const modelLabel = short ? shortModelName(fullLabel) : fullLabel;
+  if (!includeEffort) return modelLabel;
   const effort = formatModelSelectionEffort(
     { ...thread.modelSelection, model: modelSlug ?? model },
     provider?.models,
   );
-  return !includeEffort || effort === null ? modelLabel : `${modelLabel} · ${effort}`;
+  return effort === null ? modelLabel : `${modelLabel} · ${effort}`;
 }
 
 /**
