@@ -12,6 +12,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 import { CornerDownRightIcon } from "lucide-react";
 import {
   Fragment,
@@ -46,6 +47,7 @@ import {
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
 import { ThreadStatusMark } from "../ThreadStatusMark";
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { AgentElapsed } from "../chat/AgentElapsed";
 import {
   SidebarProjectThreadName,
@@ -185,6 +187,7 @@ export type SidebarBackgroundWorkRowsProps = {
 /** Subagent and background task rows in the sidebar's shared thread columns. */
 export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps) {
   const navigate = useNavigate();
+  const gt = useGT();
   const owner = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
   const ownerProvider =
     owner === null
@@ -222,6 +225,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
       )}
     >
       {rows.flatMap((row, index) => {
+        const pullRequestLabel =
+          row.kind !== "subagent" && row.pullRequestNumber !== undefined
+            ? gt("PR #{number}", { number: row.pullRequestNumber })
+            : null;
         const kindLabel =
           row.kind === "subagent"
             ? row.child
@@ -243,6 +250,14 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               driver={provider?.driver}
               provider={provider}
               fallbackIcon={CornerDownRightIcon}
+            />
+          ) : pullRequestLabel !== null ? (
+            <PullRequestGlyph.pullRequest
+              aria-hidden
+              className={cn(
+                "shrink-0 text-muted-foreground",
+                props.columns ? "size-4" : "size-3.5",
+              )}
             />
           ) : (
             <BackgroundProcessKindIcon
@@ -278,7 +293,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           const name =
             row.kind === "subagent"
               ? row.label
-              : (workRowProgram(row) ?? backgroundProcessKindLabel(row.kind, row.commandKind));
+              : (pullRequestLabel ?? workRowProgram(row) ?? kindLabel);
           const sameProgram = row.kind === "subagent" ? undefined : row.sameProgram;
           const nameDetail =
             row.kind === "subagent"
@@ -338,7 +353,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   {name}
                 </RowLabel>
                 {sameProgram ? <span className="shrink-0">×{sameProgram}</span> : null}
-                {props.compact ? null : (
+                {props.compact || pullRequestLabel !== null ? null : (
                   <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
                 )}
                 {status === "approval" || status === "input" || status === "paused" ? (
@@ -350,7 +365,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 ) : row.startedAt ? (
                   <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
                 ) : null}
-                {row.kind !== "subagent" ? <ThreadStatusMark status="working" /> : null}
+                {row.kind !== "subagent" ? <ThreadStatusMark status={status} /> : null}
               </>
             );
           const element =
@@ -463,7 +478,8 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 <Tooltip>
                   <TooltipTrigger render={element} />
                   <TooltipPopup side="right">
-                    {row.label} · {kindLabel}
+                    {row.label}
+                    {pullRequestLabel === null ? ` · ${kindLabel}` : null}
                     {modelLabel ? (
                       <>
                         <br />
