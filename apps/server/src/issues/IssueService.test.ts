@@ -821,9 +821,17 @@ it.effect("resolves the stable GitHub repository and issue identities", () =>
   }),
 );
 
-it.effect("finds T3's comment by its marker and rewrites it in place", () =>
+it.effect("rewrites T3’s status comment without invalidating roadmap reads", () =>
   Effect.gen(function* () {
-    const marker = "<!-- t3-issue-status:github.com:123:456 -->";
+    const marker = `<!-- t3-issue-status:${HOST}:123:456 -->`;
+    const edited = {
+      id: 789,
+      body: `Done\n\n${marker}`,
+      created_at: "2026-10-05T00:00:00Z",
+      updated_at: "2026-10-05T00:01:00Z",
+      html_url: `https://${HOST}/${REPOSITORY}/issues/7#issuecomment-789`,
+      issue_url: `https://${HOST}/api/v3/repos/${REPOSITORY}/issues/7`,
+    };
     const harness = makeHarness({
       responses: [
         httpResponse([
@@ -831,6 +839,12 @@ it.effect("finds T3's comment by its marker and rewrites it in place", () =>
           { id: 789, body: `Working\n\n${marker}` },
         ]),
         httpResponse({}),
+        httpResponse([]),
+        httpResponse([edited]),
+        httpResponse([]),
+        httpResponse([]),
+        httpResponse([{ ...edited, id: 788, body: "An edited reply" }]),
+        httpResponse([]),
       ],
     });
     const issues = yield* service(harness);
@@ -856,6 +870,18 @@ it.effect("finds T3's comment by its marker and rewrites it in place", () =>
     assert.equal(harness.calls[1]!.method, "PATCH");
     assert.isTrue(harness.calls[1]!.url.endsWith("/repos/acme/web/issues/comments/789"));
     assert.deepEqual(yield* decodeJson(harness.calls[1]!.body!), { body: `Done\n\n${marker}` });
+    const cursors = {
+      issuesSince: edited.created_at,
+      commentsSince: edited.created_at,
+      eventsAfter: 0,
+      issuesEtag: null,
+      commentsEtag: null,
+      eventsEtag: null,
+    };
+    assert.lengthOf((yield* issues.activitySince(issue, cursors)).comments.items, 1);
+    assert.equal(yield* issues.revision(issue), revision);
+    yield* issues.activitySince(issue, cursors);
+    assert.equal(yield* issues.revision(issue), revision + 1);
   }),
 );
 

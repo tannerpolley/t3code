@@ -587,7 +587,11 @@ export const make = Effect.fn("IssueService.make")(function* () {
       const activity = yield* github.activitySince(input, cursors);
       if (
         activity.issues.items.length > 0 ||
-        activity.comments.items.length > 0 ||
+        activity.comments.items.some(
+          ({ body, created_at, updated_at }) =>
+            created_at === updated_at ||
+            !/^<!-- t3-issue-status:[^\s]+:\d+:\d+ -->$/mu.test(body ?? ""),
+        ) ||
         activity.stateChanges.items.some((event) => event.id > cursors.eventsAfter)
       ) {
         bumpRepositoryGeneration(yield* resolveScope("list", input));
