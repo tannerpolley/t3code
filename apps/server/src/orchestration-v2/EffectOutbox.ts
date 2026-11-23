@@ -151,6 +151,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("issue.suspension.interrupt"),
     runId: RunId,
+    reason: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("issue.suspension.notify"),
@@ -673,6 +674,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
           // Idle claims return empty; tracing their full SQL on every poll overwhelms useful traces.
+          // Shutdown can save a stale retry marker. Clear it on claim so provider startup sees the same decision.
           const claimStatement = sql<EffectRow>`
             UPDATE orchestration_v2_effect_outbox
             SET
@@ -680,7 +682,23 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               attempt_count = attempt_count + 1,
               lease_owner = ${workerId},
               updated_at = ${nowIso},
-              last_error = NULL
+              last_error = NULL,
+              payload_json = CASE
+                WHEN effect_type != 'provider-runtime.continue' OR NOT json_valid(payload_json)
+                  THEN payload_json
+                WHEN json_extract(payload_json, '$.processLossCount') IS NOT NULL
+                  AND json_extract(payload_json, '$.transientFailureAttempt') IS NOT NULL
+                  AND EXISTS (
+                    SELECT 1
+                    FROM orchestration_v2_projection_run_attempts AS attempt
+                    JOIN orchestration_v2_projection_provider_turns AS turn
+                      ON turn.run_attempt_id = attempt.attempt_id
+                    WHERE attempt.thread_id = orchestration_v2_effect_outbox.thread_id
+                      AND attempt.run_id = json_extract(orchestration_v2_effect_outbox.payload_json, '$.sourceRunId')
+                  )
+                  THEN json_remove(payload_json, '$.transientFailureAttempt')
+                ELSE payload_json
+              END
             WHERE effect_id = (
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate

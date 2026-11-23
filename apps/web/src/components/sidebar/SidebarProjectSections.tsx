@@ -1371,6 +1371,7 @@ function ProjectDropLine() {
 
 const THREAD_STATUS_DOT_CLASS = {
   preparing: "bg-info",
+  paused: "bg-warning",
   request: "bg-info",
   approval: "bg-warning",
   failed: "bg-error",
@@ -1405,6 +1406,7 @@ const SidebarProjectThreadRow = memo(
     /** This row's `SidebarFamilyBlock` as JSON, in Codex style; equal text means equal marks. */
     readonly familyBlockText: string | undefined;
   }) {
+    const gt = useGT();
     const { assembly, codexStyle, thread } = props;
     const threadRef = scopeThreadRef(thread.environmentId, thread.id);
     const threadKey = scopedThreadKey(threadRef);
@@ -1470,10 +1472,14 @@ const SidebarProjectThreadRow = memo(
       if (!codexStyle) {
         return (
           <>
-            <span
-              aria-hidden
-              className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
-            />
+            {status === "paused" ? (
+              <ThreadStatusMark status={status} />
+            ) : (
+              <span
+                aria-hidden
+                className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
+              />
+            )}
             <ThreadLocationIcon thread={thread} tooltip={false} />
             <ThreadRoleIcon thread={thread.source} />
             <span className="min-w-0 flex-1">
@@ -1617,7 +1623,7 @@ const SidebarProjectThreadRow = memo(
             role: codexStyle ? role : undefined,
             title: thread.title,
             issueNumber: thread.source.linkedIssue?.number,
-            status,
+            status: status === "paused" ? gt("Paused") : status,
             links: thread.pullRequests,
           }),
           className: cn(

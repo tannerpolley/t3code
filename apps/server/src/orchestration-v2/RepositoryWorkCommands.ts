@@ -508,7 +508,11 @@ export function makeRepositoryWorkCommands({
             id: `effect:${command.commandId}:interrupt:${child.runId}`,
             commandId: command.commandId,
             threadId: child.threadId,
-            request: { type: "issue.suspension.interrupt", runId: child.runId },
+            request: {
+              type: "issue.suspension.interrupt",
+              runId: child.runId,
+              reason: "Interrupted because the usage sprint ended",
+            },
           }));
     yield* Ref.update(effects, (pending) => [
       ...pending,

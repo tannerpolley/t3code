@@ -69,8 +69,12 @@ export function makeSubagentChildThread(input: {
   /** The provider's agent type for a native subagent; it decides the child's role. */
   readonly agentType?: string | undefined;
 }): OrchestrationV2AppThread {
-  // The remote parent delegated the parent thread, not its subagents.
-  const { delegatedFrom: _delegatedFrom, ...inherited } = input.parentThread;
+  const {
+    delegatedFrom: _delegatedFrom,
+    issues: _issues,
+    roleSkillSelection: _roleSkillSelection,
+    ...inherited
+  } = input.parentThread;
   return {
     ...inherited,
     role: nativeSubagentRole(input.agentType),

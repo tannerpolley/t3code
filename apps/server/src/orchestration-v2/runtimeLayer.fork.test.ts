@@ -1884,8 +1884,16 @@ it.effect.each([
           run.userMessageId ===
           MessageId.make(`limit-switch-resume:${childThreadId}:${original.id}`),
       );
-      if (scenario === "starting-timeout") assert.equal(automatic?.status, "interrupted");
-      else if (scenario === "managed-queued" || scenario === "managed-held")
+      if (scenario === "starting-timeout") {
+        assert.equal(automatic?.status, "interrupted");
+        const request = released.turnItems.find(
+          (item) => item.runId === automatic?.id && item.type === "run_interrupt_request",
+        );
+        assert.equal(
+          request?.type === "run_interrupt_request" ? request.message : undefined,
+          "Automatic provider switch cancelled because the usage-limit failure was already reported",
+        );
+      } else if (scenario === "managed-queued" || scenario === "managed-held")
         assert.equal(automatic?.status, "cancelled");
       else
         assert.isUndefined(automatic, "a released failure must not dispatch a late continuation");

@@ -13,6 +13,7 @@ import { expect, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -25,6 +26,7 @@ import {
   ThreadId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
+  type ServerProviderSkill,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 
@@ -70,9 +72,14 @@ function makeLocalCommandHarness(input: {
   readonly context?: OrchestrationMessageContext;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
+  readonly projectRoot?: string;
+  readonly driver?: "claudeAgent";
+  readonly skillCatalogue?: ProviderAdapter.ProviderAdapterV2SessionRuntime["installedSkillsForPreload"];
   readonly fileSystem?: FileSystem.FileSystem;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
+  readonly originalBrief?: string;
+  readonly nativeThreadId?: string;
   readonly inlineLayer?: Layer.Layer<InlineShellStore.InlineShellStore>;
   readonly startNative?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
   readonly logoutFailure?: string;
@@ -115,7 +122,7 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make("codex"),
+    driver: ProviderDriverKind.make(input.driver ?? "codex"),
     providerInstanceId: newInstanceId,
     providerSessionId,
     appThreadId: threadId,
@@ -329,7 +336,7 @@ function makeLocalCommandHarness(input: {
                   ),
                 ),
               )
-            : input.failReadsAfterRunning === true
+            : input.failReadsAfterRunning === true || input.startNative !== undefined
               ? Effect.succeed({
                   driver: providerThread.driver,
                   providerSession: {
@@ -345,14 +352,28 @@ function makeLocalCommandHarness(input: {
                     lastError: null,
                   },
                   ...(input.startNative ? { startTurn: input.startNative } : {}),
-                  ensureThread: () => Effect.succeed(providerThread),
+                  ...(input.skillCatalogue === undefined
+                    ? {}
+                    : { installedSkillsForPreload: input.skillCatalogue }),
+                  ensureThread: () =>
+                    Effect.succeed({
+                      ...providerThread,
+                      nativeThreadRef:
+                        input.nativeThreadId === undefined
+                          ? null
+                          : {
+                              driver: providerThread.driver,
+                              nativeId: input.nativeThreadId,
+                              strength: "strong",
+                            },
+                    }),
                 } as never)
               : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >((args) =>
-    input.failReadsAfterRunning === true
+    input.failReadsAfterRunning === true || input.startNative !== undefined
       ? input.startNative
         ? args.session
             .startTurn({
@@ -417,7 +438,9 @@ function makeLocalCommandHarness(input: {
   );
   const resolveRuntimePolicy = vi.fn(
     ({ thread }: Parameters<RuntimePolicy.RuntimePolicyV2Shape["resolve"]>[0]) =>
-      Effect.succeed({ cwd: thread.worktreePath ?? "/tmp/native-account-command" } as never),
+      Effect.succeed({
+        cwd: thread.worktreePath ?? input.projectRoot ?? "/tmp/native-account-command",
+      } as never),
   );
   const createWorktree = vi.fn(() => Effect.succeed({} as never));
   const getThreadRecords = vi.fn<ProjectionStore.ProjectionStoreV2Shape["getThreadRecords"]>(() =>
@@ -441,7 +464,17 @@ function makeLocalCommandHarness(input: {
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: () => Effect.die("history read must fail first"),
         }),
-        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        Layer.mock(EventSink.EventSinkV2)({
+          writeIfRunCurrent,
+          write: ({ events: incoming }) =>
+            Effect.sync(() => {
+              for (const event of incoming) {
+                events.push(event);
+                projection = ProjectionStore.applyToProjection(projection, event);
+              }
+              return [];
+            }),
+        }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
         input.fileSystem === undefined
@@ -454,13 +487,16 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeedSome({ workspaceRoot: "/tmp/native-account-project" } as never),
+            Effect.succeedSome({
+              workspaceRoot: input.projectRoot ?? "/tmp/native-account-project",
+            } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRun: (_threadId, runId) =>
             Effect.succeed(projection.runs.find((run) => run.id === runId)),
           getThreadRecords,
           getTurnStartContext,
+          getOriginalRunBrief: () => Effect.succeed(input.originalBrief ?? ""),
           getRuntimeRecoveryProjection: () =>
             Effect.as(failReadIfRunning, {
               ...projection,
@@ -519,6 +555,244 @@ function makeLocalCommandHarness(input: {
     }).pipe(Effect.provide(layer)),
   };
 }
+
+effectIt.effect.each([
+  {
+    mode: "configured Codex child with inline shell context",
+    load: true,
+    ordinal: 1,
+    remote: false,
+    inline: true,
+  },
+  {
+    mode: "configured Claude child",
+    load: true,
+    ordinal: 1,
+    remote: false,
+    driver: "claudeAgent" as const,
+  },
+  { mode: "configured linked child", load: true, ordinal: 1, remote: true },
+  {
+    mode: "linked child from an older peer",
+    load: false,
+    ordinal: 1,
+    remote: true,
+    olderPeer: true,
+  },
+  { mode: "project without role skills", load: false, ordinal: 1, remote: false, optOut: true },
+  {
+    mode: "second message in the same conversation",
+    load: false,
+    ordinal: 2,
+    remote: false,
+    delivered: "loaded",
+  },
+  {
+    mode: "first message in a later provider conversation",
+    load: true,
+    ordinal: 2,
+    remote: false,
+    delivered: "loaded",
+    newConversation: true,
+  },
+  { mode: "fresh attempt retry", load: true, ordinal: 1, remote: false, retry: true },
+  {
+    mode: "steering restart after delivery",
+    load: false,
+    ordinal: 1,
+    remote: false,
+    restart: true,
+    delivered: "loaded",
+  },
+  {
+    mode: "steering restart before delivery",
+    load: true,
+    ordinal: 1,
+    remote: false,
+    restart: true,
+    delivered: "refused",
+  },
+  {
+    mode: "steering restart in a new provider conversation",
+    load: true,
+    ordinal: 1,
+    remote: false,
+    restart: true,
+    delivered: "loaded",
+    newConversation: true,
+  },
+  {
+    mode: "steering restart in the same conversation with delivery unknown",
+    load: false,
+    ordinal: 1,
+    remote: false,
+    restart: true,
+    delivered: "delivery_unknown",
+  },
+  { mode: "ambiguous delivery", load: true, ordinal: 1, remote: false, failedStart: true },
+])(
+  "records only the skills sent for $mode",
+  ({
+    load,
+    ordinal,
+    remote,
+    olderPeer,
+    optOut,
+    retry,
+    restart,
+    delivered,
+    newConversation,
+    failedStart,
+    driver,
+    inline,
+  }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "role-skill-start-" });
+      const worktreePath = path.join(projectRoot, "child");
+      yield* fs.makeDirectory(worktreePath);
+      const catalogue: ServerProviderSkill[] = [];
+      for (const name of ["build", "plot"]) {
+        const directory = path.join(projectRoot, name);
+        yield* fs.makeDirectory(directory);
+        const file = path.join(directory, "SKILL.md");
+        yield* fs.writeFileString(file, `---\nname: ${name}\n---\nInstructions for ${name}\n`);
+        catalogue.push({
+          name: `cse:${name}`,
+          path: file,
+          enabled: true,
+          scope: "plugin" as const,
+        });
+      }
+      if (!optOut)
+        yield* fs.writeFileString(
+          path.join(projectRoot, "t3.json"),
+          '{"roleSkills":{"implementor":["cse:build"]}}',
+        );
+      // The worktree's file never selects skills in place of the registered project's file.
+      yield* fs.writeFileString(
+        path.join(worktreePath, "t3.json"),
+        '{"roleSkills":{"implementor":["cse:wrong"]}}',
+      );
+      const startNative = vi.fn<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>(
+        (input) =>
+          failedStart
+            ? Effect.fail(
+                new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: input.providerThread.driver,
+                  threadId: input.threadId,
+                  providerThreadId: input.providerThread.id,
+                  runId: input.runId,
+                  cause: "connection closed",
+                }),
+              )
+            : Effect.void,
+      );
+      const skillCatalogue = vi.fn(() => Effect.succeed(catalogue));
+      const brief = "Inspect the results.\n\nSkills: cse:build, cse:plot, cse:missing";
+      const text = restart || ordinal > 1 ? "Inspect the residuals.\n\nSkills: cse:steer" : brief;
+      const harness = makeLocalCommandHarness({
+        text,
+        ...(text === brief ? {} : { originalBrief: brief }),
+        nativeThreadId: newConversation ? "new-conversation" : "original-conversation",
+        fileSystem: fs,
+        projectRoot,
+        worktreePath,
+        ...(driver === undefined ? {} : { driver }),
+        ...(inline
+          ? {
+              inlineLayer: Layer.mock(InlineShellStore.InlineShellStore)({
+                deliver: (input, send) => send(`Prior shell output\n\n${input.text}`),
+              }),
+            }
+          : {}),
+        startNative,
+        skillCatalogue,
+      });
+      const projection = harness.projection();
+      const initialAttempt = projection.attempts[0]!;
+      const currentRun = projection.runs.at(-1)!;
+      const briefRunId = ordinal === 1 ? currentRun.id : RunId.make("first-run");
+      harness.setProjection({
+        ...projection,
+        thread: {
+          ...projection.thread,
+          role: "implementor",
+          ...(remote
+            ? {
+                delegatedFrom: {
+                  environmentId: EnvironmentId.make("source"),
+                  threadId: ThreadId.make("source-parent"),
+                  title: "Source parent",
+                  ...(olderPeer ? {} : { role: "implementor" as const }),
+                },
+              }
+            : { lineage: { ...projection.thread.lineage, relationshipToParent: "subagent" } }),
+        },
+        runs: [
+          ...(ordinal === 1
+            ? []
+            : [{ ...currentRun, id: briefRunId, ordinal: 1, status: "completed" as const }]),
+          { ...currentRun, ordinal },
+        ],
+        attempts: [
+          ...(delivered
+            ? [
+                {
+                  ...initialAttempt,
+                  id: RunAttemptId.make("initial-attempt"),
+                  nativeThreadId: "original-conversation",
+                  runId: briefRunId,
+                  status: "superseded" as const,
+                  skillPreload: {
+                    skills: [
+                      {
+                        id: "cse:build",
+                        source: "role" as const,
+                        ...(delivered === "refused"
+                          ? { outcome: "skipped" as const, reason: "delivery_refused" as const }
+                          : { outcome: delivered as "loaded" | "delivery_unknown" }),
+                      },
+                    ],
+                  },
+                },
+              ]
+            : []),
+          ...projection.attempts.map((attempt) =>
+            restart
+              ? { ...attempt, reason: "steering_restart" as const, attemptOrdinal: 2 }
+              : retry
+                ? { ...attempt, reason: "retry" as const, attemptOrdinal: 2 }
+                : attempt,
+          ),
+        ],
+      });
+      yield* harness.start;
+      const {
+        message: { text: prompt },
+        inlineContextLength,
+      } = startNative.mock.calls[0]![0];
+      const record = harness.projection().attempts.at(-1)?.skillPreload;
+      expect(harness.projection().messages[0]?.text).toBe(text);
+      if (!load) {
+        expect(skillCatalogue).not.toHaveBeenCalled();
+        expect(prompt).toBe(text);
+        expect(record).toBeUndefined();
+        return;
+      }
+      expect(skillCatalogue).toHaveBeenCalledWith(worktreePath);
+      expect(prompt).toContain("Instructions for build");
+      expect(prompt).toContain("Instructions for plot");
+      expect(prompt.slice(inlineContextLength)).toBe(text);
+      const outcome = failedStart ? "delivery_unknown" : "loaded";
+      expect(record?.skills).toEqual([
+        { id: "cse:build", source: "role", outcome },
+        { id: "cse:plot", source: "brief", outcome },
+        { id: "cse:missing", source: "brief", outcome: "skipped", reason: "unavailable" },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 effectIt.effect.each(["cleanup-first", "startup-first"])(
   "coordinates provider startup through an alias with %s through the physical path",

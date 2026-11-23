@@ -1,4 +1,4 @@
-import { makeManagedIssueDelegation } from "./ManagedIssueDelegation.ts";
+import { delegatedIssueRef, makeManagedIssueDelegation } from "./ManagedIssueDelegation.ts";
 import {
   makeRepositoryMcpMethods,
   type RepositoryMcpMethods,
@@ -133,6 +133,7 @@ import {
   delegatedTaskRuns,
   runOutcome,
 } from "../orchestration-v2/RestartBackgroundNote.ts";
+import { agentStopReason } from "../orchestration-v2/RunInterruptReason.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { placeholderThreadTitle } from "../orchestration-v2/placeholderThreadTitle.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -141,6 +142,9 @@ import { delegatedTaskRole, resolveDelegatedWorkspace } from "./delegateTaskWork
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
+import { resolveRoleSkillSelection } from "../provider/roleSkills.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -296,11 +300,6 @@ export function threadManagementFailure(error: unknown): OrchestratorMcpFailure 
     case "ThreadManagementProviderInstanceDisabledError":
       return failure("invalid_request", error.message);
   }
-}
-
-// Without a reason, a Stop reads as the user's (see RunExecutionService.USER_STOP_REASON).
-function agentStopReason(reason: string | undefined): string {
-  return reason === undefined ? "Stopped by an agent" : `Stopped by an agent: ${reason}`;
 }
 
 function errorMessage(error: unknown): string {
@@ -1238,6 +1237,12 @@ const make = Effect.gen(function* () {
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
+  const projectFiles = Option.getOrUndefined(
+    yield* Effect.serviceOption(T3ProjectFileLoader.T3ProjectFileLoader),
+  );
+  const trackerIssues = Option.getOrUndefined(
+    yield* Effect.serviceOption(TrackerIssueService.IssueService),
+  );
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -2853,20 +2858,45 @@ const make = Effect.gen(function* () {
         ...result,
         ...(workspace.note === undefined ? {} : { workspaceNote: workspace.note }),
       });
+      const brief = taskPrompt(input);
+      const role = delegatedTaskRole(
+        input.role,
+        linkedIssue !== undefined || workspace.workspaceStrategy?.type === "worktree",
+      );
+      const issueRef =
+        input.issue === undefined
+          ? undefined
+          : delegatedIssueRef(parent.thread.projectId, input.issue);
+      const roleSkillSelection =
+        !isRetryOfAcceptedDelegation && issueRef !== undefined && projectFiles !== undefined
+          ? yield* Effect.gen(function* () {
+              const project = yield* projects
+                .getById(parent.thread.projectId)
+                .pipe(Effect.catch(() => Effect.succeedNone));
+              if (Option.isNone(project)) return null;
+              return yield* resolveRoleSkillSelection({
+                projectId: project.value.id,
+                workspaceRoot: project.value.workspaceRoot,
+                projectFiles,
+                issues: trackerIssues,
+                issueRefs: [issueRef],
+                role,
+                brief,
+              });
+            })
+          : undefined;
       const taskCommand = {
         type: "delegated_task.request",
         ...(linkedIssue === undefined ? {} : { issue: linkedIssue }),
+        ...(roleSkillSelection === undefined ? {} : { roleSkillSelection }),
         createdBy: "agent",
         creationSource: "mcp",
         commandId,
         parentThreadId: scope.thread.threadId,
         parentRunId: parentRun.id,
         parentNodeId: parentRun.rootNodeId,
-        task: taskPrompt(input),
-        role: delegatedTaskRole(
-          input.role,
-          linkedIssue !== undefined || workspace.workspaceStrategy?.type === "worktree",
-        ),
+        task: brief,
+        role,
         ...(input.title === undefined ? {} : { title: input.title }),
         modelSelection: target.modelSelection,
         runtimeMode,

@@ -1,4 +1,4 @@
-import { ThreadRoleInput } from "./threadRole.ts";
+import { ThreadRole, ThreadRoleInput } from "./threadRole.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
@@ -150,8 +150,18 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   title: Schema.String,
+  role: Schema.optionalKey(ThreadRole),
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
+
+const SkillPreloadRequest = Schema.Struct({
+  id: Schema.String,
+  source: Schema.Literals(["role", "issue", "brief"]),
+});
+const RoleSkillSelection = Schema.Struct({
+  requests: Schema.Array(SkillPreloadRequest),
+  issueLookupFailed: Schema.optionalKey(Schema.Literal(true)),
+});
 
 /**
  * The thread in a linked environment whose agent sent this message here, and its title
@@ -188,6 +198,23 @@ export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLin
 /** Subagents and side chats live inside their parent's view, never in thread lists. */
 export const isListedThreadLineage = (lineage: OrchestrationV2AppThreadLineage): boolean =>
   lineage.relationshipToParent !== "subagent" && lineage.sideChat !== true;
+
+export function workerListParentIds(
+  lineage: OrchestrationV2AppThreadLineage,
+  lineageOf: (id: ThreadId) => OrchestrationV2AppThreadLineage | undefined,
+): ReadonlySet<ThreadId> {
+  const parents = new Set<ThreadId>([lineage.rootThreadId]);
+  const visited = new Set(parents);
+  let id = lineage.parentThreadId;
+  while (id !== null && !visited.has(id)) {
+    visited.add(id);
+    const parent = lineageOf(id);
+    if (parent === undefined) break;
+    if (isListedThreadLineage(parent)) parents.add(id);
+    id = parent.parentThreadId;
+  }
+  return parents;
+}
 
 export const OrchestrationV2ContextTransferType = Schema.Literals([
   "fork",
@@ -546,6 +573,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  roleSkillSelection: Schema.optionalKey(Schema.NullOr(RoleSkillSelection)),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -847,6 +875,36 @@ export function orchestrationV2RunWorkStartedAt(
   return run.workStartedAt ?? run.startedAt ?? run.requestedAt;
 }
 
+export const OrchestrationV2SkillPreload = Schema.Struct({
+  skills: Schema.Array(
+    Schema.Union([
+      SkillPreloadRequest.mapFields((fields) => ({
+        ...fields,
+        outcome: Schema.Literals(["loaded", "delivery_unknown"]),
+      })),
+      SkillPreloadRequest.mapFields((fields) => ({
+        ...fields,
+        outcome: Schema.Literal("skipped"),
+        reason: Schema.Literals([
+          "unavailable",
+          "ambiguous",
+          "unreadable",
+          "unsupported",
+          "policy_unknown",
+          "budget",
+          "delivery_refused",
+        ]),
+      })),
+    ]),
+  ),
+  issueLookupFailed: Schema.optionalKey(Schema.Literal(true)),
+});
+export type OrchestrationV2SkillPreload = typeof OrchestrationV2SkillPreload.Type;
+const SkillPreloadRecorded = Schema.Struct({
+  attemptId: RunAttemptId,
+  record: OrchestrationV2SkillPreload,
+});
+
 export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
   // Provider-thread rows can be reused after recovery; retain the native input destination.
@@ -869,6 +927,7 @@ export const OrchestrationV2RunAttempt = Schema.Struct({
   ]),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  skillPreload: Schema.optionalKey(OrchestrationV2SkillPreload),
 });
 export type OrchestrationV2RunAttempt = typeof OrchestrationV2RunAttempt.Type;
 
@@ -979,6 +1038,7 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   label: Schema.String,
+  issueSkillsSkipped: Schema.optionalKey(Schema.Literal("remote")),
   /** The title it launched with there; absent on tasks recorded before it was kept. */
   title: Schema.optional(Schema.String),
   /** The run there that carries the task; absent on tasks recorded before it was kept. */
@@ -2212,6 +2272,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run-attempt.skill-preload-recorded"),
+    payload: SkillPreloadRecorded,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("node.updated"),
     payload: OrchestrationV2ExecutionNode,
   }),
@@ -2389,6 +2454,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStopRequested: Schema.optional(Schema.Boolean),
+  explicitStopRequested: Schema.optionalKey(Schema.Literal(true)),
   /** The latest run answers a background-work progress wake, like a Monitor line, not a terminal one. Absent from older servers. */
   latestRunBackgroundWake: Schema.optional(Schema.Boolean),
   activeRunId: Schema.NullOr(RunId),
@@ -2513,7 +2579,14 @@ export const OrchestrationV2OlderSettledThreads = Schema.Struct({
 });
 export type OrchestrationV2OlderSettledThreads = typeof OrchestrationV2OlderSettledThreads.Type;
 
+const WorkerPageCursor = Schema.Struct({ createdAt: IsoDateTime, threadId: ThreadId });
+const WorkerPageFields = {
+  nextWorkerPage: Schema.optionalKey(WorkerPageCursor),
+  remainingWorkers: Schema.optionalKey(NonNegativeInt),
+};
+
 export const OrchestrationV2ThreadShellSnapshot = Schema.Struct({
+  ...WorkerPageFields,
   schemaVersion: PositiveInt,
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
@@ -2525,6 +2598,9 @@ export const OrchestrationV2ShellSnapshot = Schema.Struct({
   ...OrchestrationV2ThreadShellSnapshot.fields,
   projects: Schema.Array(OrchestrationProjectShell),
   olderSettled: Schema.optionalKey(OrchestrationV2OlderSettledThreads),
+  omittedWorkers: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ parentThreadId: ThreadId, count: NonNegativeInt })),
+  ),
 });
 export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
 
@@ -3207,6 +3283,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run-attempt.skill-preload-recorded"),
+    payload: SkillPreloadRecorded,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("node.updated"),
     payload: OrchestrationV2ExecutionNodeJson,
   }),
@@ -3811,6 +3892,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("delegated_task.request"),
     role: Schema.optional(ThreadRoleInput),
     issue: Schema.optional(ThreadLinkedIssue),
+    roleSkillSelection: Schema.optionalKey(Schema.NullOr(RoleSkillSelection)),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     parentThreadId: ThreadId,
@@ -4325,8 +4407,15 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
 });
 export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
 
+export const SIDEBAR_WORKER_PAGE_SIZE = 10;
 export const OrchestrationV2GetThreadFamilyInput = Schema.Struct({
   threadId: ThreadId,
+  workers: Schema.optionalKey(
+    Schema.Struct({
+      before: Schema.optionalKey(WorkerPageCursor),
+    }),
+  ),
+  pathOnly: Schema.optionalKey(Schema.Literal(true)),
 });
 export type OrchestrationV2GetThreadFamilyInput = typeof OrchestrationV2GetThreadFamilyInput.Type;
 
@@ -4336,6 +4425,7 @@ export type OrchestrationV2GetThreadFamilyInput = typeof OrchestrationV2GetThrea
  * a deleted one still names its root.
  */
 export const OrchestrationV2ThreadFamily = Schema.Struct({
+  ...WorkerPageFields,
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
 });

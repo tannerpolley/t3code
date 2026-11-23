@@ -1983,7 +1983,7 @@ export const layerWsRpc = (
       // Rows the shell can omit, read with the same snapshot sequence the shell uses.
       const readOmittableShellRows = Effect.fn("ws.orchestrationV2.readOmittableShellRows")(
         function* (
-          options: { readonly familyOf: ThreadId } | { readonly worktreePath: string },
+          options: NonNullable<Parameters<typeof threadManagement.readShellSnapshot>[0]>,
           message: string,
         ) {
           const { threads, snapshotSequence } = yield* loadShellSnapshotParts({
@@ -1996,7 +1996,13 @@ export const layerWsRpc = (
               (cause) => new OrchestrationV2GetShellSnapshotError({ message, cause }),
             ),
           );
-          return { snapshotSequence, threads: threads.threads };
+          const { nextWorkerPage, remainingWorkers } = threads;
+          return {
+            snapshotSequence,
+            threads: threads.threads,
+            ...(nextWorkerPage === undefined ? {} : { nextWorkerPage }),
+            ...(remainingWorkers === undefined ? {} : { remainingWorkers }),
+          };
         },
       );
 
@@ -2134,8 +2140,15 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
           getOrchestrationV2ArchivedShellSnapshot,
-        [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) =>
-          readOmittableShellRows({ familyOf: input.threadId }, "Failed to load the thread family"),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: ({ threadId, workers, pathOnly }) =>
+          readOmittableShellRows(
+            workers !== undefined
+              ? { workerPage: { ...workers, parentThreadId: threadId } }
+              : pathOnly === true
+                ? { ancestorPathOf: threadId }
+                : { familyOf: threadId },
+            "Failed to load threads",
+          ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: (input) =>
           threadManagement.getThreadLinkMetadata(input.threadIds).pipe(
             Effect.mapError(

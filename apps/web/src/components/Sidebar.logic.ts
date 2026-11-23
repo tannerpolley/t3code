@@ -54,6 +54,7 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
+import { isExplicitlyPausedThread } from "@t3tools/shared/threadActivity";
 import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
@@ -684,6 +685,7 @@ export interface ThreadStatusPill {
     | "Awaiting Input"
     | "Guest Request"
     | "Waiting"
+    | "Paused"
     | "Plan Ready";
   colorClass: string;
   dotClass: string;
@@ -701,6 +703,7 @@ type ThreadStatusInput = Pick<
   | "latestRun"
   | "runtime"
 > & {
+  source?: Parameters<typeof isExplicitlyPausedThread>[0] | undefined;
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
   blockedOnThreadWait?: boolean | undefined;
@@ -947,6 +950,7 @@ export type SidebarThreadStatus =
   | "waiting"
   | "failed"
   | "limited"
+  | "paused"
   | "ready";
 
 export function shouldRecedeSidebarThread(input: {
@@ -984,8 +988,16 @@ type SidebarThreadStatusInput = Pick<
 > &
   Partial<Pick<SidebarThreadSummary, "latestRun" | "pendingBackgroundTasks">>;
 
-export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+export function resolveSidebarThreadStatus(
+  thread: SidebarThreadStatusInput & Pick<ThreadStatusInput, "source">,
+): SidebarThreadStatus {
   const activity = resolveThreadActivity(thread);
+  if (
+    activity === "ready" &&
+    thread.source !== undefined &&
+    isExplicitlyPausedThread(thread.source)
+  )
+    return "paused";
   return activity === "connecting"
     ? thread.runtime?.status === "preparing"
       ? "preparing"
@@ -1401,6 +1413,19 @@ export function resolveThreadStatusPill(input: {
 }): ThreadStatusPill | null {
   const { thread } = input;
   const activity = resolveThreadActivity(thread);
+
+  if (
+    activity === "ready" &&
+    thread.source !== undefined &&
+    isExplicitlyPausedThread(thread.source)
+  ) {
+    return {
+      label: "Paused",
+      colorClass: "text-warning-foreground",
+      dotClass: "bg-warning",
+      pulse: false,
+    };
+  }
 
   if (activity === "approval") {
     return {

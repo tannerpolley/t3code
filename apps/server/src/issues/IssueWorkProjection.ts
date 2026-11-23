@@ -11,6 +11,9 @@ import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2Pend
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
+import type * as Statement from "effect/sql/Statement";
+
+import { isExplicitStopReason } from "../orchestration-v2/RunInterruptReason.ts";
 
 const workThread = OrchestrationV2AppThreadJson.mapFields(
   ({
@@ -76,7 +79,10 @@ const decodeItems = Schema.decodeEffect(
 );
 
 export type IssueWorkThread = typeof workThread.Type &
-  Pick<OrchestrationV2ThreadShell, "status" | "activityRunStatus" | "pendingBackgroundTasks"> & {
+  Pick<
+    OrchestrationV2ThreadShell,
+    "status" | "explicitStopRequested" | "activityRunStatus" | "pendingBackgroundTasks"
+  > & {
     readonly pendingRuntimeRequest: {
       readonly kind: NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"];
     } | null;
@@ -86,11 +92,14 @@ export type IssueWorkThread = typeof workThread.Type &
 export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(function* (
   sql: SqlClient.SqlClient,
   threadIds: readonly ThreadId[],
+  presentedRunId: Statement.Fragment,
+  latestRunInterruptReason: Statement.Fragment,
 ) {
   if (threadIds.length === 0) return [];
   const rows = yield* sql<{
     thread_json: string;
     run_json: string;
+    latest_run_interrupt_reason: string | null;
     blocked_run_json: string;
     blocked_failure: string | null;
     session_error: string | null;
@@ -116,10 +125,9 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
       'linkedPullRequest', json_extract(t.payload_json, '$.linkedPullRequest'),
       'pullRequests', json_extract(t.payload_json, '$.pullRequests')
     )) AS thread_json,
-    coalesce((SELECT json_object('id', r.run_id, 'ordinal', r.ordinal, 'status', r.status)
-      FROM orchestration_v2_projection_runs r WHERE r.thread_id = t.thread_id
-        AND NOT (r.status = 'queued' AND json_extract(r.payload_json, '$.queueHeld') IS 1)
-      ORDER BY r.ordinal DESC, r.run_id DESC LIMIT 1), 'null') AS run_json,
+    ${latestRunInterruptReason} AS latest_run_interrupt_reason,
+    CASE WHEN presented.run_id IS NULL THEN 'null' ELSE json_object(
+      'id', presented.run_id, 'ordinal', presented.ordinal, 'status', presented.status) END AS run_json,
     CASE WHEN blocked.run_id IS NULL THEN 'null' ELSE json_object(
       'id', blocked.run_id, 'ordinal', blocked.ordinal, 'status', blocked.status) END AS blocked_run_json,
     (SELECT json_extract(item.payload_json, '$.failure')
@@ -164,6 +172,7 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
         AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
         AND (i.run_id IS NULL OR r.status <> 'rolled_back')) AS item_work
     FROM orchestration_v2_projection_threads t
+    LEFT JOIN orchestration_v2_projection_runs presented ON presented.run_id = ${presentedRunId}
     LEFT JOIN orchestration_v2_projection_runs blocked ON blocked.run_id = (
       SELECT r.run_id FROM orchestration_v2_projection_runs r
       WHERE r.thread_id = t.thread_id AND r.status <> 'queued'
@@ -202,6 +211,9 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
       return {
         ...thread,
         status,
+        ...(status === "interrupted" && isExplicitStopReason(row.latest_run_interrupt_reason)
+          ? { explicitStopRequested: true as const }
+          : {}),
         activityRunStatus:
           row.activity_status ??
           (native === "pending"

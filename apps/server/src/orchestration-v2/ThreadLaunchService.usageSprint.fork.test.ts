@@ -401,7 +401,10 @@ it.effect(
       assert.lengthOf(messages, 1);
       assert.include(messages[0]!.text, "stopped the running work of these issues");
       assert.include(messages[0]!.text, "#1 Issue 1; #2 Issue 2");
-      for (const child of children) assert.notEqual((yield* latestRun(child)).status, "starting");
+      for (const child of children) {
+        assert.notEqual((yield* latestRun(child)).status, "starting");
+        assert.isUndefined((yield* threads.getThreadShell(child))?.explicitStopRequested);
+      }
     }).pipe(Effect.provide(layer()));
   },
 );

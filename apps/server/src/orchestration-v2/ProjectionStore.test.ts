@@ -3158,7 +3158,7 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     // A path names a few threads; scanning every thread parses every payload.
     const sql = yield* SqlClient.SqlClient;
     const threadQuery = statements.find((statement) =>
-      statement.includes("AS latest_run_stop_requested"),
+      statement.includes("AS latest_run_interrupt_reason"),
     );
     assert.isDefined(threadQuery);
     const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
@@ -7018,7 +7018,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           .pipe(Effect.map((rows) => rows.map((row) => row.detail)));
 
       const threadQuery = statements.find((statement) =>
-        statement.includes("AS latest_run_stop_requested"),
+        statement.includes("AS latest_run_interrupt_reason"),
       );
       assert.isDefined(threadQuery);
       const plan = yield* planOf(threadQuery);

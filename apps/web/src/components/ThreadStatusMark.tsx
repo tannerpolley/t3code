@@ -1,11 +1,13 @@
 import {
   CircleAlertIcon,
   CircleDotDashedIcon,
+  CirclePauseIcon,
   CircleXIcon,
   ClockIcon,
   MessageCircleQuestionIcon,
 } from "lucide-react";
 
+import { useGT } from "gt-react";
 import { cn } from "~/lib/utils";
 import type { SidebarThreadStatus } from "./Sidebar.logic";
 import { Spinner } from "./ui/spinner";
@@ -47,6 +49,7 @@ export function lineageStatusMark(status: string | null): ThreadStatusMarkStatus
  * working, a green dot when done, an icon when it needs you or failed, a gray dot when settled.
  */
 export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMarkStatus }) {
+  const gt = useGT();
   const iconClass = "size-3.5 shrink-0";
   switch (status) {
     case "working":
@@ -72,6 +75,14 @@ export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMark
       return <CircleXIcon aria-hidden className={cn(iconClass, "text-error")} />;
     case "limited":
       return <ClockIcon aria-hidden className={cn(iconClass, "text-warning")} />;
+    case "paused":
+      return (
+        <CirclePauseIcon
+          role="img"
+          aria-label={gt("Paused")}
+          className={cn(iconClass, "text-warning-foreground")}
+        />
+      );
     case "ready":
       // A settled thread still fills the slot, so the time beside it never shifts.
       return (

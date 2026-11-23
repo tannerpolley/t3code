@@ -328,7 +328,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               {props.compact ? null : (
                 <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
               )}
-              {status === "approval" || status === "input" ? (
+              {status === "approval" || status === "input" || status === "paused" ? (
                 <span className="flex w-12 shrink-0 justify-end">
                   <ThreadStatusMark status={status} />
                 </span>
