@@ -641,64 +641,45 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
   }),
 );
 
-it.effect(
-  "denies manual cleanup and worker archive before the handler without settings permission",
-  () =>
-    Effect.gen(function* () {
-      const group = WsRpcGroup.omit(
-        ...[...WsRpcGroup.requests.keys()].filter(
-          (
-            tag,
-          ): tag is Exclude<
-            keyof typeof RPC_REQUIRED_SCOPES,
-            typeof WS_METHODS.serverRunStorageCleanup | typeof WS_METHODS.workerArchiveBacklog
-          > =>
-            tag !== WS_METHODS.serverRunStorageCleanup && tag !== WS_METHODS.workerArchiveBacklog,
-        ),
-      );
-      let handled = false;
-      const client = yield* RpcTest.makeClient(group).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            group.toLayerHandler(WS_METHODS.serverRunStorageCleanup, () =>
-              Effect.sync(() => {
-                handled = true;
-                return {
-                  trigger: "manual" as const,
-                  startedAt: "2026-10-09T12:00:00.000Z",
-                  finishedAt: "2026-10-09T12:00:00.000Z",
-                  entries: [],
-                  counts: { removed: 0, kept: 0, failed: 0 },
-                  omittedCount: 0,
-                  bytesFreed: 0,
-                };
-              }),
-            ),
-            group.toLayerHandler(WS_METHODS.workerArchiveBacklog, () =>
-              Effect.sync(() => {
-                handled = true;
-                return { kind: "archived" as const, archived: 0, unknown: 0 };
-              }),
-            ),
-            RpcAuthorization.layer([AuthOrchestrationReadScope]),
+it.effect("denies manual cleanup before the handler without settings permission", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.serverRunStorageCleanup
+        > => tag !== WS_METHODS.serverRunStorageCleanup,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.serverRunStorageCleanup, () =>
+            Effect.sync(() => {
+              handled = true;
+              return {
+                trigger: "manual" as const,
+                startedAt: "2026-10-09T12:00:00.000Z",
+                finishedAt: "2026-10-09T12:00:00.000Z",
+                entries: [],
+                counts: { removed: 0, kept: 0, failed: 0 },
+                omittedCount: 0,
+                bytesFreed: 0,
+              };
+            }),
           ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
         ),
-      );
-      expect(yield* client[WS_METHODS.serverRunStorageCleanup]({}).pipe(Effect.flip)).toMatchObject(
-        {
-          requiredPermission: AuthSettingsWriteScope,
-        },
-      );
-      expect(
-        yield* client[WS_METHODS.workerArchiveBacklog]({
-          kind: "archive",
-          token: "preview-token",
-        }).pipe(Effect.flip),
-      ).toMatchObject({
-        requiredPermission: AuthSettingsWriteScope,
-      });
-      expect(handled).toBe(false);
-    }),
+      ),
+    );
+    expect(yield* client[WS_METHODS.serverRunStorageCleanup]({}).pipe(Effect.flip)).toMatchObject({
+      requiredPermission: AuthSettingsWriteScope,
+    });
+    expect(handled).toBe(false);
+  }),
 );
 
 it.effect(

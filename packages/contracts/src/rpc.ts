@@ -562,7 +562,6 @@ export const WS_METHODS = {
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
-  workerArchiveBacklog: "workerArchive.backlog",
   serverRunStorageCleanup: "server.runStorageCleanup",
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
@@ -885,47 +884,6 @@ const WsServerCommitDesktopUpdateRpc = Rpc.make(WS_METHODS.serverCommitDesktopUp
   payload: DesktopUpdateCommitInput,
   success: ServerSelfUpdateResult,
   error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
-});
-
-const WorkerArchiveInput = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("preview") }),
-  Schema.Struct({ kind: Schema.Literal("archive"), token: TrimmedNonEmptyString }),
-]);
-export type WorkerArchiveInput = typeof WorkerArchiveInput.Type;
-const WorkerArchiveResult = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("preview"),
-    token: TrimmedNonEmptyString,
-    workers: Schema.Array(Schema.Struct({ id: ThreadId, title: Schema.String })),
-    unknown: NonNegativeInt,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("archived"),
-    archived: NonNegativeInt,
-    unknown: NonNegativeInt,
-  }),
-  Schema.Struct({ kind: Schema.Literal("completed") }),
-]);
-export type WorkerArchiveResult = typeof WorkerArchiveResult.Type;
-
-export class WorkerArchiveError extends Schema.TaggedError<WorkerArchiveError>()(
-  "WorkerArchiveError",
-  {
-    reason: Schema.Literals(["preview-expired", "operation-failed"]),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message() {
-    return this.reason === "preview-expired"
-      ? "Preview the worker archive again before confirming."
-      : "Could not archive the worker backlog.";
-  }
-}
-
-const WsWorkerArchiveBacklogRpc = Rpc.make(WS_METHODS.workerArchiveBacklog, {
-  payload: WorkerArchiveInput,
-  success: WorkerArchiveResult,
-  error: Schema.Union([WorkerArchiveError, EnvironmentAuthorizationError]),
 });
 
 const WsServerRunStorageCleanupRpc = Rpc.make(WS_METHODS.serverRunStorageCleanup, {
@@ -2393,7 +2351,6 @@ const WsTerminalWatchInlineRunRpc = Rpc.make(WS_METHODS.terminalWatchInlineRun, 
 });
 
 const forkWsRpcs = [
-  WsWorkerArchiveBacklogRpc,
   ...notebookRpcs,
   ...projectArtifactRpcs,
   WsSidebarLayoutUpdateRpc,
@@ -2648,7 +2605,6 @@ export const WsRpcGroup = RpcGroup.make(
 ).middleware(RpcScopeAuthorization);
 export const ForkWsRpcGroup = RpcGroup.make(...forkWsRpcs).middleware(RpcScopeAuthorization);
 export const UpstreamWsRpcGroup = WsRpcGroup.omit(
-  WS_METHODS.workerArchiveBacklog,
   ...Object.values(NOTEBOOK_METHODS),
   ...Object.values(PROJECT_ARTIFACT_METHODS),
   WS_METHODS.sidebarLayoutUpdate,

@@ -562,13 +562,17 @@ question and answer when the thread wakes; the question stays unanswered.
 
 ### Archived workers
 
-An idle worker is archived when a linked pull request merges or closes, or a linked
-issue closes. Running work, queued messages, pending requests, and background tasks
-keep it active. Writer threads are exempt from automatic archiving and deletion.
-Restore a worker from **Settings → Archived threads**. It stays visible until its
-work changes.
+Idle workers archive automatically when a linked pull request merges or closes, or
+a linked issue closes, regardless of when it finished. An open pull request or issue,
+a running or queued turn, a pending question or approval, or unfinished child work
+keeps the worker visible. Pinned workers stay visible.
 
-In **Settings → Archived threads**, preview the worker backlog to see which older
-threads qualify, then choose **Archive workers**. Use **Archived worker retention**
-to change the default of 14 days or choose **Never**. Retention permanently deletes
-archived workers and their history.
+Reviewers, designers, and checkers archive after their result reaches the parent or
+the parent is archived, once the same safety checks pass. Writer and orchestrator
+threads, side chats, and threads created by you are exempt from automatic archiving.
+
+Restore a worker from **Settings → Archived threads**. It stays visible until there
+is a new completion. In the same settings page, **Archived worker retention** controls
+when eligible archived workers and their history are permanently deleted. The default
+is 14 days. Choose **Never** to keep them indefinitely. Writers are exempt from automatic
+deletion.

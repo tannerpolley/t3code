@@ -1,9 +1,4 @@
-import {
-  CommandId,
-  type ThreadId,
-  WorkerArchiveError,
-  type WorkerArchiveInput,
-} from "@t3tools/contracts";
+import { CommandId, type ThreadId } from "@t3tools/contracts";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -11,9 +6,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import * as IssueService from "../issue/IssueService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -40,10 +32,7 @@ function pullRequestCompletionAt(
   return Number.isFinite(endedAt) ? endedAt : ("unknown" as const);
 }
 
-const isWorkerArchiveError = Schema.is(WorkerArchiveError);
-
 const make = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const branchDiscovery = yield* makeBranchPullRequestDiscovery;
@@ -52,27 +41,28 @@ const make = Effect.gen(function* () {
   const issues = yield* IssueService.IssueService;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const random = yield* SecureRandom.SecureRandom;
-  const confirmation = yield* Semaphore.make(1);
-  const backlog = Effect.map(
-    sql<{ readonly cutoff: string; readonly completed: number }>`
-      SELECT cutoff, completed FROM worker_archive_backlog WHERE id = 1
-    `,
-    ([row]) => row!,
-  );
-  const { cutoff } = yield* backlog;
-  const cutoffMs = Date.parse(cutoff);
 
   const completion = Effect.fn("WorkerRetention.completion")(function* (
     worker: ProjectionStore.ProjectionSettlementCandidate,
     now: DateTime.Utc,
     discoverBranch: typeof branchDiscovery.discover,
-    period?: "backlog" | "automatic",
   ) {
     if (!isIdleWorker(worker, now)) return null;
-    const qualifies = (endedAt: number) =>
-      workerCompletionIsCurrent(worker, endedAt) &&
-      (period === undefined || (period === "automatic" ? endedAt > cutoffMs : endedAt <= cutoffMs));
-    let unknown = false;
+    const temporary = worker.workerTemporaryCompletedAt !== undefined;
+    const preserveOpenWork = worker.archivedAt === null || temporary;
+    let completedAt = worker.workerTemporaryCompletedAt ?? null;
+    if (completedAt !== null && !workerCompletionIsCurrent(worker, completedAt)) completedAt = null;
+    if (temporary && worker.archivedAt === null && completedAt === null) return null;
+
+    // During archiving, a finished link cannot override another link that still needs work.
+    const recordCompletion = (endedAt: number | "unknown" | null) => {
+      if (typeof endedAt !== "number" || !Number.isFinite(endedAt)) {
+        return preserveOpenWork ? null : undefined;
+      }
+      if (!workerCompletionIsCurrent(worker, endedAt)) return undefined;
+      completedAt = Math.max(completedAt ?? -Infinity, endedAt);
+      return preserveOpenWork ? undefined : completedAt;
+    };
     const allLinks = worker.pullRequests ?? [];
     const readPullRequest = (reference: NonNullable<typeof worker.linkedPullRequest>) =>
       pullRequests
@@ -87,11 +77,13 @@ const make = Effect.gen(function* () {
     for (const link of visibleThreadPullRequests(allLinks)) {
       const recorded = pullRequestCompletionAt(link.snapshot);
       const endedAt =
-        recorded === "unknown" || (worker.archivedAt !== null && link.snapshot?.state !== "merged")
+        recorded === "unknown" ||
+        link.snapshot?.state === "closed" ||
+        (worker.archivedAt !== null && link.snapshot?.state !== "merged")
           ? yield* readPullRequest({ ...link, projectId: worker.projectId })
           : recorded;
-      if (typeof endedAt === "number" && qualifies(endedAt)) return endedAt;
-      if (endedAt === "unknown") unknown = true;
+      const decision = recordCompletion(endedAt);
+      if (decision !== undefined) return decision;
     }
 
     for (const reference of [worker.linkedPullRequest, worker.branchPullRequest]) {
@@ -105,43 +97,41 @@ const make = Effect.gen(function* () {
       )
         continue;
       const endedAt = yield* readPullRequest(reference);
-      if (typeof endedAt === "number" && qualifies(endedAt)) return endedAt;
-      if (endedAt === "unknown") unknown = true;
+      const decision = recordCompletion(endedAt);
+      if (decision !== undefined) return decision;
     }
     if (
+      (!temporary || worker.worktreePath !== null) &&
       worker.linkedPullRequest == null &&
       worker.branchPullRequest == null &&
       allLinks.length === 0 &&
       worker.branch !== null
     ) {
       const project = yield* projects.getShell(worker.projectId);
-      if (project._tag === "None") {
-        unknown = true;
-      } else {
-        const pullRequest = yield* discoverBranch(project.value, worker, {
-          refresh: worker.archivedAt !== null,
-        }).pipe(Effect.option);
-        const endedAt =
-          pullRequest._tag === "Some"
-            ? pullRequest.value?.detected == null
-              ? null
-              : pullRequestCompletionAt(pullRequest.value.detected)
-            : "unknown";
-        if (typeof endedAt === "number" && qualifies(endedAt)) return endedAt;
-        if (endedAt === "unknown") unknown = true;
+      const pullRequest =
+        project._tag === "None"
+          ? null
+          : yield* discoverBranch(project.value, worker, {
+              refresh: worker.archivedAt !== null,
+            }).pipe(Effect.option);
+      if (pullRequest?._tag !== "Some") {
+        if (preserveOpenWork) return null;
+      } else if (pullRequest.value?.detected != null) {
+        const endedAt = pullRequestCompletionAt(pullRequest.value.detected);
+        const decision = recordCompletion(endedAt);
+        if (decision !== undefined) return decision;
       }
     }
     for (const link of worker.issues ?? []) {
       const issue = yield* issues.detail(link).pipe(Effect.option);
-      if (issue._tag === "None") {
-        unknown = true;
-      } else if (issue.value.state.category === "closed") {
-        const endedAt = Date.parse(issue.value.closedAt ?? "");
-        if (qualifies(endedAt)) return endedAt;
-        if (!Number.isFinite(endedAt)) unknown = true;
-      }
+      const endedAt =
+        issue._tag === "Some" && issue.value.state.category === "closed"
+          ? Date.parse(issue.value.closedAt ?? "")
+          : null;
+      const decision = recordCompletion(endedAt);
+      if (decision !== undefined) return decision;
     }
-    return unknown ? ("unknown" as const) : null;
+    return completedAt;
   });
 
   const archive = Effect.fn("WorkerRetention.archive")(function* (
@@ -167,11 +157,20 @@ const make = Effect.gen(function* () {
     );
     const now = yield* DateTime.now;
     const discoverBranch = yield* branchDiscovery.forPass(false);
+    let archived = 0;
+    let failed = 0;
     for (const worker of workers) {
-      if (typeof (yield* completion(worker, now, discoverBranch, "automatic")) === "number")
-        yield* archive(worker);
+      const attempt = yield* Effect.result(
+        completion(worker, now, discoverBranch).pipe(
+          Effect.flatMap((completedAt) =>
+            completedAt === null ? Effect.succeed(false) : archive(worker),
+          ),
+        ),
+      );
+      if (attempt._tag === "Failure") failed++;
+      else if (attempt.success) archived++;
     }
-    return workers.at(-1)?.id;
+    return { cursor: workers.at(-1)?.id, archived, failed };
   });
 
   const removeExpired = Effect.fn("WorkerRetention.removeExpired")(function* (
@@ -201,81 +200,29 @@ const make = Effect.gen(function* () {
     return workers.at(-1)?.id;
   });
 
-  let preview:
-    | {
-        readonly token: string;
-        readonly unknown: number;
-        readonly workers: ReadonlyArray<{ readonly id: ThreadId; readonly title: string }>;
-      }
-    | undefined;
-
-  const archiveBacklog = Effect.fn("WorkerRetention.archiveBacklog")(
-    function* (input: WorkerArchiveInput) {
-      if ((yield* backlog).completed !== 0) return { kind: "completed" } as const;
-      const now = yield* DateTime.now;
-      const discoverBranch = yield* branchDiscovery.forPass(false);
-      if (input.kind === "preview") {
-        const workers: Array<{ id: ThreadId; title: string }> = [];
-        let unknown = 0;
-        let cursor: ThreadId | undefined;
-        do {
-          const page = yield* projections.getSettlementCandidates(
-            undefined,
-            cursor === undefined ? {} : { afterThreadId: cursor },
-          );
-          for (const worker of page) {
-            if (DateTime.toEpochMillis(worker.createdAt) > cutoffMs) continue;
-            const completedAt = yield* completion(worker, now, discoverBranch, "backlog");
-            if (typeof completedAt === "number")
-              workers.push({ id: worker.id, title: worker.title ?? worker.id });
-            if (completedAt === "unknown") unknown++;
-          }
-          cursor = page.at(-1)?.id;
-        } while (cursor !== undefined);
-        preview = { token: yield* random.uuidV4(), workers, unknown };
-        return { kind: "preview", ...preview } as const;
-      }
-      if (preview?.token !== input.token)
-        return yield* new WorkerArchiveError({ reason: "preview-expired" });
-      let archived = 0;
-      let unknown = preview.unknown;
-      for (const { id } of preview.workers) {
-        const [worker] = yield* projections.getSettlementCandidates(id, {});
-        if (worker === undefined) continue;
-        const completedAt = yield* completion(worker, now, discoverBranch, "backlog");
-        if (completedAt === "unknown") unknown++;
-        if (typeof completedAt === "number") {
-          if (yield* archive(worker)) archived++;
-          else unknown++;
-        }
-      }
-      if (unknown === 0) yield* sql`UPDATE worker_archive_backlog SET completed = 1 WHERE id = 1`;
-      preview = undefined;
-      return { kind: "archived", archived, unknown } as const;
-    },
-    (effect) =>
-      effect.pipe(
-        confirmation.withPermits(1),
-        Effect.mapError((cause) =>
-          isWorkerArchiveError(cause)
-            ? cause
-            : new WorkerArchiveError({ reason: "operation-failed", cause }),
-        ),
-      ),
-  );
-
   const start = Effect.fn("WorkerRetention.start")(function* () {
     let archiveCursor: ThreadId | undefined;
+    let archived = 0;
+    let failed = 0;
     let deleteCursor: ThreadId | undefined;
     yield* forkParked(
       Effect.gen(function* () {
-        archiveCursor = yield* autoArchive(undefined, archiveCursor).pipe(
+        const page = yield* autoArchive(undefined, archiveCursor).pipe(
           Effect.catch((cause) =>
-            Effect.logWarning("Worker archive sweep failed", { cause }).pipe(
-              Effect.as(archiveCursor),
-            ),
+            Effect.logWarning("Worker archive sweep failed", { cause }).pipe(Effect.as(null)),
           ),
         );
+        if (page !== null) {
+          archiveCursor = page.cursor;
+          archived += page.archived;
+          failed += page.failed;
+          if (archiveCursor === undefined && (archived > 0 || failed > 0)) {
+            const log = failed > 0 ? Effect.logWarning : Effect.logInfo;
+            yield* log("Worker archive sweep completed", { archived, failed });
+            archived = 0;
+            failed = 0;
+          }
+        }
         deleteCursor = yield* removeExpired(deleteCursor).pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Worker retention sweep failed", { cause }).pipe(
@@ -287,7 +234,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return { autoArchive, archiveBacklog, removeExpired, start };
+  return { autoArchive, removeExpired, start };
 });
 
 export class WorkerRetention extends Context.Service<

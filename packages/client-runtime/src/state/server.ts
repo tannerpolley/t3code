@@ -1366,11 +1366,6 @@ export function createServerEnvironmentAtoms<R, E>(
 
   return {
     configValueAtom,
-    workerArchiveBacklog: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:worker-archive-backlog",
-      tag: WS_METHODS.workerArchiveBacklog,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
-    }),
     runStorageCleanup: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:run-storage-cleanup",
       tag: WS_METHODS.serverRunStorageCleanup,

@@ -16174,7 +16174,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           if (
             worker === undefined ||
             worker.workerArchiveSequence !== command.workerArchiveSequence ||
-            !isIdleWorker(worker, yield* DateTime.now)
+            !isIdleWorker(worker, yield* DateTime.now) ||
+            (worker.workerTemporaryCompletedAt !== undefined &&
+              (worker.workerTemporaryCompletedAt === null ||
+                !workerCompletionIsCurrent(worker, worker.workerTemporaryCompletedAt)))
           )
             return { events: [], effects: [] };
         }
