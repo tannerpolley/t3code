@@ -1375,12 +1375,15 @@ const make = Effect.gen(function* () {
         if (changes !== null) return keep(changes);
       }
       const revision = releaseSlot ? `refs/heads/${thread.branch}` : "HEAD";
-      if (
-        releaseSlot &&
-        deleted &&
-        !(yield* git.hasCommit({ cwd: worktreePath, refName: revision }))
-      )
-        return;
+      if (releaseSlot && deleted) {
+        const branchStillExists = yield* git.execute({
+          cwd: worktreePath,
+          operation: "StorageCleanup.findDeletedWorkerBranch",
+          args: ["show-ref", "--verify", "--quiet", revision],
+          allowNonZeroExit: true,
+        });
+        if (branchStillExists.exitCode !== 0) return;
+      }
       const head = yield* git.resolveCommit({ cwd: worktreePath, revision });
       if (
         !eligible &&
@@ -1862,11 +1865,10 @@ const make = Effect.gen(function* () {
                 observeCompletion: {},
               });
               if (setup.status !== "started") return;
-              const exitCode = yield* (
-                setup.completion
-                  ? Effect.map(setup.completion, (result) => result.exitCode)
-                  : Effect.succeed(null)
-              ).pipe(
+              const completion: Effect.Effect<number | null> = setup.completion
+                ? Effect.map(setup.completion, (result) => result.exitCode)
+                : Effect.succeed(null);
+              const exitCode = yield* completion.pipe(
                 Effect.timeoutOrElse({
                   duration: "10 minutes",
                   orElse: () => Effect.succeed(null),
