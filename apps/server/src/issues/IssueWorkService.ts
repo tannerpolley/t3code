@@ -873,8 +873,8 @@ export const layer = Layer.effect(
           read.value.issue.id === entry.issue.id
             ? issueEligibility(read.value)
             : "unknown";
-        if (!(yield* stillQueued(entry.requestId))) continue;
         if (workState === "working" || eligibility === "closed") {
+          if (!(yield* stillQueued(entry.requestId))) continue;
           yield* threads
             .dispatch({
               type: "issue.queue.change",
@@ -894,7 +894,7 @@ export const layer = Layer.effect(
             );
           continue;
         }
-        if (eligibility !== "eligible") continue;
+        if (eligibility !== "eligible" || !(yield* stillQueued(entry.requestId))) continue;
         yield* start({
           host: entry.issue.host,
           repository: entry.issue.repository,
@@ -2257,7 +2257,17 @@ export const layer = Layer.effect(
               (yield* store.repositoryOwner(repository)) === null
             ) {
               const adopted = (yield* ensureOrchestrator(repository)).rootThreadId;
-              if (adopted !== null) yield* reconcile(adopted);
+              // Forked: a slow issue-host read must not hold up other repositories' events.
+              if (adopted !== null)
+                yield* reconcile(adopted).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("Queued issue starts after adoption failed", {
+                      root: adopted,
+                      cause,
+                    }),
+                  ),
+                  Effect.forkDetach,
+                );
             }
             const owner = yield* store.repositoryOwner(repository);
             if (
