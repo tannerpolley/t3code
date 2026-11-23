@@ -42,9 +42,11 @@ export class CodexAppServerClient extends Context.Service<
   {
     readonly raw: CodexAppServerClientRaw;
     readonly awaitTermination: Effect.Effect<never, CodexError.CodexAppServerError>;
+    // onResult runs before the reader dispatches later notifications and must not await an RPC.
     readonly request: <M extends CodexRpc.ClientRequestMethod>(
       method: M,
       payload: CodexRpc.ClientRequestParamsByMethod[M],
+      onResult?: (result: CodexRpc.ClientRequestResponsesByMethod[M]) => Effect.Effect<void>,
     ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexError.CodexAppServerError>;
     readonly notify: <M extends CodexRpc.ClientNotificationMethod>(
       method: M,
@@ -238,18 +240,23 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
   const request = <M extends CodexRpc.ClientRequestMethod>(
     method: M,
     payload: CodexRpc.ClientRequestParamsByMethod[M],
-  ): Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexError.CodexAppServerError> =>
-    encodeOptionalPayload(method, getClientRequestParamSchema(method), payload).pipe(
-      Effect.flatMap((encoded) => transport.request(method, encoded)),
-      Effect.flatMap(
-        (
-          raw,
-        ): Effect.Effect<
-          CodexRpc.ClientRequestResponsesByMethod[M],
-          CodexError.CodexAppServerError
-        > => decodeOptionalPayload(method, getClientRequestResponseSchema(method), raw),
+    onResult?: (result: CodexRpc.ClientRequestResponsesByMethod[M]) => Effect.Effect<void>,
+  ): Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexError.CodexAppServerError> => {
+    const decodeResult = (raw: unknown) =>
+      decodeOptionalPayload(method, getClientRequestResponseSchema(method), raw);
+    return encodeOptionalPayload(method, getClientRequestParamSchema(method), payload).pipe(
+      Effect.flatMap((encoded) =>
+        transport.request(
+          method,
+          encoded,
+          onResult === undefined
+            ? undefined
+            : (raw) => decodeResult(raw).pipe(Effect.flatMap(onResult)),
+        ),
       ),
+      Effect.flatMap(decodeResult),
     );
+  };
 
   const notify = <M extends CodexRpc.ClientNotificationMethod>(
     method: M,
