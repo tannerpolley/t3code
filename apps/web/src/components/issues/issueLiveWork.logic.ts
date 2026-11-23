@@ -56,13 +56,14 @@ type WorkSummary = Pick<RepositoryIssueSummary, "number"> & {
     | readonly (Pick<
         NonNullable<RepositoryIssueSummary["liveWork"]>[number],
         "threadId" | "inherited" | "status" | "paused" | "worktreeExists" | "requestHandledByParent"
-      > &
-        Partial<
-          Pick<
-            NonNullable<RepositoryIssueSummary["liveWork"]>[number],
-            "worktreePath" | "pullRequests"
-          >
-        >)[]
+      > & {
+        readonly worktreePath?:
+          | NonNullable<RepositoryIssueSummary["liveWork"]>[number]["worktreePath"]
+          | undefined;
+        readonly pullRequests?:
+          | NonNullable<RepositoryIssueSummary["liveWork"]>[number]["pullRequests"]
+          | undefined;
+      })[]
     | undefined;
   readonly closingPullRequests?: readonly IssuePullRequestStatus[] | undefined;
   readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
