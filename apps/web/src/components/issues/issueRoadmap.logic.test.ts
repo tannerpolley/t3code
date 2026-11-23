@@ -169,15 +169,15 @@ describe("live roadmap", () => {
       }),
       issue(14, { pullRequests: [pr("closed")] }),
     ]);
-    expect(first.map((section) => numbers(section.rows))).toEqual([
-      [],
-      [2, 7, 11, 12],
-      [],
-      [8],
-      [3, 9, 13, 14],
-      [1, 5, 10],
-      [4, 6],
-      [],
+    expect(first.map((section) => [section.id, numbers(section.rows)])).toEqual([
+      ["done", []],
+      ["ready-for-review", [8]],
+      ["in-progress", [2, 7, 11, 12]],
+      ["queued", []],
+      ["ready", [3, 9, 13, 14]],
+      ["blocked", [1, 5, 10]],
+      ["dependencies-unknown", [4, 6]],
+      ["closed", []],
     ]);
     expect(
       issueLiveStatus(

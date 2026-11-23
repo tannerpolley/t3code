@@ -183,10 +183,10 @@ export function issueRoadmap(
   }
   return [
     done,
+    ...(review.rows.length === 0 ? [] : [review]),
     inProgress,
     ...(suspended.rows.length === 0 ? [] : [suspended]),
     queued,
-    ...(review.rows.length === 0 ? [] : [review]),
     readySection,
     blocked,
     ...(unknown.rows.length === 0 ? [] : [unknown]),
