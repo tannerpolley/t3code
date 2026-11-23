@@ -473,7 +473,7 @@ export const layer = Layer.effect(
       return { root, selection, createdRoot };
     });
 
-    // Every issue admission prepares its own default-branch worktree after commit.
+    // Workspace preparation claims a slot after the worker is admitted.
     const startWorker: IssueWorkService["Service"]["startWorker"] = Effect.fn(
       "IssueWorkService.startWorker",
     )(function* (command) {

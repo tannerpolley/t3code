@@ -10,6 +10,8 @@ import * as Random from "effect/Random";
 import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
 import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
+import * as IssueWorkStore from "./issues/IssueWorkStore.ts";
+import * as IssueWorktreeSlots from "./issues/IssueWorktreeSlots.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
@@ -625,7 +627,10 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
+const layerIssueWorktreeSlots = Layer.merge(IssueWorktreeSlots.layer, IssueWorkStore.layer);
+
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  Layer.provide(layerIssueWorktreeSlots),
   Layer.provide(IssueServerLayers.layerIssueService),
   // Issue changes and status comments write through upstream's service, advancing the roadmap.
   Layer.provide(layerIssueService.pipe(Layer.provide(RuntimeLayer.layerProjectService))),
@@ -722,7 +727,15 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
-  StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+  StorageCleanup.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ProjectionStoreV2.layer,
+        layerIssueWorktreeSlots,
+        RuntimeLayer.layerProjectSetupScriptRunner,
+      ),
+    ),
+  ),
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
     Layer.provide(layerServerRestart),
