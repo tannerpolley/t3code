@@ -113,10 +113,9 @@ export function resolvePullRequestPreviewTarget({
   if (!pullRequestsEnabled || environmentId === null) return null;
   const parsed = sourceControlClients.parseChangeRequestUrl(url)?.link;
   if (parsed === undefined) return null;
-  const project = findProjectForChangeRequest(
-    projects.filter((candidate) => candidate.environmentId === environmentId),
-    parsed,
-  );
+  const candidates = projects.filter((candidate) => candidate.environmentId === environmentId);
+  const ownProject = findProjectForChangeRequest(candidates, parsed);
+  const project = ownProject ?? findProjectOnChangeRequestHost(candidates, parsed);
   if (project === undefined) return null;
   return {
     environmentId,
@@ -124,7 +123,8 @@ export function resolvePullRequestPreviewTarget({
       projectId: project.id,
       host: parsed.authority ?? parsed.host,
       repository:
-        sourceControlClients.repositorySelector(project.repositoryIdentity) ?? parsed.repository,
+        sourceControlClients.repositorySelector(ownProject?.repositoryIdentity) ??
+        parsed.repository,
       number: parsed.number,
     },
   };

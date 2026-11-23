@@ -1645,7 +1645,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect("limits a usage sprint lineage's children to the sprint provider", () =>
+  it.effect("delegates to the requested provider with a saved sprint in the lineage", () =>
     Effect.gen(function* () {
       const rootThreadId = ThreadId.make("thread:mcp-providers-sprint-root");
       const peerId = ProviderInstanceId.make("claudeAgent");
@@ -1727,44 +1727,15 @@ describe("OrchestratorMcpService provider resolution", () => {
       );
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        assert.deepEqual((yield* service.capabilities(scope)).usageSprint, usageSprint);
-        const refused = yield* service
-          .delegateTask(scope, {
-            task: "Review the change.",
-            role: "reviewer",
-            target: yield* decodeTarget({ providerInstanceId: peerId }),
-            mode: "async",
-            clientRequestId: "off-sprint",
-          })
-          .pipe(Effect.flip);
-        assert.include(
-          refused.message,
-          "usage sprint limits this repository's work to provider codex",
-        );
-        assert.equal(refused.code, "provider_unavailable");
-        const remote = yield* service
-          .delegateTask(scope, {
-            task: "Review the change.",
-            role: "reviewer",
-            // Even the sprint's own provider: the sprint cannot stop a child elsewhere.
-            target: yield* decodeTarget({
-              providerInstanceId: codexInstanceId,
-              environmentId: "environment:mcp-providers-linked",
-            }),
-            mode: "async",
-            clientRequestId: "sprint-remote",
-          })
-          .pipe(Effect.flip);
-        assert.equal(remote.code, "provider_unavailable");
-        assert.include(remote.message, "Linked-environment delegation is unavailable");
-        assert.equal(commands.length, 0);
         yield* service.delegateTask(scope, {
           task: "Review the change.",
           role: "reviewer",
+          target: yield* decodeTarget({ providerInstanceId: peerId }),
           mode: "async",
-          clientRequestId: "on-sprint",
+          clientRequestId: "off-sprint",
         });
-        assert.equal(commands.length, 1);
+        assert.lengthOf(commands, 1);
+        assert.nestedPropertyVal(commands[0], "modelSelection.instanceId", peerId);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
   );

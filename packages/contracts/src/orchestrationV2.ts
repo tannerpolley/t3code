@@ -65,7 +65,6 @@ import {
   IssueWorkCancelled,
   RepositoryWorkRestored,
   RepositoryOrchestration,
-  RepositoryUsageSprintEndReason,
 } from "./issueWork.ts";
 import { IssueGithubCommentRecorded } from "./issueComment.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
@@ -4047,15 +4046,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
     expectedRevision: Schema.Int,
     inventory: Schema.String,
   }),
-  Schema.Struct({
-    type: Schema.Literal("repository.usage-sprint.end"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    /** The ending sprint's start, so a late end never ends its successor. */
-    startedAt: Schema.String,
-    reason: RepositoryUsageSprintEndReason,
-  }),
-
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,

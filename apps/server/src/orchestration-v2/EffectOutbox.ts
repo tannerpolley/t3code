@@ -161,6 +161,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     projectId: ProjectId,
     resumed: Schema.optional(Schema.Boolean),
   }),
+  // Legacy pending effects must still decode and drain after usage sprint retirement.
   Schema.Struct({ type: Schema.Literal("usage-sprint.notify"), text: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("issue.github.comment"),

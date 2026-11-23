@@ -2427,13 +2427,6 @@ describe("fresh-thread repository handoff", () => {
         const threads = yield* ThreadManagement.ThreadManagementService;
         const store = yield* IssueWorkStore.IssueWorkStore;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const usageSprint = {
-          providerInstanceId: modelSelection.instanceId,
-          windowId: "weekly",
-          usedPercent: 40,
-          resetsAt: "2026-12-01T00:00:00.000Z",
-          startedAt: "2026-10-02T00:00:00.000Z",
-        };
         const createRoot = (
           name: string,
           work: {
@@ -2442,7 +2435,6 @@ describe("fresh-thread repository handoff", () => {
               readonly id: string;
               readonly reason: string;
             }>;
-            readonly usageSprint?: typeof usageSprint;
           },
         ) =>
           Effect.gen(function* () {
@@ -2491,7 +2483,6 @@ describe("fresh-thread repository handoff", () => {
         const recordedWork = {
           suspension: { suspendedIssues: [{ id: "issue:7", reason: "Blocked" }] },
           plan: { milestones: [plan] },
-          sprint: { usageSprint },
         };
         for (const [name, work] of Object.entries(recordedWork)) {
           const { threadId, previous } = yield* createRoot(name, work);

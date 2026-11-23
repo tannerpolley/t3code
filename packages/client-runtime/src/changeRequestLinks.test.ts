@@ -174,7 +174,7 @@ describe("resolvePullRequestPreviewTarget", () => {
     } satisfies RepositoryIdentity,
   };
 
-  it("previews a pull request only under the project that holds its repository", () => {
+  it("previews an unchecked-out repository through a project on the same host", () => {
     const target = (url: string) =>
       resolvePullRequestPreviewTarget({
         environmentId,
@@ -186,7 +186,11 @@ describe("resolvePullRequestPreviewTarget", () => {
       environmentId,
       input: { projectId: project.id, host: "github.com", repository: "acme/web", number: 7 },
     });
-    expect(target("https://github.com/acme/other/pull/7")).toBeNull();
+    expect(target("https://github.com/acme/other/pull/7")).toEqual({
+      environmentId,
+      input: { projectId: project.id, host: "github.com", repository: "acme/other", number: 7 },
+    });
+    expect(target("https://gitlab.com/acme/web/-/merge_requests/7")).toBeNull();
   });
 });
 

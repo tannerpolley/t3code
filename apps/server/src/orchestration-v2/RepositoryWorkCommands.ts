@@ -25,7 +25,6 @@ import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type { DelegatedTaskRequest, ForkCommandHooks } from "./IssueWorkCommands.ts";
 import type { OrchestratorV2Error, OrchestratorProjectionError } from "./Orchestrator.ts";
 import { isOpenBlockerSuspension, isAutomaticIssueSuspension } from "../issues/IssueEligibility.ts";
-import { usageSprintEndMessage } from "../issues/usageSprint.ts";
 
 interface RepositoryWorkCommandHooks extends ForkCommandHooks {
   readonly nextTurnItemOrdinal: (
@@ -435,105 +434,6 @@ export function makeRepositoryWorkCommands({
     }
   });
 
-  // One commit ends the sprint: history, the lifted restriction, and the outbox work it owes.
-  const endUsageSprint = Effect.fn("orchestrationV2.endUsageSprint")(function* (
-    command: Extract<
-      OrchestrationV2ServerCommand,
-      { readonly type: "repository.usage-sprint.end" }
-    >,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-  ) {
-    const shell = (yield* projectionStore
-      .getThreadRecords(command.threadId, [])
-      .pipe(mapDispatchError(command))).thread;
-    const config = shell.repositoryOrchestration;
-    const sprint = config?.usageSprint;
-    if (
-      config === undefined ||
-      sprint === undefined ||
-      repositoryPhase(config) === "retired" ||
-      sprint.startedAt !== command.startedAt
-    )
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "This usage sprint is not active on this repository root.",
-      });
-    const running = Option.isNone(issueWorkStore)
-      ? []
-      : yield* issueWorkStore.value
-          .runningLineageChildren(command.threadId)
-          .pipe(mapDispatchError(command));
-    const children: Array<{ threadId: ThreadId; issue?: ThreadLinkedIssue }> = [];
-    for (const threadId of new Set(running.map((child) => child.threadId))) {
-      const issue = (yield* projectionStore
-        .getThreadShell(threadId)
-        .pipe(mapDispatchError(command)))?.linkedIssue;
-      children.push({ threadId, ...(issue === undefined ? {} : { issue }) });
-    }
-    const now = yield* DateTime.now;
-    const endedAt = DateTime.formatIso(now);
-    const { usageSprint: _ended, ...rest } = config;
-    yield* emit(
-      events,
-      command,
-    )({
-      type: "thread.metadata-updated",
-      threadId: command.threadId,
-      occurredAt: now,
-      payload: {
-        ...shell,
-        repositoryOrchestration: {
-          ...rest,
-          revision: config.revision + 1,
-          usageSprintHistory: [
-            ...(config.usageSprintHistory ?? []),
-            {
-              providerInstanceId: sprint.providerInstanceId,
-              startedAt: sprint.startedAt,
-              endedAt,
-              reason: command.reason,
-              children,
-            },
-          ],
-        },
-        updatedAt: now,
-      },
-    });
-    const interrupts: Array<PendingOrchestrationEffectV2> =
-      command.reason === "stopped"
-        ? []
-        : running.map((child) => ({
-            id: `effect:${command.commandId}:interrupt:${child.runId}`,
-            commandId: command.commandId,
-            threadId: child.threadId,
-            request: {
-              type: "issue.suspension.interrupt",
-              runId: child.runId,
-              reason: "Interrupted because the usage sprint ended",
-            },
-          }));
-    yield* Ref.update(effects, (pending) => [
-      ...pending,
-      ...interrupts,
-      {
-        id: `effect:${command.commandId}:notify`,
-        commandId: command.commandId,
-        threadId: command.threadId,
-        request: {
-          type: "usage-sprint.notify",
-          text: usageSprintEndMessage({
-            sprint,
-            reason: command.reason,
-            endedAt,
-            stopped: children.flatMap((child) => (child.issue === undefined ? [] : [child.issue])),
-          }),
-        },
-      } satisfies PendingOrchestrationEffectV2,
-    ]);
-  });
-
   const continueWork = Effect.fn("continueWork")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "repository.work.continue" }>,
   ) {
@@ -760,7 +660,6 @@ export function makeRepositoryWorkCommands({
     end,
     restore,
     update,
-    endUsageSprint,
     continueWork,
     handoff,
   };

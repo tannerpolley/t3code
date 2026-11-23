@@ -32,7 +32,6 @@ import {
   managedIssueProviderError,
 } from "../issues/IssueEligibility.ts";
 import type { IssueWorkStore } from "../issues/IssueWorkStore.ts";
-import { lineageUsageSprint, usageSprintRefusal } from "../issues/usageSprint.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IssueReadSnapshots } from "./IssueWorkDispatch.ts";
 import type { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
@@ -164,32 +163,6 @@ export function makeIssueWorkCommands({
     },
     Effect.orElseSucceed(() => "issue_suspended" as const),
   );
-  // Only messages someone chose to send are refused; automatic follow-ups run normally.
-  // Only issue workers and read-only children live below a repository root, so others skip the read.
-  const guardUsageSprintMessage = Effect.fn("guardUsageSprintMessage")(function* (
-    command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
-    thread: OrchestrationV2AppThread,
-  ) {
-    if (
-      command.delegatedCompletion !== undefined ||
-      command.usageLimitContinuationOfRunId !== undefined ||
-      command.automaticProviderContinuationOfRunId !== undefined ||
-      (command.createdBy !== "user" && command.creationSource !== "mcp") ||
-      thread.lineage.rootThreadId === thread.id ||
-      (thread.linkedIssue === undefined && !isUnmanagedIssueRole(thread.role))
-    )
-      return;
-    const refusal = usageSprintRefusal(
-      yield* lineageUsageSprint(thread, projectionStore.getThread).pipe(mapDispatchError(command)),
-      (command.modelSelection ?? thread.modelSelection).instanceId,
-    );
-    if (refusal !== null)
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        detail: refusal,
-      });
-  });
   // Former workers cannot accept new work; usage-limit retries remain quiet until admission.
   const guardFormerWorkerMessage = Effect.fn("guardFormerWorkerMessage")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
@@ -612,7 +585,6 @@ export function makeIssueWorkCommands({
     guardThreadCreate,
     admissionWait: issueRunAdmissionWait,
     guardFormerWorkerMessage,
-    guardUsageSprintMessage,
     start,
     reuseManagedChild,
     guardDelegatedProvider,

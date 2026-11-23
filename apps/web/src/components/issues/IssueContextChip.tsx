@@ -1,8 +1,10 @@
-import type { IssueContextRecord, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, IssueContextRecord, ScopedThreadRef } from "@t3tools/contracts";
 import { CircleDashedIcon } from "lucide-react";
 import { useOpenIssueLink } from "~/lib/openIssueLink";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
-import { IssueLinkPreview, useIssuePreviewTarget } from "./IssueLinkPreview";
+import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
+import { useProjects, useServerConfigs } from "~/state/entities";
+import { IssueLinkPreview } from "../issue/IssueLinkPreview";
 import { ContextChipPopover } from "../contextChipParts";
 import { IssueStateIcon, issueStatePresentation } from "./IssueStateIcon";
 
@@ -10,28 +12,38 @@ export function IssueContextChip({
   record,
   copyMarkdown,
   threadRef,
+  environmentId: draftEnvironmentId,
 }: {
   record: IssueContextRecord;
   copyMarkdown?: string;
   threadRef?: ScopedThreadRef | null;
+  environmentId?: EnvironmentId | null;
 }) {
-  const target = useIssuePreviewTarget(threadRef?.environmentId, record.url);
+  const environmentId = threadRef?.environmentId ?? draftEnvironmentId;
+  const projects = useProjects();
+  const configs = useServerConfigs();
+  const target =
+    environmentId != null && configs.get(environmentId)?.environment.capabilities.issues === true
+      ? resolveIssueLinkTarget({
+          url: record.url,
+          projects: projects.filter((project) => project.environmentId === environmentId),
+        })
+      : null;
   const openIssue = useOpenIssueLink(threadRef ?? undefined);
   const issue = record.state === null ? null : { ...record, state: record.state };
   const state = issue === null ? "State unavailable" : issueStatePresentation(issue).label;
-  if (target !== null)
+  if (target !== null && environmentId != null)
     return (
       <IssueLinkPreview
-        environmentId={target.environmentId}
-        url={record.url}
-        title={record.title}
+        target={{ environmentId, input: target.ref }}
+        originalUrl={record.url}
         link={
           <ContextChip
             kind="issue"
             render={<a href={record.url} target="_blank" rel="noopener noreferrer" />}
             aria-label={`Open issue #${record.number}: ${record.title}, ${state}`}
             data-markdown-copy={copyMarkdown}
-            onClick={(event) => openIssue(event, record.url, target.environmentId)}
+            onClick={(event) => openIssue(event, record.url, environmentId)}
           >
             {issue === null ? <CircleDashedIcon /> : <IssueStateIcon issue={issue} />}
             <ContextChipLabel>

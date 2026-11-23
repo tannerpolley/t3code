@@ -1254,7 +1254,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Repository orchestration",
     to: "/settings/projects",
     searchTerms: [
-      "issues orchestrator worker limit implementors read-only limit usage sprint pause resume handoff close out attempt",
+      "issues orchestrator worker limit implementors read-only limit pause resume handoff close out attempt",
     ],
   },
   {

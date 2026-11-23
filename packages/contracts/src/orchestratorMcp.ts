@@ -1,5 +1,5 @@
 import { ModelRoleLevel, ThreadRoleInput } from "./threadRole.ts";
-import { RepositoryUsageSprint, RepositoryWorkTarget } from "./issueWork.ts";
+import { RepositoryWorkTarget } from "./issueWork.ts";
 import { RepositoryIssueRef } from "./repositoryIssue.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -803,8 +803,6 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   modelNotes: Schema.optionalKey(Schema.Array(OrchestratorMcpModelNote)),
   providerCredits: Schema.optionalKey(Schema.Array(OrchestratorMcpProviderCredits)),
 
-  /** The caller's repository usage sprint: only this provider's targets are allowed until it ends. */
-  usageSprint: Schema.optional(RepositoryUsageSprint),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

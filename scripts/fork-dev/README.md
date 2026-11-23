@@ -103,8 +103,7 @@ python3 scripts/fork-dev/check.py /absolute/path/to/empty-migrated.sqlite
 The check uses temporary files and local Git checkpoints, validates project owners, parentage,
 labels, native types, process commands, sections and PR states. With the optional database it also
 checks SQL writes, repeated live restoration, SQLite integrity and foreign keys. It never modifies
-the supplied database. `shot.mjs` keeps direct routes to labeled examples for optional screenshots;
-`icon-review.cjs` produces the optional icon inventory.
+the supplied database. `shot.mjs` keeps direct routes to labeled examples for optional screenshots.
 
 ## Traps and real actions
 

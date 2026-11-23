@@ -764,7 +764,6 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "repository.work.update":
     case "repository.work.continue":
     case "repository.work.handoff":
-    case "repository.usage-sprint.end":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.remote.request":
@@ -7245,7 +7244,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     yield* repositoryWork.guardScheduledMessage(command, projection.thread);
     yield* issueWork.guardFormerWorkerMessage(command, projection.thread, events);
-    yield* issueWork.guardUsageSprintMessage(command, projection.thread);
     if (command.steerFollowUpOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
       if (
@@ -16271,9 +16269,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "repository.work.continue":
         yield* repositoryWork.continueWork(command);
         break;
-      case "repository.usage-sprint.end":
-        yield* repositoryWork.endUsageSprint(command, events, effects);
-        break;
       case "repository.work.handoff":
         yield* repositoryWork.handoff(command, events, effects);
         break;
@@ -16470,7 +16465,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             if (
               cause._tag === "OrchestratorThreadAboveModeLimitError" ||
               cause._tag === "OrchestratorRuntimeModeAboveCeilingError" ||
-              command.type === "repository.usage-sprint.end" ||
               (cause._tag === "OrchestratorDispatchError" &&
                 isIssueQueueRefreshRequired(cause.cause))
             ) {

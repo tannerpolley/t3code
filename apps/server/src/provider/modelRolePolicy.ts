@@ -11,7 +11,6 @@ import {
   type OrchestratorMcpTarget,
   type ProviderDriverKind,
   type ProviderInstanceId,
-  type RepositoryUsageSprint,
   type ServerProvider,
   type ServerSettings,
   type ServerProviderUsageWindow,
@@ -25,7 +24,6 @@ import {
 import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
-import { usageSprintRefusal } from "../issues/usageSprint.ts";
 import { advertisedModel, checkDelegateTarget } from "../mcp/delegateTaskTarget.ts";
 
 export function roleDefaultTarget(
@@ -137,24 +135,19 @@ export function modelRoleStatuses(
   orchestrationCapableInstanceIds: ReadonlySet<ProviderInstanceId>,
   now: number,
   providerCredits: ReadonlyArray<OrchestratorMcpProviderCredits> = [],
-  usageSprint?: RepositoryUsageSprint,
   order: "configured" | "weekly-headroom" = "configured",
 ): ReadonlyArray<OrchestratorMcpModelRole> {
   const providerById = new Map(providers.map((provider) => [provider.instanceId, provider]));
   return roles.map((role) => {
     const choices = Arr.map(role.targets, (target, configuredOrder) => {
-      const sprintRefusal = usageSprintRefusal(usageSprint, target.providerInstanceId);
-      const checked =
-        sprintRefusal === null
-          ? checkDelegateTarget({
-              providers,
-              orchestrationCapableInstanceIds,
-              instanceId: target.providerInstanceId,
-              requestedModel: target.model,
-              inheritedModel: undefined,
-              options: target.options,
-            })
-          : new OrchestratorMcpFailure({ code: "provider_unavailable", message: sprintRefusal });
+      const checked = checkDelegateTarget({
+        providers,
+        orchestrationCapableInstanceIds,
+        instanceId: target.providerInstanceId,
+        requestedModel: target.model,
+        inheritedModel: undefined,
+        options: target.options,
+      });
       const provider = providerById.get(target.providerInstanceId);
       const windows =
         provider === undefined ? [] : weeklyWindowsForModel(provider, target.model, now);

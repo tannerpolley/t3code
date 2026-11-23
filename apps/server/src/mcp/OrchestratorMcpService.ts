@@ -71,7 +71,6 @@ import {
   latestProviderTurnForAttempt,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
-  type RepositoryUsageSprint,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -118,7 +117,6 @@ import {
   providerCreditStatuses,
   roleDefaultTarget,
 } from "../provider/modelRolePolicy.ts";
-import { lineageUsageSprint, usageSprintRefusal } from "../issues/usageSprint.ts";
 import {
   DispatchModeLimit,
   type DispatchModeRefusal,
@@ -1502,8 +1500,6 @@ const make = Effect.gen(function* () {
   });
 
   const loadProviders = providerRegistry.getProviders;
-  const loadUsageSprint = (thread: OrchestrationV2ThreadProjection["thread"]) =>
-    lineageUsageSprint(thread, loadThreadRow);
 
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
@@ -1528,7 +1524,6 @@ const make = Effect.gen(function* () {
       level: OrchestratorMcpDelegateTaskInput["level"],
       target: OrchestratorMcpDelegateTaskInput["target"],
       providers: ReadonlyArray<ServerProvider>,
-      usageSprint: RepositoryUsageSprint | undefined,
     ) {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
@@ -1541,7 +1536,6 @@ const make = Effect.gen(function* () {
         orchestrationCapableInstanceIds,
         now,
         providerCreditStatuses(providers, settings.providerCreditsApproved, now),
-        usageSprint,
       );
       return roleDefaultTarget(
         roles,
@@ -2638,7 +2632,6 @@ const make = Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
-      const usageSprint = parent === undefined ? undefined : yield* loadUsageSprint(parent.thread);
       const now = yield* Clock.currentTimeMillis;
       const providerCredits = providerCreditStatuses(
         providers,
@@ -2651,7 +2644,6 @@ const make = Effect.gen(function* () {
         orchestrationCapableInstanceIds,
         now,
         providerCredits,
-        usageSprint,
       );
       const inherited = parent?.thread.modelSelection;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
@@ -2672,7 +2664,6 @@ const make = Effect.gen(function* () {
         modelRoles,
         modelNotes: resolveModelNotes(settings.modelTiers),
         providerCredits,
-        ...(usageSprint === undefined ? {} : { usageSprint }),
         providers: providers.map((provider) => {
           // Snapshots list instances any project enables; delegate_task checks the caller's project.
           const enabledForCaller =
@@ -2744,14 +2735,6 @@ const make = Effect.gen(function* () {
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
-        const caller = yield* loadThreadRow(scope.thread.threadId);
-        // The sprint cannot stop a child that runs on another environment.
-        const sprint = yield* loadUsageSprint(caller);
-        if (sprint !== undefined)
-          return yield* failure(
-            "provider_unavailable",
-            `A one-time usage sprint runs this repository's work locally on provider ${sprint.providerInstanceId} until ${sprint.resetsAt}. Linked-environment delegation is unavailable until it ends; delegate without an environmentId.`,
-          );
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         if (Option.isNone(remoteDelegation))
           return yield* failure("invalid_request", "Linked-environment delegation is unavailable.");
@@ -2796,17 +2779,10 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      const usageSprint = yield* loadUsageSprint(parent.thread);
       const roleDefault =
         isRetryOfAcceptedDelegation || input.role === undefined || input.target?.override === true
           ? undefined
-          : yield* loadRoleDefaultTarget(
-              input.role,
-              input.level,
-              input.target,
-              providers,
-              usageSprint,
-            );
+          : yield* loadRoleDefaultTarget(input.role, input.level, input.target, providers);
       if (isOrchestratorMcpFailure(roleDefault)) return yield* roleDefault;
       const target = yield* resolveTargetRechecking({
         parent,
@@ -2814,8 +2790,6 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
-      const sprintRefusal = usageSprintRefusal(usageSprint, target.modelSelection.instanceId);
-      if (sprintRefusal !== null) return yield* failure("provider_unavailable", sprintRefusal);
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
         input.runtimeMode,

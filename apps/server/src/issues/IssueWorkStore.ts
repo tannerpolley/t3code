@@ -105,14 +105,10 @@ export class IssueWorkStore extends Context.Service<
       threadId: ThreadId,
     ) => Effect.Effect<boolean, IssueWorkError>;
     readonly activeRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
-    readonly usageSprintRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
-    /** Threads below this root with a turn in progress. */
     readonly runningLineageChildren: (
       rootThreadId: ThreadId,
-    ) => Effect.Effect<
-      ReadonlyArray<{ readonly threadId: ThreadId; readonly runId: RunId }>,
-      IssueWorkError
-    >;
+    ) => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
+    readonly usageSprintRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly subtreeDrained: (rootThreadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
     /** Queued issue-worker runs this root can never admit: their issue's attempt is not theirs under this root. */
     readonly strandedQueuedRuns: (
@@ -625,20 +621,15 @@ export const layer = Layer.effect(
         ),
       ),
       runningLineageChildren: Effect.fn("IssueWorkStore.runningLineageChildren")((rootThreadId) =>
-        sql<{ thread_id: string; run_id: string }>`
-        SELECT run.thread_id, run.run_id FROM orchestration_v2_projection_runs run
-        JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
-        WHERE CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
-          AND thread.thread_id <> ${rootThreadId} AND thread.deleted_at IS NULL
-          AND run.status IN ('preparing', 'starting', 'running', 'waiting')
-        ORDER BY run.rowid
-      `.pipe(
-          Effect.map((rows) =>
-            rows.map((row) => ({
-              threadId: ThreadId.make(row.thread_id),
-              runId: RunId.make(row.run_id),
-            })),
-          ),
+        sql<{ thread_id: string }>`
+          SELECT DISTINCT run.thread_id FROM orchestration_v2_projection_runs run
+          JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
+          WHERE CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
+            AND thread.thread_id <> ${rootThreadId} AND thread.deleted_at IS NULL
+            AND run.status IN ('preparing', 'starting', 'running', 'waiting')
+          ORDER BY run.thread_id
+        `.pipe(
+          Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
           Effect.mapError(mapError),
         ),
       ),

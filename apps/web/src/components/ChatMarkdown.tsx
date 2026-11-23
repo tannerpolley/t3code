@@ -1,9 +1,7 @@
 import { MarkdownInlineCode } from "./chat/ForkMarkdownActions";
 import { markdownImageUnavailableLabel } from "./markdownImageState";
-import { knownIssueHosts } from "../lib/openRepositoryIssueLink";
-import { parseIssueUrl } from "../lib/openRepositoryIssueLink";
-import { IssueLinkPreview } from "./issues/IssueLinkPreview";
-import { IssueLinkPreviewFallback } from "./issues/IssueLinkPreview";
+import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
+import { IssueLinkPreview, IssueLinkPreviewFallback } from "./issue/IssueLinkPreview";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { clientHostEnvironmentAtom } from "../state/clientHostEnvironment";
 import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
@@ -445,6 +443,7 @@ type MarkdownServerConfigFields = ReturnType<typeof markdownServerConfigFields>;
 function markdownServerConfigFields(config: ServerConfig | null) {
   return {
     pullRequestsEnabled: config !== null,
+    issuesEnabled: config?.environment.capabilities.issues === true,
     isMacOS: config?.environment.platform.os === "darwin",
     availableEditors: config?.availableEditors ?? NO_MARKDOWN_EDITORS,
     revealInFileManagerLabel:
@@ -462,6 +461,7 @@ function markdownServerConfigFieldsEqual(
 ): boolean {
   return (
     previous.pullRequestsEnabled === next.pullRequestsEnabled &&
+    previous.issuesEnabled === next.issuesEnabled &&
     previous.isMacOS === next.isMacOS &&
     previous.revealInFileManagerLabel === next.revealInFileManagerLabel &&
     previous.availableEditors.length === next.availableEditors.length &&
@@ -663,10 +663,17 @@ function useChatMarkdownState({
       },
     );
   };
-  const { pullRequestsEnabled, availableEditors, revealInFileManagerLabel, isMacOS } = useAtomValue(
-    markdownServerConfigFieldsAtom(environmentId),
-  );
+  const {
+    pullRequestsEnabled,
+    issuesEnabled,
+    availableEditors,
+    revealInFileManagerLabel,
+    isMacOS,
+  } = useAtomValue(markdownServerConfigFieldsAtom(environmentId));
   const projects = useProjects();
+  const issueProjects = issuesEnabled
+    ? projects.filter((project) => project.environmentId === environmentId)
+    : [];
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors, cwd);
@@ -1021,6 +1028,7 @@ function useChatMarkdownState({
     resolveThreadPullRequest,
     resolvedTheme,
     pullRequestsEnabled,
+    issueProjects,
     skills,
     threadRef,
     updateThreadPullRequestLink,
@@ -1186,6 +1194,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
       pullRequestsEnabled,
+      issueProjects,
       updateThreadPullRequestLink,
       fileLinkChip,
       renderContextReference,
@@ -1256,6 +1265,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
             url: pullRequestCandidateUrl,
           })
         : null;
+      const issueTarget =
+        faviconHost && href && issueProjects.length > 0
+          ? resolveIssueLinkTarget({ url: href, projects: issueProjects })
+          : null;
+      const issuePreviewTarget =
+        issueTarget === null || environmentId === null
+          ? null
+          : { environmentId, input: issueTarget.ref };
       const isSameDocumentLink = href?.startsWith("#") ?? false;
       const onClick = props.onClick;
       const canOpenInPreview =
@@ -1414,8 +1431,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
             target={pullRequestPreviewTarget}
             confirmBeforeOpen={confirmBeforeOpen}
             fallback={
-              confirmBeforeOpen ? (
-                <IssueLinkPreviewFallback environmentId={environmentId} url={href} />
+              confirmBeforeOpen && issuePreviewTarget !== null ? (
+                <IssueLinkPreviewFallback originalUrl={href} target={issuePreviewTarget} />
               ) : undefined
             }
             onOpenPullRequest={(targetUrl) =>
@@ -1448,8 +1465,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
           />
         );
       }
-      if (parseIssueUrl(href, knownIssueHosts(projects)) !== null) {
-        return <IssueLinkPreview link={link} url={href} environmentId={environmentId} />;
+      if (issuePreviewTarget !== null) {
+        return <IssueLinkPreview link={link} originalUrl={href} target={issuePreviewTarget} />;
       }
       return (
         <Tooltip>

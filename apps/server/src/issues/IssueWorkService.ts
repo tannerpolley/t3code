@@ -5,7 +5,6 @@ import {
   type EnvironmentId,
   CLOSED_ISSUE_SUSPENSION_REASON,
   resolveModelRoles,
-  type RepositoryUsageSprintInput,
   ThreadId,
   type IssueQueueInput,
   type OrchestrationV2ServerCommand,
@@ -77,7 +76,6 @@ import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { checkDelegateTarget } from "../mcp/delegateTaskTarget.ts";
 import { modelRoleStatuses, providerCreditStatuses } from "../provider/modelRolePolicy.ts";
-import { usageSprintCheck, usageSprintWindow } from "./usageSprint.ts";
 import {
   issueEligibility,
   isUnmanagedIssueRole,
@@ -167,12 +165,6 @@ export class IssueWorkService extends Context.Service<
     readonly setPaused: (
       input: RepositoryWorkControlInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
-    /** Starts a usage sprint, or with a null provider stops it without interrupting work. */
-    readonly setUsageSprint: (
-      input: RepositoryUsageSprintInput,
-    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
-    /** Ends sprints whose usage window reset, stopping their running children. */
-    readonly sweepUsageSprints: Effect.Effect<void, IssueWorkError>;
     readonly assertCurrentCaller: (threadId: ThreadId) => Effect.Effect<void, IssueWorkError>;
     readonly requestHandoff: (
       threadId: ThreadId,
@@ -332,8 +324,6 @@ export const layer = Layer.effect(
         const adapter = yield* adapters.get(instanceId).pipe(Effect.mapError(mapError));
         if (supportsManagedIssueWork(adapter.driver)) capableIds.add(instanceId);
       }
-      const usageSprint =
-        root === null ? undefined : (yield* store.configuration(root.rootThreadId))?.usageSprint;
       const now = yield* Clock.currentTimeMillis;
       const roles = modelRoleStatuses(
         resolveModelRoles(serverSettings),
@@ -341,7 +331,6 @@ export const layer = Layer.effect(
         capableIds,
         now,
         providerCreditStatuses(availableProviders, serverSettings.providerCreditsApproved, now),
-        usageSprint,
       );
       const role = roles.find((entry) => entry.id === input.modelRoleId);
       if (role === undefined)
@@ -1570,123 +1559,6 @@ export const layer = Layer.effect(
       return yield* repositoryStatus(input);
     });
 
-    // The sprint lock and the end command's start check keep a stale decision from ending a successor.
-    // A Stop names its sprint's start, so a late or retried Stop never ends a later sprint.
-    const advanceUsageSprint = Effect.fn("IssueWorkService.advanceUsageSprint")(
-      function* (
-        rootThreadId: ThreadId,
-        stop: { readonly requestId: CommandId; readonly startedAt: string } | undefined,
-      ) {
-        const config = yield* store.configuration(rootThreadId);
-        const sprint = config?.usageSprint;
-        if (config == null || sprint === undefined) return;
-        if (stop !== undefined && stop.startedAt !== sprint.startedAt) return;
-        const provider = (yield* providers.getProviders).find(
-          (candidate) => candidate.instanceId === sprint.providerInstanceId,
-        );
-        const check = usageSprintCheck(sprint, provider, yield* Clock.currentTimeMillis);
-        // A Stop after the window already reset ends the sprint as that reset.
-        const reason = "end" in check ? check.end : stop === undefined ? null : "stopped";
-        if (reason !== null)
-          return yield* threads
-            .dispatch({
-              type: "repository.usage-sprint.end",
-              commandId:
-                stop?.requestId ??
-                CommandId.make(
-                  `usage-sprint-end:${rootThreadId}:${config.usageSprintHistory?.length ?? 0}:${sprint.startedAt}`,
-                ),
-              threadId: rootThreadId,
-              startedAt: sprint.startedAt,
-              reason,
-            })
-            .pipe(Effect.mapError(mapError), Effect.asVoid);
-        // Usage only climbs within a window, so idle ticks write nothing.
-        if ("peak" in check && check.peak > sprint.usedPercent)
-          yield* update(
-            rootThreadId,
-            { ...config, usageSprint: { ...sprint, usedPercent: check.peak } },
-            CommandId.make(`usage-sprint:${rootThreadId}:${config.revision}`),
-          );
-      },
-      (effect, rootThreadId) => assignments.withLock(`usage-sprint:${rootThreadId}`, effect),
-    );
-
-    const setUsageSprint = Effect.fn("IssueWorkService.setUsageSprint")(function* (
-      input: RepositoryUsageSprintInput,
-    ) {
-      const owner = yield* store.repositoryOwnerByRef(input);
-      if (owner === null)
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: "This repository has no registered orchestrator.",
-        });
-      const instanceId = input.providerInstanceId;
-      if (instanceId === null) {
-        if (input.startedAt === undefined)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "Stopping a usage sprint needs the startedAt of the sprint to stop.",
-          });
-        yield* advanceUsageSprint(owner.rootThreadId, {
-          requestId: input.clientRequestId,
-          startedAt: input.startedAt,
-        });
-        return yield* repositoryStatus(input);
-      }
-      yield* assignments.withLock(
-        `usage-sprint:${owner.rootThreadId}`,
-        Effect.gen(function* () {
-          const config = (yield* store.configuration(owner.rootThreadId))!;
-          if (config.usageSprint?.providerInstanceId === instanceId) return;
-          if (config.usageSprint !== undefined)
-            return yield* new IssueWorkError({
-              code: "invalid-request",
-              message: `A usage sprint on ${config.usageSprint.providerInstanceId} is already running. Stop it before starting another.`,
-            });
-          const provider = (yield* providers.getProviders).find(
-            (candidate) => candidate.instanceId === instanceId,
-          );
-          if (provider?.driver !== "codex" && provider?.driver !== "claudeAgent")
-            return yield* new IssueWorkError({
-              code: "invalid-request",
-              message: `Usage sprints run on a Codex or Claude provider instance; ${instanceId} is not one.`,
-            });
-          const now = yield* DateTime.now;
-          const window = usageSprintWindow(provider, DateTime.toEpochMillis(now));
-          if (window?.resetsAt === undefined)
-            return yield* new IssueWorkError({
-              code: "invalid-request",
-              message: `Provider ${instanceId} reports no weekly usage window with a known reset time.`,
-            });
-          yield* update(
-            owner.rootThreadId,
-            {
-              ...config,
-              usageSprint: {
-                providerInstanceId: instanceId,
-                windowId: window.id,
-                usedPercent: window.usedPercent,
-                resetsAt: window.resetsAt,
-                startedAt: DateTime.formatIso(now),
-              },
-            },
-            input.clientRequestId,
-          );
-        }),
-      );
-      return yield* repositoryStatus(input);
-    });
-
-    const sweepUsageSprints = Effect.gen(function* () {
-      for (const rootThreadId of yield* store.usageSprintRoots())
-        yield* advanceUsageSprint(rootThreadId, undefined).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Usage sprint sweep failed", { rootThreadId, cause }),
-          ),
-        );
-    }).pipe(Effect.withSpan("IssueWorkService.sweepUsageSprints"));
-
     const validateLead = Effect.fn("IssueWorkService.validateLead")(function* (
       input: RepositoryOrchestratorInput,
       moveTo?: RepositoryWorkRestoreInput,
@@ -2172,8 +2044,6 @@ export const layer = Layer.effect(
       repositoryStatus,
       endRepository,
       setPaused,
-      setUsageSprint,
-      sweepUsageSprints,
       closeOut,
       setWorkerLimit: setLimit,
       setReadOnlyLimit: setLimit,
@@ -2184,6 +2054,47 @@ export const layer = Layer.effect(
       handoff,
       reconcile,
     });
+    const savedSprintRoots = yield* store
+      .usageSprintRoots()
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not read saved usage sprints", { cause }).pipe(Effect.as([])),
+        ),
+      );
+    for (const rootThreadId of savedSprintRoots) {
+      yield* Effect.gen(function* () {
+        const config = yield* store.configuration(rootThreadId);
+        if (config?.usageSprint === undefined) return;
+        const { usageSprint, ...rest } = config;
+        const children: Array<{ threadId: ThreadId; issue?: ThreadLinkedIssue }> = [];
+        for (const threadId of yield* store.runningLineageChildren(rootThreadId)) {
+          const issue = (yield* threads.getThreadShell(threadId))?.linkedIssue;
+          children.push({ threadId, ...(issue === undefined ? {} : { issue }) });
+        }
+        const now = yield* DateTime.now;
+        yield* update(
+          rootThreadId,
+          {
+            ...rest,
+            usageSprintHistory: [
+              ...(config.usageSprintHistory ?? []),
+              {
+                providerInstanceId: usageSprint.providerInstanceId,
+                startedAt: usageSprint.startedAt,
+                endedAt: DateTime.formatIso(now),
+                reason: "stopped",
+                children,
+              },
+            ],
+          },
+          CommandId.make(`retire-usage-sprint:${rootThreadId}:${config.revision}`),
+        );
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not retire saved usage sprint", { rootThreadId, cause }),
+        ),
+      );
+    }
     const scheduler = yield* Effect.serviceOption(Scheduler.Scheduler);
     if (Option.isSome(scheduler)) {
       let nextReadAt = 0;
@@ -2196,8 +2107,6 @@ export const layer = Layer.effect(
           for (const root of yield* store.activeRoots()) yield* reconcile(root);
         }),
       );
-      // Every tick: a passed reset, including one while the server was down, ends the sprint.
-      yield* scheduler.value.register("repository-usage-sprint", sweepUsageSprints);
     }
     const sink = yield* Effect.serviceOption(EventSink.EventSinkV2);
     if (Option.isSome(sink)) {

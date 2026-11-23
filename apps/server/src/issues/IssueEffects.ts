@@ -280,25 +280,7 @@ export const make = Effect.gen(function* () {
           }),
         );
       case "usage-sprint.notify":
-        return yield* sendOnce(effect, ({ messageId, commandId }) =>
-          threads.dispatch({
-            type: "message.dispatch",
-            commandId,
-            messageId,
-            threadId: effect.threadId,
-            text: request.text,
-            notification: {
-              source: { kind: "system" },
-              outcome: "updated",
-              summary: "Usage sprint ended",
-              detail: request.text,
-            },
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
-            createdBy: "agent",
-            creationSource: "server",
-          }),
-        );
+        return;
       case "issue.status.refresh":
         if (Option.isNone(eventSink)) return yield* Effect.fail("Issue event sink is unavailable.");
         return yield* withIssueWriteLock(

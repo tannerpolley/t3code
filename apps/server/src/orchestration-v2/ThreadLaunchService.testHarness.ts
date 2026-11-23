@@ -379,8 +379,7 @@ function suspensionWorkerLayer(
                     cause: "Injected interrupt failure",
                   }),
                 )
-              : effect.request.type.startsWith("issue.suspension.") ||
-                  effect.request.type === "usage-sprint.notify"
+              : effect.request.type.startsWith("issue.suspension.")
                 ? real.execute(effect, options)
                 : Effect.void,
         ),

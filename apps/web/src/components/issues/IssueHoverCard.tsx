@@ -28,7 +28,7 @@ interface IssueHoverContentProps {
 }
 
 /** Mounted only in an open hover: the detail cache and streamed shell overlay stay shared. */
-export function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverContentProps) {
+function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverContentProps) {
   const { environmentId, input } = target;
   const gt = useGT();
   const query = useEnvironmentQuery(repositoryIssueEnvironment.detail({ environmentId, input }));
