@@ -31,6 +31,9 @@ export const RuntimeMode = Schema.Literals([
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
+export const DelegatedToolProfile = Schema.Literals(["full", "dry"]);
+export type DelegatedToolProfile = typeof DelegatedToolProfile.Type;
+
 const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
   "approval-required": 0,
   "auto-accept-edits": 1,

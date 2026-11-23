@@ -459,6 +459,15 @@ export function makeIssueWorkCommands({
               cause:
                 "This issue already has a current worker under another parent. Read its issue status and use that parent thread to manage it.",
             });
+          if (
+            request.toolProfile !== undefined &&
+            request.toolProfile !== (current.thread.toolProfile ?? "full")
+          )
+            return yield* new OrchestratorDispatchError({
+              commandId: request.commandId,
+              commandType: request.type,
+              detail: "The existing issue worker keeps its original tool profile.",
+            });
           if (finished) {
             const message = {
               type: "message.dispatch",

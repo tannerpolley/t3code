@@ -357,6 +357,7 @@ describe("orchestrator MCP toolkit", () => {
         const delegationStartSequence = yield* orchestrator.getThreadEventSequence(parentThreadId);
         const delegatedCall = yield* invoke("delegate_task", {
           task: delegatedPrompt,
+          toolProfile: "dry",
           target: {
             providerInstanceId: codexInstanceId,
             model: codexModel,
@@ -368,6 +369,10 @@ describe("orchestrator MCP toolkit", () => {
           delegatedCall.structuredContent,
         ).pipe(Effect.orDie);
         expect(delegatedStart.childRunId).not.toBeNull();
+        expect(
+          (yield* orchestrator.getThreadProjection(localChild(delegatedStart.childThreadId))).thread
+            .toolProfile,
+        ).toBe("dry");
         yield* orchestrator
           .streamStoredEventsFrom({
             threadId: parentThreadId,
