@@ -156,6 +156,24 @@ describe("fresh-thread repository handoff", () => {
       ) => IssueWorkStore.IssueWorkStore["Service"];
     } = {},
   ) => {
+    const workRead: IssueService.IssueService["Service"]["workRead"] = (input) =>
+      Effect.sync(() => {
+        options.issueReads?.push(`relationships:${input.number}`);
+        return {
+          issue: {
+            ...linked(input.number),
+            repositoryId: options.repositoryId?.() ?? config.repositoryId,
+          },
+          state: options.issueState?.(input.number) ?? "open",
+          milestoneNumber: 1,
+          parent: input.number === 2 ? linked(1) : null,
+          subIssues: input.number === 1 ? [linked(2)] : [],
+          blockedBy: [],
+          parentComplete: true,
+          subIssuesComplete: true,
+          blockersComplete: true,
+        };
+      });
     const reads = Layer.mock(IssueService.IssueService)({
       repositoryIdentity: () =>
         Effect.sync(() => {
@@ -167,24 +185,11 @@ describe("fresh-thread repository handoff", () => {
           options.issueReads?.push(`issue identity:${input.number}`);
           return linked(input.number);
         }),
-      workRead: (input) =>
-        Effect.sync(() => {
-          options.issueReads?.push(`relationships:${input.number}`);
-          return {
-            issue: {
-              ...linked(input.number),
-              repositoryId: options.repositoryId?.() ?? config.repositoryId,
-            },
-            state: options.issueState?.(input.number) ?? "open",
-            milestoneNumber: 1,
-            parent: input.number === 2 ? linked(1) : null,
-            subIssues: input.number === 1 ? [linked(2)] : [],
-            blockedBy: [],
-            parentComplete: true,
-            subIssuesComplete: true,
-            blockersComplete: true,
-          };
-        }),
+      workRead,
+      workReads: (input, numbers) =>
+        Effect.forEach(numbers, (number) =>
+          workRead({ ...input, number }).pipe(Effect.map((read) => [number, read] as const)),
+        ).pipe(Effect.map((entries) => new Map(entries))),
       capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
       milestoneIssues: () =>
         Effect.succeed({

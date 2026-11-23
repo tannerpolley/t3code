@@ -97,6 +97,8 @@ function fakeGitHub(pageSize = 2) {
   let identityError: IssueReadError | null = null;
   const requests: Request[] = [];
   const identityReads: Array<{ host: string; repository: string }> = [];
+  const createdLabels = new Map<string, Array<{ name: string }>>();
+  const appliedLabels = new Map<string, Array<{ name: string }>>();
   const data = {
     issues: [] as Item[],
     comments: [] as Item[],
@@ -108,6 +110,28 @@ function fakeGitHub(pageSize = 2) {
   const rest = (input: Request) =>
     Effect.sync(() => {
       requests.push(input);
+      const [route, query = ""] = input.path.split("?");
+      const issueNumber = Number(/^issues\/(\d+)\/labels$/u.exec(route ?? "")?.[1]);
+      const labelKey = `${input.repository}/${issueNumber}`;
+      const issueLabels = () =>
+        appliedLabels.get(labelKey) ??
+        (data.issues.find((issue) => issue.number === issueNumber)?.labels as
+          | Array<{ name: string }>
+          | undefined) ??
+        [];
+      if (input.method === "POST" && (route === "labels" || Number.isFinite(issueNumber))) {
+        if (route === "labels") {
+          const label = input.body as { name: string };
+          createdLabels.set(input.repository, [
+            ...(createdLabels.get(input.repository) ?? []),
+            label,
+          ]);
+        } else {
+          const names = (input.body as { labels: string[] }).labels;
+          appliedLabels.set(labelKey, [...issueLabels(), ...names.map((name) => ({ name }))]);
+        }
+        return { status: 200, body: "[]", etag: null, nextPage: null };
+      }
       if (input.method === "POST")
         return {
           status: 201,
@@ -124,24 +148,25 @@ function fakeGitHub(pageSize = 2) {
           etag: null,
           nextPage: null,
         };
-      const [route, query = ""] = input.path.split("?");
       const params = new URLSearchParams(query);
       const since = params.get("since") ?? "";
       const list =
         route === "labels"
-          ? [{ name: "external" }]
-          : route === "milestones"
-            ? data.milestones
-            : route === "issues"
-              ? data.issues
-                  .filter((entry) => params.get("state") !== "open" || entry.state === "open")
-                  .filter((entry) => String(entry.updated_at) > since)
-                  .toSorted(newest("updated_at"))
-              : route === "issues/comments"
-                ? data.comments
+          ? [{ name: "external" }, ...(createdLabels.get(input.repository) ?? [])]
+          : Number.isFinite(issueNumber)
+            ? issueLabels()
+            : route === "milestones"
+              ? data.milestones
+              : route === "issues"
+                ? data.issues
+                    .filter((entry) => params.get("state") !== "open" || entry.state === "open")
                     .filter((entry) => String(entry.updated_at) > since)
                     .toSorted(newest("updated_at"))
-                : data.events.toSorted((left, right) => Number(right.id) - Number(left.id));
+                : route === "issues/comments"
+                  ? data.comments
+                      .filter((entry) => String(entry.updated_at) > since)
+                      .toSorted(newest("updated_at"))
+                  : data.events.toSorted((left, right) => Number(right.id) - Number(left.id));
       const page = Number(params.get("page") ?? "1");
       const body = JSON.stringify(list.slice((page - 1) * pageSize, page * pageSize));
       const etag = `"${input.path}:${body}"`;
@@ -645,7 +670,7 @@ it.effect(
         github.requests.filter((request) => request.path === "issues/3/labels");
       assert.deepEqual(
         labelWrites().map((request) => request.body),
-        [{ labels: ["external", "priority: high", "from:amine"] }],
+        [{ labels: ["from:amine"] }],
       );
       // Later activity does not relabel it.
       github.data.issues = [{ ...marked, updated_at: at(5) }];
@@ -804,7 +829,10 @@ it.effect("t3_issue_post marks and labels only writes to another project's repos
       body: "Can you also cover Z?",
     });
     assert.deepEqual(
-      github.requests.slice(-2).map((request) => [request.path, request.body]),
+      github.requests
+        .filter((request) => request.method === "POST")
+        .slice(-2)
+        .map((request) => [request.path, request.body]),
       [
         ["issues/3/comments", { body: `Can you also cover Z?\n\n${marker}` }],
         ["issues/3/labels", { labels: ["external", "from:a", "priority: high"] }],
