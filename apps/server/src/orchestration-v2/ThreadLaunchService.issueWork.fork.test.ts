@@ -1310,6 +1310,10 @@ it.effect.each([
       });
     const reads = Layer.mock(IssueService.IssueService)({
       workRead,
+      workReads: (_input, numbers) =>
+        Effect.forEach(numbers, (number) =>
+          workRead({ number }).pipe(Effect.map((read) => [number, read] as const)),
+        ).pipe(Effect.map((entries) => new Map(entries))),
       repositoryIdentity: () =>
         Effect.succeed({
           host: "github.com",
@@ -1425,7 +1429,7 @@ it.effect.each([
         if (canPublish) {
           assert.include(
             brief,
-            "The repository owner explicitly requests that you publish after checks pass.",
+            "The repository owner explicitly requests that you publish and merge after checks pass.",
           );
           assert.include(
             brief,
@@ -1437,13 +1441,18 @@ it.effect.each([
           );
           assert.include(
             brief,
-            "Merging, force-pushing, issue edits, and other GitHub mutations retain separate approval.",
+            "Once the PR is ready and mergeable, merge it with gh pr merge --rebase, or --squash when the branch contains merge commits. If main moved and the PR conflicts, merge origin/main into the branch, re-run your checks, push, and retry. Then report the merge SHA and finish.",
+          );
+          assert.include(
+            brief,
+            "Force-pushing, issue edits, and other GitHub mutations retain separate approval.",
           );
           assert.notInclude(brief, "publishing retain separate approval");
         } else {
           assert.include(brief, "Other GitHub mutations and publishing retain separate approval.");
           assert.notInclude(brief, "push only this issue branch");
           assert.notInclude(brief, "reviewer subagent");
+          assert.notInclude(brief, "gh pr merge");
         }
       }
       newBlocker = true;

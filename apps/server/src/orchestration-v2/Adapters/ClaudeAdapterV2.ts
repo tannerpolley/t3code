@@ -5114,14 +5114,7 @@ interface ActiveClaudeTurnContext {
   steeredLedgerUsage: ClaudeLedgerUsage | undefined;
   readonly rootModels: Set<string>;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
-  readonly mainAgentUsage: Map<
-    string,
-    {
-      readonly inputTokens: number;
-      readonly cachedInputTokens: number;
-      readonly outputTokens: number;
-    }
-  >;
+  readonly mainAgentUsage: Parameters<typeof accumulateClaudeTurnTokenUsage>[0];
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly promptUuid: string | null;
   promptEcho: "pending" | "confirmed";
@@ -11364,13 +11357,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   turnTokenUsage: accumulateClaudeTurnTokenUsage(
                     context.mainAgentUsage,
                     message.message.id,
-                    claudeProviderTurnTokenUsage(
-                      message.message.usage,
-                      claudeContextWindow(context.input.modelSelection),
-                      DateTime.formatIso(now),
-                      adapterOptions.settings.autoCompactWindow,
-                      context.streamUsage?.requestedAt,
-                    ),
+                    {
+                      inputTokens: claudeMessageInputTokens(snapshotUsage),
+                      cachedInputTokens: snapshotUsage.cache_read_input_tokens ?? 0,
+                      cacheCreationTokens: snapshotUsage.cache_creation_input_tokens ?? 0,
+                      outputTokens: snapshotUsage.output_tokens,
+                    },
                     context.subagentsByTaskId.size > 0 || context.subagentsByToolUseId.size > 0,
                   ),
                 },

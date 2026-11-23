@@ -894,6 +894,45 @@ it.effect(
     }).pipe(Effect.provide(harness())),
 );
 
+it.effect.each([
+  { draftPrRepositories: undefined, watched: true },
+  { draftPrRepositories: "GitHub.com/Owner/Repo", watched: false },
+])(
+  "managed worker PR watch with draft PR repositories $draftPrRepositories",
+  ({ draftPrRepositories, watched }) =>
+    Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const threadId = yield* startWatchTestWorker();
+      yield* threads.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("link-worker-pr"),
+        threadId,
+        host: "github.com",
+        repository: "owner/repo",
+        number: 12,
+        url: "https://github.com/owner/repo/pull/12",
+        source: "agent",
+      });
+      const { thread } = yield* threads.getThreadRecords(threadId, []);
+      assert.equal(thread.pullRequests?.[0]?.watch !== undefined, watched);
+    }).pipe(
+      Effect.provide(
+        harness().pipe(
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env:
+                  draftPrRepositories === undefined
+                    ? {}
+                    : { T3CODE_ISSUE_DRAFT_PR_REPOSITORIES: draftPrRepositories },
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+);
+
 it.effect("does not rewrite an unchanged PR snapshot after a managed worker stops", () =>
   Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;

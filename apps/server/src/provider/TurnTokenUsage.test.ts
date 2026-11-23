@@ -34,16 +34,17 @@ describe("billable native turn usage", () => {
     const first = update(breakdown(1010, 505, 102), breakdown(10, 5, 2));
     accumulateCodexTurnTokenUsage(state, "turn", first);
     accumulateCodexTurnTokenUsage(state, "turn", first);
-    accumulateCodexTurnTokenUsage(
-      state,
-      "turn",
-      update(breakdown(1030, 515, 108), breakdown(20, 10, 6)),
-    );
+    const second = update(breakdown(1030, 515, 108), breakdown(20, 10, 6));
+    accumulateCodexTurnTokenUsage(state, "turn", second);
+    accumulateCodexTurnTokenUsage(state, "turn", first);
+    accumulateCodexTurnTokenUsage(state, "turn", second);
     expect(completeCodexTurnTokenUsage(state, "turn", true)).toEqual({
       usageStatus: "complete",
       usageScope: "main_agent",
       hasSubagents: false,
       inputTokens: 30,
+      firstInputContext: 10,
+      peakInputContext: 20,
       cachedInputTokens: 15,
       outputTokens: 8,
       reasoningTokens: 0,
@@ -102,6 +103,7 @@ describe("billable native turn usage", () => {
       usageScope: "main_agent",
       hasSubagents: true,
       inputTokens: 150,
+      uncachedInputTokens: 100,
       cachedInputTokens: 40,
       cacheCreationTokens: 10,
       outputTokens: 20,
@@ -156,6 +158,7 @@ describe("billable native turn usage", () => {
         usageScope: "main_agent",
         hasSubagents: true,
         inputTokens: 147,
+        uncachedInputTokens: 105,
         cachedInputTokens: 42,
         outputTokens: 23,
       });
@@ -287,6 +290,11 @@ describe("live whole-turn usage", () => {
       outputTokens: 50,
       hasSubagents: true,
     });
+    expect(finishClaudeTurnTokenUsage(undefined, messages, true, "failed")).toMatchObject({
+      requestCount: 2,
+      firstInputContext: 100,
+      peakInputContext: 200,
+    });
   });
 });
 
@@ -311,6 +319,9 @@ it.each(["completed", "failed", "interrupted"] as const)(
       usageStatus: "partial",
       inputTokens: 300,
       cachedInputTokens: 180,
+      requestCount: 2,
+      firstInputContext: 100,
+      peakInputContext: 200,
       outputTokens: 50,
       hasSubagents: true,
     });

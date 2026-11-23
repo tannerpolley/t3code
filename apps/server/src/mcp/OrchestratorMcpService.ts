@@ -57,6 +57,7 @@ import {
   type OrchestratorMcpThreadTimelineItem,
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
+  type ProviderDriverKind,
   type ProviderInteractionMode,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
@@ -190,6 +191,7 @@ const THREAD_PULL_REQUEST_PREVIEW_LIMIT = 5;
 const THREAD_READ_RESULT_MAX_BYTES = 30_000;
 
 interface ResolvedTarget {
+  readonly driver: ProviderDriverKind;
   readonly modelSelection: ModelSelection;
   readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
 }
@@ -1665,7 +1667,8 @@ const make = Effect.gen(function* () {
     }
     return {
       modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
-      supportedRuntimeModes: provider?.supportedRuntimeModes,
+      driver: provider.driver,
+      supportedRuntimeModes: provider.supportedRuntimeModes,
     };
   });
 
@@ -2797,6 +2800,8 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
+      if (!isRetryOfAcceptedDelegation && input.enableTools?.length && target.driver !== "codex")
+        return yield* failure("invalid_request", "enableTools requires a Codex target.");
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
         input.runtimeMode,
@@ -2878,6 +2883,7 @@ const make = Effect.gen(function* () {
         parentNodeId: parentRun.rootNodeId,
         task: brief,
         role,
+        ...(input.enableTools === undefined ? {} : { enableTools: input.enableTools }),
         ...(input.title === undefined ? {} : { title: input.title }),
         modelSelection: target.modelSelection,
         runtimeMode,

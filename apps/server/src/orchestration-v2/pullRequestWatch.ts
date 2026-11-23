@@ -10,6 +10,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { isDraftPrRepository } from "../issues/IssueWorkerBrief.ts";
+
 export function needsManagedPullRequestWatch(
   thread: Pick<
     OrchestrationV2AppThread,
@@ -17,9 +19,15 @@ export function needsManagedPullRequestWatch(
   > &
     Partial<Pick<OrchestrationV2AppThread, "archivedAt">>,
   link: ThreadPullRequestLink,
+  draftPrRepositories: ReadonlySet<string>,
 ): boolean {
   return (
     isManagedIssueImplementor(thread) &&
+    // Opted-in workers merge their own PR, so nothing waits on a watch.
+    !(
+      thread.linkedIssue !== undefined &&
+      isDraftPrRepository(draftPrRepositories, thread.linkedIssue)
+    ) &&
     thread.archivedAt == null &&
     thread.settledAt === null &&
     thread.settledOverride !== "settled" &&

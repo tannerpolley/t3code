@@ -1,4 +1,5 @@
 import * as Exit from "effect/Exit";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -92,6 +93,9 @@ function safeRepository(host: string, value: string): string | null {
   return repository !== null && repository.split("/").length === 2 ? repository : null;
 }
 
+export const completionIssueKey = ({ host, repository, number }: RepositoryIssueRef) =>
+  JSON.stringify([host, repository, number]);
+
 export class IssueService extends Context.Service<
   IssueService,
   Omit<
@@ -101,6 +105,9 @@ export class IssueService extends Context.Service<
     | "listMilestonePage"
     | "listMetadata"
     | "statuses"
+    | "issueStatuses"
+    | "workRead"
+    | "workReads"
     | "capabilities"
     | "pullRequest"
   > & {
@@ -111,6 +118,12 @@ export class IssueService extends Context.Service<
     readonly pullRequest: (
       input: RepositoryIssueRef & { readonly cwd: string },
     ) => Effect.Effect<IssuePullRequestFacts | null, IssueReadError>;
+    readonly repositoryIssuesPage: (
+      input: IssueRepositoryRef & {
+        readonly state: RepositoryIssueListState;
+        readonly page: number;
+      },
+    ) => Effect.Effect<IssuePageResult, IssueReadError>;
     readonly milestoneIssues: (input: {
       readonly host: string;
       readonly repository: string;
@@ -126,6 +139,18 @@ export class IssueService extends Context.Service<
     readonly statusBatch: (
       input: import("@t3tools/contracts").IssueStatusBatchInput,
     ) => ReturnType<IssueGitHubExtension["statuses"]>;
+    readonly issueStatuses: (
+      refs: ReadonlyArray<RepositoryIssueRef>,
+      refresh?: boolean,
+    ) => Effect.Effect<ReadonlyArray<import("./IssueGitHubExtension.ts").IssueCompletionStatus>>;
+    readonly workRead: (
+      input: RepositoryIssueRef,
+      options?: { readonly cached?: boolean },
+    ) => ReturnType<IssueGitHubExtension["workRead"]>;
+    readonly workReads: (
+      input: IssueRepositoryRef,
+      numbers: ReadonlyArray<number>,
+    ) => ReturnType<IssueGitHubExtension["workReads"]>;
     /** One page of the repository's milestones, a conditional read that is free when unchanged. */
     readonly milestones: (
       input: IssueRepositoryRef & {
@@ -151,34 +176,72 @@ export class IssueService extends Context.Service<
     readonly subscribeRevisions: Effect.Effect<PubSub.Subscription<void>, never, Scope.Scope>;
   }
 >()("t3/issues/IssueService") {}
-/** Per-key reads kept for `ttlMs` after a success; failures are not kept. */
-export const makeLiveReadCache = <A>(ttlMs = LIVE_ISSUE_REFRESH_MS) => {
-  const reads = new Map<string, Effect.Effect<A, IssueReadError>>();
+/** Per-key reads share in-flight work and respect GitHub's retry deadline. */
+export const makeLiveReadCache = <A>(
+  ttl: number | ((value: A) => number) = LIVE_ISSUE_REFRESH_MS,
+) => {
+  const reads = new Map<
+    string,
+    {
+      read: Effect.Effect<A, IssueReadError>;
+      revision: string | number | undefined;
+      failureUntil: number;
+    }
+  >();
   return Effect.fn("IssueService.liveRead")(function* (
     key: string,
     read: Effect.Effect<A, IssueReadError>,
     refresh: boolean | undefined,
+    revision?: string | number,
   ) {
-    let cached = refresh !== true ? reads.get(key) : undefined;
-    if (cached === undefined) {
-      cached = yield* Effect.cachedWithTTL(read, (exit) => (Exit.isSuccess(exit) ? ttlMs : 0));
+    const clock = yield* Clock.clockWith(Effect.succeed);
+    let entry = reads.get(key);
+    if (
+      entry === undefined ||
+      ((refresh === true || revision !== entry.revision) &&
+        clock.currentTimeMillisUnsafe() >= entry.failureUntil)
+    ) {
+      let failureUntil = 0;
+      const cached = yield* Effect.cachedWithTTL(
+        read.pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              failureUntil = error.retryAt ?? clock.currentTimeMillisUnsafe() + 60_000;
+            }),
+          ),
+        ),
+        (exit) => {
+          if (Exit.isSuccess(exit)) return typeof ttl === "function" ? ttl(exit.value) : ttl;
+          return Math.max(0, failureUntil - clock.currentTimeMillisUnsafe());
+        },
+      );
+      entry = {
+        read: cached,
+        revision,
+        get failureUntil() {
+          return failureUntil;
+        },
+      };
       reads.delete(key);
-      reads.set(key, cached);
+      reads.set(key, entry);
       if (reads.size > 256) reads.delete(reads.keys().next().value!);
     }
-    return yield* cached;
+    return yield* entry.read;
   });
 };
 export const make = Effect.fn("IssueService.make")(function* () {
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const repositoryGenerations = new Map<string, number>();
-  const repositoryKey = (scope: IssueRepositoryScope) =>
+  const hostGenerations = new Map<string, number>();
+  const repositoryKey = (scope: IssueRepositoryRef) =>
     JSON.stringify([scope.host, scope.repository]);
-  const repositoryGeneration = (scope: IssueRepositoryScope) =>
+  const repositoryGeneration = (scope: IssueRepositoryRef) =>
     repositoryGenerations.get(repositoryKey(scope)) ?? 0;
   const revisionChanges = yield* PubSub.sliding<void>(1);
-  const bumpRepositoryGeneration = (scope: IssueRepositoryScope) =>
+  const bumpRepositoryGeneration = (scope: IssueRepositoryScope) => {
     repositoryGenerations.set(repositoryKey(scope), repositoryGeneration(scope) + 1);
+    hostGenerations.set(scope.host, (hostGenerations.get(scope.host) ?? 0) + 1);
+  };
   const advanceRepositoryGeneration = (scope: IssueRepositoryScope) =>
     Effect.suspend(() => {
       bumpRepositoryGeneration(scope);
@@ -206,6 +269,14 @@ export const make = Effect.fn("IssueService.make")(function* () {
   const liveStatuses =
     makeLiveReadCache<ReadonlyArray<IssueStatusBatchResult[number] & RepositoryIssueRef>>();
 
+  const completionStatuses = makeLiveReadCache<
+    ReadonlyArray<import("./IssueGitHubExtension.ts").IssueCompletionStatus>
+  >(5 * 60_000);
+  const liveWorkRead = makeLiveReadCache<import("@t3tools/contracts").IssueWorkRead>(5 * 60_000);
+  const liveWorkReads = makeLiveReadCache<
+    ReadonlyMap<number, import("@t3tools/contracts").IssueWorkRead>
+  >(5 * 60_000);
+
   const resolveScope = Effect.fn("IssueService.resolveScope")(function* (
     operation: IssueOperation,
     input: { readonly host: string; readonly repository: string },
@@ -226,6 +297,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
   const github: IssueGitHubExtension = yield* makeGitHubExtension({
     safeRepository,
     resolveScope,
+    onLabelsChanged: advanceRepositoryGeneration,
   });
   // Hosts whose credential lacks `read:project`, by credential, so the overlay stops asking.
   const withoutProjectScope = new Set<string>();
@@ -268,6 +340,19 @@ export const make = Effect.fn("IssueService.make")(function* () {
     return yield* pageResult(
       yield* host.listMilestonePage(scope, state, page, cached?.etag),
       cached,
+    );
+  });
+  const repositoryIssuesPage: IssueService["Service"]["repositoryIssuesPage"] = Effect.fn(
+    "IssueService.repositoryIssuesPage",
+  )(function* (input) {
+    const scope = yield* resolveScope("list", input);
+    return yield* github.withIdentity(scope, "list", (identity) =>
+      Effect.gen(function* () {
+        const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
+        const result = yield* readIssuePage(scope, pages, input.state, input.page);
+        pages.issues.set(issueListEndpoint(scope, input.state, input.page), result.etag, result);
+        return result;
+      }).pipe(Effect.scoped),
     );
   });
   const milestoneIssues: IssueService["Service"]["milestoneIssues"] = Effect.fn(
@@ -330,7 +415,10 @@ export const make = Effect.fn("IssueService.make")(function* () {
   });
   const statusBatch: IssueService["Service"]["statusBatch"] = Effect.fn("IssueService.statusBatch")(
     function* (input) {
-      const byHost = new Map<string, Set<string>>();
+      const byHost = new Map<
+        string,
+        { ids: Set<string>; repositories: Set<string>; legacy: boolean }
+      >();
       for (const issue of input.issues) {
         const host = safeHost(issue.host);
         if (host === null)
@@ -339,28 +427,35 @@ export const make = Effect.fn("IssueService.make")(function* () {
             "scope-unavailable",
             "The GitHub host cannot be addressed.",
           );
-        let ids = byHost.get(host);
-        if (ids === undefined) byHost.set(host, (ids = new Set()));
-        ids.add(issue.nodeId);
+        let batch = byHost.get(host);
+        if (batch === undefined)
+          byHost.set(host, (batch = { ids: new Set(), repositories: new Set(), legacy: false }));
+        batch.ids.add(issue.nodeId);
+        const repository =
+          issue.repository === undefined ? null : safeRepository(host, issue.repository);
+        if (repository === null) batch.legacy = true;
+        else batch.repositories.add(repository);
       }
       const result: Array<IssueStatusBatchResult[number] & RepositoryIssueRef> = [];
-      for (const [host, nodeIds] of byHost) {
+      for (const [host, { ids, repositories, legacy }] of byHost) {
+        const nodeIds = [...ids];
         yield* github
           .withIdentity({ cwd: homeDirectory, host, repository: "" }, "detail", (identity) =>
-            github
-              .statuses(host, [...nodeIds])
-              .pipe((read) =>
-                liveStatuses(
-                  JSON.stringify([
-                    host,
-                    identity.credentialFingerprint,
-                    [...nodeIds].sort(),
-                    [...repositoryGenerations],
-                  ]),
-                  read,
-                  input.refresh,
-                ),
+            liveStatuses(
+              JSON.stringify([host, identity.credentialFingerprint, nodeIds.toSorted()]),
+              github.statuses(host, nodeIds),
+              input.refresh,
+              JSON.stringify(
+                legacy
+                  ? (hostGenerations.get(host) ?? 0)
+                  : [...repositories]
+                      .sort()
+                      .map((repository) => [
+                        repository,
+                        repositoryGeneration({ host, repository }),
+                      ]),
               ),
+            ),
           )
           .pipe(
             Effect.tap((statuses) => Effect.sync(() => result.push(...statuses))),
@@ -376,6 +471,43 @@ export const make = Effect.fn("IssueService.make")(function* () {
     },
   );
 
+  const issueStatuses: IssueService["Service"]["issueStatuses"] = Effect.fn(
+    "IssueService.issueStatuses",
+  )(function* (refs, refresh) {
+    const unique = new Map<string, RepositoryIssueRef>();
+    for (const ref of refs) {
+      const scope = yield* resolveScope("detail", ref).pipe(Effect.option);
+      if (scope._tag === "None") continue;
+      const { host, repository } = scope.value;
+      const normalized = { ...ref, host, repository };
+      unique.set(completionIssueKey(normalized), normalized);
+    }
+    const result: import("./IssueGitHubExtension.ts").IssueCompletionStatus[] = [];
+    for (const [host, batch] of Map.groupBy(unique.values(), (ref) => ref.host)) {
+      const sorted = batch.sort(
+        (a, b) => a.repository.localeCompare(b.repository) || a.number - b.number,
+      );
+      const revisions = [...new Set(sorted.map((ref) => ref.repository))].map((repository) =>
+        repositoryGeneration({ host, repository }),
+      );
+      const statuses = yield* github
+        .withIdentity(
+          { cwd: homeDirectory, host, repository: "" },
+          "detail",
+          ({ credentialFingerprint }) =>
+            completionStatuses(
+              JSON.stringify([credentialFingerprint, sorted]),
+              github.issueStatuses(host, sorted),
+              refresh,
+              JSON.stringify(revisions),
+            ),
+        )
+        .pipe(Effect.orElseSucceed(() => []));
+      result.push(...statuses);
+    }
+    return result;
+  });
+
   return IssueService.of({
     canonicalHost: Effect.fn("IssueService.canonicalHost")((host) => Effect.succeed(host)),
     capabilities: Effect.fn("IssueService.capabilities")((_host) =>
@@ -389,7 +521,6 @@ export const make = Effect.fn("IssueService.make")(function* () {
       return yield* github
         .withIdentity(scope.value, "list", ({ credentialFingerprint }) => {
           const key = JSON.stringify([scope.value.host, credentialFingerprint]);
-          if (input.refresh === true) withoutProjectScope.delete(key);
           return github.listMetadata(scope.value, input.numbers, {
             granted: !withoutProjectScope.has(key),
             revoke: () => withoutProjectScope.add(key),
@@ -416,7 +547,35 @@ export const make = Effect.fn("IssueService.make")(function* () {
     setMilestone: Effect.fn("IssueService.setMilestone")((input) =>
       afterWrite(input, github.setMilestone(input)),
     ),
-    workRead: Effect.fn("IssueService.workRead")((input) => github.workRead(input)),
+    workRead: Effect.fn("IssueService.workRead")(function* (input, options) {
+      const scope = yield* resolveScope("detail", input);
+      return yield* github.withIdentity(scope, "detail", ({ credentialFingerprint }) => {
+        const read = github.workRead(scope, input.number);
+        return options?.cached !== true
+          ? read
+          : liveWorkRead(
+              JSON.stringify([repositoryKey(scope), credentialFingerprint, input.number]),
+              read,
+              false,
+              repositoryGeneration(scope),
+            );
+      });
+    }),
+    workReads: Effect.fn("IssueService.workReads")(function* (input, numbers) {
+      if (numbers.length === 0) return new Map();
+      const scope = yield* resolveScope("detail", input);
+      const sorted = [...new Set(numbers)].sort((left, right) => left - right);
+      return yield* github.withIdentity(scope, "detail", ({ credentialFingerprint }) =>
+        liveWorkReads(
+          JSON.stringify([repositoryKey(scope), credentialFingerprint, sorted]),
+          github.workReads(scope, sorted),
+          false,
+          repositoryGeneration(scope),
+        ),
+      );
+    }),
+    issueStatuses,
+    repositoryIssuesPage,
     milestoneIssues,
     repositoryIdentity: Effect.fn("IssueService.repositoryIdentity")((input) =>
       github.repositoryIdentity(input),
@@ -428,7 +587,11 @@ export const make = Effect.fn("IssueService.make")(function* () {
       const activity = yield* github.activitySince(input, cursors);
       if (
         activity.issues.items.length > 0 ||
-        activity.comments.items.length > 0 ||
+        activity.comments.items.some(
+          ({ body, created_at, updated_at }) =>
+            created_at === updated_at ||
+            !/^<!-- t3-issue-status:[^\s]+:\d+:\d+ -->$/mu.test(body ?? ""),
+        ) ||
         activity.stateChanges.items.some((event) => event.id > cursors.eventsAfter)
       ) {
         bumpRepositoryGeneration(yield* resolveScope("list", input));
@@ -444,12 +607,8 @@ export const make = Effect.fn("IssueService.make")(function* () {
     postIssue: Effect.fn("IssueService.postIssue")((input, ...args) =>
       afterWrite(input, github.postIssue(input, ...args)),
     ),
-    ensureLabels: Effect.fn("IssueService.ensureLabels")((input, ...args) =>
-      afterWrite(input, github.ensureLabels(input, ...args)),
-    ),
-    setLabels: Effect.fn("IssueService.setLabels")((input, ...args) =>
-      afterWrite(input, github.setLabels(input, ...args)),
-    ),
+    ensureLabels: github.ensureLabels,
+    setLabels: github.setLabels,
     repositories: github.repositories,
     statusBatch,
     setBlockedBy: Effect.fn("IssueService.setBlockedBy")((input) =>
@@ -461,9 +620,7 @@ export const make = Effect.fn("IssueService.make")(function* () {
     findManagedComment: Effect.fn("IssueService.findManagedComment")((input) =>
       github.findManagedComment(input),
     ),
-    updateManagedComment: Effect.fn("IssueService.updateManagedComment")((input) =>
-      afterWrite(input.issue, github.updateManagedComment(input)),
-    ),
+    updateManagedComment: github.updateManagedComment,
   });
 });
 export const layer = Layer.effect(IssueService, make());

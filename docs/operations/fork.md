@@ -35,9 +35,10 @@ content: its `/issues` page, its detail panel and its agent tools (`list_issues`
 
 The fork adds the work on top: the roadmap at `/roadmap` and in the per-repository Issues panel
 beside a thread, with Ready / Paused / Queued / In progress / Done, and a work section inside
-upstream's issue panel. Its issue rows, and the issues, edits, state changes and comments that
-`propose_issue_change` and status comments write, go through upstream's service. A fork-owned
-GitHub extension (`apps/server/src/issues/IssueGitHubExtension.ts`) supplies relationships,
+upstream's issue panel. The roadmap uses conditional GitHub REST issue pages for its unfiltered
+listing, avoiding the search and viewer GraphQL queries. Issue details and the issues, edits, state
+changes and comments that `propose_issue_change` and status comments write go through upstream's
+service. A fork-owned GitHub extension (`apps/server/src/issues/IssueGitHubExtension.ts`) supplies relationships,
 milestones, Project fields, marked-comment updates, and the identity and activity needed for
 retries and the inbox. `t3_issue_post` uses the extension because it can target repositories
 outside the configured projects and returns the new issue or comment URL.
@@ -76,7 +77,7 @@ PATH=$M/node_modules/.bin:$PATH CI=true T3CODE_PROJECT_ROOT=$M node scripts/setu
   - A branch that adds an MCP tool must also pass `apps/server/src/mcp/toolkits/core.test.ts`, which checks tool labels.
 - GitHub Actions are off on the GitHub copy: every workflow is disabled. Upstream's build and test workflows need its paid Blacksmith runners and would wait in the queue forever, and the rest serve upstream's own repository. A workflow that a sync adds starts out enabled: turn it off with `gh workflow disable -R tannerpolley/t3code <name>`.
 - The owner's launcher sets `T3CODE_PR_WATCH_NO_CHECKS_REPOSITORIES=github.com/tannerpolley/t3code` for the desktop's server. This comma-separated list of `host/owner/repo` keys skips the initial wait for checks on those repositories. Checks that do report, such as review-bot checks, still count. Set the same variable on a standalone server that should use this policy.
-- The owner's launcher sets `T3CODE_ISSUE_DRAFT_PR_REPOSITORIES=github.com/tannerpolley/t3code`. This server setting is empty by default and accepts a comma-separated list of `host/owner/repo` keys. It authorizes new T3-generated issue worker briefs, including milestone starts, to publish the issue branch and a ready-for-review PR after checks and a fresh reviewer pass. Set the same variable before starting a standalone server that should grant this authority.
+- The owner's launcher sets `T3CODE_ISSUE_DRAFT_PR_REPOSITORIES=github.com/tannerpolley/t3code`. This server setting is empty by default and accepts a comma-separated list of `host/owner/repo` keys. It authorizes new T3-generated issue worker briefs, including milestone starts, to publish the issue branch and a ready-for-review PR after checks and a fresh reviewer pass, then merge that PR themselves and report the merge SHA. Managed workers in these repositories get no automatic PR watch; the orchestrator builds, installs, and closes out after the worker's completion wake. Other repositories keep the orchestrator merge and the automatic watch. Set the same variable before starting a standalone server that should grant this authority.
 
 ## Dev preview
 

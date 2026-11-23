@@ -104,11 +104,13 @@ export class IssueWorkStore extends Context.Service<
       rootThreadId: ThreadId,
       threadId: ThreadId,
     ) => Effect.Effect<boolean, IssueWorkError>;
+    readonly handoffRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly activeRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly runningLineageChildren: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly usageSprintRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
+    readonly handoffSafe: (rootThreadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
     readonly subtreeDrained: (rootThreadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
     /** Queued issue-worker runs this root can never admit: their issue's attempt is not theirs under this root. */
     readonly strandedQueuedRuns: (
@@ -339,6 +341,22 @@ export const layer = Layer.effect(
           WHERE owner.root_thread_id = ${rootThreadId} AND ${usesWorkerSlot}
         `.pipe(
           Effect.map((rows) => rows[0]!.active),
+          Effect.mapError(mapError),
+        ),
+      ),
+      handoffSafe: Effect.fn("IssueWorkStore.handoffSafe")((rootThreadId) =>
+        sql`SELECT 1 FROM orchestration_v2_projection_threads thread
+          WHERE (thread.thread_id = ${rootThreadId} OR
+            json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId})
+            AND (EXISTS (SELECT 1 FROM owner_decisions decision
+              WHERE decision.requesting_thread_id = thread.thread_id
+                AND decision.state <> 'withdrawn'
+                AND (decision.chosen_option_id IS NULL OR decision.pending_delivery = 1))
+              OR EXISTS (SELECT 1 FROM issue_changes change
+                WHERE change.requesting_thread_id = thread.thread_id
+                  AND change.decision = 'pending'))
+          LIMIT 1`.pipe(
+          Effect.map((rows) => rows.length === 0),
           Effect.mapError(mapError),
         ),
       ),
@@ -582,6 +600,16 @@ export const layer = Layer.effect(
             Effect.mapError(mapError),
           ),
       ),
+      handoffRoots: Effect.fn("IssueWorkStore.handoffRoots")(() =>
+        sql<{ root_thread_id: string }>`
+          SELECT owner.root_thread_id FROM orchestration_v2_projection_repository_orchestration owner
+          JOIN orchestration_v2_projection_threads thread ON thread.thread_id = owner.root_thread_id
+          WHERE thread.deleted_at IS NULL AND thread.archived_at IS NULL
+        `.pipe(
+          Effect.map((rows) => rows.map((row) => ThreadId.make(row.root_thread_id))),
+          Effect.mapError(mapError),
+        ),
+      ),
       activeRoots: Effect.fn("IssueWorkStore.activeRoots")(() =>
         sql<{ root_thread_id: string }>`
         SELECT root_thread_id FROM orchestration_v2_projection_repository_orchestration owner
@@ -600,7 +628,14 @@ export const layer = Layer.effect(
               WHERE request.root_thread_id = owner.root_thread_id AND work.owner_thread_id IS NULL AND request.queue_state IS NULL AND json_type(request.payload_json, '$.cancellation') IS NULL)
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads worker JOIN orchestration_v2_projection_runs run ON run.thread_id = worker.thread_id
               WHERE CASE WHEN json_valid(worker.payload_json) THEN json_extract(worker.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id
-                AND json_type(worker.payload_json, '$.linkedIssue') = 'object' AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')))
+                AND json_type(worker.payload_json, '$.linkedIssue') = 'object' AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting'))
+            -- Restart cuts the readers ahead of a queued reader without a promotion event.
+            OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads reader JOIN orchestration_v2_projection_runs run ON run.thread_id = reader.thread_id
+              WHERE CASE WHEN json_valid(reader.payload_json) THEN json_extract(reader.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id
+                AND json_extract(reader.payload_json, '$.role') IN ${sql.in(readOnlyIssueRoles)}
+                AND json_extract(reader.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                AND reader.deleted_at IS NULL AND reader.archived_at IS NULL
+                AND run.status = 'queued' AND coalesce(json_extract(run.payload_json, '$.queueHeld'), 0) <> 1))
 
       `.pipe(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.root_thread_id))),

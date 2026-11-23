@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import { IssueDraftPrRepositories } from "../../../issues/IssueWorkerBrief.ts";
 import { needsManagedPullRequestWatch } from "../../../orchestration-v2/pullRequestWatch.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchService.ts";
@@ -152,6 +153,7 @@ const make = Effect.gen(function* () {
 
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
+  const draftPrRepositories = yield* IssueDraftPrRepositories.pipe(Effect.orDie);
 
   const commandId = (tag: string, threadId: ThreadId) =>
     random.uuidV4().pipe(
@@ -314,7 +316,10 @@ const make = Effect.gen(function* () {
     const existing = threadPullRequestsOf(thread).find(
       (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
     );
-    if (existing === undefined || needsManagedPullRequestWatch(thread, existing)) {
+    if (
+      existing === undefined ||
+      needsManagedPullRequestWatch(thread, existing, draftPrRepositories)
+    ) {
       yield* engine
         .dispatch({
           type: "thread.pull-request.link",

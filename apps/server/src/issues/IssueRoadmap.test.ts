@@ -1,12 +1,13 @@
 import {
   EventId,
-  IssueOperationError,
+  IssueReadError,
   IssueTrackerKind,
   MessageId,
   ProjectId,
   RunId,
   TurnItemId,
   type IssueListEntry,
+  type RepositoryIssueSummary,
   type IssueMilestone,
   type OrchestrationV2Run,
   ThreadId,
@@ -40,7 +41,6 @@ const input = { host: "github.com", repository: "owner/repo" };
 const projectId = ProjectId.make("project");
 const github = IssueTrackerKind.make("github");
 const scope = { projectId, tracker: github, host: "github.com", scope: "owner/repo" };
-const cursorKey = "github.com owner/repo";
 const entry = (key: string, overrides: Partial<IssueListEntry> = {}): IssueListEntry => ({
   tracker: github,
   host: "github.com",
@@ -70,32 +70,37 @@ const milestone: IssueMilestone = {
   openCount: 3,
   closedCount: 1,
 };
-const upstreamList = (
-  entries: ReadonlyArray<IssueListEntry>,
-  nextCursors: Record<string, string> = {},
-) => ({
-  viewers: { "github.com": "octocat" },
-  trackers: [],
-  entries,
-  errors: [],
-  nextCursors,
+const row = (
+  number: number,
+  fields: Partial<RepositoryIssueSummary> = {},
+): RepositoryIssueSummary => ({
+  number,
+  title: `Issue ${number}`,
+  url: `https://github.com/owner/repo/issues/${number}`,
+  state: "open",
+  stateReason: null,
+  author: null,
+  assignees: [],
+  labels: [],
+  milestone: null,
+  createdAt: "2026-10-01T00:00:00Z",
+  updatedAt: "2026-10-01T00:00:00Z",
+  closedAt: null,
+  commentCount: 0,
+  projects: [],
+  ...fields,
+});
+const tracker = Layer.mock(TrackerIssueService.IssueService)({
+  resolveUrl: () => Effect.succeed({ ...scope, key: "1", writable: true }),
 });
 
-/** Upstream's service for one project that owns `owner/repo`, counting list reads. */
-function tracker(lists: ReadonlyArray<ReturnType<typeof upstreamList>>, calls: unknown[] = []) {
-  const pending = [...lists];
-  return Layer.mock(TrackerIssueService.IssueService)({
-    resolveUrl: () => Effect.succeed({ ...scope, key: "1", writable: true }),
-    list: (request) =>
-      Effect.sync(() => {
-        calls.push(request);
-        return pending.shift() ?? upstreamList([]);
-      }),
-  });
-}
-
-function forkIssues(revision: { value: number }, overlayFails = { value: false }) {
+function forkIssues(
+  revision: { value: number },
+  overlayFails = { value: false },
+  repositoryIssuesPage?: IssueService.IssueService["Service"]["repositoryIssuesPage"],
+) {
   return Layer.mock(IssueService.IssueService)({
+    ...(repositoryIssuesPage === undefined ? {} : { repositoryIssuesPage }),
     revision: () => Effect.sync(() => revision.value),
     milestones: (request) =>
       Effect.succeed(
@@ -128,154 +133,142 @@ const failingLinks = Layer.mock(IssueLinks.IssueLinks)({
   enrich: () => Effect.fail(new IssueLinkError({ code: "storage", cause: "unavailable" })),
 });
 
-it.effect(
-  "joins upstream rows with the fork overlay, pages both and reuses rows until a change",
-  () => {
-    const calls: unknown[] = [];
-    const revision = { value: 0 };
-    const overlayFails = { value: false };
-    const layer = roadmapLayer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          tracker(
-            [
-              upstreamList(
-                [
-                  entry("13", {
-                    labels: [
-                      { name: "bug", color: "d73a4a" },
-                      { name: "odd", color: "not-a-colour" },
-                    ],
-                  }),
-                  entry("14", {
-                    state: { category: "closed", name: "Not planned", closeReason: "not-planned" },
-                    closedAt: "2026-10-02T00:00:00Z",
-                  }),
-                  entry("7", { scope: "owner/other" }),
-                ],
-                { [cursorKey]: "next-issues" },
-              ),
-              upstreamList([entry("15")]),
-              upstreamList([entry("16")]),
-              upstreamList([entry("17")]),
-              ...Array.from({ length: 3 }, () => upstreamList([entry("18")])),
-            ],
-            calls,
-          ),
-          forkIssues(revision, overlayFails),
-          failingLinks,
-        ),
-      ),
-    );
-    return Effect.gen(function* () {
-      const roadmap = yield* IssueRoadmap.IssueRoadmap;
-      const first = yield* roadmap.list({ ...input, state: "all" });
-      assert.deepEqual(
-        first.issues.map((issue) => [issue.number, issue.state, issue.stateReason]),
-        [
-          [13, "open", null],
-          [14, "closed", "not_planned"],
-        ],
-      );
-      const [open] = first.issues;
-      assert.deepEqual(open?.milestone, milestone, "the listed milestone carries its counts");
-      assert.deepEqual(open?.labels, [
-        { name: "bug", color: "d73a4a" },
-        { name: "odd", color: null },
-      ]);
-      assert.deepEqual(open?.blockedBy, [{ ...input, number: 2, state: "open" }]);
-      assert.deepEqual(open?.subIssues, { total: 2, completed: 1 });
-      assert.deepEqual(open?.liveWork, [], "work storage failures keep the rows");
-      assert.notProperty(open!, "pullRequestRefs");
-      assert.deepEqual(first.milestones, [milestone]);
-      assert.isFalse(first.issuesComplete);
-      assert.isFalse(first.milestonesComplete);
-
-      const second = yield* roadmap.list({ ...input, state: "all", cursor: first.nextCursor! });
-      assert.deepEqual(
-        second.issues.map((issue) => issue.number),
-        [15],
-      );
-      assert.isTrue(second.issuesComplete && second.milestonesComplete);
-      assert.isNull(second.nextCursor);
-      assert.deepEqual(calls[1], {
-        projectId,
-        host: "github.com",
-        state: "all",
-        limit: 100,
-        cursors: { [cursorKey]: "next-issues" },
-      });
-
-      // Signals and mounts re-read local work only; GitHub is read again after a change.
-      for (let index = 0; index < 5; index++) yield* roadmap.list({ ...input, state: "all" });
-      assert.equal(calls.length, 2);
-      revision.value++;
-      assert.equal((yield* roadmap.list({ ...input, state: "all" })).issues[0]?.number, 16);
-      yield* TestClock.adjust("5 minutes");
-      assert.equal((yield* roadmap.list({ ...input, state: "all" })).issues[0]?.number, 17);
-      yield* roadmap.list({ ...input, state: "all", refresh: true });
-      assert.equal(calls.length, 5);
-
-      // Rows built while GitHub's relationships failed are not kept.
-      overlayFails.value = true;
-      revision.value++;
-      for (let index = 0; index < 2; index++)
-        assert.isFalse(
-          (yield* roadmap.list({ ...input, state: "all" })).issues[0]?.relationshipsComplete,
-        );
-      assert.equal(calls.length, 7);
-    }).pipe(Effect.provide(layer));
-  },
-);
-
-it.effect("refuses a repository without a project and keeps upstream failure reasons", () => {
-  let writable = false;
-  let failure: "rate-limited" | "per-project" = "rate-limited";
+it.effect("joins REST issue pages with the fork overlay and caches incomplete rows briefly", () => {
+  const calls: unknown[] = [];
+  const revision = { value: 0 };
+  const overlayFails = { value: false };
+  const pending = [
+    {
+      items: [
+        row(13, {
+          labels: [
+            { name: "bug", color: "d73a4a" },
+            { name: "odd", color: null },
+          ],
+        }),
+        row(14, { state: "closed", stateReason: "not_planned", closedAt: "2026-10-02T00:00:00Z" }),
+      ],
+      nextPage: 2,
+    },
+    ...[15, 16, 17, 18, 18, 18].map((number) => ({ items: [row(number)], nextPage: null })),
+  ];
   const layer = roadmapLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(TrackerIssueService.IssueService)({
-          resolveUrl: () => Effect.succeed({ ...scope, key: "1", writable }),
-          list: () =>
-            failure === "rate-limited"
-              ? Effect.fail(
-                  new IssueOperationError({
-                    operation: "list",
-                    reason: "rate-limited",
-                    detail: "GitHub API rate limit exceeded.",
-                    retryAt: 1234,
-                  }),
-                )
-              : Effect.succeed({
-                  ...upstreamList([]),
-                  errors: [{ projectId, projectTitle: "repo", message: "GitHub is down." }],
-                }),
-        }),
-        forkIssues({ value: 0 }),
+        tracker,
+        forkIssues(revision, overlayFails, (request) =>
+          Effect.sync(() => {
+            calls.push(request);
+            return pending.shift()!;
+          }),
+        ),
         failingLinks,
       ),
     ),
   );
   return Effect.gen(function* () {
     const roadmap = yield* IssueRoadmap.IssueRoadmap;
-    assert.equal((yield* roadmap.list(input).pipe(Effect.flip)).code, "scope-unavailable");
-    writable = true;
-    const limited = yield* roadmap.list(input).pipe(Effect.flip);
-    assert.deepEqual([limited.code, limited.retryAt], ["rate-limited", 1234]);
-    failure = "per-project";
+    const first = yield* roadmap.list({ ...input, state: "all" });
     assert.deepEqual(
-      yield* roadmap.list(input).pipe(
-        Effect.flip,
-        Effect.map((error) => [error.code, error.message]),
-      ),
-      ["upstream", "GitHub is down."],
+      first.issues.map((issue) => [issue.number, issue.state, issue.stateReason]),
+      [
+        [13, "open", null],
+        [14, "closed", "not_planned"],
+      ],
     );
-    assert.equal(
-      (yield* roadmap.list({ ...input, cursor: "not-a-cursor" }).pipe(Effect.flip)).code,
-      "invalid-cursor",
+    const [open] = first.issues;
+    assert.deepEqual(open?.milestone, milestone, "the listed milestone carries its counts");
+    assert.deepEqual(open?.labels, [
+      { name: "bug", color: "d73a4a" },
+      { name: "odd", color: null },
+    ]);
+    assert.deepEqual(open?.blockedBy, [{ ...input, number: 2, state: "open" }]);
+    assert.deepEqual(open?.subIssues, { total: 2, completed: 1 });
+    assert.deepEqual(open?.liveWork, [], "work storage failures keep the rows");
+    assert.notProperty(open!, "pullRequestRefs");
+    assert.deepEqual(first.milestones, [milestone]);
+    assert.isFalse(first.issuesComplete);
+    assert.isFalse(first.milestonesComplete);
+
+    const second = yield* roadmap.list({ ...input, state: "all", cursor: first.nextCursor! });
+    assert.deepEqual(
+      second.issues.map((issue) => issue.number),
+      [15],
     );
+    assert.isTrue(second.issuesComplete && second.milestonesComplete);
+    assert.isNull(second.nextCursor);
+    assert.deepEqual(calls[1], { ...input, state: "all", page: 2, cursor: first.nextCursor });
+
+    // Signals and mounts re-read local work only; GitHub is read again after a change.
+    for (let index = 0; index < 5; index++) yield* roadmap.list({ ...input, state: "all" });
+    assert.equal(calls.length, 2);
+    revision.value++;
+    assert.equal((yield* roadmap.list({ ...input, state: "all" })).issues[0]?.number, 16);
+    yield* TestClock.adjust("5 minutes");
+    assert.equal((yield* roadmap.list({ ...input, state: "all" })).issues[0]?.number, 17);
+    yield* roadmap.list({ ...input, state: "all", refresh: true });
+    assert.equal(calls.length, 5);
+
+    // Incomplete rows are cached briefly and then the overlay is retried.
+    overlayFails.value = true;
+    revision.value++;
+    for (let index = 0; index < 2; index++)
+      assert.isFalse(
+        (yield* roadmap.list({ ...input, state: "all" })).issues[0]?.relationshipsComplete,
+      );
+    assert.equal(calls.length, 6);
+    yield* TestClock.adjust("1 minute");
+    yield* roadmap.list({ ...input, state: "all" });
+    assert.equal(calls.length, 7);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "refuses a repository without a project and reuses a failed listing until its retry deadline",
+  () => {
+    let writable = false;
+    let reads = 0;
+    const layer = roadmapLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(TrackerIssueService.IssueService)({
+            resolveUrl: () => Effect.succeed({ ...scope, key: "1", writable }),
+          }),
+          forkIssues({ value: 0 }, undefined, () =>
+            Effect.suspend(() =>
+              ++reads === 1
+                ? new IssueReadError({
+                    operation: "list",
+                    code: "rate-limited",
+                    message: "GitHub API rate limit exceeded.",
+                    retryAt: 120_000,
+                  })
+                : Effect.succeed({ items: [], nextPage: null }),
+            ),
+          ),
+          failingLinks,
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const roadmap = yield* IssueRoadmap.IssueRoadmap;
+      assert.equal((yield* roadmap.list(input).pipe(Effect.flip)).code, "scope-unavailable");
+      writable = true;
+      yield* TestClock.adjust("1 minute");
+      const limited = yield* roadmap.list(input).pipe(Effect.flip);
+      assert.deepEqual([limited.code, limited.retryAt], ["rate-limited", 120_000]);
+      assert.equal((yield* roadmap.list(input).pipe(Effect.flip)).code, "rate-limited");
+      assert.equal(reads, 1);
+      yield* TestClock.adjust("1 minute");
+      assert.deepEqual((yield* roadmap.list(input)).issues, []);
+      assert.equal(reads, 2);
+      assert.equal(
+        (yield* roadmap.list({ ...input, cursor: "not-a-cursor" }).pipe(Effect.flip)).code,
+        "invalid-cursor",
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("gives an issue's detail the overlay and live work its row has", () => {
   let enrichedRefs: unknown;
@@ -347,7 +340,7 @@ it.effect("reports live work in issue status batches when it has no pull request
   const layer = roadmapLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        tracker([]),
+        tracker,
         Layer.mock(IssueService.IssueService)({
           statusBatch: () =>
             Effect.succeed([
@@ -458,7 +451,7 @@ it.effect(
           ["starting", false, "working", 1],
           ["running", false, "working", 1],
           ["waiting", false, "working", 1],
-          ["completed", false, "done", 0],
+          ["completed", false, "idle", 0],
           ["running", false, "working", 1],
           ["failed", false, "failed", 0],
           ["running", false, "working", 1],
