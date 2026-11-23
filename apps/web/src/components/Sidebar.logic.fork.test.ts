@@ -315,7 +315,7 @@ describe("groupRunningSubagentsByParent", () => {
     ]);
   });
 
-  it("lists a subagent of a visible fork only under the fork's own row", () => {
+  it("lists a running subagent under its fork, including through an inactive parent", () => {
     const fork = child("fork", { fork: true, status: "idle" });
     const leaf = {
       ...child("leaf"),
@@ -330,6 +330,16 @@ describe("groupRunningSubagentsByParent", () => {
       grouped.get(scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make(id)))) ?? [];
     expect(listedUnder("fork").map((thread) => thread.id)).toEqual(["leaf"]);
     expect(listedUnder("parent")).toEqual([]);
+    const orphaned = {
+      ...leaf,
+      lineage: { ...leaf.lineage, parentThreadId: ThreadId.make("archived-parent") },
+      source: { ...leaf.source, workerAncestorIds: [fork.id] },
+    };
+    expect(
+      groupRunningSubagentsByParent([fork, orphaned])
+        .get(scopedThreadKey(scopeThreadRef(localEnvironmentId, fork.id)))
+        ?.map((thread) => thread.id),
+    ).toEqual([leaf.id]);
   });
 });
 

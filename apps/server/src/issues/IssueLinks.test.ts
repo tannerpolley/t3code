@@ -435,6 +435,7 @@ it.effect(
       h.lookups.length = 0;
       const first = yield* links.enrich(withPr);
       assert.deepEqual(h.lookups, [
+        inactive.id,
         child.id,
         foreignHost.id,
         grandchild.id,
@@ -506,6 +507,54 @@ it.effect(
   },
 );
 
+it.effect.each([
+  ["archivedAt", false],
+  ["archivedAt", true],
+  ["deletedAt", false],
+] as const)(
+  "shows a paused worker through an ancestor with %s (direct issue link: %s)",
+  ([inactiveField, directLink]) => {
+    const root = liveThreadShell(threadId);
+    const implementor = {
+      ...liveThreadShell(ThreadId.make("implementor")),
+      [inactiveField]: DateTime.makeUnsafe("2026-10-13T00:00:00Z"),
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent" as const,
+      },
+    };
+    const checker = {
+      ...liveThreadShell(ThreadId.make("checker"), { activeRunId: null }),
+      status: "interrupted" as const,
+      explicitStopRequested: true as const,
+      lineage: { ...implementor.lineage, parentThreadId: implementor.id },
+    };
+    const h = harness([
+      directLink ? root : linked(root),
+      directLink ? linked(implementor) : implementor,
+      checker,
+    ]);
+    return Effect.gen(function* () {
+      const links = yield* IssueLinks.IssueLinks;
+      const result = yield* links.enrich(list());
+      const work = result.issues[0]?.liveWork ?? [];
+      assert.notInclude(
+        work.map((item) => item.threadId),
+        implementor.id,
+      );
+      assert.include(
+        work.find((item) => item.threadId === checker.id),
+        {
+          inherited: true,
+          paused: true,
+          status: "idle",
+        },
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
 it.effect("bounds cyclic descendant lineage without loading unrelated threads", () => {
   const childId = ThreadId.make("cycle-child");
   const root = {
@@ -542,51 +591,51 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      for (const includeArchived of [true, false]) {
-        for (const hasPrRefs of [true, false]) {
-          const linkedIds = hasPrRefs ? [threadId] : [];
-          const query = issueWorkThreadIds(
-            sql,
-            ref,
-            [13],
-            linkedIds,
-            '[{"host":"github.com","repository":"owner/repo","number":42}]',
-            hasPrRefs,
-            includeArchived,
-          );
-          const plan = yield* sql<{ detail: string }>`EXPLAIN QUERY PLAN ${query}`;
-          const details = plan.map((row) => row.detail).join("\n");
-          if (linkedIds.length > 0)
-            assert.include(
-              details,
-              "SEARCH explicit USING INDEX sqlite_autoindex_orchestration_v2_projection_threads_1",
-            );
-          else assert.notInclude(details, "explicit");
+      for (const hasPrRefs of [true, false]) {
+        const linkedIds = hasPrRefs ? [threadId] : [];
+        const query = issueWorkThreadIds(
+          sql,
+          ref,
+          [13],
+          linkedIds,
+          '[{"host":"github.com","repository":"owner/repo","number":42}]',
+          hasPrRefs,
+        );
+        const plan = yield* sql<{ detail: string }>`EXPLAIN QUERY PLAN ${query}`;
+        const details = plan.map((row) => row.detail).join("\n");
+        if (linkedIds.length > 0)
           assert.include(
             details,
-            "SEARCH issue_thread USING INDEX issue_roadmap_linked_issue_idx (<expr>=? AND <expr>=? AND <expr>=?)",
+            "SEARCH explicit USING INDEX sqlite_autoindex_orchestration_v2_projection_threads_1",
           );
-          assert.include(details, "SEARCH child USING INDEX issue_roadmap_parent_idx (<expr>=?)");
-          if (hasPrRefs)
-            assert.include(
-              details,
-              "SEARCH pr_thread USING INDEX issue_roadmap_linked_pr_idx (<expr>=? AND <expr>=?)",
-            );
-          else assert.notInclude(details, "pr_thread");
+        else assert.notInclude(details, "explicit");
+        assert.include(
+          details,
+          "SEARCH issue_thread USING INDEX issue_roadmap_linked_issue_idx (<expr>=? AND <expr>=? AND <expr>=?)",
+        );
+        assert.include(
+          details,
+          "SEARCH child USING COVERING INDEX issue_roadmap_parent_idx (<expr>=?)",
+        );
+        if (hasPrRefs)
           assert.include(
             details,
-            "SEARCH selected USING INDEX sqlite_autoindex_orchestration_v2_projection_threads_1",
+            "SEARCH pr_thread USING INDEX issue_roadmap_linked_pr_idx (<expr>=? AND <expr>=?)",
           );
-          assert.notInclude(query.compile()[0], "$.pullRequests");
-          for (const detail of plan.map((row) => row.detail)) {
-            if (
-              !detail.startsWith("SCAN ") ||
-              detail === "SCAN linked" ||
-              detail.includes("VIRTUAL TABLE INDEX")
-            )
-              continue;
-            assert.fail(`Unexpected scan: ${detail}\n${details}`);
-          }
+        else assert.notInclude(details, "pr_thread");
+        assert.include(
+          details,
+          "SEARCH selected USING INDEX sqlite_autoindex_orchestration_v2_projection_threads_1",
+        );
+        assert.notInclude(query.compile()[0], "$.pullRequests");
+        for (const detail of plan.map((row) => row.detail)) {
+          if (
+            !detail.startsWith("SCAN ") ||
+            detail === "SCAN linked" ||
+            detail.includes("VIRTUAL TABLE INDEX")
+          )
+            continue;
+          assert.fail(`Unexpected scan: ${detail}\n${details}`);
         }
       }
     }).pipe(

@@ -369,6 +369,71 @@ it.effect.each([
     }).pipe(Effect.provide(layer)),
 );
 
+it.effect.each(["archivedAt", "deletedAt"] as const)(
+  "keeps fork worker rows and paging reachable through an ancestor with %s",
+  (inactiveField) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const root = yield* addRolledBackRecoveryCandidate(`worker-lineage:${inactiveField}`);
+      const thread = yield* store.getThread(root);
+      const now = yield* DateTime.now;
+      const fork = ThreadId.make("worker-fork");
+      const implementor = ThreadId.make("worker-implementor");
+      const reviewer = ThreadId.make("worker-reviewer");
+      const checker = ThreadId.make("worker-checker");
+      for (const [id, parentThreadId, relationshipToParent] of [
+        [fork, root, "fork"],
+        [implementor, fork, "subagent"],
+        [reviewer, implementor, "subagent"],
+        [checker, reviewer, "subagent"],
+      ] as const) {
+        yield* store.apply({
+          id: EventId.make(`created:${id}`),
+          type: "thread.created",
+          threadId: id,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            id,
+            lineage: { rootThreadId: root, parentThreadId, relationshipToParent },
+            ...(id === implementor ? { [inactiveField]: now } : {}),
+          },
+        });
+      }
+      const { snapshot } = yield* loadSubscriberShellSnapshot({
+        sql,
+        listShellIndex: store.listActiveShellIndex(),
+        readThreads: (threadIds) =>
+          store.readShellSnapshot({
+            location: "active",
+            ...(threadIds === undefined ? {} : { threadIds }),
+          }),
+        listProjects: Effect.succeed([]),
+        latestSequence: Effect.succeed(0),
+        options: { omitIdleSubagents: true, omitOlderSettled: false },
+      });
+      expect
+        .soft(snapshot.omittedWorkers)
+        .toEqual(expect.arrayContaining([{ parentThreadId: fork, count: 1 }]));
+      expect
+        .soft(snapshot.threads.find(({ id }) => id === reviewer)?.workerAncestorIds)
+        .toEqual([fork]);
+      expect.soft((yield* store.getThreadShell(checker))?.workerAncestorIds).toEqual([fork]);
+      for (const parentThreadId of [root, fork]) {
+        const page = yield* store.getShellSnapshot({
+          location: "active",
+          workerPage: { parentThreadId },
+        });
+        expect.soft(page.threads.map(({ id }) => id).toSorted()).toEqual([checker, reviewer]);
+        expect
+          .soft(page.threads.find(({ id }) => id === checker)?.workerAncestorIds)
+          .toEqual([fork]);
+        expect.soft(page.remainingWorkers).toBe(0);
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "subscriber snapshots retain idle children referenced by pending tasks after restart",
