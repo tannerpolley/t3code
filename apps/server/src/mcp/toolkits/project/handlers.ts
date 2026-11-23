@@ -203,6 +203,7 @@ const nestingParent = Effect.fn("mcp.launchNestingParent")(function* (
       message:
         "parentThreadId is for outside agents. Inside a thread, hand off work with delegate_task.",
     });
+  // The shell tells a missing parent from an outage; only records carry the sign-in.
   const shell = yield* context.threads
     .getThreadShell(parentThreadId)
     .pipe(Effect.mapError(unavailable));
@@ -304,6 +305,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
             message: "A launch retry must use the original project.",
+          });
+        if (
+          launched !== null &&
+          replaying &&
+          input.parentThreadId !== undefined &&
+          launched.delegatedFrom?.threadId !== input.parentThreadId
+        )
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "A launch retry must use the original parentThreadId.",
           });
         const project =
           replaying && input.workspaceStrategy?.type !== "existing_worktree"

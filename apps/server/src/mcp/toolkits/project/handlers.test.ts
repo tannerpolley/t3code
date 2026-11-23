@@ -2,7 +2,6 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
-  OrchestratorMcpFailure,
   EnvironmentId,
   GitCommandError,
   ProjectId,
@@ -132,6 +131,7 @@ const clientLaunchHarness = (input: {
                 id: launch.threadId,
                 projectId: launch.projectId,
                 modelSelection: launch.modelSelection,
+                delegatedFrom: launch.delegatedFrom,
                 deletedAt: null,
               } as unknown as OrchestrationV2ThreadShell),
         );
@@ -151,9 +151,7 @@ const clientLaunchHarness = (input: {
               ? { id: threadId, title: "Other bot", mcpClientSessionId: "session-other" }
               : undefined;
         return thread === undefined
-          ? (Effect.fail(
-              new OrchestratorMcpFailure({ code: "thread_not_found", message: "Not found." }),
-            ) as never)
+          ? Effect.die("no records for an unknown thread")
           : Effect.succeed({
               thread: { ...thread, lineage: { parentThreadId: null }, deletedAt: null },
             } as never);
@@ -422,6 +420,7 @@ it.effect("an outside agent launches by role, nested under its own thread", () =
       readonly role?: "implementor";
       readonly level?: "routine";
       readonly parentThreadId?: ThreadId;
+      readonly clientRequestId?: string;
     }) =>
       toolkit.handle("t3_thread_launch", { projectId, ...params }).pipe(
         Stream.unwrap,
@@ -461,6 +460,17 @@ it.effect("an outside agent launches by role, nested under its own thread", () =
       });
     }
     expect(launched).toHaveLength(2);
+
+    // A retry replays the first launch, so it cannot add a parent the first one lacked.
+    yield* launch({ title: "[FM] Unnested", clientRequestId: "unnested" });
+    expect(
+      yield* launch({
+        title: "[FM] Unnested",
+        clientRequestId: "unnested",
+        parentThreadId: parent.threadId!,
+      }),
+    ).toMatchObject({ code: "invalid_request" });
+    expect(launched).toHaveLength(3);
   }),
 );
 
