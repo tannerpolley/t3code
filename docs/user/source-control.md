@@ -395,6 +395,9 @@ allowed worker. Each worker starts on its own issue branch from the freshly fetc
 default branch. When existing workers hold every slot, new workers wait in the queue. A settled
 worker's slot can return to the pool once the checkout is safe to clean and its work is included in
 the default branch or its pull request has merged.
+On a closed issue, **Remove worktree** can return a clean slot while keeping the local issue branch.
+If Git can't clean a slot because it contains a nested repository, move that repository out of the
+slot or list its path in `issueWorktreeKeepPaths` in the default branch's `t3.json`.
 Starting allows T3 to update one status comment and publish a closeout comment for each finished
 attempt; the publishing policy is shown before you start. When a worker has been created, select
 its name to open its conversation with the issue beside it. A queued start can appear before a
