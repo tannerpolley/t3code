@@ -2,6 +2,7 @@ import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/reactivity";
 import type * as Atom from "effect/reactivity/Atom";
+// oxlint-disable-next-line t3code/require-disposable-render -- react-test-renderer unit test without a browser
 import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -13,6 +14,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("gt-react", () => ({ useGT: () => (message: string) => message }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: <T,>(select: (settings: { backgroundProcessOutput: boolean }) => T) =>
@@ -71,6 +73,7 @@ afterEach(async () => {
 });
 
 it("streams only expanded task output and releases it on collapse, task removal and panel close", async () => {
+  // oxlint-disable-next-line t3code/require-disposable-render -- react-test-renderer unit test without a browser
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const environmentId = EnvironmentId.make("remote");
   const threadId = ThreadId.make("parent");
