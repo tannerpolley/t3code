@@ -7,7 +7,7 @@ import { PullRequestState } from "./pullRequest.ts";
 import { ThreadRole } from "./threadRole.ts";
 
 /** Maximum age of GitHub data reused by automatic issue reads. */
-export const LIVE_ISSUE_REFRESH_MS = 60_000;
+export const LIVE_ISSUE_REFRESH_MS = 3 * 60_000;
 
 const IssueNumber = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
@@ -181,6 +181,7 @@ export const IssueStatusBatchInput = Schema.Struct({
   issues: Schema.Array(
     Schema.Struct({
       host: ThreadLinkedIssue.fields.host,
+      repository: Schema.optional(ThreadLinkedIssue.fields.repository),
       nodeId: ThreadLinkedIssue.fields.nodeId,
     }),
   ),
