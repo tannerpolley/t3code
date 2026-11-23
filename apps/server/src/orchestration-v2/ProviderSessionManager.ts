@@ -577,7 +577,7 @@ export const layerWithOptions = (
             ),
           });
         },
-        Effect.ignore,
+        (effect) => Effect.ignore(effect),
       );
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
       /** Serialize prepares per thread so concurrent rotations cannot revoke each other's credentials. */
