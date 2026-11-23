@@ -77,7 +77,8 @@ export function IssueLiveWork({
             <div key={thread.threadId}>
               <p>
                 {thread.role === undefined ? "" : `${THREAD_ROLE_LABELS[thread.role]}: `}
-                {thread.title} · {status === "suspended" ? label : labels[issueWorkerStatus(thread)]}
+                {thread.title} ·{" "}
+                {status === "suspended" ? label : labels[issueWorkerStatus(thread)]}
               </p>
               {thread.branch ? <p>Branch: {thread.branch}</p> : null}
               {thread.worktreePath ? <p>Worktree: {thread.worktreePath}</p> : null}

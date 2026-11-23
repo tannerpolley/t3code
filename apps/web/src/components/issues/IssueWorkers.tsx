@@ -43,7 +43,9 @@ export function IssueWorkers({
               >
                 {worker.title}
               </Link>
-              <span className="shrink-0 text-muted-foreground">{labels[issueWorkerStatus(worker)]}</span>
+              <span className="shrink-0 text-muted-foreground">
+                {labels[issueWorkerStatus(worker)]}
+              </span>
             </div>
             {worker.branch ? (
               <p className="break-all font-mono text-muted-foreground">{worker.branch}</p>

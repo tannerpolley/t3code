@@ -156,11 +156,12 @@ it.effect("counts an upstream thread.issues link as live work, matching host and
 });
 
 it.effect(
-  "sidebar status includes ordinarily linked running work beside an idle managed thread",
+  "compact sidebar status preserves an open PR and an explicitly paused worker beside running work",
   () => {
     const managed = {
       ...liveThreadShell(ThreadId.make("managed"), { activeRunId: null }),
-      status: "idle" as const,
+      status: "interrupted" as const,
+      explicitStopRequested: true as const,
       linkedIssue: {
         ...ref,
         repositoryId: "repo",
@@ -205,16 +206,17 @@ it.effect(
       const pane = yield* (yield* IssueLinks.IssueLinks).enrich(list());
       const badge = yield* roadmap.statusBatch({ issues: [{ host: ref.host, nodeId: "I_13" }] });
       const compact = pane.issues[0]!.liveWork!.map(
-        ({ threadId, inherited, status, pullRequests }) => ({
+        ({ threadId, inherited, status, paused, pullRequests }) => ({
           threadId,
           inherited,
           status,
+          ...(paused === true ? { paused } : {}),
           ...(pullRequests.length === 0 ? {} : { pullRequests }),
         }),
       );
       assert.deepEqual(badge[0]?.liveWork, compact);
       assert.deepEqual(compact, [
-        { threadId: managed.id, inherited: false, status: "idle" },
+        { threadId: managed.id, inherited: false, status: "idle", paused: true },
         { threadId: ordinary.id, inherited: false, status: "working", pullRequests: [pr.url] },
       ]);
       assert.equal(badge[0]?.pullRequests[0]?.url, pr.url);
