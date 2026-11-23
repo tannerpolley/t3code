@@ -353,7 +353,7 @@ const make = Effect.gen(function* () {
   const terminals = yield* TerminalManager.TerminalManager;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const lastWorkerLimits = new Map<ThreadId, number>();
+  const lastPoolUpkeep = new Map<ThreadId, { readonly workerLimit: number; readonly at: number }>();
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
   const orphanSizes = new Map<string, number | null>();
   const noteTerminal = (terminal: TerminalSummary) => {
@@ -734,6 +734,7 @@ const make = Effect.gen(function* () {
   const branchChanged = Effect.fn("StorageCleanup.branchChanged")(function* (
     cwd: string,
     branch: string | null,
+    allowDetached = false,
   ) {
     const failure = (detail: string) =>
       new GitCommandError({
@@ -777,7 +778,7 @@ const make = Effect.gen(function* () {
     if (head === null) return true;
     const ref = head.exitCode === 0 ? head.stdout.trim() : "";
     const name = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length).trim() : null;
-    return name !== branch;
+    return !(allowDetached && head.exitCode === 1) && name !== branch;
   });
 
   // Nothing watches an idle worktree, so its threads still record the branch it left.
@@ -1109,7 +1110,7 @@ const make = Effect.gen(function* () {
       maintainIssueSlots &&
       thread.linkedIssue !== undefined &&
       issueSlots !== undefined;
-    let mergedSlotBase: string | null = null;
+    let releaseSlotBase: string | null = null;
     let issueMerged = false;
     const entries: StorageCleanupReportEntry[] = [];
     const keep = (reason: string) => entries.push({ ...entry, reason: sentence(reason) });
@@ -1365,7 +1366,7 @@ const make = Effect.gen(function* () {
         ))
       )
         return keep("not a linked worktree");
-      if (yield* branchChanged(worktreePath, thread.branch)) {
+      if (yield* branchChanged(worktreePath, thread.branch, releaseSlot)) {
         if (!slot && !deleted) yield* followBranch(worktreePath);
         return keep("repository or branch changed");
       }
@@ -1373,7 +1374,14 @@ const make = Effect.gen(function* () {
         const changes = yield* localChangesReason(worktreePath, settings);
         if (changes !== null) return keep(changes);
       }
-      const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
+      const revision = releaseSlot ? `refs/heads/${thread.branch}` : "HEAD";
+      if (
+        releaseSlot &&
+        deleted &&
+        !(yield* git.hasCommit({ cwd: worktreePath, refName: revision }))
+      )
+        return;
+      const head = yield* git.resolveCommit({ cwd: worktreePath, revision });
       if (
         !eligible &&
         (slot || retainedIssue || settings.worktreeUnchanged || settings.worktreeOnMerge)
@@ -1453,7 +1461,14 @@ const make = Effect.gen(function* () {
           allowNonZeroExit: true,
         });
         const integrated = ancestor.exitCode === 0;
-        eligible = !slot && !retainedIssue && integrated && unchangedApplies;
+        const issueWorkFinished =
+          deleted ||
+          thread.archivedAt !== null ||
+          thread.settledAt !== null ||
+          thread.status === "cancelled" ||
+          thread.status === "failed" ||
+          thread.status === "interrupted";
+        eligible = integrated && (slot ? issueWorkFinished : !retainedIssue && unchangedApplies);
         if (eligible)
           removalReason =
             remote === null
@@ -1476,15 +1491,15 @@ const make = Effect.gen(function* () {
             integrated: slot || retainedIssue ? false : integrated,
           });
           issueMerged = retainedIssue && eligible;
-          if (slot && eligible) mergedSlotBase = base.commitSha;
           if (eligible) removalReason = "pull request was merged";
         }
+        if (slot && eligible) releaseSlotBase = base.commitSha;
         if (!eligible && remote === null)
           return keep(integrated ? notDueReason : "has commits beyond the project branch");
       }
       if (
-        (slot && mergedSlotBase === null) ||
-        (retainedIssue && members.some((member) => keepIssueWorktree(member, issueMerged)))
+        (slot && releaseSlotBase === null) ||
+        (!slot && retainedIssue && members.some((member) => keepIssueWorktree(member, issueMerged)))
       )
         return keep("issue work is awaiting a merged pull request");
       if (!eligible)
@@ -1505,14 +1520,14 @@ const make = Effect.gen(function* () {
       // worktree takes seconds on large databases.
       const blocked = yield* blockedSinceCheck();
       if (blocked !== null) return keep(blocked);
-      if (releaseSlot && mergedSlotBase !== null) {
-        const defaultRef = mergedSlotBase;
+      if (releaseSlot && releaseSlotBase !== null) {
+        const defaultRef = releaseSlotBase;
         return yield* withWorkspaceLease(
           worktreePath,
           Effect.gen(function* () {
             const reason = yield* blockedSinceCheck();
             if (reason !== null) return keep(reason);
-            if (yield* branchChanged(worktreePath, thread.branch!))
+            if (yield* branchChanged(worktreePath, thread.branch!, true))
               return keep("branch changed since check");
             const released = yield* issueSlots.release({
               cwd: project.workspaceRoot,
@@ -1521,19 +1536,23 @@ const make = Effect.gen(function* () {
               head: head.commitSha,
               defaultRef,
               unbind: Effect.gen(function* () {
-                for (const member of group) {
+                // Keep the owner's binding until all sharing threads have been unbound.
+                const ordered = group.toSorted(
+                  (a, b) => Number(a.id === thread.id) - Number(b.id === thread.id),
+                );
+                for (const member of ordered) {
                   if (member.archivedAt === null && member.role !== "writer")
                     yield* engine.dispatch({
                       type: "thread.archive",
                       commandId: CommandId.make(
-                        `storage-cleanup:merged:${member.id}:${head.commitSha}`,
+                        `storage-cleanup:merged-slot:${member.id}:${member.branch}:${DateTime.toEpochMillis(member.updatedAt)}`,
                       ),
                       threadId: member.id,
                     });
                   yield* engine.dispatch({
                     type: "thread.metadata.update",
                     commandId: CommandId.make(
-                      `storage-cleanup:release-slot:${member.id}:${head.commitSha}`,
+                      `storage-cleanup:release-slot:${member.id}:${member.branch}:${DateTime.toEpochMillis(member.updatedAt)}`,
                     ),
                     threadId: member.id,
                     expectedWorktreePath: member.worktreePath,
@@ -1689,12 +1708,11 @@ const make = Effect.gen(function* () {
     now: number,
     entries: StorageCleanupReportEntry[],
     maintainIssueSlots: boolean,
+    manual: boolean,
   ) {
     const snapshot = yield* readThreads();
     const repositoryRoots =
       issueWork === undefined || !maintainIssueSlots ? [] : yield* issueWork.worktreePools();
-    lastWorkerLimits.clear();
-    for (const root of repositoryRoots) lastWorkerLimits.set(root.rootThreadId, root.workerLimit);
     if (
       repositoryRoots.length === 0 &&
       !anyWorktreePolicy(serverSettings, worktreeCleanupEnabled) &&
@@ -1751,9 +1769,10 @@ const make = Effect.gen(function* () {
             .get(key)
             ?.find(
               (deleted) =>
-                !IssueWorktreeSlots.isIssueWorktreeSlot(path, deleted.worktreePath!) &&
-                resolveWorktreeCleanup(serverSettings, deleted.projectId).worktreeOnDelete &&
-                worktreeOwner([deleted, ...group]) === deleted,
+                worktreeOwner([deleted, ...group]) === deleted &&
+                (IssueWorktreeSlots.isIssueWorktreeSlot(path, deleted.worktreePath!)
+                  ? group.every((member) => member.branch === deleted.branch)
+                  : resolveWorktreeCleanup(serverSettings, deleted.projectId).worktreeOnDelete),
             ) ??
           worktreeOwner(group) ??
           group[0]!,
@@ -1795,6 +1814,10 @@ const make = Effect.gen(function* () {
 
     if (issueSlots !== undefined && setupScripts !== undefined) {
       for (const root of repositoryRoots) {
+        const last = lastPoolUpkeep.get(root.rootThreadId);
+        if (!manual && last?.workerLimit === root.workerLimit && now - last.at < 60 * 60 * 1000)
+          continue;
+        lastPoolUpkeep.set(root.rootThreadId, { workerLimit: root.workerLimit, at: now });
         const project = snapshot.projects.find((entry) => entry.id === root.projectId);
         if (project === undefined) continue;
         const report = ({
@@ -1844,9 +1867,17 @@ const make = Effect.gen(function* () {
                   ? Effect.map(setup.completion, (result) => result.exitCode)
                   : Effect.succeed(null)
               ).pipe(
+                Effect.timeoutOrElse({
+                  duration: "10 minutes",
+                  orElse: () => Effect.succeed(null),
+                }),
                 Effect.ensuring(
                   terminals
-                    .close({ threadId: root.rootThreadId, terminalId: setup.terminalId })
+                    .close({
+                      threadId: root.rootThreadId,
+                      terminalId: setup.terminalId,
+                      deleteHistory: true,
+                    })
                     .pipe(Effect.ignore),
                 ),
               );
@@ -2050,6 +2081,7 @@ const make = Effect.gen(function* () {
       now,
       entries,
       maintainIssueSlots,
+      trigger === "manual",
     ).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
@@ -2218,7 +2250,7 @@ const make = Effect.gen(function* () {
           config.devUrl === undefined &&
           (event.type === "thread.created" || event.type === "thread.metadata-updated") &&
           event.payload.repositoryOrchestration !== undefined &&
-          lastWorkerLimits.get(event.threadId) !==
+          lastPoolUpkeep.get(event.threadId)?.workerLimit !==
             event.payload.repositoryOrchestration.workerLimit &&
           repositoryPhase(event.payload.repositoryOrchestration) !== "retired"
         )

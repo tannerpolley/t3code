@@ -2248,7 +2248,8 @@ export const layer = Layer.effect(
             !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
             (stored.event.type === "thread.created" ||
               (stored.event.type === "thread.metadata-updated" &&
-                stored.event.payload.repositoryOrchestration !== undefined) ||
+                (stored.event.payload.repositoryOrchestration !== undefined ||
+                  String(stored.commandId).startsWith("storage-cleanup:release-slot:"))) ||
               stored.event.type === "thread.unarchived" ||
               stored.event.type === "thread.archived" ||
               stored.event.type === "thread.deleted" ||
@@ -2271,7 +2272,10 @@ export const layer = Layer.effect(
         ),
         Stream.runForEach((stored) =>
           Effect.gen(function* () {
-            if (stored.event.type === "thread.metadata-updated") {
+            if (
+              stored.event.type === "thread.metadata-updated" &&
+              !String(stored.commandId).startsWith("storage-cleanup:release-slot:")
+            ) {
               const receipt =
                 stored.commandId == null
                   ? Option.none()

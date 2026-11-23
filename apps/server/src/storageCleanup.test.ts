@@ -27,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
+import * as IssueWorktreeSlots from "./issues/IssueWorktreeSlots.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as GitManager from "./git/GitManager.ts";
@@ -376,7 +377,9 @@ const cleanupFixture = (
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
-    const context = yield* Layer.build(StorageCleanup.layer).pipe(
+    const context = yield* Layer.build(
+      StorageCleanup.layer.pipe(Layer.provide(IssueWorktreeSlots.layer)),
+    ).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
         ...git,
         execute: (input) =>
@@ -476,6 +479,12 @@ const cleanupFixture = (
         dispatch: (command: OrchestrationV2ServerCommand) =>
           Effect.sync(() => {
             if (command.type === "thread.archive") archivedThreads.push(command.threadId);
+            if (command.type === "thread.metadata.update" && command.worktreePath === null)
+              threads = threads.map((thread) =>
+                thread.id === command.threadId
+                  ? { ...thread, worktreePath: null, branch: null }
+                  : thread,
+              );
             return { sequence: 0, storedEvents: [] };
           }),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
@@ -552,6 +561,7 @@ const cleanupFixture = (
       config,
       command,
       archivedThreads,
+      getThreads: () => threads,
       setBranchPullRequest: (next: GitManager.GitBranchPullRequest) => {
         branchPullRequest = next;
       },
@@ -3294,6 +3304,74 @@ describe("storage cleanup reports and local file policies", () => {
         ).not.toBe("");
       }),
     ),
+  );
+  it.live.each(["finished with no PR", "interrupted during merged release"] as const)(
+    "returns an issue slot to the pool after the worker %s",
+    (scenario) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const {
+            service,
+            fs,
+            repo,
+            worktree,
+            command,
+            setThreads,
+            getThreads,
+            setBranchPullRequest,
+          } = yield* cleanupFixture(DEFAULT_SERVER_SETTINGS.storageCleanup);
+          const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-slot-remote-" });
+          yield* command(remote, ["init", "--bare", "-b", "main"]);
+          yield* command(repo, ["remote", "add", "origin", remote]);
+          yield* command(repo, ["push", "origin", "main"]);
+          const slots = `${repo}/.worktrees`;
+          const slot = `${slots}/slot-1`;
+          yield* fs.makeDirectory(slots);
+          yield* command(repo, ["worktree", "move", worktree, slot]);
+          yield* command(slot, ["update-ref", "refs/worktree/t3-issue-slot", "HEAD"]);
+          if (scenario === "interrupted during merged release") {
+            yield* fs.writeFileString(`${slot}/tracked.txt`, "squashed work\n");
+            yield* command(slot, ["commit", "-am", "squashed work"]);
+            const head = (yield* command(slot, ["rev-parse", "HEAD"])).stdout.trim();
+            setBranchPullRequest({
+              number: 2,
+              title: "Merged",
+              url: "https://github.com/owner/project/pull/2",
+              state: "merged",
+              headRef: "feature",
+              baseRef: "main",
+              headSha: head,
+              repositoryKey: "github.com/owner/project",
+              updatedAt: null,
+            });
+            yield* command(slot, ["switch", "--detach", "origin/main"]);
+          }
+          setThreads([
+            shell({
+              branch: "feature",
+              worktreePath: slot,
+              archivedAt: at(-DAY_MS),
+              linkedIssue: {
+                host: "github.com",
+                repository: "owner/project",
+                repositoryId: "repo",
+                id: "issue",
+                nodeId: "issue-node",
+                number: 1,
+                title: "Issue",
+                url: "https://github.com/owner/project/issues/1",
+              },
+            }),
+          ]);
+          expect((yield* service.runNow).entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Returned to the issue worktree pool",
+          });
+          expect(getThreads()[0]?.worktreePath).toBeNull();
+          expect(yield* fs.exists(slot)).toBe(true);
+          expect((yield* command(repo, ["branch", "--list", "feature"])).stdout).toBe("");
+        }),
+      ),
   );
   it.live("keeps a Writer unarchived when cleanup removes the shared issue worktree", () =>
     runCleanupTest(

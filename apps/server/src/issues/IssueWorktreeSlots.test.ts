@@ -68,6 +68,21 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
       });
     yield* maintain();
     assert.deepEqual(prepared, [slot, surplus]);
+    const failedBind = yield* slots
+      .claim({
+        cwd: local,
+        branch: "failed-bind",
+        occupied,
+        bind: () => Effect.fail("bind failed"),
+        limit: () => Effect.succeed(limit),
+      })
+      .pipe(Effect.flip);
+    assert.equal(failedBind, "bind failed");
+    assert.equal((yield* run(slot, "branch", "--show-current")).stdout.trim(), "");
+    yield* run(slot, "switch", "-c", "abandoned-claim");
+    yield* maintain();
+    assert.equal((yield* run(slot, "branch", "--show-current")).stdout.trim(), "");
+    assert.include(yield* git.listLocalBranchNames(local), "abandoned-claim");
     const [first, second] = yield* Effect.all([claim("issue-1"), claim("issue-2")], {
       concurrency: 2,
     });
@@ -106,6 +121,7 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
     yield* run(slot, "update-index", "--no-assume-unchanged", "tracked");
     yield* run(slot, "restore", "tracked");
     assert.isNull(yield* release(slot, slotBranch));
+    yield* run(surplus, "switch", "--detach", "origin/main");
     assert.isNull(yield* release(surplus, surplusBranch));
     claims.clear();
     assert.notInclude(yield* git.listLocalBranchNames(local), slotBranch);

@@ -2,6 +2,7 @@ import {
   GitCommandError,
   PROJECT_WORKTREES_FOLDER,
   T3_PROJECT_FILE_NAME,
+  type TerminalSummary,
 } from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Context from "effect/Context";
@@ -9,8 +10,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import type * as PlatformError from "effect/PlatformError";
 
+import * as TerminalManager from "../terminal/Manager.ts";
 import { excludeProjectWorktrees } from "../projectLocalWorktrees.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { makeHiddenTrackedChangeCheck } from "../vcs/hiddenTrackedChange.ts";
@@ -73,6 +77,45 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const hiddenTrackedChange = yield* makeHiddenTrackedChangeCheck;
+  const preparing = new Set<string>();
+  const terminalManager = yield* Effect.serviceOption(TerminalManager.TerminalManager);
+  const liveTerminals = new Map<string, TerminalSummary>();
+  if (Option.isSome(terminalManager)) {
+    const unsubscribe = yield* terminalManager.value.subscribeMetadata((event) =>
+      Effect.sync(() => {
+        if (event.type === "snapshot") liveTerminals.clear();
+        if (event.type === "remove") {
+          liveTerminals.delete(`${event.threadId}/${event.terminalId}`);
+          return;
+        }
+        for (const terminal of event.type === "snapshot" ? event.terminals : [event.terminal]) {
+          const key = `${terminal.threadId}/${terminal.terminalId}`;
+          if (terminal.status === "running" || terminal.status === "starting")
+            liveTerminals.set(key, terminal);
+          else liveTerminals.delete(key);
+        }
+      }),
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+  }
+  const hasLiveTerminal = Effect.fn("IssueWorktreeSlots.hasLiveTerminal")(function* (
+    target: string,
+  ) {
+    for (const terminal of liveTerminals.values()) {
+      for (const cwd of [terminal.worktreePath, terminal.cwd]) {
+        if (cwd === null) continue;
+        const real = yield* fs.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+        const relative = path.relative(target, real);
+        if (
+          relative === "" ||
+          (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
+        )
+          return true;
+      }
+    }
+    return false;
+  });
+
   const run = (cwd: string, args: ReadonlyArray<string>, allowNonZeroExit = false) =>
     git.execute({ cwd, args, allowNonZeroExit, operation: "IssueWorktreeSlots.git" });
   const failure = (cwd: string, detail: string) =>
@@ -163,6 +206,22 @@ const make = Effect.gen(function* () {
       return yield* failure(target, "The slot still contains local files after git clean.");
   });
 
+  const currentBranch = Effect.fn("IssueWorktreeSlots.currentBranch")(function* (target: string) {
+    const result = yield* run(target, ["symbolic-ref", "--quiet", "HEAD"], true);
+    if (result.exitCode === 1) return null;
+    if (result.exitCode !== 0) return yield* failure(target, "The slot branch could not be read.");
+    return result.stdout.trim();
+  });
+
+  const containedInDefault = Effect.fn("IssueWorktreeSlots.containedInDefault")(function* (
+    target: string,
+    base: SlotBase,
+  ) {
+    return (
+      (yield* run(target, ["merge-base", "--is-ancestor", "HEAD", base.ref], true)).exitCode === 0
+    );
+  });
+
   const inspectIdle = Effect.fn("IssueWorktreeSlots.inspectIdle")(function* (
     pool: SlotPool,
     target: string,
@@ -172,13 +231,8 @@ const make = Effect.gen(function* () {
     if (!(yield* markedSlot(pool.cwd, target))) return "is not a registered issue worktree slot";
     const changes = yield* localChanges(target, pool.base);
     if (changes !== null) return changes;
-    if (
-      (yield* run(target, ["merge-base", "--is-ancestor", "HEAD", pool.base.ref], true))
-        .exitCode !== 0
-    )
+    if (!(yield* containedInDefault(target, pool.base)))
       return "has commits outside the default branch";
-    if ((yield* run(target, ["symbolic-ref", "--quiet", "HEAD"], true)).exitCode !== 1)
-      return "is still attached to a branch";
     return null;
   });
 
@@ -220,7 +274,8 @@ const make = Effect.gen(function* () {
             const result = yield* withWorkspaceLease(
               target,
               Effect.gen(function* () {
-                if (yield* input.occupied(target))
+                if (preparing.has(target)) return "is being prepared";
+                if ((yield* input.occupied(target)) || (yield* hasLiveTerminal(target)))
                   return "is reserved by another thread or terminal";
                 base ??= yield* fetchBase(directory.cwd);
                 const exists = yield* fs.exists(target);
@@ -232,39 +287,46 @@ const make = Effect.gen(function* () {
                 let branch = input.branch;
                 let suffix = 2;
                 while (branches.has(branch)) branch = `${input.branch}-${suffix++}`;
-                // A cancelled preparation must leave either a detached slot or a recorded owner.
-                yield* Effect.uninterruptible(
+                const startRef = base.ref;
+                const rollback = Effect.gen(function* () {
+                  if (
+                    (yield* input.occupied(target)) ||
+                    (yield* currentBranch(target)) !== `refs/heads/${branch}` ||
+                    (yield* git.resolveCommit({ cwd: target, revision: "HEAD" })).commitSha !==
+                      startRef ||
+                    (yield* localChanges(target, base!)) !== null
+                  )
+                    return;
+                  yield* run(target, ["switch", "--detach", "--no-overwrite-ignore", startRef]);
+                  yield* git.deleteLocalBranch({
+                    cwd: directory.cwd,
+                    refName: branch,
+                    force: true,
+                  });
+                }).pipe(Effect.ignore({ log: true }));
+                const unavailable = yield* Effect.uninterruptible(
                   Effect.gen(function* () {
-                    yield* run(target, [
+                    const checkout = yield* run(target, [
                       "switch",
                       "--no-overwrite-ignore",
                       "--recurse-submodules",
                       "-c",
                       branch,
-                      base!.ref,
-                    ]);
-                    yield* clean(target, base!).pipe(
-                      Effect.onError(() =>
-                        run(target, [
-                          "switch",
-                          "--detach",
-                          "--no-overwrite-ignore",
-                          base!.ref,
-                        ]).pipe(
-                          Effect.andThen(
-                            git.deleteLocalBranch({
-                              cwd: directory.cwd,
-                              refName: branch,
-                              force: false,
-                            }),
-                          ),
-                          Effect.ignore({ log: true }),
-                        ),
-                      ),
-                    );
-                    yield* input.bind(target, branch);
+                      startRef,
+                    ]).pipe(Effect.andThen(clean(target, base!)), Effect.result);
+                    if (Result.isFailure(checkout)) {
+                      yield* rollback;
+                      yield* Effect.logWarning("Issue worktree slot could not be prepared", {
+                        path: target,
+                        cause: checkout.failure,
+                      });
+                      return "could not be switched or cleaned";
+                    }
+                    yield* input.bind(target, branch).pipe(Effect.onError(() => rollback));
+                    return null;
                   }),
                 );
+                if (unavailable !== null) return unavailable;
                 return { path: target, branch };
               }),
             );
@@ -281,59 +343,67 @@ const make = Effect.gen(function* () {
     "IssueWorktreeSlots.maintain",
   )(function* (input) {
     const directory = yield* poolDirectory(input.cwd);
-    yield* withWorkspaceLease(
-      directory.dir,
-      Effect.gen(function* () {
-        yield* git.pruneWorktrees({ cwd: directory.cwd });
-        const existing = (yield* git.listWorktreePaths(directory.cwd)).filter(
-          (target) => path.dirname(target) === directory.dir && isIssueWorktreeSlot(path, target),
-        );
-        const wanted = Array.from({ length: input.limit }, (_, i) =>
-          path.join(directory.dir, `slot-${i + 1}`),
-        );
-        const wantedPaths = new Set(wanted);
-        let base: SlotBase | undefined;
-        for (const target of new Set([...wanted, ...existing])) {
-          yield* Effect.gen(function* () {
-            const ready = yield* withWorkspaceLease(
-              target,
-              Effect.gen(function* () {
-                if (yield* input.occupied(target)) return false;
-                base ??= yield* fetchBase(directory.cwd);
-                const exists = yield* fs.exists(target);
-                const reason = yield* inspectIdle({ ...directory, base }, target, exists);
-                if (reason !== null) {
-                  input.report({ path: target, reason });
-                  return false;
+    yield* Effect.gen(function* () {
+      yield* git.pruneWorktrees({ cwd: directory.cwd });
+      const existing = (yield* git.listWorktreePaths(directory.cwd)).filter(
+        (target) => path.dirname(target) === directory.dir && isIssueWorktreeSlot(path, target),
+      );
+      const wanted = Array.from({ length: input.limit }, (_, i) =>
+        path.join(directory.dir, `slot-${i + 1}`),
+      );
+      const wantedPaths = new Set(wanted);
+      let base: SlotBase | undefined;
+      for (const target of new Set([...wanted, ...existing])) {
+        let reserved = false;
+        yield* Effect.gen(function* () {
+          const ready = yield* withWorkspaceLease(
+            target,
+            Effect.gen(function* () {
+              if (
+                preparing.has(target) ||
+                (yield* input.occupied(target)) ||
+                (yield* hasLiveTerminal(target))
+              )
+                return false;
+              base ??= yield* fetchBase(directory.cwd);
+              const exists = yield* fs.exists(target);
+              const reason = yield* inspectIdle({ ...directory, base }, target, exists);
+              if (reason !== null) {
+                input.report({ path: target, reason });
+                return false;
+              }
+              if (!wantedPaths.has(target)) {
+                if (exists) {
+                  yield* clean(target, base);
+                  // Git has verified all remaining files are declared disposable slot artifacts.
+                  yield* git.removeWorktree({ cwd: directory.cwd, path: target, force: true });
                 }
-                if (!wantedPaths.has(target)) {
-                  if (exists) {
-                    yield* clean(target, base);
-                    // Git has verified all remaining files are declared disposable slot artifacts.
-                    yield* git.removeWorktree({ cwd: directory.cwd, path: target, force: true });
-                  }
-                  return false;
-                }
-                if (exists) yield* reset(target, base);
-                else yield* create({ ...directory, base }, target);
-                return true;
-              }),
-            );
-            if (ready) yield* input.setup(target);
-          }).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Issue worktree slot upkeep failed", { path: target, cause }).pipe(
-                Effect.andThen(
-                  Effect.sync(() =>
-                    input.report({ path: target, reason: "could not be refreshed" }),
-                  ),
-                ),
+                return false;
+              }
+              if (exists) yield* reset(target, base);
+              else yield* create({ ...directory, base }, target);
+              preparing.add(target);
+              reserved = true;
+              return true;
+            }),
+          );
+          if (ready) yield* input.setup(target);
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (reserved) preparing.delete(target);
+            }),
+          ),
+          Effect.catch((cause) =>
+            Effect.logWarning("Issue worktree slot upkeep failed", { path: target, cause }).pipe(
+              Effect.andThen(
+                Effect.sync(() => input.report({ path: target, reason: "could not be refreshed" })),
               ),
             ),
-          );
-        }
-      }),
-    );
+          ),
+        );
+      }
+    });
   });
 
   const release: IssueWorktreeSlots["Service"]["release"] = Effect.fn("IssueWorktreeSlots.release")(
@@ -343,19 +413,15 @@ const make = Effect.gen(function* () {
       const base = yield* readBase(input.cwd, input.defaultRef);
       const reason = yield* localChanges(input.path, base);
       if (reason !== null) return reason;
-      const head = yield* git.resolveCommit({ cwd: input.path, revision: "HEAD" });
+      const checkedOut = yield* currentBranch(input.path);
+      const branchRef = `refs/heads/${input.branch}`;
+      if (checkedOut !== null && checkedOut !== branchRef) return "branch changed since check";
+      if (checkedOut === null && !(yield* containedInDefault(input.path, base)))
+        return "detached slot has commits outside the default branch";
+      const head = yield* git.resolveCommit({ cwd: input.path, revision: branchRef });
       if (head.commitSha !== input.head) return "commit changed since check";
-      yield* reset(input.path, base).pipe(
-        Effect.andThen(input.unbind),
-        Effect.onError(() =>
-          run(input.path, [
-            "switch",
-            "--no-overwrite-ignore",
-            "--recurse-submodules",
-            input.branch,
-          ]).pipe(Effect.ignore({ log: true })),
-        ),
-      );
+      yield* reset(input.path, base);
+      yield* input.unbind;
       yield* git
         .deleteLocalBranch({ cwd: input.cwd, refName: input.branch, force: true })
         .pipe(Effect.ignore({ log: true }));

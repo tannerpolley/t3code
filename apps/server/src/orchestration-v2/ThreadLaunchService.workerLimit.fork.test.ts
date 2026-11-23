@@ -11,7 +11,13 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { adapter, makeHarness, modelSelection, projectId, suspensionWorkerLayer } from "./ThreadLaunchService.testHarness.ts";
+import {
+  adapter,
+  makeHarness,
+  modelSelection,
+  projectId,
+  suspensionWorkerLayer,
+} from "./ThreadLaunchService.testHarness.ts";
 
 it.effect(
   "validates repository limits, preserves Stop and usage-limit holds on a raise, and only holds new starts on a lower",
@@ -163,10 +169,31 @@ it.effect(
           },
         ],
       });
+      yield* threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("limit-bind-slot"),
+        threadId: limited,
+        branch: "issue-4",
+        worktreePath: "/repo/.worktrees/slot-1",
+      });
+      assert.equal(yield* store.slotsInUse(rootId), 1);
       yield* delegate(1);
+      const first = (yield* store.issueOwner(issue(1)))!;
+      assert.equal((yield* threads.getThreadRecords(first, ["runs"])).runs[0]?.status, "queued");
+      yield* threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("limit-release-slot"),
+        threadId: limited,
+        branch: null,
+        worktreePath: null,
+      });
+      yield* threads.dispatch({
+        type: "repository.work.continue",
+        commandId: CommandId.make("limit-continue-after-release"),
+        threadId: rootId,
+      });
       yield* delegate(2);
       yield* worker.drain();
-      const first = (yield* store.issueOwner(issue(1)))!;
       const held = (yield* store.issueOwner(issue(2)))!;
       const status = (id: ThreadId) =>
         threads

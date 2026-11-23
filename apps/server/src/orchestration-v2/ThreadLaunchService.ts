@@ -693,16 +693,21 @@ const make = Effect.gen(function* () {
             .claim({
               cwd: project.workspaceRoot,
               branch: requestedBranch,
-              limit: () =>
-                issueWork.repositoryOwner(input.managedIssue!).pipe(
-                  Effect.flatMap((owner) =>
-                    owner?.projectId === input.projectId && !owner.paused
-                      ? issueWork.configuration(owner.rootThreadId)
-                      : Effect.succeed(null),
-                  ),
-                  Effect.map((config) => config?.workerLimit ?? 0),
-                  Effect.mapError(mapError(input, "provision-worktree", threadId)),
-                ),
+              limit: Effect.fn("ThreadLaunchService.issueSlotLimit")(
+                function* () {
+                  const owner = yield* issueWork.repositoryOwner(input.managedIssue!);
+                  if (owner?.projectId !== input.projectId)
+                    return yield* mapError(
+                      input,
+                      "provision-worktree",
+                      threadId,
+                    )("This project no longer owns the repository's issue work.");
+                  if (owner.paused) return 0;
+                  const config = yield* issueWork.configuration(owner.rootThreadId);
+                  return config?.workerLimit ?? 0;
+                },
+                Effect.mapError(mapError(input, "provision-worktree", threadId)),
+              ),
               occupied: (target) =>
                 threads.getShellSnapshot({ worktreePath: target }).pipe(
                   Effect.map(
@@ -737,7 +742,7 @@ const make = Effect.gen(function* () {
             threadId,
             "checkout",
             "pending",
-            detail || "Waiting for a repository issue worktree slot.",
+            detail || "The repository paused before a worktree slot could be claimed.",
           );
           // The reservation can also be cleared by a Git repair outside T3.
           yield* Effect.sleep("30 seconds");
