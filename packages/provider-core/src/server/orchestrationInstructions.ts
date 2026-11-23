@@ -6,11 +6,13 @@ const T3_CODE_NATIVE_SUBAGENT_GUIDANCE = `- Subagents: use your native tool when
 
 const T3_CODE_ORCHESTRATION_INTRO = `## T3 Code orchestration
 
-Ordinary coding tasks need no T3 tools. Use tool discovery when the task calls for T3.`;
-const T3_CODE_DELEGATION_TOOLS = `- Before the first \`delegate_task\`, read \`orchestrator_capabilities\` for ranked role choices, model notes and credit approval. Refresh after an error or provider change. Ask before switching an unavailable choice. Use the tool’s isolation argument for child checkouts.
+Ordinary coding tasks need no T3 tools. Use tool discovery when the task calls for T3.
+
+- If you are a subagent or child, do the work yourself. Start subagents only when your task or role calls for it.
+- If a provider or model is unavailable, ask before switching. Never fall back to native tools, Workflow or CLIs.`;
+const T3_CODE_DELEGATION_TOOLS = `- Before the first \`delegate_task\`, read \`orchestrator_capabilities\` for ranked role choices, model notes and credit approval. Refresh after an error or provider change. Use the tool’s isolation argument for child checkouts.
 - The orchestrator delegates an independent Reviewer only when the owner or plan asks. Start each review or re-check with \`delegate_task\`. Fix small findings yourself. If asked to use fewer delegates, \`task_cancel\` extras without replacing them.
-- Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
-- If you are a subagent or child, do the work yourself. Start subagents only when your task or role calls for it.`;
+- Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.`;
 
 const T3_CODE_THREAD_TOOLS = `- Multiple selections: use \`t3_request_user_input\`. Parents use \`t3_pending_request\` for child decisions and approve only delegated descendants within task authority. Writer questions go to the owner. Never message ancestors, whose results arrive automatically.
 - Launch top-level threads only on explicit request, using \`t3_thread_launch\` for one thread. Read a given thread id with \`t3_thread_read\` and use its returned link verbatim. Discover environment-link tools for another machine.
@@ -60,13 +62,13 @@ export function t3OrchestrationBaseInstructions(managedIssue?: ManagedIssueRole)
 }
 
 const MANAGED_ISSUE_PROPOSALS =
-  "Keep issues current through propose_issue_change. Submit the typed proposal and follow its returned decision. Reuse its `clientRequestId` on retry. Agents cannot approve changes, and question answers never approve a mutation. A stale baseline needs a new proposal and preview. An uncertain create that needs attention requires the user to check GitHub and mark it resolved. Submit another create only when you intend to create a separate issue. T3 tracks its written bodies by exact baseline, never GitHub author login. Labels and assignees are outside this tool's scope.";
+  "Keep issues current through propose_issue_change. Submit the typed proposal and follow its returned decision. Reuse its `clientRequestId` on retry. Agents cannot approve changes, and question answers never approve a mutation. A stale baseline needs a new proposal and preview. An uncertain create that needs attention requires the user to check GitHub and mark it resolved. Submit another create only when you intend to create a separate issue. T3 tracks its written bodies by exact baseline, never GitHub author login. Labels and assignees are outside this tool's scope. Ask before expanding the approved milestone or repository scope.";
 
 const MANAGED_ISSUE_WORKFLOW = `Run heavy checks through \`agent-heavy\`. T3 posts managed status and closeout comments. End the turn while children work and report results and remaining gates in your final message.`;
 
 const ISSUE_OWNER_WORKFLOW = `Use Designer for research or planning. Read native hierarchy and blockers before delegation. For an outside blocker, use propose_issue_change to create an issue, add blocked_by with the blocked issue as number and the new issue as blockerNumber, then report it in your final result. Use the question tool for owner decisions and fix failing tests within scope.`;
 
-const ROOT_WORKFLOW = `Own top-level issues. Read complete native hierarchy and blockers before delegation. Use \`work_through_milestone\` for milestones and \`get_repository_orchestration\` for capacity and queue controls. Wait for T3 wakes. Ask before expanding milestone or repository scope or changing worker limits.`;
+const ROOT_WORKFLOW = `Own top-level issues. Read complete native hierarchy and blockers before delegation. Use \`work_through_milestone\` for milestones and \`get_repository_orchestration\` for capacity and queue controls. Wait for T3 wakes. Ask before changing worker limits.`;
 
 const ROLE_GUIDANCE: Partial<Record<ThreadRole, string>> = {
   designer:
