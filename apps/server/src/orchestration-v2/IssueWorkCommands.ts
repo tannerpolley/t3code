@@ -1,4 +1,5 @@
 import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
+import { issueWorkerBrief } from "../issues/IssueWorkerBrief.ts";
 import { IssueTrackerKind, MessageId } from "@t3tools/contracts";
 import type {
   NodeId,
@@ -62,6 +63,7 @@ export interface ForkCommandHooks {
 }
 
 interface IssueWorkCommandHooks extends ForkCommandHooks {
+  readonly draftPrRepositories: ReadonlySet<string>;
   readonly recordSubagentFollowup: (
     command: Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -118,6 +120,7 @@ export function makeIssueWorkCommands({
   emit,
   mapDispatchError,
   OrchestratorDispatchError,
+  draftPrRepositories,
   providerAdapters,
   dispatchDelegatedTaskRequest,
   dispatchMessage,
@@ -314,7 +317,13 @@ export function makeIssueWorkCommands({
         parentRunId: null,
         parentNodeId: null,
         issue: command.issue,
-        task: `Implement issue #${command.issue.number}: ${command.issue.title}\n${command.issue.url}\nRead the issue and its comments, complete the authorized work, and report the result. Status and closeout comments are authorized. Other GitHub mutations and publishing retain separate approval.`,
+        task: issueWorkerBrief(
+          command.issue,
+          command.issueWorktree !== undefined &&
+            draftPrRepositories.has(
+              `${command.issue.host}/${command.issue.repository}`.toLowerCase(),
+            ),
+        ),
         modelSelection: command.workerModelSelection,
         runtimeMode: recipient.runtimeMode,
         interactionMode: recipient.interactionMode,

@@ -34,6 +34,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -1245,9 +1246,16 @@ it.effect(
   },
 );
 
-it.effect(
-  "starts ancestor owners for milestone work, reports blocked and unreadable plans, and suspends externally changed branches without rewriting lineage",
-  () => {
+it.effect.each([
+  { configuredRepositories: undefined, canPublish: false },
+  { configuredRepositories: "github.com/tannerpolley/another-repo", canPublish: false },
+  {
+    configuredRepositories: " github.com/another/repo, GitHub.com/TannerPolley/T3Code ",
+    canPublish: true,
+  },
+])(
+  "starts milestone workers with draft PR authority $canPublish ($configuredRepositories) and respects issue relationships",
+  ({ configuredRepositories, canPublish }) => {
     const linked = (number: number) => ({
       host: "github.com",
       repository: "tannerpolley/t3code",
@@ -1406,6 +1414,33 @@ it.effect(
         (yield* threads.getThreadRecords(secondId, [])).thread.lineage.parentThreadId,
         firstId,
       );
+      for (const [threadId, number] of [
+        [firstId, 1],
+        [secondId, 2],
+      ] as const) {
+        const { messages } = yield* threads.getThreadRecords(threadId, ["messages"]);
+        const brief = messages[0]!.text;
+        assert.include(brief, `Implement issue #${number}`);
+        assert.include(brief, "Status and closeout comments are authorized.");
+        if (canPublish) {
+          assert.include(
+            brief,
+            "The repository owner explicitly requests that you publish after checks pass.",
+          );
+          assert.include(
+            brief,
+            `Push only this issue branch to github.com/tannerpolley/t3code and open or update a draft PR there with Closes #${number}`,
+          );
+          assert.include(
+            brief,
+            "Merging, force-pushing, issue edits, and other GitHub mutations retain separate approval.",
+          );
+          assert.notInclude(brief, "publishing retain separate approval");
+        } else {
+          assert.include(brief, "Other GitHub mutations and publishing retain separate approval.");
+          assert.notInclude(brief, "Push only this issue branch");
+        }
+      }
       newBlocker = true;
       yield* service.reconcile(rootId);
       yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
@@ -1477,7 +1512,18 @@ it.effect(
       }
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(dependencies, serviceLayer, suspensionWorkerLayer(dependencies)),
+        Layer.mergeAll(dependencies, serviceLayer, suspensionWorkerLayer(dependencies)).pipe(
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env:
+                  configuredRepositories === undefined
+                    ? {}
+                    : { T3CODE_ISSUE_DRAFT_PR_REPOSITORIES: configuredRepositories },
+              }),
+            ),
+          ),
+        ),
       ),
     );
   },

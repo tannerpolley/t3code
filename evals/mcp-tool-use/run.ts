@@ -41,6 +41,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { t3OrchestrationBaseInstructions } from "../../packages/provider-core/src/server/orchestrationInstructions.ts";
 import { issueQueueMessage } from "../../apps/server/src/issues/IssueQueueMessage.ts";
+import { issueWorkerBrief } from "../../apps/server/src/issues/IssueWorkerBrief.ts";
 import { openBlockerSuspensionReason } from "../../apps/server/src/issues/IssueEligibility.ts";
 import { CommandId } from "@t3tools/contracts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
@@ -322,6 +323,8 @@ export const McpToolUseCase = Schema.Struct({
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     silentWakeFollowup: Schema.optional(Schema.Boolean),
     context: Schema.optional(Schema.String),
+    /** Build the managed implementor's first message from the issue title in `prompt`. */
+    issueDraftPublication: Schema.optional(Schema.Boolean),
     issueGuidance: Schema.optional(
       Schema.Literals(["queued-issue", "open-blocker", "managed-worker", "managed-root"]),
     ),
@@ -1060,7 +1063,7 @@ export const buildMessages = (sample: Sample) => {
     if (last?.role !== role) messages.push({ role, content: blocks });
     else messages[messages.length - 1] = { role, content: [...last.content, ...blocks] };
   };
-  const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
+  const { role, context, delegateRole, issueDraftPublication, priorTurns = [] } = testCase.setup;
   const sideChat = testCase.setup.sideChat;
   if (testCase.prompt === "" && (role !== "top" || sideChat !== undefined)) {
     throw new Error(
@@ -1080,11 +1083,13 @@ export const buildMessages = (sample: Sample) => {
       ? "You are a subagent started by the parent agent's Agent tool. Your final message goes to the parent agent, not to the user."
       : undefined,
     context,
-    testCase.setup.issueGuidance === "managed-worker"
-      ? t3OrchestrationBaseInstructions("worker")
-      : testCase.setup.issueGuidance === "managed-root"
-        ? t3OrchestrationBaseInstructions("root")
-        : undefined,
+    issueDraftPublication !== undefined
+      ? t3OrchestrationBaseInstructions("implementor")
+      : testCase.setup.issueGuidance === "managed-worker"
+        ? t3OrchestrationBaseInstructions("worker")
+        : testCase.setup.issueGuidance === "managed-root"
+          ? t3OrchestrationBaseInstructions("root")
+          : undefined,
     testCase.setup.issueGuidance === "open-blocker"
       ? openBlockerSuspensionReason
       : testCase.setup.issueGuidance === "queued-issue"
@@ -1160,12 +1165,28 @@ export const buildMessages = (sample: Sample) => {
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
+  const taskText =
+    issueDraftPublication === undefined
+      ? testCase.prompt
+      : issueWorkerBrief(
+          {
+            host: "github.com",
+            repository: "acme/app",
+            repositoryId: "12",
+            id: "107",
+            nodeId: "12/7",
+            number: 7,
+            title: testCase.prompt,
+            url: "https://github.com/acme/app/issues/7",
+          },
+          issueDraftPublication,
+        );
   const userText =
     testCase.setup.silentWakeFollowup === true
       ? SILENT_WAKE_FOLLOWUP
       : testCase.promptContext === undefined
-        ? testCase.prompt
-        : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+        ? taskText
+        : projectComposerContextForProvider({ text: taskText, ...testCase.promptContext });
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
