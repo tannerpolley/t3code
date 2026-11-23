@@ -36,6 +36,7 @@ import { PullRequestProviderError } from "@t3tools/source-control-core/server/Pu
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { IssueDraftPrRepositories } from "../issues/IssueWorkerBrief.ts";
 import { needsManagedPullRequestWatch } from "./pullRequestWatch.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
@@ -363,6 +364,7 @@ export const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const git = yield* GitManager.GitManager;
   const random = yield* SecureRandom.SecureRandom;
+  const draftPrRepositories = yield* IssueDraftPrRepositories.pipe(Effect.orDie);
 
   const lastSyncedAt = new Map<string, number>();
   const requested = new Set<string>();
@@ -495,7 +497,10 @@ export const make = Effect.gen(function* () {
         });
         linkedThisSweep.add(dedupeKey);
       }
-      if (changed || (fields.state === "open" && needsManagedPullRequestWatch(thread, link))) {
+      if (
+        changed ||
+        (fields.state === "open" && needsManagedPullRequestWatch(thread, link, draftPrRepositories))
+      ) {
         const uuid = yield* random.uuidV4();
         yield* engine.dispatch({
           type: "thread.pull-request-link.sync",
