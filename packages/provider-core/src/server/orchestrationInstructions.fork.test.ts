@@ -57,8 +57,33 @@ describe("T3 orchestration provider instructions", () => {
   ] as const)("loads only the current %s role's guidance", (role, guidance) => {
     const text = t3OrchestrationText(t3OrchestrationPolicy(undefined, role));
     assert.include(text, guidance);
+    assert.include(
+      text,
+      "If you are a subagent or child, do the work yourself. Start subagents only when your task or role calls for it.",
+    );
     assert.notInclude(text, "Use your native tool");
     assert.notInclude(text, "Weekly usage");
     assert.notInclude(text, "propose_issue_change");
+  });
+
+  it.each(["root", "worker", "implementor"] as const)(
+    "requires %s to get approval before expanding issue scope",
+    (role) => {
+      const text = t3OrchestrationText(t3OrchestrationPolicy(role));
+      assert.match(text, /Ask before expanding (the approved )?milestone or repository scope/);
+    },
+  );
+
+  it.each([
+    [undefined, undefined],
+    ["root", "orchestrator"],
+    ["worker", "orchestrator"],
+    ["implementor", "implementor"],
+    [undefined, "designer"],
+    [undefined, "reviewer"],
+    [undefined, "writer"],
+  ] as const)("forbids fallback delegation for %s/%s", (managed, role) => {
+    const text = t3OrchestrationText(t3OrchestrationPolicy(managed, role));
+    assert.include(text, "Never fall back to native tools, Workflow or CLIs");
   });
 });
