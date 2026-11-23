@@ -17,7 +17,6 @@ import {
   isOlderSettledThreadShell,
   OrchestrationProjectShell as ProjectShellSchema,
   OrchestrationV2ThreadShell as ThreadShellSchema,
-  workerListParentIds,
 } from "@t3tools/contracts";
 import { turnItemCanChangeUserWait } from "@t3tools/shared/agentAwareness";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -247,13 +246,14 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
 }
 
 function hiddenChildAncestorIds(
-  threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "lineage">>,
+  threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "lineage" | "workerAncestorIds">>,
 ) {
   const ancestorIds = new Set<string>();
   for (const thread of threads) {
     if (isListedThreadLineage(thread.lineage)) continue;
     if (thread.lineage.parentThreadId !== null) ancestorIds.add(thread.lineage.parentThreadId);
     ancestorIds.add(thread.lineage.rootThreadId);
+    for (const id of thread.workerAncestorIds ?? []) ancestorIds.add(id);
   }
   return ancestorIds;
 }
@@ -469,15 +469,14 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
     const omittedWorkers = new Map<ThreadId, number>();
     if (input.options.omitIdleSubagents && read.index !== null) {
       const sent = new Set(snapshot.threads.map((thread) => thread.id));
-      const lineages = new Map(read.index.map(({ id, lineage }) => [id, lineage]));
-      for (const { id, lineage } of read.index) {
+      for (const { id, lineage, workerAncestorIds } of read.index) {
         if (
           lineage.relationshipToParent !== "subagent" ||
           lineage.parentThreadId === null ||
           sent.has(id)
         )
           continue;
-        for (const parent of workerListParentIds(lineage, (id) => lineages.get(id))) {
+        for (const parent of [lineage.rootThreadId, ...(workerAncestorIds ?? [])]) {
           omittedWorkers.set(parent, (omittedWorkers.get(parent) ?? 0) + 1);
         }
       }

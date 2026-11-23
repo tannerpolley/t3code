@@ -72,7 +72,16 @@ const make = Effect.gen(function* () {
     string,
     {
       revision: number;
-      queries: Map<string, Effect.Effect<ReadonlyArray<IssueWorkThread>, IssueLinkError>>;
+      queries: Map<
+        string,
+        Effect.Effect<
+          {
+            readonly threads: ReadonlyArray<IssueWorkThread>;
+            readonly parentById: ReadonlyMap<string, string | null>;
+          },
+          IssueLinkError
+        >
+      >;
       threadLinks: Effect.Effect<ReadonlyArray<LinkRow>, IssueLinkError>;
     }
   >();
@@ -110,11 +119,7 @@ const make = Effect.gen(function* () {
     const rows = yield* memo.threadLinks;
     // The GitHub candidate set is outside the event projection, so paging and newly discovered
     // closing PRs invalidate their own reads.
-    const queryKey = encodeMemoKey([
-      issueNumbers,
-      prRefsJson,
-      list.issues.some((issue) => issue.state === "closed"),
-    ]);
+    const queryKey = encodeMemoKey([issueNumbers, prRefsJson]);
     const queries = memo.queries;
     let read = queries.get(queryKey);
     if (read === undefined) {
@@ -132,11 +137,18 @@ const make = Effect.gen(function* () {
                     .map((row) => row.thread_id),
                   prRefsJson,
                   prRefs.length > 0,
-                  list.issues.some((issue) => issue.state === "closed"),
                 ).pipe(NodeSqliteClient.readOnly);
-          return yield* projections.getIssueWorkThreads(
-            candidates.map(({ thread_id }) => ThreadId.make(thread_id)),
+          const threads = yield* projections.getIssueWorkThreads(
+            candidates.flatMap(({ thread_id, deleted_at }) =>
+              deleted_at === null ? [ThreadId.make(thread_id)] : [],
+            ),
           );
+          return {
+            threads,
+            parentById: new Map(
+              candidates.map(({ thread_id, parent_thread_id }) => [thread_id, parent_thread_id]),
+            ),
+          };
         }).pipe(
           Effect.mapError(storageError),
           Effect.tapError(() => Effect.sync(() => queries.delete(queryKey))),
@@ -146,7 +158,7 @@ const make = Effect.gen(function* () {
       if (memo.queries.size >= 32) memo.queries.delete(memo.queries.keys().next().value!);
       memo.queries.set(queryKey, read);
     }
-    const threads = yield* read;
+    const { threads, parentById } = yield* read;
     const issues = new Map(
       list.issues.map((issue) => [key({ ...list.repository, number: issue.number }), issue.number]),
     );
@@ -187,11 +199,11 @@ const make = Effect.gen(function* () {
     const linked = threads.flatMap((thread) => {
       const refs = new Set(refsByThread.get(thread.id));
       const visited = new Set<string>([thread.id]);
-      let parent = thread.lineage.parentThreadId;
+      let parent: string | null = thread.lineage.parentThreadId;
       while (parent !== null && !visited.has(parent)) {
         visited.add(parent);
         for (const number of refsByThread.get(parent) ?? []) refs.add(number);
-        parent = byId.get(parent)?.lineage.parentThreadId ?? null;
+        parent = parentById.get(parent) ?? null;
       }
       return refs.size === 0 ? [] : [{ thread, refs }];
     });

@@ -16,9 +16,13 @@ export function indexSidebarWorkers(threads: readonly SidebarThreadSummary[]) {
   for (const thread of threads) {
     const { environmentId, lineage } = thread;
     if (thread.archivedAt !== null || lineage.relationshipToParent !== "subagent") continue;
-    for (const id of workerListParentIds(lineage, (id) =>
-      lineages.get(scopedThreadKey(scopeThreadRef(environmentId, id))),
-    )) {
+    const parents =
+      thread.source.workerAncestorIds === undefined
+        ? workerListParentIds(lineage, (id) =>
+            lineages.get(scopedThreadKey(scopeThreadRef(environmentId, id))),
+          )
+        : [lineage.rootThreadId, ...thread.source.workerAncestorIds];
+    for (const id of parents) {
       const parent = scopedThreadKey(scopeThreadRef(environmentId, id));
       const siblings = children.get(parent);
       if (siblings) siblings.push(thread);

@@ -540,6 +540,7 @@ export interface ActiveShellIndexEntry extends Pick<
   | "id"
   | "projectId"
   | "lineage"
+  | "workerAncestorIds"
   | "settledOverride"
   | "settledAt"
   | "pinnedAt"
@@ -1312,6 +1313,7 @@ export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
 type ShellThreadRow = {
   readonly thread_id: string;
   readonly payload_json: string;
+  readonly worker_ancestor_ids: string | null;
   readonly native_subagent_payload_json: string | null;
   readonly forked_from_run_source_thread_id: string | null;
   readonly latest_run_id: string | null;
@@ -1402,6 +1404,13 @@ const shellIndexLineage = (row: {
 });
 
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const decodeWorkerAncestorIds = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Array(ThreadId)),
+);
+const workerAncestorsFromRow = ({ worker_ancestor_ids }: { worker_ancestor_ids: string | null }) =>
+  worker_ancestor_ids === null || worker_ancestor_ids === "[]"
+    ? {}
+    : { workerAncestorIds: decodeWorkerAncestorIds(worker_ancestor_ids) };
 
 // Empty filters still scan SQLite rows; short-circuit them, including turnItemTypes: [].
 const matchesNothing = (...filters: ReadonlyArray<ReadonlyArray<unknown> | undefined>) =>
@@ -1534,6 +1543,8 @@ const decodePlanJson = Schema.decodeUnknownEffect(
 const decodeTurnItemPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
 );
+const decodeTurnItemJson = Schema.decodeUnknownEffect(OrchestrationV2TurnItemJsonSchema);
+const decodeStoredJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeCheckpointScopePayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2CheckpointScopeJsonSchema),
 );
@@ -2181,6 +2192,7 @@ function isActivityRunForShell(
 }
 
 type ShellThreadState = {
+  readonly workerAncestorIds?: ReadonlyArray<ThreadId>;
   readonly thread: OrchestrationV2ThreadProjection["thread"];
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
@@ -2385,6 +2397,9 @@ function shellFromState(input: {
       ? {}
       : { activeOrderKey: input.state.thread.activeOrderKey }),
     lineage: input.state.thread.lineage,
+    ...(input.state.workerAncestorIds === undefined
+      ? {}
+      : { workerAncestorIds: input.state.workerAncestorIds }),
     forkedFrom: input.state.thread.forkedFrom,
     activeProviderThreadId: input.state.thread.activeProviderThreadId,
     ...(input.state.thread.historyOrigin === undefined
@@ -3557,21 +3572,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
       );
 
+    const hidesQueuedTurn = sql`(
+      COALESCE(run.status IN ('queued', 'cancelled'), 0)
+      OR COALESCE(run.status = 'rolled_back' AND EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_run_attempts AS attempt
+        WHERE attempt.run_id = run.run_id AND attempt.status = 'cancelled'
+      ), 0)
+    )`;
+
     // Share selection so counting discarded ancestry preserves payload-read positions.
     const visibleTimelineItem = (inherited: boolean) => sql`
       (${inherited ? sql`1` : sql`run.status IS NOT 'rolled_back'`})
-      AND NOT (
-        CASE WHEN item.type = 'user_message'
+      AND NOT CASE WHEN item.type = 'user_message' AND ${hidesQueuedTurn}
+        THEN CASE WHEN json_valid(item.payload_json)
           THEN json_extract(item.payload_json, '$.inputIntent') IS 'queued_turn'
           ELSE 0 END
-        AND (
-          COALESCE(run.status IN ('queued', 'cancelled'), 0)
-          OR COALESCE(run.status = 'rolled_back' AND EXISTS (
-            SELECT 1 FROM orchestration_v2_projection_run_attempts AS attempt
-            WHERE attempt.run_id = run.run_id AND attempt.status = 'cancelled'
-          ), 0)
-        )
-      )
+        ELSE 0 END
       AND NOT (
         item.type = 'run_interrupt_result'
         AND EXISTS (
@@ -8100,7 +8116,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const materializeTimelineRows = Effect.fn("ProjectionStore.materializeTimelineRows")(function* (
       threadId: ThreadId,
-      page: ReadonlyArray<Omit<TimelineIndexRow, "item"> & { readonly position: number }>,
+      page: ReadonlyArray<
+        Omit<TimelineIndexRow, "item"> & {
+          readonly position: number;
+          readonly hideQueuedTranscriptTurn?: boolean;
+        }
+      >,
     ) {
       const sources = yield* encodeTimelineSources(
         page
@@ -8124,22 +8145,41 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const byIdentity = new Map(
         payloads.map((row) => [`${row.thread_id}:${row.turn_item_id}`, row.payload_json]),
       );
-      return yield* Effect.forEach(page, (row) =>
+      const rows = yield* Effect.forEach(page, (row) =>
         Effect.gen(function* () {
           const payload = byIdentity.get(`${row.sourceThreadId}:${row.sourceItemId}`);
-          const item =
-            row.synthetic ??
-            (payload === undefined
-              ? yield* new ProjectionStoreReadError({
-                  threadId,
-                  cause: "Timeline item disappeared during snapshot",
-                })
-              : yield* decodeTurnItemPayload(payload).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ProjectionStoreReadError({ threadId: row.sourceThreadId, cause }),
-                  ),
-                ));
+          let item = row.synthetic;
+          if (item === undefined) {
+            if (payload === undefined) {
+              return yield* new ProjectionStoreReadError({
+                threadId,
+                cause: "Timeline item disappeared during snapshot",
+              });
+            }
+            // Export checks intent again for payloads beyond SQLite's JSON depth limit.
+            const decode =
+              row.hideQueuedTranscriptTurn === undefined
+                ? decodeTurnItemPayload(payload)
+                : decodeStoredJson(payload).pipe(
+                    Effect.orElseSucceed(() => undefined),
+                    Effect.flatMap((json) =>
+                      json === undefined ||
+                      (row.hideQueuedTranscriptTurn &&
+                        typeof json === "object" &&
+                        json !== null &&
+                        "inputIntent" in json &&
+                        json.inputIntent === "queued_turn")
+                        ? Effect.undefined
+                        : decodeTurnItemJson(json),
+                    ),
+                  );
+            item = yield* decode.pipe(
+              Effect.mapError(
+                (cause) => new ProjectionStoreReadError({ threadId: row.sourceThreadId, cause }),
+              ),
+            );
+            if (item === undefined) return undefined;
+          }
           return {
             position: row.position,
             sourceThreadId: row.sourceThreadId,
@@ -8149,6 +8189,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           };
         }),
       );
+      return rows.filter((row) => row !== undefined);
     });
 
     type TranscriptSegment = {
@@ -8217,9 +8258,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ${thread.historyOrigin === "v1_import" ? sql`OR item.run_id IS NULL` : sql``}
             )`;
       // Stored lengths bound the read page only. A large row can shrink when decoded.
-      return yield* sql<TranscriptCursor>`
+      return yield* sql<TranscriptCursor & { hideQueuedTurn: 0 | 1 | null }>`
         WITH candidates AS MATERIALIZED (
-          SELECT item.turn_item_id AS itemId, item.ordinal, octet_length(item.payload_json) AS bytes
+          SELECT item.turn_item_id AS itemId, item.ordinal, octet_length(item.payload_json) AS bytes,
+            CASE WHEN item.type = 'user_message' THEN ${hidesQueuedTurn} END AS hideQueuedTurn
           FROM orchestration_v2_projection_turn_items AS item
           LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = item.run_id
           WHERE item.thread_id = ${thread.id}
@@ -8229,11 +8271,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ORDER BY item.ordinal ASC, item.turn_item_id ASC
           LIMIT 64
         ), sized AS (
-          SELECT itemId, ordinal, ROW_NUMBER() OVER page AS position, SUM(bytes) OVER page AS bytes
+          SELECT itemId, ordinal, hideQueuedTurn,
+            ROW_NUMBER() OVER page AS position, SUM(bytes) OVER page AS bytes
           FROM candidates
           WINDOW page AS (ORDER BY ordinal ASC, itemId ASC)
         )
-        SELECT itemId, ordinal FROM sized
+        SELECT itemId, ordinal, hideQueuedTurn FROM sized
         WHERE position = 1 OR bytes <= ${8 * 1024 * 1024}
         ORDER BY position ASC
       `;
@@ -8279,10 +8322,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 sourceThreadId: segment.thread.id,
                 sourceItemId: item.itemId,
                 visibility: inherited ? "inherited" : "local",
+                ...(item.hideQueuedTurn === null
+                  ? {}
+                  : { hideQueuedTranscriptTurn: item.hideQueuedTurn === 1 }),
               })),
             );
             for (const row of rows) {
-              if (!append(row))
+              if (!append({ ...row, position: transcript.items.length }))
                 return yield* new ProjectionStoreSnapshotTooLargeError({ threadId });
             }
           }
@@ -8580,6 +8626,36 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       )`;
     };
 
+    // Migration 98 indexes these exact expressions for the active shell index.
+    const indexedField = (path: string, read: "json_extract" | "json_type" = "json_extract") =>
+      sql.literal(
+        `CASE WHEN json_valid(t.payload_json) THEN ${read}(t.payload_json, '${path}') END`,
+      );
+    const workerParent = indexedField("$.lineage.parentThreadId");
+    const workerRoot = indexedField("$.lineage.rootThreadId");
+    const workerAncestorIds = sql`
+      CASE WHEN ${indexedField("$.lineage.relationshipToParent")} = 'subagent'
+        AND ${workerParent} <> ${workerRoot}
+      THEN (
+        WITH RECURSIVE ancestors(id) AS (
+          SELECT ${workerParent}
+          UNION
+          SELECT CASE WHEN json_valid(parent.payload_json)
+            THEN json_extract(parent.payload_json, '$.lineage.parentThreadId') END
+          FROM ancestors
+          JOIN orchestration_v2_projection_threads parent ON parent.thread_id = ancestors.id
+          WHERE ancestors.id <> ${workerRoot} AND ancestors.id <> t.thread_id
+        )
+        SELECT json_group_array(parent.thread_id ORDER BY parent.thread_id)
+        FROM ancestors
+        JOIN orchestration_v2_projection_threads parent ON parent.thread_id = ancestors.id
+        WHERE ancestors.id <> ${workerRoot} AND ancestors.id <> t.thread_id
+          AND CASE WHEN json_valid(parent.payload_json) THEN
+            json_extract(parent.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+            AND json_extract(parent.payload_json, '$.lineage.sideChat') IS NOT 1
+          END
+      ) END`;
+
     const selectShellThreadRows = (
       threadId?: ThreadId,
       {
@@ -8601,6 +8677,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
+              ${workerAncestorIds} AS worker_ancestor_ids,
               ${nativeSubagentPayload} AS native_subagent_payload_json,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
@@ -9524,6 +9601,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ];
         return {
           thread,
+          ...workerAncestorsFromRow(row),
           latestRunId,
           latestRunStatus,
           latestRunRequestedAt,
@@ -9603,14 +9681,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT child.thread_id
             FROM descendants
             CROSS JOIN orchestration_v2_projection_threads child
-            WHERE child.deleted_at IS NULL
-              AND CASE WHEN json_valid(child.payload_json)
+            WHERE CASE WHEN json_valid(child.payload_json)
                 THEN json_extract(child.payload_json, '$.lineage.parentThreadId') END = +descendants.thread_id
           )
           SELECT thread_id, created_at, count(*) OVER () AS total
           FROM descendants
           JOIN orchestration_v2_projection_threads USING (thread_id)
-          WHERE thread_id <> ${workerPage.parentThreadId} AND archived_at IS NULL
+          WHERE thread_id <> ${workerPage.parentThreadId} AND archived_at IS NULL AND deleted_at IS NULL
             AND CASE WHEN json_valid(payload_json)
               THEN json_extract(payload_json, '$.lineage.relationshipToParent') END = 'subagent'
             ${workerPage.before === undefined ? sql`` : sql`AND (created_at, thread_id) < (${workerPage.before.createdAt}, ${workerPage.before.threadId})`}
@@ -9997,12 +10074,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0]?.count ?? 0;
     }, Effect.mapError(shellSnapshotReadError));
 
-    // Migration 98 indexes these exact expressions, so the read takes them from the index instead
-    // of parsing every active thread's payload. Changing one here needs a matching index change.
-    const indexedField = (path: string, read: "json_extract" | "json_type" = "json_extract") =>
-      sql.literal(
-        `CASE WHEN json_valid(t.payload_json) THEN ${read}(t.payload_json, '${path}') END`,
-      );
     // The planner otherwise scans the whole (thread_id, type, status) index for this list.
     const PENDING_ITEMS_INDEX = sql.literal(
       "INDEXED BY orchestration_v2_projection_turn_items_shell_pending_idx",
@@ -10015,6 +10086,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly parent_thread_id: string | null;
         readonly root_thread_id: string;
         readonly side_chat: number | null;
+        readonly worker_ancestor_ids: string | null;
         readonly settled_override: string | null;
         readonly settled_at: string | null;
         readonly pinned_at: string | null;
@@ -10030,6 +10102,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ${indexedField("$.lineage.parentThreadId")} AS parent_thread_id,
           ${indexedField("$.lineage.rootThreadId")} AS root_thread_id,
           ${indexedField("$.lineage.sideChat")} AS side_chat,
+          ${workerAncestorIds} AS worker_ancestor_ids,
           ${indexedField("$.settledOverride")} AS settled_override,
           ${indexedField("$.settledAt")} AS settled_at,
           ${indexedField("$.pinnedAt")} AS pinned_at,
@@ -10091,6 +10164,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         id: ThreadId.make(row.thread_id),
         projectId: ProjectId.make(row.project_id),
         lineage: shellIndexLineage(row),
+        ...workerAncestorsFromRow(row),
         settledOverride:
           row.settled_override === "settled" || row.settled_override === "active"
             ? row.settled_override

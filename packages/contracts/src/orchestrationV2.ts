@@ -2443,6 +2443,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Issues linked to this thread; optional so pre-linking servers still decode. */
   issues: Schema.optional(Schema.Array(ThreadIssueLink)),
   lineage: OrchestrationV2AppThreadLineage,
+  /** Listed ancestors beyond the family root, including forks reached through inactive workers. */
+  workerAncestorIds: Schema.optionalKey(Schema.Array(ThreadId)),
   forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
