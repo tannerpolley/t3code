@@ -43,6 +43,7 @@ describe("T3 orchestration provider instructions", () => {
       assert.include(text, "Submit the typed proposal and follow its returned decision.");
       assert.include(text, "Reuse its `clientRequestId` on retry.");
       assert.notInclude(text, "always wait");
+      assert.notInclude(text, "agent-heavy");
       assert.include(text, "Do not poll it");
       assert.notInclude(text, "milestone..");
     }

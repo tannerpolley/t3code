@@ -35,6 +35,7 @@ import {
 import * as IssueInbox from "./IssueInbox.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -955,117 +956,134 @@ it.effect("does not rewrite an unchanged PR snapshot after a managed worker stop
   }).pipe(Effect.scoped, Effect.provide(harness())),
 );
 
-it.effect("wakes a managed implementor on new PR feedback after its first turn ends", () =>
-  Effect.gen(function* () {
-    const threads = yield* ThreadManagement.ThreadManagementService;
-    const threadId = yield* startWatchTestWorker();
-    const repository = "tannerpolley/t3code";
-    const url = `https://github.com/${repository}/pull/12`;
-    const at = DateTime.formatIso(yield* DateTime.now);
-    const comments: PullRequestComment[] = [];
-    const reactor = yield* PullRequestWatchReactor.make.pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          NodeCrypto.layer,
-          Layer.mock(PullRequestService.PullRequestService)({
-            watchFingerprint: () =>
-              Effect.sync(() => ({ status: "open", remarks: String(comments.length) })),
-            invalidate: () => Effect.void,
-            detail: () =>
-              Effect.succeed({
-                provider: SourceControlProviderKind.make("github"),
-                capabilities: {
-                  checksAlwaysReport: true,
-                  diff: true,
-                  comment: true,
-                  actions: [],
-                  mergeMethods: [],
-                  search: false,
-                  review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
-                  reviewers: { request: false, listCandidates: false },
-                },
-                viewerPermissions: {
-                  actions: [],
-                  comment: true,
-                  resolve: true,
-                  verdicts: [],
-                  requestReviewers: false,
-                },
-                projectId,
-                projectTitle: "Queue root",
-                workspaceRoot: "/repo",
-                repository,
-                number: 12,
-                title: "Implement issue 1",
-                body: "",
-                url,
-                author: null,
-                state: "open",
-                isDraft: true,
-                mergeability: "mergeable",
-                additions: 1,
-                deletions: 0,
-                changedFiles: 1,
-                headBranch: "feature",
-                headSha: "abc1234",
-                baseBranch: "main",
-                createdAt: at,
-                updatedAt: at,
-                mergedAt: null,
-                closedAt: null,
-                reviewers: [],
-                labels: [],
-                checks: [],
-                mergeCapabilities: { merge: true, squash: true, rebase: true },
+it.effect.each([
+  { configuredRepository: undefined, checksPending: true },
+  { configuredRepository: "other.example/acme/app", checksPending: true },
+  { configuredRepository: " other.example/acme/app, GitHub.com/Acme/App ", checksPending: false },
+  { configuredRepository: "github.com/acme/app", checksPending: true, reportsChecks: true },
+])(
+  "wakes a managed implementor on PR feedback ($configuredRepository, checks pending: $checksPending)",
+  ({ configuredRepository, checksPending, reportsChecks }) =>
+    Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const threadId = yield* startWatchTestWorker();
+      const repository = "acme/app";
+      const url = `https://github.com/${repository}/pull/12`;
+      const at = DateTime.formatIso(yield* DateTime.now);
+      const comments: PullRequestComment[] = [];
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeCrypto.layer,
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env:
+                  configuredRepository === undefined
+                    ? {}
+                    : { T3CODE_PR_WATCH_NO_CHECKS_REPOSITORIES: configuredRepository },
               }),
-            activity: () =>
-              Effect.sync(() => ({
-                comments,
-                commentCount: comments.length,
-                commentsTruncated: false,
-                reviewThreads: [],
-                commits: [],
-              })),
-          }),
+            ),
+            Layer.mock(PullRequestService.PullRequestService)({
+              watchFingerprint: () =>
+                Effect.sync(() => ({ status: "open", remarks: String(comments.length) })),
+              invalidate: () => Effect.void,
+              detail: () =>
+                Effect.succeed({
+                  provider: SourceControlProviderKind.make("github"),
+                  capabilities: {
+                    checksAlwaysReport: true,
+                    diff: true,
+                    comment: true,
+                    actions: [],
+                    mergeMethods: [],
+                    search: false,
+                    review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+                    reviewers: { request: false, listCandidates: false },
+                  },
+                  viewerPermissions: {
+                    actions: [],
+                    comment: true,
+                    resolve: true,
+                    verdicts: [],
+                    requestReviewers: false,
+                  },
+                  projectId,
+                  projectTitle: "Queue root",
+                  workspaceRoot: "/repo",
+                  repository,
+                  number: 12,
+                  title: "Implement issue 1",
+                  body: "",
+                  url,
+                  author: null,
+                  state: "open",
+                  isDraft: true,
+                  mergeability: "mergeable",
+                  additions: 1,
+                  deletions: 0,
+                  changedFiles: 1,
+                  headBranch: "feature",
+                  headSha: "abc1234",
+                  baseBranch: "main",
+                  createdAt: at,
+                  updatedAt: at,
+                  mergedAt: null,
+                  closedAt: null,
+                  reviewers: [],
+                  labels: [],
+                  checks: reportsChecks
+                    ? [{ name: "review-bot", status: "pending", description: null, url: null }]
+                    : [],
+                  mergeCapabilities: { merge: true, squash: true, rebase: true },
+                }),
+              activity: () =>
+                Effect.sync(() => ({
+                  comments,
+                  commentCount: comments.length,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                })),
+            }),
+          ),
         ),
-      ),
-    );
-    yield* threads.dispatch({
-      type: "thread.pull-request.link",
-      commandId: CommandId.make("pr-watch-created"),
-      threadId,
-      host: "github.com",
-      repository,
-      number: 12,
-      url,
-      source: "created",
-    });
-    yield* reactor.sweep;
-    const before = yield* threads.getThreadRecords(threadId, ["runs", "messages"]);
-    assert.equal(before.thread.pullRequests?.[0]?.watch?.checksPending, false);
-    yield* finish(before.runs[0]!, "pr-watch-worker-finished");
-    yield* TestClock.adjust("30 minutes");
-    yield* reactor.sweep;
+      );
+      yield* threads.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("pr-watch-created"),
+        threadId,
+        host: "github.com",
+        repository,
+        number: 12,
+        url,
+        source: "created",
+      });
+      yield* reactor.sweep;
+      const before = yield* threads.getThreadRecords(threadId, ["runs", "messages"]);
+      assert.equal(before.thread.pullRequests?.[0]?.watch?.checksPending, checksPending);
+      yield* finish(before.runs[0]!, "pr-watch-worker-finished");
+      yield* TestClock.adjust("1 minute");
+      yield* reactor.sweep;
 
-    comments.push({
-      id: "review-1",
-      kind: "review-comment",
-      author: { login: "review-bot", name: null, avatarUrl: null },
-      body: "Please handle an empty response.",
-      createdAt: DateTime.formatIso(yield* DateTime.now),
-      url: null,
-      path: "src/main.ts",
-      reviewState: null,
-    });
-    yield* reactor.sweep;
-    const after = yield* threads.getThreadRecords(threadId, ["messages", "runs"]);
-    const wakes = after.messages.filter(
-      (message) => message.notification?.source.kind === "monitor",
-    );
-    assert.lengthOf(wakes, 1);
-    assert.include(wakes[0]!.text, comments[0]!.body);
-    assert.equal(after.runs.find((run) => run.id === wakes[0]!.runId)?.status, "starting");
-  }).pipe(Effect.provide(harness())),
+      comments.push({
+        id: "review-1",
+        kind: "review-comment",
+        author: { login: "review-bot", name: null, avatarUrl: null },
+        body: "Please handle an empty response.",
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+        url: null,
+        path: "src/main.ts",
+        reviewState: null,
+      });
+      yield* reactor.sweep;
+      const after = yield* threads.getThreadRecords(threadId, ["messages", "runs"]);
+      const wakes = after.messages.filter(
+        (message) => message.notification?.source.kind === "monitor",
+      );
+      assert.lengthOf(wakes, 1);
+      assert.include(wakes[0]!.text, comments[0]!.body);
+      assert.equal(after.runs.find((run) => run.id === wakes[0]!.runId)?.status, "starting");
+    }).pipe(Effect.provide(harness())),
 );
 
 const statusToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(

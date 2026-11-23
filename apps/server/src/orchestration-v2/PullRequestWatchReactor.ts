@@ -17,6 +17,7 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -238,6 +239,19 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const random = yield* SecureRandom.SecureRandom;
+  const noChecksRepositories = yield* Config.String("T3CODE_PR_WATCH_NO_CHECKS_REPOSITORIES").pipe(
+    Config.withDefault(""),
+    Config.map(
+      (value) =>
+        new Set(
+          value
+            .toLowerCase()
+            .split(",")
+            .map((key) => key.trim()),
+        ),
+    ),
+    Effect.orDie,
+  );
   const bootedAt = yield* Clock.currentTimeMillis;
   const lives = new Map<string, WatchLife>();
 
@@ -697,9 +711,9 @@ export const make = Effect.gen(function* () {
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
     });
-    // GitHub Actions are disabled in this fork. Real review-bot checks can still report.
-    const waitForChecks =
-      reference.host !== "github.com" || reference.repository !== "tannerpolley/t3code";
+    const waitForChecks = !noChecksRepositories.has(
+      `${reference.host}/${reference.repository.toLowerCase()}`,
+    );
     yield* eachTarget(group, (target) => {
       const report = evaluatePullRequestWatch(target.watch, detail, remarks, now, waitForChecks);
       if (report.changes.length > 0) {

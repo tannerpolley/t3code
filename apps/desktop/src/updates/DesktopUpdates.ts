@@ -342,7 +342,6 @@ function shouldBroadcastDownloadProgress(
 }
 
 function getAutoUpdateDisabledReason(args: {
-  appVersion: string;
   policy: DesktopUpdatePolicy.UpdatePolicy;
   isDevelopment: boolean;
   isPackaged: boolean;
@@ -352,9 +351,6 @@ function getAutoUpdateDisabledReason(args: {
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
 }): string | null {
-  if (args.appVersion.includes("-v2.")) {
-    return "Automatic updates are disabled for fork builds.";
-  }
   if (args.policy.mode === "off") {
     return args.policy.message ?? "Updates are turned off on this machine.";
   }
@@ -479,10 +475,17 @@ export const make = Effect.gen(function* () {
 
   const resolveDisabledReason = Effect.gen(function* () {
     if (forkUpdates) return Option.none<string>();
+    if (
+      Option.isSome(config.stagedUpdateDirectory) ||
+      Option.isSome(config.stagedUpdateVersionPattern)
+    ) {
+      return Option.some(
+        "Staged updates are unavailable for this build or launcher configuration.",
+      );
+    }
     const hasFeedConfig = yield* hasUpdateFeedConfig;
     return Option.fromNullishOr(
       getAutoUpdateDisabledReason({
-        appVersion: environment.appVersion,
         policy,
         isDevelopment: environment.isDevelopment,
         isPackaged: environment.isPackaged,

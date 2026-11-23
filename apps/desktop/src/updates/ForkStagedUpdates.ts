@@ -34,12 +34,20 @@ export function compareForkVersions(left: string, right: string): number {
   return leftParts.length - rightParts.length || (left < right ? -1 : left > right ? 1 : 0);
 }
 
+const dottedVersion = /^\d+(?:\.\d+)*$/;
+
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const config = yield* DesktopConfig.DesktopConfig;
-  const installedVersion = environment.appVersion.match(/-v(2\.\d+(?:\.\d+)*)$/)?.[1];
+  const pendingDirectory = Option.getOrUndefined(config.stagedUpdateDirectory);
+  const launcher = Option.getOrUndefined(config.desktopLauncherPath);
+  const versionPattern = Option.getOrUndefined(config.stagedUpdateVersionPattern);
   if (
-    !installedVersion ||
+    !pendingDirectory ||
+    !environment.path.isAbsolute(pendingDirectory) ||
+    !launcher ||
+    !environment.path.isAbsolute(launcher) ||
+    !versionPattern ||
     environment.platform !== "linux" ||
     environment.processArch !== "x64" ||
     !environment.isPackaged ||
@@ -50,13 +58,21 @@ export const make = Effect.gen(function* () {
     return undefined;
   }
 
+  const compiled = Option.liftThrowable(RegExp)(versionPattern);
+  if (Option.isNone(compiled)) return undefined;
+  const parseVersion = (version: string) => {
+    const match = compiled.value.exec(version);
+    if (match?.[0] !== version) return undefined;
+    const [, base, build] = match;
+    return base && build && dottedVersion.test(base) && dottedVersion.test(build)
+      ? { base, build, version }
+      : undefined;
+  };
+  const installed = parseVersion(environment.appVersion);
+  if (!installed) return undefined;
+
   const fileSystem = yield* FileSystem.FileSystem;
   const app = yield* ElectronApp.ElectronApp;
-  const pendingDirectory = environment.path.join(
-    environment.homeDirectory,
-    ".local/opt/t3-code/pending",
-  );
-  const launcher = environment.path.join(environment.homeDirectory, ".local/bin/t3-code");
 
   const readStagedBuild = Effect.gen(function* () {
     const entries = yield* fileSystem.readDirectory(pendingDirectory).pipe(
@@ -66,17 +82,18 @@ export const make = Effect.gen(function* () {
       ),
     );
     const builds = entries.flatMap((name) => {
-      const match = name.match(/^T3-Code-(\d+(?:\.\d+)*)-v(2\.\d+(?:\.\d+)*)-x86_64\.AppImage$/);
-      return match ? [{ name, base: match[1]!, version: match[2]! }] : [];
+      const version = /^T3-Code-(.+)-x86_64\.AppImage$/.exec(name)?.[1];
+      const parsed = version === undefined ? undefined : parseVersion(version);
+      return parsed ? [{ name, ...parsed }] : [];
     });
     // The launcher sorts whole filenames: the upstream base precedes the fork version.
     builds.sort(
-      (a, b) => compareForkVersions(a.base, b.base) || compareForkVersions(a.version, b.version),
+      (a, b) => compareForkVersions(a.base, b.base) || compareForkVersions(a.build, b.build),
     );
     const latest = builds.at(-1);
-    if (!latest || compareForkVersions(latest.version, installedVersion) <= 0) return null;
+    if (!latest || compareForkVersions(latest.build, installed.build) <= 0) return null;
     const info = yield* fileSystem.stat(environment.path.join(pendingDirectory, latest.name));
-    return info.type === "File" && info.size > 0 ? `${latest.base}-v${latest.version}` : null;
+    return info.type === "File" && info.size > 0 ? latest.version : null;
   });
 
   return {
