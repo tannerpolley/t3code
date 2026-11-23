@@ -2186,6 +2186,15 @@ effectIt.effect("sends new steering text when restarting a manual continuation",
     yield* harness.start;
     expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("New steering instruction");
     expect(harness.startRootRun.mock.calls[0]?.[0].resume).toBe(false);
+    const started = harness.projection();
+    expect(started.runs.at(-1)?.usageAttribution).toMatchObject({
+      projectId: started.thread.projectId,
+      role: "orchestrator",
+    });
+    expect(started.attempts.at(-1)?.startedModelSelection).toEqual({
+      instanceId: ProviderInstanceId.make("codex-personal"),
+      model: "gpt-5.4",
+    });
   }),
 );
 

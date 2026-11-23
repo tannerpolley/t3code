@@ -46,7 +46,8 @@ it.effect(
           role: "implementor",
           stage: "Plan execution",
         },
-      })})
+      })}),
+        ('codex-run', 'thread', 3, 'codex', 'completed', ${since}, '{"userMessageId":"mixed-batch"}')
     `;
       yield* sql`
       INSERT INTO orchestration_v2_projection_runs
@@ -75,13 +76,18 @@ it.effect(
       INSERT INTO orchestration_v2_projection_run_attempts
         (attempt_id, thread_id, run_id, attempt_ordinal, root_node_id, provider, provider_thread_id, status, payload_json)
       VALUES ('initial', 'thread', 'run', 1, 'node', 'claudeAgent', 'root', 'interrupted', '{"reason":"initial"}'),
-        ('retry', 'thread', 'run', 2, 'node', 'claudeAgent', 'root', 'completed', '{"reason":"retry"}')
+        ('retry', 'thread', 'run', 2, 'node', 'claudeAgent', 'root', 'completed', '{"reason":"retry"}'),
+        ('codex-initial', 'thread', 'codex-run', 1, 'node', 'codex', 'codex', 'completed', '{"reason":"initial"}'),
+        ('steering', 'thread', 'codex-run', 2, 'node', 'codex', 'codex', 'completed', '{"reason":"steering_restart"}'),
+        ('recovery', 'thread', 'codex-run', 3, 'node', 'codex', 'codex', 'completed', '{"reason":"provider_recovery"}')
     `;
       yield* sql`
       INSERT INTO orchestration_v2_projection_messages
         (message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json)
       VALUES ('message', 'thread', 'run', 'user', 0, ${since}, ${since},
-        '{"delegatedCompletion":{"taskIds":["a","b","c"],"batched":true}}')
+        '{"delegatedCompletion":{"taskIds":["a","b","c"],"batched":true}}'),
+        ('mixed-batch', 'thread', 'codex-run', 'user', 0, ${since}, ${since},
+          '{"delegatedCompletion":{"taskIds":["d","e"],"batched":true,"containsFailure":true}}')
     `;
       const measured = {
         usageStatus: "complete",
@@ -103,10 +109,11 @@ it.effect(
         status: string,
         attempt: string | null,
         payload: Record<string, unknown>,
+        nodeId = "node",
       ) => sql`
       INSERT INTO orchestration_v2_projection_provider_turns
         (provider_turn_id, thread_id, provider_thread_id, node_id, run_attempt_id, ordinal, status, completed_at, payload_json)
-      VALUES (${id}, 'thread', ${providerThread}, 'node', ${attempt}, ${ordinal}, ${status}, ${completedAt}, ${JSON.stringify(payload)})
+      VALUES (${id}, 'thread', ${providerThread}, ${nodeId}, ${attempt}, ${ordinal}, ${status}, ${completedAt}, ${JSON.stringify(payload)})
       ON CONFLICT(provider_turn_id) DO UPDATE SET payload_json = excluded.payload_json
     `;
       yield* turn("before", "root", 1, "2026-11-16T17:59:59.999Z", "completed", null, {
@@ -127,7 +134,17 @@ it.effect(
       yield* turn("native", "child", 1, "2026-11-16T18:00:01.000Z", "completed", null, {
         turnTokenUsage: measured,
       });
-      yield* turn("missing", "codex", 1, since, "failed", null, {});
+      yield* turn("missing", "codex", 1, since, "failed", null, {}, "unlinked");
+      const codexUsage = {
+        ...measured,
+        requestCount: undefined,
+        cacheCreationTokens: undefined,
+      };
+      for (const [index, attempt] of ["codex-initial", "steering", "recovery"].entries()) {
+        yield* turn(attempt, "codex", index + 2, since, "completed", attempt, {
+          turnTokenUsage: codexUsage,
+        });
+      }
       yield* turn("local", "root", 4, since, "completed", null, {
         turnTokenUsage: { ...measured, localCommand: true },
       });
@@ -173,11 +190,23 @@ it.effect(
         ],
       );
       assert.include(codex?.totals, {
-        turns: 1,
-        measuredTurns: 0,
+        turns: 4,
+        measuredTurns: 3,
         partialTurns: 1,
         requestCountTurns: 0,
+        cacheWriteTurns: 0,
+        wakes: 1,
+        deliveredResults: 2,
       });
+      assert.deepEqual(
+        codex?.groups.wake.map(({ label, totals }) => [label, totals.wakes]),
+        [
+          ["Child failure", 1],
+          ["Provider recovery", 0],
+          ["Steering restart", 0],
+          ["Unspecified", 0],
+        ],
+      );
       const report = yield* budget.report(asOf);
       assert.include(report.text, `${since} to ${asOf}`);
       assert.include(
