@@ -10,7 +10,11 @@ Ordinary coding tasks need no T3 tools. Use tool discovery when the task calls f
 
 - If you are a subagent or child, do the work yourself. Start subagents only when your task or role calls for it.
 - If a provider or model is unavailable, ask before switching. Never fall back to native tools, Workflow or CLIs.`;
+
+export const T3_CODE_CHILD_BRIEF = `Goal: one sentence. Done when: checks the parent will run. Be exhaustive about: coverage that matters. Out of scope: boundaries. Return: exact result format.`;
+
 const T3_CODE_DELEGATION_TOOLS = `- Before the first \`delegate_task\`, read \`orchestrator_capabilities\` for ranked role choices, model notes and credit approval. Refresh after an error or provider change. Use the tool’s isolation argument for child checkouts.
+- Brief each child with outcomes. ${T3_CODE_CHILD_BRIEF} Leave routine decisions to the child. For parallel work, state the split and which results you need before continuing.
 - The orchestrator delegates an independent Reviewer only when the owner or plan asks. Start each review or re-check with \`delegate_task\`. Fix small findings yourself. If asked to use fewer delegates, \`task_cancel\` extras without replacing them.
 - Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.`;
 
@@ -64,7 +68,7 @@ export function t3OrchestrationBaseInstructions(managedIssue?: ManagedIssueRole)
 const MANAGED_ISSUE_PROPOSALS =
   "Keep issues current through propose_issue_change. Submit the typed proposal and follow its returned decision. Reuse its `clientRequestId` on retry. Agents cannot approve changes, and question answers never approve a mutation. A stale baseline needs a new proposal and preview. An uncertain create that needs attention requires the user to check GitHub and mark it resolved. Submit another create only when you intend to create a separate issue. T3 tracks its written bodies by exact baseline, never GitHub author login. Labels and assignees are outside this tool's scope. Ask before expanding the approved milestone or repository scope.";
 
-const MANAGED_ISSUE_WORKFLOW = `T3 posts managed status and closeout comments. End the turn while children work and report results and remaining gates in your final message.`;
+const MANAGED_ISSUE_WORKFLOW = `T3 posts managed status and closeout comments and wakes you when children finish. End the turn while waiting; report results and open gates in the final answer.`;
 
 const ISSUE_OWNER_WORKFLOW = `Use Designer for research or planning. Read native hierarchy and blockers before delegation. For an outside blocker, use propose_issue_change to create an issue, add blocked_by with the blocked issue as number and the new issue as blockerNumber, then report it in your final result. Use the question tool for owner decisions and fix failing tests within scope.`;
 
@@ -72,7 +76,7 @@ const ROOT_WORKFLOW = `Own top-level issues. Read complete native hierarchy and 
 
 const ROLE_GUIDANCE: Partial<Record<ThreadRole, string>> = {
   designer:
-    "Research or plan the issue without editing code. Record the problem, findings, strategy, and done criteria through the issue tools within the owner's authority. Return a short result.",
+    "Research or plan the issue without editing code. Record the problem, findings, strategy, and done criteria through the issue tools within the owner's authority.",
   reviewer: "Review the requested scope without editing code and return findings to your parent.",
   writer:
     "Write in the assigned checkout. Ask the owner directly through your question tool. Return your final result to your parent.",
