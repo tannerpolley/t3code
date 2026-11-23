@@ -2113,6 +2113,68 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return { thread, parentRun, runs, messages, subagents };
     });
 
+  const discardMisroutedCompletion = Effect.fn("Orchestrator.discardMisroutedCompletion")(
+    function* (
+      projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+      parentRunId: RunId | null,
+      delivery: OrchestrationV2DelegatedCompletionDelivery,
+    ) {
+      const threadId = projection.thread.id;
+      const { subagents } = yield* projectionStore.getThreadRecords(threadId, ["subagents"], {
+        subagentIds: delivery.taskIds,
+      });
+      const ownedTasks = subagents.filter(
+        (task) =>
+          task.threadId === threadId && task.runId === parentRunId && task.origin === "app_owned",
+      );
+      const ownedIds = new Set(ownedTasks.map((task) => task.id));
+      const mismatchedTaskIds = delivery.taskIds.filter((id) => !ownedIds.has(id));
+      if (mismatchedTaskIds.length === 0) return;
+
+      yield* Effect.logWarning("Dropped a misrouted delegated completion", {
+        threadId,
+        parentRunId,
+        messageId: delivery.messageId,
+        mismatchedTaskIds,
+      });
+      const cohort = completionCohort(projection, parentRunId);
+      if (
+        cohort?.delivery?.messageId !== delivery.messageId ||
+        cohort.delivery.generation !== delivery.generation
+      )
+        return [];
+      const now = yield* DateTime.now;
+      return [
+        ...completionCohortEvents(
+          projection.thread,
+          projection.runs.find((run) => run.id === parentRunId),
+          { ...cohort, delivery: null },
+          now,
+        ),
+        ...ownedTasks.flatMap((task) =>
+          task.completionDelivery?.state !== "claimed"
+            ? []
+            : [
+                {
+                  type: "subagent.updated" as const,
+                  threadId,
+                  ...(task.runId === null ? {} : { runId: task.runId }),
+                  nodeId: task.id,
+                  driver: task.driver,
+                  providerInstanceId: task.providerInstanceId,
+                  occurredAt: now,
+                  payload: {
+                    ...task,
+                    completionDelivery: { state: "disposed" as const, observedByRunId: null },
+                    updatedAt: now,
+                  },
+                },
+              ],
+        ),
+      ];
+    },
+  );
+
   const offerDelegatedCompletionDelivery =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (threadId: ThreadId, parentRunId: RunId | null) {
@@ -2131,6 +2193,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         controls.thread.deletedAt !== null
       )
         return;
+      const discarded = yield* discardMisroutedCompletion(controls, parentRunId, delivery);
+      if (discarded !== undefined) {
+        yield* writeSystemEvents(discarded, [], { updateDelegatedCompletionOnly: true });
+        return;
+      }
       const messages = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
         messageIds: [delivery.messageId],
       });
@@ -2512,18 +2579,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     for (const run of projection.runs) {
       if (run.status !== "queued") continue;
       const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+      const completion = message?.delegatedCompletion;
+      const discarded =
+        completion === undefined
+          ? undefined
+          : yield* discardMisroutedCompletion(projection, completion.parentRunId, {
+              ...completion,
+              messageId: run.userMessageId,
+            });
+      if (discarded !== undefined && discarded.length > 0) {
+        yield* writeSystemEvents(discarded, [], { updateDelegatedCompletionOnly: true });
+      }
       if (
         message === undefined ||
-        !(yield* isStaleDelegatedWake(projection, message.id, message.notification).pipe(
-          // A child thread read must not fail the parent's unrelated next queued run.
-          Effect.catchTags({
-            OrchestratorProjectionError: (cause) =>
-              Effect.logWarning("Failed to check a queued delegated wake", {
-                runId: run.id,
-                cause,
-              }).pipe(Effect.as(message.notification?.source.kind === "background_task")),
-          }),
-        ))
+        (discarded === undefined &&
+          !(yield* isStaleDelegatedWake(projection, message.id, message.notification).pipe(
+            // A child thread read must not fail the parent's unrelated next queued run.
+            Effect.catchTags({
+              OrchestratorProjectionError: (cause) =>
+                Effect.logWarning("Failed to check a queued delegated wake", {
+                  runId: run.id,
+                  cause,
+                }).pipe(Effect.as(message.notification?.source.kind === "background_task")),
+            }),
+          )))
       )
         continue;
       yield* emitQueuedRunCancellation({
@@ -16158,6 +16237,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "message.dispatch": {
         const thread = yield* refuseNativeSubagentMessage(command);
+        const completion = command.delegatedCompletion;
+        if (
+          completion !== undefined &&
+          command.createdBy === "agent" &&
+          command.creationSource === "server"
+        ) {
+          const { parentRunId } = completion;
+          const projection = yield* loadProjectionForCommand(command, ["runs"], {
+            runIds: parentRunId === null ? [] : [parentRunId],
+          });
+          const cohort = completionCohort(projection, parentRunId);
+          const delivery = cohort?.delivery;
+          if (
+            cohort?.disposition === "open" &&
+            delivery?.messageId === command.messageId &&
+            delivery.generation === completion.generation
+          ) {
+            const discarded = yield* discardMisroutedCompletion(
+              projection,
+              parentRunId,
+              delivery,
+            ).pipe(mapDispatchError(command));
+            if (discarded !== undefined) {
+              for (const event of discarded) yield* emit(events, command)(event);
+              updateDelegatedCompletionOnlyRunId = parentRunId ?? undefined;
+              break;
+            }
+          }
+        }
         const guestSend =
           command.guestMessageId === undefined
             ? undefined

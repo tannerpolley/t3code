@@ -377,6 +377,170 @@ it.layer(
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "completion recovery for both cohort owners",
   (it) => {
+    it.effect("leaves the parent's completion reservation behind when starting a reviewer", () =>
+      Effect.gen(function* () {
+        const engine = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const parent = yield* seedOwnedParent("thread", "start-reviewer", {
+          deliveryState: "claimed",
+          withDelivery: true,
+          parentRunEnded: false,
+        });
+        const rootNodeId = parent.run.rootNodeId!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:start-reviewer-root"),
+              type: "node.updated",
+              threadId: parent.threadId,
+              runId: parent.runId,
+              nodeId: rootNodeId,
+              occurredAt: parent.now,
+              payload: {
+                id: rootNodeId,
+                threadId: parent.threadId,
+                runId: parent.runId,
+                parentNodeId: null,
+                rootNodeId,
+                kind: "root_turn",
+                status: "running",
+                countsForRun: false,
+                providerThreadId: parent.run.providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: parent.now,
+                completedAt: null,
+              },
+            },
+          ],
+        });
+        const { storedEvents } = yield* engine.dispatch({
+          type: "delegated_task.request",
+          commandId: reconcileCommandId("start-reviewer"),
+          parentThreadId: parent.threadId,
+          parentRunId: parent.runId,
+          parentNodeId: rootNodeId,
+          role: "reviewer",
+          task: "Review the patch.",
+          modelSelection: parent.thread.modelSelection,
+          runtimeMode: parent.thread.runtimeMode,
+          interactionMode: parent.thread.interactionMode,
+          createdBy: "agent",
+          creationSource: "server",
+        });
+        const created = storedEvents.find(({ event }) => event.type === "thread.created")?.event;
+        assert.isDefined(created);
+        if (created?.type !== "thread.created") return;
+        assert.isUndefined(created.payload.delegatedCompletion);
+        const after = yield* engine.getThreadProjection(parent.threadId);
+        assert.deepEqual(parent.cohortOf(after)?.delivery?.taskIds, [parent.taskId]);
+        yield* engine.dispatch({
+          type: "delegated_task.completion-delivery.dispose",
+          commandId: reconcileCommandId(`${parent.key}-dispose`),
+          parentThreadId: parent.threadId,
+          taskId: parent.taskId,
+        });
+      }),
+    );
+
+    it.effect.each(["dispatch", "recovery", "queue resume"] as const)(
+      "drops a copied completion reservation at %s without waking the reviewer",
+      (path) =>
+        Effect.gen(function* () {
+          const engine = yield* Orchestrator.OrchestratorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const parent = yield* seedOwnedParent("thread", `copied-wake-${path}`, {
+            deliveryState: "claimed",
+            withDelivery: true,
+            parentRunEnded: true,
+          });
+          const before = yield* engine.getThreadProjection(parent.threadId);
+          const worker = finishedWorkerEvents(parent, "reviewer", "Review complete.");
+          const child = worker.events[0];
+          yield* sink.write({
+            events: [
+              {
+                ...child,
+                payload: { ...child.payload, delegatedCompletion: parent.cohortOf(before)! },
+              },
+            ],
+          });
+          using offer = vi.spyOn(requests, "offer").mockReturnValue(Effect.void);
+          if (path === "dispatch") {
+            yield* engine.dispatch({
+              type: "message.dispatch",
+              commandId: reconcileCommandId(`${parent.key}-wake`),
+              threadId: child.threadId,
+              messageId: parent.messageId,
+              text: "Issue worker finished.",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              delegatedCompletion: { parentRunId: null, generation: 1, taskIds: [parent.taskId] },
+              createdBy: "agent",
+              creationSource: "server",
+            });
+          } else if (path === "recovery") {
+            yield* engine.recoverDelegatedTasks;
+            const recipients = offer.mock.calls.map(([request]) => request.threadId);
+            assert.include(recipients, parent.threadId);
+            assert.notInclude(recipients, child.threadId);
+          } else {
+            const { payload: finished } = worker.events[3];
+            yield* sink.write({
+              events: [
+                {
+                  ...worker.events[2],
+                  payload: {
+                    ...worker.events[2].payload,
+                    id: parent.messageId,
+                    role: "user",
+                    delegatedCompletion: {
+                      parentRunId: null,
+                      generation: 1,
+                      taskIds: [parent.taskId],
+                    },
+                  },
+                },
+                {
+                  ...worker.events[3],
+                  payload: {
+                    ...finished,
+                    userMessageId: parent.messageId,
+                    status: "queued",
+                    startedAt: null,
+                    completedAt: null,
+                  },
+                },
+              ],
+            });
+            yield* engine.resumeQueuedRuns;
+          }
+          const reviewer = yield* engine.getThreadProjection(child.threadId);
+          if (path === "queue resume") {
+            assert.deepEqual(
+              reviewer.runs.map((run) => run.status),
+              ["cancelled"],
+            );
+          } else {
+            assert.isEmpty(reviewer.messages);
+            assert.isEmpty(reviewer.runs);
+          }
+          assert.isNull(reviewer.thread.delegatedCompletion?.delivery);
+          const after = yield* engine.getThreadProjection(parent.threadId);
+          assert.deepEqual(parent.cohortOf(after), parent.cohortOf(before));
+          assert.deepEqual(after.subagents, before.subagents);
+          yield* engine.dispatch({
+            type: "delegated_task.completion-delivery.dispose",
+            commandId: reconcileCommandId(`${parent.key}-dispose`),
+            parentThreadId: parent.threadId,
+            taskId: parent.taskId,
+          });
+        }),
+    );
+
     it.effect.each(cohortOwners)(
       "reoffers a committed %s-owned completion during targeted checkpoint recovery",
       (owner) =>
