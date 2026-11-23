@@ -1,4 +1,4 @@
-import { CommandId, type RunId } from "@t3tools/contracts";
+import { CommandId, MessageId, type RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -120,6 +120,37 @@ export const layerExecutor: Layer.Layer<
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const settings = yield* ServerSettings.ServerSettingsService;
     const issueEffects = yield* IssueEffects.make;
+    const deliverHandoffCompletion = Effect.fn(
+      "OrchestrationEffectExecutorV2.deliverHandoffCompletion",
+    )(function* (effect: EffectOutbox.OrchestrationEffectV2, text: string) {
+      let thread = yield* projectionStore.getThread(effect.threadId);
+      while (thread.repositoryOrchestration?.retiredToThreadId != null) {
+        thread = yield* projectionStore.getThread(thread.repositoryOrchestration.retiredToThreadId);
+        const commandId = CommandId.make(`${effect.id}:${thread.id}`);
+        const messageId = MessageId.make(String(commandId));
+        const { messages } = yield* projectionStore.getThreadRecords(thread.id, ["messages"], {
+          messageIds: [messageId],
+        });
+        if (messages.length > 0) return;
+        if (
+          thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
+          thread.archivedAt !== null
+        )
+          continue;
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId,
+          threadId: thread.id,
+          messageId,
+          text,
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "system",
+          creationSource: "server",
+        });
+        return;
+      }
+    });
     const startRun = (
       effect: EffectOutbox.OrchestrationEffectV2,
       runId: RunId,
@@ -175,6 +206,17 @@ export const layerExecutor: Layer.Layer<
           );
         }
         switch (effect.request.type) {
+          case "repository.handoff-completion":
+            return deliverHandoffCompletion(effect, effect.request.text).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "run.silence.check":
             return threads
               .dispatch({

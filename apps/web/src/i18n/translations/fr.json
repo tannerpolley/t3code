@@ -186,5 +186,11 @@
   "5602db67733bdfd7": "Vérifié à {time}",
   "17b54fa905090a87": "Obsolète ou incomplet",
   "fe8a0b7a0c5d9c6f": "Budget",
-  "606105b780226d49": "Actualiser le budget"
+  "606105b780226d49": "Actualiser le budget",
+  "4c3fd3add524da9b": "Passation automatique de l’orchestrateur",
+  "2578ae9180b4292a": "Démarre un nouvel orchestrateur de dépôt lorsque son contexte atteint le seuil de jetons et qu’aucune tâche n’est en cours.",
+  "82e5d02834c683dd": "Seuil de passation (jetons)",
+  "50c54e168c9c4ab6": "Prédécesseur",
+  "759e59bb1b2ed0b6": "Successeur",
+  "447f20052e59a42d": "Orchestration"
 }

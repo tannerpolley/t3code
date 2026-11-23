@@ -95,6 +95,10 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import {
+  automaticHandoffThreadId,
+  REPOSITORY_HANDOFF_VERIFICATION_TIMEOUT_MS,
+} from "../orchestration-v2/AutomaticRepositoryHandoff.ts";
 
 const decodeLimit = Schema.decodeEffect(
   Schema.Union([RepositoryWorkerLimitInput, RepositoryReadOnlyLimitInput]),
@@ -1040,11 +1044,101 @@ export const layer = Layer.effect(
           .pipe(Effect.mapError(mapError));
       }),
     );
+    const considerAutomaticHandoff = coalescedPerRoot((rootThreadId) =>
+      Effect.gen(function* () {
+        const config = yield* store.configuration(rootThreadId);
+        if (
+          config === null ||
+          config.handoff !== undefined ||
+          repositoryPhase(config) === "retired"
+        )
+          return;
+        const current = yield* settings.getSettings;
+        const override =
+          current.projectSettingsOverrides[config.projectId]?.orchestratorHandoffTokens;
+        const threshold = override === undefined ? current.orchestratorHandoffTokens : override;
+        const attempt = config.automaticHandoff;
+        const targetId = automaticHandoffThreadId(rootThreadId);
+        let automatic: NonNullable<
+          Extract<OrchestrationV2ServerCommand, { type: "repository.work.handoff" }>["automatic"]
+        >;
+        let brief = "";
+        if (attempt?.status === "verifying") {
+          const successor = yield* threads.getThreadShell(targetId).pipe(Effect.mapError(mapError));
+          const expired =
+            (yield* Clock.currentTimeMillis) - Date.parse(attempt.startedAt) >=
+            REPOSITORY_HANDOFF_VERIFICATION_TIMEOUT_MS;
+          if (
+            threshold !== null &&
+            !expired &&
+            successor?.pendingRuntimeRequest == null &&
+            !(yield* store.subtreeDrained(targetId))
+          )
+            return;
+          automatic = { type: "verify", enabled: threshold !== null };
+        } else {
+          if (threshold == null) return;
+          const root = yield* threads.getThreadShell(rootThreadId).pipe(Effect.mapError(mapError));
+          if (
+            root === null ||
+            root.archivedAt !== null ||
+            root.deletedAt !== null ||
+            root.activeRunId !== null ||
+            root.pendingRuntimeRequest !== null ||
+            root.activeProviderThreadId === null ||
+            root.latestRunId === null ||
+            root.latestRunId === attempt?.sourceRunId ||
+            root.status !== "completed"
+          )
+            return;
+          const { providerThreads } = yield* threads
+            .getThreadRecords(root.id, ["providerThreads"], {
+              providerThreadIds: [root.activeProviderThreadId],
+            })
+            .pipe(Effect.mapError(mapError));
+          if (
+            (providerThreads[0]?.contextUsage?.usedTokens ?? 0) < threshold ||
+            !(yield* store.subtreeDrained(rootThreadId)) ||
+            !(yield* store.handoffSafe(rootThreadId)) ||
+            !(yield* store.subtreeDrained(targetId))
+          )
+            return;
+          const successor = yield* threads.getThreadShell(targetId).pipe(Effect.mapError(mapError));
+          if (successor !== null && (successor.archivedAt !== null || successor.deletedAt !== null))
+            return;
+          automatic = { type: "start", sourceRunId: root.latestRunId, threshold };
+          brief = yield* inventory(config);
+        }
+        yield* threads
+          .dispatch({
+            type: "repository.work.handoff",
+            commandId: yield* ids.allocate
+              .command({
+                fixtureName: "repository-handoff",
+                commandName: automatic.type,
+              })
+              .pipe(Effect.mapError(mapError)),
+            threadId: rootThreadId,
+            expectedRevision: config.revision,
+            inventory: brief,
+            automatic,
+          })
+          .pipe(Effect.mapError(mapError));
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not continue automatic repository handoff", {
+            rootThreadId,
+            cause,
+          }),
+        ),
+      ),
+    );
     const continueLocal = Effect.fn("IssueWorkService.continueLocal")(function* (
       rootThreadId: ThreadId,
       refreshRequests = false,
       eventSequence?: number,
     ) {
+      yield* considerAutomaticHandoff(rootThreadId);
       const config = yield* store.configuration(rootThreadId);
       if (config === null || !repositoryAdmitsWork(config)) return;
       const draining = repositoryPhase(config) === "draining";
@@ -1153,6 +1247,7 @@ export const layer = Layer.effect(
     const reconcilePass = Effect.fn("IssueWorkService.reconcilePass")(function* (
       rootThreadId: ThreadId,
     ) {
+      yield* considerAutomaticHandoff(rootThreadId);
       let config = yield* store.configuration(rootThreadId);
       if (config === null || !repositoryAdmitsWork(config)) return;
       const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry]));
@@ -1240,7 +1335,13 @@ export const layer = Layer.effect(
         config = (yield* store.configuration(rootThreadId))!;
       }
       yield* continueLocal(rootThreadId, true);
-      if (repositoryPhase(config) === "draining" || config.milestones.length === 0) return;
+      config = (yield* store.configuration(rootThreadId))!;
+      if (
+        !repositoryAdmitsWork(config) ||
+        repositoryPhase(config) === "draining" ||
+        config.milestones.length === 0
+      )
+        return;
       const plans: RepositoryOrchestration["milestones"][number][] = [];
       for (const plan of config.milestones) {
         const listing = yield* issues
@@ -1618,6 +1719,11 @@ export const layer = Layer.effect(
           message: "Choose a different thread for the repository handoff.",
         });
       const config = (yield* store.configuration(owner.rootThreadId))!;
+      if (config.automaticHandoff?.status === "verifying")
+        return yield* new IssueWorkError({
+          code: "repository-owner-conflict",
+          message: "This repository already has an automatic handoff in verification.",
+        });
       if (config.handoff?.requestId === input.clientRequestId && config.handoff.status === status)
         return yield* repositoryStatus(input);
       if (config.revision !== input.expectedRevision)
@@ -2105,20 +2211,29 @@ export const layer = Layer.effect(
           const now = yield* Clock.currentTimeMillis;
           if (now < nextReadAt) return;
           nextReadAt = now + 60_000;
+          for (const root of yield* store.handoffRoots()) yield* considerAutomaticHandoff(root);
           for (const root of yield* store.activeRoots()) yield* reconcile(root);
         }),
       );
     }
     const sink = yield* Effect.serviceOption(EventSink.EventSinkV2);
     if (Option.isSome(sink)) {
-      const pendingRoots = new Map<ThreadId, number>();
+      const pendingRoots = new Map<ThreadId, number | null>();
       const wake = yield* Queue.sliding<void>(1);
+      const queueHandoffCheck = (root: ThreadId) => {
+        if (!pendingRoots.has(root)) pendingRoots.set(root, null);
+        return Queue.offer(wake, undefined);
+      };
       yield* Effect.gen(function* () {
         while (true) {
           yield* Queue.take(wake);
           for (const [root, eventSequence] of pendingRoots) {
             pendingRoots.delete(root);
-            yield* continueLocal(root, false, eventSequence).pipe(
+            yield* (
+              eventSequence === null
+                ? considerAutomaticHandoff(root)
+                : continueLocal(root, false, eventSequence)
+            ).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Issue queue continuation failed", { root, cause }),
               ),
@@ -2135,6 +2250,8 @@ export const layer = Layer.effect(
               (stored.event.type === "thread.metadata-updated" &&
                 stored.event.payload.repositoryOrchestration !== undefined) ||
               stored.event.type === "thread.unarchived" ||
+              stored.event.type === "thread.archived" ||
+              stored.event.type === "thread.deleted" ||
               stored.event.type === "thread.settled" ||
               stored.event.type === "repository.work.restored" ||
               (stored.event.type === "issue.queue.updated" &&
@@ -2144,8 +2261,7 @@ export const layer = Layer.effect(
                 ["completed", "failed", "interrupted", "cancelled"].includes(
                   stored.event.payload.status,
                 )) ||
-              (stored.event.type === "runtime-request.updated" &&
-                stored.event.payload.status !== "pending") ||
+              stored.event.type === "runtime-request.updated" ||
               (stored.event.type === "provider-thread.updated" &&
                 (stored.event.payload.pendingBackgroundTasks?.length ?? 0) === 0) ||
               ((stored.event.type === "run.updated" || stored.event.type === "run.created") &&
@@ -2221,6 +2337,17 @@ export const layer = Layer.effect(
             const shell = yield* threads
               .getThreadShell(stored.event.threadId)
               .pipe(Effect.mapError(mapError));
+            const predecessor = shell?.handoffFromThreadId;
+            if (
+              predecessor !== undefined &&
+              (stored.event.type === "run.updated" ||
+                stored.event.type === "runtime-request.updated" ||
+                stored.event.type === "thread.archived" ||
+                stored.event.type === "thread.unarchived" ||
+                stored.event.type === "thread.deleted")
+            ) {
+              yield* queueHandoffCheck(predecessor);
+            }
             const repository =
               (stored.event.type === "issue.queue.updated"
                 ? stored.event.payload.issue
@@ -2233,6 +2360,9 @@ export const layer = Layer.effect(
             )
               yield* ensureOrchestrator(repository);
             const owner = yield* store.repositoryOwner(repository);
+            if (owner !== null && stored.event.type !== "thread.metadata-updated") {
+              yield* queueHandoffCheck(owner.rootThreadId);
+            }
             // Root availability also releases one queued notice.
             if (
               owner !== null &&

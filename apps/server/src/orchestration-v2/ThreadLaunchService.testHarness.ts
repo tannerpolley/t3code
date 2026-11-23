@@ -379,7 +379,8 @@ function suspensionWorkerLayer(
                     cause: "Injected interrupt failure",
                   }),
                 )
-              : effect.request.type.startsWith("issue.suspension.")
+              : effect.request.type.startsWith("issue.suspension.") ||
+                  effect.request.type === "repository.handoff-completion"
                 ? real.execute(effect, options)
                 : Effect.void,
         ),
