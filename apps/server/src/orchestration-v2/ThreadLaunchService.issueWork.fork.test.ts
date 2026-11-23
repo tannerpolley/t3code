@@ -1308,6 +1308,10 @@ it.effect.each([
       });
     const reads = Layer.mock(IssueService.IssueService)({
       workRead,
+      workReads: (_input, numbers) =>
+        Effect.forEach(numbers, (number) =>
+          workRead({ number }).pipe(Effect.map((read) => [number, read] as const)),
+        ).pipe(Effect.map((entries) => new Map(entries))),
       repositoryIdentity: () =>
         Effect.succeed({
           host: "github.com",

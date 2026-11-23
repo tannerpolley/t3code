@@ -6,6 +6,7 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
 import { Profiler, type ReactNode } from "react";
@@ -234,4 +235,34 @@ it("reveals an eleventh worker after the server page is exhausted", async () => 
   await screen.getByRole("button", { name: "Show more workers (1)" }).click();
   await expect.element(screen.getByRole("button", { name: /Worker 0$/ })).toBeVisible();
   await expect.element(screen.getByRole("button", { name: /Worker added$/ })).toBeVisible();
+});
+
+it("reveals a selected reviewer nested under a worker beyond the first page", async () => {
+  const root = worker("Busy parent");
+  // Equal creation times sort by id, newest first, so "Worker 00" is the eleventh row.
+  const workers = Array.from({ length: 11 }, (_, index) =>
+    worker(`Worker ${String(index).padStart(2, "0")}`, root),
+  );
+  const holder = workers[0]!;
+  const reviewer = worker("Nested reviewer", holder);
+  using _rows = setupRows([root, ...workers, reviewer]);
+  const router = workerRouter(
+    <SidebarWorkerRows thread={root} onClick={vi.fn()} onContextMenu={vi.fn()} />,
+    reviewer.id,
+  );
+  // This fixture supplies the parameterized thread routes the selector subscribes to.
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <RouterProvider router={router} />
+    </AppAtomRegistryProvider>,
+    { router: false },
+  );
+  const row = screen.getByRole("button", { name: /Nested reviewer$/ });
+  await expect.element(row).toHaveAttribute("aria-current", "true");
+  await expect
+    .element(row)
+    .toHaveAttribute(
+      "data-sidebar-parent",
+      scopedThreadKey(scopeThreadRef(holder.environmentId, holder.id)),
+    );
 });

@@ -29,9 +29,14 @@ import { PROJECTS_WORK_ROW_HEIGHT } from "./SidebarColumns";
 import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
 import { SidebarProjectThreadTooltip } from "./SidebarProjectThreadTooltip";
 import type { SidebarProviderEntry } from "./SidebarThreadRow";
-import { indexSidebarWorkers, sidebarWorkerPage } from "./SidebarWorkers.logic";
+import { idleWorkerHolding, indexSidebarWorkers, sidebarWorkerPage } from "./SidebarWorkers.logic";
 
 const sidebarWorkers = Atom.map(environmentThreadShells.quietThreadShellsAtom, indexSidebarWorkers);
+const nestingParents = Atom.map(sidebarWorkers, ({ parentOf }) => parentOf).pipe(
+  Atom.withEquality<ReadonlyMap<string, string>>(
+    (a, b) => a.size === b.size && [...a].every(([child, parent]) => b.get(child) === parent),
+  ),
+);
 const omittedFamilies = Atom.family((environmentId: EnvironmentId) =>
   Atom.map(
     Atom.map(environmentSnapshotAtom(environmentId), (snapshot) => snapshot?.omittedWorkers),
@@ -75,6 +80,7 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   const key = scopedThreadKey(scopeThreadRef(environmentId, id));
   const { idle, running } = useAtomValue(childrenFor(key));
   const omitted = useAtomValue(omittedFamilies(environmentId));
+  const parentOf = useAtomValue(nestingParents);
   const canPage = omitted.has(id);
   const { rowRef, leaseLiveStatus: nearViewport } = useSidebarRowSubscriptionLease(false);
   const listRef = useStableCallback(rowRef);
@@ -94,9 +100,12 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
     select: (params) => {
       const route = resolveThreadRouteRef(params);
       if (idle.length <= limit || route?.environmentId !== environmentId) return null;
-      return idle.findIndex((worker) => worker.id === route.threadId) >= limit
-        ? route.threadId
-        : null;
+      const holder = idleWorkerHolding(
+        idle,
+        parentOf,
+        scopedThreadKey(scopeThreadRef(environmentId, route.threadId)),
+      );
+      return idle.findIndex((worker) => worker.id === holder) >= limit ? holder : null;
     },
   });
   const workers = [
@@ -108,7 +117,12 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   return (
     <ul
       ref={canPage && !paging ? listRef : undefined}
-      className={cn("min-h-px", !props.columns && "ms-3 border-s border-sidebar-border/60 ps-1")}
+      className={cn(
+        "min-h-px",
+        props.columns
+          ? props.thread.lineage.relationshipToParent === "subagent" && "ps-3"
+          : "ms-3 border-s border-sidebar-border/60 ps-1",
+      )}
       onPointerDown={(event) => event.stopPropagation()}
     >
       {workers.map((worker) => (
@@ -125,6 +139,7 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
             onClick={props.onClick}
             onContextMenu={props.onContextMenu}
           />
+          <SidebarWorkerRows {...props} thread={worker} />
         </li>
       ))}
       {failedQuery !== null || remaining > 0 ? (

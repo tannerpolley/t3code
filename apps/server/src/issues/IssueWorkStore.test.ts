@@ -191,6 +191,26 @@ it.effect("keeps roots with persisted blocker suspensions eligible for automatic
   }).pipe(Effect.provide(dependencies)),
 );
 
+it.effect("keeps roots with an unheld queued reader active for the admission sweep", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+      VALUES ('root', 'project', 'Root', 'codex', 'full-access', 'default', '2026-11-23', '2026-11-23', '{}')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_repository_orchestration(host, repository_id, repository, root_thread_id, project_id, workspace, launch_command_id, revision, paused, worker_limit, publish_status_comments, publish_closeout_comments, created_at, updated_at)
+      VALUES ('github.com', 'repo', 'owner/repo', 'root', 'project', 'project', 'start', 1, 0, 4, 1, 1, '2026-11-23', '2026-11-23')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+      VALUES ('reader', 'project', 'Reader', 'codex', 'full-access', 'default', '2026-11-23', '2026-11-23',
+        '{"role":"reviewer","lineage":{"rootThreadId":"root","relationshipToParent":"subagent"}}')`;
+    assert.deepEqual(yield* store.activeRoots(), []);
+    yield* sql`INSERT INTO orchestration_v2_projection_runs(run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      VALUES ('run', 'reader', 1, 'codex', 'queued', '2026-11-23', '{"queueHeld":true}')`;
+    assert.deepEqual(yield* store.activeRoots(), []);
+    yield* sql`UPDATE orchestration_v2_projection_runs SET payload_json = '{"admissionWait":"read_only_limit"}'`;
+    assert.deepEqual(yield* store.activeRoots(), [ThreadId.make("root")]);
+  }).pipe(Effect.provide(dependencies)),
+);
+
 it.effect("admission visits only read-only threads with queued or preparing work", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -216,6 +236,18 @@ it.effect("admission visits only read-only threads with queued or preparing work
 it.effect("SQL phase and admission agree with contracts for every stored field combination", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    for (const status of ["verifying", "failed"] as const) {
+      const config = { paused: false, automaticHandoff: { status } };
+      const payload = JSON.stringify({ repositoryOrchestration: config });
+      const [row] = yield* sql<{ phase: string; allowed: number }>`SELECT
+        ${sql.unsafe(repositoryPhaseSql("payload"))} AS phase,
+        ${sql.unsafe(repositoryAdmissionSql("payload"))} AS allowed
+        FROM (SELECT ${payload} AS payload)`;
+      assert.equal(row?.phase, status === "verifying" ? "handoff_verifying" : "active");
+      assert.equal(row?.phase, repositoryPhase(config));
+      assert.equal(row?.allowed === 1, status === "failed");
+      assert.equal(row?.allowed === 1, repositoryAdmitsWork(config));
+    }
     for (const paused of [false, true]) {
       for (const status of [undefined, "awaiting_approval", "draining"] as const) {
         for (const retired of [undefined, null, ThreadId.make("next")]) {

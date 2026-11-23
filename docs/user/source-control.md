@@ -392,8 +392,15 @@ is selected for you. A thread becomes the repository orchestrator only from the 
 default branch. While no issue workers run, it may switch that checkout to its own branch and use
 native subagents for its own work; issue work still goes to workers.
 Start agent registers the selected lead and starts or queues an issue worker, following the issue
-parent tree. Later starts use that orchestrator's project. Every worker gets a new worktree and
-branch named after the issue, created from the default branch; there is no checkout choice.
+parent tree. Later starts use that orchestrator's project. Managed issue workers share a pool
+of reusable worktrees at `.worktrees/slot-1`, `.worktrees/slot-2`, and so on, with one slot per
+allowed worker. Each worker starts on its own issue branch from the freshly fetched remote
+default branch. When existing workers hold every slot, new workers wait in the queue. A settled
+worker's slot can return to the pool once the checkout is safe to clean and its work is included in
+the default branch or its pull request has merged.
+On a closed issue, **Remove worktree** can return a clean slot while keeping the local issue branch.
+If Git can't clean a slot because it contains a nested repository, move that repository out of the
+slot or list its path in `issueWorktreeKeepPaths` in the default branch's `t3.json`.
 Starting allows T3 to update one status comment and publish a closeout comment for each finished
 attempt; the publishing policy is shown before you start. When a worker has been created, select
 its name to open its conversation with the issue beside it. A queued start can appear before a
@@ -450,7 +457,12 @@ preview, the agent must propose a new change. If GitHub may have created an issu
 recover it, the change needs your attention. Check GitHub, then choose **Mark resolved** to stop
 its remaining writes. Propose another create only when you intend to create another issue.
 
-To replace the orchestrator's conversation, open **Repository orchestration** in the project's
+Repository orchestrators automatically hand off when their reported context reaches 200,000
+tokens and their work is idle. T3 archives the old thread after the successor verifies it can
+continue. Both threads link to each other in the sidebar. To turn this off or change the token
+threshold, open **Settings → Threads → Orchestration**. A project can use its own setting.
+
+To replace the orchestrator's conversation manually, open **Repository orchestration** in the project's
 settings, choose **Hand off to a fresh thread** from the menu beside its orchestrator, and provide a summary. Your approval pauses new issue admissions until existing
 workers and their final results finish; the fresh thread receives your summary and a recovery
 inventory. You can cancel a pending handoff there too, and the same menu opens previous

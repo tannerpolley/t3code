@@ -30,7 +30,6 @@ function issueWorkSignal(snapshot: OrchestrationV2ShellSnapshot | null): string 
     .map((thread) =>
       [
         thread.id,
-        thread.status,
         thread.activeRunId,
         thread.latestRunId,
         thread.pendingRuntimeRequest?.id,
@@ -297,9 +296,13 @@ export function createRepositoryIssueEnvironmentAtoms<R, E>(
     list: (target: Parameters<typeof listTarget>[0]) => listQuery.expose(listTarget(target)),
     statusBatch: ({ environmentId, input }: Parameters<typeof statusBatch.query>[0]) => {
       const issues = new Map(
-        input.issues.map(({ host, nodeId }) => {
-          const ref = { host: host.toLowerCase(), nodeId };
-          return [JSON.stringify(ref), ref] as const;
+        input.issues.map(({ host, nodeId, repository }) => {
+          const ref = {
+            host: host.toLowerCase(),
+            nodeId,
+            ...(repository === undefined ? {} : { repository: repository.toLowerCase() }),
+          };
+          return [JSON.stringify([ref.host, ref.nodeId]), ref] as const;
         }),
       );
       return statusBatch.expose({
