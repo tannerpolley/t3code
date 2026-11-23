@@ -36,6 +36,7 @@ export function IssueRow({
   const projects = useProjects();
   const reference = parseIssueUrl(issue.url, knownIssueHosts(projects));
   const queued = useIssueQueued(environmentId, reference);
+  const liveStatus = environmentId === undefined ? null : issueLiveStatus(issue);
   const row = (
     <div
       draggable
@@ -61,13 +62,13 @@ export function IssueRow({
         <span className="min-w-0 truncate text-sm">{issue.title || "Untitled issue"}</span>
       </button>
       <span className="flex min-w-0 max-w-1/2 items-center gap-1.5 text-2xs text-muted-foreground">
-        <IssueStageBadges issue={issue} cycle={cycle} />
+        <IssueStageBadges issue={issue} cycle={cycle} liveStatus={liveStatus} />
         <IssuePullRequests
           pullRequests={issue.pullRequests}
           count={issue.pullRequestCount}
           environmentId={environmentId}
         />
-        {environmentId !== undefined && issueLiveStatus(issue) !== null ? (
+        {environmentId !== undefined && liveStatus !== null ? (
           <IssueLiveWork issue={issue} environmentId={environmentId} />
         ) : null}
       </span>

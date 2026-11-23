@@ -1,3 +1,4 @@
+import { RelativeTime } from "~/components/RelativeTime";
 import { issueWorkerStatus } from "@t3tools/shared/issueWorkerStatus";
 import { useWorkerStatusLabels } from "./IssueLiveWork";
 import type { EnvironmentId, RepositoryIssueRef, RepositoryIssueSummary } from "@t3tools/contracts";
@@ -73,6 +74,8 @@ function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverCon
             {issue.commentCount > 0
               ? ` · ${issue.commentCount} ${issue.commentCount === 1 ? "comment" : "comments"}`
               : ""}
+            {" · updated "}
+            <RelativeTime timestamp={issue.updatedAt} />
           </div>
           {issue.labels.length > 0 ? (
             <div className="flex flex-wrap gap-1" aria-label="Labels">

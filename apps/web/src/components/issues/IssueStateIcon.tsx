@@ -136,19 +136,31 @@ const BADGE_VARIANTS = {
 export function IssueStageBadges({
   issue,
   cycle = false,
+  liveStatus = null,
 }: {
   readonly issue: IssueStageInput;
   readonly cycle?: boolean | undefined;
+  /** The worker chip beside the badges already names these conditions. */
+  readonly liveStatus?: string | null | undefined;
 }) {
   const gt = useGT();
   const labels = useIssueBadgeLabels();
+  const shownByChip = {
+    blocked: false,
+    suspended: liveStatus === "suspended",
+    needs_you: ["waiting_on_you", "question", "approval"].includes(liveStatus ?? ""),
+    failed: liveStatus === "failed",
+    dependencies_unknown: false,
+  } satisfies Record<IssueBadge, boolean>;
   return (
     <>
-      {issueBadges(issue).map((badge) => (
-        <Badge key={badge} variant={BADGE_VARIANTS[badge]} size="sm">
-          {labels[badge]}
-        </Badge>
-      ))}
+      {issueBadges(issue)
+        .filter((badge) => !shownByChip[badge])
+        .map((badge) => (
+          <Badge key={badge} variant={BADGE_VARIANTS[badge]} size="sm">
+            {labels[badge]}
+          </Badge>
+        ))}
       {cycle ? (
         <Badge variant="secondary" size="sm">
           {gt("Dependency cycle")}

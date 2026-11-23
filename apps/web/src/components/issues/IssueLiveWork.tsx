@@ -103,7 +103,7 @@ export function useWorkerStatusLabels() {
     suspended: gt("Suspended"),
     paused: gt("Paused"),
     working: gt("Running"),
-    waiting_on_you: gt("Waiting on you"),
+    waiting_on_you: gt("Needs you"),
     question: gt("Waiting on question"),
     approval: gt("Waiting on approval"),
     queued: gt("Queued"),

@@ -34,7 +34,7 @@ export const ISSUE_STAGE_LABELS = {
   closed: "Closed",
 } satisfies Record<IssueStage, string>;
 
-/** One stage per issue, from facts its row carries. Blockers and worker trouble are badges. */
+/** One stage per issue: In progress, then Queued, then Ready for review. Blockers and worker trouble are badges. */
 export function issueStage(issue: IssueStageInput): IssueStage {
   if (issue.state === "closed")
     return issue.stateReason === "not_planned" || issue.stateReason === "duplicate"
