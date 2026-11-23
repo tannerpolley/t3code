@@ -3,12 +3,15 @@ import { CommandId, EventId, MessageId, NodeId, RunId } from "@t3tools/contracts
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
@@ -23,17 +26,114 @@ import {
   reviewRead,
 } from "./ThreadLaunchService.testHarness.ts";
 
-const harness = makeHarness({
-  issueServiceLayer: Layer.mock(IssueService.IssueService)({
-    workRead: (input) => Effect.succeed(reviewRead(reviewIssue(input.number))),
-  }),
+const issueServiceLayer = Layer.mock(IssueService.IssueService)({
+  workRead: (input) => Effect.succeed(reviewRead(reviewIssue(input.number))),
 });
-const dependencies = Layer.mergeAll(
-  IssueWorkStore.layer,
-  ProjectionStore.layer,
-  IdAllocator.layer,
-).pipe(Layer.provideMerge(harness.layer));
-const layerTest = ProviderRuntimeRecovery.layer.pipe(Layer.provideMerge(dependencies));
+const recoveryLayer = (options: Parameters<typeof makeHarness>[0] = {}) =>
+  ProviderRuntimeRecovery.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(IssueWorkStore.layer, ProjectionStore.layer, IdAllocator.layer).pipe(
+        Layer.provideMerge(makeHarness({ ...options, issueServiceLayer }).layer),
+      ),
+    ),
+  );
+const layerTest = recoveryLayer();
+
+it.effect("restart reports an unsent issue worker brief and allows the parent to retry", () =>
+  Effect.gen(function* () {
+    const wakes = yield* Queue.unbounded<ProviderContinuationRequest>();
+    yield* Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const rootId = yield* createReviewRoot();
+      const parentRun = (yield* threads.getThreadRecords(rootId, ["runs"])).runs[0]!;
+      const issue = reviewIssue(1);
+      yield* threads.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("unsent-issue-worker"),
+        parentThreadId: rootId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        issue,
+        role: "implementor",
+        task: "Start the issue",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const childId = (yield* store.issueOwner(issue))!;
+      const original = (yield* threads.getThreadRecords(childId, ["runs"])).runs[0]!;
+      assert.equal(original.status, "starting");
+      assert.equal(yield* store.slotsInUse(rootId), 1);
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("parent-finished-delegating"),
+            type: "run.updated",
+            threadId: rootId,
+            runId: parentRun.id,
+            occurredAt: now,
+            payload: { ...parentRun, status: "completed", startedAt: now, completedAt: now },
+          },
+        ],
+      });
+
+      yield* recovery.reconcile("shutdown");
+      yield* recovery.recover;
+      yield* orchestrator.recoverDelegatedTasks;
+
+      const recovered = (yield* threads.getThreadRecords(childId, ["runs"])).runs[0]!;
+      assert.equal(recovered.status, "failed");
+      assert.isNull(recovered.startedAt);
+      assert.equal(yield* store.slotsInUse(rootId), 0);
+      const sql = yield* SqlClient.SqlClient;
+      const starts = yield* sql<{ status: string; attempt_count: number }>`
+        SELECT status, attempt_count FROM orchestration_v2_effect_outbox
+        WHERE thread_id = ${childId} AND effect_type = 'provider-turn.start'
+          AND json_extract(payload_json, '$.runId') = ${original.id}
+      `;
+      assert.deepEqual(starts, [{ status: "cancelled", attempt_count: 0 }]);
+      assert.isEmpty(
+        yield* outbox.listByCommandId(CommandId.make(`command:restart-resend:${original.id}`)),
+      );
+      const task = (yield* threads.getThreadRecords(rootId, ["subagents"])).subagents[0]!;
+      assert.equal(task.status, "failed");
+      assert.include(task.result ?? "", "before the provider confirmed the turn");
+      assert.equal((yield* Queue.take(wakes)).threadId, rootId);
+
+      const followup = yield* threads.sendToThread({
+        projectId,
+        threadId: childId,
+        senderThreadId: rootId,
+        commandId: CommandId.make("retry-unsent-issue-worker"),
+        messageId: MessageId.make("retry-unsent-issue-worker"),
+        text: "Retry the issue",
+        attachments: [],
+        mode: "auto",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      assert.equal(followup.run.status, "starting");
+    }).pipe(
+      Effect.provide(
+        recoveryLayer({
+          continuationRequests: {
+            offer: (request) => Queue.offer(wakes, request).pipe(Effect.asVoid),
+            take: Effect.never,
+          },
+        }),
+      ),
+    );
+  }),
+);
 
 it.effect(
   "after restart a completed current worker's auto follow-up waits for capacity then starts",
