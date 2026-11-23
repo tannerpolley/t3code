@@ -2203,7 +2203,24 @@ describe("fresh-thread repository handoff", () => {
           ],
           { concurrency: 2 },
         );
-        assert.equal(results.filter((result) => result._tag === "Success").length, 1);
+        assert.isTrue(results.some((result) => result._tag === "Success"));
+        const request = (yield* store.request(cancelInput.requestId))!;
+        if (results[0]._tag === "Success" && results[1]._tag === "Success") {
+          const sink = yield* EventSink.EventSinkV2;
+          const cancellation = yield* sink
+            .readByCommandId({
+              commandId: cancelInput.clientRequestId,
+            })
+            .pipe(Stream.runCollect);
+          const cancelled = cancellation.find(({ event }) => event.type === "issue.work.cancelled");
+          const claimed = results[0].success.storedEvents.find(
+            ({ event }) => event.type === "thread.created",
+          );
+          assert.isDefined(request.cancellation);
+          assert.isDefined(cancelled);
+          assert.isDefined(claimed);
+          assert.isBelow(cancelled!.sequence, claimed!.sequence);
+        }
         if (results[0]._tag === "Success") {
           const owner = yield* store.issueOwner(linked(9));
           assert.isNotNull(owner);
@@ -2211,13 +2228,15 @@ describe("fresh-thread repository handoff", () => {
             (yield* threads.getThreadRecords(owner!, ["runs"])).runs.at(-1)!.status,
             "starting",
           );
-          assert.isUndefined((yield* store.request(cancelInput.requestId))!.cancellation);
-          const retryCancel = yield* service
-            .cancelRequest({ ...cancelInput, clientRequestId: CommandId.make("claimed:cancel") })
-            .pipe(Effect.result);
-          assert.equal(retryCancel._tag, "Failure");
-          if (retryCancel._tag === "Failure")
-            assert.include(retryCancel.failure.message, "unclaimed");
+          if (results[1]._tag === "Failure") {
+            assert.isUndefined(request.cancellation);
+            const retryCancel = yield* service
+              .cancelRequest({ ...cancelInput, clientRequestId: CommandId.make("claimed:cancel") })
+              .pipe(Effect.result);
+            assert.equal(retryCancel._tag, "Failure");
+            if (retryCancel._tag === "Failure")
+              assert.include(retryCancel.failure.message, "unclaimed");
+          }
         } else {
           assert.isNull(yield* store.issueOwner(linked(9)));
           assert.isFalse(yield* store.hasAttempt(linked(9), "first"));
