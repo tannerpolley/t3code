@@ -83,10 +83,10 @@ export type IssueWorkThread = typeof workThread.Type &
     OrchestrationV2ThreadShell,
     "status" | "explicitStopRequested" | "activityRunStatus" | "pendingBackgroundTasks"
   > & {
-    readonly pendingRuntimeRequest: {
-      readonly kind: NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"];
-      readonly routedTo?: ThreadId;
-    } | null;
+    readonly pendingRuntimeRequest: Pick<
+      NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>,
+      "kind" | "routedTo"
+    > | null;
   };
 
 export const pendingRuntimeRequestOrder = (sql: SqlClient.SqlClient) =>

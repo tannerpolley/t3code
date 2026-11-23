@@ -343,7 +343,7 @@ it.effect("gives an issue's detail the overlay and live work its row has", () =>
 });
 
 it.effect("reports live work in issue status batches when it has no pull requests", () => {
-  const work = { threadId: ThreadId.make("worker"), status: "working" as const };
+  const work = { threadId: ThreadId.make("worker"), inherited: false, status: "working" as const };
   const layer = roadmapLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -357,7 +357,6 @@ it.effect("reports live work in issue status batches when it has no pull request
                 nodeId: "I_13",
                 state: "open",
                 stateReason: null,
-                suspensionReason: null,
                 blockedBy: [],
                 pullRequests: [],
               },
