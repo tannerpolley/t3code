@@ -1,5 +1,6 @@
 import { RunId, ThreadId, type ThreadProcesses } from "@t3tools/contracts";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { pullRequestWatchTaskId } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 import { expect, it } from "vite-plus/test";
 
@@ -168,6 +169,21 @@ it("lists commands directly before agents, deduplicating each program", () => {
     ["t", undefined],
     ["agent", 0],
   ]);
+});
+
+it("lists PR watches separately from each other and other monitors", () => {
+  const tasks = [
+    { taskId: "watch", kind: "monitor" as const },
+    ...[579, 580].map((number) => ({
+      taskId: pullRequestWatchTaskId({ host: "github.com", repository: "acme/app", number }),
+      kind: "monitor" as const,
+    })),
+  ];
+  const rows = describeSidebarBackgroundWork(tasks, []);
+
+  expect(foldThreadWork(rows, []).rows.map((row) => row.taskId)).toEqual(
+    tasks.map((task) => task.taskId),
+  );
 });
 
 it("lists each program once, skipping a command's program before capping the groups", () => {
