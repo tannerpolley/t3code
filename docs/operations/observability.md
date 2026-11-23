@@ -44,8 +44,9 @@ worktree uses `~/.t3/dev/logs/server.trace.ndjson`.
 
 The server's local file samples one percent of routine spans by span ID. It always keeps failures,
 events, spans lasting at least one second, SQL spans that waited at least 100 ms for a connection,
-thread launch and provider start milestones, heap spike signals, and spans tagged with
-`memory.heap_growth_bytes`. Interrupted spans are sampled unless another retention rule applies.
+thread launch and provider start milestones, heap spike signals, and spans tagged with at least
+64 MiB of heap growth. Interrupted spans and smaller heap-growth spans are sampled unless another
+retention rule applies.
 The policy also applies to renderer spans written to the server file. A retained span may have
 missing parents or children. OTLP export uses the original sampling decision.
 

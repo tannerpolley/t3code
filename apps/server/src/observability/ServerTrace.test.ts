@@ -104,6 +104,12 @@ it.effect("samples the local server and renderer traces while forwarding every s
       yield* Effect.annotateCurrentSpan("memory.heap_growth_bytes", 200 * 1_024 * 1_024).pipe(
         Effect.withSpan("heap growth"),
       );
+      yield* Effect.annotateCurrentSpan("memory.heap_growth_bytes", 64 * 1_024 * 1_024).pipe(
+        Effect.withSpan("heap growth at threshold"),
+      );
+      yield* Effect.annotateCurrentSpan("memory.heap_growth_bytes", 64 * 1_024 * 1_024 - 1).pipe(
+        Effect.withSpan("heap growth below threshold"),
+      );
     }).pipe(
       Effect.withParentSpan(Tracer.externalSpan({ traceId: workerTraceId, spanId: "1" })),
       Effect.withTracer(tracer),
@@ -128,7 +134,12 @@ it.effect("samples the local server and renderer traces while forwarding every s
       ),
       { ...rendererRecord, spanId: spanId(3), name: "slow request", durationMs: 1_000 },
       { ...rendererRecord, spanId: spanId(4), name: "failed request", status: { code: "2" } },
-      { ...rendererRecord, spanId: spanId(100), name: "sampled request" },
+      {
+        ...rendererRecord,
+        spanId: spanId(100),
+        name: "sampled heap growth below threshold",
+        attributes: { "memory.heap_growth_bytes": 32 * 1_024 * 1_024 },
+      },
       {
         ...rendererRecord,
         spanId: spanId(5),
@@ -150,6 +161,8 @@ it.effect("samples the local server and renderer traces while forwarding every s
       "failed query",
       "server.heap.spike",
       "heap growth",
+      "heap growth at threshold",
+      "heap growth below threshold",
     ]);
     expect(forwarded.every((span) => span.status._tag === "Ended")).toBe(true);
     expect(names).toEqual([
@@ -158,9 +171,10 @@ it.effect("samples the local server and renderer traces while forwarding every s
       "failed query",
       "server.heap.spike",
       "heap growth",
+      "heap growth at threshold",
       "slow request",
       "failed request",
-      "sampled request",
+      "sampled heap growth below threshold",
       "request with event",
     ]);
   }).pipe(Effect.provide(NodeServices.layer)),

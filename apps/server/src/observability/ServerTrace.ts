@@ -14,13 +14,14 @@ const launchSpans = new Set([
 
 function keepLocalRecord(record: TraceRecord): boolean {
   const lockWaitMs = record.attributes["db.lock_wait_ms"];
+  const heapGrowthBytes = record.attributes["memory.heap_growth_bytes"];
   return (
     record.durationMs >= 1_000 ||
     (typeof lockWaitMs === "number" && lockWaitMs >= 100) ||
     record.events.length > 0 ||
     launchSpans.has(record.name) ||
     record.name === "server.heap.spike" ||
-    Object.hasOwn(record.attributes, "memory.heap_growth_bytes") ||
+    (typeof heapGrowthBytes === "number" && heapGrowthBytes >= 64 * 1_024 * 1_024) ||
     (record.type === "effect-span"
       ? record.exit._tag === "Failure"
       : record.status?.code === "2") ||
