@@ -50,6 +50,7 @@ interface FakeUnit {
   activeState: string;
   result: string;
   controlGroup?: string;
+  slice?: string;
 }
 
 const withFakeSystemd = <A, E>(
@@ -73,7 +74,7 @@ const withFakeSystemd = <A, E>(
     readonly oomPolicy?: boolean;
     readonly stopFails?: boolean;
     readonly leftovers?: boolean;
-    readonly liveOwner?: boolean;
+    readonly liveOwner?: boolean | "during-discovery";
     readonly parentSlice?: string;
     readonly previousParents?: ReadonlyArray<string>;
   } = {},
@@ -114,9 +115,14 @@ const withFakeSystemd = <A, E>(
             };
           }
           if (verb === "reset-failed") units.delete(unit);
-          if (verb === "list-units") {
+          if (verb === "show" && unit === "t3code-*.scope") {
             return output(
-              [...units.keys()].map((name) => `${name} loaded active active\n`).join(""),
+              [...units]
+                .map(
+                  ([name, state]) =>
+                    `Id=${name}\nSlice=${state.slice ?? ""}\nActiveState=${state.activeState}\n\n`,
+                )
+                .join(""),
             );
           }
           if (verb !== "show") return output("");
@@ -131,18 +137,31 @@ const withFakeSystemd = <A, E>(
     });
     const fileSystem = yield* FileSystem.FileSystem;
     const { stateDir } = yield* ServerConfig.ServerConfig;
+    const active = { activeState: "active", result: "success" };
+    const ownSlice = ownedAgentSlice(stateDir);
     if (leftovers) {
-      units.set(ownedAgentSlice(stateDir), { activeState: "active", result: "success" });
-    }
-    for (const parent of previousParents) {
-      units.set(ownedAgentSlice(stateDir).replace("app-t3code", parent), {
-        activeState: "active",
-        result: "success",
+      units.set(ownSlice, active);
+      units.set("t3code-leftover-00000001.scope", { ...active, slice: ownSlice });
+      units.set("codex-app-00000002.scope", { ...active, slice: ownSlice });
+      units.set("t3code-terminal-00000003.scope", { ...active, slice: "app-t3code-agents.slice" });
+      units.set("t3code-other-00000004.scope", {
+        ...active,
+        slice: ownSlice.replace(".slice", "-other-agents-0123456789ab.slice"),
       });
     }
-    units.set("other-agents-0123456789ab.slice", { activeState: "active", result: "success" });
+    for (const parent of previousParents) {
+      const slice = ownSlice.replace("app-t3code", parent);
+      units.set(slice, active);
+      units.set(`t3code-${parent}-00000005.scope`, { ...active, slice });
+    }
     const scope = yield* make.pipe(
-      Effect.provideService(ProviderProcesses.ProviderProcesses, { hasOtherLiveOwner: liveOwner }),
+      Effect.provideService(ProviderProcesses.ProviderProcesses, {
+        get hasOtherLiveOwner() {
+          return liveOwner === "during-discovery"
+            ? calls.some((args) => args.includes("t3code-*.scope"))
+            : liveOwner;
+        },
+      }),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.Environment, {
@@ -442,7 +461,7 @@ describe("AgentScope service", () => {
     withFakeSystemd(
       ({ scope, calls, stateDir }) =>
         Effect.gen(function* () {
-          expect(stopsOf(calls)).toEqual([["--user", "stop", ownedAgentSlice(stateDir)]]);
+          expect(stopsOf(calls)).toEqual([["--user", "stop", "t3code-leftover-00000001.scope"]]);
           const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
           expect(sliceOf(agent)).toBe(ownedAgentSlice(stateDir));
           expect(agent.args).toContain("--property=TimeoutStopSec=10s");
@@ -459,24 +478,28 @@ describe("AgentScope service", () => {
     ),
   );
 
-  it.effect("leaves the slice to another live server sharing this home", () =>
-    withFakeSystemd(({ calls }) => Effect.sync(() => expect(stopsOf(calls)).toEqual([])), {
-      leftovers: true,
-      previousParents: ["agents-t3code"],
-      liveOwner: true,
-    }),
+  it.effect.each([true, "during-discovery"] as const)(
+    "leaves agent scopes to another live server sharing this home (%s)",
+    (liveOwner) =>
+      withFakeSystemd(({ calls }) => Effect.sync(() => expect(stopsOf(calls)).toEqual([])), {
+        leftovers: true,
+        previousParents: ["agents-t3code"],
+        liveOwner,
+      }),
   );
 
   it.effect("cleans up the same home's agent scopes after changing the slice", () =>
     withFakeSystemd(
-      ({ calls, stateDir }) =>
+      ({ calls }) =>
         Effect.sync(() => {
-          const legacy = ownedAgentSlice(stateDir);
-          expect(
-            stopsOf(calls)
-              .map((args) => args.at(-1))
-              .sort(),
-          ).toEqual([legacy, legacy.replace("app-t3code", "previous-t3code")].sort());
+          expect(stopsOf(calls)).toEqual([
+            [
+              "--user",
+              "stop",
+              "t3code-leftover-00000001.scope",
+              "t3code-previous-t3code-00000005.scope",
+            ],
+          ]);
         }),
       { parentSlice: "agents-t3code.slice", leftovers: true, previousParents: ["previous-t3code"] },
     ),
