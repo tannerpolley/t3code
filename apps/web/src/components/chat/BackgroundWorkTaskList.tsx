@@ -1,9 +1,11 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { useState, type ComponentProps, type ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { SidebarBackgroundWorkRows } from "../sidebar/SidebarBackgroundWorkRows";
 import {
   groupBackgroundWorkTaskRows,
@@ -33,6 +35,7 @@ export function BackgroundWorkTaskList(props: {
     ComponentProps<typeof SidebarBackgroundWorkRows>["renderAgent"]
   >;
 }) {
+  const gt = useGT();
   const { agents, backgroundTasks } = groupBackgroundWorkTaskRows(props.rows);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
   const { listRef, isVisible } = useBackgroundTaskListVisibility(backgroundTasks.length > 0);
@@ -55,15 +58,23 @@ export function BackgroundWorkTaskList(props: {
             taskId: row.taskId,
             label: row.label,
           };
+          const pullRequestLabel =
+            row.pullRequestNumber === undefined
+              ? null
+              : gt("PR #{number}", { number: row.pullRequestNumber });
           return (
             <li key={`${props.environmentId}:${threadId}:${row.taskId}`} className="space-y-1">
               <div className="flex min-w-0 items-center gap-2">
-                <BackgroundProcessKindIcon
-                  kind={row.kind}
-                  commandKind={row.commandKind}
-                  command={row.command}
-                  className="size-3.5"
-                />
+                {pullRequestLabel === null ? (
+                  <BackgroundProcessKindIcon
+                    kind={row.kind}
+                    commandKind={row.commandKind}
+                    command={row.command}
+                    className="size-3.5"
+                  />
+                ) : (
+                  <PullRequestGlyph.pullRequest aria-hidden className="size-3.5" />
+                )}
                 {props.renderDetails ? (
                   <div className="min-w-0 flex-1">{props.renderDetails(row)}</div>
                 ) : (
@@ -77,7 +88,9 @@ export function BackgroundWorkTaskList(props: {
                 <StopBackgroundShellButton {...target} />
               </div>
               <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-                <span>{backgroundProcessKindLabel(row.kind, row.commandKind)}</span>
+                <span>
+                  {pullRequestLabel ?? backgroundProcessKindLabel(row.kind, row.commandKind)}
+                </span>
                 {row.startedAt ? (
                   <BackgroundShellElapsed startedAt={row.startedAt} commandKind={row.commandKind} />
                 ) : null}

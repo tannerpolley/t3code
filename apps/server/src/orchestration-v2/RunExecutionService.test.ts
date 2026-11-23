@@ -1406,7 +1406,7 @@ it.effect("prompts the provider only after a forked baseline capture finishes", 
         .pipe(Effect.forkChild);
       yield* TestClock.adjust("1 second");
       yield* Fiber.join(started);
-    }).pipe(Effect.provide(layerTest));
+    }).pipe(Effect.scoped, Effect.provide(layerTest));
 
     assert.deepEqual(yield* Ref.get(order), ["baseline", "prompt"]);
   }),

@@ -27,6 +27,7 @@ import {
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  isPullRequestWatchTask,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   withLegacyUltracodeEffort,
@@ -652,8 +653,17 @@ export function presentPendingBackgroundWork(
         : `Running a ${noun}`;
     return { title, items, waiting };
   }
+  // A PR watch whose checks finished holds nothing, so a waiting title leaves it out.
+  const settled = new Set(
+    tasks
+      .filter((task) => isPullRequestWatchTask(task) && !task.awaited)
+      .map((task) => task.taskId),
+  );
   const counts = new Map<BackgroundWorkKind, number>();
-  for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
+  for (const item of items) {
+    if (waiting && settled.has(item.taskId)) continue;
+    counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
+  }
   const groups = Array.from(counts, ([kind, count]) => {
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;

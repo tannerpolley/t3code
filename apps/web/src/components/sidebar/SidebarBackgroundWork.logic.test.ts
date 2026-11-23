@@ -8,7 +8,10 @@ import {
   type ThreadRole,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  pendingBackgroundWorkOfThread,
+  pullRequestWatchTaskId,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadFixture } from "../../test-fixtures";
@@ -90,6 +93,21 @@ describe("describeSidebarBackgroundWork", () => {
     });
     expect(rows[5]).toMatchObject({ childThreadId: null, startedAt: null });
     expect(rows[0]).not.toHaveProperty("childThreadId");
+  });
+
+  it("identifies each PR watch and shows work only while its checks are pending", () => {
+    const watch = (number: number) => ({
+      taskId: pullRequestWatchTaskId({ host: "github.com", repository: "acme/app", number }),
+      kind: "monitor" as const,
+    });
+    const rows = describeSidebarBackgroundWork(
+      [{ ...watch(579), awaited: true }, watch(580), { taskId: "native#581", kind: "monitor" }],
+      [],
+    );
+
+    expect(rows[0]).toMatchObject({ pullRequestNumber: "579", status: "working" });
+    expect(rows[1]).toMatchObject({ pullRequestNumber: "580", status: "ready" });
+    expect(rows[2]).not.toHaveProperty("pullRequestNumber");
   });
 
   it("orders native and app-owned workers by effective role, then newest creation, independent of streaming activity", () => {

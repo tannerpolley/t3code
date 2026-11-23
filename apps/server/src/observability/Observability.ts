@@ -1,6 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as HttpObservability from "@t3tools/shared/httpObservability";
-import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
+import { makeLocalFileTracer } from "@t3tools/shared/observability";
 import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as Effect from "effect/Effect";
@@ -19,6 +19,7 @@ import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
 import * as HeapAttribution from "./HeapAttribution.ts";
 import * as StallAttribution from "./StallAttribution.ts";
 import * as OtlpExportFailures from "./OtlpExportFailures.ts";
+import { makeServerTraceSink } from "./ServerTrace.ts";
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
@@ -41,7 +42,7 @@ export const layer = Layer.unwrap(
 
     const layerTracer = Layer.unwrap(
       Effect.gen(function* () {
-        const sink = yield* makeTraceSink({
+        const sink = yield* makeServerTraceSink({
           filePath: config.serverTracePath,
           maxBytes: config.traceMaxBytes,
           maxFiles: config.traceMaxFiles,
