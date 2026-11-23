@@ -4,8 +4,6 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
-  resolveModelNotes,
-  resolveModelRoles,
   ModelSelection,
   type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
@@ -17,6 +15,7 @@ import {
   type OrchestrationV2Subagent,
   ProviderInstanceId,
   ProviderSessionId,
+  resolveThreadRole,
   ThreadId,
   type OrchestrationV2TurnItem,
   type ProviderThreadId,
@@ -56,15 +55,8 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import { modelRoleStatuses, providerCreditStatuses } from "../provider/modelRolePolicy.ts";
-import { lineageUsageSprint } from "../issues/usageSprint.ts";
 import { managedIssueRole } from "../issues/IssueEligibility.ts";
-import {
-  t3ModelRolesInstructions,
-  t3ModelNotesInstructions,
-  t3OrchestrationPolicy,
-} from "@t3tools/provider-core/server/orchestrationInstructions";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { t3OrchestrationPolicy } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -446,7 +438,6 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
-      const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const promptSuggestionStore = yield* SubscriptionRef.make<
@@ -572,50 +563,21 @@ export const layerWithOptions = (
       };
       const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
-      // Roles carry the same availability check `delegate_task` applies. An
-      // unreadable settings file keeps the roles the session already has.
-      const syncModelRoles = Effect.fn("ProviderSessionManager.syncModelRoles")(
+      const syncOrchestrationPolicy = Effect.fn("ProviderSessionManager.syncOrchestrationPolicy")(
         function* (threadId: ThreadId) {
           if ((yield* mcpSessions.read(threadId)) === undefined) return;
           const thread = yield* projectionStore.getThread(threadId);
-          const modelInstructions = yield* Effect.gen(function* () {
-            if (Option.isNone(serverSettings)) return { roles: "", notes: "" };
-            const settings = yield* serverSettings.value.getSettings;
-            const providers = Option.isSome(providerRegistry)
-              ? yield* providerRegistry.value.getProviders
-              : [];
-            const capableIds = new Set(yield* registry.list());
-            const now = yield* Clock.currentTimeMillis;
-            const credits = providerCreditStatuses(
-              providers,
-              settings.providerCreditsApproved,
-              now,
-            );
-            const roles = modelRoleStatuses(
-              resolveModelRoles(settings),
-              providers,
-              capableIds,
-              now,
-              credits,
-              yield* lineageUsageSprint(thread, projectionStore.getThread),
-            );
-            return {
-              roles: t3ModelRolesInstructions(roles, credits),
-              notes: t3ModelNotesInstructions(resolveModelNotes(settings.modelTiers)),
-            };
-          }).pipe(Effect.option);
           const session = yield* mcpSessions.read(threadId);
           if (session === undefined) return;
-          const { roles, notes } = Option.getOrElse(modelInstructions, () => ({
-            roles: session.orchestration?.modelRoles ?? "",
-            notes: session.orchestration?.modelNotes ?? "",
-          }));
           yield* mcpSessions.set({
             ...session,
-            orchestration: t3OrchestrationPolicy(managedIssueRole(thread), roles, notes),
+            orchestration: t3OrchestrationPolicy(
+              managedIssueRole(thread),
+              resolveThreadRole(thread.role ?? ""),
+            ),
           });
         },
-        (effect) => effect.pipe(Effect.ignore),
+        Effect.ignore,
       );
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
       /** Serialize prepares per thread so concurrent rotations cannot revoke each other's credentials. */
@@ -666,7 +628,7 @@ export const layerWithOptions = (
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {
-                    yield* syncModelRoles(threadId);
+                    yield* syncOrchestrationPolicy(threadId);
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -688,7 +650,7 @@ export const layerWithOptions = (
                       Effect.orElseSucceed(() => false),
                     ),
                 });
-                yield* syncModelRoles(threadId);
+                yield* syncOrchestrationPolicy(threadId);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),
@@ -2705,7 +2667,7 @@ export const layerWithOptions = (
                 providerInstanceId: runtime.instanceId,
               }),
             ).pipe(
-              Effect.andThen(syncModelRoles(input.threadId)),
+              Effect.andThen(syncOrchestrationPolicy(input.threadId)),
               // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
               Effect.andThen(
                 holdThreadLoaded({

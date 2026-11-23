@@ -1,3 +1,4 @@
+import { ToolSearchToolkit } from "../../mcp/toolkits/toolSearch/tools.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- workflow fixtures use files and the fake Claude CLI uses Node streams
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
@@ -672,6 +673,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       url: "http://127.0.0.1:43123/mcp",
       headers: {
         Authorization: "Bearer secret-claude-token",
+        "t3-tool-exposure": "deferred",
       },
       timeout: ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
     },
@@ -737,6 +739,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
     const readOnlyToolNames = [
       ...Object.values(OrchestratorToolkit.tools),
+      ...Object.values(ToolSearchToolkit.tools),
       ...Object.values(ThreadToolkit.tools),
       ...Object.values(WorktreeToolkit.tools),
       ...Object.values(ProjectToolkit.tools),
@@ -818,6 +821,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
           url: "http://127.0.0.1:43123/mcp",
           headers: {
             Authorization: "Bearer secret-claude-token",
+            "t3-tool-exposure": "deferred",
           },
           timeout: ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
         },

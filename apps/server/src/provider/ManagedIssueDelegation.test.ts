@@ -32,7 +32,7 @@ const overrides = (orchestration?: ReturnType<typeof t3OrchestrationPolicy>) =>
 describe("repository-managed Claude delegation", () => {
   it("removes Claude spawning tools in bypass mode and changes the live-query reuse key", () => {
     const ordinary = overrides();
-    const managed = overrides(t3OrchestrationPolicy("worker", ""));
+    const managed = overrides(t3OrchestrationPolicy("worker"));
     const options = makeClaudeQueryOptions({
       modelSelection: { instanceId: session.providerInstanceId, model: "claude-sonnet-5-5" },
       nativeThreadId: "managed-native-claude",
@@ -45,7 +45,7 @@ describe("repository-managed Claude delegation", () => {
     assert.deepEqual(options.disallowedTools, ["Agent", "Task", "TeamCreate"]);
     assert.include(options.allowedTools ?? [], "mcp__t3-code__*");
     assert.isUndefined(ordinary.disallowedTools);
-    const implementor = overrides(t3OrchestrationPolicy("implementor", ""));
+    const implementor = overrides(t3OrchestrationPolicy("implementor"));
     assert.deepEqual(implementor.disallowedTools, ["Agent", "Task", "TeamCreate"]);
     assert.include(implementor.orchestration?.sections.join("\n") ?? "", 'role: "reviewer"');
     const append =
@@ -57,25 +57,18 @@ describe("repository-managed Claude delegation", () => {
     assert.include(append, "Native subagent tools are disabled");
   });
 
-  it("restarts a live query on a role change but not on a model-roles refresh", () => {
+  it("restarts a live query on a thread role change", () => {
     const keys = [
-      overrides(),
-      overrides(t3OrchestrationPolicy(undefined, "")),
-      overrides(t3OrchestrationPolicy("root", "")),
-      overrides(t3OrchestrationPolicy("worker", "")),
+      overrides(t3OrchestrationPolicy()),
+      overrides(t3OrchestrationPolicy("root")),
+      overrides(t3OrchestrationPolicy("worker")),
+      overrides(t3OrchestrationPolicy(undefined, "writer")),
     ].map((mcpOverrides) => claudeEffectiveQueryPolicyKey(policy, mcpOverrides));
-    assert.equal(new Set(keys.slice(1)).size, 3);
-    assert.equal(
-      claudeEffectiveQueryPolicyKey(
-        policy,
-        overrides(t3OrchestrationPolicy("worker", "\n\n### Model roles\n- Sprinter\n")),
-      ),
-      keys[3],
-    );
+    assert.equal(new Set(keys).size, keys.length);
   });
 
   it("keeps native subagents for the repository root's own work", () => {
-    const root = overrides(t3OrchestrationPolicy("root", ""));
+    const root = overrides(t3OrchestrationPolicy("root"));
     assert.isUndefined(root.disallowedTools);
     assert.isTrue(root.orchestration?.nativeSubagents);
   });

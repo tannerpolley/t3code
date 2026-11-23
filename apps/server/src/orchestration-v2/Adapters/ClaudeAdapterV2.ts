@@ -2149,7 +2149,7 @@ const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
 
 ### Background work you wait on
 
-To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its \`taskId\` before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
+To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its \`taskId\` before you end your turn. Do not mark work you leave running, or PRs. Find missing T3 tools with \`mcp__t3-code__tool_search\`. Load the returned schemas with ToolSearch when available.
 `;
 
 // Claude 5.1+ returns text written before a tool call as a progress update, which the API
@@ -2456,6 +2456,7 @@ export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 // Keep in sync with OrchestratorToolkit Tool.Readonly annotations; ClaudeAdapterV2.test.ts checks this.
 export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__orchestrator_capabilities",
+  "mcp__t3-code__tool_search",
   "mcp__t3-code__list_scheduled_tasks",
   "mcp__t3-code__t3_background_wait",
   "mcp__t3-code__t3_thread_list",
@@ -2513,6 +2514,7 @@ export function claudeMcpQueryOverrides(input: {
         url: session.endpoint,
         headers: {
           Authorization: session.authorizationHeader,
+          [McpProviderSession.MCP_TOOL_EXPOSURE_HEADER]: "deferred",
         },
         timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
       },
@@ -3574,7 +3576,6 @@ export function claudeEffectiveQueryPolicyKey(
     }),
     mcpServers: mcpOverrides.mcpServers,
     disallowedTools: mcpOverrides.disallowedTools,
-    // The system prompt is fixed for a live query; model roles alone do not restart it.
     orchestration: mcpOverrides.orchestration?.sections,
   });
 }
