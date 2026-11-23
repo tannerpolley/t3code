@@ -65,7 +65,7 @@ export interface ProjectSetupScriptRunnerInput {
   readonly projectId?: string;
   readonly projectCwd?: string;
   readonly worktreePath: string;
-  readonly trigger?: "setup" | "settle" | "slot-upkeep";
+  readonly trigger?: "setup" | "settle";
   readonly project?: {
     readonly id: ProjectId;
     readonly workspaceRoot: string;
@@ -490,11 +490,11 @@ export const make = Effect.gen(function* () {
       } as const;
     }
 
-    // Settle and upkeep runs must never write to the thread's interactive setup terminal.
+    // Earlier settle shells may still run foreground programs; do not type resumed settles into them.
     const terminalId =
-      trigger === "setup"
-        ? `setup-${script.id}`
-        : `${trigger}-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`;
+      trigger === "settle"
+        ? `settle-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`
+        : `setup-${script.id}`;
     const cwd = input.worktreePath;
     const env = {
       ...projectScriptRuntimeEnv({

@@ -198,7 +198,6 @@ it.effect(
     const harness = reviewHarness(workRead);
     const reads = Layer.mock(IssueService.IssueService)({
       workRead,
-      workReads: () => workRead().pipe(Effect.map((read) => new Map([[issue.number, read]]))),
       milestoneIssues: () =>
         Effect.succeed({
           complete: true,

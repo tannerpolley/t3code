@@ -560,8 +560,6 @@ export const OrchestrationV2AppThread = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedIssue: Schema.optional(ThreadLinkedIssue),
   repositoryOrchestration: Schema.optional(RepositoryOrchestration),
-  handoffFromThreadId: Schema.optional(ThreadId),
-  handoffToThreadId: Schema.optional(ThreadId),
   silentWakeAttention: Schema.optional(
     Schema.Union([
       Schema.Struct({ runId: RunId, reason: Schema.String, createdAt: IsoDateTime }),
@@ -2469,8 +2467,6 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
-  handoffFromThreadId: OrchestrationV2AppThread.fields.handoffFromThreadId,
-  handoffToThreadId: OrchestrationV2AppThread.fields.handoffToThreadId,
   linkedIssue: Schema.optional(ThreadLinkedIssue),
 
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -4092,12 +4088,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     expectedRevision: Schema.Int,
     inventory: Schema.String,
-    automatic: Schema.optional(
-      Schema.Union([
-        Schema.Struct({ type: Schema.Literal("start"), sourceRunId: RunId, threshold: Schema.Int }),
-        Schema.Struct({ type: Schema.Literal("verify"), enabled: Schema.Boolean }),
-      ]),
-    ),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),

@@ -235,10 +235,7 @@ export function viewerRepositoriesFirst<T extends Pick<IssueRepositorySummary, "
 
 /** The repository work status the settings Status row and the Issues pane line both show. */
 export function repositoryWorkStatus(
-  config: Pick<
-    RepositoryOrchestration,
-    "paused" | "handoff" | "automaticHandoff" | "retiredToThreadId"
-  > & {
+  config: Pick<RepositoryOrchestration, "paused" | "handoff" | "retiredToThreadId"> & {
     readonly suspendedIssues: readonly unknown[];
   },
   idMismatch?: RepositoryWorkResult["idMismatch"],
@@ -250,8 +247,7 @@ export function repositoryWorkStatus(
     };
   const phase = repositoryPhase(config);
   const suspended = config.suspendedIssues.length;
-  if (phase === "draining" || phase === "handoff_verifying")
-    return { label: "Handing off", needsAttention: true };
+  if (phase === "draining") return { label: "Handing off", needsAttention: true };
   // A handoff request keeps the existing pause, so a waiting handoff must outrank Paused.
   if (phase === "handoff_awaiting_approval")
     return { label: "Handoff awaiting approval", needsAttention: true };

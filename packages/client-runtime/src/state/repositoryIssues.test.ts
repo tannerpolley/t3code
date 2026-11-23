@@ -279,15 +279,15 @@ it.effect(
           registry.set(shells, shellSnapshot([workThread({ status: "running" })])),
         );
         yield* settle;
-        expect(reads).toHaveLength(2);
+        expect(reads).toEqual(["owner/repo", "detail", "owner/repo", "detail"]);
         yield* SubscriptionRef.set(inbox, 1);
         yield* settle;
-        expect(reads).toHaveLength(4);
-        expect(refreshModes).toEqual(Array.from({ length: 4 }, () => false));
+        expect(reads).toHaveLength(6);
+        expect(refreshModes).toEqual(Array.from({ length: 6 }, () => false));
 
         for (const atom of atoms) registry.refresh(atom);
         yield* settle;
-        expect(refreshModes.slice(4)).toEqual([true, true]);
+        expect(refreshModes.slice(6)).toEqual([true, true]);
       }),
     ),
 );

@@ -68,6 +68,12 @@ function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverCon
             <IssueStateIcon issue={{ ...issue, queued }} />
             <span>{label}</span>
           </div>
+          <div>
+            Opened by {issue.author?.login ?? "ghost"}
+            {issue.commentCount > 0
+              ? ` · ${issue.commentCount} ${issue.commentCount === 1 ? "comment" : "comments"}`
+              : ""}
+          </div>
           {issue.labels.length > 0 ? (
             <div className="flex flex-wrap gap-1" aria-label="Labels">
               {issue.labels.map((label) => (

@@ -9,7 +9,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import { IssueReadError, LIVE_ISSUE_REFRESH_MS, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
@@ -268,7 +268,7 @@ it.effect(
         ),
       );
       const roadmap = yield* IssueRoadmap.IssueRoadmap.pipe(Effect.provideContext(roadmapContext));
-      const input = { issues: [{ ...listInput, nodeId: "I_7" }] };
+      const input = { issues: [{ host: HOST, nodeId: "I_7" }] };
       const first = yield* roadmap.statusBatch(input);
       assert.equal(first[0]?.liveWork?.[0]?.status, "idle");
       for (let index = 0; index < 10; index++) {
@@ -279,16 +279,13 @@ it.effect(
       }
       assert.equal(harness.calls.length, 1, "local link refreshes must reuse GitHub states");
       assert.equal(enrichments, 11);
-      yield* TestClock.adjust(LIVE_ISSUE_REFRESH_MS - 1);
+      yield* TestClock.adjust("59999 millis");
       yield* issues.statusBatch(input);
       assert.equal(harness.calls.length, 1);
       yield* TestClock.adjust("1 millis");
       yield* issues.statusBatch(input);
       assert.equal(harness.calls.length, 2);
       yield* issues.statusBatch({ ...input, refresh: true });
-      yield* issues.statusBatch(input);
-      assert.equal(harness.calls.length, 3);
-      yield* issues.markChanged({ ...listInput, repository: "acme/other" });
       yield* issues.statusBatch(input);
       assert.equal(harness.calls.length, 3);
       credential = "writer";
@@ -302,33 +299,6 @@ it.effect(
       assert.equal((yield* issues.statusBatch(input))[0]?.state, "open");
       assert.equal(harness.calls.length, 8, "inbox writes must invalidate live status reads");
     }),
-);
-
-it.effect("keeps a live read failure through its retry deadline, including manual refreshes", () =>
-  Effect.gen(function* () {
-    let attempts = 0;
-    const cached = IssueService.makeLiveReadCache<string>();
-    const read = Effect.suspend(() =>
-      ++attempts === 1
-        ? Effect.fail(
-            new IssueReadError({
-              operation: "detail",
-              code: "rate-limited",
-              message: "GitHub is paused",
-              retryAt: 120_000,
-            }),
-          )
-        : Effect.succeed("ok"),
-    );
-    const first = yield* cached("repo", read, false).pipe(Effect.flip);
-    yield* TestClock.adjust("119999 millis");
-    assert.equal(yield* cached("repo", read, false).pipe(Effect.flip), first);
-    assert.equal(yield* cached("repo", read, true, 1).pipe(Effect.flip), first);
-    assert.equal(attempts, 1);
-    yield* TestClock.adjust("1 millis");
-    assert.equal(yield* cached("repo", read, false), "ok");
-    assert.equal(attempts, 2);
-  }),
 );
 
 it.effect("shares an in-flight status read between concurrent link refreshes", () =>
@@ -587,67 +557,6 @@ it.effect("treats a milestone as missing only when GitHub cannot find it", () =>
   }),
 );
 
-it.effect("reads one conditional REST issue page and skips pull requests", () =>
-  Effect.gen(function* () {
-    const harness = makeHarness({
-      responses: [
-        httpResponse(
-          [rawIssue(1), rawIssue(2, { pull_request: { url: "https://example.test/pr/2" } })],
-          { etag: '"issues"', link: '<https://example.test/issues?page=2>; rel="next"' },
-        ),
-        { body: null, status: 304 },
-      ],
-    });
-    const issues = yield* service(harness);
-    const input = { ...listInput, state: "open" as const, page: 1 };
-    const first = yield* issues.repositoryIssuesPage(input);
-    assert.deepEqual(
-      first.items.map((item) => item.number),
-      [1],
-    );
-    assert.equal(first.nextPage, 2);
-    assert.deepEqual(yield* issues.repositoryIssuesPage(input), first);
-    assert.equal(harness.calls[1]?.ifNoneMatch, '"issues"');
-    assert.isTrue(
-      harness.calls.every(
-        (call) => call.method === "GET" && call.url.includes("/repos/acme/web/issues?"),
-      ),
-    );
-  }),
-);
-
-it.effect("batches completion state across repositories and refreshes it before removal", () =>
-  Effect.gen(function* () {
-    const second = { ...listInput, repository: "acme/other", number: 7 };
-    const first = { ...listInput, number: 7 };
-    const closedAt = "2026-10-05T00:00:00Z";
-    const status = (closed: boolean) =>
-      httpResponse({
-        data: {
-          r0: { i0: { number: 7, state: "OPEN", closedAt: null } },
-          r1: {
-            i1: {
-              number: 7,
-              state: closed ? "CLOSED" : "OPEN",
-              closedAt: closed ? closedAt : null,
-            },
-          },
-        },
-      });
-    const harness = makeHarness({ responses: [status(true), status(false)] });
-    const issues = yield* service(harness);
-    assert.deepEqual(yield* issues.issueStatuses([first, second, first]), [
-      { ...second, state: "open", closedAt: null },
-      { ...first, state: "closed", closedAt },
-    ]);
-    yield* TestClock.adjust("4 minutes");
-    assert.equal((yield* issues.issueStatuses([second, first]))[1]?.state, "closed");
-    assert.equal(harness.calls.length, 1);
-    assert.equal((yield* issues.issueStatuses([first, second], true))[1]?.state, "open");
-    assert.equal(harness.calls.length, 2);
-  }),
-);
-
 it.effect(
   "reads native hierarchy and closed blockers, and rejects partial GraphQL permission errors",
   () =>
@@ -713,27 +622,6 @@ it.effect(
       assert.equal(pullRequestError.code, "inaccessible");
       assert.include(pullRequestNumber.calls[0]!.body, "issue(number: $number)");
       const requestedIssue = payload.data.repository.issue;
-      const batch = makeHarness({
-        responses: [
-          httpResponse({
-            data: {
-              r0: {
-                i0: { ...requestedIssue, ...node(1), parent: null },
-                i1: requestedIssue,
-                i2: { ...requestedIssue, ...node(3), parent: null },
-              },
-            },
-            errors: [{ message: "Forbidden", path: ["r0", "i2", "parent"] }],
-          }),
-        ],
-      });
-      const batchIssues = yield* service(batch);
-      const batched = yield* batchIssues.workReads(listInput, [1, 2, 3]);
-      assert.deepEqual([...batched.keys()], [1, 2]);
-      assert.deepEqual(batched.get(2), read);
-      assert.deepEqual(yield* batchIssues.workReads(listInput, [3, 2, 1]), batched);
-      assert.lengthOf(batch.calls, 1);
-
       for (const issue of [
         { ...requestedIssue, number: 7 },
         {
@@ -821,17 +709,9 @@ it.effect("resolves the stable GitHub repository and issue identities", () =>
   }),
 );
 
-it.effect("rewrites T3’s status comment without invalidating roadmap reads", () =>
+it.effect("finds T3's comment by its marker and rewrites it in place", () =>
   Effect.gen(function* () {
-    const marker = `<!-- t3-issue-status:${HOST}:123:456 -->`;
-    const edited = {
-      id: 789,
-      body: `Done\n\n${marker}`,
-      created_at: "2026-10-05T00:00:00Z",
-      updated_at: "2026-10-05T00:01:00Z",
-      html_url: `https://${HOST}/${REPOSITORY}/issues/7#issuecomment-789`,
-      issue_url: `https://${HOST}/api/v3/repos/${REPOSITORY}/issues/7`,
-    };
+    const marker = "<!-- t3-issue-status:github.com:123:456 -->";
     const harness = makeHarness({
       responses: [
         httpResponse([
@@ -839,12 +719,6 @@ it.effect("rewrites T3’s status comment without invalidating roadmap reads", (
           { id: 789, body: `Working\n\n${marker}` },
         ]),
         httpResponse({}),
-        httpResponse([]),
-        httpResponse([edited]),
-        httpResponse([]),
-        httpResponse([]),
-        httpResponse([{ ...edited, id: 788, body: "An edited reply" }]),
-        httpResponse([]),
       ],
     });
     const issues = yield* service(harness);
@@ -860,28 +734,14 @@ it.effect("rewrites T3’s status comment without invalidating roadmap reads", (
     };
     const comment = yield* issues.findManagedComment({ issue, marker });
     assert.equal(comment?.id, "789");
-    const revision = yield* issues.revision(issue);
     yield* issues.updateManagedComment({
       issue,
       commentId: comment!.id,
       body: `Done\n\n${marker}`,
     });
-    assert.equal(yield* issues.revision(issue), revision);
     assert.equal(harness.calls[1]!.method, "PATCH");
     assert.isTrue(harness.calls[1]!.url.endsWith("/repos/acme/web/issues/comments/789"));
     assert.deepEqual(yield* decodeJson(harness.calls[1]!.body!), { body: `Done\n\n${marker}` });
-    const cursors = {
-      issuesSince: edited.created_at,
-      commentsSince: edited.created_at,
-      eventsAfter: 0,
-      issuesEtag: null,
-      commentsEtag: null,
-      eventsEtag: null,
-    };
-    assert.lengthOf((yield* issues.activitySince(issue, cursors)).comments.items, 1);
-    assert.equal(yield* issues.revision(issue), revision);
-    yield* issues.activitySince(issue, cursors);
-    assert.equal(yield* issues.revision(issue), revision + 1);
   }),
 );
 
@@ -1563,7 +1423,7 @@ it.effect("loads roadmap relationships without Project scope, and stops asking f
     }
     assert.equal(harness.calls.length, 3);
 
-    // Only a new credential probes for Project access again.
+    // A manual refresh probes the same token again. A new credential also gets its own probe.
     yield* issues.overlay({ ...listInput, numbers: [948] });
     yield* issues.overlay({ ...listInput, numbers: [948], refresh: true });
     credential = "another-credential";
@@ -1572,7 +1432,7 @@ it.effect("loads roadmap relationships without Project scope, and stops asking f
       decodeProjectRequest(call.body!),
     );
     assert.notInclude(remembered!.query, "projectItems(");
-    assert.notInclude(refreshed!.query, "projectItems(");
+    assert.include(refreshed!.query, "projectItems(");
     assert.include(renewed!.query, "projectItems(");
     assert.equal(harness.calls.length, 6);
   }),
@@ -1705,18 +1565,14 @@ it.effect("inbox labels preserve existing labels and tolerate a failed create", 
     const harness = makeHarness({
       responses: [
         httpResponse([{ name: "External" }]),
-        httpResponse([{ name: "External" }]),
         httpResponse({ message: "already exists" }, {}, 422),
         httpResponse({}),
         httpResponse([{ name: "other" }]),
-        httpResponse([{ name: "decision-needed" }]),
         httpResponse([{ name: "decision-needed" }, { name: "other" }]),
         { body: null, status: 204 },
       ],
     });
     const issues = yield* service(harness);
-    yield* issues.ensureLabels(listInput, [{ name: "external", color: "1d76db" }]);
-    assert.equal(yield* issues.revision(listInput), 0);
     yield* issues.ensureLabels(listInput, [
       { name: "external", color: "1d76db" },
       { name: "raced", color: "ededed" },
@@ -1724,10 +1580,7 @@ it.effect("inbox labels preserve existing labels and tolerate a failed create", 
     ]);
     const ref = { ...listInput, number: 7 };
     yield* issues.setLabels(ref, [], ["decision-needed"]);
-    assert.equal(harness.calls.length, 5, "an absent label must not be deleted");
-    assert.equal(yield* issues.revision(listInput), 1);
-    yield* issues.setLabels(ref, ["Decision-needed"], []);
-    assert.equal(yield* issues.revision(listInput), 1);
+    assert.equal(harness.calls.length, 4, "an absent label must not be deleted");
     yield* issues.setLabels(ref, [], ["decision-needed"]);
     assert.deepEqual(
       harness.calls.filter((call) => call.method === "POST").map((call) => JSON.parse(call.body!)),
@@ -1736,8 +1589,7 @@ it.effect("inbox labels preserve existing labels and tolerate a failed create", 
         { name: "high-priority", color: "b60205" },
       ],
     );
-    assert.equal(yield* issues.revision(listInput), 2);
-    assert.equal(harness.calls[7]?.method, "DELETE");
-    assert.isTrue(harness.calls[7]!.url.endsWith("/issues/7/labels/decision-needed"));
+    assert.equal(harness.calls[5]?.method, "DELETE");
+    assert.isTrue(harness.calls[5]!.url.endsWith("/issues/7/labels/decision-needed"));
   }),
 );

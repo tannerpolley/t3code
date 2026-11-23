@@ -11,7 +11,8 @@ import {
 } from "@t3tools/contracts";
 import { makeThreadFixture } from "~/test-fixtures";
 import { createLiveIssueWorkOverlay, indexIssueWork } from "./issueLiveWork.logic";
-import { issueProgress, issueStatePresentation } from "./IssueStateIcon";
+import { issueBadges, issueStage } from "@t3tools/shared/issueStage";
+import { issueStatePresentation } from "./IssueStateIcon";
 import { issueLiveWorkSummary, issueRoadmap } from "./issueRoadmap.logic";
 
 const overlay = createLiveIssueWorkOverlay();
@@ -99,14 +100,14 @@ it("follows a linked parent's sidebar status", () => {
     runtime: running.runtime,
     source: { ...root.source, status: "running" as const },
   };
-  expect(section(withLiveIssueWork(list, [root]))).toBe("ready");
+  expect(section(withLiveIssueWork(list, [root]))).toBe("backlog");
   expect(section(withLiveIssueWork(list, [workingRoot]))).toBe("in-progress");
-  expect(section(withLiveIssueWork(list, [root, running]))).toBe("ready");
+  expect(section(withLiveIssueWork(list, [root, running]))).toBe("backlog");
   expect(section(withLiveIssueWork(list, [{ ...workingRoot, archivedAt: root.updatedAt }]))).toBe(
-    "ready",
+    "backlog",
   );
   const stopped = withLiveIssueWork(list, []);
-  expect(section(stopped)).toBe("ready");
+  expect(section(stopped)).toBe("backlog");
   const foreign = { ...workingRoot, linkedIssue: { ...linkedIssue, host: "enterprise.test" } };
   expect(withLiveIssueWork(list, [foreign])).toBe(stopped);
 });
@@ -192,7 +193,7 @@ it("keeps a managed implementor's issue in progress while its reviewer runs", ()
         },
       ]),
     ),
-  ).toBe("ready");
+  ).toBe("backlog");
 });
 
 it("keeps unrelated issue and list objects identical across unrelated shell updates", () => {
@@ -232,11 +233,11 @@ it("the Linked issue summary derives the same live status as the issue list", ()
     runtime: running.runtime,
     source: { ...root.source, status: "running" as const },
   };
-  expect(
-    issueProgress(overlay.summary(issue, scope, environmentId, indexIssueWork([working]))),
-  ).toBe("in_progress");
-  expect(issueProgress(overlay.summary(issue, scope, environmentId, indexIssueWork([root])))).toBe(
-    "open",
+  expect(issueStage(overlay.summary(issue, scope, environmentId, indexIssueWork([working])))).toBe(
+    "in_progress",
+  );
+  expect(issueStage(overlay.summary(issue, scope, environmentId, indexIssueWork([root])))).toBe(
+    "backlog",
   );
 });
 
@@ -295,12 +296,12 @@ it("leaves older-server inherited work settled when an unlinked child runs", () 
   };
   const result = withLiveIssueWork(old, [root, running]);
   expect(result).toBe(old);
-  expect(section(result)).toBe("ready");
+  expect(section(result)).toBe("backlog");
   expect(
-    issueProgress(
+    issueStage(
       overlay.summary(old.issues[0]!, scope, environmentId, indexIssueWork([root, running])),
     ),
-  ).toBe("open");
+  ).toBe("backlog");
 });
 
 it("combines closing PRs with linked threads' PRs, deduplicates identity and follows streamed PR state", () => {
@@ -339,14 +340,16 @@ it("combines closing PRs with linked threads' PRs, deduplicates identity and fol
         { ...thread, pullRequests: [{ ...pr, snapshot: { ...pr.snapshot!, state: "merged" } }] },
       ]),
     ),
-  ).toBe("ready");
+  ).toBe("backlog");
   const blocked = {
     ...closing,
     issues: [
       { ...closing.issues[0]!, blockedBy: [{ ...scope, number: 9, state: "open" as const }] },
     ],
   };
-  expect(section(withLiveIssueWork(blocked, [thread, running]))).toBe("blocked");
+  const blockedResult = withLiveIssueWork(blocked, [thread, running]);
+  expect(section(blockedResult)).toBe("ready-for-review");
+  expect(issueBadges(blockedResult.issues[0]!)).toEqual(["blocked"]);
 });
 
 it("drops PRs from unlinked, dismissed and archived threads instead of retaining the cached union", () => {
@@ -379,9 +382,9 @@ it("drops PRs from unlinked, dismissed and archived threads instead of retaining
   expect(section(withLiveIssueWork(source, [thread]))).toBe("ready-for-review");
   // Dropping the PR association returns idle work to Ready.
   for (const [changed, expected] of [
-    [{ ...unlinkedRoot, pullRequests: thread.pullRequests }, "ready"],
-    [{ ...thread, archivedAt: root.updatedAt }, "ready"],
-    [{ ...thread, pullRequests: [{ ...link, source: "stack-dismissed" as const }] }, "ready"],
+    [{ ...unlinkedRoot, pullRequests: thread.pullRequests }, "backlog"],
+    [{ ...thread, archivedAt: root.updatedAt }, "backlog"],
+    [{ ...thread, pullRequests: [{ ...link, source: "stack-dismissed" as const }] }, "backlog"],
   ] as const) {
     const result = withLiveIssueWork(source, [changed]);
     expect(result.issues[0]?.pullRequests).toEqual([]);
@@ -422,7 +425,7 @@ it("counts a directly linked subagent, but inherited children do not make a sett
       },
     ],
   };
-  expect(section(withLiveIssueWork(inherited, [root, running]))).toBe("ready");
+  expect(section(withLiveIssueWork(inherited, [root, running]))).toBe("backlog");
   expect(section(withLiveIssueWork(list, [{ ...running, linkedIssue }]))).toBe("in-progress");
 });
 
@@ -435,7 +438,7 @@ it("keeps identical repository and thread IDs on separate environments apart", (
     environmentId: otherEnvironment,
   };
   const index = indexIssueWork([root, other]);
-  expect(section(overlay.list(list, environmentId, index))).toBe("ready");
+  expect(section(overlay.list(list, environmentId, index))).toBe("backlog");
   expect(section(overlay.list(list, otherEnvironment, index))).toBe("in-progress");
 });
 
@@ -475,10 +478,10 @@ it("overlays ordinary work from compact provenance when the managed thread is id
     environmentId,
     index,
   );
-  expect(issueProgress(badge)).toBe("in_progress");
-  expect(issueProgress(badge)).toBe(issueProgress(pane));
+  expect(issueStage(badge)).toBe("in_progress");
+  expect(issueStage(badge)).toBe(issueStage(pane));
   expect(
-    issueProgress(
+    issueStage(
       overlay.summary(
         summary,
         scope,
@@ -486,7 +489,7 @@ it("overlays ordinary work from compact provenance when the managed thread is id
         indexIssueWork([root], new Map([[environmentId, new Map([[ordinary.id, 10]])]])),
       ),
     ),
-  ).toBe("open");
+  ).toBe("backlog");
 });
 
 it("overlays compact sidebar status with the same live work and PR observations", () => {
@@ -507,7 +510,7 @@ it("overlays compact sidebar status with the same live work and PR observations"
     source: { ...root.source, status: "running" as const },
   };
   const progress = (shells: Parameters<typeof indexIssueWork>[0]) =>
-    issueProgress(overlay.summary(summary, scope, environmentId, indexIssueWork(shells)));
+    issueStage(overlay.summary(summary, scope, environmentId, indexIssueWork(shells)));
   expect(progress([working])).toBe("in_progress");
   expect(progress([root])).toBe("ready_for_review");
   expect(
@@ -522,9 +525,9 @@ it("overlays compact sidebar status with the same live work and PR observations"
         ],
       },
     ]),
-  ).toBe("open");
+  ).toBe("backlog");
   expect(
-    issueProgress(
+    issueStage(
       overlay.summary(
         { ...summary, state: "closed" as const },
         scope,
@@ -532,7 +535,7 @@ it("overlays compact sidebar status with the same live work and PR observations"
         indexIssueWork([working]),
       ),
     ),
-  ).toBe("completed");
+  ).toBe("done");
 });
 
 it("keeps an open compact PR ready for review while its worker is absent", () => {
@@ -544,11 +547,11 @@ it("keeps an open compact PR ready for review while its worker is absent", () =>
     liveWork: [{ threadId: running.id, status: "done" as const, pullRequests: [pr.url] }],
   };
   const progress = (index: ReturnType<typeof indexIssueWork>) =>
-    issueProgress(overlay.summary(status, scope, environmentId, index));
+    issueStage(overlay.summary(status, scope, environmentId, index));
   expect(progress(indexIssueWork([root]))).toBe("ready_for_review");
   expect(
     progress(indexIssueWork([root], new Map([[environmentId, new Map([[running.id, 1]])]]))),
-  ).toBe("open");
+  ).toBe("backlog");
 });
 
 it("retains archived worker and PR details on closed issues while preserving their closed state", () => {
@@ -572,7 +575,7 @@ it("retains archived worker and PR details on closed issues while preserving the
     status: "idle",
   });
   expect(result.issues[0]?.pullRequests?.[0]?.number).toBe(pr.number);
-  expect(issueProgress(result.issues[0]!)).toBe("completed");
+  expect(issueStage(result.issues[0]!)).toBe("done");
 });
 
 it("preserves server checkout existence for matching paths and drops it when a worker moves", () => {
@@ -619,11 +622,13 @@ it("shows the server suspension over live working state and clears it after Resu
   };
   const serverList = { ...list, issues: [{ ...list.issues[0]!, suspensionReason: reason }] };
   const suspended = withLiveIssueWork(serverList, [working]);
-  expect(issueProgress(suspended.issues[0]!)).toBe("suspended");
+  expect(issueStage(suspended.issues[0]!)).toBe("in_progress");
+  expect(issueBadges(suspended.issues[0]!)).toEqual(["suspended"]);
   expect(issueStatePresentation(suspended.issues[0]!).label).toBe(`Suspended: ${reason}`);
-  expect(section(suspended)).toBe("suspended");
+  expect(section(suspended)).toBe("in-progress");
   const resumed = withLiveIssueWork(list, [working]);
-  expect(issueProgress(resumed.issues[0]!)).toBe("in_progress");
+  expect(issueStage(resumed.issues[0]!)).toBe("in_progress");
+  expect(issueBadges(resumed.issues[0]!)).toEqual([]);
   expect(issueStatePresentation(resumed.issues[0]!).label).toBe("In progress");
 });
 

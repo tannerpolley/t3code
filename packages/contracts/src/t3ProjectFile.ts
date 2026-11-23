@@ -124,19 +124,6 @@ export const T3ProjectFile = Schema.Struct({
       T3_PROJECT_FILE_PATH_MAX_LENGTH,
     ),
   ),
-  issueWorktreeKeepPaths: Schema.optionalKey(
-    Schema.Array(
-      Schema.String.check(
-        Schema.isMaxLength(T3_PROJECT_FILE_PATH_MAX_LENGTH),
-        Schema.isPattern(
-          /^(?!.*(?:^|\/)\.{1,2}(?:\/|$))(?!.*(?:^|\/)\.git(?:\/|$))[^/\\\r\n\0*?[\]!#]+(?:\/[^/\\\r\n\0*?[\]!#]+)*$/i,
-        ),
-      ),
-    ).annotate({
-      description:
-        'Repository-relative files and directories to keep when cleaning reusable issue worktrees, for example [".venv", "build"]. Use literal paths with forward slashes.',
-    }),
-  ),
   roleSkills: Schema.optionalKey(
     Schema.Record(ThreadRole, Schema.optionalKey(RoleSkills)).annotate({
       description: "Installed plugin skill IDs to preload for delegated children, keyed by role.",

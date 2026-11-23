@@ -187,10 +187,11 @@
   "17b54fa905090a87": "Desatualizado ou incompleto",
   "fe8a0b7a0c5d9c6f": "Orçamento",
   "606105b780226d49": "Atualizar orçamento",
-  "4c3fd3add524da9b": "Transferência automática do orquestrador",
-  "2578ae9180b4292a": "Inicia um novo orquestrador do repositório quando o contexto atinge o limite de tokens e não há trabalho em andamento.",
-  "82e5d02834c683dd": "Limite para transferência (tokens)",
-  "50c54e168c9c4ab6": "Predecessor",
-  "759e59bb1b2ed0b6": "Sucessor",
-  "447f20052e59a42d": "Orquestração"
+  "9756b09ffd8a55c6": "Em andamento",
+  "9a88f2c650ccc700": "Backlog",
+  "7f7f6116f1c8f3a9": "Fechadas",
+  "4dccb48528cb04d2": "Bloqueada",
+  "d25661576338fcf0": "Precisa da sua atenção",
+  "626069229ac7aa1a": "Dependências desconhecidas",
+  "bd19196b43a87b29": "Ciclo de dependências"
 }

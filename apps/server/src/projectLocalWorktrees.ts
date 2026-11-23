@@ -15,7 +15,7 @@ import { resolveWorktreePath } from "./forkWorktreePaths.ts";
 const UNIQUE_WORKTREE_NAME_ATTEMPTS = 100;
 
 /** Preparation inside the Git driver's worktree-creation operation. */
-export const excludeProjectWorktrees = Effect.fn("GitVcsDriver.excludeProjectWorktrees")(function* (
+const excludeProjectWorktrees = Effect.fn("GitVcsDriver.excludeProjectWorktrees")(function* (
   cwd: string,
   gitCommonDir: string,
   repositoryRoot: string,

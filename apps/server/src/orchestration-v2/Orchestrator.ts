@@ -1,4 +1,3 @@
-import { automaticHandoffCompletion } from "./AutomaticRepositoryHandoff.ts";
 import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
 import { isDelegatedAppThread } from "@t3tools/contracts";
 import { silentWakeAction, SILENT_WAKE_FOLLOWUP, SILENT_WAKE_ATTENTION } from "./SilentWake.ts";
@@ -4485,19 +4484,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-    retiredRoot?: OrchestrationV2AppThread,
   ) {
-    let thread =
-      retiredRoot ??
-      (yield* projectionStore.getThread(command.threadId).pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorProjectionError({
-              threadId: command.threadId,
-              cause,
-            }),
-        ),
-      ));
+    let thread = yield* projectionStore.getThread(command.threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new OrchestratorProjectionError({
+            threadId: command.threadId,
+            cause,
+          }),
+      ),
+    );
     if (command.type === "thread.settle" && keepIssueWorktree(thread)) return;
     if (command.type === "thread.archive" && isRegisteredRepositoryRoot(thread)) {
       yield* repositoryWork.end(
@@ -10753,7 +10749,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { readonly type: "delegated_task.remote.complete" }
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     // Delivery planning reads only this task and the undelivered tasks of the queued delivery;
     // the task's own node and turn item are all it updates besides.
@@ -10849,15 +10844,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       updatedTask,
       now,
     }).pipe(mapDispatchError(command));
-    if (
-      parentProjection.thread.handoffToThreadId !== undefined &&
-      plan.task.completionDelivery?.state === "disposed"
-    ) {
-      yield* Ref.update(effects, (pending) => [
-        ...pending,
-        automaticHandoffCompletion(command.parentThreadId, updatedTask, command.commandId),
-      ]);
-    }
     const emitEvent = emit(events, command);
     yield* emitEvent({
       type: "subagent.updated",
@@ -15446,13 +15432,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: resultTransfer,
         },
       ];
-      const wake =
-        parentProjection.thread.handoffToThreadId !== undefined &&
-        completionPlan.task.completionDelivery?.state === "disposed" &&
-        !cancelled
-          ? [automaticHandoffCompletion(parentThreadId, updatedTask, childRun.id)]
-          : [];
-      yield* writeSystemEvents(completionEvents, wake, { updateDelegatedCompletionOnly: true });
+      yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
       yield* releaseFinishedDelegateSessions(childThreadId, childRun.id);
 
       if (completionPlan.offer) {
@@ -16039,13 +16019,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     dispatchThreadCreate,
     dispatchMessage,
     getProjectionWithPendingEvents,
-    archiveRetiredRoot: (commandId, thread, events, effects) =>
-      dispatchThreadMutation(
-        { type: "thread.archive", commandId, threadId: thread.id },
-        events,
-        effects,
-        thread,
-      ),
   });
 
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
@@ -16565,7 +16538,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchRemoteDelegatedTaskRequest(command, events);
         break;
       case "delegated_task.remote.complete":
-        yield* dispatchRemoteDelegatedTaskComplete(command, events, effects);
+        yield* dispatchRemoteDelegatedTaskComplete(command, events);
         break;
       case "delegated_task.remote.stop":
         yield* dispatchRemoteDelegatedTaskStop(command, events);

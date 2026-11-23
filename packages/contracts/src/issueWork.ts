@@ -84,7 +84,6 @@ export const RepositoryPhase = Schema.Literals([
   "active",
   "paused",
   "handoff_awaiting_approval",
-  "handoff_verifying",
   "draining",
   "retired",
 ]);
@@ -92,23 +91,17 @@ export type RepositoryPhase = typeof RepositoryPhase.Type;
 type RepositoryPhaseFields = {
   readonly paused: boolean;
   readonly handoff?: { readonly status: "awaiting_approval" | "draining" } | undefined;
-  readonly automaticHandoff?: { readonly status: "verifying" | "failed" } | undefined;
   readonly retiredToThreadId?: string | null | undefined;
 };
 
 export const repositoryPhase = (config: RepositoryPhaseFields): RepositoryPhase => {
   if (config.retiredToThreadId !== undefined) return "retired";
-  if (config.automaticHandoff?.status === "verifying") return "handoff_verifying";
   if (config.handoff?.status === "draining") return "draining";
   if (config.handoff !== undefined) return "handoff_awaiting_approval";
   return config.paused ? "paused" : "active";
 };
 export const isValidRepositoryPhase = (config: RepositoryPhaseFields) =>
   !(config.retiredToThreadId !== undefined && config.handoff !== undefined) &&
-  !(
-    config.automaticHandoff?.status === "verifying" &&
-    (config.handoff !== undefined || config.retiredToThreadId !== undefined)
-  ) &&
   !(config.handoff?.status === "draining" && !config.paused);
 
 // Awaiting approval preserves the existing pause state; draining admits already queued work.
@@ -149,15 +142,6 @@ export const RepositoryOrchestration = Schema.Struct({
       modelSelection: ModelSelection,
       status: Schema.Literals(["awaiting_approval", "draining"]),
       wasPaused: Schema.Boolean,
-    }),
-  ),
-  automaticHandoff: Schema.optional(
-    Schema.Struct({
-      sourceRunId: RunId,
-      requestId: CommandId,
-      contextTokens: Schema.Int,
-      startedAt: Schema.String,
-      status: Schema.Literals(["verifying", "failed"]),
     }),
   ),
   handoffHistory: Schema.optional(
@@ -397,19 +381,6 @@ export const IssueWorkStatus = Schema.Literals([
   "unavailable",
 ]);
 export type IssueWorkStatus = typeof IssueWorkStatus.Type;
-
-export const ISSUE_WORK_STATUS_LABELS = {
-  queued_preparing: "Queued / preparing",
-  working: "Working",
-  waiting_on_you: "Waiting on you",
-  waiting_on_sub_issues: "Waiting on sub-issues",
-  done: "Done",
-  failed: "Failed",
-  interrupted: "Interrupted",
-  cancelled: "Cancelled",
-  paused: "Paused",
-  unavailable: "Unavailable",
-} satisfies Record<IssueWorkStatus, string>;
 
 export const IssueWorkStartResult = Schema.Struct({
   rootThreadId: ThreadId,

@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   EventId,
+  IssueOperationError,
   IssueTrackerKind,
   MessageId,
   NodeId,
@@ -15,7 +16,6 @@ import {
   SourceControlProviderKind,
   ThreadId,
   type OrchestrationV2AppThread,
-  type RepositoryIssueRef,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -26,8 +26,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as GitManager from "../git/GitManager.ts";
-import * as TrackerIssues from "../issue/IssueService.ts";
-import * as IssueService from "../issues/IssueService.ts";
+import * as IssueService from "../issue/IssueService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import WorkerArchiveBacklog from "../persistence/ForkMigrations/031_WorkerArchiveBacklog.ts";
@@ -93,66 +92,104 @@ const layerIdentity = Layer.mock(RepositoryIdentityResolver.RepositoryIdentityRe
     }),
 });
 
-const makeRetentionLayer = (statusBatches: Array<ReadonlyArray<RepositoryIssueRef>> = []) =>
-  WorkerRetention.layer.pipe(
-    Layer.provideMerge(layerTest),
-    Layer.provide(
-      Layer.mergeAll(
-        NodeCrypto.layer,
-        ServerSettings.layerTest({}),
-        Layer.mock(TrackerIssues.IssueService)({}),
-        Layer.mock(IssueService.IssueService)({
-          issueStatuses: (refs) =>
-            Effect.sync(() => {
-              statusBatches.push(refs);
-              return refs
-                .filter(({ number }) => number !== 42)
-                .map((ref) => ({
-                  ...ref,
-                  state: ref.number === 43 ? ("closed" as const) : ("open" as const),
-                  closedAt: ref.number === 43 ? "1970-01-01T00:00:00.000Z" : null,
-                }));
-            }),
-        }),
-        FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
-        Path.layer,
-        Layer.mock(GitManager.GitManager)({
-          branchPullRequest: ({ cwd, branch }) =>
-            Effect.succeed(
-              cwd !== workspaceRoot
-                ? null
-                : {
-                    number: 48,
-                    title: "Merged pull request",
-                    url: `https://github.com/owner/${branch === "foreign" ? "another" : "project"}/pull/48`,
-                    repositoryKey: `github.com/owner/${branch === "foreign" ? "another" : "project"}`,
-                    state: "merged",
-                    headRef: branch,
-                    baseRef: "main",
-                    updatedAt: "1970-01-01T00:00:00.000Z",
-                    mergedAt: "1970-01-01T00:00:00.000Z",
-                  },
-            ),
-        }),
-        Layer.mock(PullRequestService.PullRequestService)({
-          summary: (reference) =>
-            Effect.succeed({
-              ...reference,
-              provider: SourceControlProviderKind.make("github"),
-              title: "Pull request",
-              url: "https://github.com/owner/project/pull/42",
-              state: reference.number === 42 ? "open" : "merged",
-              headBranch: "feature",
-              baseBranch: "main",
-              updatedAt: "1970-01-01T00:00:00.000Z",
-              mergedAt: "1970-01-01T00:00:00.000Z",
-            }),
-        }),
-      ),
+const layerRetentionBase = WorkerRetention.layer.pipe(
+  Layer.provideMerge(layerTest),
+  Layer.provide(
+    Layer.mergeAll(
+      NodeCrypto.layer,
+      ServerSettings.layerTest({}),
+      Layer.mock(IssueService.IssueService)({
+        detail: (input) => {
+          if (input.key === "42") {
+            return Effect.fail(new IssueOperationError({ operation: "detail", detail: "Offline" }));
+          }
+          const closed = input.key === "43";
+          const time = "1970-01-01T00:00:00.000Z";
+          return Effect.succeed({
+            ...input,
+            host: "github.com",
+            displayKey: `#${input.key}`,
+            title: "Issue",
+            url: `https://github.com/${input.scope}/issues/${input.key}`,
+            author: null,
+            state: closed
+              ? { category: "closed", name: "Closed" }
+              : { category: "open", name: "Open" },
+            createdAt: time,
+            updatedAt: time,
+            closedAt: closed ? time : null,
+            assignees: [],
+            labels: [],
+            commentCount: 0,
+            projectTitle: "Project",
+            writable: false,
+            capabilities: {
+              create: false,
+              edit: false,
+              comment: false,
+              labels: false,
+              assignees: false,
+              reactions: false,
+              templates: false,
+              linkedPullRequests: false,
+              events: false,
+              search: false,
+            },
+            viewerPermissions: {
+              setState: false,
+              comment: false,
+              edit: false,
+              labels: false,
+              assignees: false,
+            },
+            states: [],
+            viewer: null,
+            body: "",
+            comments: [],
+            commentsCursor: null,
+            events: [],
+            linkedPullRequests: [],
+          });
+        },
+      }),
+      FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
+      Path.layer,
+      Layer.mock(GitManager.GitManager)({
+        branchPullRequest: ({ cwd, branch }) =>
+          Effect.succeed(
+            cwd !== workspaceRoot
+              ? null
+              : {
+                  number: 48,
+                  title: "Merged pull request",
+                  url: `https://github.com/owner/${branch === "foreign" ? "another" : "project"}/pull/48`,
+                  repositoryKey: `github.com/owner/${branch === "foreign" ? "another" : "project"}`,
+                  state: "merged",
+                  headRef: branch,
+                  baseRef: "main",
+                  updatedAt: "1970-01-01T00:00:00.000Z",
+                  mergedAt: "1970-01-01T00:00:00.000Z",
+                },
+          ),
+      }),
+      Layer.mock(PullRequestService.PullRequestService)({
+        summary: (reference) =>
+          Effect.succeed({
+            ...reference,
+            provider: SourceControlProviderKind.make("github"),
+            title: "Pull request",
+            url: "https://github.com/owner/project/pull/42",
+            state: reference.number === 42 ? "open" : "merged",
+            headBranch: "feature",
+            baseBranch: "main",
+            updatedAt: "1970-01-01T00:00:00.000Z",
+            mergedAt: "1970-01-01T00:00:00.000Z",
+          }),
+      }),
     ),
-  );
+  ),
+);
 
-const layerRetentionBase = makeRetentionLayer();
 const layerRetention = layerRetentionBase.pipe(Layer.provide(layerIdentity));
 
 const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
@@ -353,49 +390,12 @@ it.effect("archives temporary workers after delivery or parent archive when they
   Effect.gen(function* () {
     const { service, projections, orchestrator, sink, sql, parent, createdAt, seed } =
       yield* makeFixture();
-    const worktreePath = "/workspace/worktree";
     yield* seed(parent, "open", {
       lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
-      worktreePath,
     });
     const delivered = yield* seed("reviewer-delivered", "open", {
       role: "reviewer",
       pullRequests: [],
-    });
-    // The parent's open PR and issue reach a child in its checkout through the shared branch.
-    const branchLinks = {
-      branch: "feature",
-      pullRequests: [],
-      branchPullRequest: {
-        projectId,
-        repository: "owner/project",
-        number: 42,
-        url: "https://github.com/owner/project/pull/42",
-      },
-      issues: [
-        {
-          tracker: IssueTrackerKind.make("github"),
-          host: "github.com",
-          scope: "owner/project",
-          key: "44",
-          projectId,
-          displayKey: "#44",
-          title: "Issue",
-          url: "https://github.com/owner/project/issues/44",
-          source: "agent" as const,
-          linkedAt: DateTime.formatIso(createdAt),
-        },
-      ],
-    };
-    const sharedCheckout = yield* seed("reviewer-shared-checkout", "open", {
-      role: "reviewer",
-      worktreePath,
-      ...branchLinks,
-    });
-    const ownCheckout = yield* seed("reviewer-own-checkout", "open", {
-      role: "reviewer",
-      worktreePath: "/workspace/own",
-      ...branchLinks,
     });
     const pending = yield* seed("checker-pending", "open", { role: "reviewer", pullRequests: [] });
     yield* sql`UPDATE orchestration_v2_projection_threads
@@ -452,7 +452,7 @@ it.effect("archives temporary workers after delivery or parent archive when they
       });
     });
 
-    for (const child of [delivered, sharedCheckout, ownCheckout, question, openPr, writer]) {
+    for (const child of [delivered, question, openPr, writer]) {
       yield* recordTask(parent, child, "delivered");
     }
     yield* recordTask(parent, pending, "pending");
@@ -469,8 +469,7 @@ it.effect("archives temporary workers after delivery or parent archive when they
 
     yield* service.autoArchive();
     assert.isNotNull((yield* projections.getThread(delivered)).archivedAt);
-    assert.isNotNull((yield* projections.getThread(sharedCheckout)).archivedAt);
-    for (const child of [pending, ownCheckout, question, openPr, writer, withOpenChild]) {
+    for (const child of [pending, question, openPr, writer, withOpenChild]) {
       assert.isNull((yield* projections.getThread(child)).archivedAt, child);
     }
 
@@ -481,7 +480,7 @@ it.effect("archives temporary workers after delivery or parent archive when they
     });
     yield* service.autoArchive();
     assert.isNotNull((yield* projections.getThread(pending)).archivedAt);
-    for (const child of [ownCheckout, question, openPr, writer, withOpenChild]) {
+    for (const child of [question, openPr, writer, withOpenChild]) {
       assert.isNull((yield* projections.getThread(child)).archivedAt, child);
     }
 
@@ -711,9 +710,8 @@ it.effect("discovers branch completion only in the project repository", () =>
 
 it.effect(
   "archives completed issues and discovered pull requests while keeping open or unresolved links visible",
-  () => {
-    const statusBatches: Array<ReadonlyArray<RepositoryIssueRef>> = [];
-    return Effect.gen(function* () {
+  () =>
+    Effect.gen(function* () {
       const { service, projections, seed } = yield* makeFixture();
       const branchWorker = yield* seed("branch", "open", {
         pullRequests: [],
@@ -743,24 +741,14 @@ it.effect(
       const openPr = yield* seed("open-pr-closed-issue", "open", { issues: [link("43")] });
       const openIssue = yield* seed("open-issue-merged-pr", "merged", { issues: [link("44")] });
       const unknown = yield* seed("unknown-issue-merged-pr", "merged", { issues: [link("42")] });
-      for (let index = 0; index < 20; index++) {
-        yield* seed(`open-issue-${index}`, "open", {
-          pullRequests: [],
-          branch: "own",
-          issues: [link(`${50 + index}`)],
-        });
-      }
       assert.equal((yield* service.autoArchive()).archived, 2);
-      assert.equal(statusBatches.length, 1);
-      assert.lengthOf(statusBatches[0]!, 24);
       for (const thread of [branchWorker, closed]) {
         assert.isNotNull((yield* projections.getThread(thread)).archivedAt, thread);
       }
       for (const thread of [openPr, openIssue, unknown]) {
         assert.isNull((yield* projections.getThread(thread)).archivedAt, thread);
       }
-    }).pipe(Effect.provide(makeRetentionLayer(statusBatches).pipe(Layer.provide(layerIdentity))));
-  },
+    }).pipe(Effect.provide(layerRetention)),
 );
 
 it.effect.each(["timeout", "failed exit"] as const)(

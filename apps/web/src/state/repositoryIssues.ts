@@ -68,11 +68,7 @@ const sidebarIssueRefs = Atom.family((environmentId: EnvironmentId) =>
     for (const thread of get(environmentThreadShells.environmentThreadsAtom(environmentId))) {
       const issue = thread.linkedIssue;
       if (issue === undefined || thread.archivedAt !== null) continue;
-      const ref = {
-        host: issue.host.toLowerCase(),
-        repository: issue.repository.toLowerCase(),
-        nodeId: issue.nodeId,
-      };
+      const ref = { host: issue.host.toLowerCase(), nodeId: issue.nodeId };
       refs.set(JSON.stringify(ref), ref);
     }
     return JSON.stringify(

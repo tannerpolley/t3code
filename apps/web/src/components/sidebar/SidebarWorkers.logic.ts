@@ -1,4 +1,4 @@
-import { type ThreadId, workerListParentIds } from "@t3tools/contracts";
+import { workerListParentIds } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import type { SidebarThreadSummary } from "../../types";
@@ -11,34 +11,17 @@ export function indexSidebarWorkers(threads: readonly SidebarThreadSummary[]) {
   for (const children of groupRunningSubagentsByParent(threads).values()) {
     for (const child of children) running.add(keyOf(child));
   }
-  const isWorker = (thread: SidebarThreadSummary | undefined) =>
-    thread !== undefined &&
-    thread.archivedAt === null &&
-    thread.lineage.relationshipToParent === "subagent";
-  const byKey = new Map(threads.map((thread) => [keyOf(thread), thread]));
+  const lineages = new Map(threads.map((thread) => [keyOf(thread), thread.lineage]));
   const children = new Map<string, SidebarThreadSummary[]>();
-  const parentOf = new Map<string, string>();
   for (const thread of threads) {
     const { environmentId, lineage } = thread;
-    if (!isWorker(thread)) continue;
-    const threadOf = (id: ThreadId) =>
-      byKey.get(scopedThreadKey(scopeThreadRef(environmentId, id)));
-    // A worker's own children nest under its row; others list under the listed rows above them.
-    const nested =
-      lineage.parentThreadId !== null &&
-      lineage.parentThreadId !== thread.id &&
-      isWorker(threadOf(lineage.parentThreadId));
-    const parents = nested
-      ? [lineage.parentThreadId!]
-      : thread.source.workerAncestorIds === undefined
-        ? workerListParentIds(lineage, (id) => threadOf(id)?.lineage)
+    if (thread.archivedAt !== null || lineage.relationshipToParent !== "subagent") continue;
+    const parents =
+      thread.source.workerAncestorIds === undefined
+        ? workerListParentIds(lineage, (id) =>
+            lineages.get(scopedThreadKey(scopeThreadRef(environmentId, id))),
+          )
         : [lineage.rootThreadId, ...thread.source.workerAncestorIds];
-    if (nested) {
-      parentOf.set(
-        keyOf(thread),
-        scopedThreadKey(scopeThreadRef(environmentId, lineage.parentThreadId!)),
-      );
-    }
     for (const id of parents) {
       const parent = scopedThreadKey(scopeThreadRef(environmentId, id));
       const siblings = children.get(parent);
@@ -49,28 +32,7 @@ export function indexSidebarWorkers(threads: readonly SidebarThreadSummary[]) {
   for (const siblings of children.values()) {
     siblings.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || (a.id < b.id ? 1 : -1));
   }
-  return { children, running, parentOf };
-}
-
-/** The row in `idle` that is `key` or holds it nested beneath, so a selected descendant can be revealed. */
-export function idleWorkerHolding(
-  idle: readonly SidebarThreadSummary[],
-  parentOf: ReadonlyMap<string, string>,
-  key: string,
-): ThreadId | null {
-  const idleIds = new Map(
-    idle.map((thread) => [
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      thread.id,
-    ]),
-  );
-  const seen = new Set<string>();
-  for (let at: string | undefined = key; at !== undefined && !seen.has(at); at = parentOf.get(at)) {
-    seen.add(at);
-    const id = idleIds.get(at);
-    if (id !== undefined) return id;
-  }
-  return null;
+  return { children, running };
 }
 
 export function sidebarWorkerPage(

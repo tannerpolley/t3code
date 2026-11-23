@@ -1234,28 +1234,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     )
   ) : null;
 
-  const handoffLinks =
-    thread.source.handoffFromThreadId === undefined &&
-    thread.source.handoffToThreadId === undefined ? null : (
-      <div className="flex gap-2 px-3 pb-1 text-xs text-muted-foreground">
-        {[
-          { id: thread.source.handoffFromThreadId, label: gt("Predecessor") },
-          { id: thread.source.handoffToThreadId, label: gt("Successor") },
-        ].map(({ id, label }) =>
-          id === undefined ? null : (
-            <button
-              key={id}
-              type="button"
-              className="hover:underline"
-              onClick={(event) => onThreadClick(event, scopeThreadRef(thread.environmentId, id))}
-            >
-              {label}
-            </button>
-          ),
-        )}
-      </div>
-    );
-
   const workers = (
     <SidebarWorkerRows
       thread={thread}
@@ -1319,7 +1297,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           {detailsTooltip}
         </Tooltip>
         {columns.after}
-        {handoffLinks}
         {workers}
       </li>
     );
@@ -1486,7 +1463,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
-        {handoffLinks}
         {workers}
       </li>
     );
@@ -1750,7 +1726,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
-        {handoffLinks}
         {workers}
       </li>
     );
@@ -2011,7 +1986,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
-      {handoffLinks}
       {workers}
     </li>
   );

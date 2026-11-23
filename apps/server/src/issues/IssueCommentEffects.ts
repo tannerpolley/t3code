@@ -1,7 +1,7 @@
+import { ISSUE_WORK_STATUS_LABELS } from "@t3tools/shared/issueStage";
 import {
   repositoryPhase,
   CommandId,
-  ISSUE_WORK_STATUS_LABELS,
   IssueWorkRequested,
   ThreadId,
   type ThreadLinkedIssue,

@@ -1232,7 +1232,6 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleKeepPullRequests",
-  "orchestratorHandoffTokens",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
   "speechProjectCustomWords",
@@ -1246,9 +1245,6 @@ export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOver
 
 /** Absent keys inherit; null is a value for nullable settings.
  * providerInstances overrides fields per instance; other keys replace the whole setting. */
-const OrchestratorHandoffTokens = Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0)));
-export const DEFAULT_ORCHESTRATOR_HANDOFF_TOKENS = 200_000;
-
 export const ProjectSettingsOverrides = Schema.Struct({
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -1273,7 +1269,6 @@ export const ProjectSettingsOverrides = Schema.Struct({
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
-  orchestratorHandoffTokens: Schema.optionalKey(OrchestratorHandoffTokens),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
@@ -1508,9 +1503,6 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
-  orchestratorHandoffTokens: OrchestratorHandoffTokens.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_ORCHESTRATOR_HANDOFF_TOKENS)),
-  ),
   // Compatibility for saved settings and mobile. Web edits the single recovery choice.
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1964,7 +1956,6 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
-  orchestratorHandoffTokens: Schema.optionalKey(OrchestratorHandoffTokens),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),

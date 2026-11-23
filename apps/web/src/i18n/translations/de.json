@@ -187,10 +187,11 @@
   "17b54fa905090a87": "Veraltet oder unvollständig",
   "fe8a0b7a0c5d9c6f": "Budget",
   "606105b780226d49": "Budget aktualisieren",
-  "4c3fd3add524da9b": "Automatische Orchestrator-Übergabe",
-  "2578ae9180b4292a": "Startet einen neuen Repository-Orchestrator, sobald der Kontext die Token-Schwelle erreicht und keine Arbeit läuft.",
-  "82e5d02834c683dd": "Übergabeschwelle (Token)",
-  "50c54e168c9c4ab6": "Vorgänger",
-  "759e59bb1b2ed0b6": "Nachfolger",
-  "447f20052e59a42d": "Orchestrierung"
+  "9756b09ffd8a55c6": "In Arbeit",
+  "9a88f2c650ccc700": "Backlog",
+  "7f7f6116f1c8f3a9": "Geschlossen",
+  "4dccb48528cb04d2": "Blockiert",
+  "d25661576338fcf0": "Wartet auf dich",
+  "626069229ac7aa1a": "Abhängigkeiten unbekannt",
+  "bd19196b43a87b29": "Abhängigkeitszyklus"
 }

@@ -654,13 +654,11 @@ export const make = Effect.gen(function* () {
           continue;
         }
         // Repository plans already authorize queued work. Preserve any user hold;
-        // fresh managed queues and runs awaiting admission (delegated readers) recover through
-        // the shared eligibility/admission gate, which skips held runs.
+        // fresh managed queues recover through the shared eligibility/admission gate.
         if (
           run.queueHeld === true ||
           (run.status === "queued" &&
-            (run.admissionWait !== undefined ||
-              projection.thread.linkedIssue !== undefined ||
+            (projection.thread.linkedIssue !== undefined ||
               projection.thread.repositoryOrchestration !== undefined))
         )
           continue;

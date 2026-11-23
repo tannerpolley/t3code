@@ -1,5 +1,6 @@
 import {
   IssueReadError,
+  TrimmedNonEmptyString,
   type IssueActor,
   type IssueDetailInput,
   type IssueDetailResult,
@@ -12,6 +13,7 @@ import {
   type RepositoryIssueListResult,
   type RepositoryIssueSummary,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -26,13 +28,17 @@ import { fromTrackerError, trackerIssueRef } from "./trackerIssueRef.ts";
 import * as IssueLinks from "./IssueLinks.ts";
 import * as IssueService from "./IssueService.ts";
 
+/** Rows per upstream list slice; GitHub search answers at most 100. */
+const PAGE_ROWS = 100;
+/**
+ * Upstream's list is a paid search, so rows are reused until a write or inbox activity advances
+ * the repository's revision. ponytail: the age bound covers repositories the inbox does not watch.
+ */
 const ROWS_MAX_AGE_MS = 5 * 60_000;
-const INCOMPLETE_ROWS_MAX_AGE_MS = 60_000;
-const PageNumber = Schema.Int.check(Schema.isGreaterThan(0));
 
 const Position = Schema.Struct({
-  issues: Schema.NullOr(PageNumber),
-  milestones: Schema.NullOr(PageNumber),
+  issues: Schema.NullOr(TrimmedNonEmptyString),
+  milestones: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
 });
 type Position = typeof Position.Type;
 const decodePosition = Schema.decodeUnknownOption(Schema.fromJsonString(Position));
@@ -89,7 +95,12 @@ const roadmapRow = (
   };
 };
 
-/** Issue rows with their relationships, milestones and live work. */
+const issueNumber = (key: string) => {
+  const number = Number(key);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+};
+
+/** Upstream's issue rows with the fork's overlay: relationships, milestones and live work. */
 export class IssueRoadmap extends Context.Service<
   IssueRoadmap,
   {
@@ -111,6 +122,11 @@ export const layer = Layer.effect(
     const issues = yield* IssueService.IssueService;
     const links = yield* IssueLinks.IssueLinks;
     const sql = yield* SqlClient.SqlClient;
+    const rowsCache = new Map<
+      string,
+      { readonly revision: number; readonly at: number; readonly list: RepositoryIssueListResult }
+    >();
+
     const withLiveWork = (list: RepositoryIssueListResult) =>
       links.enrich(list).pipe(
         Effect.orElseSucceed(() => ({
@@ -144,29 +160,55 @@ export const layer = Layer.effect(
       },
       position: Position | null,
     ) {
-      yield* trackerIssueRef(trackerIssues, "list", input);
-      const issuePage = position === null ? 1 : position.issues;
+      const scope = yield* trackerIssueRef(trackerIssues, "list", input);
+      const cursorKey = `${scope.host} ${scope.scope.toLowerCase()}`;
+      const issuesFrom = position === null ? undefined : position.issues;
       const milestonePage = position === null ? 1 : position.milestones;
       const [page, milestones] = yield* Effect.all(
         [
-          issuePage === null
-            ? Effect.succeed({ items: [], nextPage: null })
-            : issues.repositoryIssuesPage({ ...input, page: issuePage }),
+          issuesFrom === null
+            ? Effect.succeed(null)
+            : trackerIssues
+                .list({
+                  projectId: scope.projectId,
+                  host: scope.host,
+                  state: input.state,
+                  limit: PAGE_ROWS,
+                  ...(issuesFrom === undefined ? {} : { cursors: { [cursorKey]: issuesFrom } }),
+                })
+                .pipe(Effect.mapError(fromTrackerError("list"))),
           milestonePage === null
             ? Effect.succeed({ items: [], nextPage: null })
-            : issues.milestones({ ...input, page: milestonePage }),
+            : issues.milestones({ ...input, state: input.state, page: milestonePage }),
         ],
         { concurrency: "unbounded" },
       );
+      const entries = (page?.entries ?? []).flatMap((entry) => {
+        const number = issueNumber(entry.key);
+        return entry.tracker === "github" &&
+          entry.scope.toLowerCase() === scope.scope.toLowerCase() &&
+          number !== null
+          ? [{ entry, number }]
+          : [];
+      });
+      const failure = page?.errors.find((error) => error.projectId === scope.projectId);
+      if (failure !== undefined && entries.length === 0) {
+        const tracker = page?.trackers.find((candidate) => candidate.host === scope.host);
+        return yield* readError(
+          "list",
+          tracker?.configured === false ? "unauthenticated" : "upstream",
+          tracker?.detail ?? failure.message,
+        );
+      }
       const overlay = yield* overlayOf(
         input,
-        page.items.map(({ number }) => number),
+        entries.map(({ number }) => number),
       );
       const milestonesByNumber = new Map(
         milestones.items.map((milestone) => [milestone.number, milestone]),
       );
       const next: Position = {
-        issues: page.nextPage,
+        issues: page === null ? null : (page.nextCursors[cursorKey] ?? null),
         milestones: milestones.nextPage,
       };
       return {
@@ -175,15 +217,9 @@ export const layer = Layer.effect(
           repository: { host: input.host, repository: input.repository },
           viewer: null,
           fetchedAt: DateTime.formatIso(yield* DateTime.now),
-          issues: page.items.map((issue) => {
-            const { milestone = issue.milestone, ...facts } = overlay.facts.get(issue.number) ?? {};
-            return {
-              ...issue,
-              ...facts,
-              milestone:
-                milestone == null ? null : (milestonesByNumber.get(milestone.number) ?? milestone),
-            };
-          }),
+          issues: entries.map(({ entry, number }) =>
+            roadmapRow(entry, number, overlay.facts.get(number), milestonesByNumber),
+          ),
           milestones: milestones.items,
           nextCursor: next.issues === null && next.milestones === null ? null : encodeCursor(next),
           issuesComplete: next.issues === null,
@@ -225,12 +261,14 @@ export const layer = Layer.effect(
         ),
       };
     });
-    const ttl = (read: { readonly complete: boolean }) =>
-      read.complete ? ROWS_MAX_AGE_MS : INCOMPLETE_ROWS_MAX_AGE_MS;
-    const rowsCache =
-      IssueService.makeLiveReadCache<Effect.Success<ReturnType<typeof readRows>>>(ttl);
-    const detailCache =
-      IssueService.makeLiveReadCache<Effect.Success<ReturnType<typeof readDetail>>>(ttl);
+    const detailCache = new Map<
+      string,
+      {
+        readonly revision: number;
+        readonly at: number;
+        readonly read: Effect.Success<ReturnType<typeof readDetail>>;
+      }
+    >();
 
     return IssueRoadmap.of({
       statusBatch: Effect.fn("IssueRoadmap.statusBatch")(function* (input) {
@@ -323,18 +361,39 @@ export const layer = Layer.effect(
           );
         const key = `${input.host.toLowerCase()} ${input.repository.toLowerCase()} ${state} ${input.cursor ?? ""}`;
         const revision = yield* issues.revision(input);
-        const read = yield* rowsCache(
-          key,
-          readRows({ ...input, state }, position),
-          input.refresh,
-          revision,
-        );
+        const now = yield* Clock.currentTimeMillis;
+        const cached = rowsCache.get(key);
+        if (
+          input.refresh !== true &&
+          cached !== undefined &&
+          cached.revision === revision &&
+          now - cached.at < ROWS_MAX_AGE_MS
+        )
+          return yield* withLiveWork(cached.list);
+        const read = yield* readRows({ ...input, state }, position);
+        rowsCache.delete(key);
+        // Rows built without GitHub's relationships show them unknown; the next read retries.
+        if (read.complete) rowsCache.set(key, { revision, at: now, list: read.list });
+        if (rowsCache.size > 64) rowsCache.delete(rowsCache.keys().next().value!);
         return yield* withLiveWork(read.list);
       }),
       detail: Effect.fn("IssueRoadmap.detail")(function* (input) {
         const key = `${input.host.toLowerCase()} ${input.repository.toLowerCase()} ${input.number}`;
         const revision = yield* issues.revision(input);
-        const read = yield* detailCache(key, readDetail(input), input.refresh, revision);
+        const now = yield* Clock.currentTimeMillis;
+        const cached = detailCache.get(key);
+        const read =
+          input.refresh !== true &&
+          cached !== undefined &&
+          cached.revision === revision &&
+          now - cached.at < ROWS_MAX_AGE_MS
+            ? cached.read
+            : yield* readDetail(input);
+        if (read !== cached?.read) {
+          detailCache.delete(key);
+          if (read.complete) detailCache.set(key, { revision, at: now, read });
+          if (detailCache.size > 64) detailCache.delete(detailCache.keys().next().value!);
+        }
         const enriched = yield* links.enrich(read.list).pipe(Effect.orElseSucceed(() => read.list));
         return {
           repository: read.list.repository,

@@ -234,11 +234,7 @@ export const make = Effect.gen(function* () {
       )
         continue;
       // A paused or archived owner must not be replaced or woken by Inbox discovery.
-      if (
-        (yield* issueWork.repositoryStatus({ host, repository }, { verifyIdentity: false }))
-          .rootThreadId !== null
-      )
-        continue;
+      if ((yield* issueWork.repositoryStatus({ host, repository })).rootThreadId !== null) continue;
       if (cached !== undefined && unchanged) {
         if (cached.repository !== null) {
           repositories.push(cached.repository);

@@ -23,6 +23,10 @@
       "types": "./src/authScopeOptions.ts",
       "import": "./src/authScopeOptions.ts"
     },
+    "./issueStage": {
+      "types": "./src/issueStage.ts",
+      "import": "./src/issueStage.ts"
+    },
     "./issueWorkerStatus": {
       "types": "./src/issueWorkerStatus.ts",
       "import": "./src/issueWorkerStatus.ts"

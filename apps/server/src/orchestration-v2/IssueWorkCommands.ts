@@ -147,8 +147,7 @@ export function makeIssueWorkCommands({
         const root = thread.lineage.rootThreadId;
         if (!(yield* store.isRepositoryOrchestrator(root))) return null;
         if (yield* store.canAdmitReadOnly(root, thread.id)) return null;
-        const config = yield* store.configuration(root);
-        return config?.paused === true || config?.automaticHandoff?.status === "verifying"
+        return (yield* store.configuration(root))?.paused === true
           ? "repository_paused"
           : "read_only_limit";
       }
@@ -230,17 +229,11 @@ export function makeIssueWorkCommands({
         commandType: command.type,
         cause: `This repository root has retired. Route issue work to the current root ${repository?.rootThreadId ?? "(unavailable)"}.`,
       });
-    if (
-      repository.paused ||
-      (yield* store.configuration(command.threadId).pipe(mapDispatchError(command)))
-        ?.automaticHandoff?.status === "verifying"
-    )
+    if (repository.paused)
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: repository.paused
-          ? "The repository root is unavailable or paused."
-          : "The repository root is verifying a handoff.",
+        cause: "The repository root is unavailable or paused.",
       });
     const root = yield* projectionStore
       .getThreadShell(command.threadId)
@@ -395,18 +388,11 @@ export function makeIssueWorkCommands({
       const repositoryOwner = yield* issueStore
         .repositoryOwner(request.issue)
         .pipe(mapDispatchError(command));
-      if (
-        repositoryOwner === null ||
-        repositoryOwner.paused ||
-        root.repositoryOrchestration?.automaticHandoff?.status === "verifying"
-      )
+      if (repositoryOwner === null || repositoryOwner.paused)
         return yield* new OrchestratorDispatchError({
           commandId: request.commandId,
           commandType: request.type,
-          cause:
-            repositoryOwner === null || repositoryOwner.paused
-              ? "The repository is paused or issue relationships are unavailable."
-              : "The repository root is verifying a handoff.",
+          cause: "The repository is paused or issue relationships are unavailable.",
         });
       const read = yield* issueSnapshot(request.issue);
       if (read === undefined)

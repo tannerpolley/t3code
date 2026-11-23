@@ -14,7 +14,7 @@ vi.mock("./IssueRow", () => ({ IssueRow: () => null }));
 
 const issue: RepositoryIssueSummary = {
   number: 1,
-  title: "Ready issue",
+  title: "Backlog issue",
   url: "https://github.com/owner/repo/issues/1",
   state: "open",
   stateReason: null,
@@ -41,25 +41,27 @@ it("remembers each roadmap section across refreshes, repository changes and remo
   );
   {
     await using screen = await render(roadmap());
-    for (const section of ["Done", "In progress", "Queued", "Ready", "Blocked"]) {
+    for (const section of ["Done", "Ready for review", "In progress", "Queued"]) {
       const button = screen.getByRole("region", { name: section, exact: true }).getByRole("button");
       await expect.element(button).toHaveAttribute("aria-expanded", "true");
       await button.click();
       await expect.element(button).toHaveAttribute("aria-expanded", "false");
     }
-    await expect
-      .element(screen.getByRole("region", { name: "Closed", exact: true }).getByRole("button"))
-      .toHaveAttribute("aria-expanded", "false");
-    await screen.rerender(roadmap("owner/repo", [{ ...issue, title: "Refreshed" }]));
+    const backlog = screen
+      .getByRole("region", { name: "Backlog", exact: true })
+      .getByRole("button");
+    await expect.element(backlog).toHaveAttribute("aria-expanded", "false");
     await expect.element(screen.getByRole("listitem")).not.toBeInTheDocument();
-    await screen.rerender(roadmap("owner/other"));
+    await backlog.click();
     await expect.element(screen.getByRole("listitem")).toBeInTheDocument();
+    await screen.rerender(roadmap("owner/repo", [{ ...issue, title: "Refreshed" }]));
+    await expect.element(screen.getByRole("listitem")).toBeInTheDocument();
+    await screen.rerender(roadmap("owner/other"));
+    await expect.element(screen.getByRole("listitem")).not.toBeInTheDocument();
   }
   await using screen = await render(roadmap());
-  await expect.element(screen.getByRole("listitem")).not.toBeInTheDocument();
-  await screen.getByRole("region", { name: "Ready", exact: true }).getByRole("button").click();
   await expect.element(screen.getByRole("listitem")).toBeInTheDocument();
-  for (const section of ["Done", "In progress", "Queued", "Blocked"]) {
+  for (const section of ["Done", "Ready for review", "In progress", "Queued"]) {
     await expect
       .element(screen.getByRole("region", { name: section, exact: true }).getByRole("button"))
       .toHaveAttribute("aria-expanded", "false");
