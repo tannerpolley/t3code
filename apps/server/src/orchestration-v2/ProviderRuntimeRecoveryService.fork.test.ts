@@ -156,8 +156,12 @@ it.effect.each(["startup", "shutdown"] as const)(
 it.effect.each([
   { status: "queued", managed: false },
   { status: "queued", managed: true },
+  // A delegated reader queued behind a paused repository or a full read-only pool.
+  { status: "queued", managed: false, admissionWait: "repository_paused" },
   { status: "preparing", managed: false },
-] as const)("recovers $status work after restart (managed=$managed)", ({ status, managed }) => {
+] as const)("recovers $status work after restart (managed=$managed $admissionWait)", (row) => {
+  const { status, managed } = row;
+  const admissionWait = "admissionWait" in row ? row.admissionWait : undefined;
   const threadId = ThreadId.make("thread_queued_restart");
   const runId = RunId.make("run_queued_restart");
   const attemptId = RunAttemptId.make("attempt_queued_restart");
@@ -176,6 +180,7 @@ it.effect.each([
         status,
         queuePosition: 1,
         providerInstanceId: ProviderInstanceId.make("codex"),
+        ...(admissionWait === undefined ? {} : { admissionWait }),
         ...(status === "preparing"
           ? {
               workspacePreparation: {
@@ -247,7 +252,8 @@ it.effect.each([
       yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
     assert.equal(summary.terminalizedRuns, status === "preparing" ? 1 : 0);
     const command = committedInput;
-    if (managed) {
+    // The admission gate starts these runs; a hold would hide them from it.
+    if (managed || admissionWait !== undefined) {
       assert.isNull(command);
       return;
     }
