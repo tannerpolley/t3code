@@ -372,11 +372,10 @@ export const ForkServerSettingsFields = {
   dontAskMode: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
    * Outside agents' MCP sign-ins the owner lets answer approvals, as well as questions, in
-   * threads that sign-in started and their subagents. Set in Settings → Sharing & access.
+   * threads that sign-in launched and their subagents, by session id. A patch merges per key,
+   * so two switches saved at once both stick. Set in Settings → Sharing & access.
    */
-  mcpApprovalRelaySessionIds: Schema.Array(TrimmedNonEmptyString).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
+  mcpApprovalRelaySessions: defaulted(Schema.Record(TrimmedNonEmptyString, Schema.Boolean), {}),
   modelRoles: defaulted(ModelRoles, {}),
   modelTiers: defaulted(ModelTiers, {}),
   providerCreditsApproved: defaulted(CreditsApproved, {}),
@@ -455,7 +454,9 @@ export const ForkServerSettingsPatchFields = {
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
   issueUpkeepRequiresApproval: Schema.optionalKey(Schema.Boolean),
   dontAskMode: Schema.optionalKey(Schema.Boolean),
-  mcpApprovalRelaySessionIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  mcpApprovalRelaySessions: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, Schema.Boolean),
+  ),
   modelRoles: Schema.optionalKey(ModelRolesPatch),
   modelTiers: Schema.optionalKey(ModelTiersPatch),
   providerCreditsApproved: Schema.optionalKey(

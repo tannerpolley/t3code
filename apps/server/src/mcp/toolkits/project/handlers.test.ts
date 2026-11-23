@@ -125,7 +125,9 @@ const clientLaunchHarness = (input: {
         const launch = input.launched.find((candidate) => candidate.threadId === threadId);
         return Effect.succeed(
           launch === undefined
-            ? null
+            ? threadId === OTHER_AGENT_THREAD
+              ? ({ id: threadId, deletedAt: null } as unknown as OrchestrationV2ThreadShell)
+              : null
             : ({
                 id: launch.threadId,
                 projectId: launch.projectId,

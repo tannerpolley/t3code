@@ -203,10 +203,15 @@ const nestingParent = Effect.fn("mcp.launchNestingParent")(function* (
       message:
         "parentThreadId is for outside agents. Inside a thread, hand off work with delegate_task.",
     });
-  const parent = yield* context.threads.getThreadRecords(parentThreadId, []).pipe(
-    Effect.map(({ thread }) => thread),
-    Effect.orElseSucceed(() => null),
-  );
+  const shell = yield* context.threads
+    .getThreadShell(parentThreadId)
+    .pipe(Effect.mapError(unavailable));
+  const parent =
+    shell === null
+      ? null
+      : (yield* context.threads
+          .getThreadRecords(parentThreadId, [])
+          .pipe(Effect.mapError(unavailable))).thread;
   if (
     parent === null ||
     parent.deletedAt !== null ||
@@ -327,8 +332,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           caller === undefined && context.scope.client?.linked !== true
             ? context.scope.client?.sessionId
             : undefined;
+        // A retry replays the accepted launch, which already names its parent.
         const parent =
-          input.parentThreadId === undefined
+          input.parentThreadId === undefined || replaying
             ? undefined
             : yield* nestingParent(context, input.parentThreadId, outsideSessionId);
         const role = input.role === undefined ? undefined : resolveThreadRole(input.role);
