@@ -540,6 +540,7 @@ export interface ActiveShellIndexEntry extends Pick<
   | "id"
   | "projectId"
   | "lineage"
+  | "workerAncestorIds"
   | "settledOverride"
   | "settledAt"
   | "pinnedAt"
@@ -1312,6 +1313,7 @@ export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
 type ShellThreadRow = {
   readonly thread_id: string;
   readonly payload_json: string;
+  readonly worker_ancestor_ids: string | null;
   readonly native_subagent_payload_json: string | null;
   readonly forked_from_run_source_thread_id: string | null;
   readonly latest_run_id: string | null;
@@ -1402,6 +1404,13 @@ const shellIndexLineage = (row: {
 });
 
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const decodeWorkerAncestorIds = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Array(ThreadId)),
+);
+const workerAncestorsFromRow = ({ worker_ancestor_ids }: { worker_ancestor_ids: string | null }) =>
+  worker_ancestor_ids === null || worker_ancestor_ids === "[]"
+    ? {}
+    : { workerAncestorIds: decodeWorkerAncestorIds(worker_ancestor_ids) };
 
 // Empty filters still scan SQLite rows; short-circuit them, including turnItemTypes: [].
 const matchesNothing = (...filters: ReadonlyArray<ReadonlyArray<unknown> | undefined>) =>
@@ -2181,6 +2190,7 @@ function isActivityRunForShell(
 }
 
 type ShellThreadState = {
+  readonly workerAncestorIds?: ReadonlyArray<ThreadId>;
   readonly thread: OrchestrationV2ThreadProjection["thread"];
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
@@ -2385,6 +2395,9 @@ function shellFromState(input: {
       ? {}
       : { activeOrderKey: input.state.thread.activeOrderKey }),
     lineage: input.state.thread.lineage,
+    ...(input.state.workerAncestorIds === undefined
+      ? {}
+      : { workerAncestorIds: input.state.workerAncestorIds }),
     forkedFrom: input.state.thread.forkedFrom,
     activeProviderThreadId: input.state.thread.activeProviderThreadId,
     ...(input.state.thread.historyOrigin === undefined
@@ -8580,6 +8593,36 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       )`;
     };
 
+    // Migration 98 indexes these exact expressions for the active shell index.
+    const indexedField = (path: string, read: "json_extract" | "json_type" = "json_extract") =>
+      sql.literal(
+        `CASE WHEN json_valid(t.payload_json) THEN ${read}(t.payload_json, '${path}') END`,
+      );
+    const workerParent = indexedField("$.lineage.parentThreadId");
+    const workerRoot = indexedField("$.lineage.rootThreadId");
+    const workerAncestorIds = sql`
+      CASE WHEN ${indexedField("$.lineage.relationshipToParent")} = 'subagent'
+        AND ${workerParent} <> ${workerRoot}
+      THEN (
+        WITH RECURSIVE ancestors(id) AS (
+          SELECT ${workerParent}
+          UNION
+          SELECT CASE WHEN json_valid(parent.payload_json)
+            THEN json_extract(parent.payload_json, '$.lineage.parentThreadId') END
+          FROM ancestors
+          JOIN orchestration_v2_projection_threads parent ON parent.thread_id = ancestors.id
+          WHERE ancestors.id <> ${workerRoot} AND ancestors.id <> t.thread_id
+        )
+        SELECT json_group_array(parent.thread_id ORDER BY parent.thread_id)
+        FROM ancestors
+        JOIN orchestration_v2_projection_threads parent ON parent.thread_id = ancestors.id
+        WHERE ancestors.id <> ${workerRoot} AND ancestors.id <> t.thread_id
+          AND CASE WHEN json_valid(parent.payload_json) THEN
+            json_extract(parent.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+            AND json_extract(parent.payload_json, '$.lineage.sideChat') IS NOT 1
+          END
+      ) END`;
+
     const selectShellThreadRows = (
       threadId?: ThreadId,
       {
@@ -8601,6 +8644,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
+              ${workerAncestorIds} AS worker_ancestor_ids,
               ${nativeSubagentPayload} AS native_subagent_payload_json,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
@@ -9524,6 +9568,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ];
         return {
           thread,
+          ...workerAncestorsFromRow(row),
           latestRunId,
           latestRunStatus,
           latestRunRequestedAt,
@@ -9603,14 +9648,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT child.thread_id
             FROM descendants
             CROSS JOIN orchestration_v2_projection_threads child
-            WHERE child.deleted_at IS NULL
-              AND CASE WHEN json_valid(child.payload_json)
+            WHERE CASE WHEN json_valid(child.payload_json)
                 THEN json_extract(child.payload_json, '$.lineage.parentThreadId') END = +descendants.thread_id
           )
           SELECT thread_id, created_at, count(*) OVER () AS total
           FROM descendants
           JOIN orchestration_v2_projection_threads USING (thread_id)
-          WHERE thread_id <> ${workerPage.parentThreadId} AND archived_at IS NULL
+          WHERE thread_id <> ${workerPage.parentThreadId} AND archived_at IS NULL AND deleted_at IS NULL
             AND CASE WHEN json_valid(payload_json)
               THEN json_extract(payload_json, '$.lineage.relationshipToParent') END = 'subagent'
             ${workerPage.before === undefined ? sql`` : sql`AND (created_at, thread_id) < (${workerPage.before.createdAt}, ${workerPage.before.threadId})`}
@@ -9997,12 +10041,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0]?.count ?? 0;
     }, Effect.mapError(shellSnapshotReadError));
 
-    // Migration 98 indexes these exact expressions, so the read takes them from the index instead
-    // of parsing every active thread's payload. Changing one here needs a matching index change.
-    const indexedField = (path: string, read: "json_extract" | "json_type" = "json_extract") =>
-      sql.literal(
-        `CASE WHEN json_valid(t.payload_json) THEN ${read}(t.payload_json, '${path}') END`,
-      );
     // The planner otherwise scans the whole (thread_id, type, status) index for this list.
     const PENDING_ITEMS_INDEX = sql.literal(
       "INDEXED BY orchestration_v2_projection_turn_items_shell_pending_idx",
@@ -10015,6 +10053,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly parent_thread_id: string | null;
         readonly root_thread_id: string;
         readonly side_chat: number | null;
+        readonly worker_ancestor_ids: string | null;
         readonly settled_override: string | null;
         readonly settled_at: string | null;
         readonly pinned_at: string | null;
@@ -10030,6 +10069,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ${indexedField("$.lineage.parentThreadId")} AS parent_thread_id,
           ${indexedField("$.lineage.rootThreadId")} AS root_thread_id,
           ${indexedField("$.lineage.sideChat")} AS side_chat,
+          ${workerAncestorIds} AS worker_ancestor_ids,
           ${indexedField("$.settledOverride")} AS settled_override,
           ${indexedField("$.settledAt")} AS settled_at,
           ${indexedField("$.pinnedAt")} AS pinned_at,
@@ -10091,6 +10131,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         id: ThreadId.make(row.thread_id),
         projectId: ProjectId.make(row.project_id),
         lineage: shellIndexLineage(row),
+        ...workerAncestorsFromRow(row),
         settledOverride:
           row.settled_override === "settled" || row.settled_override === "active"
             ? row.settled_override

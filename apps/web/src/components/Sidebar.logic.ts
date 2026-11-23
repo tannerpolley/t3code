@@ -1022,7 +1022,9 @@ export function groupRunningSubagentsByParent<
     | "hasPendingUserInput"
     | "hasPendingApprovals"
     | "pendingBackgroundTasks"
-  > & { readonly source: Pick<SidebarThreadSummary["source"], "creationSource"> },
+  > & {
+    readonly source: Pick<SidebarThreadSummary["source"], "creationSource" | "workerAncestorIds">;
+  },
 >(threads: readonly TThread[]): ReadonlyMap<string, TThread[]> {
   const pendingTaskChildIds = new Set(
     threads.flatMap((thread) =>
@@ -1101,10 +1103,12 @@ export function groupRunningSubagentsByParent<
           };
     const parentKey = keyOf(thread, thread.lineage.parentThreadId!);
     add(parentKey, thread);
-    // A subagent whose direct parent has no row still reaches the root row.
-    const rootKey = keyOf(thread, thread.lineage.rootThreadId);
-    if (!listed.has(parentKey) && !threadRows.has(parentKey) && rootKey !== parentKey)
-      add(rootKey, thread);
+    if (!listed.has(parentKey) && !threadRows.has(parentKey)) {
+      for (const id of [thread.lineage.rootThreadId, ...(thread.source.workerAncestorIds ?? [])]) {
+        const ancestorKey = keyOf(thread, id);
+        if (ancestorKey !== parentKey) add(ancestorKey, thread);
+      }
+    }
   }
   return byParent;
 }
