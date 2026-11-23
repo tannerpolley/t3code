@@ -19,15 +19,16 @@ function keepLocalRecord(record: TraceRecord): boolean {
     (typeof lockWaitMs === "number" && lockWaitMs >= 100) ||
     record.events.length > 0 ||
     launchSpans.has(record.name) ||
+    record.name === "server.heap.spike" ||
+    Object.hasOwn(record.attributes, "memory.heap_growth_bytes") ||
     (record.type === "effect-span"
       ? record.exit._tag === "Failure"
       : record.status?.code === "2") ||
-    (typeof record.traceId === "string" &&
-      Number.parseInt(record.traceId.slice(-8), 16) % 100 === 0)
+    (typeof record.spanId === "string" && Number.parseInt(record.spanId.slice(-8), 16) % 100 === 0)
   );
 }
 
-// Keep the sampling decision local to disk and consistent across spans that share a trace ID.
+// The worker and commit loops can share a trace ID for the lifetime of the server.
 export const makeServerTraceSink = (options: TraceSinkOptions) =>
   makeTraceSink(options).pipe(
     Effect.map((sink) => ({

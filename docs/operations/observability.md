@@ -42,11 +42,12 @@ server starts: production and explicitly configured homes use
 `<worktree>/.t3/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
 worktree uses `~/.t3/dev/logs/server.trace.ndjson`.
 
-The server's local file keeps one percent of traces by trace ID, plus individual failed spans,
-spans with events, spans lasting at least one second, SQL spans that waited at least 100 ms for a
-connection, and thread launch and provider start milestones. This also applies to renderer spans
-written to the server file. A span retained outside the sample may have missing parents or children.
-OTLP export uses the original sampling decision.
+The server's local file samples one percent of routine spans by span ID. It always keeps failures,
+events, spans lasting at least one second, SQL spans that waited at least 100 ms for a connection,
+thread launch and provider start milestones, heap spike signals, and spans tagged with
+`memory.heap_growth_bytes`. Interrupted spans are sampled unless another retention rule applies.
+The policy also applies to renderer spans written to the server file. A retained span may have
+missing parents or children. OTLP export uses the original sampling decision.
 
 Important fields common to both record types:
 
