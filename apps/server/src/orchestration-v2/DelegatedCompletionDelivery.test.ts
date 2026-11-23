@@ -4524,6 +4524,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           (run) => run.userMessageId === wakeMessageId,
         );
         assert.isDefined(wakeRun?.delegatedTaskId);
+        assert.notEqual(wakeRun?.delegatedTaskId, owner.taskId);
         const before = yield* eventSink.latestSequence();
         yield* eventSink.write({
           events: [

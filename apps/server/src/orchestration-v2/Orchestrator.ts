@@ -10317,7 +10317,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (run === undefined || run.delegatedTaskId !== undefined) return;
     const completion = command.delegatedCompletion;
     const wakeRuns =
-      command.notification === undefined && command.delegatedCompletion === undefined
+      command.notification === undefined && completion?.parentRunId == null
         ? []
         : (yield* projectionStore
             .getThreadRecords(command.threadId, ["runs"])
@@ -10328,7 +10328,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .filter((row) => row.id !== run.id && row.delegatedTaskId !== undefined)
             .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.delegatedTaskId
         : wakeRuns.find((row) => row.id === completion.parentRunId)?.delegatedTaskId;
-    if (completion !== undefined && followupId === undefined) return;
+    if (completion?.parentRunId != null && followupId === undefined) return;
     const parent = yield* projectionStore
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
         subagentIds: [
