@@ -1,7 +1,8 @@
 import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
-import { issueWorkerBrief } from "../issues/IssueWorkerBrief.ts";
+import { isDraftPrRepository, issueWorkerBrief } from "../issues/IssueWorkerBrief.ts";
 import { IssueTrackerKind, MessageId } from "@t3tools/contracts";
 import type {
+  DelegatedToolAdditions,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -19,6 +20,7 @@ import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentPro
 import type { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
@@ -39,6 +41,12 @@ import type { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
 import type { OrchestratorDispatchError, OrchestratorV2Error } from "./Orchestrator.ts";
 import type { ProjectionStoreV2, ProjectionRecords } from "./ProjectionStore.ts";
 import type { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
+
+function toolAdditionKeys(additions: DelegatedToolAdditions) {
+  return new Set(
+    additions.map((entry) => (typeof entry === "string" ? entry : `mcp:${entry.mcpServer}`)),
+  );
+}
 
 export type DelegatedTaskRequest = Omit<
   Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
@@ -327,9 +335,7 @@ export function makeIssueWorkCommands({
         task: issueWorkerBrief(
           command.issue,
           command.issueWorktree !== undefined &&
-            draftPrRepositories.has(
-              `${command.issue.host}/${command.issue.repository}`.toLowerCase(),
-            ),
+            isDraftPrRepository(draftPrRepositories, command.issue),
         ),
         modelSelection: command.workerModelSelection,
         runtimeMode: recipient.runtimeMode,
@@ -472,6 +478,18 @@ export function makeIssueWorkCommands({
               commandType: request.type,
               cause:
                 "This issue already has a current worker under another parent. Read its issue status and use that parent thread to manage it.",
+            });
+          if (
+            request.enableTools !== undefined &&
+            !Equal.equals(
+              toolAdditionKeys(request.enableTools),
+              toolAdditionKeys(current.thread.enableTools ?? []),
+            )
+          )
+            return yield* new OrchestratorDispatchError({
+              commandId: request.commandId,
+              commandType: request.type,
+              detail: "The existing issue worker keeps its original tool selection.",
             });
           if (finished) {
             const message = {

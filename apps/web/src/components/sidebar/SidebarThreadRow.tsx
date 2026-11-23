@@ -1,3 +1,7 @@
+import { isIssueWorkerChild } from "@t3tools/shared/issueWorkerStatus";
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import { useWorkerStatusLabels } from "../issues/IssueLiveWork";
+import { useSidebarIssueWorkerStatus } from "../../state/repositoryIssues";
 import { useGT } from "gt-react";
 import { ThreadWorktreeIndicator } from "../ThreadStatusIndicators";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
@@ -50,6 +54,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotDashedIcon,
+  CircleDotIcon,
   CirclePauseIcon,
   ClockIcon,
   GitBranchIcon,
@@ -521,6 +526,8 @@ const TOP_STATUS_ICONS = {
   request: UserRoundIcon,
   approval: ShieldQuestionIcon,
   failed: CircleAlertIcon,
+  idle: CircleDotIcon,
+  ready_for_review: PullRequestGlyph.pullRequest,
   done: CircleCheckIcon,
   woke: AlarmClockIcon,
 } as const;
@@ -775,6 +782,12 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     resolveSidebarRowStatus({ ...thread, lastVisitedAt }),
     props.childThreads,
   );
+  const workerStatus = useSidebarIssueWorkerStatus(
+    thread,
+    variant !== "columns" && status === "ready",
+  );
+  const workerLabels = useWorkerStatusLabels();
+  const isManagedWorker = isIssueWorkerChild(thread.source);
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -848,13 +861,24 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                           icon: "woke" as const,
                           className: "text-warning-foreground",
                         }
-                      : isUnread
-                        ? {
-                            label: "Done",
-                            icon: "done" as const,
-                            className: "text-success-foreground",
-                          }
-                        : null;
+                      : workerStatus === "idle" ||
+                          workerStatus === "ready_for_review" ||
+                          workerStatus === "done"
+                        ? ({
+                            label: workerLabels[workerStatus],
+                            icon: workerStatus,
+                            className:
+                              workerStatus === "done"
+                                ? "text-success-foreground"
+                                : "text-muted-foreground",
+                          } as const)
+                        : isUnread && !isManagedWorker
+                          ? {
+                              label: "Done",
+                              icon: "done" as const,
+                              className: "text-success-foreground",
+                            }
+                          : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({

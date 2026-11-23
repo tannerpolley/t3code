@@ -385,6 +385,7 @@ const make = Effect.gen(function* () {
             threadId: parent.thread.id,
             title: parent.thread.title,
             role: delegatedTaskRole(input.role, false),
+            ...(input.enableTools === undefined ? {} : { enableTools: input.enableTools }),
           },
         },
       );

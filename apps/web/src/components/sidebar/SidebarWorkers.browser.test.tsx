@@ -32,22 +32,21 @@ vi.mock(import("../../state/threads"), async (original) => {
     remainingWorkers: 1,
   };
   const pagingFixture = Atom.family((key: string) => {
-    const [, parentId, count] = JSON.parse(key) as [string, string, number];
+    const [, parentId] = JSON.parse(key) as [string, string];
     const growing = parentId === "Growing parent";
+    const count = Atom.make(1);
     const rows = Atom.make(
-      count === 0
-        ? []
-        : growing
-          ? [{ snapshotSequence: 1, threads: [], remainingWorkers: 0 }]
-          : [page],
+      growing ? [{ snapshotSequence: 1, threads: [], remainingWorkers: 0 }] : [page],
     );
+    const failed = Atom.make(AsyncResult.initial<never, never>());
     return {
+      count,
       rows,
-      state: Atom.map(rows, (pages) => ({
-        pages,
+      state: Atom.make((get) => ({
+        generation: 1,
+        pages: get(rows),
         waiting: false,
-        failedQuery:
-          !growing && count === 2 ? Atom.make(AsyncResult.initial<never, never>()) : null,
+        failedQuery: !growing && get(count) === 2 ? failed : null,
       })),
     };
   });
@@ -60,7 +59,7 @@ vi.mock(import("../../state/threads"), async (original) => {
     threadFamilies: {
       ...actual.threadFamilies,
       workerPages: (key: string) => {
-        const [, parentId] = JSON.parse(key) as [string, string, number];
+        const [, parentId] = JSON.parse(key) as [string, string];
         return parentId === "Paged parent" || parentId === "Growing parent"
           ? pagingFixture(key)
           : actual.threadFamilies.workerPages(key);

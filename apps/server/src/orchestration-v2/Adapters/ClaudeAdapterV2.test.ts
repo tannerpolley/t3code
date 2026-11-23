@@ -8319,10 +8319,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             usageStatus: queryExits ? "partial" : "complete",
             hasSubagents: false,
             inputTokens: queryExits ? 3100 : 603 + 2847 + 11455,
+            uncachedInputTokens: queryExits ? 600 : 603,
             outputTokens: queryExits ? 40 : 46,
             cachedInputTokens: queryExits ? 2000 : 11455,
             cacheCreationTokens: queryExits ? 500 : 2847,
-            ...(queryExits ? {} : { models: ["claude-sonnet-4-6"] }),
+            ...(queryExits
+              ? {}
+              : {
+                  models: ["claude-sonnet-4-6"],
+                  requestCount: 2,
+                  firstInputContext: 1,
+                  peakInputContext: 1,
+                }),
           },
         );
       }
@@ -10736,6 +10744,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             usageStatus: "complete",
             hasSubagents: false,
             inputTokens: 1,
+            uncachedInputTokens: 1,
             outputTokens: 1,
             cachedInputTokens: 0,
             cacheCreationTokens: 0,

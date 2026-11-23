@@ -1548,6 +1548,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
             kind: "delegated_task",
             taskIds: [task.id],
             childThreadId: task.childThreadId!,
+            wakeReason: "child_question",
           },
           outcome: "updated",
           summary: 'Delegated task "Research the sources" has a question',
@@ -1752,6 +1753,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       kind: "delegated_task",
       taskIds: [followup.delegatedTaskId],
       childThreadId: task.childThreadId!,
+      wakeReason: "child_question",
     });
   }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );

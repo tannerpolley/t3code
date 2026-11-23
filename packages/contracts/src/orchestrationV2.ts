@@ -79,6 +79,7 @@ import {
   ThreadPullRequestWatch,
 } from "./threadPullRequest.ts";
 import {
+  DelegatedToolAdditions,
   ProviderApprovalDecision,
   ProviderApprovalFullAccessOverride,
   ProviderApprovalOption,
@@ -150,6 +151,7 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
   threadId: ThreadId,
   title: Schema.String,
   role: Schema.optionalKey(ThreadRole),
+  enableTools: Schema.optional(DelegatedToolAdditions),
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
@@ -584,6 +586,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  enableTools: Schema.optional(DelegatedToolAdditions),
   roleSkillSelection: Schema.optionalKey(Schema.NullOr(RoleSkillSelection)),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
@@ -839,6 +842,17 @@ export function orchestrationV2RunAdmissionWaitLabel(wait: OrchestrationV2RunAdm
 }
 
 export const OrchestrationV2Run = Schema.Struct({
+  usageAttribution: Schema.optional(
+    Schema.Struct({
+      projectId: ProjectId,
+      role: Schema.optional(ThreadRoleInput),
+      linkedIssue: Schema.optional(ThreadLinkedIssue),
+      issue: Schema.optional(ThreadIssueLink),
+      parentThreadId: Schema.NullOr(ThreadId),
+      delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+      stage: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
   id: RunId,
   threadId: ThreadId,
   ordinal: PositiveInt,
@@ -920,6 +934,7 @@ export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
   // Provider-thread rows can be reused after recovery; retain the native input destination.
   nativeThreadId: Schema.optional(Schema.String),
+  startedModelSelection: Schema.optional(ModelSelection),
   runId: RunId,
   attemptOrdinal: PositiveInt,
   rootNodeId: NodeId,
@@ -1515,6 +1530,7 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
       ...NotificationSourceFields,
       kind: Schema.Literal("delegated_task"),
       taskIds: Schema.Array(NodeId),
+      wakeReason: Schema.optional(Schema.Literals(["child_question", "child_approval"])),
       childThreadId: Schema.optional(ThreadId),
     }),
     Schema.Struct({
@@ -1556,7 +1572,11 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
         }),
       ),
     }),
-    Schema.Struct({ ...NotificationSourceFields, kind: Schema.Literal("system") }),
+    Schema.Struct({
+      ...NotificationSourceFields,
+      kind: Schema.Literal("system"),
+      wakeReason: Schema.optional(Schema.Literals(["owner_decision", "provider_retry"])),
+    }),
   ],
   (kind) => Schema.Struct({ ...NotificationSourceFields, kind }),
   (source) => ({ ...source, kind: "background_task" }),
@@ -1606,6 +1626,8 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
       parentRunId: Schema.NullOr(RunId),
       generation: PositiveInt,
       taskIds: Schema.Array(NodeId),
+      batched: Schema.optional(Schema.Boolean),
+      containsFailure: Schema.optional(Schema.Boolean),
     }),
   ),
 });
@@ -3908,6 +3930,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("delegated_task.request"),
     role: Schema.optional(ThreadRoleInput),
     issue: Schema.optional(ThreadLinkedIssue),
+    enableTools: Schema.optional(DelegatedToolAdditions),
     roleSkillSelection: Schema.optionalKey(Schema.NullOr(RoleSkillSelection)),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,

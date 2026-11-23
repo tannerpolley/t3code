@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -13,7 +14,7 @@ import {
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -82,13 +83,14 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionStatusDot";
 import {
   AuthOrchestrationOperateScope,
+  AuthDiagnosticsReadScope,
   clampManagedRuntimeMode,
   managedCapabilityDenial,
 } from "@t3tools/contracts";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ManagedNotice } from "../ManagedPolicy";
-import { readEnvironmentScope } from "~/state/session";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
@@ -741,6 +743,7 @@ function ScheduledTaskRow({
   );
   const [busy, setBusy] = useState(false);
   const [deliveriesOpen, setDeliveriesOpen] = useState(false);
+  const isBudget = task.action === "usage_budget";
   const isWebhook = task.schedule.type === "webhook";
   const toggle = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
     label: "scheduled task enabled",
@@ -781,7 +784,7 @@ function ScheduledTaskRow({
   return (
     <SettingsRow
       title={task.title}
-      description={<span className="line-clamp-2">{task.prompt}</span>}
+      description={isBudget ? undefined : <span className="line-clamp-2">{task.prompt}</span>}
       status={
         <div className="flex flex-wrap items-center gap-2">
           <span>
@@ -862,7 +865,63 @@ function ScheduledTaskRow({
           ) : null}
         </div>
       }
-    />
+    >
+      {isBudget ? <ScheduledUsageBudgetDetails environmentId={environmentId} task={task} /> : null}
+    </SettingsRow>
+  );
+}
+
+function ScheduledUsageBudgetDetails({
+  environmentId,
+  task,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly task: ScheduledTask;
+}) {
+  const gt = useGT();
+  const [open, setOpen] = useState(false);
+  const canRead = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
+  const query = useEnvironmentQuery(
+    open && canRead
+      ? serverEnvironment.scheduledUsageBudgetReport({ environmentId, input: { taskId: task.id } })
+      : null,
+  );
+  const refresh = query.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a scheduled occurrence can publish a new report while details are open
+  useEffect(() => {
+    if (open && canRead && task.lastRunStatus === "succeeded" && task.lastRunAt !== null) refresh();
+  }, [open, canRead, task.lastRunStatus, task.lastRunAt, refresh]);
+  return (
+    <details
+      className="mt-2 text-xs text-muted-foreground"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="cursor-pointer">{gt("Usage budget report")}</summary>
+      {open ? (
+        <div className="mt-2 space-y-2">
+          {query.isPending ? <p>{gt("Reading report…")}</p> : null}
+          {query.error ? <p role="status">{query.error}</p> : null}
+          {query.data !== null ? (
+            <>
+              <p>
+                {gt("Last reported {time}", {
+                  time: new Date(query.data.recordedAt).toLocaleString(),
+                })}
+              </p>
+              <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap break-words">
+                {query.data.text}
+              </pre>
+            </>
+          ) : !query.isPending && !query.error ? (
+            <p>
+              {canRead
+                ? gt("No report yet.")
+                : gt("Diagnostics access is required to read this report.")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </details>
   );
 }
 
@@ -1359,6 +1418,7 @@ function ScheduledTaskEditorForm({
   readonly onSavingChange: (saving: boolean) => void;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
@@ -1406,6 +1466,8 @@ function ScheduledTaskEditorForm({
         project.id === task?.projectId,
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
+  const offersBudget = environment?.serverConfig?.environment.capabilities.usageBudget === true;
+  const isBudget = draft.action === "usage_budget";
   const submissionPending = useRef(false);
   const editingTaskMissing =
     draft.editingId !== null &&
@@ -1470,10 +1532,14 @@ function ScheduledTaskEditorForm({
       tasksQuery.data === null
     )
       return;
-    const selection = activeSelection;
+    const selection = isBudget
+      ? (draft.baseModelSelection ??
+        activeSelection ?? { instanceId: "codex" as ProviderInstanceId, model: "default" })
+      : activeSelection;
     if (
       !draft.title.trim() ||
-      !draft.prompt.trim() ||
+      (!isBudget && !draft.prompt.trim()) ||
+      (isBudget && !offersBudget) ||
       !projects.some((project) => project.id === selectedProjectId) ||
       selection === null
     ) {
@@ -1537,7 +1603,8 @@ function ScheduledTaskEditorForm({
     const input: ScheduledTaskUpsertInput = {
       ...(draft.editingId ? { id: draft.editingId as ScheduledTaskId, requireExisting: true } : {}),
       title: draft.title.trim(),
-      prompt: draft.prompt.trim(),
+      ...(offersBudget ? { action: draft.action ?? "prompt" } : {}),
+      prompt: isBudget ? "Usage budget report" : draft.prompt.trim(),
       enabled: draft.enabled,
       schedule,
       projectId: selectedProjectId as ProjectId,
@@ -1666,29 +1733,64 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          <ScheduledTaskDestination
-            environmentId={environmentId}
-            projectId={selectedProjectId}
-            threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
-            threadMode={draft.threadMode}
-            disabled={saving || !connected}
-            onSelect={(thread) =>
-              setDraft((current) =>
-                thread === null
-                  ? { ...unbindDraftFromThread(current), threadMode: "new_thread" }
-                  : moveDraftToThread(current, thread),
-              )
-            }
-            onThreadModeChange={
-              offersThreadModes
-                ? (threadMode) =>
-                    setDraft((current) => ({
-                      ...(threadMode === "new_thread" ? unbindDraftFromThread(current) : current),
-                      threadMode,
-                    }))
-                : undefined
-            }
-          />
+          {offersBudget ? (
+            <Field label={gt("Action")} htmlFor="scheduled-task-action">
+              <Select
+                value={draft.action ?? "prompt"}
+                onValueChange={(action) => {
+                  if (action !== "prompt" && action !== "usage_budget") return;
+                  setDraft((current) => ({
+                    ...current,
+                    action,
+                    prompt:
+                      task?.action === "usage_budget" &&
+                      action === "prompt" &&
+                      current.prompt === task.prompt
+                        ? ""
+                        : current.prompt,
+                    scheduleMode:
+                      action === "usage_budget" && current.scheduleMode === "webhook"
+                        ? "fixed"
+                        : current.scheduleMode,
+                  }));
+                }}
+              >
+                <SelectTrigger id="scheduled-task-action" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="prompt">{gt("Run a prompt")}</SelectItem>
+                  <SelectItem value="usage_budget">{gt("Usage budget report")}</SelectItem>
+                </SelectPopup>
+              </Select>
+            </Field>
+          ) : null}
+
+          {!isBudget ? (
+            <ScheduledTaskDestination
+              environmentId={environmentId}
+              projectId={selectedProjectId}
+              threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
+              threadMode={draft.threadMode}
+              disabled={saving || !connected}
+              onSelect={(thread) =>
+                setDraft((current) =>
+                  thread === null
+                    ? { ...unbindDraftFromThread(current), threadMode: "new_thread" }
+                    : moveDraftToThread(current, thread),
+                )
+              }
+              onThreadModeChange={
+                offersThreadModes
+                  ? (threadMode) =>
+                      setDraft((current) => ({
+                        ...(threadMode === "new_thread" ? unbindDraftFromThread(current) : current),
+                        threadMode,
+                      }))
+                  : undefined
+              }
+            />
+          ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Project" htmlFor="scheduled-task-project">
@@ -1721,26 +1823,28 @@ function ScheduledTaskEditorForm({
               </Select>
             </Field>
 
-            <Field label="Workspace" htmlFor="scheduled-task-workspace">
-              <Select
-                value={draft.workspaceMode}
-                onValueChange={(value) =>
-                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-workspace">
-                  <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value="worktree">Create a new worktree</SelectItem>
-                  <SelectItem value="root">Use the project checkout</SelectItem>
-                  <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
-                </SelectPopup>
-              </Select>
-            </Field>
+            {!isBudget ? (
+              <Field label="Workspace" htmlFor="scheduled-task-workspace">
+                <Select
+                  value={draft.workspaceMode}
+                  onValueChange={(value) =>
+                    setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
+                  }
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-workspace">
+                    <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="worktree">Create a new worktree</SelectItem>
+                    <SelectItem value="root">Use the project checkout</SelectItem>
+                    <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
+                  </SelectPopup>
+                </Select>
+              </Field>
+            ) : null}
           </div>
 
-          {draft.workspaceMode === "worktree" ? (
+          {!isBudget && draft.workspaceMode === "worktree" ? (
             <Field label="Base branch" htmlFor="scheduled-task-base-ref">
               <WorktreeBaseBranchPicker
                 key={`${environmentId}:${selectedProjectId}`}
@@ -1757,7 +1861,7 @@ function ScheduledTaskEditorForm({
               />
             </Field>
           ) : null}
-          {draft.workspaceMode === "existing_worktree" ? (
+          {!isBudget && draft.workspaceMode === "existing_worktree" ? (
             <Field label="Checkout path" htmlFor="scheduled-task-checkout">
               <Input
                 id="scheduled-task-checkout"
@@ -1776,37 +1880,41 @@ function ScheduledTaskEditorForm({
             </Field>
           ) : null}
 
-          <Field label="Prompt" htmlFor="scheduled-task-prompt">
-            <Textarea
-              id="scheduled-task-prompt"
-              className="max-h-64 overflow-y-auto"
-              placeholder="What should the agent do each time this runs?"
-              value={draft.prompt}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, prompt: event.target.value }))
-              }
-            />
-          </Field>
+          {!isBudget ? (
+            <>
+              <Field label="Prompt" htmlFor="scheduled-task-prompt">
+                <Textarea
+                  id="scheduled-task-prompt"
+                  className="max-h-64 overflow-y-auto"
+                  placeholder="What should the agent do each time this runs?"
+                  value={draft.prompt}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, prompt: event.target.value }))
+                  }
+                />
+              </Field>
 
-          <Field label="Model">
-            <div>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                // The saved selection only seeds new threads; bound runs ignore it.
-                disabled={saving || !connected || draft.threadId !== ""}
-                activeInstanceId={shownInstanceId}
-                model={shownModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </div>
-          </Field>
+              <Field label="Model">
+                <div>
+                  <ProviderModelPicker
+                    environmentId={environmentId}
+                    // The saved selection only seeds new threads; bound runs ignore it.
+                    disabled={saving || !connected || draft.threadId !== ""}
+                    activeInstanceId={shownInstanceId}
+                    model={shownModel}
+                    lockedProvider={null}
+                    instanceEntries={instanceEntries}
+                    modelOptionsByInstance={modelOptionsByInstance}
+                    isComposerOwned={false}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onInstanceModelChange={(instanceId, model) =>
+                      setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                    }
+                  />
+                </div>
+              </Field>
+            </>
+          ) : null}
 
           <div className="space-y-3">
             {task?.schedule.type === "interval" &&
@@ -1860,7 +1968,9 @@ function ScheduledTaskEditorForm({
                 <Toggle value="interval">Every interval</Toggle>
                 <Toggle
                   value="webhook"
-                  disabled={webhookDenial !== undefined && draft.scheduleMode !== "webhook"}
+                  disabled={
+                    isBudget || (webhookDenial !== undefined && draft.scheduleMode !== "webhook")
+                  }
                 >
                   On webhook
                 </Toggle>

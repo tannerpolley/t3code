@@ -395,8 +395,8 @@ Starting allows T3 to update one status comment and publish a closeout comment f
 attempt; the publishing policy is shown before you start. When a worker has been created, select
 its name to open its conversation with the issue beside it. A queued start can appear before a
 worker exists; use the **Orchestrator** link in **Settings → Projects → Repository orchestration** to open the lead.
-**Linked issue** in thread details opens the issue beside that thread. A worker marked done may
-still need review, publishing, or merge approval; T3 does not automatically close the GitHub issue.
+**Linked issue** in thread details opens the issue beside that thread. A worker labeled **Done**
+has a closed issue or a merged pull request. A merged pull request can leave the GitHub issue open.
 
 Use **Add to queue** on an open issue’s row or detail panel to put it in the repository’s
 ordered **Queued** section. When the registered orchestrator is idle and a worker slot is free,

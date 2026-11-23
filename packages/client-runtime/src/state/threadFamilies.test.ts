@@ -119,7 +119,7 @@ describe("createThreadFamilyAtoms", () => {
     registry.dispose();
   });
 
-  it.effect("reads a family per shell generation and retries a failed read", () =>
+  it.effect("retains worker pages across archive refreshes", () =>
     Effect.gen(function* () {
       const replies =
         yield* Queue.unbounded<
@@ -237,8 +237,8 @@ describe("createThreadFamilyAtoms", () => {
       expect(mergedIds()).toEqual(["parent", "idle-child"]);
       releaseFamily();
 
-      const key = JSON.stringify([TARGET.environmentId, parent.id, 2]);
-      const { state, rows } = families.workerPages(key);
+      const key = JSON.stringify([TARGET.environmentId, parent.id]);
+      const { count, state, rows } = families.workerPages(key);
       families.mountRows(registry, TARGET.environmentId, key, rows);
       const whenSettled = AtomRegistry.toStream(registry, state).pipe(
         Stream.filter((result) => !result.waiting),
@@ -256,7 +256,10 @@ describe("createThreadFamilyAtoms", () => {
           remainingWorkers: 1,
         }),
       );
+      expect((yield* whenSettled).pages).toHaveLength(1);
+      registry.set(count, 2);
       expect((yield* Queue.take(workerRequests)).workers).toEqual({ before: cursor });
+      expect(mergedIds()).toEqual(["parent", "idle-child"]);
       yield* Queue.offer(
         replies,
         Effect.fail(new OrchestrationV2GetShellSnapshotError({ message: "page failed" })),
@@ -273,12 +276,16 @@ describe("createThreadFamilyAtoms", () => {
         Effect.succeed({ snapshotSequence: 5, threads: [unseen], remainingWorkers: 0 }),
       );
       expect((yield* whenSettled).pages).toHaveLength(2);
+      expect(mergedIds()).toEqual(["parent", "idle-child", "unseen"]);
 
       registry.set(
         shellState,
         AsyncResult.success({ ...shellAt(2), removedAt: new Map([[unseen.id, 6]]) }),
       );
       expect((yield* Queue.take(workerRequests)).workers).toEqual({});
+      expect(registry.get(state).waiting).toBe(true);
+      expect(mergedIds()).toEqual(["parent", "idle-child"]);
+      expect(registry.get(state).pages.at(-1)?.remainingWorkers).toBe(0);
       yield* Queue.offer(
         replies,
         Effect.succeed({ snapshotSequence: 6, threads: [child], remainingWorkers: 0 }),

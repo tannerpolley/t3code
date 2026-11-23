@@ -103,6 +103,15 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("requires diagnostics access for usage budget data and saved reports", () => {
+    for (const method of [
+      WS_METHODS.serverGetUsageBudget,
+      WS_METHODS.scheduledTasksGetUsageBudgetReport,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthDiagnosticsReadScope);
+    }
+  });
+
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });

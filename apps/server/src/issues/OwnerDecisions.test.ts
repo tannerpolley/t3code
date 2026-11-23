@@ -409,7 +409,10 @@ it.effect(
       assert.equal(command.type, "message.dispatch");
       if (command.type === "message.dispatch") {
         assert.deepEqual(command.dispatchMode, { type: "queue_after_active" });
-        assert.deepEqual(command.notification?.source, { kind: "system" });
+        assert.deepEqual(command.notification?.source, {
+          kind: "system",
+          wakeReason: "owner_decision",
+        });
         const option = request.options.find((entry) => entry.id === chosen.chosenOptionId)!;
         assert.equal(
           command.text,

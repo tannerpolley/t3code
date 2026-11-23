@@ -89,7 +89,12 @@ function environment() {
     label: "Laptop",
     connection: { phase: state.connected ? "connected" : "disconnected" },
     serverConfig: state.connected
-      ? { environment: { platform: "linux", capabilities: { oneTimeSchedules: true } } }
+      ? {
+          environment: {
+            platform: "linux",
+            capabilities: { oneTimeSchedules: true, usageBudget: true },
+          },
+        }
       : null,
   };
 }
@@ -261,6 +266,19 @@ describe("ScheduledTasksSettings", () => {
     await expect
       .element(page.getByRole("dialog").getByRole("button", { name: "gpt-5.5", exact: true }))
       .toBeDisabled();
+  });
+
+  it("offers a model-free action when converting a task into a usage report", async () => {
+    setup();
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    const editor = page.getByRole("dialog");
+    await userEvent.click(editor.getByRole("combobox", { name: "Action" }));
+    await userEvent.click(page.getByRole("option", { name: "Usage budget report" }));
+    await expect.element(editor.getByRole("textbox", { name: "Prompt" })).not.toBeInTheDocument();
+    await expect.element(editor.getByText("Fix login bug")).not.toBeInTheDocument();
+    await expect
+      .element(editor.getByRole("button", { name: "Save task", exact: true }))
+      .toBeEnabled();
   });
 
   it("keeps an editor the user opened when the linked task loads later", async () => {

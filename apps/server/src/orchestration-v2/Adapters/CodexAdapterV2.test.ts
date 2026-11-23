@@ -4452,7 +4452,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect("resumes a provider thread without requesting or decoding its history", () =>
+  it.effect("resumes without history and restores opted-in tools", () =>
     Effect.gen(function* () {
       const scenario = "codex-resume-metadata";
       const nativeThreadId = `native-${scenario}-thread`;
@@ -4519,6 +4519,80 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             label: "thread/resume with an explicit app thread",
             frame: { id: 5, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
           },
+          {
+            type: "expect_outbound",
+            label: "read dry child's effective config",
+            frame: {
+              id: 6,
+              method: "config/read",
+              params: { cwd: "/workspace", includeLayers: false },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "read dry child's effective config",
+            frame: {
+              id: 6,
+              result: {
+                config: {
+                  mcp_servers: {
+                    "external.http": {
+                      url: "http://127.0.0.1:43124/mcp",
+                      enabled: true,
+                      tool_timeout_sec: null,
+                    },
+                    "other-mcp": { command: "echo", enabled: true },
+                  },
+                },
+                origins: {},
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "resume dry child with both T3 MCP registrations",
+            frame: {
+              id: 7,
+              method: "thread/resume",
+              params: {
+                threadId: nativeThreadId,
+                excludeTurns: true,
+                cwd: "/workspace",
+                model: "gpt-5.4",
+                config: {
+                  ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}-explicit`,
+                  "features.browser_use": false,
+                  "features.browser_use_external": false,
+                  "features.computer_use": false,
+                  "features.image_generation": false,
+                  "features.in_app_browser": false,
+                  mcp_servers: {
+                    "external.http": { url: "http://127.0.0.1:43124/mcp", enabled: true },
+                    "other-mcp": { command: "", enabled: false },
+                    "t3-code": {
+                      url: "http://127.0.0.1:43123/mcp",
+                      tool_timeout_sec: 3_900,
+                      http_headers: { Authorization: "Bearer replay-token" },
+                      disabled_tools: ["t3_thread_wait", "delegate_task"],
+                    },
+                    "t3-code-direct": {
+                      url: "http://127.0.0.1:43123/mcp",
+                      tool_timeout_sec: 3_900,
+                      http_headers: { Authorization: "Bearer replay-token" },
+                      enabled_tools: ["t3_thread_wait", "delegate_task"],
+                      omit_tools_from: ["code_mode", "deferred"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "resume dry child",
+            frame: { id: 7, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+          },
         ],
       });
       const resumeThreadEnvs: Array<unknown> = [];
@@ -4547,11 +4621,34 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         modelSelection: CODEX_TEST_MODEL_SELECTION,
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-codex-mcp"),
+        threadId: explicitThreadId,
+        providerSessionId: `provider-session-${scenario}`,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer replay-token",
+        browserToolsAvailable: true,
+      });
+      yield* harness.runtime.resumeThread({
+        threadId: explicitThreadId,
+        providerThread: harness.providerThread,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: {
+          ...CODEX_TEST_RUNTIME_POLICY,
+          enableTools: ["apps", "documents", { mcpServer: "external.http" }],
+        },
+      });
 
       assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
       assert.equal(resumed.status, "idle");
       assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
-      assert.deepEqual(resumeThreadEnvs, [harness.threadId, undefined, explicitThreadId]);
+      assert.deepEqual(resumeThreadEnvs, [
+        harness.threadId,
+        undefined,
+        explicitThreadId,
+        explicitThreadId,
+      ]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

@@ -117,6 +117,7 @@ import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.t
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
+import * as UsageBudget from "./usage/UsageBudget.ts";
 import { layerWsRpcWithFork, upstreamWsRpcHandlers } from "./ForkWsRpc.ts";
 import { withRoutedRequestParent } from "./orchestration-v2/RoutedRequestShell.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -3658,6 +3659,7 @@ export const layer = Layer.unwrap(
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const sql = yield* SqlClient.SqlClient;
+    const usageBudget = yield* UsageBudget.UsageBudget;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3738,6 +3740,7 @@ export const layer = Layer.unwrap(
               Layer.provide(DefectReporter.layer),
               Layer.provide(AcpRegistrySessions.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+              Layer.provide(Layer.succeed(UsageBudget.UsageBudget, usageBudget)),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
@@ -3809,4 +3812,4 @@ export const layer = Layer.unwrap(
       ),
     );
   }),
-).pipe(Layer.provide(NpmRelease.layer));
+).pipe(Layer.provide(NpmRelease.layer), Layer.provide(UsageBudget.layer));

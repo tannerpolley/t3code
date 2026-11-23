@@ -206,6 +206,7 @@ export function normalizeClaudeTurnTokenUsage(
     ...observedFields,
     ...(otherUsage === undefined ? {} : { otherUsage }),
     usageScope: "main_agent",
+    ...(uncachedInputTokens === undefined ? {} : { uncachedInputTokens }),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
     ...(thinkingTokens !== undefined && rawOutputTokens !== undefined
@@ -247,6 +248,7 @@ export function accumulateClaudeTurnTokenUsage(
     {
       readonly inputTokens: number;
       readonly cachedInputTokens: number;
+      readonly cacheCreationTokens?: number;
       readonly outputTokens: number;
     }
   >,
@@ -254,6 +256,7 @@ export function accumulateClaudeTurnTokenUsage(
   usage: {
     readonly inputTokens: number;
     readonly cachedInputTokens: number;
+    readonly cacheCreationTokens?: number;
     readonly outputTokens: number;
   },
   hasSubagents: boolean,
@@ -269,9 +272,13 @@ function accumulatedClaudeUsage(
   let inputTokens = 0;
   let cachedInputTokens = 0;
   let outputTokens = 0;
+  let cacheCreationTokens = 0;
+  let cacheCreationKnown = true;
   for (const message of messages.values()) {
     inputTokens += message.inputTokens;
     cachedInputTokens += message.cachedInputTokens;
+    cacheCreationTokens += message.cacheCreationTokens ?? 0;
+    cacheCreationKnown &&= message.cacheCreationTokens !== undefined;
     outputTokens += message.outputTokens;
   }
   return {
@@ -279,6 +286,12 @@ function accumulatedClaudeUsage(
     usageStatus: "partial",
     inputTokens,
     cachedInputTokens,
+    ...(cacheCreationKnown
+      ? {
+          cacheCreationTokens,
+          uncachedInputTokens: inputTokens - cachedInputTokens - cacheCreationTokens,
+        }
+      : {}),
     outputTokens,
     hasSubagents,
   };
@@ -300,6 +313,21 @@ export function finishClaudeTurnTokenUsage(
     earlierSegmentUsage,
     observed,
   );
-  if (reported.usageStatus !== "unavailable" || messages.size === 0) return reported;
-  return accumulatedClaudeUsage(messages, hasSubagents);
+  if (messages.size === 0 || reported.localCommand === true) return reported;
+  let firstInputContext: number | undefined;
+  let peakInputContext = 0;
+  for (const message of messages.values()) {
+    firstInputContext ??= message.inputTokens;
+    peakInputContext = Math.max(peakInputContext, message.inputTokens);
+  }
+  const usage =
+    reported.usageStatus === "unavailable"
+      ? { ...reported, ...accumulatedClaudeUsage(messages, hasSubagents) }
+      : reported;
+  return {
+    ...usage,
+    requestCount: messages.size,
+    firstInputContext: firstInputContext!,
+    peakInputContext,
+  };
 }

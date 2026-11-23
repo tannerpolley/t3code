@@ -294,12 +294,29 @@ export interface LimitAccount {
   readonly limits: ServerProviderUsageLimits;
 }
 
-export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
+export function collectLimitAccounts(
+  presentations: LimitPresentations,
+  { includeCreditOnly = false }: { readonly includeCreditOnly?: boolean } = {},
+): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
+  const purchasedCreditSources = new Map<string, ServerProviderUsageLimits>();
   const hubRedeems = new Map<string, LimitAccount>();
   const planSources = new Map<string, LimitAccount>();
+  const canDisplay = (limits: ServerProviderUsageLimits) =>
+    limitsNotice(limits) === null ||
+    (includeCreditOnly && !limits.unavailable && limits.credits?.hasCredits === true);
   const merge = (key: string, next: LimitAccount) => {
+    const snapshot = next.limits;
+    const previousPurchasedCredit = purchasedCreditSources.get(key);
+    if (
+      includeCreditOnly &&
+      snapshot.credits !== undefined &&
+      (!previousPurchasedCredit ||
+        Date.parse(snapshot.checkedAt) > Date.parse(previousPurchasedCredit.checkedAt))
+    ) {
+      purchasedCreditSources.set(key, snapshot);
+    }
     // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
@@ -330,7 +347,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       accounts.set(key, next);
       return;
     }
-    const fresher = Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt);
+    const nextHasWindows = snapshot.windows.length > 0;
+    const previousHasWindows = previous.limits.windows.length > 0;
+    const nextWins =
+      nextHasWindows === previousHasWindows
+        ? Date.parse(snapshot.checkedAt) > Date.parse(previous.limits.checkedAt)
+        : nextHasWindows;
     const environments = [
       ...previous.environments,
       ...next.environments.filter(
@@ -338,8 +360,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           !previous.environments.some((seen) => seen.environmentId === candidate.environmentId),
       ),
     ];
-    const winner = fresher ? next : previous;
+    const winner = nextWins ? next : previous;
     const creditSource = creditSources.get(key);
+    const purchasedCredit = purchasedCreditSources.get(key);
     const redeem =
       hubRedeems.get(key)?.redeem ??
       (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem));
@@ -363,6 +386,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       redeem: redeem && creditId ? { ...redeem, input: { ...redeem.input, creditId } } : redeem,
       limits: {
         ...winner.limits,
+        ...(purchasedCredit === undefined ? {} : { credits: purchasedCredit.credits }),
         ...(creditSource?.limits.resetCredits
           ? { resetCredits: creditSource.limits.resetCredits }
           : { resetCredits: undefined }),
@@ -380,7 +404,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
+      if (!provider.usageLimits || !canDisplay(provider.usageLimits)) continue;
       merge(resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`, {
         key: `${environmentId}:${provider.instanceId}`,
         driver: provider.driver,
@@ -410,7 +434,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         ? `${presentation.entry.target.label} · ${source.label}`
         : source.label;
       for (const account of source.accounts) {
-        if (limitsNotice(account.usageLimits) !== null) continue;
+        if (!canDisplay(account.usageLimits)) continue;
         const resolved = resolveKey(account);
         // A resolved account already has an identity; its public key must stay distinct from others'.
         const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);

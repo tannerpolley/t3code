@@ -93,6 +93,7 @@ describe("fork migration ledger", () => {
           { migration_id: 31, name: "WorkerArchiveBacklog" },
           { migration_id: 32, name: "QuietThreadActivity" },
           { migration_id: 33, name: "ThreadLineageIndex" },
+          { migration_id: 34, name: "UsageBudget" },
         ],
       );
       const columns = yield* sql<{ name: string }>`PRAGMA table_info(owner_decisions)`;
@@ -307,6 +308,7 @@ describe("fork migration ledger", () => {
           { migration_id: 31, name: "WorkerArchiveBacklog" },
           { migration_id: 32, name: "QuietThreadActivity" },
           { migration_id: 33, name: "ThreadLineageIndex" },
+          { migration_id: 34, name: "UsageBudget" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

@@ -34,6 +34,7 @@ describe("T3 orchestration provider instructions", () => {
     assert.include(text, "## T3 Code orchestration");
     assert.include(text, delegation);
     assert.include(text, "read `orchestrator_capabilities`");
+    assert.match(text, /Goal:.*Done when:.*Be exhaustive about:.*Out of scope:.*Return:/s);
     assert.include(text, "independent Reviewer only when the owner or plan asks");
     assert.include(text, "Multiple selections: use `t3_request_user_input`");
     assert.include(text, "### Visuals and preview");

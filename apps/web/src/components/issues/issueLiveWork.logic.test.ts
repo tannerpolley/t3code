@@ -670,3 +670,22 @@ it("keeps a paused worker from the server while its family is unloaded and clear
   expect(issueLiveWorkSummary(summary([worker]))?.status).toBe("working");
   expect(issueLiveWorkSummary(summary([], new Map([[worker.id, 10]])))).toBeNull();
 });
+
+it.each([
+  ["open issue", "open", null, "idle"],
+  ["open PR", "open", "open", "ready_for_review"],
+  ["merged PR", "open", "merged", "done"],
+  ["closed issue", "closed", null, "done"],
+  ["closed unmerged PR", "open", "closed", "idle"],
+] as const)("labels a completed worker for %s", (_case, state, prState, expected) => {
+  const worker = {
+    ...root,
+    source: { ...root.source, status: "completed" as const },
+    pullRequests:
+      prState === null ? [] : [{ ...pr, snapshot: { ...pr.snapshot!, state: prState } }],
+  };
+  const source = { ...list, issues: [{ ...list.issues[0]!, state }] };
+  expect(issueLiveWorkSummary(withLiveIssueWork(source, [worker]).issues[0]!)?.status).toBe(
+    expected,
+  );
+});

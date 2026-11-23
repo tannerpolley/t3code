@@ -58,6 +58,7 @@ import {
   IssueChange,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import { T3_CODE_CHILD_BRIEF } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
@@ -122,8 +123,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   .annotate(Tool.Idempotent, true);
 
 const DelegateTaskTool = Tool.make("delegate_task", {
-  description:
-    "Start one child agent with only `task`. No parent history. Pass `role` and `level` (routine or complex, default complex) with no `target` to use the current model choice. For a target outside the role's choices, ask the owner and set `target.override: true` only after approval. On a provider error or exhausted usage, ask the owner through the question tool before switching. Offer the role's other choices with a recommendation and wait for the answer. Separate checkout or PR per child: `isolation:'worktree'`. Writer: a direct child sharing the parent checkout by default, with no issue claim or worker slot. Implementors default to worktree; read-only roles share. Designer gathers evidence or designs issue plans without code edits. Managed implementors require `issue` and async mode. Writers and read-only roles only link the issue. Options inherit for the same provider and model; explicit options override. Writer questions go directly to the owner; the parent must not answer them. Other child questions and approvals route to the parent. A child queued on a full repository pool reports its limit and slots in use. Final results return to the parent. Keep `taskId` for `task_status` and `task_cancel`.",
+  description: `Start one child agent with only \`task\` and no parent history. ${T3_CODE_CHILD_BRIEF} Pass \`role\` and \`level\` without \`target\` for the current model choice. Use \`target.override: true\` only after owner approval for a target outside the role. On provider errors or exhausted usage, use the question tool to offer the owner the role's alternatives and a recommendation, then wait before switching. Use \`isolation:"worktree"\` for a separate checkout or PR. Managed implementors need \`issue\` and async mode. Writers and read-only roles only link issues. Designers do read-only research and planning. Options inherit for the same provider and model; explicit options override. Writers ask the owner directly; parents must not answer. Other child questions and approvals go to the parent, as do final results. A full pool reports its limit and slots in use. Keep \`taskId\` for \`task_status\` and \`task_cancel\`.\nCodex children start lean. Pass \`enableTools\` with only the groups needed: "apps", "browser", "documents", or {mcpServer: "name"}.`,
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,

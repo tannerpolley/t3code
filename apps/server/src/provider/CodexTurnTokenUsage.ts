@@ -15,7 +15,10 @@ interface CodexTurnTokenUsageAccumulator {
   cacheCreationTokens: number | undefined;
   outputTokens: number;
   reasoningTokens: number;
+  readonly observedTotals: Set<string>;
   observed: boolean;
+  firstInputContext?: number;
+  peakInputContext?: number;
   hasSubagents: boolean;
 }
 
@@ -59,6 +62,7 @@ export function getCodexTurnAccumulator(
     cacheCreationTokens: 0,
     outputTokens: 0,
     reasoningTokens: 0,
+    observedTotals: new Set(),
     observed: false,
     hasSubagents: false,
   };
@@ -107,11 +111,11 @@ export function accumulateCodexTurnTokenUsage(
   }
 
   const accumulator = getCodexTurnAccumulator(state, turnId);
-  const delta = codexTurnTokenUsageDelta(
-    state.baseline,
-    current,
-    codexTokenUsageBreakdown(usage.last),
-  );
+  const snapshot = JSON.stringify(current);
+  if (accumulator.observedTotals.has(snapshot)) return;
+  accumulator.observedTotals.add(snapshot);
+  const last = codexTokenUsageBreakdown(usage.last);
+  const delta = codexTurnTokenUsageDelta(state.baseline, current, last);
   state.baseline = current;
 
   if (
@@ -121,6 +125,8 @@ export function accumulateCodexTurnTokenUsage(
     delta.reasoningTokens > 0
   ) {
     accumulator.observed = true;
+    accumulator.firstInputContext ??= last.inputTokens;
+    accumulator.peakInputContext = Math.max(accumulator.peakInputContext ?? 0, last.inputTokens);
   }
   accumulator.inputTokens += delta.inputTokens;
   accumulator.cachedInputTokens += delta.cachedInputTokens;
@@ -156,6 +162,8 @@ export function readCodexTurnTokenUsage(
     usageStatus: completed ? "complete" : "partial",
     usageScope: "main_agent",
     inputTokens: usage.inputTokens,
+    firstInputContext: usage.firstInputContext!,
+    peakInputContext: usage.peakInputContext!,
     cachedInputTokens: Math.min(usage.inputTokens, usage.cachedInputTokens),
     ...(usage.cacheCreationTokens !== undefined
       ? { cacheCreationTokens: Math.min(usage.inputTokens, usage.cacheCreationTokens) }

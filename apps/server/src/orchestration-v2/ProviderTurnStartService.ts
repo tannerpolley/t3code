@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
+  effectiveThreadRole,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadProjection,
@@ -1673,13 +1674,30 @@ export const layer: Layer.Layer<
         createdAt: providerThread.createdAt,
         updatedAt: now,
       };
+      const { thread } = projection;
+      const stage =
+        run.sourcePlanRef !== undefined
+          ? "Plan execution"
+          : message.workflowScript
+            ? "Workflow"
+            : undefined;
       const runningRun: OrchestrationV2Run = {
         ...run,
+        usageAttribution: run.usageAttribution ?? {
+          projectId: thread.projectId,
+          role: effectiveThreadRole(thread),
+          ...(thread.linkedIssue === undefined ? {} : { linkedIssue: thread.linkedIssue }),
+          ...(thread.issues?.length === 1 ? { issue: thread.issues[0]! } : {}),
+          parentThreadId: thread.lineage.parentThreadId,
+          ...(thread.delegatedFrom === undefined ? {} : { delegatedFrom: thread.delegatedFrom }),
+          ...(stage === undefined ? {} : { stage }),
+        },
         status: "running",
         startedAt: run.startedAt ?? now,
       };
       const runningAttempt: OrchestrationV2RunAttempt = {
         ...attempt,
+        startedModelSelection: run.modelSelection,
         ...(runningProviderThread.nativeThreadRef?.nativeId == null
           ? {}
           : { nativeThreadId: runningProviderThread.nativeThreadRef.nativeId }),

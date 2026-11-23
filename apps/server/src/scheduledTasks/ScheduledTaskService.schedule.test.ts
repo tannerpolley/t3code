@@ -5,8 +5,11 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
   MessageId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   RunId,
   ScheduledTaskUpsertInput,
+  UsageLimitSourceId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -21,6 +24,9 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as UsageBudget from "../usage/UsageBudget.ts";
+import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -554,5 +560,156 @@ it.effect(
         error: null,
       });
       expect(morning?.nextRunAt).toBe(DateTime.formatIso(DateTime.toUtc(at(8, 0, 2))));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "converts the Sunday report in place and records one result without dispatching an agent",
+  () =>
+    Effect.gen(function* () {
+      const due = DateTime.makeZonedUnsafe(
+        { year: 2026, month: 11, day: 22, hour: 18, minute: 0 },
+        { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+      );
+      const dueAt = DateTime.formatIso(DateTime.toUtc(due));
+      const resetsAt = DateTime.formatIso(DateTime.addDuration(due, "1 hour"));
+      yield* TestClock.setTime(DateTime.toEpochMillis(due) - 1_000);
+      const tick = yield* Ref.make(Effect.void);
+      const launches = yield* Ref.make(0);
+      const countLaunch = () =>
+        Ref.update(launches, (count) => count + 1).pipe(
+          Effect.andThen(Effect.die("Unexpected model run")),
+        );
+      const dependencies = Layer.mergeAll(
+        NodeCrypto.layer,
+        ManagedPolicy.layerTest(),
+        Layer.mock(Scheduler.Scheduler)({
+          register: (name, work) =>
+            name !== "scheduled-tasks"
+              ? Effect.void
+              : Effect.context<Effect.Services<typeof work>>().pipe(
+                  Effect.flatMap((context) =>
+                    Ref.set(tick, work.pipe(Effect.provideContext(context), Effect.ignore)),
+                  ),
+                ),
+        }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({ launch: countLaunch }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({ sendToThread: countLaunch }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const budget = yield* UsageBudget.UsageBudget;
+        const input = yield* decodeUpsertInput({
+          id: "weekly-usage",
+          title: "Weekly model usage report",
+          prompt: "Delegate a session log scan",
+          enabled: true,
+          schedule: { type: "fixed_time", timeOfDay: "18:00", weekdays: [0] },
+          projectId: "global-rules",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+        const before = (yield* service.upsert(input)).task;
+        const converted = (yield* service.upsert({
+          ...input,
+          action: "usage_budget",
+          requireExisting: true,
+        })).task;
+        expect(converted).toMatchObject({
+          id: before.id,
+          enabled: true,
+          nextRunAt: dueAt,
+          schedule: before.schedule,
+          prompt: "Usage budget report",
+        });
+        yield* TestClock.adjust("1 second");
+        yield* Effect.flatten(Ref.get(tick));
+        yield* Effect.flatten(Ref.get(tick));
+
+        const [completed] = (yield* service.list()).tasks;
+        expect(completed).toMatchObject({
+          lastRunStatus: "succeeded",
+          runCount: 1,
+          lastRunError: null,
+        });
+        expect(completed?.nextRunAt).not.toBe(dueAt);
+        expect(yield* Ref.get(launches)).toBe(0);
+        const report = yield* budget.latestReport(before.id);
+        expect(report?.occurrenceAt).toBe(dueAt);
+        expect(report?.text).toBe((yield* budget.report(dueAt)).text);
+        expect(report?.text).toContain(`Weekly: 75% left, reset ${resetsAt}`);
+        expect(report?.text).toContain("Purchased credits: 12");
+        expect(report?.text).toContain("Banked resets: 2");
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            ScheduledTaskService.layer.pipe(Layer.provide(dependencies)),
+            UsageBudget.layer,
+          ).pipe(
+            Layer.provide(
+              Layer.merge(
+                Layer.mock(ProviderRegistry.ProviderRegistry)({
+                  getProviders: Effect.succeed([
+                    {
+                      instanceId: ProviderInstanceId.make("codex"),
+                      driver: ProviderDriverKind.make("codex"),
+                      enabled: true,
+                      installed: true,
+                      version: null,
+                      status: "ready",
+                      auth: { status: "authenticated" },
+                      checkedAt: dueAt,
+                      models: [],
+                      slashCommands: [],
+                      skills: [],
+                      usageLimits: {
+                        checkedAt: dueAt,
+                        windows: [],
+                        credits: { hasCredits: true, unlimited: false, balance: "12" },
+                      },
+                    },
+                  ]),
+                }),
+                Layer.mock(UsageLimitSources.UsageLimitSources)({
+                  current: Effect.succeed([
+                    {
+                      id: UsageLimitSourceId.make("test-hub"),
+                      kind: "cliproxy",
+                      label: "Test hub",
+                      checkedAt: dueAt,
+                      accounts: [
+                        {
+                          id: "claude",
+                          driver: ProviderDriverKind.make("claudeAgent"),
+                          usageLimits: {
+                            checkedAt: dueAt,
+                            windows: [
+                              {
+                                id: "weekly",
+                                kind: "weekly",
+                                label: "Weekly",
+                                usedPercent: 25,
+                                resetsAt,
+                              },
+                            ],
+                            resetCredits: { availableCount: 2 },
+                          },
+                        },
+                      ],
+                    },
+                  ]),
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

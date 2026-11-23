@@ -119,6 +119,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverCheckOtlpEndpoint]: "server",
   [WS_METHODS.serverListTextGeneratorModels]: "server",
   [WS_METHODS.serverPrepareTriage]: "server",
+  [WS_METHODS.serverGetUsageBudget]: "server",
+  [WS_METHODS.scheduledTasksGetUsageBudgetReport]: "server",
   [WS_METHODS.serverGetUsageSummary]: "server",
   [WS_METHODS.serverRefreshUsageRates]: "server",
   [WS_METHODS.serverSignalProcess]: "server",
