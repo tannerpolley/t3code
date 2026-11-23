@@ -51,7 +51,9 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "~/state/server";
 import { useGT } from "gt-react";
 import { Textarea } from "../ui/textarea";
 import {
@@ -500,10 +502,10 @@ function ApprovalRelaySwitch({
   readonly disabled: boolean;
 }) {
   const gt = useGT();
-  const granted = useEnvironmentSettings(
-    environmentId,
-    (settings) => settings.mcpApprovalRelaySessions[sessionId] === true,
-  );
+  // Unloaded settings would read as "off", so the switch waits for them.
+  const grants = useAtomValue(
+    serverEnvironment.settingsValueAtom(environmentId),
+  )?.mcpApprovalRelaySessions;
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   return (
     <Tooltip>
@@ -512,8 +514,8 @@ function ApprovalRelaySwitch({
       >
         <Switch
           size="sm"
-          checked={granted}
-          disabled={disabled}
+          checked={grants?.[sessionId] === true}
+          disabled={disabled || grants === undefined}
           onCheckedChange={(allowed) =>
             updateSettings({ mcpApprovalRelaySessions: { [sessionId]: allowed } })
           }
