@@ -1159,107 +1159,92 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
   ),
 );
 
-it.live.each([
-  "home",
-  "custom",
-  "project-local",
-  "project-local wrapper",
-  "project-local sibling",
-  "project-local symlink",
-])("places task folders in the configured location and cleans their worktrees (%s)", (location) =>
-  runCleanupTest(
-    Effect.gen(function* () {
-      const {
-        service,
-        fs,
-        repo,
-        config,
-        command,
-        setProjectRoots,
-        setSettings,
-        setTaskFolders,
-        setThreads,
-      } = yield* cleanupFixture();
-      const sibling = location === "project-local sibling";
-      const symlink = location === "project-local symlink";
-      const wrapper = sibling || symlink || location === "project-local wrapper";
-      const projectRoot = wrapper ? `${repo}/dist` : repo;
-      const customDirectory = `${config.baseDir}/custom-worktrees`;
-      const worktreesDirectory =
-        location === "home" ? "" : location === "custom" ? customDirectory : "project-local";
-      const trackedRepository = Effect.fnUntraced(function* (relative: string) {
-        const folder = `${repo}/${relative}`;
-        yield* fs.makeDirectory(folder, { recursive: true });
-        yield* command(folder, ["init", "-b", "main"]);
-        yield* command(folder, ["config", "user.email", "cleanup@example.test"]);
-        yield* command(folder, ["config", "user.name", "Cleanup test"]);
-        yield* fs.writeFileString(`${folder}/tracked.txt`, "original\n");
-        yield* command(folder, ["add", "."]);
-        yield* command(folder, ["commit", "-m", "initial"]);
-        return { name: relative.split("/").at(-1)!, path: folder };
-      });
-      const api = yield* trackedRepository(symlink ? "dist/services/api" : "dist/api");
-      const web = yield* trackedRepository(sibling ? "node_modules" : "dist/web");
-      if (symlink) {
-        yield* fs.makeDirectory(`${projectRoot}/services/storage`);
-        yield* fs.writeFileString(`${projectRoot}/services/README.md`, "shared\n");
-        yield* fs.symlink(`${projectRoot}/services/storage`, `${projectRoot}/.worktrees`);
-      }
-      const context = yield* Layer.build(
-        layerTaskFoldersWithGit(
-          { workspaceRoot: projectRoot, trackedFolders: [api, web], thread: null },
-          worktreesDirectory,
-        ).pipe(Layer.provide(NodeCrypto.layer)),
-      );
-      const taskFolders = Context.get(context, TaskFolders.TaskFolders);
-      const plan = yield* taskFolders.plan({ projectId: ProjectId.make("project-1") });
-      const { taskFolder } = yield* taskFolders.create({
-        plan: plan!,
-        branch: "task",
-        projectStart: { refName: "main", baseRefName: "main" },
-        startFromOrigin: false,
-        projectCommands: true,
-      });
-      const root = taskFolder.root;
-      if (symlink) {
-        expect(yield* fs.exists(`${root}/services/storage`)).toBe(false);
-        expect(yield* fs.readFileString(`${root}/services/README.md`)).toBe("shared\n");
-      }
-      if (worktreesDirectory === "project-local") {
-        expect(root.startsWith(`${projectRoot}/.worktrees/task-`)).toBe(true);
-        expect(yield* fs.exists(`${root}/.worktrees`)).toBe(false);
-        expect((yield* command(repo, ["status", "--porcelain"])).stdout).toBe("");
-      } else {
-        const parent = location === "home" ? config.worktreesDir : customDirectory;
-        expect(root.startsWith(`${parent}/${repo.split("/").at(-1)}/task-`)).toBe(true);
-      }
-      const isManagedWorktreePath = yield* makeIsManagedWorktreePath.pipe(
-        Effect.provide(Settings.layerTest({ worktreesDirectory })),
-      );
-      expect(yield* isManagedWorktreePath(root, projectRoot)).toBe(true);
-      setTaskFolders(taskFolders);
-      setProjectRoots([projectRoot]);
-      setSettings({ worktreesDirectory });
-      const thread = shell({ branch: "task", worktreePath: taskFolder.projectPath });
-      if (sibling) {
-        const checkout = `${root}/node_modules`;
-        yield* fs.utimes(checkout, 1, 1);
-        setThreads([{ ...thread, status: "running" }]);
-        const report = yield* service.runNow;
-        expect(report.entries.map((entry) => entry.path)).not.toContain(checkout);
-      }
-      setThreads([thread]);
-
-      const report = yield* service.runNow;
-      for (const { worktreePath } of taskFolder.repositories) {
-        expect(report.entries).toContainEqual(
-          expect.objectContaining({ path: worktreePath, outcome: "removed" }),
+it.live.each(["home", "custom", "project-local", "project-local wrapper", "project-local sibling"])(
+  "places task folders in the configured location and cleans their worktrees (%s)",
+  (location) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const {
+          service,
+          fs,
+          repo,
+          config,
+          command,
+          setProjectRoots,
+          setSettings,
+          setTaskFolders,
+          setThreads,
+        } = yield* cleanupFixture();
+        const sibling = location === "project-local sibling";
+        const wrapper = sibling || location === "project-local wrapper";
+        const projectRoot = wrapper ? `${repo}/dist` : repo;
+        const customDirectory = `${config.baseDir}/custom-worktrees`;
+        const worktreesDirectory =
+          location === "home" ? "" : location === "custom" ? customDirectory : "project-local";
+        const trackedRepository = Effect.fnUntraced(function* (relative: string) {
+          const folder = `${repo}/${relative}`;
+          yield* fs.makeDirectory(folder, { recursive: true });
+          yield* command(folder, ["init", "-b", "main"]);
+          yield* command(folder, ["config", "user.email", "cleanup@example.test"]);
+          yield* command(folder, ["config", "user.name", "Cleanup test"]);
+          yield* fs.writeFileString(`${folder}/tracked.txt`, "original\n");
+          yield* command(folder, ["add", "."]);
+          yield* command(folder, ["commit", "-m", "initial"]);
+          return { name: relative.split("/").at(-1)!, path: folder };
+        });
+        const api = yield* trackedRepository("dist/api");
+        const web = yield* trackedRepository(sibling ? "node_modules" : "dist/web");
+        const context = yield* Layer.build(
+          layerTaskFoldersWithGit(
+            { workspaceRoot: projectRoot, trackedFolders: [api, web], thread: null },
+            worktreesDirectory,
+          ).pipe(Layer.provide(NodeCrypto.layer)),
         );
-      }
-      expect(yield* fs.exists(root)).toBe(false);
-      expect(yield* fs.readFileString(`${api.path}/tracked.txt`)).toBe("original\n");
-    }),
-  ),
+        const taskFolders = Context.get(context, TaskFolders.TaskFolders);
+        const plan = yield* taskFolders.plan({ projectId: ProjectId.make("project-1") });
+        const { taskFolder } = yield* taskFolders.create({
+          plan: plan!,
+          branch: "task",
+          projectStart: { refName: "main", baseRefName: "main" },
+          startFromOrigin: false,
+          projectCommands: true,
+        });
+        const root = taskFolder.root;
+        if (worktreesDirectory === "project-local") {
+          expect(root.startsWith(`${projectRoot}/.worktrees/task-`)).toBe(true);
+          expect(yield* fs.exists(`${root}/.worktrees`)).toBe(false);
+          expect((yield* command(repo, ["status", "--porcelain"])).stdout).toBe("");
+        } else {
+          const parent = location === "home" ? config.worktreesDir : customDirectory;
+          expect(root.startsWith(`${parent}/${repo.split("/").at(-1)}/task-`)).toBe(true);
+        }
+        const isManagedWorktreePath = yield* makeIsManagedWorktreePath.pipe(
+          Effect.provide(Settings.layerTest({ worktreesDirectory })),
+        );
+        expect(yield* isManagedWorktreePath(root, projectRoot)).toBe(true);
+        setTaskFolders(taskFolders);
+        setProjectRoots([projectRoot]);
+        setSettings({ worktreesDirectory });
+        const thread = shell({ branch: "task", worktreePath: taskFolder.projectPath });
+        if (sibling) {
+          const checkout = `${root}/node_modules`;
+          yield* fs.utimes(checkout, 1, 1);
+          setThreads([{ ...thread, status: "running" }]);
+          const report = yield* service.runNow;
+          expect(report.entries.map((entry) => entry.path)).not.toContain(checkout);
+        }
+        setThreads([thread]);
+
+        const report = yield* service.runNow;
+        for (const { worktreePath } of taskFolder.repositories) {
+          expect(report.entries).toContainEqual(
+            expect.objectContaining({ path: worktreePath, outcome: "removed" }),
+          );
+        }
+        expect(yield* fs.exists(root)).toBe(false);
+        expect(yield* fs.readFileString(`${api.path}/tracked.txt`)).toBe("original\n");
+      }),
+    ),
 );
 
 it.live("removes clean submodules recursively, including deinitialized repositories", () =>

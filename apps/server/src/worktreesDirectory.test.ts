@@ -68,23 +68,37 @@ it.layer(NodeServices.layer)("worktree locations", (it) => {
       ).toEqual([defaultDir, oldCustom, path.join(repository, ".worktrees")]);
     }),
   );
-  it.effect(
-    "refuses a project-local task folder symlink to a filesystem root before Git setup",
-    () =>
+  it.effect.each(["filesystem root", "inside project", "external alias"])(
+    "refuses a project-local task folder symlink before Git setup (%s)",
+    (location) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const projectRoot = yield* fs.makeTempDirectoryScoped();
-        yield* fs.symlink(path.parse(projectRoot).root, path.join(projectRoot, ".worktrees"));
-        const parent = yield* prepareTaskFolderParent({
+        const fixture = yield* fs.makeTempDirectoryScoped();
+        const projectRoot = path.join(fixture, "project");
+        yield* fs.makeDirectory(projectRoot);
+        const destination =
+          location === "filesystem root"
+            ? path.parse(fixture).root
+            : path.join(location === "inside project" ? projectRoot : fixture, "storage");
+        if (location !== "filesystem root") yield* fs.makeDirectory(destination);
+        if (location === "external alias")
+          yield* fs.symlink(destination, path.join(projectRoot, "shared"));
+        const parent = path.join(projectRoot, ".worktrees");
+        yield* fs.symlink(destination, parent);
+        const error = yield* prepareTaskFolderParent({
           setting: PROJECT_LOCAL_WORKTREES,
-          defaultDir: path.join(projectRoot, "default"),
-          home: projectRoot,
+          defaultDir: path.join(fixture, "default"),
+          home: fixture,
           projectRoot,
           anchor: projectRoot,
           executeGit: () => Effect.die("Git setup ran before the location was validated"),
+        }).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "TaskFolderError",
+          operation: "create",
+          detail: expect.stringContaining(parent),
         });
-        expect(parent).toBeNull();
       }),
   );
 });
