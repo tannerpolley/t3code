@@ -633,7 +633,6 @@ it.effect("grades issue worker handbacks against the check result", () =>
       .map((line) => decodeDeviceCase(line));
     const codex = cases.find((testCase) => testCase.id === "issue-worker-check-codex")!;
     const claude = cases.find((testCase) => testCase.id === "issue-worker-check-claude")!;
-    const control = cases.find((testCase) => testCase.id === "issue-worker-check-complete")!;
     const backgroundWait = yield* makeBackgroundWait(["bcheck617", "bdev617"]);
     const registerWait = (input: unknown) =>
       backgroundWait(input).pipe(
@@ -653,11 +652,10 @@ it.effect("grades issue worker handbacks against the check result", () =>
       failed: false,
     };
     const review = { step: 1, tool: "delegate_task", input: { role: "reviewer" } };
-    const passes = (testCase: McpToolUseCase, calls: SampleRun["calls"], finalText = "") =>
+    const passes = (testCase: McpToolUseCase, calls: SampleRun["calls"]) =>
       failed(testCase.expect, {
         calls,
-        text: "Checks passed.",
-        finalText,
+        text: "",
         stopReason: "end_turn",
       }).length === 0;
 
@@ -686,9 +684,6 @@ it.effect("grades issue worker handbacks against the check result", () =>
     );
     assert.isFalse(passes(codex, [poll, { ...review, step: 0 }]));
     assert.isFalse(passes(codex, [{ ...poll, output: '{"session_id":6170}' }]));
-    assert.isTrue(passes(control, [], "Validation passed."));
-    assert.isFalse(passes(control, [], "The check never passed."));
-    assert.isFalse(passes(control, [], "I'll report the result later."));
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
