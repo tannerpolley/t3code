@@ -93,6 +93,7 @@ const displayKey = "t3code:sidebar-display:v1";
 const other = EnvironmentId.make("client-d");
 const savedLayout = {
   ...EMPTY_SIDEBAR_LAYOUT,
+  projectOrder: [],
   sidebarProjectSections: [
     {
       id: JSON.stringify([environmentId, "saved"]),
