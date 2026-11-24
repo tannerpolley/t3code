@@ -763,7 +763,6 @@ const make = Effect.gen(function* () {
                     type: "thread.metadata.update",
                     commandId: CommandId.make(`${input.commandId}:workspace`),
                     threadId,
-                    expectedWorktreePath: null,
                     worktreePath: target,
                     branch: name,
                   })
