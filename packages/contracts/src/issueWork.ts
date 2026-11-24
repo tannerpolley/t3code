@@ -149,6 +149,7 @@ export const RepositoryOrchestration = Schema.Struct({
       modelSelection: ModelSelection,
       status: Schema.Literals(["awaiting_approval", "draining"]),
       wasPaused: Schema.Boolean,
+      requestedAt: Schema.optional(Schema.String),
     }),
   ),
   automaticHandoff: Schema.optional(

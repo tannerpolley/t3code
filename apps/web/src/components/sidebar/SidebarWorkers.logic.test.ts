@@ -3,7 +3,11 @@ import { SIDEBAR_WORKER_PAGE_SIZE, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
 import { makeThreadFixture } from "~/test-fixtures";
-import { indexSidebarWorkers, sidebarWorkerPage } from "./SidebarWorkers.logic";
+import {
+  indexSidebarWorkers,
+  sidebarWorkerPage,
+  sidebarWorkerRecedes,
+} from "./SidebarWorkers.logic";
 
 it("keeps settled workers under their parent, bounds the initial page, and reveals an older worker", () => {
   const parent = makeThreadFixture({ id: ThreadId.make("parent") });
@@ -77,4 +81,40 @@ it("nests a worker's own children under that worker, and lists them under the ro
   const orphaned = indexSidebarWorkers([root, archived, idleReviewer]);
   expect(orphaned.children.get(keyOf(root))).toEqual([idleReviewer]);
   expect(orphaned.children.has(keyOf(worker))).toBe(false);
+});
+
+it("dims only finished, disposable workers", () => {
+  const reviewer = makeThreadFixture({
+    lineage: {
+      parentThreadId: ThreadId.make("parent"),
+      rootThreadId: ThreadId.make("parent"),
+      relationshipToParent: "subagent",
+    },
+  });
+  const linkedIssue = {
+    host: "github.com",
+    repository: "owner/repo",
+    repositoryId: "repo",
+    number: 43,
+    id: "43",
+    nodeId: "I_43",
+    title: "Fix",
+    url: "https://github.com/owner/repo/issues/43",
+  };
+  const issueWorker = { ...reviewer, source: { ...reviewer.source, linkedIssue } };
+  const writer = { ...reviewer, source: { ...reviewer.source, role: "writer" as const } };
+  const pinned = { ...reviewer, pinnedAt: "2026-11-20T00:00:00Z" };
+  const nativeWriter = {
+    ...writer,
+    source: { ...writer.source, creationSource: "provider" as const },
+  };
+
+  expect(sidebarWorkerRecedes(reviewer, undefined)).toBe(true);
+  expect(sidebarWorkerRecedes(issueWorker, "done")).toBe(true);
+  expect(sidebarWorkerRecedes(issueWorker, "paused")).toBe(false);
+  expect(sidebarWorkerRecedes(issueWorker, "suspended")).toBe(false);
+  expect(sidebarWorkerRecedes(issueWorker, "idle")).toBe(false);
+  expect(sidebarWorkerRecedes(writer, undefined)).toBe(false);
+  expect(sidebarWorkerRecedes(pinned, undefined)).toBe(false);
+  expect(sidebarWorkerRecedes(nativeWriter, undefined)).toBe(true);
 });

@@ -29,7 +29,12 @@ import { PROJECTS_WORK_ROW_HEIGHT } from "./SidebarColumns";
 import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
 import { SidebarProjectThreadTooltip } from "./SidebarProjectThreadTooltip";
 import type { SidebarProviderEntry } from "./SidebarThreadRow";
-import { idleWorkerHolding, indexSidebarWorkers, sidebarWorkerPage } from "./SidebarWorkers.logic";
+import {
+  idleWorkerHolding,
+  indexSidebarWorkers,
+  sidebarWorkerPage,
+  sidebarWorkerRecedes,
+} from "./SidebarWorkers.logic";
 
 const sidebarWorkers = Atom.map(environmentThreadShells.quietThreadShellsAtom, indexSidebarWorkers);
 const nestingParents = Atom.map(sidebarWorkers, ({ parentOf }) => parentOf).pipe(
@@ -209,7 +214,10 @@ function SidebarWorkerButton(
           ? cn(
               "fork-sidebar-agent gap-2 text-2xs text-foreground/85",
               PROJECTS_WORK_ROW_HEIGHT,
-              !active && !selected && "opacity-70 hover:opacity-100 focus-visible:opacity-100",
+              !active &&
+                !selected &&
+                sidebarWorkerRecedes(thread, workerStatus) &&
+                "opacity-70 hover:opacity-100 focus-visible:opacity-100",
             )
           : "gap-1.5 py-0.5 text-xs text-muted-foreground",
         selected && "bg-sidebar-row-selected",
