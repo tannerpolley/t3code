@@ -700,7 +700,6 @@ export const layer = Layer.effect(
           ON work.host = repository.host AND work.repository_id = repository.repository_id
         JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
         WHERE repository.root_thread_id = ${rootThreadId} AND work.issue_id = ${issueId}
-          AND CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
           AND thread.deleted_at IS NULL
       `.pipe(
             Effect.map((rows) => (rows[0] === undefined ? null : ThreadId.make(rows[0].thread_id))),
