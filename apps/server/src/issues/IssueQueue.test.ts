@@ -614,10 +614,9 @@ it.effect.each([false, true])(
         // The slot frees while paused; resuming must offer it to the queue entry first.
         yield* setPaused(true);
         yield* service.queueIssue(input(5));
-        const paused = yield* sink.latestSequence();
         yield* finish(yield* runOf(running), "running-worker-finished");
-        // The completion's promotion attempt finishes while paused, before the resume.
-        yield* sink.stream({ afterSequence: paused }).pipe(
+        // An in-flight promotion can record the pause before the completed run retries it.
+        yield* sink.stream({ afterSequence: sequence }).pipe(
           Stream.filter(
             (stored) =>
               stored.event.type === "run.updated" &&
