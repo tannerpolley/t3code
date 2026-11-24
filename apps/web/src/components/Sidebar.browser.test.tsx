@@ -96,6 +96,7 @@ describe("sidebar header new thread", () => {
     __setClientSettingsForTests({
       ...DEFAULT_CLIENT_SETTINGS,
       boringSidebarEnabled: scenario.mode === "boring",
+      projectsView: false,
     });
     const projects = [project("active"), project("idle")].slice(0, scenario.count);
     const currentProjectRef = {
