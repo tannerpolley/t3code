@@ -157,6 +157,7 @@ type PendingBackgroundWorkTurnItem = {
   readonly type: OrchestrationV2TurnItem["type"];
   readonly status: OrchestrationV2TurnItem["status"];
   readonly title: string | null;
+  readonly providerThreadId?: OrchestrationV2TurnItem["providerThreadId"];
   /** Shell readers join the owner, even when its provider thread belongs to a child app thread. */
   readonly owningProviderInstanceId?: OrchestrationV2ProviderThread["providerInstanceId"];
   readonly runId?: OrchestrationV2Run["id"] | string | null;
@@ -297,6 +298,11 @@ export function derivePendingBackgroundWork(input: {
   const byTaskId = new Map<string, PendingBackgroundWorkTask>();
   const rosterItemIds = new Set<string>();
   const rosterNativeItemIds = new Set<string>();
+  const roster: Array<{
+    task: PendingBackgroundWorkTask;
+    providerThreadId: PendingBackgroundWorkProviderThread["id"];
+    retained: boolean;
+  }> = [];
 
   for (const providerThread of providerThreads) {
     for (const task of providerThread.pendingBackgroundTasks ?? []) {
@@ -307,9 +313,10 @@ export function derivePendingBackgroundWork(input: {
         (task.kind !== "command" || owner === undefined || owner === input.threadId)
       )
         continue;
-      if (task.taskId.length === 0 || byTaskId.has(task.taskId)) {
-        continue;
-      }
+      if (task.taskId.length === 0) continue;
+      const retained = !byTaskId.has(task.taskId);
+      roster.push({ task, providerThreadId: providerThread.id, retained });
+      if (!retained) continue;
       const { description: rawDescription, ...named } = task;
       const description = rawDescription?.trim();
       byTaskId.set(task.taskId, {
@@ -329,6 +336,7 @@ export function derivePendingBackgroundWork(input: {
 
   if (hasActiveRun) return Array.from(byTaskId.values());
 
+  const childIdsByRosterTask = new Map<string, ThreadId | null>();
   for (const item of pendingBackgroundTurnItems(input)) {
     const taskId = nativeTaskIdFromTurnItem(item);
     const nativeItemId = item.nativeItemRef?.nativeId;
@@ -337,12 +345,39 @@ export function derivePendingBackgroundWork(input: {
       rosterItemIds.has(item.id) ||
       (nativeItemId != null && rosterNativeItemIds.has(nativeItemId))
     ) {
+      if (item.type === "subagent" && item.childThreadId != null) {
+        const [match, other] = roster.filter(
+          ({ task, providerThreadId }) =>
+            (item.providerThreadId == null || item.providerThreadId === providerThreadId) &&
+            (task.taskId === taskId ||
+              task.itemId === item.id ||
+              (nativeItemId != null && task.nativeItemId === nativeItemId)),
+        );
+        if (
+          match?.retained &&
+          match.task.kind === "subagent" &&
+          match.task.childThreadId === undefined &&
+          other === undefined
+        ) {
+          const previous = childIdsByRosterTask.get(match.task.taskId);
+          childIdsByRosterTask.set(
+            match.task.taskId,
+            previous === undefined || previous === item.childThreadId ? item.childThreadId : null,
+          );
+        }
+      }
       continue;
     }
 
     byTaskId.set(taskId, pendingTaskFromTurnItem(taskId, item));
   }
 
+  for (const [taskId, childThreadId] of childIdsByRosterTask) {
+    const task = byTaskId.get(taskId);
+    if (task !== undefined && childThreadId !== null) {
+      byTaskId.set(taskId, { ...task, childThreadId });
+    }
+  }
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
 
   return Array.from(byTaskId.values());

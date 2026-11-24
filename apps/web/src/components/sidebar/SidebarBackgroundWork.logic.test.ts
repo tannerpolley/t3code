@@ -124,6 +124,30 @@ describe("describeSidebarBackgroundWork", () => {
     expect(rows[0]).not.toHaveProperty("childThreadId");
   });
 
+  it.each([
+    { childThreadId: undefined, expected: [runningChild.id, "native-first", "native-second"] },
+    { childThreadId: runningChild.id, expected: [runningChild.id, "native-first"] },
+  ])(
+    "keeps the first roster task when the second task's child ID is $childThreadId",
+    ({ childThreadId, expected }) => {
+      const rows = describeSidebarBackgroundWork(
+        [
+          { taskId: "native-first", kind: "subagent", origin: "provider_native" },
+          {
+            taskId: "native-second",
+            kind: "subagent",
+            origin: "provider_native",
+            description: runningChild.title,
+            ...(childThreadId === undefined ? {} : { childThreadId }),
+          },
+        ],
+        [runningChild],
+      );
+
+      expect(rows.map((row) => row.taskId)).toEqual(expected);
+    },
+  );
+
   it("identifies each PR watch and shows work only while its checks are pending", () => {
     const watch = (number: number) => ({
       taskId: pullRequestWatchTaskId({ host: "github.com", repository: "acme/app", number }),

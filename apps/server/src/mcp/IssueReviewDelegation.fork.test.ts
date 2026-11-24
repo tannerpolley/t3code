@@ -8,7 +8,7 @@ import {
   EventId,
   ProviderSessionId,
   resolveThreadRole,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
@@ -46,6 +46,7 @@ function setup() {
     Effect.succeed({
       ...reviewRead(reviewIssue(input.number)),
       state: closed ? ("closed" as const) : ("open" as const),
+      blockedBy: input.number === 3 ? [{ issue: reviewIssue(4), state: "open" as const }] : [],
     }),
   );
   const readDefaultBranch = vi.fn(() => Effect.succeed("main"));
@@ -399,9 +400,9 @@ it.effect(
   },
 );
 
-it.effect(
-  "close-out requires the repository root and a closed, stopped attempt, clears suspension and survives Resume and retries",
-  () => {
+it.effect.each(["retained", "archived", "archived before handoff"] as const)(
+  "close-out (%s worker) requires the repository root, a closed issue and a stopped attempt, clears suspension and survives Resume and retries",
+  (disposition) => {
     const harness = setup();
     return Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
@@ -444,30 +445,118 @@ it.effect(
         .closeOut({ ...input, clientRequestId: CommandId.make("active-close-out") })
         .pipe(Effect.flip);
       assert.include(rejectedRetry.message, "remaining work");
+      if (disposition !== "retained") {
+        yield* threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-closed-worker"),
+          threadId: childId,
+        });
+      }
+      const beforeCloseOut = (yield* threads.getThreadProjection(childId)).thread;
+      assert.equal(beforeCloseOut.archivedAt !== null, disposition !== "retained");
+      let closingRoot = root;
+      let closingRevision = config.revision;
+      if (disposition === "archived before handoff") {
+        const sink = yield* EventSink.EventSinkV2;
+        closingRoot = ThreadId.make("close-out-successor");
+        closingRevision = config.revision + 1;
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-close-out-successor"),
+          threadId: closingRoot,
+          projectId: config.projectId,
+          title: "Successor",
+          role: "orchestrator",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const original = yield* threads.getThreadRecords(root, ["subagents"]);
+        const task = original.subagents.find((entry) => entry.childThreadId === childId)!;
+        const successor = (yield* threads.getThreadRecords(closingRoot, [])).thread;
+        const now = yield* DateTime.now;
+        // Seed the committed ownership transfer the close-out must recover after a handoff.
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("retired-close-out-root"),
+              type: "thread.metadata-updated",
+              threadId: root,
+              occurredAt: now,
+              payload: {
+                ...original.thread,
+                archivedAt: now,
+                updatedAt: now,
+                repositoryOrchestration: { ...config, retiredToThreadId: closingRoot },
+              },
+            },
+            {
+              id: EventId.make("inherited-close-out-suspension"),
+              type: "thread.metadata-updated",
+              threadId: closingRoot,
+              occurredAt: now,
+              payload: {
+                ...successor,
+                updatedAt: now,
+                repositoryOrchestration: {
+                  ...config,
+                  revision: closingRevision,
+                  handoffHistory: [{ threadId: root, transferredAt: DateTime.formatIso(now) }],
+                },
+              },
+            },
+            {
+              id: EventId.make("root-observed-result"),
+              type: "subagent.updated",
+              threadId: root,
+              nodeId: task.id,
+              occurredAt: now,
+              payload: {
+                ...task,
+                status: "completed",
+                completedAt: now,
+                updatedAt: now,
+                completionDelivery: { state: "disposed", observedByRunId: null },
+              },
+            },
+          ],
+        });
+        assert.equal((yield* work.repositoryStatus(repository)).rootThreadId, closingRoot);
+        assert.deepEqual(
+          (yield* store.configuration(closingRoot))!.suspendedIssues,
+          config.suspendedIssues,
+        );
+      }
+      const previousTask = (yield* threads.getThreadRecords(root, ["subagents"])).subagents.find(
+        (task) => task.childThreadId === childId,
+      )!;
       const accepted = {
         ...input,
-        expectedRevision: config.revision,
+        expectedRevision: closingRevision,
         clientRequestId: CommandId.make("finish-closed"),
       };
-      const closed = yield* mcp.closeOutIssue(scopeFor(root), accepted);
+      const closed = yield* mcp.closeOutIssue(scopeFor(closingRoot), accepted);
       assert.lengthOf(closed.orchestration!.suspendedIssues, 0);
       assert.isTrue(yield* store.resultAvailable(childId));
       const afterCloseOut = (yield* threads.getThreadProjection(childId)).thread;
-      assert.isNull(afterCloseOut.archivedAt);
+      assert.deepEqual(afterCloseOut.archivedAt, beforeCloseOut.archivedAt);
       assert.isNull(afterCloseOut.deletedAt);
       assert.equal(afterCloseOut.worktreePath, retained.worktreePath);
       const parent = yield* threads.getThreadRecords(root, ["subagents"]);
-      assert.equal(
-        parent.subagents.find((task) => task.childThreadId === childId)!.status,
-        "completed",
-      );
+      const task = parent.subagents.find((task) => task.childThreadId === childId)!;
+      if (closingRoot === root) assert.equal(task.status, "completed");
+      else assert.deepEqual(task, previousTask);
       assert.deepEqual(yield* work.closeOut(accepted), closed);
       yield* work.setPaused({
         ...repository,
         paused: false,
         clientRequestId: CommandId.make("resume-closed"),
       });
-      assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 0);
+      assert.lengthOf((yield* store.configuration(closingRoot))!.suspendedIssues, 0);
     }).pipe(Effect.provide(harness.layer));
   },
 );
