@@ -4,6 +4,7 @@ import {
   resolveThreadWorkingStartedAt,
 } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
+import { classifyIssueWorker } from "@t3tools/shared/issueWorkerStatus";
 
 import { describe, expect, it } from "vite-plus/test";
 
@@ -45,6 +46,69 @@ function makeLatestRun(overrides?: {
 }
 
 describe("resolveSidebarThreadStatus", () => {
+  it("keeps an issue implementor working through a Codex terminal's lifetime", () => {
+    const parent = makeThreadFixture();
+    const runId = RunId.make("codex-run");
+    const worker = {
+      ...parent.source,
+      id: ThreadId.make("worker"),
+      role: "implementor" as const,
+      lineage: {
+        parentThreadId: parent.id,
+        rootThreadId: parent.id,
+        relationshipToParent: "subagent" as const,
+      },
+      linkedIssue: {
+        host: "github.com" as const,
+        repository: "owner/repo",
+        repositoryId: "1",
+        id: "610",
+        nodeId: "I_610",
+        number: 610,
+        title: "Fix",
+        url: "https://github.com/owner/repo/issues/610",
+      },
+      latestRunId: runId,
+    };
+    for (const [state, expected] of [
+      [
+        {
+          status: "running",
+          activeRunId: runId,
+          activityRunStatus: "running",
+          blockedOnThreadWait: true,
+        },
+        "working",
+      ],
+      [
+        {
+          status: "completed",
+          pendingBackgroundTasks: [{ taskId: "exec-fit", kind: "command" }],
+        },
+        "working",
+      ],
+      [{ status: "completed", pendingBackgroundTasks: [] }, "ready"],
+      [
+        {
+          status: "completed",
+          pendingBackgroundTasks: [{ taskId: "pr-check", kind: "monitor", awaited: true }],
+        },
+        "waiting",
+      ],
+    ] as const) {
+      const shell = presentThreadShell(localEnvironmentId, { ...worker, ...state });
+      expect.soft(resolveSidebarThreadStatus(shell)).toBe(expected);
+      expect.soft(resolveThreadStatusMark(shell, undefined)).toBe(expected);
+      expect
+        .soft(classifyIssueWorker(shell.source).status)
+        .toBe(expected === "working" ? "working" : "idle");
+      const listedAsRunning = [...groupRunningSubagentsByParent([parent, shell]).values()]
+        .flat()
+        .some((thread) => thread.id === worker.id);
+      expect.soft(listedAsRunning).toBe(expected !== "ready");
+    }
+  });
+
   const runtime = {
     status: "running" as const,
     activeRunId: null,

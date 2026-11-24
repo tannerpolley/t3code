@@ -704,6 +704,7 @@ type ThreadStatusInput = Pick<
   | "hasPendingUserInput"
   | "pendingSubagentRequest"
   | "pendingGuestMessageCount"
+  | "issueWorkerWorking"
   | "interactionMode"
   | "latestRun"
   | "runtime"
@@ -988,6 +989,7 @@ type SidebarThreadStatusInput = Pick<
   | "hasPendingUserInput"
   | "pendingSubagentRequest"
   | "pendingGuestMessageCount"
+  | "issueWorkerWorking"
   | "runtime"
   | "blockedOnThreadWait"
 > &
@@ -1023,6 +1025,7 @@ export function groupRunningSubagentsByParent<
     | "environmentId"
     | "lineage"
     | "runtime"
+    | "issueWorkerWorking"
     | "archivedAt"
     | "hasPendingUserInput"
     | "hasPendingApprovals"
@@ -1063,6 +1066,7 @@ export function groupRunningSubagentsByParent<
       // A child waiting on the user stays listed so its question is one click away.
       !(
         threadRuntimeIsActive(thread.runtime) ||
+        thread.issueWorkerWorking ||
         backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks) ||
         pendingTaskChildIds.has(keyOf(thread, thread.id)) ||
         thread.hasPendingUserInput ||

@@ -22,7 +22,7 @@ export function isIssueWorkerChild(
   return thread.lineage.parentThreadId !== null && thread.linkedIssue !== undefined;
 }
 
-export function classifyIssueWorker(
+export function issueWorkerIsWorking(
   thread: Pick<
     OrchestrationV2ThreadShell,
     | "status"
@@ -33,7 +33,28 @@ export function classifyIssueWorker(
     | "lineage"
     | "linkedIssue"
     | "pendingBackgroundTasks"
-  > & {
+  >,
+): boolean {
+  const status = thread.activityRunStatus ?? thread.status;
+  if (thread.archivedAt !== null || status === "queued") return false;
+  const tasks = thread.pendingBackgroundTasks ?? [];
+  return (
+    status === "preparing" ||
+    status === "starting" ||
+    status === "running" ||
+    managedImplementorAwaitingSubagent(thread) ||
+    (status !== "failed" &&
+      !isExplicitlyPausedThread(thread) &&
+      isIssueWorkerChild(thread) &&
+      tasks.some((task) => task.kind === "command")) ||
+    (status === "waiting" &&
+      !tasks.some((task) => task.kind === "monitor") &&
+      !backgroundWorkHoldsCompletion(tasks))
+  );
+}
+
+export function classifyIssueWorker(
+  thread: Parameters<typeof issueWorkerIsWorking>[0] & {
     readonly pendingRuntimeRequest: Pick<
       NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>,
       "kind" | "routedTo"
@@ -53,16 +74,7 @@ export function classifyIssueWorker(
   }
   const status = thread.activityRunStatus ?? thread.status;
   if (status === "queued") return { status: "queued" };
-  if (
-    status === "preparing" ||
-    status === "starting" ||
-    status === "running" ||
-    managedImplementorAwaitingSubagent(thread) ||
-    (status === "waiting" &&
-      !thread.pendingBackgroundTasks?.some((task) => task.kind === "monitor") &&
-      !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []))
-  )
-    return { status: "working" };
+  if (issueWorkerIsWorking(thread)) return { status: "working" };
   if (status === "failed") return { status: "failed" };
   return isExplicitlyPausedThread(thread) ? { status: "idle", paused: true } : { status: "idle" };
 }

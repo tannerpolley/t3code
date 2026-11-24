@@ -2,6 +2,7 @@ import {
   runtimeRequestIsOwnerVisible,
   type RoutedRequestParent,
 } from "@t3tools/shared/delegatedRequestVisibility";
+import { isIssueWorkerChild, issueWorkerIsWorking } from "@t3tools/shared/issueWorkerStatus";
 import {
   threadActivityFromShell,
   threadActivityWorkingStartedAt,
@@ -131,6 +132,7 @@ export interface EnvironmentThreadShell {
   readonly blockedOnThreadWait?: boolean;
   readonly lastProviderActivityAt?: number | undefined;
   readonly hasActiveProviderWork?: boolean | undefined;
+  readonly issueWorkerWorking?: boolean;
   readonly latestUserMessageAt: string | null;
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
@@ -231,6 +233,7 @@ export function presentThreadShell(
     delegatedFrom: thread.delegatedFrom ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     ...threadActivityFromShell(thread, ownerVisible),
+    issueWorkerWorking: isIssueWorkerChild(thread) && issueWorkerIsWorking(thread),
     latestUserMessageAt: nullableIso(thread.latestUserMessageAt),
     ...(thread.latestUserAuthoredMessageAt === undefined
       ? {}

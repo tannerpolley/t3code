@@ -68,6 +68,7 @@ export interface ThreadActivityInput {
   readonly pendingGuestMessageCount?: number | undefined;
   readonly lastProviderActivityAt?: number | undefined;
   readonly hasActiveProviderWork?: boolean | undefined;
+  readonly issueWorkerWorking?: boolean;
   readonly blockedOnThreadWait?: boolean | undefined;
   readonly pendingBackgroundTasks?: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly runtime?: Pick<
@@ -84,8 +85,9 @@ export function resolveThreadActivity(thread: ThreadActivityInput): ThreadActivi
   if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") return "input";
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return "request";
   const status = thread.runtime?.status;
-  if (status === "queued" || (status === "running" && thread.blockedOnThreadWait)) return "waiting";
   if (status === "preparing" || status === "starting") return "connecting";
+  if (thread.issueWorkerWorking) return "working";
+  if (status === "queued" || (status === "running" && thread.blockedOnThreadWait)) return "waiting";
   if (status === "running" || status === "waiting") return "working";
   if (thread.runtime?.silentWakeAttention !== undefined) return "failed";
   if (status === "failed" || thread.latestRun?.status === "failed") {
