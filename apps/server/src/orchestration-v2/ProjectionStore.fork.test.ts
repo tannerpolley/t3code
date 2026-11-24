@@ -544,22 +544,33 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             },
           });
         }
+        const nestedReviewer = ThreadId.make("page-worker:reviewer");
+        yield* store.apply({
+          id: EventId.make(`created:${nestedReviewer}`),
+          type: "thread.created",
+          threadId: nestedReviewer,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            id: nestedReviewer,
+            lineage: {
+              rootThreadId: root,
+              parentThreadId: ids[11]!,
+              relationshipToParent: "subagent",
+            },
+          },
+        });
         const pageOptions = { parentThreadId: root, exclude: [delegated, unrelated] };
         const page = yield* store.getShellSnapshot({ location: "active", workerPage: pageOptions });
         expect
           .soft(page.threads.map((shell) => shell.id).toSorted())
-          .toEqual(ids.slice(2).toSorted());
-        expect.soft(page.remainingWorkers).toBe(4);
-        const lastVisible = page.threads.find((shell) => shell.id === ids[2])!;
+          .toEqual([...ids.slice(2), nestedReviewer].toSorted());
+        expect
+          .soft(page.remainingWorkers, "a reviewer pages with its worker, outside the count")
+          .toBe(4);
         const next = yield* store.getShellSnapshot({
           location: "active",
-          workerPage: {
-            ...pageOptions,
-            before: {
-              threadId: lastVisible.id,
-              createdAt: DateTime.formatIso(lastVisible.createdAt),
-            },
-          },
+          workerPage: { ...pageOptions, before: page.nextWorkerPage! },
         });
         expect
           .soft(
