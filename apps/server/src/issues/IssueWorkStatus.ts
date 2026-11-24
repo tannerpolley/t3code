@@ -3,19 +3,6 @@ import { isManagedIssueImplementor, type OrchestrationV2ThreadShell } from "@t3t
 import type { IssueWorkStatus, OrchestrationV2RuntimeRequest } from "@t3tools/contracts";
 import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
 
-type IssueOwnerAvailability = Pick<
-  OrchestrationV2ThreadShell,
-  "deletedAt" | "archivedAt" | "archivedByDelegatedResult"
->;
-
-export function issueOwnerAvailable<S extends IssueOwnerAvailability>(shell: S | null): shell is S {
-  return (
-    shell !== null &&
-    shell.deletedAt === null &&
-    (shell.archivedAt === null || shell.archivedByDelegatedResult === true)
-  );
-}
-
 /** Derive issue progress from orchestration state so status cannot drift from runs and children. */
 export function deriveIssueWorkStatus(input: {
   readonly shell: Pick<
@@ -25,7 +12,6 @@ export function deriveIssueWorkStatus(input: {
     | "linkedIssue"
     | "deletedAt"
     | "archivedAt"
-    | "archivedByDelegatedResult"
     | "pendingRuntimeRequest"
     | "status"
     | "activityRunStatus"
@@ -40,7 +26,9 @@ export function deriveIssueWorkStatus(input: {
 }): IssueWorkStatus {
   const { shell } = input;
   if (input.paused) return "paused";
-  if (!issueOwnerAvailable(shell)) return "unavailable";
+  if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) {
+    return "unavailable";
+  }
   const needsUser =
     input.runtimeRequests === undefined
       ? shell.pendingRuntimeRequest !== null &&

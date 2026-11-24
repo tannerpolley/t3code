@@ -3885,6 +3885,7 @@ describe("storage cleanup reports and local file policies", () => {
     "finished with no PR",
     "was removed explicitly with unmerged commits",
     "received a merge update",
+    "is visible with a merged pull request",
     "interrupted",
     "cancelled",
     "failed",
@@ -3936,8 +3937,13 @@ describe("storage cleanup reports and local file policies", () => {
           shell({
             branch: "feature",
             worktreePath: slot,
-            archivedAt: unsettledStatus === null ? at(-DAY_MS) : null,
-            status: unsettledStatus ?? "idle",
+            archivedAt:
+              unsettledStatus === null && scenario !== "is visible with a merged pull request"
+                ? at(-DAY_MS)
+                : null,
+            status:
+              unsettledStatus ??
+              (scenario === "is visible with a merged pull request" ? "completed" : "idle"),
             linkedIssue: {
               host: "github.com",
               repository: "owner/project",
@@ -3950,7 +3956,7 @@ describe("storage cleanup reports and local file policies", () => {
             },
           }),
         ]);
-        if (unsettledStatus !== null) {
+        if (unsettledStatus !== null || scenario === "is visible with a merged pull request") {
           for (const pullRequest of [null, merged]) {
             if (pullRequest !== null) setBranchPullRequest(pullRequest);
             yield* service.runNow;

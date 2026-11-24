@@ -1201,7 +1201,9 @@ const make = Effect.gen(function* () {
         files: null,
       };
       const retainedIssue =
-        !explicit && !deleted && members.some((member) => keepIssueWorktree(member));
+        !explicit &&
+        !deleted &&
+        members.some((member) => member.archivedAt === null && keepIssueWorktree(member));
       const releaseSlot =
         slot && maintainIssueSlots && thread.linkedIssue !== undefined && issueSlots !== undefined;
       let releaseSlotBase: string | null = null;
@@ -1423,15 +1425,7 @@ const make = Effect.gen(function* () {
               releaseSlot && !explicit && !deleted
                 ? latestGroup.find((shell) => shell.id === thread.id)
                 : undefined;
-            if (
-              liveOwner !== undefined &&
-              keepIssueWorktree(liveOwner) &&
-              liveOwner.settledAt === null &&
-              (liveOwner.status === "interrupted" ||
-                liveOwner.status === "cancelled" ||
-                liveOwner.status === "failed")
-            )
-              return "issue worker can still be resumed";
+            if (liveOwner?.archivedAt === null) return "issue worker is still visible";
             if (settlementChain.length > 1) {
               const ancestors = yield* Effect.forEach(settlementChain.slice(1), (ancestor) =>
                 projections.getThreadShell(ancestor.id),
@@ -2157,7 +2151,7 @@ const make = Effect.gen(function* () {
         (thread) =>
           thread.worktreePath !== null &&
           (IssueWorktreeSlots.isIssueWorktreeSlot(path, thread.worktreePath) ||
-            keepIssueWorktree(thread)),
+            (thread.archivedAt === null && keepIssueWorktree(thread))),
       )
     )
       return { waiting: false, kept: [] };

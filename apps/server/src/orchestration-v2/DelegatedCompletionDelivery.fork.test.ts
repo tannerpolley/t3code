@@ -965,68 +965,100 @@ it.layer(layerTest)("worker archive on result observation", (it) => {
       }),
   );
 
-  it.effect.each([false, true])(
-    "archives a failed wake only if its prompt was accepted (%s)",
-    (accepted) =>
-      Effect.gen(function* () {
-        const engine = yield* Orchestrator.OrchestratorV2;
-        const sink = yield* EventSink.EventSinkV2;
-        const parent = yield* seedOwnedParent("thread", `wake-acceptance-${accepted}`, {
-          deliveryState: "claimed",
-          withDelivery: true,
-          parentRunEnded: true,
-        });
-        const child = finishedWorkerEvents(parent, "child", "Review complete.");
-        yield* sink.write({
-          events: [
-            child.events[0],
-            {
-              ...child.events[1],
-              payload: {
-                ...parent.task,
-                runId: parent.parentRunId,
-                childThreadId: child.task.childThreadId,
-              },
+  it.effect("archives a successful result read after cancellation disposed its wake", () =>
+    Effect.gen(function* () {
+      const engine = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const parent = yield* seedOwnedParent("run", "cancelled-success", {
+        deliveryState: "delivered",
+        withDelivery: false,
+        parentRunEnded: false,
+      });
+      const child = finishedWorkerEvents(parent, "child", "Success before cancellation.");
+      yield* sink.write({ events: child.events });
+      yield* engine.recoverDelegatedTask(child.task.childThreadId, {
+        sourceRunId: child.events[3].payload.id,
+      });
+      yield* engine.dispatch({
+        type: "delegated_task.completion-delivery.dispose",
+        commandId: CommandId.make("cancelled-success-dispose"),
+        parentThreadId: parent.threadId,
+        taskId: child.task.id,
+      });
+      assert.isNull(
+        (yield* engine.getThreadProjection(child.task.childThreadId)).thread.archivedAt,
+      );
+      yield* engine.dispatch({
+        type: "delegated_task.completion-delivery.acknowledge",
+        commandId: CommandId.make("cancelled-success-observed"),
+        parentThreadId: parent.threadId,
+        taskId: child.task.id,
+        observedByRunId: parent.runId,
+      });
+      assert.isNotNull(
+        (yield* engine.getThreadProjection(child.task.childThreadId)).thread.archivedAt,
+      );
+      const task = (yield* engine.getThreadProjection(parent.threadId)).subagents.find(
+        (candidate) => candidate.id === child.task.id,
+      );
+      assert.equal(task?.completionDelivery?.state, "disposed");
+    }),
+  );
+
+  it.effect("keeps a worker visible when its wake fails to start", () =>
+    Effect.gen(function* () {
+      const engine = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const parent = yield* seedOwnedParent("thread", `wake-acceptance-refused`, {
+        deliveryState: "claimed",
+        withDelivery: true,
+        parentRunEnded: true,
+      });
+      const child = finishedWorkerEvents(parent, "child", "Review complete.");
+      yield* sink.write({
+        events: [
+          child.events[0],
+          {
+            ...child.events[1],
+            payload: {
+              ...parent.task,
+              runId: parent.parentRunId,
+              childThreadId: child.task.childThreadId,
             },
-          ],
-        });
-        yield* engine.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(`result-wake:${accepted}`),
-          threadId: parent.threadId,
-          messageId: parent.messageId,
-          text: "Review complete.",
-          attachments: [],
-          createdBy: "agent",
-          creationSource: "server",
-          delegatedCompletion: { parentRunId: null, generation: 1, taskIds: [parent.taskId] },
-          dispatchMode: { type: "queue_after_active" },
-        });
-        const projection = yield* engine.getThreadProjection(parent.threadId);
-        const wake = projection.runs.find((run) => run.userMessageId === parent.messageId)!;
-        yield* sink.write({
-          commandId: reconcileCommandId(`failed-wake:${accepted}`),
-          events: [
-            {
-              id: EventId.make(`failed-wake:${accepted}`),
-              type: "run.updated",
-              threadId: parent.threadId,
-              occurredAt: parent.now,
-              payload: { ...wake, status: "failed", completedAt: parent.now },
-            },
-          ],
-        });
-        yield* engine.recoverDelegatedTask(parent.threadId, { completedRunId: wake.id });
-        assert.isNull(
-          (yield* engine.getThreadProjection(child.task.childThreadId)).thread.archivedAt,
-        );
-        if (accepted) {
-          yield* engine.archiveDelegatedCompletion(parent.threadId, [parent.taskId]);
-          assert.isNotNull(
-            (yield* engine.getThreadProjection(child.task.childThreadId)).thread.archivedAt,
-          );
-        }
-      }),
+          },
+        ],
+      });
+      yield* engine.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`result-wake:refused`),
+        threadId: parent.threadId,
+        messageId: parent.messageId,
+        text: "Review complete.",
+        attachments: [],
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: { parentRunId: null, generation: 1, taskIds: [parent.taskId] },
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const projection = yield* engine.getThreadProjection(parent.threadId);
+      const wake = projection.runs.find((run) => run.userMessageId === parent.messageId)!;
+      yield* sink.write({
+        commandId: reconcileCommandId(`failed-wake:refused`),
+        events: [
+          {
+            id: EventId.make(`failed-wake:refused`),
+            type: "run.updated",
+            threadId: parent.threadId,
+            occurredAt: parent.now,
+            payload: { ...wake, status: "failed", completedAt: parent.now },
+          },
+        ],
+      });
+      yield* engine.recoverDelegatedTask(parent.threadId, { completedRunId: wake.id });
+      assert.isNull(
+        (yield* engine.getThreadProjection(child.task.childThreadId)).thread.archivedAt,
+      );
+    }),
   );
 });
 

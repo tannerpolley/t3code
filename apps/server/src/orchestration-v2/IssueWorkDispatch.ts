@@ -38,14 +38,7 @@ class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
 
 type RetainedWorker = Pick<
   OrchestrationV2AppThread,
-  | "linkedIssue"
-  | "role"
-  | "lineage"
-  | "projectId"
-  | "worktreePath"
-  | "archivedAt"
-  | "archivedByDelegatedResult"
-  | "deletedAt"
+  "linkedIssue" | "role" | "lineage" | "projectId" | "worktreePath" | "archivedAt" | "deletedAt"
 >;
 
 export const retainedWorkerSuccessor = Effect.fn("retainedWorkerSuccessor")(function* (
@@ -284,7 +277,21 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     return yield* dispatch(dispatchCommand);
   });
 
+  const isClosedIssue = (issue: ThreadLinkedIssue) =>
+    Option.isNone(issueReads)
+      ? Effect.succeed(false)
+      : issueReads.value.workRead(issue).pipe(
+          Effect.map(
+            (read) =>
+              read.state === "closed" &&
+              sameIssueRepository(read.issue, issue) &&
+              read.issue.id === issue.id,
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+
   return {
+    isClosedIssue,
     withAdmissionReads,
     promoteOtherIssueQueues,
     threadExecutor,

@@ -107,6 +107,7 @@ import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
@@ -226,6 +227,9 @@ function makeDeterministicAdapter(input: {
   readonly terminalGate?: (
     turn: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Deferred.Deferred<void> | undefined;
+  readonly dropPromptAfterStart?: (
+    turn: ProviderAdapter.ProviderAdapterV2TurnInput,
+  ) => Deferred.Deferred<void> | undefined;
   readonly response: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) => string;
   readonly respondToRuntimeRequest?: (
     response: ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput,
@@ -316,27 +320,59 @@ function makeDeterministicAdapter(input: {
               );
               runOrdinals.set(providerTurnId, turnInput.runOrdinal);
               turnInputs.set(providerTurnId, turnInput);
+              const providerTurn = {
+                id: providerTurnId,
+                providerThreadId: turnInput.providerThread.id,
+                nodeId: turnInput.rootNodeId,
+                runAttemptId: turnInput.attemptId,
+                nativeTurnRef: {
+                  driver: input.driver,
+                  nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
+                  strength: "strong" as const,
+                },
+                ordinal: turnInput.providerTurnOrdinal,
+                startedAt: eventTime,
+              };
               yield* publish([
                 {
                   type: "provider_turn.updated",
                   driver: input.driver,
-                  providerTurn: {
-                    id: providerTurnId,
-                    providerThreadId: turnInput.providerThread.id,
-                    nodeId: turnInput.rootNodeId,
-                    runAttemptId: turnInput.attemptId,
-                    nativeTurnRef: {
-                      driver: input.driver,
-                      nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
-                      strength: "strong",
-                    },
-                    ordinal: turnInput.providerTurnOrdinal,
-                    status: "running",
-                    startedAt: eventTime,
-                    completedAt: null,
-                  },
+                  providerTurn: { ...providerTurn, status: "running", completedAt: null },
                 },
               ]);
+              const dropped = input.dropPromptAfterStart?.(turnInput);
+              if (dropped !== undefined) {
+                yield* Deferred.await(dropped).pipe(
+                  Effect.andThen(
+                    publish([
+                      {
+                        type: "provider_turn.updated",
+                        driver: input.driver,
+                        providerTurn: {
+                          ...providerTurn,
+                          status: "failed",
+                          completedAt: eventTime,
+                          promptDropped: true,
+                        },
+                      },
+                      {
+                        type: "turn.terminal",
+                        driver: input.driver,
+                        providerThreadId: turnInput.providerThread.id,
+                        providerTurnId,
+                        runOrdinal: turnInput.runOrdinal,
+                        status: "failed",
+                        failureItemOrdinal: turnInput.runOrdinal * 100 + 1,
+                        failure: makeProviderFailure({ class: "provider_error" }),
+                        threadDisposition: "reusable",
+                        promptDropped: true,
+                      },
+                    ]),
+                  ),
+                  Effect.forkDetach,
+                );
+                return;
+              }
               // Match fixture prompts by body while capturedTurns keeps what the provider received.
               const terminalGate = input.terminalGate?.(turnInput);
               if (terminalGate !== undefined) {
@@ -573,6 +609,7 @@ describe("orchestrator MCP toolkit", () => {
           const steerReceivedGates = new Map<string, Deferred.Deferred<void>>();
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
+          const droppedPromptGates = new Map<ThreadId, Deferred.Deferred<void>>();
           // Holds a delegated child whose thread id is not known until it starts.
           const promptTerminalGates = new Map<string, Deferred.Deferred<void>>();
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
@@ -593,6 +630,8 @@ describe("orchestrator MCP toolkit", () => {
                   ? deliveryTerminalGates.get(turn.threadId)
                   : (parentTerminalGates.get(turn.threadId) ?? promptTerminalGates.get(prompt));
               },
+              dropPromptAfterStart: (turn) =>
+                turn.runOrdinal === 2 ? droppedPromptGates.get(turn.threadId) : undefined,
               response: (turn) => `Codex completed: ${fixturePromptBody(turn.message)}`,
               respondToRuntimeRequest: (response) =>
                 Deferred.succeed(approvalResponse, response).pipe(Effect.asVoid),
@@ -4035,7 +4074,7 @@ describe("orchestrator MCP toolkit", () => {
             const lateParentGate = yield* Deferred.make<void>();
             const lateDeliveryGate = yield* Deferred.make<void>();
             parentTerminalGates.set(lateParentThreadId, lateParentGate);
-            deliveryTerminalGates.set(lateParentThreadId, lateDeliveryGate);
+            droppedPromptGates.set(lateParentThreadId, lateDeliveryGate);
             yield* Ref.set(continuationOffers, []);
             yield* orchestrator.dispatch({
               type: "thread.create",
@@ -4249,11 +4288,10 @@ describe("orchestrator MCP toolkit", () => {
               generation: firstLateDelivery.generation + 1,
               taskIds: [lateTask.id],
             });
-            yield* waitForProjection(
-              orchestrator,
-              earlyLateTask.childThreadId!,
-              (projection) => projection.thread.archivedAt !== null,
-            );
+            expect(
+              (yield* orchestrator.getThreadProjection(earlyLateTask.childThreadId!)).thread
+                .archivedAt,
+            ).toBeNull();
             const lateOffers = yield* waitForContinuationOffers(2);
             expect(lateOffers).toHaveLength(2);
             expect(
@@ -4395,6 +4433,11 @@ describe("orchestrator MCP toolkit", () => {
                     ?.state,
               ),
             ).toEqual(["delivered", "claimed", "claimed"]);
+            yield* waitForProjection(
+              orchestrator,
+              lateTask.childThreadId!,
+              (projection) => projection.thread.archivedAt !== null,
+            );
             yield* waitForContinuationOffers(3);
             yield* expectOffersToStay(3);
             expect(
@@ -4404,7 +4447,7 @@ describe("orchestrator MCP toolkit", () => {
                 );
                 return (
                   message?.delegatedCompletion?.parentRunId === lateParentRun.id &&
-                  run.status !== "completed"
+                  ["queued", "preparing", "starting", "running", "waiting"].includes(run.status)
                 );
               }),
             ).toHaveLength(0);

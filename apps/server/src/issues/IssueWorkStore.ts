@@ -669,6 +669,17 @@ export const layer = Layer.effect(
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads worker JOIN orchestration_v2_projection_runs run ON run.thread_id = worker.thread_id
               WHERE CASE WHEN json_valid(worker.payload_json) THEN json_extract(worker.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id
                 AND json_type(worker.payload_json, '$.linkedIssue') = 'object' AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting'))
+            OR EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_issue_work work
+              JOIN orchestration_v2_projection_threads worker ON worker.thread_id = work.owner_thread_id
+              JOIN orchestration_v2_projection_subagents task ON task.child_thread_id = worker.thread_id
+              WHERE work.host = owner.host AND work.repository_id = owner.repository_id
+                AND worker.archived_at IS NULL AND worker.deleted_at IS NULL
+                AND json_extract(worker.payload_json, '$.lineage.rootThreadId') = owner.root_thread_id
+                AND json_extract(worker.payload_json, '$.createdBy') IS NOT 'user'
+                AND task.origin = 'app_owned' AND task.completed_at IS NOT NULL
+                AND (task.completion_delivery_state = 'acknowledged'
+                  OR json_extract(task.payload_json, '$.completionDelivery.observedByRunId') IS NOT NULL))
             -- Restart cuts the readers ahead of a queued reader without a promotion event.
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads reader JOIN orchestration_v2_projection_runs run ON run.thread_id = reader.thread_id
               WHERE CASE WHEN json_valid(reader.payload_json) THEN json_extract(reader.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id
@@ -716,9 +727,7 @@ export const layer = Layer.effect(
           ON repository.host = work.host AND repository.repository_id = work.repository_id
         WHERE repository.root_thread_id = ${rootThreadId}
           AND CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
-          AND thread.deleted_at IS NULL
-          AND (thread.archived_at IS NULL
-            OR json_extract(thread.payload_json, '$.archivedByDelegatedResult') = 1)
+          AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
         ORDER BY thread.created_at, thread.thread_id
       `.pipe(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
