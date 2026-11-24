@@ -1999,11 +1999,15 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       yield* runGit(repoDir, ["branch", "--unset-upstream", branch]);
       const lookup = { cwd: repoDir, branch };
-      expect(yield* manager.branchPullRequest(lookup, { refresh: true })).toBeNull();
-      expect(
-        yield* manager.branchPullRequest(lookup, { refresh: true, includeUnpublished: true }),
-      ).toMatchObject({ state: "merged", headRef: branch, baseRef: "main", headSha });
-      expect(yield* manager.branchPullRequest(lookup)).toBeNull();
+      for (const upstream of [null, "origin/main"]) {
+        if (upstream !== null)
+          yield* runGit(repoDir, ["branch", "--set-upstream-to", upstream, branch]);
+        expect(yield* manager.branchPullRequest(lookup, { refresh: true })).toBeNull();
+        expect(
+          yield* manager.branchPullRequest(lookup, { refresh: true, useLocalBranchName: true }),
+        ).toMatchObject({ state: "merged", headRef: branch, baseRef: "main", headSha });
+        expect(yield* manager.branchPullRequest(lookup)).toBeNull();
+      }
     }),
   );
 

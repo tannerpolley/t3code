@@ -147,7 +147,7 @@ export class GitManager extends Context.Service<
      * refresh queries the host; freshGitState rereads only git state and is required before persisting.
      * A merged or closed answer is confirmed against git state unless confirmTerminal is false;
      * callers that opt out confirm before acting on it.
-     * includeUnpublished allows a host lookup when local refs give no evidence of publication.
+     * useLocalBranchName queries the local branch name even if its upstream differs or is gone.
      */
     readonly branchPullRequest: (
       input: { readonly cwd: string; readonly branch: string },
@@ -155,7 +155,7 @@ export class GitManager extends Context.Service<
         readonly refresh?: boolean;
         readonly freshGitState?: boolean;
         readonly confirmTerminal?: boolean;
-        readonly includeUnpublished?: boolean;
+        readonly useLocalBranchName?: boolean;
       },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     /** Whether T3 checked this pull request out onto the branch, which ties it to later threads. */
@@ -1267,7 +1267,7 @@ export const make = Effect.gen(function* () {
       defaultBranch: string | null;
       localBranchExists?: boolean;
       remoteName?: string | null;
-      includeUnpublished?: boolean;
+      useLocalBranchName?: boolean;
     },
   ) =>
     [
@@ -1277,7 +1277,7 @@ export const make = Effect.gen(function* () {
       details.defaultBranch ?? "",
       details.localBranchExists === false ? "0" : "1",
       details.remoteName ?? "",
-      details.includeUnpublished ? "1" : "0",
+      details.useLocalBranchName ? "1" : "0",
       String(prLookupEpoch(cwd)),
     ].join("\u0000");
   const prLookupFailureStreakByKey = new Map<string, number>();
@@ -1327,7 +1327,7 @@ export const make = Effect.gen(function* () {
         defaultBranch = "",
         branchExists = "1",
         remoteName = "",
-        includeUnpublished = "0",
+        useLocalBranchName = "0",
       ] = key.split("\u0000");
       const details = {
         branch,
@@ -1342,7 +1342,7 @@ export const make = Effect.gen(function* () {
           return { latest: null, headContext };
         }
         if (
-          includeUnpublished !== "1" &&
+          useLocalBranchName !== "1" &&
           details.localBranchExists &&
           (details.upstreamRef === null || headContext.remoteName === null) &&
           (yield* isUnpublishedBranch(cwd, headContext))
@@ -2754,7 +2754,7 @@ export const make = Effect.gen(function* () {
     options: {
       readonly refresh: boolean;
       readonly freshGitState: boolean;
-      readonly includeUnpublished: boolean;
+      readonly useLocalBranchName: boolean;
     },
   ) {
     const remember = <E>(key: string, read: Effect.Effect<string | null, E>) =>
@@ -2785,7 +2785,7 @@ export const make = Effect.gen(function* () {
     const localBranchExists = refName.length > 0;
     let upstreamRef: string | null = null;
     let remoteName: string | null = null;
-    if (savedUpstream.length > 0) {
+    if (savedUpstream.length > 0 && !options.useLocalBranchName) {
       if (savedRemoteName.length === 0 || savedRemoteRef.length === 0) {
         return yield* new GitManagerError({
           operation: "branchPullRequest",
@@ -2844,7 +2844,7 @@ export const make = Effect.gen(function* () {
       upstreamRef,
       defaultBranch,
       localBranchExists,
-      includeUnpublished: options.includeUnpublished,
+      useLocalBranchName: options.useLocalBranchName,
       ...(localBranchExists ? {} : { remoteName }),
     });
     if (options.refresh) {
@@ -2925,11 +2925,11 @@ export const make = Effect.gen(function* () {
     const cacheCwd = yield* normalizeStatusCacheKey(cwd);
     const refresh = options?.refresh === true;
     const freshGitState = refresh || options?.freshGitState === true;
-    const includeUnpublished = options?.includeUnpublished === true;
+    const useLocalBranchName = options?.useLocalBranchName === true;
     const pullRequest = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh,
       freshGitState,
-      includeUnpublished,
+      useLocalBranchName,
     });
     if (
       pullRequest === null ||
@@ -2941,7 +2941,7 @@ export const make = Effect.gen(function* () {
     }
     // A confirmed closed or merged result stays final until the branch or remotes change,
     // with a periodic fresh lookup so a new PR from a reused branch still shows up.
-    const settledKey = `${cacheCwd}\u0000${branch}\u0000${includeUnpublished}`;
+    const settledKey = `${cacheCwd}\u0000${branch}\u0000${useLocalBranchName}`;
     const now = yield* Clock.currentTimeMillis;
     const settled = settledPrLookupByBranchKey.get(settledKey);
     // Read before any fresh lookup, so a change made during it forces another one.
@@ -2957,7 +2957,7 @@ export const make = Effect.gen(function* () {
     const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh: false,
       freshGitState: true,
-      includeUnpublished,
+      useLocalBranchName,
     });
     settledPrLookupByBranchKey.delete(settledKey);
     if (confirmed !== null && confirmed.state !== "open") {
