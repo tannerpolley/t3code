@@ -1690,8 +1690,15 @@ export const layer = Layer.effect(
             : config.suspendedIssues.filter((entry) => entry.id !== issueId);
         const paused = issueId === undefined ? false : config.paused;
         // Explicit Resume removes only the chosen suspensions; reconcile still validates GitHub.
-        if (paused !== config.paused || suspendedIssues.length !== config.suspendedIssues.length)
-          yield* update(rootThreadId, { ...config, paused, suspendedIssues }, commandId);
+        if (paused === config.paused && suspendedIssues.length === config.suspendedIssues.length)
+          return;
+        const publish = update(rootThreadId, { ...config, paused, suspendedIssues }, commandId);
+        if (paused === config.paused) return yield* publish;
+        // Terminal reactions can try to fill a slot between unpausing and admitting queued issues.
+        yield* store.withQueuedIssuePriority(
+          rootThreadId,
+          publish.pipe(Effect.andThen(startQueuedIssues(rootThreadId))),
+        );
       },
       (effect, rootThreadId) => reconcile(rootThreadId, effect),
     );

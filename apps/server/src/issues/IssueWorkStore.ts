@@ -133,6 +133,10 @@ export class IssueWorkStore extends Context.Service<
       IssueWorkError
     >;
     readonly resultAvailable: (threadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
+    readonly withQueuedIssuePriority: <A, E, R>(
+      rootThreadId: ThreadId,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
     readonly canAdmit: (
       issue: ThreadLinkedIssue,
       threadId: ThreadId,
@@ -188,6 +192,7 @@ export const layer = Layer.effect(
   IssueWorkStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const admittingQueuedIssues = new Set<ThreadId>();
     const mapError = (cause: unknown) =>
       new IssueWorkError({ code: "orchestration-error", message: String(cause) });
     // A slot covers a managed worker preparing/running/waiting or awaiting a person's response.
@@ -243,6 +248,17 @@ export const layer = Layer.effect(
       GROUP BY run.thread_id
     `;
     const store: IssueWorkStore["Service"] = IssueWorkStore.of({
+      withQueuedIssuePriority: Effect.fn("IssueWorkStore.withQueuedIssuePriority")(
+        <A, E, R>(rootThreadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
+          Effect.acquireUseRelease(
+            Effect.sync(() => admittingQueuedIssues.add(rootThreadId)),
+            () => effect,
+            () =>
+              Effect.sync(() => {
+                admittingQueuedIssues.delete(rootThreadId);
+              }),
+          ),
+      ),
       queueWorkState: Effect.fn("IssueWorkStore.queueWorkState")(function* (issue) {
         const owner = yield* store.currentIssueOwner(issue);
         if (owner === null) {
@@ -693,13 +709,14 @@ export const layer = Layer.effect(
       }),
       admissionWait: Effect.fn("IssueWorkStore.admissionWait")(function* (issue, threadId) {
         const rows = yield* sql<{
+          root_thread_id: ThreadId;
           allowed: number;
           worker_limit: number;
           active: number;
           suspended: number;
           lineage_valid: number;
         }>`
-          SELECT owner.worker_limit, ${sql.unsafe(repositoryAdmissionSql("root.payload_json", "owner.paused"))} AS allowed,
+          SELECT owner.root_thread_id, owner.worker_limit, ${sql.unsafe(repositoryAdmissionSql("root.payload_json", "owner.paused"))} AS allowed,
             EXISTS (SELECT 1 FROM orchestration_v2_projection_threads candidate
               WHERE candidate.thread_id = ${threadId}
                 AND CASE WHEN json_valid(candidate.payload_json) THEN json_extract(candidate.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id) AS lineage_valid,
@@ -722,6 +739,11 @@ export const layer = Layer.effect(
         if (row === undefined || row.lineage_valid !== 1) return "not_current_worker" as const;
         if (row.allowed !== 1) return "repository_paused" as const;
         if (row.suspended !== 0) return "issue_suspended" as const;
+        if (
+          admittingQueuedIssues.has(row.root_thread_id) &&
+          !threadId.startsWith(queuedIssueWorker)
+        )
+          return "worker_limit" as const;
         if (row.active >= row.worker_limit) return "worker_limit" as const;
         return null;
       }, Effect.mapError(mapError)),
