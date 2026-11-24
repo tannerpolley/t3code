@@ -1814,8 +1814,16 @@ const make = Effect.gen(function* () {
                 }
               : workspaceStrategy;
         if (shouldSchedule) {
+          // The committed thread owns the link for both new and reused workspaces.
+          const { linkOrigin: _requestLinkOrigin, ...preparation } = input;
           yield* ensurePreparation(
-            { ...input, workspaceStrategy: preparationStrategy },
+            {
+              ...preparation,
+              workspaceStrategy: preparationStrategy,
+              ...(committedThread.linkOrigin === undefined
+                ? {}
+                : { linkOrigin: committedThread.linkOrigin }),
+            },
             threadId,
             runId,
           );

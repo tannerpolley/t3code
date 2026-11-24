@@ -145,6 +145,7 @@ const ProbeToolkit = Toolkit.make(
       issue: Schema.Struct({ host: Schema.String, number: Schema.Number }),
     }),
   }),
+  Tool.make("writes_owner_work", probe),
 );
 const ran = Effect.succeed({ ran: "ran" });
 const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
@@ -166,6 +167,7 @@ const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
   reads_hosts: McpToolAccess.reads(({ host, issue }) =>
     Effect.succeed({ ran: `${host} ${issue.host}#${issue.number}` }),
   ),
+  writes_owner_work: McpToolAccess.writesOwnerWork("drive owner work", () => ran),
 };
 const layerProbeHandlers = McpToolAccess.toLayer(ProbeToolkit, probeHandlers);
 
@@ -206,6 +208,7 @@ export const refusedAtCompileTime = () => {
       starts_threads: unchecked,
       writes_environment: unchecked,
       reads_hosts: unchecked,
+      writes_owner_work: unchecked,
     }),
   );
 };
@@ -266,6 +269,15 @@ const linkedClient: McpInvocationContext.McpInvocationScope = {
 const fullAccessLinkedClient: McpInvocationContext.McpInvocationScope = {
   ...fullAccessClient,
   client: { ...fullAccessClient.client!, linked: true },
+};
+// An administrator's ceiling narrows every client to it.
+const atCeilingClient: McpInvocationContext.McpInvocationScope = {
+  ...fullAccessClient,
+  runtimeModeCeiling: "auto",
+  client: {
+    ...fullAccessClient.client!,
+    narrowedTo: { runtimeMode: "auto", interactionMode: "default" },
+  },
 };
 const previewOnly = { ...fullAccess, capabilities: new Set(["preview"] as const) };
 
@@ -346,6 +358,17 @@ it.effect.each([
     { host: "forge.example", issue: { host: "forge.example", number: 7 } },
     "forge.example:3000 forge.example:3000#7",
   ],
+  ["writes_owner_work", fullAccess, {}, "ran"],
+  ["writes_owner_work", supervised, {}, "capability_denied"],
+  ["writes_owner_work", plan, {}, "capability_denied"],
+  ["writes_owner_work", ended, {}, "parent_not_active"],
+  ["writes_owner_work", fullAccessClient, {}, "ran"],
+  ["writes_owner_work", supervisedClient, {}, "capability_denied"],
+  ["writes_owner_work", readOnlyClient, {}, "capability_denied"],
+  ["writes_owner_work", linkedClient, {}, "capability_denied"],
+  ["writes_owner_work", fullAccessLinkedClient, {}, "ran"],
+  ["writes_owner_work", atCeilingClient, {}, "ran"],
+  ["writes_environment", atCeilingClient, {}, "capability_denied"],
 ] as const)("%s from %o with %o: %s", ([tool, scope, args, expected]) =>
   call(tool, scope, args).pipe(
     Effect.map((outcome) => expect(outcome).toBe(expected)),
