@@ -2510,13 +2510,12 @@ it.effect.each([
           failure: null,
           threadDisposition: "reusable",
         });
-        // A successful provider turn waits for checkpoint capture before the run completes.
         yield* orchestrator.streamStoredEventsFrom({ threadId, eventType: "run.updated" }).pipe(
           Stream.filter(
             ({ event }) =>
               event.type === "run.updated" &&
               event.payload.id === followUp.runId &&
-              event.payload.status === "waiting",
+              event.payload.status === "completed",
           ),
           Stream.take(1),
           Stream.runDrain,

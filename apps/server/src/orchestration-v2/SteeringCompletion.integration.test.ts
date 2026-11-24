@@ -874,7 +874,8 @@ it.effect.each(
           admissions[0]?.providerThread.driver,
           ProviderDriverKind.make(request.provider),
         );
-        assert.equal(admissions[0]?.message.text, brief);
+        const sentByParent = `[T3 Code: the agent in T3 thread "${parent}" sent this message, not the user.]`;
+        assert.equal(admissions[0]?.message.text, `${sentByParent}\n\n${brief}`);
       });
       if (request.restart) {
         const queued = yield* arrange.pipe(Effect.provide(layer));
@@ -3864,10 +3865,9 @@ it.effect(
         const threadId = yield* startFirstTurn;
         const first = started[0]!;
         yield* orchestrator.dispatch({
-          type: "run.interrupt",
+          type: "thread.stop",
           commandId: CommandId.make("stop"),
           threadId,
-          runId: first.runId,
         });
         const draining = yield* worker.drain().pipe(Effect.forkScoped);
         yield* Deferred.await(interruptReached);

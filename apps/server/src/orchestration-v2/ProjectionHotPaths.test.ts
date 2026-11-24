@@ -27,6 +27,7 @@ const layer = Layer.mergeAll(
 );
 const threadId = ThreadId.make("thread:hot-paths");
 const runId = RunId.make("run:hot-paths");
+const runOrdinal = 1001;
 const instanceId = ProviderInstanceId.make("codex");
 const now = DateTime.makeUnsafe("2026-10-05T00:00:00.000Z");
 const later = DateTime.makeUnsafe("2026-10-05T00:01:00.000Z");
@@ -88,7 +89,7 @@ const seed = Effect.gen(function* () {
     payload: {
       id: runId,
       threadId,
-      ordinal: 1001,
+      ordinal: runOrdinal,
       providerInstanceId: instanceId,
       modelSelection: { instanceId, model: "gpt-5.1-codex" },
       providerThreadId: null,
@@ -219,11 +220,12 @@ it.effect(
         return Effect.succeed(statement);
       };
       const replayed = yield* positions
-        .allocate({ threadId, turnItemId: item.id, runId, runOrdinal: 9999 })
+        .allocate({ threadId, turnItemId: item.id, runId, runOrdinal })
         .pipe(Effect.provideService(Statement.CurrentTransformer, record));
       assert.equal(replayed, first);
       assert.lengthOf(statements, 1);
       assert.match(statements[0]!, /WHERE thread_id = \? AND turn_item_id = \?/u);
+      assert.notMatch(statements[0]!, /orchestration_v2_projection_runs/u);
       const second = yield* positions.allocate({
         threadId,
         turnItemId: TurnItemId.make("next"),
