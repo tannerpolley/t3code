@@ -2269,7 +2269,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("compaction"),
-    contextFull: Schema.optional(Schema.Literal(true)),
+    contextFullCompactionId: Schema.optional(TurnItemId),
     driver: Schema.NullOr(ProviderDriverKind),
     summary: Schema.optional(Schema.String),
     beforeTokenCount: Schema.optional(NonNegativeInt),
@@ -3234,7 +3234,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("compaction"),
-    contextFull: Schema.optional(Schema.Literal(true)),
+    contextFullCompactionId: Schema.optional(TurnItemId),
     driver: Schema.NullOr(ProviderDriverKind),
     summary: Schema.optional(Schema.String),
     beforeTokenCount: Schema.optional(NonNegativeInt),

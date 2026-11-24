@@ -2391,7 +2391,7 @@ export const layer = Layer.effect(
               (stored.event.type === "turn-item.updated" &&
                 stored.event.payload.type === "compaction" &&
                 stored.event.payload.status === "completed" &&
-                stored.event.payload.contextFull === true) ||
+                stored.event.payload.contextFullCompactionId !== undefined) ||
               (stored.event.type === "provider-thread.updated" &&
                 (stored.event.payload.pendingBackgroundTasks?.length ?? 0) === 0) ||
               ((stored.event.type === "run.updated" || stored.event.type === "run.created") &&

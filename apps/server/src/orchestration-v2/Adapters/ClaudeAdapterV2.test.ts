@@ -12017,7 +12017,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(compaction.turnItem.beforeTokenCount, 1500);
           assert.equal(compaction.turnItem.afterTokenCount, 400);
           assert.equal(compaction.turnItem.status, "completed");
-          assert.isUndefined(compaction.turnItem.contextFull);
+          assert.isUndefined(compaction.turnItem.contextFullCompactionId);
         }
         const watermark = harness.events.find(
           (event) =>
@@ -12130,15 +12130,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.isUndefined(reported[1]?.afterTokenCount);
       assert.isEmpty(harness.terminalEvents());
       yield* TestClock.adjust(1_000);
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          type: "system",
-          subtype: "compact_boundary",
-          compact_metadata: { trigger: "auto", pre_tokens: 1500, post_tokens: 400 },
-          uuid: "00000000-0000-4000-8000-000000000213",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-      );
+      const autoBoundary = claudeSdkFrame({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "auto", pre_tokens: 1500, post_tokens: 400 },
+        uuid: "00000000-0000-4000-8000-000000000213",
+        session_id: WAKE_NATIVE_SESSION,
+      });
+      yield* harness.offerAndWait(autoBoundary);
       const afterBoundary = yield* observeCompactions("00000000-0000-4000-8000-000000000216");
       assert.lengthOf(afterBoundary, 3);
       const completed = afterBoundary[2]!;
@@ -12147,7 +12146,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(completed.ordinal, running.ordinal);
       assert.deepEqual(completed.startedAt, running.startedAt);
       assert.equal(completed.beforeTokenCount, 1500);
-      assert.isTrue(completed.contextFull);
+      assert.isDefined(completed.contextFullCompactionId);
       assert.equal(completed.afterTokenCount, 400);
       assert.deepEqual(completed.completedAt, reported[1]?.completedAt);
 
@@ -12177,7 +12176,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.notEqual(boundaryOnly.id, completed.id);
       assert.isAbove(boundaryOnly.ordinal, completed.ordinal);
       assert.equal(boundaryOnly.beforeTokenCount, 2000);
-      assert.isUndefined(boundaryOnly.contextFull);
+      assert.isUndefined(boundaryOnly.contextFullCompactionId);
       assert.equal(boundaryOnly.afterTokenCount, 500);
       assert.equal(nextRunning.status, "running");
       assert.notEqual(nextRunning.id, boundaryOnly.id);
@@ -12266,6 +12265,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(allCompactions[9]?.beforeTokenCount, 3000);
       assert.equal(allCompactions[9]?.afterTokenCount, 600);
 
+      yield* harness.offerAndWait(autoBoundary);
+      const withReplay = yield* observeCompactions("00000000-0000-4000-8000-000000000235");
+      assert.lengthOf(withReplay, allCompactions.length + 1);
+      assert.equal(withReplay.at(-1)?.contextFullCompactionId, completed.contextFullCompactionId);
+      assert.notEqual(
+        allCompactions[9]?.contextFullCompactionId,
+        completed.contextFullCompactionId,
+      );
+
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({
@@ -12280,7 +12288,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ? [event.turnItem]
             : [],
         ),
-        allCompactions,
+        withReplay,
       );
     }).pipe(
       Effect.scoped,

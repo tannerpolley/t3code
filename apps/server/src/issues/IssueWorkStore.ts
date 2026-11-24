@@ -372,9 +372,9 @@ export const layer = Layer.effect(
         (rootThreadId) =>
           // Providers without a context-full signal never contribute to automatic handoff.
           sql<{ count: number }>`
-          SELECT count(*) AS count FROM orchestration_v2_projection_turn_items
+          SELECT count(DISTINCT json_extract(payload_json, '$.contextFullCompactionId')) AS count
+          FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${rootThreadId} AND type = 'compaction' AND status = 'completed'
-            AND json_extract(payload_json, '$.contextFull') = 1
         `.pipe(
             Effect.map((rows) => rows[0]?.count ?? 0),
             Effect.mapError(mapError),

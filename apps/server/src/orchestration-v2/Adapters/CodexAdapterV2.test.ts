@@ -5034,7 +5034,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ["running", "completed"],
       );
       assert.equal(items[0]?.id, items[1]?.id);
-      assert.isUndefined(items[1]?.contextFull);
+      assert.isUndefined(items[1]?.contextFullCompactionId);
       assert.equal(harness.terminalEvents()[0]?.status, "completed");
     }).pipe(
       Effect.provide(
@@ -5049,6 +5049,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   it.effect.each([
+    { itemType: "contextCompaction", outcome: "completed" },
     { itemType: "contextCompaction", outcome: "failed" },
     { itemType: "contextCompaction", outcome: "interrupted" },
     { itemType: "contextCompaction", outcome: "Stop" },
@@ -5167,7 +5168,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           (item) => item.nativeItemRef?.nativeId === "unfinished-item",
         );
         const status =
-          outcome === "completed" ? "cancelled" : outcome === "failed" ? "failed" : "interrupted";
+          outcome === "completed"
+            ? itemType === "webSearch"
+              ? "cancelled"
+              : "completed"
+            : outcome === "failed"
+              ? "failed"
+              : "interrupted";
         assert.deepEqual(
           unfinished.map((item) => item.status),
           ["running", status],
@@ -5195,8 +5202,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ["running", "completed"],
         );
         if (completed[1]?.type === "compaction" && unfinished[1]?.type === "compaction") {
-          assert.isTrue(completed[1].contextFull);
-          assert.isUndefined(unfinished[1].contextFull);
+          assert.equal(completed[1].contextFullCompactionId, completed[1].id);
+          assert.isUndefined(unfinished[1].contextFullCompactionId);
         }
         assert.deepEqual(completed[1]?.startedAt, DateTime.makeUnsafe(1782622441000));
         assert.deepEqual(
