@@ -179,10 +179,16 @@ it("names how the provider process exited and the stage it failed in, without it
       code: 1,
       stderr: "Error: Operation not permitted (os error 1) at /Users/private/Desktop",
     },
-  }).message;
-  assert.include(denied, "The provider process exited with code 1. It was denied access");
-  assert.include(denied, "Files and Folders");
-  assert.notInclude(denied, "/Users/private");
+  });
+  assert.include(denied.message, "The provider process exited with code 1. It was denied access");
+  assert.include(denied.message, "Files and Folders");
+  assert.notInclude(denied.message, "/Users/private");
+  assert.isNull(denied.code);
+  const disconnected = makeProviderFailure({
+    cause: { _tag: "CodexAppServerProcessExitedError", code: 1 },
+  });
+  assert.equal(disconnected.code, "codex_app_server_disconnected");
+  assert.equal(disconnected.class, "transport_error");
 });
 
 it("tells the user to sign in only when an ACP agent answers auth_required", () => {

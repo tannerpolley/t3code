@@ -45,7 +45,7 @@ vi.mock(import("../../state/orchestration"), async (original) => {
 });
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
-  useThreadProjection: () => null,
+  useQuietThreadProjection: () => null,
   useThreadRelationshipShells: () => [child],
   // The parent is absent from this client's shell, as for a parent never loaded here.
   useQuietThreadShell: () => null,

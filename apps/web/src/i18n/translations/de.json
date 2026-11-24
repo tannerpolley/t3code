@@ -13232,5 +13232,13 @@
   "9be5b8420ee64ec7": "Übergabe an {target} wird abgeschlossen",
   "e05b2595e2c7c313": "Übergabe an {target} wartet auf Freigabe",
   "97144d3a3218d931": "T3 startet keine neuen Issues, bis die laufende Arbeit abgeschlossen ist, und übergibt dann an einen neuen Thread.",
-  "9a73e6f99e93612a": "Übergabe starten"
+  "9a73e6f99e93612a": "Übergabe starten",
+  "b1d8a5a24bd684e3": "Subagent",
+  "5a805b37d8940816": "Befehl",
+  "da2da87e78bd6b11": "Monitor",
+  "b034f8434dd8479d": "Hintergrundaufgabe",
+  "519dd506361059c9": "Befehl",
+  "b851b1f4c772dea4": "Wartet",
+  "83915f0968cde2cc": "Läuft",
+  "e7b4d35b3eeeb470": "HTML-Ausgabe von Zelle {number}"
 }

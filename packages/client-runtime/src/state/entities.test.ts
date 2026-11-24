@@ -202,20 +202,26 @@ describe("V2 client presentation", () => {
     });
   });
 
-  it("keeps a post-settlement background roster ahead of activity status", () => {
+  it("parks at idle after the activity run settles and background work remains", () => {
     const activeRunId = RunId.make("run-active");
-    const shell = presentThreadShell(environmentId, {
+    const shell = {
       ...v2ThreadShell,
       latestRunId: RunId.make("run-cancelled"),
       activeRunId,
-      activityRunStatus: "running",
-      status: "cancelled",
+      activityRunStatus: null,
+      status: "cancelled" as const,
       pendingBackgroundTasks: [
-        { taskId: "bg-activity", description: "background work", kind: "background_task" },
+        { taskId: "bg-activity", description: "background work", kind: "background_task" as const },
       ],
-    });
+    };
 
-    expect(shell.runtime).toMatchObject({ status: "idle", activeRunId });
+    expect(presentThreadShell(environmentId, shell).runtime).toMatchObject({
+      status: "idle",
+      activeRunId,
+    });
+    expect(
+      presentThreadShell(environmentId, { ...shell, activityRunStatus: "running" }).runtime,
+    ).toMatchObject({ status: "running", activeRunId });
   });
 
   it("parks runtime idle over stale shell running when the roster is nonempty", () => {

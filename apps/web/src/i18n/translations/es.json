@@ -13227,5 +13227,13 @@
   "9be5b8420ee64ec7": "El traspaso a {target} se está completando",
   "e05b2595e2c7c313": "El traspaso a {target} espera aprobación",
   "97144d3a3218d931": "T3 pausa el inicio de nuevas incidencias mientras termina el trabajo en curso y luego transfiere el control a un hilo nuevo.",
-  "9a73e6f99e93612a": "Iniciar transferencia"
+  "9a73e6f99e93612a": "Iniciar transferencia",
+  "b1d8a5a24bd684e3": "subagente",
+  "5a805b37d8940816": "comando",
+  "da2da87e78bd6b11": "monitor",
+  "b034f8434dd8479d": "tarea en segundo plano",
+  "519dd506361059c9": "Comando",
+  "b851b1f4c772dea4": "Esperando",
+  "83915f0968cde2cc": "En ejecución",
+  "e7b4d35b3eeeb470": "Salida HTML de la celda {number}"
 }

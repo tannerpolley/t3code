@@ -13232,5 +13232,13 @@
   "9be5b8420ee64ec7": "Le transfert vers {target} est en cours de finalisation",
   "e05b2595e2c7c313": "Le transfert vers {target} attend une approbation",
   "97144d3a3218d931": "T3 suspend le démarrage de nouvelles tâches liées aux tickets le temps que le travail en cours se termine, puis passe le relais à un nouveau fil.",
-  "9a73e6f99e93612a": "Passer le relais"
+  "9a73e6f99e93612a": "Passer le relais",
+  "b1d8a5a24bd684e3": "sous-agent",
+  "5a805b37d8940816": "commande",
+  "da2da87e78bd6b11": "moniteur",
+  "b034f8434dd8479d": "tâche en arrière-plan",
+  "519dd506361059c9": "Commande",
+  "b851b1f4c772dea4": "En attente",
+  "83915f0968cde2cc": "En cours",
+  "e7b4d35b3eeeb470": "Sortie HTML de la cellule {number}"
 }

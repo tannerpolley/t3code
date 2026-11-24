@@ -81,7 +81,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 
-import { fakeTimers, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { isMacPlatform } from "../../lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
@@ -597,7 +597,9 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
     </div>,
   );
   if (count > 6) {
-    await screen.getByRole("button", { name: "Show 12 more" }).click();
+    const more = screen.getByRole("button", { name: "Show 12 more" });
+    await expect.element(more).toBeVisible();
+    await act(() => (more.element() as HTMLElement).click());
     await expect.element(screen.getByText("Subagent 17", { exact: true })).toBeInTheDocument();
   }
   const list = screen.getByRole("list", { name: "Related threads" }).element();

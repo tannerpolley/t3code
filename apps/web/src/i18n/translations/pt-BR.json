@@ -13232,5 +13232,13 @@
   "9be5b8420ee64ec7": "A transferência para {target} está sendo concluída",
   "e05b2595e2c7c313": "A transferência para {target} aguarda aprovação",
   "97144d3a3218d931": "O T3 pausa o início de novos trabalhos em issues até que o trabalho em andamento termine e depois transfere o controle para uma nova conversa.",
-  "9a73e6f99e93612a": "Iniciar transferência"
+  "9a73e6f99e93612a": "Iniciar transferência",
+  "b1d8a5a24bd684e3": "subagente",
+  "5a805b37d8940816": "comando",
+  "da2da87e78bd6b11": "monitor",
+  "b034f8434dd8479d": "tarefa em segundo plano",
+  "519dd506361059c9": "Comando",
+  "b851b1f4c772dea4": "Aguardando",
+  "83915f0968cde2cc": "Executando",
+  "e7b4d35b3eeeb470": "Saída HTML da célula {number}"
 }

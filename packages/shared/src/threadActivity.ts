@@ -134,17 +134,12 @@ function threadActivityShellRuntime(
   const parkAtIdle =
     activityStatus !== "preparing" &&
     activityStatus !== "starting" &&
-    activityStatus !== "running" &&
+    thread.activityRunStatus !== "running" &&
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
     resolveThreadActivity({ runtime: { status: thread.status } }) !== "failed";
   // A pull request watch can hold a thread that never ran, and a provider-native
   // child without an app run still reports its own status.
-  if (
-    thread.latestRunId === null &&
-    thread.activeProviderThreadId === null &&
-    thread.status === "idle" &&
-    !parkAtIdle
-  ) {
+  if (thread.latestRunId === null && activityStatus === "idle" && !parkAtIdle) {
     return null;
   }
   const status = parkAtIdle ? "idle" : activityStatus;

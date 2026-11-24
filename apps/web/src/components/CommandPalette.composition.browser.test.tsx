@@ -298,7 +298,9 @@ it("leaves a reopened subsection picker open when the previous save finishes", a
     .mockReturnValue(save.promise);
   await act(openFolderSubsection);
   await page.getByRole("combobox").fill("/workspace/First");
-  await userEvent.keyboard("{Enter}");
+  const submit = page.getByRole("button", { name: /^Add subsection/ });
+  await expect.element(submit).toBeEnabled();
+  await act(() => (submit.element() as HTMLElement).click());
   await vi.waitFor(() => expect(add).toHaveBeenCalledOnce());
   await act(() => dispatchCommandPalette({ _tag: "SetOpen", open: false }));
   await act(openFolderSubsection);

@@ -157,6 +157,8 @@ export function ChatMarkdownImageFallback(props: {
   readonly kind?: "image" | "video" | "audio" | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
   readonly unavailableLabel?: string | undefined;
+  readonly standalone?: boolean | undefined;
+  readonly style?: CSSProperties | undefined;
 }) {
   const content = (
     <span
@@ -164,8 +166,12 @@ export function ChatMarkdownImageFallback(props: {
       role="alert"
       className={cn(
         CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
-        "rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
+        "px-2 py-1 text-xs text-muted-foreground",
+        props.standalone
+          ? CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME
+          : "rounded-md border border-border/40 bg-muted/40",
       )}
+      style={props.style}
     >
       {props.unavailableLabel ?? (
         <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} />
@@ -242,6 +248,8 @@ export function ChatMarkdownImage(props: {
         copyMarkdown={props.copyMarkdown}
         actionsSource={props.actionsSource}
         unavailableLabel={unavailableLabel}
+        standalone={props.standalone}
+        style={props.standalone ? props.style : undefined}
       />
     );
   }
@@ -477,36 +485,16 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     downloadable: fallbackSrc === undefined,
   });
 
-  const unavailableLabel = markdownImageUnavailableLabel({
-    path: "path" in resource ? resource.path : (props.originalUrl ?? props.alt),
-    sourceFailed: assetUrl._tag === "Failure" && fallbackSrc === undefined,
-    reason:
-      assetUrl._tag !== "Failure"
-        ? undefined
-        : assetUrl.reason === "missing-file-access"
-          ? MISSING_FILE_ACCESS_MESSAGE
-          : assetUrl.reason,
-    kind: props.kind,
-  });
-  if (unavailableLabel) {
-    return (
-      <ChatMarkdownImageFallback
-        alt={props.alt}
-        copyMarkdown={props.copyMarkdown}
-        kind={props.kind}
-        actionsSource={actionsSource}
-        unavailableLabel={unavailableLabel}
-      />
-    );
-  }
-
+  const sourcePath = "path" in resource ? resource.path : props.originalUrl;
   if (props.kind === "video") {
     return (
       <ChatMarkdownVideo
         src={src}
         sourceFailed={unavailable}
-        unavailableDetail={unavailableDetail}
-        alt={props.alt}
+        unavailableDetail={
+          unavailableDetail ?? (assetUrl._tag === "Failure" ? assetUrl.reason : undefined)
+        }
+        alt={unavailable ? (sourcePath ?? props.alt) : props.alt}
         copyMarkdown={props.copyMarkdown}
         originalUrl={props.originalUrl}
         style={props.style}
@@ -518,14 +506,37 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     );
   }
 
+  const standalone = props.standalone ?? true;
+  const unavailableLabel = markdownImageUnavailableLabel({
+    path: sourcePath ?? props.alt,
+    sourceFailed: unavailable,
+    reason: missingFileAccess
+      ? MISSING_FILE_ACCESS_MESSAGE
+      : assetUrl._tag === "Failure"
+        ? assetUrl.reason
+        : undefined,
+  });
+  if (unavailableLabel) {
+    return (
+      <ChatMarkdownImageFallback
+        alt={props.alt}
+        copyMarkdown={props.copyMarkdown}
+        actionsSource={actionsSource}
+        unavailableLabel={unavailableLabel}
+        standalone={standalone}
+        style={standalone ? style : undefined}
+      />
+    );
+  }
+
   return (
     <ChatMarkdownImage
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
-      sourcePath={"path" in resource ? resource.path : props.originalUrl}
+      sourcePath={sourcePath}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
-      standalone={props.standalone ?? true}
+      standalone={standalone}
       className={cn(
         props.framed === false ? undefined : CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME,
         props.className,

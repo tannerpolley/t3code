@@ -299,7 +299,7 @@ export function WorkspaceBrowserPreview(props: {
   // inode, which an atomic replace changes.
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   useWorkspaceMutationRefresh({
-    mutationId: String(props.revealRequestId ?? 0),
+    mutationId: props.revealRequestId ? String(props.revealRequestId) : null,
     resourceKey: JSON.stringify([props.environmentId, resource]),
     refresh: () => {
       void refreshAssetUrl().catch(() => undefined);

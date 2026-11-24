@@ -180,36 +180,41 @@ export function NotebookCellSurface({
           text={cell.source}
         />
       ) : null}
-      {cell.outputs.map((output, outputIndex) => (
-        <div
-          key={outputIndex}
-          data-notebook-output={output.kind === "html" ? `${index}-${outputIndex}` : undefined}
-          className="border-t border-border/60"
-          style={{
-            minHeight:
-              output.kind !== "html" || outputView.mounted.has(`${index}-${outputIndex}`)
-                ? undefined
-                : (outputView.heights.get(`${index}-${outputIndex}`) ?? 80),
-          }}
-        >
-          {output.kind === "html" ? (
-            !outputView.mounted.has(`${index}-${outputIndex}`) ? null : (
-              <DocumentPages html={output.text} name={`Cell ${index + 1} HTML output`} output />
-            )
-          ) : output.kind === "image" ? (
-            <img
-              src={output.text}
-              alt={gt("Cell {number} output", { number: index + 1 })}
-              loading="lazy"
-              className="max-h-96 max-w-full p-4 object-contain"
-            />
-          ) : (
-            <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
-              {output.text}
-            </pre>
-          )}
-        </div>
-      ))}
+      {cell.outputs.map((output, outputIndex) => {
+        const key = `${index}-${outputIndex}`;
+        const mounted = outputView.mounted.has(key);
+        const estimatedHeight = outputView.heights.get(key) ?? 80;
+        return (
+          <div
+            key={outputIndex}
+            data-notebook-output={output.kind === "html" ? key : undefined}
+            className="box-content border-t border-border/60"
+            style={{ minHeight: output.kind === "html" && !mounted ? estimatedHeight : undefined }}
+          >
+            {output.kind === "html" ? (
+              mounted ? (
+                <DocumentPages
+                  html={output.text}
+                  name={gt("Cell {number} HTML output", { number: index + 1 })}
+                  output
+                  estimatedOutputHeight={estimatedHeight}
+                />
+              ) : null
+            ) : output.kind === "image" ? (
+              <img
+                src={output.text}
+                alt={gt("Cell {number} output", { number: index + 1 })}
+                loading="lazy"
+                className="max-h-96 max-w-full p-4 object-contain"
+              />
+            ) : (
+              <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
+                {output.text}
+              </pre>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }

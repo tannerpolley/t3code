@@ -128,7 +128,7 @@ it("opens full command details for short labels and keeps pending tasks current"
   await expect
     .element(page.getByRole("heading", { name: "Worker detail", exact: true }))
     .toBeVisible();
-  await page.getByRole("button", { name: "Open thread", exact: true }).click();
+  await page.getByRole("button", { name: "Open subagent", exact: true }).click();
   expect(onOpenThread).toHaveBeenCalledWith(ThreadId.make("child"));
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
 });

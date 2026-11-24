@@ -54,7 +54,7 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
 }));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
-  useThreadProjection: ((ref: ScopedThreadRef | null) =>
+  useQuietThreadProjection: ((ref: ScopedThreadRef | null) =>
     ref === null
       ? undefined
       : {
@@ -144,6 +144,8 @@ vi.mock(import("../ui/tooltip"), async () => {
 });
 
 import { act, render as renderUi } from "../../../test/render";
+import { isMacPlatform } from "../../lib/utils";
+import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
 async function setup() {
@@ -231,6 +233,8 @@ async function setup() {
 
 it("opens the correct chat for every workflow phase and unphased member", async () => {
   await using fixture = await setup();
+  const initialPanels = useRightPanelStore.getState();
+  using _panels = { [Symbol.dispose]: () => useRightPanelStore.setState(initialPanels, true) };
   const { render, update, click, byLabel, buttonsWithLabel, textNodes } = fixture;
   state.showTooltips = true;
   state.configs.set("remote", {
@@ -317,17 +321,28 @@ it("opens the correct chat for every workflow phase and unphased member", async 
   expect(byLabel("Collapse Verify phase, running")).toBeDefined();
   for (const phase of phaseButtons().slice(0, 2)) await click(phase);
   expect(memberButtons()).toHaveLength(7);
-  for (const button of memberButtons()) {
+  const parentRef = {
+    environmentId: EnvironmentId.make("remote"),
+    threadId: ThreadId.make("parent"),
+  };
+  const panelState = () => selectThreadRightPanelState(useRightPanelStore.getState(), parentRef);
+  for (const agent of agents) {
+    const button = byLabel(`Open ${agent.label} chat`);
     expect(button.disabled).toBe(false);
     await click(button);
+    expect(panelState().activeSurfaceId).toBe(`thread:${agent.childThreadId}`);
   }
-  expect(state.navigate).toHaveBeenCalledTimes(7);
-  state.navigate.mockClear();
+  expect(state.navigate).not.toHaveBeenCalled();
   state.shells = memberShells.map((source) => ({ environmentId: "remote", source }));
   await update();
   for (const button of memberButtons()) expect(button.disabled).toBe(false);
+  const mac = isMacPlatform(navigator.platform);
   for (const agent of agents) {
-    await click(byLabel(`Open ${agent.label} chat`));
+    await act(() =>
+      byLabel(`Open ${agent.label} chat`).dispatchEvent(
+        new MouseEvent("click", { bubbles: true, metaKey: mac, ctrlKey: !mac }),
+      ),
+    );
     expect(state.navigate).toHaveBeenLastCalledWith({
       to: "/$environmentId/$threadId",
       params: { environmentId: "remote", threadId: agent.childThreadId },

@@ -158,14 +158,6 @@ function curatedCauseMessages(cause: unknown): {
               "Codex timed out waiting for a reply. Check whether the request took effect before retrying.",
             category: categoryMessage(),
           };
-        case "CodexAppServerProcessExitedError":
-          if (typeof details.stderr === "string" && CODEX_PERSISTENT_EXIT.test(details.stderr))
-            break;
-          return {
-            known: `Codex App Server process exited${processExitStatus(cause)}.`,
-            category: categoryMessage(),
-            disconnected: true,
-          };
         case "CodexAppServerTransportError":
           if (!PlatformError.isPlatformError(details.cause)) break;
           return {
@@ -202,12 +194,20 @@ function curatedCauseMessages(cause: unknown): {
         }
         case "AcpProcessExitedError":
         case "CodexAppServerProcessExitedError": {
+          const disconnected =
+            tag === "CodexAppServerProcessExitedError" &&
+            !(
+              typeof details.stderr === "string" &&
+              (CODEX_PERSISTENT_EXIT.test(details.stderr) ||
+                PERMISSION_DENIED_OUTPUT.test(details.stderr))
+            );
           const exit = `provider process exited${processExitStatus(cause)}`;
           const stage = category === undefined ? `The ${exit}` : `${category.summary}: the ${exit}`;
-          const guidance = providerProcessExitGuidance((cause as Record<string, unknown>).stderr);
+          const guidance = providerProcessExitGuidance(details.stderr);
           return {
             known: `${stage}. ${guidance}`,
             category: categoryMessage(),
+            ...(disconnected ? { disconnected: true } : {}),
           };
         }
         // ACP reserves -32000 for auth_required; the agent's own text is not shown.
