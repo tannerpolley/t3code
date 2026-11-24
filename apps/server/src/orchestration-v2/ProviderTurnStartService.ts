@@ -2411,6 +2411,8 @@ export const layer: Layer.Layer<
       const deliverySession = carriesPendingContext
         ? makeDeliverySession(skillSession, startWithHandoffs)
         : skillSession;
+      const archiveDelegatedCompletion = input.archiveDelegatedCompletion;
+      const deliveredTaskIds = message.delegatedCompletion?.taskIds;
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
@@ -2424,12 +2426,13 @@ export const layer: Layer.Layer<
         attemptId: attempt.id,
         baseline,
         loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
-        ...(message.delegatedCompletion === undefined ||
-        input.archiveDelegatedCompletion === undefined
+        ...(deliveredTaskIds === undefined || archiveDelegatedCompletion === undefined
           ? {}
           : {
-              onPromptAccepted: input.archiveDelegatedCompletion(
-                message.delegatedCompletion.taskIds,
+              onPromptAccepted: Effect.suspend(() =>
+                promptDroppedOnTerminal
+                  ? Effect.void
+                  : archiveDelegatedCompletion(deliveredTaskIds),
               ),
             }),
         relatedThreadIds: routableSubagents.flatMap((subagent) =>

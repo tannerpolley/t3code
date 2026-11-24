@@ -920,6 +920,116 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   },
 );
 
+it.layer(layerTest)("worker archive on result observation", (it) => {
+  it.effect.each(["pending", "disposed"] as const)(
+    "archives after finalization when the parent already observed a %s result",
+    (state) =>
+      Effect.gen(function* () {
+        const engine = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const parent = yield* seedOwnedParent("run", `early-observation-${state}`, {
+          deliveryState: "delivered",
+          withDelivery: false,
+          parentRunEnded: true,
+        });
+        const child = finishedWorkerEvents(parent, "child", "Preparation failed", {
+          status: "failed",
+        });
+        const childId = child.task.childThreadId;
+        yield* sink.write({
+          events: [
+            child.events[0],
+            {
+              ...child.events[1],
+              payload: {
+                ...child.task,
+                completionDelivery: { state, observedByRunId: null },
+              },
+            },
+          ],
+        });
+        yield* engine.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make(`observe:${state}`),
+          parentThreadId: parent.threadId,
+          taskId: child.task.id,
+          observedByRunId: parent.runId,
+        });
+        assert.isNull((yield* engine.getThreadProjection(childId)).thread.archivedAt);
+        yield* sink.write({
+          commandId: reconcileCommandId(`terminal-after-observation:${state}`),
+          events: child.events.slice(2),
+        });
+        yield* engine.recoverDelegatedTask(childId, { sourceRunId: child.events[3].payload.id });
+        assert.isNotNull((yield* engine.getThreadProjection(childId)).thread.archivedAt);
+      }),
+  );
+
+  it.effect.each([false, true])(
+    "archives a failed wake only if its prompt was accepted (%s)",
+    (accepted) =>
+      Effect.gen(function* () {
+        const engine = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const parent = yield* seedOwnedParent("thread", `wake-acceptance-${accepted}`, {
+          deliveryState: "claimed",
+          withDelivery: true,
+          parentRunEnded: true,
+        });
+        const child = finishedWorkerEvents(parent, "child", "Review complete.");
+        yield* sink.write({
+          events: [
+            child.events[0],
+            {
+              ...child.events[1],
+              payload: {
+                ...parent.task,
+                runId: parent.parentRunId,
+                childThreadId: child.task.childThreadId,
+              },
+            },
+          ],
+        });
+        yield* engine.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`result-wake:${accepted}`),
+          threadId: parent.threadId,
+          messageId: parent.messageId,
+          text: "Review complete.",
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: { parentRunId: null, generation: 1, taskIds: [parent.taskId] },
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const projection = yield* engine.getThreadProjection(parent.threadId);
+        const wake = projection.runs.find((run) => run.userMessageId === parent.messageId)!;
+        yield* sink.write({
+          commandId: reconcileCommandId(`failed-wake:${accepted}`),
+          events: [
+            {
+              id: EventId.make(`failed-wake:${accepted}`),
+              type: "run.updated",
+              threadId: parent.threadId,
+              occurredAt: parent.now,
+              payload: { ...wake, status: "failed", completedAt: parent.now },
+            },
+          ],
+        });
+        yield* engine.recoverDelegatedTask(parent.threadId, { completedRunId: wake.id });
+        assert.isNull(
+          (yield* engine.getThreadProjection(child.task.childThreadId)).thread.archivedAt,
+        );
+        if (accepted) {
+          yield* engine.archiveDelegatedCompletion(parent.threadId, [parent.taskId]);
+          assert.isNotNull(
+            (yield* engine.getThreadProjection(child.task.childThreadId)).thread.archivedAt,
+          );
+        }
+      }),
+  );
+});
+
 it.layer(layerTest)("workspace preparation failure for both cohort owners", (it) => {
   it.effect.each(cohortOwners)(
     "a %s-owned worker can retry after its delivered preparation failure archives it",
@@ -993,7 +1103,55 @@ it.layer(layerTest)("workspace preparation failure for both cohort owners", (it)
         });
         const retried = yield* engine.getThreadProjection(childThreadId);
         assert.isNull(retried.thread.archivedAt);
-        assert.equal(retried.runs[0]?.status, "preparing");
+        const retry = retried.runs[0]!;
+        assert.equal(retry.status, "preparing");
+        assert.isDefined(retry.delegatedTaskId);
+        assert.notEqual(retry.delegatedTaskId, task.id);
+        yield* TestClock.adjust("1 second");
+        yield* engine.dispatch({
+          type: "prepared-run.release",
+          commandId: CommandId.make(`${parent.key}-release-retry`),
+          threadId: childThreadId,
+          runId: retry.id,
+        });
+        const released = (yield* engine.getThreadProjection(childThreadId)).runs[0]!;
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          commandId: reconcileCommandId(`${parent.key}-retry-completed`),
+          events: [
+            {
+              ...worker.events[2],
+              runId: retry.id,
+              occurredAt: now,
+              payload: {
+                ...worker.events[2].payload,
+                runId: retry.id,
+                text: "The retry succeeded.",
+                updatedAt: now,
+              },
+            },
+            {
+              ...worker.events[3],
+              runId: retry.id,
+              occurredAt: now,
+              payload: { ...released, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* engine.recoverDelegatedTask(childThreadId, { sourceRunId: retry.id });
+        const parentAfterRetry = yield* engine.getThreadProjection(parent.threadId);
+        const retryTask = parentAfterRetry.subagents.find(
+          ({ id }) => id === retry.delegatedTaskId,
+        )!;
+        assert.include(retryTask.result, "The retry succeeded.");
+        yield* engine.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make(`${parent.key}-retry-observed`),
+          parentThreadId: parent.threadId,
+          taskId: retryTask.id,
+          observedByRunId: parent.runId,
+        });
+        assert.isNotNull((yield* engine.getThreadProjection(childThreadId)).thread.archivedAt);
       }),
   );
 });

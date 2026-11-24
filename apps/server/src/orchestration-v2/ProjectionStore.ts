@@ -278,6 +278,7 @@ export type ProjectionThreadPullRequests = Pick<
 >;
 
 export type WorkerRetentionPage = {
+  readonly observedTaskId?: NodeId | undefined;
   readonly afterThreadId?: ThreadId;
   readonly archivedBefore?: DateTime.Utc;
   readonly rootThreadId?: ThreadId;
@@ -770,6 +771,9 @@ export interface ProjectionStoreV2Shape {
   readonly findGuestShareThreadId: (
     shareId: GuestShareId,
   ) => Effect.Effect<ThreadId | null, ProjectionStoreV2Error>;
+  readonly hasReleasedIssueWorkspace: (
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
@@ -9662,7 +9666,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const isTemporaryWorker = sql`json_extract(t.payload_json, '$.role') IN ${sql.in(temporaryWorkerRoles)}`;
 
     // A claimed result is observable once the wake carrying that exact task starts running.
-    const workerResultAvailableAt = (alias: "incoming" | "outstanding") => {
+    const workerResultAvailableAt = (
+      alias: "incoming" | "outstanding",
+      observedTaskId: NodeId | undefined,
+    ) => {
       const task = sql(alias);
       return sql`CASE
       WHEN ${task}.completed_at IS NULL
@@ -9671,6 +9678,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         OR (${task}.status IN ('failed', 'cancelled', 'interrupted')
           AND ${task}.completion_delivery_state = 'disposed')
         THEN ${task}.updated_at
+      ${
+        observedTaskId === undefined
+          ? sql``
+          : sql`
+        WHEN ${task}.completion_delivery_state = 'claimed' AND ${task}.subagent_id = ${observedTaskId}
+          THEN ${task}.updated_at
+      `
+      }
       WHEN ${task}.completion_delivery_state = 'claimed' THEN (
         SELECT json_extract(wake.payload_json, '$.startedAt')
         FROM orchestration_v2_projection_runs wake
@@ -9717,7 +9732,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           Effect.gen(function* () {
             // Linked children are archived manually and have no local child_thread_id.
             const resultAvailableAt =
-              workers === undefined ? sql`NULL` : workerResultAvailableAt("incoming");
+              workers === undefined
+                ? sql`NULL`
+                : workerResultAvailableAt("incoming", workers.observedTaskId);
             const resultCompletedAt =
               workers === undefined
                 ? sql`NULL`
@@ -9899,7 +9916,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         ? sql`
                     OR (
                       outstanding.completed_at >= COALESCE(r.requested_at, t.created_at)
-                      AND (${workerResultAvailableAt("outstanding")}) IS NULL
+                      AND (${workerResultAvailableAt("outstanding", workers.observedTaskId)}) IS NULL
                     )
                     `
                         : sql``
@@ -11089,6 +11106,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return row?.found === 1;
     });
 
+    const hasReleasedIssueWorkspace: ProjectionStoreV2Shape["hasReleasedIssueWorkspace"] =
+      Effect.fn("ProjectionStore.hasReleasedIssueWorkspace")(function* (threadId) {
+        const [row] = yield* sql<{ found: number }>`
+          SELECT EXISTS (
+            SELECT 1 FROM orchestration_command_receipts INDEXED BY idx_orch_command_receipts_aggregate
+            WHERE aggregate_kind = 'thread' AND aggregate_id = ${threadId}
+              AND command_id GLOB 'storage-cleanup:release-slot:*' AND status = 'accepted'
+          ) AS found
+        `.pipe(Effect.mapError(controlReadError(threadId)));
+        return row?.found === 1;
+      });
+
     const getThreadShell: ProjectionStoreV2Shape["getThreadShell"] = (threadId) =>
       sql
         .withTransaction(
@@ -11197,6 +11226,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
       findThread: readOnReader(findThread),
+      hasReleasedIssueWorkspace: readOnReader(hasReleasedIssueWorkspace),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getArchivedHandoffSources: readOnReader(getArchivedHandoffSources),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),

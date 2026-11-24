@@ -2596,6 +2596,11 @@ describe("orchestrator MCP toolkit", () => {
                   Effect.orDie,
                 );
                 expect(child.status).toBe("completed");
+                yield* orchestrator.dispatch({
+                  type: "thread.unarchive",
+                  commandId: CommandId.make(`command:mcp-child:${name}:unarchive`),
+                  threadId: child.childThreadId!,
+                });
                 const messageId = MessageId.make(`message:mcp-child:${name}`);
                 yield* orchestrator.dispatch({
                   type: "message.dispatch",
@@ -2809,6 +2814,15 @@ describe("orchestrator MCP toolkit", () => {
             yield* waitForProjection(orchestrator, cancellable.childThreadId!, (projection) =>
               projection.runs.some((run) => run.status === "interrupted"),
             );
+            yield* waitForProjection(orchestrator, parentThreadId, (projection) =>
+              projection.subagents.some(
+                (task) => task.id === cancellable.taskId && task.completedAt !== null,
+              ),
+            );
+            expect(
+              (yield* orchestrator.getThreadProjection(cancellable.childThreadId!)).thread
+                .archivedAt,
+            ).toBeNull();
             const cancelledStatusCall = yield* invoke("task_status", {
               taskId: cancellable.taskId,
             });
@@ -2816,6 +2830,10 @@ describe("orchestrator MCP toolkit", () => {
               cancelledStatusCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(cancelledStatus.status).toBe("interrupted");
+            expect(
+              (yield* orchestrator.getThreadProjection(cancellable.childThreadId!)).thread
+                .archivedAt,
+            ).not.toBeNull();
 
             expect(
               (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
@@ -4231,6 +4249,11 @@ describe("orchestrator MCP toolkit", () => {
               generation: firstLateDelivery.generation + 1,
               taskIds: [lateTask.id],
             });
+            yield* waitForProjection(
+              orchestrator,
+              earlyLateTask.childThreadId!,
+              (projection) => projection.thread.archivedAt !== null,
+            );
             const lateOffers = yield* waitForContinuationOffers(2);
             expect(lateOffers).toHaveLength(2);
             expect(

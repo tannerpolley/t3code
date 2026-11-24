@@ -2104,7 +2104,8 @@ const make = Effect.gen(function* () {
       acknowledgeTerminal &&
       isTerminalTaskStatus(status) &&
       task.completionDelivery?.state !== "acknowledged" &&
-      task.completionDelivery?.state !== "disposed"
+      (task.completionDelivery?.state !== "disposed" ||
+        task.completionDelivery.observedByRunId === null)
     ) {
       const parentProjection = yield* loadCallerRecords(scope.thread.threadId, ["runs"]);
       const observingRun = ThreadManagementService.latestActiveRun({

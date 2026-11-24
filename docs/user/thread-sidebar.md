@@ -630,7 +630,9 @@ environments manually.
 
 Sending a follow-up to an archived worker or retrying its work restores the
 thread automatically. You can also restore it from **Settings → Archived threads**.
-It stays visible until the parent receives a new result.
+It stays visible until the parent receives a new result. If T3 returned a
+reviewer’s shared issue worktree to the pool, restore the thread and assign a
+worktree before resuming it.
 
 **Archived worker retention** controls when eligible archived workers and their
 history are permanently deleted. The default is 14 days. Choose

@@ -64,7 +64,7 @@ import { ProjectService } from "../project/ProjectService.ts";
 import * as Layer from "effect/Layer";
 import { IssueService, makeLiveReadCache } from "./IssueService.ts";
 import { IssueWorkStore, missingOwnerMessage } from "./IssueWorkStore.ts";
-import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
+import { deriveIssueWorkStatus, issueOwnerAvailable } from "./IssueWorkStatus.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import {
   ThreadManagementService,
@@ -1534,7 +1534,7 @@ export const layer = Layer.effect(
           }
           if (owner !== null) {
             const shell = yield* threads.getThreadShell(owner).pipe(Effect.mapError(mapError));
-            if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) {
+            if (!issueOwnerAvailable(shell)) {
               unreadable = true;
               continue;
             }

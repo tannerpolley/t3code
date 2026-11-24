@@ -398,6 +398,64 @@ it.effect("restores an archived local child when sent a follow-up", () =>
   }).pipe(Effect.provide(layerSend)),
 );
 
+it.effect.each([false, true])(
+  "refuses to run without the released issue workspace (legacy release %s)",
+  (legacy) =>
+    Effect.gen(function* () {
+      const { parent, seed, projections, orchestrator, sql } = yield* makeFixture();
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      yield* seed(parent, "open", {
+        lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+      });
+      const path = "/workspace/review-slot";
+      const child = yield* seed("released-reviewer", "open", {
+        role: "reviewer",
+        branch: legacy ? null : "fix",
+        worktreePath: legacy ? null : path,
+        archivedAt: yield* DateTime.now,
+      });
+      if (legacy) {
+        yield* sql`INSERT INTO orchestration_command_receipts
+        (command_id, aggregate_kind, aggregate_id, command_type, accepted_at, result_sequence, status)
+        VALUES ('storage-cleanup:release-slot:old-reviewer', 'thread', ${child},
+          'thread.metadata.update', ${DateTime.formatIso(yield* DateTime.now)}, 1, 'accepted')`;
+      } else {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("release-review-slot"),
+          threadId: child,
+          expectedWorktreePath: path,
+          expectedBranch: "fix",
+          worktreePath: null,
+          branch: null,
+          releaseIssueWorktreeSlot: true,
+        });
+      }
+      const failure = yield* threads
+        .sendToThread({
+          projectId,
+          commandId: CommandId.make("send-to-released-reviewer"),
+          threadId: child,
+          senderThreadId: parent,
+          messageId: MessageId.make("released-reviewer-followup"),
+          text: "Continue the review",
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "mcp",
+          mode: "auto",
+        })
+        .pipe(Effect.flip);
+      assert.propertyVal(
+        failure,
+        "cause",
+        "This worker's issue worktree was returned to the pool. Assign a worktree before resuming this thread.",
+      );
+      const { thread, runs } = yield* projections.getThreadRecords(child, ["runs"]);
+      assert.isNotNull(thread.archivedAt);
+      assert.isEmpty(runs);
+    }).pipe(Effect.provide(layerSend)),
+);
+
 it.effect("archives only eligible children and keeps restored children active", () =>
   Effect.gen(function* () {
     const { service, orchestrator, projections, parent, sql, createdAt, seed, recordTask } =
@@ -599,7 +657,6 @@ it.effect("archives during the running result wake and leaves the worker’s sid
         archiveDelegatedWorker: true,
       });
     yield* archive("archive-before-wake").pipe(Effect.flip);
-    yield* orchestrator.archiveDelegatedCompletion(parent, [followupTask]);
     assert.isNull((yield* projections.getThread(worker)).archivedAt);
     assert.isEmpty(
       (yield* projections.getThreadRecords(parent, ["messages"])).messages.filter(

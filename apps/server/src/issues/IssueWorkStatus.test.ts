@@ -103,6 +103,15 @@ describe("deriveIssueWorkStatus", () => {
     ).toBe("unavailable");
   });
 
+  it("preserves a delivered result when its worker is archived automatically", () => {
+    const archived = {
+      archivedAt: DateTime.makeUnsafe("2026-10-05T00:00:00Z"),
+      archivedByDelegatedResult: true as const,
+    };
+    expect(derive({ ...shell("completed"), ...archived }, { resultAvailable: true })).toBe("done");
+    expect(derive({ ...shell("failed"), ...archived })).toBe("failed");
+  });
+
   it("prioritizes user requests and repository pause", () => {
     expect(
       derive({
