@@ -593,6 +593,8 @@ each thread with child agents, and everything under it, from the rows around it;
 marks each change of checkout between consecutive rows within a family. Workers stay under their
 parent across worktrees, ordered by role: Implementor, Reviewer, then other
 roles, with the newest activity first within each role.
+Idle Writer rows stay at full strength in both sidebar styles. A new Writer shares
+its parent thread's checkout even when the Writer is linked to an issue.
 In **Settings → Appearance → Sidebar & projects**, choose which icons, model, effort and issue or pull request badges appear, or use a branch icon for worktrees; hidden columns give their space to the title.
 Choose **Role display → Icons** to replace role names with compact icons; hover an icon for its role and purpose.
 Choose **Family style → Colors** to tint each family instead, with deeper rows a slightly stronger shade. **Line color** sets the color of those lines; **Reset** returns to the theme's.

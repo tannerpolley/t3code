@@ -176,28 +176,29 @@ it.effect(
           );
         }
       }
-      for (const issue of [undefined, reviewIssue(1)]) {
-        const result = yield* mcp.delegateTask(scope, {
+      for (const [issue, workspaceChoice] of [
+        [undefined, {}],
+        [reviewIssue(1), { isolation: "worktree" }],
+        [reviewIssue(1), { workspace: "worktree" }],
+      ] as const) {
+        const request = {
           role: "writer",
           target: { override: true },
           task: "Write the document with the owner",
           issue,
-          clientRequestId: `writer:${issue?.id ?? "no-issue"}`,
-        });
+          ...workspaceChoice,
+          clientRequestId: `writer:${JSON.stringify(workspaceChoice)}`,
+        } as const;
+        const result = yield* mcp.delegateTask(scope, request);
         const child = yield* threads.getThreadRecords(result.childThreadId!, ["runs"]);
-        const reused = yield* mcp.delegateTask(scope, {
-          role: "writer",
-          target: { override: true },
-          task: "Write the document with the owner",
-          issue,
-          clientRequestId: `writer:${issue?.id ?? "no-issue"}`,
-        });
+        const reused = yield* mcp.delegateTask(scope, request);
         assert.equal(reused.childThreadId, result.childThreadId);
         assert.isUndefined(result.queueNote);
         assert.equal(child.thread.role, "writer");
         assert.equal(child.thread.worktreePath, null);
         assert.equal(child.thread.branch, null);
         assert.isUndefined(child.thread.linkedIssue);
+        assert.isUndefined(child.runs[0]!.workspacePreparation);
         assert.equal(child.runs[0]!.status, "starting");
         assert.equal(yield* store.slotsInUse(root), 1);
         assert.equal(yield* store.readOnlySlotsInUse(root), 4);

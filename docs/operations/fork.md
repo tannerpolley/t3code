@@ -51,6 +51,7 @@ its link is removed. At each start, a backfill moves the retired `issue_thread_l
 older GitHub claims onto `thread.issues[]`, until the table is empty and every GitHub claim is
 linked; after that it finds nothing to do. Rows and claims on other hosts, such as the archived
 Forgejo, are not linked: their rows are dropped and their claims stay claims.
+Delegating a Writer always uses the parent's checkout. An issue on a Writer is a visibility link.
 
 ## Branches and worktrees
 
