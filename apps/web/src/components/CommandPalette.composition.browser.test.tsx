@@ -282,16 +282,18 @@ it("reports that the subsection could not be saved if its parent disappeared bef
 
 it("leaves a reopened subsection picker open when the previous save finishes", async () => {
   setup();
-  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-  const originalSections = useUiStateStore.getState().sidebarProjectSections;
+  const { sidebarProjectSections, sidebarDisplaySnapshot } = useUiStateStore.getState();
   using _sections = {
-    [Symbol.dispose]: () => useUiStateStore.setState({ sidebarProjectSections: originalSections }),
+    [Symbol.dispose]: () =>
+      useUiStateStore.setState({ sidebarProjectSections, sidebarDisplaySnapshot }),
   };
   useUiStateStore.setState({
+    sidebarDisplaySnapshot: null,
     sidebarProjectSections: [
       { id: parentSectionId, name: "Work", projectKeys: [], collapsed: false },
     ],
   });
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   const save = Promise.withResolvers<string | null>();
   using add = vi
     .spyOn(useUiStateStore.getState(), "addSidebarProjectSection")
@@ -301,10 +303,11 @@ it("leaves a reopened subsection picker open when the previous save finishes", a
   const submit = page.getByRole("button", { name: /^Add subsection/ });
   await expect.element(submit).toBeEnabled();
   await act(() => (submit.element() as HTMLElement).click());
-  await vi.waitFor(() => expect(add).toHaveBeenCalledOnce());
+  expect(add).toHaveBeenCalledExactlyOnceWith("First", parentSectionId, "/workspace/First");
   await act(() => dispatchCommandPalette({ _tag: "SetOpen", open: false }));
   await act(openFolderSubsection);
   await page.getByRole("combobox").fill("/workspace/Second");
   await act(() => save.resolve("first-section"));
   expect(useCommandPaletteStore.getState().open).toBe(true);
+  await expect.element(page.getByRole("combobox")).toHaveValue("/workspace/Second");
 });
