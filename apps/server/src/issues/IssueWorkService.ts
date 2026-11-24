@@ -1889,6 +1889,7 @@ export const layer = Layer.effect(
             modelSelection: selection,
             status,
             wasPaused: config.paused,
+            requestedAt: config.handoff?.requestedAt ?? DateTime.formatIso(yield* DateTime.now),
           },
         },
         input.clientRequestId,

@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type ProjectId,
   type IssueRepositoryRef,
+  type RepositoryOrchestration,
   type ThreadId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
@@ -16,6 +17,7 @@ import {
   PlayIcon,
   ReplaceIcon,
 } from "lucide-react";
+import { useGT } from "gt-react";
 import { useState } from "react";
 import { useServerConfigs, useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
@@ -27,6 +29,8 @@ import { randomUUID } from "~/lib/utils";
 import { RelativeTime } from "../RelativeTime";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
+import { useDeadlinePassed } from "~/hooks/useDeadline";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -466,57 +470,41 @@ function RepositoryControls({
             </div>
           </div>
         ) : null}
-        {config.handoff || handoffExpanded ? (
+        {config.handoff ? (
+          <PendingHandoffLine
+            handoff={config.handoff}
+            busy={busy}
+            onCancel={() => void transfer("cancel")}
+            onApprove={() => void transfer("approve")}
+          />
+        ) : handoffExpanded ? (
           <div className="flex w-full max-w-md flex-col gap-2 pt-1">
-            <span className="text-xs text-muted-foreground" role="status">
-              {repositoryPhase(config) === "draining"
-                ? "Handoff is pending while existing work finishes and the recovery inventory is prepared. The current root keeps ownership until then."
-                : "Approve a fresh thread after existing work finishes. Routine model changes can keep the current thread."}
+            <span className="text-xs text-muted-foreground">
+              Approve a fresh thread after existing work finishes. Routine model changes can keep
+              the current thread.
             </span>
-            {config.handoff ? (
-              <p className="break-words whitespace-pre-wrap text-xs">
-                {config.handoff.summary}
-                <br />
-                Next model: {config.handoff.modelSelection.instanceId} /{" "}
-                {config.handoff.modelSelection.model}
-              </p>
-            ) : (
-              <Textarea
-                aria-label="Handoff summary"
-                placeholder="Summarize decisions and remaining work for the new root"
-                value={summary}
-                onChange={(event) => setSummary(event.target.value)}
-              />
-            )}
+            <Textarea
+              aria-label="Handoff summary"
+              placeholder="Summarize decisions and remaining work for the new root"
+              value={summary}
+              onChange={(event) => setSummary(event.target.value)}
+            />
             <div className="flex justify-end gap-1">
-              {config.handoff ? (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => void transfer("cancel")}
-                >
-                  Cancel handoff
-                </Button>
-              ) : (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => setHandoffExpanded(false)}
-                >
-                  Cancel
-                </Button>
-              )}
-              {repositoryPhase(config) !== "draining" ? (
-                <Button
-                  size="xs"
-                  disabled={busy || (config.handoff === undefined && summary.trim().length === 0)}
-                  onClick={() => void transfer("approve")}
-                >
-                  Approve fresh-thread handoff
-                </Button>
-              ) : null}
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => setHandoffExpanded(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="xs"
+                disabled={busy || summary.trim().length === 0}
+                onClick={() => void transfer("approve")}
+              >
+                Approve fresh-thread handoff
+              </Button>
             </div>
           </div>
         ) : null}
@@ -598,6 +586,58 @@ function RepositoryControls({
           ))}
       </SettingsRow>
     </SettingsSection>
+  );
+}
+
+const STALE_HANDOFF_MS = 24 * 60 * 60 * 1000;
+
+/** The pending handoff as one status line; its summary is for the successor thread, not settings. */
+function PendingHandoffLine({
+  handoff,
+  busy,
+  onCancel,
+  onApprove,
+}: {
+  handoff: NonNullable<RepositoryOrchestration["handoff"]>;
+  busy: boolean;
+  onCancel: () => void;
+  onApprove: () => void;
+}) {
+  const gt = useGT();
+  const requestedMs = handoff.requestedAt === undefined ? NaN : Date.parse(handoff.requestedAt);
+  const old = useDeadlinePassed(Number.isNaN(requestedMs) ? null : requestedMs + STALE_HANDOFF_MS);
+  const draining = handoff.status === "draining";
+  const model = handoff.modelSelection.model;
+  return (
+    <div
+      className="flex w-full items-center gap-2 pt-1 text-xs text-muted-foreground"
+      role="status"
+    >
+      <span className="min-w-0 truncate">
+        {draining
+          ? gt("Handoff to {model} is draining", { model })
+          : gt("Handoff to {model} awaits approval", { model })}
+      </span>
+      {handoff.requestedAt === undefined ? null : (
+        <span className="shrink-0">
+          · <RelativeTime timestamp={handoff.requestedAt} />
+        </span>
+      )}
+      <span className="flex-1" />
+      {old ? (
+        <Badge variant="warning" size="sm" className="shrink-0">
+          {gt("Over a day old")}
+        </Badge>
+      ) : null}
+      <Button size="xs" variant="ghost" className="shrink-0" disabled={busy} onClick={onCancel}>
+        {gt("Cancel")}
+      </Button>
+      {draining ? null : (
+        <Button size="xs" className="shrink-0" disabled={busy} onClick={onApprove}>
+          {gt("Approve")}
+        </Button>
+      )}
+    </div>
   );
 }
 
