@@ -11,7 +11,7 @@ import type * as Semaphore from "effect/Semaphore";
 
 import { resolveWorktreePath } from "./forkWorktreePaths.ts";
 import type { GitVcsDriver } from "./vcs/GitVcsDriver.ts";
-import { resolveWorktreesDirectory } from "./worktreesDirectory.ts";
+import { isFilesystemRoot, resolveWorktreesDirectory } from "./worktreesDirectory.ts";
 
 // ponytail: linear probe; past this many copies of one name, creation fails.
 const UNIQUE_WORKTREE_NAME_ATTEMPTS = 100;
@@ -97,6 +97,12 @@ export const prepareTaskFolderParent = Effect.fn("TaskFolders.prepareParent")(fu
   const path = yield* Path.Path;
   if (input.setting === PROJECT_LOCAL_WORKTREES) {
     const { projectRoot } = input;
+    const parent = path.join(projectRoot, PROJECT_WORKTREES_FOLDER);
+    const fileSystem = yield* FileSystem.FileSystem;
+    const resolved = yield* fileSystem
+      .realPath(parent)
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(parent)));
+    if (isFilesystemRoot(resolved, path)) return null;
     const { exitCode, stdout } = yield* input.executeGit({
       operation: "TaskFolders.prepareParent.gitCommonDir",
       cwd: projectRoot,
@@ -109,7 +115,7 @@ export const prepareTaskFolderParent = Effect.fn("TaskFolders.prepareParent")(fu
         path.resolve(projectRoot, stdout.trim()),
         projectRoot,
       );
-    return path.join(projectRoot, PROJECT_WORKTREES_FOLDER);
+    return parent;
   }
   const directory = resolveWorktreesDirectory(input.setting, input.defaultDir, path, input.home);
   return directory === null

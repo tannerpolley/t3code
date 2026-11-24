@@ -649,6 +649,11 @@ const make = Effect.gen(function* () {
         referencedAncestors.add(ancestor);
       }
     }
+    // A referenced project checkout also owns the sibling checkouts in its task folder.
+    const isReferencedTaskFolder = (target: string) =>
+      referencedAncestors.has(pathKey(target))
+        ? taskFolders.find(target).pipe(Effect.map((folder) => folder !== null))
+        : Effect.succeed(false);
     const projectRoots = (yield* Effect.forEach(
       yield* Effect.filter(projects, (project) =>
         fs.exists(path.resolve(project.workspaceRoot)).pipe(Effect.orElseSucceed(() => true)),
@@ -734,13 +739,18 @@ const make = Effect.gen(function* () {
       // Worktrees can be <root>/<repository>/<branch> or explicitly <root>/<name>.
       for (const projectDirectory of yield* directories(root, root)) {
         yield* Effect.gen(function* () {
-          if (referenced.has(pathKey(projectDirectory))) return;
+          if (
+            referenced.has(pathKey(projectDirectory)) ||
+            (yield* isReferencedTaskFolder(projectDirectory))
+          )
+            return;
           const gitPath = path.join(projectDirectory, ".git");
           if (yield* fs.exists(gitPath)) {
             if (yield* isLinkedWorktree(projectDirectory)) yield* report(projectDirectory);
             return;
           }
           for (const worktreePath of yield* directories(projectDirectory, root)) {
+            if (yield* isReferencedTaskFolder(worktreePath)) continue;
             const nested = yield* nestedWorktrees(worktreePath, root);
             for (const target of nested.length > 0 ? nested : [worktreePath]) yield* report(target);
           }
