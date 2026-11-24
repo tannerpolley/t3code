@@ -639,6 +639,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
   /** The Settle undo may reopen this archive along with reversing settlement. */
   archivedBySettlement: Schema.optional(Schema.Literal(true)),
+  archivedByDelegatedResult: Schema.optional(Schema.Literal(true)),
   workerUnarchivedAt: Schema.optional(IsoDateTime),
   settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -2735,6 +2736,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   visibleItemCount: NonNegativeInt,
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
+  archivedByDelegatedResult: OrchestrationV2AppThread.fields.archivedByDelegatedResult,
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
   settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
   settledAt: Schema.NullOr(Schema.DateTimeUtc),

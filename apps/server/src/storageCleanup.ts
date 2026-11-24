@@ -1201,9 +1201,7 @@ const make = Effect.gen(function* () {
         files: null,
       };
       const retainedIssue =
-        !explicit &&
-        !deleted &&
-        members.some((member) => member.archivedAt === null && keepIssueWorktree(member));
+        !explicit && !deleted && members.some((member) => keepIssueWorktree(member));
       const releaseSlot =
         slot && maintainIssueSlots && thread.linkedIssue !== undefined && issueSlots !== undefined;
       let releaseSlotBase: string | null = null;
@@ -1426,7 +1424,8 @@ const make = Effect.gen(function* () {
                 ? latestGroup.find((shell) => shell.id === thread.id)
                 : undefined;
             if (
-              liveOwner?.archivedAt === null &&
+              liveOwner !== undefined &&
+              keepIssueWorktree(liveOwner) &&
               liveOwner.settledAt === null &&
               (liveOwner.status === "interrupted" ||
                 liveOwner.status === "cancelled" ||
@@ -2158,7 +2157,7 @@ const make = Effect.gen(function* () {
         (thread) =>
           thread.worktreePath !== null &&
           (IssueWorktreeSlots.isIssueWorktreeSlot(path, thread.worktreePath) ||
-            (thread.archivedAt === null && keepIssueWorktree(thread))),
+            keepIssueWorktree(thread)),
       )
     )
       return { waiting: false, kept: [] };

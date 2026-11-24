@@ -32,7 +32,9 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CommandReceipts from "./CommandReceiptStore.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as WorkerRetention from "./WorkerRetention.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -148,6 +150,11 @@ const layerRetentionBase = WorkerRetention.layer.pipe(
 );
 
 const layerRetention = layerRetentionBase.pipe(Layer.provide(layerIdentity));
+const layerSend = ThreadManagement.layer.pipe(
+  Layer.provide(CommandReceipts.layer),
+  Layer.provide(ServerSettings.layerTest({})),
+  Layer.provideMerge(layerRetention),
+);
 
 const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -288,7 +295,7 @@ const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
   const recordRun = Effect.fn("WorkerRetention.test.recordRun")(function* (
     id: string,
     threadId: ThreadId,
-    status: "completed" | "cancelled" | "running" | "interrupted",
+    status: "completed" | "cancelled" | "running" | "interrupted" | "queued",
     startedAt: DateTime.Utc,
     delegatedTaskId?: NodeId,
     ordinal = 1,
@@ -338,68 +345,57 @@ const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
   };
 });
 
-it.effect("flags the #636 interrupted worker after its PR merged", () =>
+it.effect("archives the delivered child immediately and leaves its queued sibling active", () =>
   Effect.gen(function* () {
-    const { service, projections, parent, seed, recordTask, recordRun, createdAt } =
-      yield* makeFixture();
-    yield* seed(parent, "open", {
-      role: "orchestrator",
-      lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
-    });
-    const mergedAt = DateTime.add(createdAt, { hours: 1 });
-    const worker = yield* seed("interrupted-worker", "merged", {}, mergedAt);
-    const interruptedAt = DateTime.add(mergedAt, { hours: 1 });
-    yield* recordRun("interrupted-handoff", worker, "interrupted", interruptedAt);
-    yield* recordTask(parent, worker, "disposed", "interrupted", interruptedAt);
-
-    yield* service.remindMissedArchives();
-    assert.isNull((yield* projections.getThread(worker)).archivedAt);
-    const { messages } = yield* projections.getThreadRecords(parent, ["messages"]);
-    assert.include(
-      messages.map((message) => message.notification?.summary),
-      "Finished children still visible (1)",
-    );
-    assert.include(messages[0]?.text, worker);
-  }).pipe(Effect.provide(layerRetention)),
-);
-
-it.effect("flags finished children as a group after the grace period and never archives them", () =>
-  Effect.gen(function* () {
-    const { service, projections, parent, seed, recordTask } = yield* makeFixture();
+    const { parent, seed, recordTask, recordRun, orchestrator, projections } = yield* makeFixture();
     yield* seed(parent, "open", {
       role: "orchestrator",
       lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
     });
     const now = yield* DateTime.now;
-    const children: ThreadId[] = [];
-    for (let index = 0; index < 33; index++) {
-      const recipient = index === 32 ? children[0]! : parent;
-      const child = yield* seed(`finished-${index}`, "open", {
-        pullRequests: [],
-        role: "reviewer",
-        lineage: {
-          rootThreadId: parent,
-          parentThreadId: recipient,
-          relationshipToParent: "subagent",
-        },
+    const delivered = yield* seed("delivered", "open");
+    const queued = yield* seed("queued", "open");
+    yield* recordTask(parent, delivered, "pending", "completed", now);
+    yield* recordTask(parent, queued, "pending", "completed", now);
+    yield* recordRun("queued-followup", queued, "queued", now);
+    for (const child of [delivered, queued]) {
+      yield* orchestrator.dispatch({
+        type: "delegated_task.completion-delivery.acknowledge",
+        commandId: CommandId.make(`observe:${child}`),
+        parentThreadId: parent,
+        taskId: NodeId.make(`task:${child}`),
+        observedByRunId: RunId.make("observing-run"),
       });
-      yield* recordTask(recipient, child, "delivered", "completed", now);
-      children.push(child);
     }
-    yield* service.remindMissedArchives();
-    assert.isEmpty((yield* projections.getThreadRecords(parent, ["messages"])).messages);
-    yield* TestClock.adjust("5 minutes");
-    yield* service.remindMissedArchives();
-    yield* service.remindMissedArchives();
-    const { messages } = yield* projections.getThreadRecords(parent, ["messages"]);
-    assert.lengthOf(messages, 1);
-    assert.equal(messages[0]?.notification?.summary, "Finished children still visible (33)");
-    assert.isEmpty((yield* projections.getThreadRecords(children[0]!, ["messages"])).messages);
-    for (const child of children) {
-      assert.include(messages[0]?.text, child);
-      assert.isNull((yield* projections.getThread(child)).archivedAt);
-    }
+    assert.isNotNull((yield* projections.getThread(delivered)).archivedAt);
+    assert.isNull((yield* projections.getThread(queued)).archivedAt);
   }).pipe(Effect.provide(layerRetention)),
+);
+
+it.effect("restores an archived local child when sent a follow-up", () =>
+  Effect.gen(function* () {
+    const { parent, seed, projections } = yield* makeFixture();
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* seed(parent, "open", {
+      lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+    });
+    const child = yield* seed("archived-child", "open", { archivedAt: yield* DateTime.now });
+    const result = yield* threads.sendToThread({
+      projectId,
+      commandId: CommandId.make("send-to-archived-child"),
+      threadId: child,
+      senderThreadId: parent,
+      messageId: MessageId.make("archived-child-followup"),
+      text: "Continue the review",
+      attachments: [],
+      createdBy: "agent",
+      creationSource: "mcp",
+      mode: "auto",
+    });
+    assert.isNull((yield* projections.getThread(child)).archivedAt);
+    assert.equal(result.delivery, "started");
+    assert.oneOf(result.run.status, ["preparing", "starting"]);
+  }).pipe(Effect.provide(layerSend)),
 );
 
 it.effect("archives only eligible children and keeps restored children active", () =>
@@ -449,7 +445,6 @@ it.effect("archives only eligible children and keeps restored children active", 
       yield* archive(child).pipe(Effect.flip);
       assert.isNull((yield* projections.getThread(child)).archivedAt, child);
     }
-    yield* service.remindMissedArchives();
     assert.isEmpty((yield* projections.getThreadRecords(parent, ["messages"])).messages);
     yield* TestClock.adjust("1 second");
     yield* orchestrator.dispatch({
@@ -521,7 +516,7 @@ it.effect.each([undefined, "orchestrator"] as const)(
       yield* recordTask(parent, worker, "delivered");
       yield* recordTask(parent, pinned, "delivered");
 
-      yield* service.remindMissedArchives();
+      yield* service.recoverHandoffArchives();
       assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
       assert.isNull((yield* projections.getThread(pinned)).archivedAt);
       yield* TestClock.adjust("13 days");
@@ -536,18 +531,8 @@ it.effect.each([undefined, "orchestrator"] as const)(
 
 it.effect("archives during the running result wake and leaves the worker’s side chat active", () =>
   Effect.gen(function* () {
-    const {
-      sql,
-      parent,
-      seed,
-      recordTask,
-      recordRun,
-      service,
-      sink,
-      createdAt,
-      orchestrator,
-      projections,
-    } = yield* makeFixture();
+    const { sql, parent, seed, recordTask, recordRun, sink, createdAt, orchestrator, projections } =
+      yield* makeFixture();
     yield* seed(parent, "open", {
       lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
     });
@@ -614,7 +599,8 @@ it.effect("archives during the running result wake and leaves the worker’s sid
         archiveDelegatedWorker: true,
       });
     yield* archive("archive-before-wake").pipe(Effect.flip);
-    yield* service.remindMissedArchives();
+    yield* orchestrator.archiveDelegatedCompletion(parent, [followupTask]);
+    assert.isNull((yield* projections.getThread(worker)).archivedAt);
     assert.isEmpty(
       (yield* projections.getThreadRecords(parent, ["messages"])).messages.filter(
         (message) => message.notification?.source.kind === "system",
@@ -623,7 +609,7 @@ it.effect("archives during the running result wake and leaves the worker’s sid
     yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'running',
       payload_json = json_set(payload_json, '$.startedAt', ${DateTime.formatIso(createdAt)})
       WHERE run_id = ${wake}`;
-    yield* archive("archive-in-wake");
+    yield* orchestrator.archiveDelegatedCompletion(parent, [followupTask]);
     assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
     assert.isNull((yield* projections.getThread(side)).archivedAt);
     const [sideRun] = yield* sql<{ status: string }>`
@@ -660,7 +646,7 @@ it.effect.each(["overlapping cancellation", "unobserved failure"] as const)(
   "keeps the worker visible before delivery after %s",
   (example) =>
     Effect.gen(function* () {
-      const { service, orchestrator, projections, parent, seed, recordTask, recordRun, createdAt } =
+      const { orchestrator, projections, parent, seed, recordTask, recordRun, createdAt } =
         yield* makeFixture();
       yield* seed(parent, "open", {
         lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
@@ -701,7 +687,6 @@ it.effect.each(["overlapping cancellation", "unobserved failure"] as const)(
           threadId: worker,
           archiveDelegatedWorker: true,
         });
-      yield* service.remindMissedArchives();
       assert.isEmpty((yield* projections.getThreadRecords(parent, ["messages"])).messages);
       yield* archive("archive-before-observation").pipe(Effect.flip);
       assert.isNull((yield* projections.getThread(worker)).archivedAt);
@@ -777,7 +762,6 @@ it.effect("keeps pinned workers in both active and archive views", () =>
       pinnedAt: createdAt,
       archivedAt: createdAt,
     });
-    yield* service.remindMissedArchives();
     yield* TestClock.adjust("15 days");
     yield* service.removeExpired();
     assert.deepEqual(
@@ -792,7 +776,7 @@ it.effect("keeps pinned workers in both active and archive views", () =>
 
 it.effect("keeps a worker with a background command in its parent's provider session", () =>
   Effect.gen(function* () {
-    const { service, sink, createdAt, parent, projections, seed, recordTask, orchestrator } =
+    const { sink, createdAt, parent, projections, seed, recordTask, orchestrator } =
       yield* makeFixture();
     const worker = yield* seed("background", "merged");
     yield* seed("parent", "open", {
@@ -829,7 +813,6 @@ it.effect("keeps a worker with a background command in its parent's provider ses
       ],
     });
     yield* recordTask(parent, worker, "delivered");
-    yield* service.remindMissedArchives();
     assert.isEmpty((yield* projections.getThreadRecords(parent, ["messages"])).messages);
     yield* orchestrator
       .dispatch({

@@ -1,15 +1,11 @@
 import {
   CommandId,
-  MessageId,
-  type NodeId,
   type RepositoryIssueRef,
   type ThreadId,
   type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Context from "effect/Context";
-import * as Digest from "effect/crypto/Digest";
-import * as Hex from "effect/encoding/Hex";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -24,12 +20,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import {
-  ARCHIVE_REMINDER_GRACE_MS,
-  finishedWorkerAt,
-  finishedWorkers,
-  reminderRecipient,
-} from "./WorkerArchiveCandidates.ts";
+import { finishedWorkerAt, finishedWorkers } from "./WorkerArchiveCandidates.ts";
 import { makeBranchPullRequestDiscovery } from "./ThreadPullRequestService.ts";
 import { isIdleWorker, workerCompletionIsCurrent } from "./ThreadSettlementService.ts";
 
@@ -64,12 +55,6 @@ const sharesParentBranch = (worker: ProjectionStore.ProjectionSettlementCandidat
 const ownIssues = (worker: ProjectionStore.ProjectionSettlementCandidate) =>
   sharesParentBranch(worker) ? [] : (worker.issues ?? []);
 
-interface ReminderChild {
-  readonly id: ThreadId;
-  readonly title: string;
-  readonly taskId: NodeId;
-}
-
 const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -80,7 +65,6 @@ const make = Effect.gen(function* () {
   const trackerIssues = yield* TrackerIssues.IssueService;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const random = yield* SecureRandom.SecureRandom;
-  const digest = yield* Digest.Digest;
 
   const readIssues = Effect.fn("WorkerRetention.readIssues")(function* (
     workers: ReadonlyArray<ProjectionStore.ProjectionSettlementCandidate>,
@@ -214,20 +198,11 @@ const make = Effect.gen(function* () {
     return completedAt;
   });
 
-  const remindMissedArchives = Effect.fn("WorkerRetention.remindMissedArchives")(function* () {
+  const recoverHandoffArchives = Effect.fn("WorkerRetention.recoverHandoffArchives")(function* () {
     const now = yield* DateTime.now;
-    const dueBy = DateTime.toEpochMillis(now) - ARCHIVE_REMINDER_GRACE_MS;
-    const finished = yield* finishedWorkers(projections, now);
-    if (finished.size === 0) return;
-    const handedOff = new Set(
-      (yield* projections.getArchivedHandoffSources(now)).map(({ threadId }) => threadId),
-    );
-
-    const parents = new Map<ThreadId, ThreadId | null>();
-    const byRecipient = new Map<ThreadId, ReminderChild[]>();
-    for (const worker of finished.values()) {
-      // The archived source persists the handoff even if the initial child cleanup was interrupted.
-      if (handedOff.has(worker.lineage.rootThreadId)) {
+    for (const { threadId } of yield* projections.getArchivedHandoffSources(now)) {
+      const workers = yield* finishedWorkers(projections, now, threadId);
+      for (const worker of workers.values()) {
         yield* orchestrator
           .dispatch({
             type: "thread.archive",
@@ -243,56 +218,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        continue;
       }
-      if (worker.workerResult === undefined || worker.workerResult.availableAt > dueBy) continue;
-      const recipient = yield* reminderRecipient(
-        projections,
-        worker.lineage.parentThreadId,
-        parents,
-        finished,
-      );
-      if (recipient === null) continue;
-      const child = { id: worker.id, title: worker.title, taskId: worker.workerResult.taskId };
-      const group = byRecipient.get(recipient);
-      if (group === undefined) byRecipient.set(recipient, [child]);
-      else group.push(child);
-    }
-
-    for (const [threadId, workers] of byRecipient) {
-      const hash = yield* digest.digest(
-        Digest.sha256,
-        new TextEncoder().encode(
-          workers.map(({ taskId }) => `${taskId.length}:${taskId}`).join("|"),
-        ),
-      );
-      const id = `missed-worker-archive:${threadId}:${Hex.encode(hash)}`;
-      const summary = `Finished children still visible (${workers.length})`;
-      const children = workers
-        .map((worker) => `- ${worker.title.replace(/\s+/g, " ").trim()} (${worker.id})`)
-        .join("\n");
-      const detail = `${summary}\n\n${children}`;
-      yield* orchestrator
-        .dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(id),
-          threadId,
-          messageId: MessageId.make(id),
-          text: `${detail}\n\nUse t3_thread_organize with action archive, delegatedWorker true and the child thread ID for each child. The tool checks whether it is still eligible.`,
-          notification: { source: { kind: "system" }, outcome: "updated", summary, detail },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
-        })
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Could not remind parent to archive finished children", {
-              threadId,
-              cause,
-            }),
-          ),
-        );
     }
   });
 
@@ -342,9 +268,9 @@ const make = Effect.gen(function* () {
     let deleteCursor: ThreadId | undefined;
     yield* forkParked(
       Effect.gen(function* () {
-        yield* remindMissedArchives().pipe(
+        yield* recoverHandoffArchives().pipe(
           Effect.catch((cause) =>
-            Effect.logWarning("Worker archive reminder sweep failed", { cause }),
+            Effect.logWarning("Handoff worker archive recovery failed", { cause }),
           ),
         );
         deleteCursor = yield* removeExpired(deleteCursor).pipe(
@@ -358,7 +284,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return { remindMissedArchives, removeExpired, start };
+  return { recoverHandoffArchives, removeExpired, start };
 });
 
 export class WorkerRetention extends Context.Service<
@@ -366,4 +292,4 @@ export class WorkerRetention extends Context.Service<
   Effect.Success<typeof make>
 >()("t3/orchestration-v2/WorkerRetention") {}
 
-export const layer = Layer.effect(WorkerRetention, make).pipe(Layer.provide(Digest.layerWebCrypto));
+export const layer = Layer.effect(WorkerRetention, make);

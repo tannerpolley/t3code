@@ -716,7 +716,9 @@ export const layer = Layer.effect(
           ON repository.host = work.host AND repository.repository_id = work.repository_id
         WHERE repository.root_thread_id = ${rootThreadId}
           AND CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.lineage.rootThreadId') END = ${rootThreadId}
-          AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
+          AND thread.deleted_at IS NULL
+          AND (thread.archived_at IS NULL
+            OR json_extract(thread.payload_json, '$.archivedByDelegatedResult') = 1)
         ORDER BY thread.created_at, thread.thread_id
       `.pipe(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),

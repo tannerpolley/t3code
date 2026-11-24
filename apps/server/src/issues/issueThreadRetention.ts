@@ -4,14 +4,14 @@ import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 export function keepIssueWorktree(
   thread: Pick<
     OrchestrationV2ThreadShell,
-    "linkedIssue" | "worktreePath" | "archivedAt" | "deletedAt"
+    "linkedIssue" | "worktreePath" | "archivedAt" | "archivedByDelegatedResult" | "deletedAt"
   >,
   merged = false,
 ): boolean {
   return (
     thread.linkedIssue != null &&
     thread.worktreePath != null &&
-    thread.archivedAt == null &&
+    (thread.archivedAt == null || thread.archivedByDelegatedResult === true) &&
     thread.deletedAt == null &&
     !merged
   );
