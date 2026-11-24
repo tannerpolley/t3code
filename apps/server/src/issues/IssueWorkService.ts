@@ -1116,6 +1116,23 @@ export const layer = Layer.effect(
           }),
         );
     };
+    const verificationPending = Effect.fnUntraced(function* (
+      targetId: ThreadId,
+      startedAt: string,
+    ) {
+      const successor = yield* threads.getThreadShell(targetId).pipe(Effect.mapError(mapError));
+      const expired =
+        (yield* Clock.currentTimeMillis) - Date.parse(startedAt) >=
+        REPOSITORY_HANDOFF_VERIFICATION_TIMEOUT_MS;
+      return (
+        successor !== null &&
+        successor.archivedAt === null &&
+        successor.deletedAt === null &&
+        !expired &&
+        successor.pendingRuntimeRequest == null &&
+        !(yield* store.subtreeDrained(targetId))
+      );
+    });
     // A draining root lets queued turns and final deliveries finish through their original lineage;
     // new requests and milestone admissions wait until the ownership pointer moves. Reconcile and
     // the event loop both drain, so each pass re-reads the configuration the last one changed.
@@ -1125,14 +1142,17 @@ export const layer = Layer.effect(
         const handoff = config?.handoff;
         if (config === null || handoff === undefined || repositoryPhase(config) !== "draining")
           return;
-        yield* threads
-          .dispatch({
-            type: "repository.work.continue",
-            threadId: rootThreadId,
-            commandId: CommandId.make(`handoff-drain:${handoff.requestId}:${config.revision}`),
-          })
-          .pipe(Effect.mapError(mapError));
-        if (!(yield* store.subtreeDrained(rootThreadId))) return;
+        if (handoff.verification === undefined) {
+          yield* threads
+            .dispatch({
+              type: "repository.work.continue",
+              threadId: rootThreadId,
+              commandId: CommandId.make(`handoff-drain:${handoff.requestId}:${config.revision}`),
+            })
+            .pipe(Effect.mapError(mapError));
+          if (!(yield* store.subtreeDrained(rootThreadId))) return;
+        } else if (yield* verificationPending(handoff.nextThreadId, handoff.verification.startedAt))
+          return;
         yield* threads
           .dispatch({
             type: "repository.work.handoff",
@@ -1143,14 +1163,15 @@ export const layer = Layer.effect(
               .command({ fixtureName: "repository-handoff", commandName: "complete" })
               .pipe(Effect.mapError(mapError)),
             expectedRevision: config.revision,
-            inventory: yield* inventory(config),
+            inventory: handoff.verification === undefined ? yield* inventory(config) : "",
           })
           .pipe(Effect.mapError(mapError));
       }),
     );
-    const considerAutomaticHandoff = coalescedPerRoot((rootThreadId) =>
+    const considerHandoff = coalescedPerRoot((rootThreadId) =>
       Effect.gen(function* () {
         const config = yield* store.configuration(rootThreadId);
+        if (config?.handoff?.verification !== undefined) return yield* drainHandoff(rootThreadId);
         if (
           config === null ||
           config.handoff !== undefined ||
@@ -1166,16 +1187,7 @@ export const layer = Layer.effect(
         let brief = "";
         if (attempt?.status === "verifying") {
           const threshold = yield* readThreshold;
-          const successor = yield* threads.getThreadShell(targetId).pipe(Effect.mapError(mapError));
-          const expired =
-            (yield* Clock.currentTimeMillis) - Date.parse(attempt.startedAt) >=
-            REPOSITORY_HANDOFF_VERIFICATION_TIMEOUT_MS;
-          if (
-            threshold !== null &&
-            !expired &&
-            successor?.pendingRuntimeRequest == null &&
-            !(yield* store.subtreeDrained(targetId))
-          )
+          if (threshold !== null && (yield* verificationPending(targetId, attempt.startedAt)))
             return;
           automatic = { type: "verify", enabled: threshold !== null };
         } else {
@@ -1226,7 +1238,7 @@ export const layer = Layer.effect(
           .pipe(Effect.mapError(mapError));
       }).pipe(
         Effect.catch((cause) =>
-          Effect.logWarning("Could not continue automatic repository handoff", {
+          Effect.logWarning("Could not continue repository handoff verification", {
             rootThreadId,
             cause,
           }),
@@ -1238,7 +1250,7 @@ export const layer = Layer.effect(
       refreshRequests = false,
       eventSequence?: number,
     ) {
-      yield* considerAutomaticHandoff(rootThreadId);
+      yield* considerHandoff(rootThreadId);
       const config = yield* store.configuration(rootThreadId);
       if (config === null || !repositoryAdmitsWork(config)) return;
       const draining = repositoryPhase(config) === "draining";
@@ -1340,7 +1352,7 @@ export const layer = Layer.effect(
     const reconcilePass = Effect.fn("IssueWorkService.reconcilePass")(function* (
       rootThreadId: ThreadId,
     ) {
-      yield* considerAutomaticHandoff(rootThreadId);
+      yield* considerHandoff(rootThreadId);
       let config = yield* store.configuration(rootThreadId);
       if (config?.handoff?.status === "awaiting_approval") {
         const root = yield* threads.getThreadShell(rootThreadId).pipe(Effect.mapError(mapError));
@@ -2331,7 +2343,7 @@ export const layer = Layer.effect(
           const now = yield* Clock.currentTimeMillis;
           if (now < nextReadAt) return;
           nextReadAt = now + 60_000;
-          for (const root of yield* store.handoffRoots()) yield* considerAutomaticHandoff(root);
+          for (const root of yield* store.handoffRoots()) yield* considerHandoff(root);
           for (const root of yield* store.activeRoots()) {
             yield* reconcile(root).pipe(
               Effect.catch((cause) =>
@@ -2357,7 +2369,7 @@ export const layer = Layer.effect(
             pendingRoots.delete(root);
             yield* (
               eventSequence === null
-                ? considerAutomaticHandoff(root)
+                ? considerHandoff(root)
                 : continueLocal(root, false, eventSequence)
             ).pipe(
               Effect.catchCause((cause) =>

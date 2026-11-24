@@ -507,8 +507,9 @@ environment or a project.
 To replace the orchestrator's conversation manually, open **Repository orchestration** in the project's
 settings, choose **Hand off to a fresh thread** from the menu beside its orchestrator, and provide a
 summary. Starting the handoff pauses new issue admissions while existing workers and their final
-results finish. T3 archives the previous orchestrator when the fresh thread takes over. The fresh
-thread receives your summary and a recovery inventory. Saved requests
+results finish. The fresh thread receives your summary and a recovery inventory. T3 transfers
+ownership and archives the previous orchestrator after the fresh thread verifies it can continue.
+Saved requests
 from an older build proceed when their source thread has full access and is in default mode.
 You can cancel a pending handoff in Settings. Open **Previous orchestrators** in the same
 menu to read archived conversations. The server's **Archived worker retention** setting
