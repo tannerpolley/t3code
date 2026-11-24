@@ -192,12 +192,12 @@ export function createEnvironmentThreadShellAtoms(input: {
     }
     const request = subagentRequests.get(thread.id) ?? null;
     const lineageParentId = thread.lineage.parentThreadId;
-    const issueWorkerWorking =
-      isIssueWorkerChild(thread) &&
-      issueWorkerIsWorking(
-        thread,
-        lineageParentId === null ? undefined : index.get(lineageParentId)?.pendingBackgroundTasks,
-      );
+    const issueWorkerWorking = isIssueWorkerChild(thread)
+      ? issueWorkerIsWorking(
+          thread,
+          lineageParentId === null ? undefined : index.get(lineageParentId)?.pendingBackgroundTasks,
+        )
+      : undefined;
     const key = `${environmentId}:${request ?? ""}:${ownerVisible}:${issueWorkerWorking}`;
     let value = byEnvironment.get(key);
     if (value === undefined) {

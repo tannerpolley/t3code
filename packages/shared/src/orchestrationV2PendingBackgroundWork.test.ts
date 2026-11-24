@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, ProviderThreadId, ThreadId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
@@ -62,13 +62,21 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([{ taskId: "roster-item", kind: "subagent", providerInstanceId: owner }]);
   });
 
-  it("returns empty while the latest run is not settled", () => {
-    const tasks = derivePendingBackgroundWork({
+  it("preserves child-owned commands on the roster during the parent's active run", () => {
+    const parent = ThreadId.make("parent");
+    const child = ThreadId.make("child");
+    const childCommand = { taskId: "fit", kind: "command", ownerThreadId: child } as const;
+    const input = {
       latestRun: { id: "run-1" as never, ordinal: 1, status: "running" },
+      hasActiveRun: true,
       providerThreads: [
         {
           id: "pt-1" as never,
-          pendingBackgroundTasks: [{ taskId: "bg-1", description: "sleep 20", kind: "command" }],
+          pendingBackgroundTasks: [
+            { taskId: "bg-1", description: "sleep 20", kind: "command" },
+            { taskId: "parent-fit", kind: "command", ownerThreadId: parent },
+            childCommand,
+          ],
         },
       ],
       turnItems: [
@@ -81,8 +89,10 @@ describe("derivePendingBackgroundWork", () => {
           input: "npm test",
         },
       ],
-    });
-    expect(tasks).toEqual([]);
+    } as const;
+    expect(derivePendingBackgroundWork(input)).toEqual([]);
+    const shell = { ...input, threadId: parent };
+    expect(derivePendingBackgroundWork(shell)).toEqual([childCommand]);
   });
 
   it("does not keep a settled parent waiting for an idle child", () => {

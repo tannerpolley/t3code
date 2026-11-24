@@ -781,6 +781,16 @@ it.effect("distinguishes a running monitor from a background command in the issu
       SET payload_json = '{"input":"build"}' WHERE turn_item_id = 'exec'`;
     const [command] = yield* projections.getIssueWorkThreads([thread.id]);
     assert.equal(classifyIssueWorker(command!).status, "working");
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_provider_threads(
+        provider_thread_id, thread_id, provider, status, updated_at, payload_json
+      ) VALUES ('provider-thread', ${thread.id}, 'codex', 'idle', '2026-10-13',
+        '{"pendingBackgroundTasks":[{"taskId":"native-exec","kind":"command","ownerThreadId":"other-worker"}]}')`;
+    yield* sql`UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = '{"input":"build","nativeItemRef":{"nativeId":"native-exec"}}'
+      WHERE turn_item_id = 'exec'`;
+    const [sharedCommand] = yield* projections.getIssueWorkThreads([thread.id]);
+    assert.equal(classifyIssueWorker(sharedCommand!).status, "idle");
   }).pipe(
     Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
   ),
