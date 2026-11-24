@@ -30,6 +30,7 @@ import {
   type IssueRepositoryRef,
   isMovableRepositoryRegistration,
   isRepositoryOrchestratorEligible,
+  hasRepositoryControllerModes,
   type RepositoryHandoffRequestInput,
   type RepositoryWorkResult,
   type RepositoryChildrenStatus,
@@ -984,7 +985,10 @@ export const layer = Layer.effect(
       rootThreadId: ThreadId,
       config: RepositoryOrchestration,
       commandId: CommandId,
-      resumeBlockedIssueId?: string,
+      options?: Pick<
+        Extract<OrchestrationV2ServerCommand, { type: "repository.work.update" }>,
+        "resumeBlockedIssueId" | "requireControllerModes"
+      >,
     ) =>
       threads
         .dispatch({
@@ -993,7 +997,7 @@ export const layer = Layer.effect(
           commandId,
           expectedRevision: config.revision,
           orchestration: config,
-          ...(resumeBlockedIssueId === undefined ? {} : { resumeBlockedIssueId }),
+          ...options,
         })
         .pipe(Effect.mapError(mapError), Effect.asVoid);
     const assertCurrentCaller = Effect.fn("IssueWorkService.assertCurrentCaller")(function* (
@@ -1343,16 +1347,22 @@ export const layer = Layer.effect(
       yield* considerAutomaticHandoff(rootThreadId);
       let config = yield* store.configuration(rootThreadId);
       if (config?.handoff?.status === "awaiting_approval") {
-        yield* update(
-          rootThreadId,
-          {
-            ...config,
-            paused: true,
-            handoff: { ...config.handoff, status: "draining", wasPaused: config.paused },
-          },
-          CommandId.make(`handoff-resume:${rootThreadId}:${config.revision}`),
-        );
-        config = yield* store.configuration(rootThreadId);
+        const root = yield* threads.getThreadShell(rootThreadId).pipe(Effect.mapError(mapError));
+        if (root !== null && hasRepositoryControllerModes(root)) {
+          yield* update(
+            rootThreadId,
+            {
+              ...config,
+              paused: true,
+              handoff: { ...config.handoff, status: "draining", wasPaused: config.paused },
+            },
+            yield* ids.allocate
+              .command({ fixtureName: "repository-handoff", commandName: "resume" })
+              .pipe(Effect.mapError(mapError)),
+            { requireControllerModes: true },
+          );
+          config = yield* store.configuration(rootThreadId);
+        }
       }
       if (config === null || !repositoryAdmitsWork(config)) return;
       const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry]));
@@ -1415,7 +1425,7 @@ export const layer = Layer.effect(
               ),
             },
             CommandId.make(`issue-resume:${rootThreadId}:${config.revision}:${resumedIssueId}`),
-            resumedIssueId,
+            { resumeBlockedIssueId: resumedIssueId },
           );
           config = (yield* store.configuration(rootThreadId))!;
           continue;
@@ -1919,6 +1929,7 @@ export const layer = Layer.effect(
           },
         },
         input.clientRequestId,
+        callerThreadId === undefined ? undefined : { requireControllerModes: true },
       );
       yield* reconcile(owner.rootThreadId);
       return yield* repositoryStatus(input);

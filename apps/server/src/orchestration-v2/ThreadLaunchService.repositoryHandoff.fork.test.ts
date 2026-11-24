@@ -3565,70 +3565,112 @@ describe("fresh-thread repository handoff", () => {
     }).pipe(Effect.provide(fixture({ continuation: true }))),
   );
 
-  it.effect("reconciles a saved handoff even when another root fails its pass", () => {
-    let runDueWork: Effect.Effect<void> | undefined;
-    const failingRoot = ThreadId.make("stale-handoff-root");
-    const scheduler = Layer.mock(Scheduler.Scheduler)({
-      register: <E, R>(_name: string, work: Effect.Effect<void, E, R>) =>
-        Effect.gen(function* () {
-          runDueWork = work.pipe(Effect.provideContext(yield* Effect.context<R>()), Effect.orDie);
-        }),
-    });
-    return Effect.gen(function* () {
-      const service = yield* IssueWorkService.IssueWorkService;
-      const store = yield* IssueWorkStore.IssueWorkStore;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const target = ThreadId.make("saved-handoff-target");
-      yield* createRoot;
-      yield* createLead(target);
-      yield* threads.dispatch({
-        type: "repository.work.update",
-        commandId: CommandId.make("saved-handoff:proposal"),
-        threadId: rootId,
-        expectedRevision: 1,
-        orchestration: {
-          ...config,
-          paused: true,
-          milestones: [],
-          handoff: {
-            requestId: CommandId.make("saved-handoff:proposal"),
-            nextThreadId: target,
-            summary: "Carry over the saved decisions.",
-            modelSelection,
-            status: "awaiting_approval",
-            wasPaused: false,
-          },
-        },
-      });
-      assert.include(yield* store.activeRoots(), rootId);
-      assert.isDefined(runDueWork);
-      yield* runDueWork!;
-      yield* worker.drain();
-      const result = yield* service.repositoryStatus(reference);
-      assert.equal(result.rootThreadId, target);
-      assert.isTrue(result.orchestration!.paused);
-      assert.isUndefined(result.orchestration!.handoff);
-    }).pipe(
-      Effect.provide(
-        fixture({
-          recovery: true,
-          scheduler,
-          wrapStore: (store) => ({
-            ...store,
-            activeRoots: () =>
-              store.activeRoots().pipe(Effect.map((roots) => [failingRoot, ...roots])),
-            configuration: (id) =>
-              id === failingRoot
-                ? Effect.fail(
-                    new IssueWorkError({ code: "invalid-request", message: "Stale root" }),
-                  )
-                : store.configuration(id),
+  it.effect.each(["full-access", "approval-required", "plan", "plan at commit"] as const)(
+    "reconciles a saved handoff with the source in %s",
+    (mode) => {
+      let runDueWork: Effect.Effect<void> | undefined;
+      const failingRoot = ThreadId.make("stale-handoff-root");
+      const scheduler = Layer.mock(Scheduler.Scheduler)({
+        register: <E, R>(_name: string, work: Effect.Effect<void, E, R>) =>
+          Effect.gen(function* () {
+            runDueWork = work.pipe(Effect.provideContext(yield* Effect.context<R>()), Effect.orDie);
           }),
-        }),
-      ),
-    );
-  });
+      });
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const target = ThreadId.make("saved-handoff-target");
+        yield* createRoot;
+        yield* createLead(target);
+        if (mode === "plan" || mode === "approval-required") {
+          const command = { threadId: rootId, commandId: CommandId.make("saved-handoff:mode") };
+          yield* threads.dispatch(
+            mode === "plan"
+              ? { ...command, type: "thread.interaction-mode.set", interactionMode: mode }
+              : { ...command, type: "thread.runtime-mode.set", runtimeMode: mode },
+          );
+        }
+        yield* threads.dispatch({
+          type: "repository.work.update",
+          commandId: CommandId.make("saved-handoff:proposal"),
+          threadId: rootId,
+          expectedRevision: 1,
+          orchestration: {
+            ...config,
+            paused: true,
+            milestones: [],
+            handoff: {
+              requestId: CommandId.make("saved-handoff:proposal"),
+              nextThreadId: target,
+              summary: "Carry over the saved decisions.",
+              modelSelection,
+              status: "awaiting_approval",
+              wasPaused: false,
+            },
+          },
+        });
+        assert.include(yield* store.activeRoots(), rootId);
+        assert.isDefined(runDueWork);
+        yield* runDueWork!;
+        yield* worker.drain();
+        const result = yield* service.repositoryStatus(reference);
+        if (mode !== "full-access") {
+          assert.equal(result.rootThreadId, rootId);
+          assert.equal(result.orchestration!.handoff?.status, "awaiting_approval");
+          const cancelled = yield* service.handoff({
+            ...reference,
+            action: "cancel",
+            expectedRevision: result.orchestration!.revision,
+            clientRequestId: CommandId.make("saved-handoff:cancel"),
+          });
+          assert.isUndefined(cancelled.orchestration!.handoff);
+          assert.isTrue(cancelled.orchestration!.paused);
+          return;
+        }
+        assert.equal(result.rootThreadId, target);
+        assert.isTrue(result.orchestration!.paused);
+        assert.isUndefined(result.orchestration!.handoff);
+      }).pipe(
+        Effect.provide(
+          fixture({
+            recovery: true,
+            scheduler,
+            ...(mode === "plan at commit"
+              ? {
+                  wrapThreads: (threads) => ({
+                    ...threads,
+                    dispatch: (command) =>
+                      command.type === "repository.work.update" && command.requireControllerModes
+                        ? threads
+                            .dispatch({
+                              type: "thread.interaction-mode.set",
+                              threadId: rootId,
+                              commandId: CommandId.make("saved-handoff:late-plan"),
+                              interactionMode: "plan",
+                            })
+                            .pipe(Effect.andThen(threads.dispatch(command)))
+                        : threads.dispatch(command),
+                  }),
+                }
+              : {}),
+            wrapStore: (store) => ({
+              ...store,
+              activeRoots: () =>
+                store.activeRoots().pipe(Effect.map((roots) => [failingRoot, ...roots])),
+              configuration: (id) =>
+                id === failingRoot
+                  ? Effect.fail(
+                      new IssueWorkError({ code: "invalid-request", message: "Stale root" }),
+                    )
+                  : store.configuration(id),
+            }),
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect(
     "cancelling a draining handoff says why it refuses, then restores the pause state",

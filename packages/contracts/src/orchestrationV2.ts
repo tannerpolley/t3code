@@ -3431,6 +3431,7 @@ export const OrchestrationV2Command = Schema.Union([
     expectedRevision: Schema.Int,
     orchestration: RepositoryOrchestration,
     resumeBlockedIssueId: Schema.optional(Schema.String),
+    requireControllerModes: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.stop"),
