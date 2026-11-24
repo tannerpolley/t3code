@@ -19,6 +19,7 @@ export function indexSidebarWorkers(threads: readonly SidebarThreadSummary[]) {
   const isWorker = (thread: SidebarThreadSummary | undefined) =>
     thread !== undefined &&
     thread.archivedAt === null &&
+    !isProviderNativeSubagentThread(thread.source) &&
     thread.lineage.relationshipToParent === "subagent";
   const byKey = new Map(threads.map((thread) => [keyOf(thread), thread]));
   const children = new Map<string, SidebarThreadSummary[]>();

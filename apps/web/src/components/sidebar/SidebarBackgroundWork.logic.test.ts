@@ -14,6 +14,7 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { describe, expect, it } from "vite-plus/test";
 
+import { withNativeSidebarTaskOrigins } from "../../state/entities";
 import { makeThreadFixture } from "../../test-fixtures";
 import {
   childWorktreeLabel,
@@ -21,6 +22,7 @@ import {
   sidebarModelParts,
   sameSidebarSubagentTree,
   describeSidebarBackgroundWork,
+  describeProjectSidebarWork,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
   sidebarEffortGlyph,
@@ -59,39 +61,66 @@ describe("describeSidebarBackgroundWork", () => {
       ...nativeFixture,
       source: { ...nativeFixture.source, creationSource: "provider" as const },
     };
-    const rows = describeSidebarBackgroundWork(
-      [
-        {
-          taskId: "linked-agent",
-          description: "Review the diff",
-          kind: "subagent",
-          childThreadId: runningChild.id,
-        },
-        { taskId: "native-agent", kind: "subagent", childThreadId: nativeChild.id },
-        { taskId: "roster-agent", description: "Explore", kind: "subagent" },
-        { taskId: "command", description: "Run tests", kind: "command" },
-        { taskId: "monitor", description: "Watch build", kind: "monitor" },
-        { taskId: "unknown", kind: "background_task" },
-      ],
-      [nativeChild, runningChild],
-    );
+    const tasks = [
+      {
+        taskId: "linked-agent",
+        description: "Review the diff",
+        kind: "subagent",
+        childThreadId: runningChild.id,
+      },
+      { taskId: "native-agent", kind: "subagent", childThreadId: nativeChild.id },
+      { taskId: "native-roster", kind: "subagent", origin: "provider_native" },
+      {
+        taskId: "legacy-native-roster",
+        kind: "subagent",
+        providerInstanceId: runningChild.providerInstanceId,
+      },
+      {
+        taskId: "turn-item:delegated-task:remote",
+        kind: "subagent",
+        providerInstanceId: runningChild.providerInstanceId,
+      },
+      { taskId: "command", description: "Run tests", kind: "command" },
+      { taskId: "monitor", description: "Watch build", kind: "monitor" },
+      { taskId: "unknown", kind: "background_task" },
+    ] as const;
+    const parent = makeThreadFixture({ pendingBackgroundTasks: tasks });
+    const [marked] = withNativeSidebarTaskOrigins([parent, nativeChild, runningChild]);
+    const rows = describeProjectSidebarWork(marked!.pendingBackgroundTasks, [runningChild]);
 
     expect(rows.map(({ taskId, kind }) => [taskId, kind])).toEqual([
       ["command", "command"],
       ["monitor", "monitor"],
       ["unknown", "background_task"],
-      [nativeChild.id, "subagent"],
       [runningChild.id, "subagent"],
-      ["roster-agent", "subagent"],
+      ["turn-item:delegated-task:remote", "subagent"],
     ]);
-    expect(rows[4]).toMatchObject({
+    expect(rows[3]).toMatchObject({
       label: "Review the diff",
       childThreadId: runningChild.id,
       startedAt: "2026-09-23T10:00:00.000Z",
       status: "working",
       child: runningChild,
     });
-    expect(rows[5]).toMatchObject({ childThreadId: null, startedAt: null });
+    expect(rows[4]).toMatchObject({ childThreadId: null, startedAt: null });
+    const grandchild = makeThreadFixture({
+      id: ThreadId.make("grandchild"),
+      lineage: {
+        rootThreadId: parent.id,
+        parentThreadId: runningChild.id,
+        relationshipToParent: "subagent",
+      },
+      runtime: runningChild.runtime,
+    });
+    expect(
+      describeProjectSidebarWork(marked!.pendingBackgroundTasks, [runningChild, grandchild])
+        .filter((row) => row.kind === "subagent")
+        .map(({ taskId }) => taskId)
+        .toSorted(),
+    ).toEqual([runningChild.id, grandchild.id, "turn-item:delegated-task:remote"]);
+    expect(describeSidebarBackgroundWork(tasks, [nativeChild, runningChild])).toContainEqual(
+      expect.objectContaining({ childThreadId: nativeChild.id, child: nativeChild }),
+    );
     expect(rows[0]).not.toHaveProperty("childThreadId");
   });
 

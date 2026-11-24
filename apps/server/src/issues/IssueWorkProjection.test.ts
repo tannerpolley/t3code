@@ -115,7 +115,8 @@ it.effect(
                 ],
               }
             : {}),
-          ...(name === "inherited"
+          ...(name === "native" ? { creationSource: "provider" as const } : {}),
+          ...(name === "inherited" || name === "native"
             ? {
                 lineage: {
                   rootThreadId: ThreadId.make("idle"),
@@ -479,10 +480,7 @@ it.effect(
           requestHandledByParent: true,
         },
       );
-      assert.equal(
-        first.issues[0]?.liveWork?.find((work) => work.threadId === "native")?.status,
-        "working",
-      );
+      assert.isFalse(work.some((item) => item.threadId === "native"));
       assert.deepEqual(yield* links.enrich(input).pipe(Effect.withTracer(tracer)), first);
       assert.equal(reads, 1);
       const thread = yield* projections.getThread(ThreadId.make("running"));

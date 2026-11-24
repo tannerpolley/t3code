@@ -59,7 +59,14 @@ describe("derivePendingBackgroundWork", () => {
       ],
       turnItems: [],
     });
-    expect(tasks).toEqual([{ taskId: "roster-item", kind: "subagent", providerInstanceId: owner }]);
+    expect(tasks).toEqual([
+      {
+        taskId: "roster-item",
+        kind: "subagent",
+        origin: "provider_native",
+        providerInstanceId: owner,
+      },
+    ]);
   });
 
   it("returns empty while the latest run is not settled", () => {

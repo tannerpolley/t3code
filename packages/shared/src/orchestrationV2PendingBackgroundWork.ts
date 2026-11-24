@@ -168,6 +168,7 @@ type PendingBackgroundWorkTurnItem = {
   readonly monitor?: boolean | undefined;
   readonly prompt?: string | undefined;
   readonly childThreadId?: ThreadId | null;
+  readonly origin?: Extract<PendingBackgroundWorkTask, { kind: "subagent" }>["origin"];
 };
 
 function isLatestRunSettledForBackgroundWait(
@@ -222,6 +223,7 @@ function pendingTaskFromTurnItem(
       return {
         ...named,
         kind: "subagent",
+        ...(item.origin === undefined ? {} : { origin: item.origin }),
         ...(item.owningProviderInstanceId === undefined
           ? {}
           : { providerInstanceId: item.owningProviderInstanceId }),
@@ -310,7 +312,10 @@ export function derivePendingBackgroundWork(input: {
       byTaskId.set(task.taskId, {
         ...named,
         ...(task.kind === "subagent"
-          ? { providerInstanceId: providerThread.providerInstanceId }
+          ? {
+              origin: task.origin ?? "provider_native",
+              providerInstanceId: providerThread.providerInstanceId,
+            }
           : {}),
         ...(description === undefined || description.length === 0 ? {} : { description }),
       });
