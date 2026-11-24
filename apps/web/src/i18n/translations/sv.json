@@ -6856,27 +6856,6 @@
   "be3d1766bad18693": "Kontroller: {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} misslyckades} other {{count} misslyckades}}",
   "cb116c139cdace98": "Inga kontroller rapporterade",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "kontroller"
-  ],
   "60b56e201607c7ec": "Kontrolldetaljerna är inaktuella. Uppdatera pull requesten för att uppdatera dem.",
   "e74cd4e960cbb5e5": "Oförändrade rader är inte tillgängliga i en fil med bortklippta rader.",
   "38d6169e04a9a4ce": "Fler kommentarer kunde inte läsas in",
@@ -12553,7 +12532,6 @@
   "f938bb483eb3d189": "startar om sist",
   "9bca02be2b4d612a": "inte ansluten",
   "2dcc418b6a13b83c": "behöver uppdateras manuellt",
-  "5c8ebc36f84dee7a": "behöver en nyare skrivbordsapp",
   "fa8faa732a2688ef": "på kanalen {channel}",
   "9b961309baafa09d": "ingen behörighet",
   "9bafb2622c22d145": "uppdateras redan",
@@ -13226,5 +13204,34 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "1cbfbcad9f0d04fe": "Återupptar sessionen för {provider}",
+  "fd63b391898889f9": "{count, plural, one {{count} väntar på åtgärd} other {{count} väntar på åtgärd}}",
+  "7d7f65967cc821e3": "Bredd för HTML-förhandsvisning",
+  "70ce0af7f78d5957": "Låter HTML-förhandsvisningar i en chatt bli bredare än meddelandena, som förblir centrerade.",
+  "f2b119bf02ae2558": "Återställ bredd för HTML-förhandsvisning till standard",
+  "6287212fed0deec6": "Samma som chatten",
+  "dc8e85ea0364649c": "Samma som chatten (standard)",
+  "9d5c7430a7ff76cf": "bred full bredd inbäddad sida rendera diagram instrumentpanel artefakt centrerad",
+  "f13e08bd3614112e": "uppdatera T3 Code på den datorn",
+  "3c3348c36a2695af": "byt uppdateringsspår på den datorn",
+  "8a883c4fbc127b68": "Aktiverar automatisk merge för stacken...",
+  "5fb2a26ae31e8983": "Kunde inte aktivera automatisk merge för stacken",
+  "986d0dcbf4dd0098": "Automatisk merge för stacken aktiverad",
+  "f3ed1f63c8a3eef2": "{host} mergar stacken till och med #{number} när kraven är uppfyllda.",
+  "bd536a0a1754f6cb": "Kunde inte avbryta automatisk merge för stacken",
+  "bb90ac3b2f3a72d5": "Värden vägrade avbryta den automatiska mergen. Uppdatera och försök igen.",
+  "9c28753c777c37b7": "{count, plural, one {Merga {count} {term, select, mr {merge request} cr {ändringsbegäran} other {pull request}} automatiskt?} other {Merga {count} {term, select, mr {merge requests} cr {ändringsbegäranden} other {pull requests}} automatiskt?}}",
+  "a86b49982e18784d": "Merga #{number} och dess omergade lager under in i {base} med {method} när vart och ett uppfyller kraven på {host}. Det kan ske direkt.",
+  "b1afda5c964deee4": [
+    "Merga stacken automatiskt (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Avbryt automatisk merge för stacken",
+  "012c67c7f1a99e33": "Merga stacken automatiskt"
 }

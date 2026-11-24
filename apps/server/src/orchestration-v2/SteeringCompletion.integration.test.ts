@@ -1126,6 +1126,7 @@ it.effect.each(
         yield* orchestrator.dispatch({
           type: "queued-run.edit",
           commandId: CommandId.make("edit-steer-to-compact"),
+          modelSelection: composerSelection,
           threadId,
           runId: edited.id,
           text: "/compact",
@@ -1134,6 +1135,7 @@ it.effect.each(
           (candidate) => candidate.id === edited.id,
         )!;
         assert.isUndefined(compact.steerWhenReadyRunId);
+        assert.deepEqual(compact.modelSelection, composerSelection);
         assert.equal(compact.queuePosition, edited.queuePosition);
       }
       if (direct) {
@@ -1165,7 +1167,10 @@ it.effect.each(
       const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
         (candidate) => candidate.userMessageId === MessageId.make("message:steer-after-setup"),
       )!;
-      assert.deepEqual(queued.modelSelection, runSelection);
+      assert.deepEqual(
+        queued.modelSelection,
+        status === "preparing" && !direct ? composerSelection : runSelection,
+      );
       for (const text of ["/compact", "/logout"]) {
         yield* orchestrator.dispatch({
           type: "message.dispatch",

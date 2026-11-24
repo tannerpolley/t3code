@@ -6850,27 +6850,6 @@
   "be3d1766bad18693": "Comprobaciones: {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} con errores} other {{count} con errores}}",
   "cb116c139cdace98": "No se informó de ninguna comprobación",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "comprobaciones"
-  ],
   "60b56e201607c7ec": "Los detalles de las comprobaciones están desactualizados. Actualiza la pull request para ponerlos al día.",
   "e74cd4e960cbb5e5": "Las líneas sin cambios no están disponibles en un archivo con líneas cortadas.",
   "38d6169e04a9a4ce": "No se pudieron cargar más comentarios",
@@ -12540,7 +12519,6 @@
   "f938bb483eb3d189": "se reinicia el último",
   "9bca02be2b4d612a": "sin conexión",
   "2dcc418b6a13b83c": "requiere una actualización manual",
-  "5c8ebc36f84dee7a": "requiere una app de escritorio más reciente",
   "fa8faa732a2688ef": "en el canal {channel}",
   "9b961309baafa09d": "sin permiso",
   "9bafb2622c22d145": "ya se está actualizando",
@@ -13214,5 +13192,34 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
+  "1cbfbcad9f0d04fe": "Reanudando la sesión de {provider}",
+  "fd63b391898889f9": "{count, plural, one {{count} pendiente de acción} other {{count} pendientes de acción}}",
+  "7d7f65967cc821e3": "Ancho de la vista previa HTML",
+  "70ce0af7f78d5957": "Permite que las vistas previas HTML de un chat sean más anchas que sus mensajes, que siguen centrados.",
+  "f2b119bf02ae2558": "Restablecer el ancho de la vista previa HTML al valor predeterminado",
+  "6287212fed0deec6": "Igual que el chat",
+  "dc8e85ea0364649c": "Igual que el chat (predeterminado)",
+  "9d5c7430a7ff76cf": "ancho ancho completo en línea página renderizar gráfico panel artefacto centrado",
+  "f13e08bd3614112e": "actualiza T3 Code en ese equipo",
+  "3c3348c36a2695af": "cambia el canal de actualizaciones en ese equipo",
+  "8a883c4fbc127b68": "Activando la fusión automática de la pila...",
+  "5fb2a26ae31e8983": "No se pudo activar la fusión automática de la pila",
+  "986d0dcbf4dd0098": "Fusión automática de la pila activada",
+  "f3ed1f63c8a3eef2": "{host} fusionará la pila hasta #{number} cuando se cumplan sus requisitos.",
+  "bd536a0a1754f6cb": "No se pudo cancelar la fusión automática de la pila",
+  "bb90ac3b2f3a72d5": "El host rechazó cancelar la fusión automática. Actualiza e inténtalo de nuevo.",
+  "9c28753c777c37b7": "{count, plural, one {¿Fusionar automáticamente {count} {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}?} other {¿Fusionar automáticamente {count} {term, select, mr {merge requests} cr {solicitudes de cambios} other {pull requests}}?}}",
+  "a86b49982e18784d": "Fusiona #{number} y sus capas sin fusionar de debajo en {base} mediante {method} cuando todas cumplan los requisitos de {host}. Puede ocurrir de inmediato.",
+  "b1afda5c964deee4": [
+    "Fusión automática de la pila (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Cancelar la fusión automática de la pila",
+  "012c67c7f1a99e33": "Fusión automática de la pila"
 }

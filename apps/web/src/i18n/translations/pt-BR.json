@@ -6850,27 +6850,6 @@
   "be3d1766bad18693": "Verificações: {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} com falha} other {{count} com falha}}",
   "cb116c139cdace98": "Nenhuma verificação informada",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "verificações"
-  ],
   "60b56e201607c7ec": "Os detalhes das verificações estão desatualizados. Atualize o pull request para atualizá-los.",
   "e74cd4e960cbb5e5": "As linhas não alteradas não estão disponíveis em um arquivo com linhas cortadas.",
   "38d6169e04a9a4ce": "Não foi possível carregar mais comentários",
@@ -12545,7 +12524,6 @@
   "f938bb483eb3d189": "reinicia por último",
   "9bca02be2b4d612a": "não conectado",
   "2dcc418b6a13b83c": "precisa de atualização manual",
-  "5c8ebc36f84dee7a": "precisa de um app desktop mais novo",
   "fa8faa732a2688ef": "no canal {channel}",
   "9b961309baafa09d": "sem permissão",
   "9bafb2622c22d145": "já está atualizando",
@@ -13219,5 +13197,34 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "1cbfbcad9f0d04fe": "Retomando a sessão do {provider}",
+  "fd63b391898889f9": "{count, plural, one {{count} aguardando ação} other {{count} aguardando ação}}",
+  "7d7f65967cc821e3": "Largura da pré-visualização HTML",
+  "70ce0af7f78d5957": "Permite que as pré-visualizações HTML de um chat fiquem mais largas que as mensagens, que continuam centralizadas.",
+  "f2b119bf02ae2558": "Redefinir a largura da pré-visualização HTML para o padrão",
+  "6287212fed0deec6": "Igual ao chat",
+  "dc8e85ea0364649c": "Igual ao chat (padrão)",
+  "9d5c7430a7ff76cf": "largo largura total em linha página renderizar gráfico painel artefato centralizado",
+  "f13e08bd3614112e": "atualize o T3 Code nessa máquina",
+  "3c3348c36a2695af": "mude o canal de atualização nessa máquina",
+  "8a883c4fbc127b68": "Ativando o merge automático da pilha...",
+  "5fb2a26ae31e8983": "Não foi possível ativar o merge automático da pilha",
+  "986d0dcbf4dd0098": "Merge automático da pilha ativado",
+  "f3ed1f63c8a3eef2": "{host} vai mesclar a pilha até o #{number} quando os requisitos forem atendidos.",
+  "bd536a0a1754f6cb": "Não foi possível cancelar o merge automático da pilha",
+  "bb90ac3b2f3a72d5": "O host recusou o cancelamento do merge automático. Atualize e tente novamente.",
+  "9c28753c777c37b7": "{count, plural, one {Mesclar automaticamente {count} {term, select, mr {merge request} cr {solicitação de alteração} other {pull request}}?} other {Mesclar automaticamente {count} {term, select, mr {merge requests} cr {solicitações de alteração} other {pull requests}}?}}",
+  "a86b49982e18784d": "Mescla o #{number} e as camadas não mescladas abaixo dele em {base} usando {method} quando todas atenderem aos requisitos de {host}. Isso pode acontecer imediatamente.",
+  "b1afda5c964deee4": [
+    "Merge automático da pilha (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Cancelar merge automático da pilha",
+  "012c67c7f1a99e33": "Merge automático da pilha"
 }

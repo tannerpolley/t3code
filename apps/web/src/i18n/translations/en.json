@@ -6857,27 +6857,6 @@
   "be3d1766bad18693": "Checks: {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} failed} other {{count} failed}}",
   "cb116c139cdace98": "No checks reported",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "checks"
-  ],
   "60b56e201607c7ec": "Check details are out of date. Refresh the pull request to update them.",
   "e74cd4e960cbb5e5": "Unchanged lines are unavailable in a file with cut lines.",
   "38d6169e04a9a4ce": "More comments could not be loaded",
@@ -12555,7 +12534,6 @@
   "f938bb483eb3d189": "restarts last",
   "9bca02be2b4d612a": "not connected",
   "2dcc418b6a13b83c": "needs a manual update",
-  "5c8ebc36f84dee7a": "needs a newer desktop app",
   "fa8faa732a2688ef": "on the {channel} channel",
   "9b961309baafa09d": "no permission",
   "9bafb2622c22d145": "already updating",
@@ -13228,5 +13206,34 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "1cbfbcad9f0d04fe": "Resuming {provider} session",
+  "fd63b391898889f9": "{count, plural, one {{count} awaiting action} other {{count} awaiting action}}",
+  "7d7f65967cc821e3": "HTML preview width",
+  "70ce0af7f78d5957": "Let HTML previews in a chat grow wider than its messages, which stay centered.",
+  "f2b119bf02ae2558": "Reset HTML preview width to default",
+  "6287212fed0deec6": "Match chat",
+  "dc8e85ea0364649c": "Match chat (default)",
+  "9d5c7430a7ff76cf": "wide full width inline page render chart dashboard artifact centered",
+  "f13e08bd3614112e": "update T3 Code on that machine",
+  "3c3348c36a2695af": "change the update track on that machine",
+  "8a883c4fbc127b68": "Enabling stack auto-merge...",
+  "5fb2a26ae31e8983": "Could not enable stack auto-merge",
+  "986d0dcbf4dd0098": "Stack auto-merge enabled",
+  "f3ed1f63c8a3eef2": "{host} merges the stack through #{number} once its requirements are met.",
+  "bd536a0a1754f6cb": "Could not cancel stack auto-merge",
+  "bb90ac3b2f3a72d5": "The host refused to cancel auto-merge. Refresh and try again.",
+  "9c28753c777c37b7": "{count, plural, one {Auto-merge {count} {term, select, mr {merge request} cr {change request} other {pull request}}?} other {Auto-merge {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}?}}",
+  "a86b49982e18784d": "Merge #{number} and its unmerged layers below into {base} using {method} once every one of them meets the requirements on {host}. This may happen immediately.",
+  "b1afda5c964deee4": [
+    "Auto-merge stack (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Cancel stack auto-merge",
+  "012c67c7f1a99e33": "Auto-merge stack"
 }
