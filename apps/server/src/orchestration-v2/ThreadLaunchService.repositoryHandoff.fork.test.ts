@@ -1351,6 +1351,97 @@ describe("fresh-thread repository handoff", () => {
     },
   );
 
+  it.effect.each(["delegate_task", "t3_thread_send"] as const)(
+    "resumes a finished retained worker through %s after repository handoff",
+    (operation) =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const sink = yield* EventSink.EventSinkV2;
+        const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
+        yield* createRoot;
+        const worker = (yield* service.start({
+          ...reference,
+          number: 9,
+          projectId,
+          modelRoleId: "implementor-complex",
+          clientRequestId: CommandId.make("retained-worker:start"),
+        })).issueThreadId!;
+        yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(worker).pipe(
+          Stream.filter((snapshot) => snapshot?.phase === "done"),
+          Stream.runHead,
+        );
+        const worktree = (yield* threads.getThreadShell(worker))!.worktreePath;
+        assert.isNotNull(worktree);
+        const beforeWorker = yield* sink.latestSequence();
+        yield* finish(worker, "retained-worker:first");
+        yield* awaitFollowup(rootId, beforeWorker);
+        const beforeRoot = yield* sink.latestSequence();
+        yield* finish(rootId, "retained-worker:delivery");
+        yield* sink.stream({ afterSequence: beforeRoot }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "subagent.updated" &&
+              event.threadId === rootId &&
+              event.payload.completionDelivery?.state === "delivered",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const original = (yield* threads.getThreadRecords(rootId, ["subagents"])).subagents;
+        const moved = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: 1,
+          summary: "Continue work in the retained issue worktree.",
+          clientRequestId: CommandId.make("retained-worker:handoff"),
+        });
+        const successor = moved.rootThreadId!;
+        assert.notEqual(successor, rootId);
+        const resume = "Continue in the existing issue workspace.";
+        const taskId =
+          operation === "delegate_task"
+            ? (yield* mcp.delegateTask(scope(successor), {
+                issue: { ...reference, number: 9 },
+                task: resume,
+                mode: "async",
+                clientRequestId: "retained-worker:delegate",
+              })).taskId
+            : (yield* mcp.sendToThread(scope(successor), {
+                threadId: worker,
+                message: resume,
+                clientRequestId: "retained-worker:send",
+              })).taskId;
+        const child = yield* threads.getThreadRecords(worker, ["runs", "messages"]);
+        assert.equal(child.thread.worktreePath, worktree);
+        const message = child.messages.find((entry) => entry.text.includes(resume));
+        assert.isDefined(message);
+        const run = child.runs.find((entry) => entry.id === message?.runId);
+        assert.equal(run?.status, "starting");
+        assert.isDefined(taskId);
+        assert.equal(run?.delegatedTaskId, taskId);
+        const beforeResume = yield* sink.latestSequence();
+        yield* finish(worker, "retained-worker:resumed");
+        yield* sink.stream({ afterSequence: beforeResume }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "subagent.updated" &&
+              event.threadId === successor &&
+              event.payload.id === taskId &&
+              event.payload.result !== null,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        assert.deepEqual(
+          (yield* threads.getThreadRecords(rootId, ["subagents"])).subagents,
+          original,
+        );
+      }).pipe(
+        Effect.provide(fixture({ recovery: true, continuation: true, inventoryIssues: () => [] })),
+      ),
+  );
+
   it.effect(
     "rejects reusing a worker under a retired root without rewriting that root's task",
     () =>

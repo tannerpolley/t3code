@@ -187,6 +187,7 @@ import { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
 import {
   claimFields,
   makeIssueWorkCommands,
+  isSettledIssueWorkerTask,
   type DelegatedTaskRequest,
 } from "./IssueWorkCommands.ts";
 import { makeRepositoryWorkCommands } from "./RepositoryWorkCommands.ts";
@@ -1686,6 +1687,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readIssueSnapshots,
     withAdmissionReads,
     promoteOtherIssueQueues,
+    successorFor,
   } = yield* makeIssueWorkDispatch;
   const issueWorkRecovery = yield* makeIssueWorkRecovery;
   const messageIntake = yield* KeyedLock.make<ThreadId>();
@@ -10418,18 +10420,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     if (!startsAttempt) return;
     const child = yield* projectionStore.getThread(command.threadId);
-    const parentThreadId = child.lineage.parentThreadId;
-    // A send with no sender thread comes from a client acting for the owner, like a user send.
-    if (
-      child.lineage.relationshipToParent !== "subagent" ||
-      parentThreadId === null ||
-      (command.notification === undefined &&
-        command.createdBy !== "user" &&
-        command.usageLimitContinuationOfRunId === undefined &&
-        command.senderThreadId !== undefined &&
-        command.senderThreadId !== parentThreadId)
-    )
-      return;
+    const priorParentId = child.lineage.parentThreadId;
+    if (child.lineage.relationshipToParent !== "subagent" || priorParentId === null) return;
     const run =
       pending
         .flatMap((event) =>
@@ -10443,6 +10435,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (row) => row.id === message.runId,
       );
     if (run === undefined || run.delegatedTaskId !== undefined) return;
+    const successor =
+      run.admissionWait === "not_current_worker" && child.forkedFrom?.type === "node"
+        ? yield* successorFor(child).pipe(mapDispatchError(command))
+        : null;
+    const adoption =
+      successor === null
+        ? null
+        : yield* issueWork.adoptionLineage(child, successor).pipe(mapDispatchError(command));
+    if (successor !== null && adoption === null) return;
+    const parentThreadId = adoption?.parentThreadId ?? priorParentId;
+    // A send with no sender thread comes from a client acting for the owner, like a user send.
+    if (
+      command.notification === undefined &&
+      command.createdBy !== "user" &&
+      command.usageLimitContinuationOfRunId === undefined &&
+      command.senderThreadId !== undefined &&
+      command.senderThreadId !== parentThreadId
+    )
+      return;
     const completion = command.delegatedCompletion;
     const wakeRuns =
       command.notification === undefined && completion?.parentRunId == null
@@ -10471,7 +10482,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.childThreadId === child.id &&
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
-    if (original === undefined || original.result === null) return;
+    const previous =
+      adoption === null
+        ? original
+        : (yield* projectionStore.getThreadRecords(priorParentId, ["subagents"], {
+            subagentChildThreadIds: [child.id],
+          })).subagents.findLast((task) => task.childThreadId === child.id);
+    if (
+      previous === undefined ||
+      previous.result === null ||
+      (adoption !== null && !isSettledIssueWorkerTask(previous))
+    )
+      return;
     const openFollowup = parent.subagents.find(
       (task) =>
         task.id === followupId &&
@@ -10480,7 +10502,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.cancelledRunId === undefined &&
         task.result === null,
     );
-    if (openFollowup !== undefined) {
+    if (adoption === null && openFollowup !== undefined) {
       yield* emit(
         events,
         command,
@@ -10494,17 +10516,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
     const owner = followUpOwnerRun(parent.runs);
-    if (owner === null || owner.rootNodeId === null) return;
+    if (adoption === null && (owner === null || owner.rootNodeId === null)) return;
     const now = message.createdAt;
     const adapter = yield* providerAdapters.get(run.providerInstanceId);
     const taskId = idAllocator.derive.delegatedTaskNode({ commandId: command.commandId });
     const task: OrchestrationV2Subagent = {
-      ...original,
+      ...previous,
       createdBy: command.createdBy,
       driver: adapter.driver,
       id: taskId,
-      runId: owner.id,
-      parentNodeId: owner.rootNodeId,
+      threadId: parentThreadId,
+      runId: owner?.id ?? null,
+      parentNodeId: owner?.rootNodeId ?? taskId,
       providerInstanceId: run.providerInstanceId,
       providerThreadId: run.providerThreadId,
       model: run.modelSelection.model,
@@ -10524,9 +10547,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const node: OrchestrationV2ExecutionNode = {
       id: taskId,
       threadId: parentThreadId,
-      runId: owner.id,
-      parentNodeId: owner.rootNodeId,
-      rootNodeId: owner.rootNodeId,
+      runId: owner?.id ?? null,
+      parentNodeId: owner?.rootNodeId ?? null,
+      rootNodeId: owner?.rootNodeId ?? taskId,
       kind: "subagent",
       status: task.status,
       countsForRun: false,
@@ -10541,10 +10564,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const turnItem: OrchestrationV2TurnItem = {
       id: idAllocator.derive.delegatedTaskTurnItem({ commandId: command.commandId }),
       threadId: parentThreadId,
-      runId: owner.id,
+      runId: owner?.id ?? null,
       nodeId: taskId,
-      providerThreadId: owner.providerThreadId,
-      providerTurnId: providerTurnForRun(parent, owner)?.id ?? null,
+      providerThreadId: owner?.providerThreadId ?? null,
+      providerTurnId: owner === null ? null : (providerTurnForRun(parent, owner)?.id ?? null),
       nativeItemRef: null,
       parentItemId: null,
       ordinal: yield* nextTurnItemOrdinal(parent),
@@ -10563,6 +10586,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       result: null,
     };
     const emitEvent = emit(events, command);
+    if (adoption !== null) {
+      const updated = pending.findLast(
+        (event) => event.type === "thread.metadata-updated" && event.threadId === child.id,
+      );
+      yield* emitEvent({
+        type: "thread.metadata-updated",
+        threadId: child.id,
+        occurredAt: now,
+        payload: {
+          ...(updated?.type === "thread.metadata-updated" ? updated.payload : child),
+          lineage: adoption,
+          forkedFrom: { type: "node", nodeId: taskId },
+          updatedAt: now,
+        },
+      });
+    }
     yield* emitEvent({
       type: "run.updated",
       threadId: child.id,
@@ -10573,7 +10612,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* emitEvent({
       type: "node.updated",
       threadId: parentThreadId,
-      runId: owner.id,
+      ...(owner === null ? {} : { runId: owner.id }),
       nodeId: taskId,
       occurredAt: now,
       payload: node,
@@ -10581,7 +10620,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* emitEvent({
       type: "subagent.updated",
       threadId: parentThreadId,
-      runId: owner.id,
+      ...(owner === null ? {} : { runId: owner.id }),
       nodeId: taskId,
       occurredAt: now,
       payload: task,
@@ -10589,7 +10628,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* emitEvent({
       type: "turn-item.updated",
       threadId: parentThreadId,
-      runId: owner.id,
+      ...(owner === null ? {} : { runId: owner.id }),
       nodeId: taskId,
       occurredAt: now,
       payload: turnItem,
@@ -14862,14 +14901,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  /**
-   * Thread lineage and fork origin are immutable, so this
-   * is safe to read without holding either thread's dispatch lock.
-   */
   const appOwnedSubagentParentThreadId = Effect.fn("Orchestrator.appOwnedSubagentParentThreadId")(
-    function* (childThreadId: ThreadId) {
+    function* (childThreadId: ThreadId, options?: { allowAdoption: true }) {
       const childThread = yield* projectionStore.getThread(childThreadId);
       const lineage = childThread.lineage;
+      // Adoption writes the successor's task under the repository planning lock.
+      if (options?.allowAdoption && (yield* successorFor(childThread).pipe(Effect.orDie)) !== null)
+        return undefined;
       return lineage.relationshipToParent === "subagent" &&
         lineage.parentThreadId !== null &&
         childThread.forkedFrom?.type === "node"
@@ -16957,7 +16995,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
   // Follow-up intake and Stop serialize on the parent before taking the child lock.
   const withSubagentParentLock = <A, E, R>(threadId: ThreadId, dispatch: Effect.Effect<A, E, R>) =>
-    appOwnedSubagentParentThreadId(threadId).pipe(
+    appOwnedSubagentParentThreadId(threadId, { allowAdoption: true }).pipe(
       Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       Effect.flatMap((parentThreadId) =>
         parentThreadId === undefined ? dispatch : threadDispatch.withLock(parentThreadId, dispatch),

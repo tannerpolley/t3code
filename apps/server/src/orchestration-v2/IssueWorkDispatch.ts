@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import { sameIssueRepository, isUnmanagedIssueRole } from "../issues/IssueEligibility.ts";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
 import type { ForkCommandHooks } from "./IssueWorkCommands.ts";
 import type { OrchestratorV2Error } from "./Orchestrator.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
@@ -34,6 +35,37 @@ class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
     defaultValue: (): ReadonlySet<ThreadId> => new Set(),
   },
 ) {}
+
+type RetainedWorker = Pick<
+  OrchestrationV2AppThread,
+  "linkedIssue" | "role" | "lineage" | "projectId" | "worktreePath" | "archivedAt" | "deletedAt"
+>;
+
+export const retainedWorkerSuccessor = Effect.fn("retainedWorkerSuccessor")(function* (
+  store: IssueWorkStore.IssueWorkStore["Service"],
+  thread: RetainedWorker,
+) {
+  if (
+    thread.linkedIssue === undefined ||
+    isUnmanagedIssueRole(thread.role) ||
+    thread.lineage.relationshipToParent !== "subagent" ||
+    !keepIssueWorktree(thread)
+  )
+    return null;
+  const owner = yield* store.repositoryOwner(thread.linkedIssue);
+  if (
+    owner === null ||
+    owner.projectId !== thread.projectId ||
+    owner.rootThreadId === thread.lineage.rootThreadId
+  )
+    return null;
+  const configuration = yield* store.configuration(owner.rootThreadId);
+  return configuration?.handoffHistory?.some(
+    (entry) => entry.threadId === thread.lineage.rootThreadId,
+  )
+    ? owner.rootThreadId
+    : null;
+});
 
 // shortcut: Unlinked managers lock themselves, so concurrent read-only delegations can exceed the cap (#91).
 export function threadDispatchLockKey(
@@ -63,22 +95,47 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
   const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const issueReads = yield* Effect.serviceOption(IssueService.IssueService);
 
+  const successorFor = (thread: RetainedWorker) =>
+    Option.isSome(issueWorkStore)
+      ? retainedWorkerSuccessor(issueWorkStore.value, thread)
+      : Effect.succeed(null);
+
   const threadDispatch: ThreadCommandExecutor.ThreadCommandExecutor["Service"] = {
     activeKeys: threadExecutor.activeKeys,
     withDeletionLock: threadExecutor.withDeletionLock,
     withLock: Effect.fn("withLock")(function* (threadId, effect) {
       const shell = yield* projectionStore.findThread(threadId).pipe(Effect.orDie);
-      // Run starts across every managed descendant share the root's planning lock.
-      // Whole-thread provider writes use the same key; ordinary provider updates do not plan admissions.
-      const key = threadDispatchLockKey(threadId, shell);
-      // A child's dispatch can nest inside its parent's lock, and both may resolve to
-      // the root. The lock is not reentrant, so a held key is not taken again.
       const held = yield* HeldDispatchLocks;
-      if (held.has(key)) return yield* effect;
-      return yield* threadExecutor.withLock(
-        key,
-        effect.pipe(Effect.provideService(HeldDispatchLocks, new Set([...held, key]))),
-      );
+      const keyFor = (thread: typeof shell) =>
+        thread === null
+          ? Effect.succeed(threadId)
+          : successorFor(thread).pipe(
+              Effect.map((successor) => successor ?? threadDispatchLockKey(threadId, thread)),
+              Effect.orDie,
+            );
+      let key = yield* keyFor(shell);
+      for (;;) {
+        // Managed children share their repository root's planning lock.
+        if (held.has(key)) return yield* effect;
+        const result = yield* threadExecutor.withLock(
+          key,
+          Effect.gen(function* () {
+            if (shell !== null && keepIssueWorktree(shell)) {
+              // Ownership can move while a retained worker waits for the lock.
+              const current = yield* keyFor(
+                yield* projectionStore.findThread(threadId).pipe(Effect.orDie),
+              );
+              if (current !== key) return { nextKey: current } as const;
+            }
+            const value = yield* effect.pipe(
+              Effect.provideService(HeldDispatchLocks, new Set([...held, key])),
+            );
+            return { value };
+          }),
+        );
+        if ("value" in result) return result.value;
+        key = result.nextKey;
+      }
     }),
   };
 
@@ -101,7 +158,8 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
       !isUnmanagedIssueRole(shell.role) &&
       shell.activeRunId === null &&
       Option.isSome(issueWorkStore) &&
-      (yield* issueWorkStore.value.canAdmit(shell.linkedIssue, threadId))
+      ((yield* issueWorkStore.value.canAdmit(shell.linkedIssue, threadId)) ||
+        (yield* successorFor(shell)) !== null)
     )
       selected.set(
         `${shell.linkedIssue.host}:${shell.linkedIssue.repositoryId}:${shell.linkedIssue.id}`,
@@ -225,5 +283,6 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     threadExecutor,
     threadDispatch,
     readIssueSnapshots,
+    successorFor,
   };
 });
