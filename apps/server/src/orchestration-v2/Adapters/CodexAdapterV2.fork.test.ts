@@ -51,7 +51,7 @@ import {
 } from "./CodexAdapterV2.testkit.ts";
 
 describe("CodexAdapterV2 file change approvals", () => {
-  it("keeps the reason, grant root, all file operations, and renamed paths", () => {
+  it("lists the grant root, every file operation, and renamed paths", () => {
     const fileChanges = {
       "/tmp/removed.md": { type: "delete" as const, content: "gone" },
       "/tmp/added.ts": { type: "add" as const, content: "export {};" },
@@ -62,34 +62,18 @@ describe("CodexAdapterV2 file change approvals", () => {
       },
     };
     assert.equal(
-      CodexAdapterV2.codexFileChangeApprovalPrompt({
-        reason: "  Update configuration. ",
-        grantRoot: "/workspace",
-        fileChanges,
-      }),
-      "Update configuration.\n\nGrant root: /workspace\nadd /tmp/added.ts\nupdate /tmp/moved.ts -> /tmp/renamed.ts\ndelete /tmp/removed.md",
-    );
-    assert.equal(
-      CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", fileChanges }),
-      "add /tmp/added.ts\nupdate /tmp/moved.ts -> /tmp/renamed.ts\ndelete /tmp/removed.md",
+      CodexAdapterV2.codexFileChangeApprovalPrompt({ grantRoot: "/workspace", fileChanges }),
+      "add /tmp/added.ts\nupdate /tmp/moved.ts -> /tmp/renamed.ts\ndelete /tmp/removed.md\nwrite /workspace",
     );
   });
 
   it("falls back to a nonblank grant root and omits empty details", () => {
     assert.equal(
-      CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", grantRoot: " /workspace " }),
-      "Grant root: /workspace",
-    );
-    assert.equal(
-      CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges: {}, grantRoot: "/workspace" }),
-      "Grant root: /workspace",
+      CodexAdapterV2.codexFileChangeApprovalPrompt({ grantRoot: " /workspace " }),
+      "write /workspace",
     );
     assert.isUndefined(
-      CodexAdapterV2.codexFileChangeApprovalPrompt({
-        reason: " ",
-        grantRoot: " ",
-        fileChanges: {},
-      }),
+      CodexAdapterV2.codexFileChangeApprovalPrompt({ grantRoot: " ", fileChanges: {} }),
     );
   });
 

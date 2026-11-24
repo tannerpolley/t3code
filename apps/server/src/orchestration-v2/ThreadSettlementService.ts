@@ -177,7 +177,7 @@ export function workerCompletionIsCurrent(
       Math.max(
         DateTime.toEpochMillis(worker.createdAt),
         toMillis(worker.latestRunRequestedAt) ?? Number.NEGATIVE_INFINITY,
-        toMillis(worker.latestUserAuthoredMessageAt) ?? Number.NEGATIVE_INFINITY,
+        toMillis(worker.latestResumingMessageAt) ?? Number.NEGATIVE_INFINITY,
       ) &&
     (worker.workerUnarchivedAt === undefined || completedAt > Date.parse(worker.workerUnarchivedAt))
   );
@@ -186,7 +186,7 @@ export function workerCompletionIsCurrent(
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "createdAt" | "latestUserAuthoredMessageAt"
+    "createdAt" | "latestResumingMessageAt"
   >,
   pullRequest: SettlementPullRequest,
   autoSettleOnMerge: boolean,
@@ -198,7 +198,7 @@ function pullRequestSettles(
   if (terminalAt == null) return false;
   const userAnchorMs = latestMillis([
     toMillis(thread.createdAt),
-    toMillis(thread.latestUserAuthoredMessageAt),
+    toMillis(thread.latestResumingMessageAt),
   ]);
   if (userAnchorMs === null) return false;
   const pullRequestAtMs = Date.parse(terminalAt);
@@ -207,7 +207,7 @@ function pullRequestSettles(
 }
 
 export function isAutoSettlementCandidate(
-  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
+  thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestResumingMessageAt">,
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;

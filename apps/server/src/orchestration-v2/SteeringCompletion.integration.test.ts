@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  RuntimeRequestId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ScheduledTaskId,
   ThreadId,
@@ -37,6 +38,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
@@ -515,6 +517,8 @@ const composerSelection = {
   ...runSelection,
   options: [...runSelection.options, { id: "fastMode", value: false }],
 };
+
+const supervised = { runtimeMode: "approval-required", interactionMode: "default" } as const;
 
 const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function* (
   name: string,
@@ -2112,6 +2116,223 @@ it.effect("queues a steer until the turn ends when the provider cannot steer it"
   }),
 );
 
+it.effect(
+  "refuses a limited caller's steer into a turn started before its thread was lowered",
+  () =>
+    Effect.gen(function* () {
+      const { steered, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("steer-above-limit");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        // Codex keeps its session, and its running turn the full-access policy it started with.
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("lower"),
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        const steer = {
+          type: "message.dispatch",
+          commandId: CommandId.make("steer"),
+          threadId,
+          messageId: MessageId.make("message:steer"),
+          text: "follow up",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          deliveryIntent: "steer",
+          createdBy: "agent",
+          creationSource: "mcp",
+        } as const;
+        const refused = yield* orchestrator
+          .dispatch(steer)
+          .pipe(Effect.provideService(DispatchModeLimit, supervised), Effect.flip);
+        assert.ok(refused._tag === "OrchestratorThreadAboveModeLimitError");
+        assert.equal(refused.runtimeMode, "full-access");
+        yield* worker.drain();
+        assert.deepEqual(steered, []);
+
+        // The refusal records nothing, and a caller without the limit still reaches the turn.
+        yield* orchestrator.dispatch(steer);
+        yield* worker.drain();
+        assert.lengthOf(steered, 1);
+
+        // The turn's own record decides: one that started within the limit takes the steer.
+        const attempt = (yield* orchestrator.getThreadProjection(threadId)).attempts[0]!;
+        assert.deepEqual(attempt.startedModes, {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("started-supervised"),
+              type: "run-attempt.updated",
+              threadId,
+              occurredAt: yield* DateTime.now,
+              payload: { ...attempt, startedModes: supervised },
+            },
+          ],
+        });
+        yield* orchestrator
+          .dispatch({
+            ...steer,
+            commandId: CommandId.make("steer-within"),
+            messageId: MessageId.make("message:steer-within"),
+          })
+          .pipe(Effect.provideService(DispatchModeLimit, supervised));
+        yield* worker.drain();
+        assert.lengthOf(steered, 2);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("queues a limited caller's steer into a turn that is not running yet", () =>
+  Effect.gen(function* () {
+    const { started, layer, startFirstTurn } = yield* nextTurnSelectionHarness("steer-not-ready");
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = yield* startFirstTurn;
+      const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+      yield* (yield* EventSink.EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("turn-not-ready"),
+            type: "provider-turn.updated",
+            threadId,
+            occurredAt: yield* DateTime.now,
+            payload: { ...turn, status: "pending" },
+          },
+        ],
+      });
+      const steer = (name: string) =>
+        ({
+          type: "message.dispatch",
+          commandId: CommandId.make(name),
+          threadId,
+          messageId: MessageId.make(`message:${name}`),
+          text: "follow up",
+          attachments: [],
+          dispatchMode: { type: "steer_active", targetRunId: started[0]!.runId },
+          createdBy: "agent",
+          creationSource: "mcp",
+        }) as const;
+      const queuedBy = Effect.fn("queuedBy")(function* (name: string) {
+        return (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === MessageId.make(`message:${name}`),
+        )!;
+      });
+      // Every MCP caller carries a limit; one at full access parks its steer like the owner.
+      yield* orchestrator.dispatch(steer("parked")).pipe(
+        Effect.provideService(DispatchModeLimit, {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+      const parked = yield* queuedBy("parked");
+      assert.equal(parked.steerWhenReadyRunId, started[0]!.runId);
+
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("lower"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      // A parked steer is delivered by the server itself, which carries no caller limit.
+      yield* orchestrator
+        .dispatch({
+          type: "queued-run.edit",
+          commandId: CommandId.make("edit-parked"),
+          threadId,
+          runId: parked.id,
+          text: "rewritten",
+        })
+        .pipe(Effect.provideService(DispatchModeLimit, supervised));
+      assert.isUndefined((yield* queuedBy("parked")).steerWhenReadyRunId);
+
+      yield* orchestrator
+        .dispatch(steer("steer"))
+        .pipe(Effect.provideService(DispatchModeLimit, supervised));
+      const queued = yield* queuedBy("steer");
+      assert.isUndefined(queued.steerWhenReadyRunId);
+
+      yield* orchestrator
+        .dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote"),
+          threadId,
+          queuedRunId: queued.id,
+          targetRunId: started[0]!.runId,
+        })
+        .pipe(Effect.provideService(DispatchModeLimit, supervised), Effect.flip);
+      const kept = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.id === queued.id,
+      )!;
+      assert.equal(kept.status, "queued");
+      assert.isUndefined(kept.steerWhenReadyRunId);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("refuses a limited caller's answer to a turn started above its limit", () =>
+  Effect.gen(function* () {
+    const { started, layer, startFirstTurn } = yield* nextTurnSelectionHarness("answer-above");
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = yield* startFirstTurn;
+      const now = yield* DateTime.now;
+      const requestId = RuntimeRequestId.make("request:question");
+      const session = (yield* orchestrator.getThreadProjection(threadId)).providerSessions[0]!;
+      yield* (yield* EventSink.EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("question"),
+            type: "runtime-request.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: requestId,
+              nodeId: started[0]!.rootNodeId,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "command",
+              status: "pending",
+              responseCapability: { type: "live", providerSessionId: session.id },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("lower"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const respond = {
+        type: "runtime-request.respond",
+        commandId: CommandId.make("respond"),
+        threadId,
+        requestId,
+        decision: "accept",
+      } as const;
+      const refused = yield* orchestrator
+        .dispatch(respond)
+        .pipe(Effect.provideService(DispatchModeLimit, supervised), Effect.flip);
+      assert.ok(refused._tag === "OrchestratorThreadAboveModeLimitError");
+      assert.equal(refused.runtimeMode, "full-access");
+
+      yield* orchestrator.dispatch(respond);
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).runtimeRequests[0]?.status,
+        "resolved",
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 // regression: #39404 a later agent message steers ahead of one queued behind /compact
 it.effect("delivers agent messages queued behind /compact before a later one steers", () =>
   Effect.gen(function* () {
@@ -3645,12 +3866,12 @@ it.effect(
         });
         const draining = yield* worker.drain().pipe(Effect.forkScoped);
         yield* Deferred.await(interruptReached);
-        const waiting = yield* orchestrator.streamDomainEvents.pipe(
+        const completed = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(
             (event) =>
               event.type === "run.updated" &&
               event.payload.id === first.runId &&
-              event.payload.status === "waiting",
+              event.payload.status === "completed",
           ),
           Stream.take(1),
           Stream.runDrain,
@@ -3672,7 +3893,7 @@ it.effect(
           failure: null,
           threadDisposition: "reusable",
         });
-        yield* Fiber.join(waiting);
+        yield* Fiber.join(completed);
         yield* Deferred.succeed(releaseInterrupt, undefined);
         yield* Fiber.join(draining);
         yield* worker.drain();

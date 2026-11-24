@@ -45,6 +45,8 @@ import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -459,6 +461,14 @@ function makeLocalCommandHarness(input: {
   );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({})),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+          runForThread: () => Effect.succeed({ status: "no-script" } as const),
+        }),
+        Layer.mock(ThreadWorktreeRestore)({ takeRecreated: () => Effect.undefined }),
+      ),
+    ),
     Layer.provide(input.inlineLayer ?? InlineShellStore.layerEmpty),
     Layer.provide(layerNoTaskFolders),
     Layer.provide(
