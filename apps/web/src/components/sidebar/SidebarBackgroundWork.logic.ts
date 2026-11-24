@@ -199,13 +199,13 @@ export function groupBackgroundWorkTaskRows(rows: ReadonlyArray<BackgroundWorkTa
  * Joins provider-reported subagents to their thread rows, matching roster-only tasks by count.
  * Children in the owner's checkout (`ownerWorktreePath`) list first, inside its checkout lines.
  */
-export function describeSidebarBackgroundWork(
+export function describeProjectSidebarWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<ChildThread>,
   ownerThreadId?: ThreadId,
   ownerWorktreePath?: string | null,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
-  return describeBackgroundWork(
+  return describeSidebarBackgroundWork(
     tasks.filter((task) => task.kind !== "subagent" || task.origin !== "provider_native"),
     runningChildren,
     ownerThreadId,
@@ -213,7 +213,7 @@ export function describeSidebarBackgroundWork(
   );
 }
 
-export function describeBackgroundWork(
+export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<ChildThread>,
   ownerThreadId?: ThreadId,

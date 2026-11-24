@@ -102,7 +102,7 @@ import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import {
-  describeSidebarBackgroundWork,
+  describeProjectSidebarWork,
   type BackgroundWorkTaskRow,
   resolveSidebarThreadModelLabel,
   sidebarEffortGlyph,
@@ -1425,7 +1425,7 @@ const SidebarProjectThreadRow = memo(
     } = useSidebarThreadProcesses(
       thread,
       threadStatus,
-      describeSidebarBackgroundWork(
+      describeProjectSidebarWork(
         thread.pendingBackgroundTasks,
         codexStyle
           ? runningSubagents
@@ -1724,7 +1724,7 @@ function SidebarSubagentTree(props: {
       props.runningSubagentsByParentKey.get(
         scopedThreadKey(scopeThreadRef(props.environmentId, child.id)),
       ) ?? NO_THREADS;
-    const rows = describeSidebarBackgroundWork(
+    const rows = describeProjectSidebarWork(
       pendingBackgroundWorkOfThread(child.id, child.pendingBackgroundTasks, props.parentTasks),
       grandchildren,
       child.id,

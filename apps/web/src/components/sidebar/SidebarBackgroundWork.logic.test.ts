@@ -21,7 +21,7 @@ import {
   sidebarModelParts,
   sameSidebarSubagentTree,
   describeSidebarBackgroundWork,
-  describeBackgroundWork,
+  describeProjectSidebarWork,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
   sidebarEffortGlyph,
@@ -78,7 +78,7 @@ describe("describeSidebarBackgroundWork", () => {
       { taskId: "monitor", description: "Watch build", kind: "monitor" },
       { taskId: "unknown", kind: "background_task" },
     ] as const;
-    const rows = describeSidebarBackgroundWork(tasks, [runningChild]);
+    const rows = describeProjectSidebarWork(tasks, [runningChild]);
 
     expect(rows.map(({ taskId, kind }) => [taskId, kind])).toEqual([
       ["command", "command"],
@@ -95,7 +95,7 @@ describe("describeSidebarBackgroundWork", () => {
       child: runningChild,
     });
     expect(rows[4]).toMatchObject({ childThreadId: null, startedAt: null });
-    expect(describeBackgroundWork(tasks, [nativeChild, runningChild])).toContainEqual(
+    expect(describeSidebarBackgroundWork(tasks, [nativeChild, runningChild])).toContainEqual(
       expect.objectContaining({ childThreadId: nativeChild.id, child: nativeChild }),
     );
     expect(rows[0]).not.toHaveProperty("childThreadId");
@@ -155,12 +155,12 @@ describe("describeSidebarBackgroundWork", () => {
       "designer",
       "other",
     ];
-    expect(describeBackgroundWork([], children).map((row) => row.taskId)).toEqual(expected);
+    expect(describeSidebarBackgroundWork([], children).map((row) => row.taskId)).toEqual(expected);
     const streamingChildren = children.map((child) => ({
       ...child,
       updatedAt: child.id === "implementor-old" ? "2026-09-23T12:00:00.000Z" : old,
     }));
-    expect(describeBackgroundWork([], streamingChildren).map((row) => row.taskId)).toEqual(
+    expect(describeSidebarBackgroundWork([], streamingChildren).map((row) => row.taskId)).toEqual(
       expected,
     );
     expect(children[0]?.id).toBe("designer");
@@ -169,7 +169,7 @@ describe("describeSidebarBackgroundWork", () => {
       worktreePath: child.id === "reviewer-old" ? null : `/worktrees/${child.id}`,
     }));
     expect(
-      describeBackgroundWork([], sharedCheckout, undefined, null).map((row) => row.taskId),
+      describeSidebarBackgroundWork([], sharedCheckout, undefined, null).map((row) => row.taskId),
     ).toEqual(["reviewer-old", ...expected.filter((id) => id !== "reviewer-old")]);
   });
 
