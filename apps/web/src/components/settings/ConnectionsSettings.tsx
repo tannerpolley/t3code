@@ -1111,6 +1111,7 @@ function ConnectionsSettingsContent({
       onRevokePairingLink={handleRevokeDesktopPairingLink}
       onRevokeClientSession={requestRevokeClientSession}
       canRevoke={canWriteAccess}
+      environmentId={accessEnvironmentId}
     />
   );
   const renderAuthorizedClients = () => (

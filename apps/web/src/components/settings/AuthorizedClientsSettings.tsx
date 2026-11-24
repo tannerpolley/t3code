@@ -6,7 +6,9 @@ import {
   AuthDiagnosticsReadScope,
   AuthOrchestrationReadScope,
   AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
   AuthStandardClientScopes,
+  MCP_CLIENT_SESSION_SUBJECT,
   AuthTerminalReadScope,
   managedCapabilityDenial,
   type AuthEnvironmentScope,
@@ -48,6 +50,11 @@ import { QRCodeSvg } from "../ui/qr-code";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
+import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "~/state/server";
+import { useGT } from "gt-react";
 import { Textarea } from "../ui/textarea";
 import {
   isLoopbackHostname,
@@ -481,13 +488,55 @@ type ConnectedClientListRowProps = {
   revokingClientSessionId: string | null;
   onRevokeSession: (sessionId: ServerClientSessionRecord["sessionId"]) => void;
   canRevoke: boolean;
+  environmentId: EnvironmentId | null;
 };
+
+/** The owner's grant letting an outside agent answer approvals in threads it launched. */
+function ApprovalRelaySwitch({
+  environmentId,
+  sessionId,
+  disabled,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly sessionId: string;
+  readonly disabled: boolean;
+}) {
+  const gt = useGT();
+  // Unloaded settings would read as "off", so the switch waits for them.
+  const grants = useAtomValue(
+    serverEnvironment.settingsValueAtom(environmentId),
+  )?.mcpApprovalRelaySessions;
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<label className="flex items-center gap-1.5 text-xs text-muted-foreground" />}
+      >
+        <Switch
+          size="sm"
+          checked={grants?.[sessionId] === true}
+          disabled={disabled || grants === undefined}
+          onCheckedChange={(allowed) =>
+            updateSettings({ mcpApprovalRelaySessions: { [sessionId]: allowed } })
+          }
+        />
+        {gt("Answers approvals")}
+      </TooltipTrigger>
+      <TooltipPopup className="max-w-72">
+        {gt(
+          "Lets this agent accept or decline command approvals in threads it started and their subagents. It can always answer questions.",
+        )}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 const ConnectedClientListRow = memo(function ConnectedClientListRow({
   clientSession,
   revokingClientSessionId,
   onRevokeSession,
   canRevoke,
+  environmentId,
 }: ConnectedClientListRowProps) {
   const nowMs = useNowSecond();
   const isLive = clientSession.current || clientSession.connected;
@@ -540,6 +589,15 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
           </p>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {environmentId !== null &&
+          clientSession.subject === MCP_CLIENT_SESSION_SUBJECT &&
+          clientSession.scopes.includes(AuthOrchestrationOperateScope) ? (
+            <ApprovalRelaySwitch
+              environmentId={environmentId}
+              sessionId={clientSession.sessionId}
+              disabled={!canRevoke}
+            />
+          ) : null}
           {!clientSession.current ? (
             <Button
               size="xs"
@@ -798,6 +856,7 @@ type PairingClientsListProps = {
   onRevokePairingLink: (id: string) => void;
   onRevokeClientSession: (sessionId: ServerClientSessionRecord["sessionId"]) => void;
   canRevoke: boolean;
+  environmentId: EnvironmentId | null;
 };
 
 export const PairingClientsList = memo(function PairingClientsList({
@@ -815,6 +874,7 @@ export const PairingClientsList = memo(function PairingClientsList({
   onRevokePairingLink,
   onRevokeClientSession,
   canRevoke,
+  environmentId,
 }: PairingClientsListProps) {
   return (
     <>
@@ -841,6 +901,7 @@ export const PairingClientsList = memo(function PairingClientsList({
           revokingClientSessionId={revokingClientSessionId}
           onRevokeSession={onRevokeClientSession}
           canRevoke={canRevoke}
+          environmentId={environmentId}
         />
       ))}
 

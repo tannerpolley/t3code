@@ -4120,8 +4120,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       activeProviderThreadId: null,
       pullRequests: [],
       ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
-      // Only stamped work names a remote parent, so a client cannot claim one.
-      ...(command.linkOrigin === undefined || command.delegatedFrom === undefined
+      // Only server-stamped work names a parent: a linked environment's task, or an outside
+      // agent's launch nested under its own thread. Clients' thread.create drops both stamps.
+      ...((command.linkOrigin === undefined && command.mcpClientSessionId === undefined) ||
+      command.delegatedFrom === undefined
         ? {}
         : {
             delegatedFrom: command.delegatedFrom,
@@ -4129,6 +4131,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? {}
               : { role: command.delegatedFrom.role }),
           }),
+      ...(command.role === undefined ? {} : { role: command.role }),
+      ...(command.mcpClientSessionId === undefined
+        ? {}
+        : { mcpClientSessionId: command.mcpClientSessionId }),
       lineage: {
         parentThreadId: null,
         relationshipToParent: null,

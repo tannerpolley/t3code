@@ -198,5 +198,7 @@
   "4dccb48528cb04d2": "Blockiert",
   "d25661576338fcf0": "Wartet auf dich",
   "626069229ac7aa1a": "Abhängigkeiten unbekannt",
-  "bd19196b43a87b29": "Abhängigkeitszyklus"
+  "bd19196b43a87b29": "Abhängigkeitszyklus",
+  "9a177023bb38a981": "Beantwortet Freigaben",
+  "9f7af9830925ca2c": "Erlaubt diesem Agenten, Befehlsfreigaben in Threads, die er gestartet hat, und deren Subagenten anzunehmen oder abzulehnen. Fragen kann er immer beantworten."
 }

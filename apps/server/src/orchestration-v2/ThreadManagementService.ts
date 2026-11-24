@@ -17,6 +17,7 @@ import {
   isListedThreadLineage,
   MessageId,
   OrchestrationV2StopWorkflowError,
+  type OrchestrationV2AppThread,
   type OrchestrationV2StopWorkflowInput,
   OrchestrationV2ForceStopThreadError,
   type OrchestrationV2ForceStopThreadInput,
@@ -108,6 +109,7 @@ export function withCreationProvenance(
       const {
         linkOrigin: _linkOrigin,
         delegatedFrom: _delegatedFrom,
+        mcpClientSessionId: _mcpClientSessionId,
         initialMessage: _initialMessage,
         ...rest
       } = command;
@@ -551,6 +553,8 @@ export interface ThreadManagementServiceShape {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
     readonly callerThreadId?: ThreadId;
+    /** An outside agent's MCP sign-in, which may answer approvals if the owner allowed it. */
+    readonly callerClientSessionId?: string;
     readonly requestId: RuntimeRequestId;
     readonly commandId: CommandId;
     readonly answers?: ProviderUserInputAnswers;
@@ -1404,10 +1408,36 @@ const make = Effect.gen(function* () {
   const respondToPendingRequest: ThreadManagementServiceShape["respondToPendingRequest"] =
     Effect.fn("orchestrationV2.threadManagement.respondToPendingRequest")(function* (input) {
       const projection = yield* getProjectThreadRecords(input, ["runtimeRequests"]);
+      const sessionId = input.callerClientSessionId;
+      const granted =
+        sessionId !== undefined &&
+        (yield* serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.mcpApprovalRelaySessions[sessionId] === true),
+          Effect.orElseSucceed(() => false),
+        ));
+      // The owner's grant covers threads the sign-in launched and their subagents, found by
+      // walking subagent edges only: a fork or side chat of the bot's thread is not its own.
+      let thread: Pick<OrchestrationV2AppThread, "lineage" | "mcpClientSessionId"> | null = granted
+        ? projection.thread
+        : null;
+      for (let hops = 0; thread !== null && hops < 32; hops += 1) {
+        if (thread.mcpClientSessionId !== undefined) break;
+        const parentId: ThreadId | null =
+          thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null;
+        thread =
+          parentId === null
+            ? null
+            : yield* orchestrator.getThreadRecords(parentId, []).pipe(
+                Effect.map((records) => records.thread),
+                Effect.orElseSucceed(() => null),
+              );
+      }
+      const relaysApprovals = thread !== null && thread.mcpClientSessionId === sessionId;
       const command = yield* delegatedRequestResponse(
         orchestrator,
         input,
         projection.runtimeRequests,
+        relaysApprovals,
       );
       return yield* dispatch(command);
     });
