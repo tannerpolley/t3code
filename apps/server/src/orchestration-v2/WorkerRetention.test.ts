@@ -234,7 +234,7 @@ const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
     owner: ThreadId,
     child: ThreadId,
     delivery: "delivered" | "acknowledged" | "claimed" | "pending" | "disposed" | undefined,
-    status: "completed" | "running" | "interrupted" = "completed",
+    status: "completed" | "failed" | "cancelled" | "running" | "interrupted" = "completed",
     endedAt = createdAt,
     options: {
       taskKey?: string;
@@ -288,9 +288,10 @@ const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
   const recordRun = Effect.fn("WorkerRetention.test.recordRun")(function* (
     id: string,
     threadId: ThreadId,
-    status: "completed" | "running" | "interrupted",
+    status: "completed" | "cancelled" | "running" | "interrupted",
     startedAt: DateTime.Utc,
     delegatedTaskId?: NodeId,
+    ordinal = 1,
   ) {
     const runId = RunId.make(id);
     yield* sink.write({
@@ -303,7 +304,7 @@ const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
           payload: {
             id: runId,
             threadId,
-            ordinal: 1,
+            ordinal,
             providerInstanceId: instanceId,
             modelSelection,
             providerThreadId: null,
@@ -313,7 +314,7 @@ const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
             activeAttemptId: null,
             status,
             requestedAt: startedAt,
-            startedAt,
+            startedAt: status === "cancelled" ? null : startedAt,
             completedAt: status === "running" ? null : startedAt,
             checkpointId: null,
             contextHandoffId: null,
@@ -585,6 +586,83 @@ it.effect("an acknowledgment of an old task cannot hide the current result", () 
       archiveDelegatedWorker: true,
     });
     assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
+  }).pipe(Effect.provide(layerRetention)),
+);
+
+it.effect.each(["overlapping cancellation", "unobserved failure"] as const)(
+  "keeps the worker visible before delivery after %s",
+  (example) =>
+    Effect.gen(function* () {
+      const { service, orchestrator, projections, parent, seed, recordTask, recordRun, createdAt } =
+        yield* makeFixture();
+      yield* seed(parent, "open", {
+        lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+      });
+      const worker = yield* seed("worker-with-undelivered-result", "open", { pullRequests: [] });
+      const finishedAt = DateTime.add(createdAt, { minutes: 2 });
+      const taskId = NodeId.make(`task:${worker}`);
+      const status = example === "overlapping cancellation" ? "completed" : "failed";
+      const result = status === "completed" ? "The original run finished." : "The worker failed.";
+      yield* recordTask(
+        parent,
+        worker,
+        example === "overlapping cancellation" ? "claimed" : undefined,
+        status,
+        finishedAt,
+        { result },
+      );
+      yield* recordRun("original-run", worker, "completed", createdAt, taskId);
+      if (example === "overlapping cancellation") {
+        const cancelledAt = DateTime.add(createdAt, { minutes: 1 });
+        yield* recordTask(parent, worker, "delivered", "cancelled", cancelledAt, {
+          taskKey: "cancelled-followup",
+          result: "Cancelled before start.",
+        });
+        yield* recordRun(
+          "cancelled-followup",
+          worker,
+          "cancelled",
+          cancelledAt,
+          NodeId.make("task:cancelled-followup"),
+          2,
+        );
+      }
+      const archive = (commandId: string) =>
+        orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(commandId),
+          threadId: worker,
+          archiveDelegatedWorker: true,
+        });
+      yield* service.remindMissedArchives();
+      assert.isEmpty((yield* projections.getThreadRecords(parent, ["messages"])).messages);
+      yield* archive("archive-before-observation").pipe(Effect.flip);
+      assert.isNull((yield* projections.getThread(worker)).archivedAt);
+
+      yield* recordTask(parent, worker, "acknowledged", status, finishedAt, { result });
+      yield* archive("archive-after-observation");
+      assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
+    }).pipe(Effect.provide(layerRetention)),
+);
+
+it.effect("expires an archived worker when its PR merged after the worker was restored", () =>
+  Effect.gen(function* () {
+    const { service, projections, parent, seed, recordTask, createdAt } = yield* makeFixture();
+    const restoredAt = DateTime.add(createdAt, { minutes: 1 });
+    const mergedAt = DateTime.add(createdAt, { minutes: 2 });
+    const worker = yield* seed(
+      "archived-after-restore",
+      "merged",
+      {
+        workerUnarchivedAt: DateTime.formatIso(restoredAt),
+        archivedAt: DateTime.add(createdAt, { minutes: 3 }),
+      },
+      mergedAt,
+    );
+    yield* recordTask(parent, worker, "delivered", "completed", createdAt);
+    yield* TestClock.adjust("15 days");
+    yield* service.removeExpired();
+    assert.isNotNull((yield* projections.getThread(worker)).deletedAt);
   }).pipe(Effect.provide(layerRetention)),
 );
 
