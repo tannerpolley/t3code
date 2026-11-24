@@ -201,8 +201,8 @@
   "bd19196b43a87b29": "Ciclo de dependências",
   "9a177023bb38a981": "Responde aprovações",
   "9f7af9830925ca2c": "Permite que este agente aceite ou recuse aprovações de comandos nas conversas que iniciou e em seus subagentes. Ele sempre pode responder perguntas.",
-  "18caa678616c9e08": "A transferência para {model} está sendo concluída",
-  "a8d9877851d00fde": "A transferência para {model} aguarda aprovação",
+  "9be5b8420ee64ec7": "A transferência para {target} está sendo concluída",
+  "e05b2595e2c7c313": "A transferência para {target} aguarda aprovação",
   "c1303d131afc6a17": "Mais de um dia",
   "00ad8aeed0a6c461": "Cancelar",
   "ac48cc297029db41": "Aprovar"

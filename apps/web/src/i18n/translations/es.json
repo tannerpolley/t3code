@@ -201,8 +201,8 @@
   "bd19196b43a87b29": "Ciclo de dependencias",
   "9a177023bb38a981": "Responde aprobaciones",
   "9f7af9830925ca2c": "Permite que este agente acepte o rechace aprobaciones de comandos en los hilos que inició y sus subagentes. Siempre puede responder preguntas.",
-  "18caa678616c9e08": "El traspaso a {model} se está completando",
-  "a8d9877851d00fde": "El traspaso a {model} espera aprobación",
+  "9be5b8420ee64ec7": "El traspaso a {target} se está completando",
+  "e05b2595e2c7c313": "El traspaso a {target} espera aprobación",
   "c1303d131afc6a17": "Más de un día",
   "00ad8aeed0a6c461": "Cancelar",
   "ac48cc297029db41": "Aprobar"

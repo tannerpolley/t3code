@@ -472,6 +472,7 @@ function RepositoryControls({
         ) : null}
         {config.handoff ? (
           <PendingHandoffLine
+            environmentId={environmentId}
             handoff={config.handoff}
             busy={busy}
             onCancel={() => void transfer("cancel")}
@@ -591,13 +592,15 @@ function RepositoryControls({
 
 const STALE_HANDOFF_MS = 24 * 60 * 60 * 1000;
 
-/** The pending handoff as one status line; its summary is for the successor thread, not settings. */
+/** The summary is agent-facing and goes to the successor thread, so settings show only this line. */
 function PendingHandoffLine({
+  environmentId,
   handoff,
   busy,
   onCancel,
   onApprove,
 }: {
+  environmentId: EnvironmentId;
   handoff: NonNullable<RepositoryOrchestration["handoff"]>;
   busy: boolean;
   onCancel: () => void;
@@ -607,16 +610,17 @@ function PendingHandoffLine({
   const requestedMs = handoff.requestedAt === undefined ? NaN : Date.parse(handoff.requestedAt);
   const old = useDeadlinePassed(Number.isNaN(requestedMs) ? null : requestedMs + STALE_HANDOFF_MS);
   const draining = handoff.status === "draining";
-  const model = handoff.modelSelection.model;
+  const existingTarget = useThreadShell(scopeThreadRef(environmentId, handoff.nextThreadId));
+  const target = existingTarget?.title ?? handoff.modelSelection.model;
   return (
     <div
       className="flex w-full items-center gap-2 pt-1 text-xs text-muted-foreground"
       role="status"
     >
-      <span className="min-w-0 truncate">
+      <span className="min-w-0 break-words">
         {draining
-          ? gt("Handoff to {model} is draining", { model })
-          : gt("Handoff to {model} awaits approval", { model })}
+          ? gt("Handoff to {target} is draining", { target })
+          : gt("Handoff to {target} awaits approval", { target })}
       </span>
       {handoff.requestedAt === undefined ? null : (
         <span className="shrink-0">

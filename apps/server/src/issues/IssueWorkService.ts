@@ -1889,7 +1889,11 @@ export const layer = Layer.effect(
             modelSelection: selection,
             status,
             wasPaused: config.paused,
-            requestedAt: config.handoff?.requestedAt ?? DateTime.formatIso(yield* DateTime.now),
+            // A proposal from before requestedAt existed stays undated rather than dated at approval.
+            requestedAt:
+              config.handoff === undefined
+                ? DateTime.formatIso(yield* DateTime.now)
+                : config.handoff.requestedAt,
           },
         },
         input.clientRequestId,
