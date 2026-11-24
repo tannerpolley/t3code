@@ -382,7 +382,11 @@ export const layer = Layer.effect(
               WHERE provider.thread_id = subtree.thread_id
                 AND json_array_length(provider.payload_json, '$.pendingBackgroundTasks') > 0)
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_turn_items item
-              WHERE item.thread_id = subtree.thread_id AND item.status IN ('pending', 'running', 'waiting'))
+              WHERE item.thread_id = subtree.thread_id AND item.status IN ('pending', 'running', 'waiting')
+                -- An ended run can leave an item open forever; background work outliving it is pendingBackgroundTasks.
+                AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs ended
+                  WHERE ended.run_id = item.run_id
+                    AND ended.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')))
             OR subtree.thread_id IN (${unsettledRestartContinuations})
           LIMIT 1
         `.pipe(
