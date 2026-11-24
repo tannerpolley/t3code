@@ -1,6 +1,6 @@
 import { useWorkerStatusLabels } from "../issues/IssueLiveWork";
 import { useSidebarIssueWorkerStatus } from "../../state/repositoryIssues";
-import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import { SIDEBAR_WORKER_PAGE_SIZE, type EnvironmentId } from "@t3tools/contracts";
@@ -93,9 +93,8 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   const [paging, setPaging] = useState(false);
   if (!paging && canPage && nearViewport) setPaging(true);
   const pageKey = JSON.stringify([environmentId, id]);
-  const { count: pageCount, nestedPageCount, state, rows } = threadFamilies.workerPages(pageKey);
+  const { count: pageCount, state, rows } = threadFamilies.workerPages(pageKey);
   const [count, setCount] = useAtom(pageCount);
-  const setNestedPageCount = useAtomSet(nestedPageCount);
   const { pages, waiting, failedQuery } = useAtomValue(paging ? state : unpagedWorkers);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- merges the mounted pages with authoritative shell deltas
   useEffect(() => {
@@ -121,14 +120,12 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   ];
   const lastPage = pages.at(-1);
   const remaining = remainingSidebarWorkers(idle, running, limit, lastPage);
-  const nextNestedPage =
-    remaining === 0 && !waiting && failedQuery === null && lastPage?.nextWorkerPage !== undefined
-      ? pages.length + 1
-      : null;
+  const nextPage = lastPage?.nextWorkerPage === undefined ? 0 : pages.length + 1;
+  const nextNestedPage = remaining === 0 && !waiting && failedQuery === null ? nextPage : 0;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- remaining pages can carry nested workers for rows already shown
   useEffect(() => {
-    if (nextNestedPage !== null) setNestedPageCount((current) => Math.max(current, nextNestedPage));
-  }, [nextNestedPage, setNestedPageCount]);
+    if (nextNestedPage > 0) setCount({ through: nextNestedPage, showMore: false });
+  }, [nextNestedPage, setCount]);
   if (workers.length === 0 && !canPage && failedQuery === null) return null;
   return (
     <ul
@@ -165,7 +162,7 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
             className="w-full cursor-pointer rounded-md px-2 py-0.5 text-start text-xs text-muted-foreground hover:bg-sidebar-row-hover hover:text-foreground"
             onClick={() =>
               failedQuery === null
-                ? setCount((current) => current + 1)
+                ? setCount({ through: nextPage, showMore: true })
                 : appAtomRegistry.refresh(failedQuery)
             }
           >

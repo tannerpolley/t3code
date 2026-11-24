@@ -167,8 +167,17 @@ export function createThreadFamilyAtoms<R, ER, E>(
   );
   const workerPages = Atom.family((key: string) => {
     const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
-    const count = Atom.make(1);
-    const nestedPageCount = Atom.make(1);
+    const pageCounts = Atom.make({ visible: 1, requested: 1 });
+    const count = Atom.writable(
+      (get) => get(pageCounts).visible,
+      (ctx, input: { readonly through: number; readonly showMore: boolean }) => {
+        const current = ctx.get(pageCounts);
+        const visible = current.visible + (input.showMore ? 1 : 0);
+        const requested = Math.max(current.requested, visible, input.through);
+        if (visible !== current.visible || requested !== current.requested)
+          ctx.set(pageCounts, { visible, requested });
+      },
+    );
     const shellWorkerIds = Atom.map(
       shellWorkersByParent(environmentId),
       (byParent) => byParent.get(threadId) ?? EMPTY_WORKER_IDS,
@@ -188,7 +197,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
       const generation = get(generationAtom(environmentId));
       if (generation === 0)
         return { generation, pages: EMPTY_READS, waiting: true, failedQuery: null };
-      const limit = Math.max(get(count), get(nestedPageCount));
+      const limit = get(pageCounts).requested;
       const workerChangeSequence = Math.max(
         get(removalSequenceAtom(environmentId)),
         get(membershipSequence),
@@ -227,7 +236,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
       }
       return { generation, pages, waiting: false, failedQuery: null };
     });
-    return { count, nestedPageCount, state, rows: Atom.map(state, (result) => result.pages) };
+    return { count, state, rows: Atom.map(state, (result) => result.pages) };
   });
 
   const familyAtom = Atom.family((key: string) => {
