@@ -354,7 +354,7 @@ it("opens the correct chat for every workflow phase and unphased member", async 
   expect(rendered).not.toContain("Personal account");
   for (const phase of phases) expect(rendered).toContain(phase.title);
   expect(rendered).not.toContain(" phases");
-  expect(rendered).toContain("1|/|2| |agents");
+  expect(rendered).toContain("1/2 agents");
   expect(rendered).toContain("Running");
   expect(rendered).toContain("running");
   expect(buttonsWithLabel((label) => label.endsWith("phase, done"))).toHaveLength(1);
