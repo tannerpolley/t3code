@@ -51,6 +51,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import { makeIsWorktreeContainer } from "./worktreeContainer.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
+import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import {
   discoverFolders,
   mergeProjectFolders,
@@ -206,6 +207,7 @@ export const make = Effect.gen(function* () {
   const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const threadProjections = yield* ProjectionStore.ProjectionStoreV2;
+  const taskFolderStore = yield* TaskFolderStore.TaskFolderStore;
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
@@ -568,7 +570,6 @@ export const make = Effect.gen(function* () {
   const workspaceScanDirectory = Effect.fn("ProjectService.workspaceScanDirectory")(
     function* (cwd: string) {
       if (yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true))) return cwd;
-      if (!(yield* isManagedWorktreePath(cwd))) return cwd;
       const snapshot = yield* Effect.flatten(
         threadProjections.readShellSnapshot({ worktreePath: cwd }),
       );
@@ -576,7 +577,13 @@ export const make = Effect.gen(function* () {
         (candidate) => candidate.branch !== null,
       );
       if (thread === undefined) return cwd;
-      return Option.getOrUndefined(yield* readRow(thread.projectId))?.workspaceRoot ?? cwd;
+      const project = Option.getOrUndefined(yield* readRow(thread.projectId));
+      if (project === undefined) return cwd;
+      const taskFolder = yield* taskFolderStore.findContaining(cwd);
+      const managedPath = taskFolder?.projectId === thread.projectId ? taskFolder.root : cwd;
+      return (yield* isManagedWorktreePath(managedPath, project.workspaceRoot))
+        ? project.workspaceRoot
+        : cwd;
     },
     (effect, cwd) => Effect.orElseSucceed(effect, () => cwd),
   );
