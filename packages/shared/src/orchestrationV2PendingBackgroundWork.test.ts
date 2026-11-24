@@ -352,11 +352,13 @@ describe("derivePendingBackgroundWork", () => {
 
 describe("derivePendingBackgroundWork kinds", () => {
   it("keeps the roster's kinds and names turn items by their type", () => {
+    const providerInstanceId = ProviderInstanceId.make("codex");
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
       providerThreads: [
         {
           id: "pt-1" as never,
+          providerInstanceId,
           pendingBackgroundTasks: [
             { taskId: "bash", kind: "command" },
             { taskId: "tests", kind: "command", awaited: true },
@@ -413,6 +415,8 @@ describe("derivePendingBackgroundWork kinds", () => {
         taskId: "followup",
         description: "Review src/math.ts",
         kind: "subagent",
+        origin: "provider_native",
+        providerInstanceId,
         childThreadId: "thread:child",
       },
       {
