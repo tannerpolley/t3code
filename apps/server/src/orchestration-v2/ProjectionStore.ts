@@ -10617,6 +10617,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ids,
           presentedShellRunId(sql`t.thread_id`),
           latestRunInterruptReason,
+          isSilentShellRun("r"),
         ).pipe(NodeSqliteClient.readOnly, Effect.mapError(shellSnapshotReadError)),
       getTitleRefreshCandidates: readOnReader(getTitleRefreshCandidates),
       getPendingRoutedRequestThreadIds: readOnReader(getPendingRoutedRequestThreadIds),
