@@ -4,20 +4,18 @@ import {
   type IssueTrackerKind,
   type ProjectId,
   type ScopedThreadRef,
-  type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 import { IssueBrowser, useIssueRepositoryTargets } from "./IssueBrowser";
-import { useIssuePageCopyShortcut } from "./useIssueReferenceCopyTarget";
 import { IssueDetailPanel } from "../issue/IssueDetailPanel";
 import { issueTabTarget, repositoryIssueOf, type RepositoryIssueTarget } from "./issueTabs";
 import { sameRepository } from "./issueWorkspace.logic";
 import { RightPanelTabs } from "../RightPanelTabs";
 import { Button } from "../ui/button";
-import { SidebarInset } from "../ui/sidebar";
+import { roadmapSearchFromUrl, type RoadmapSearch } from "../issue/issuesSearch.logic";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { isTerminalFocused } from "../../lib/terminalFocus";
@@ -35,23 +33,6 @@ import {
 import { useProjects, useThreadShell } from "../../state/entities";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 
-export interface RoadmapSearch {
-  readonly environmentId?: EnvironmentId;
-  readonly host?: string;
-  readonly repository?: string;
-  readonly number?: number;
-  readonly issueQuery?: string;
-  readonly selectedEnvironmentId?: EnvironmentId;
-  readonly selectedHost?: string;
-  readonly selectedRepository?: string;
-  readonly selectedNumber?: number;
-  readonly originThreadId?: ThreadId;
-}
-
-type IssuesSearchPatch = {
-  readonly [Key in keyof RoadmapSearch]?: RoadmapSearch[Key] | undefined;
-};
-
 const EMPTY_SURFACES: ReadonlyArray<RightPanelSurface> = [];
 const EMPTY_PENDING_SURFACES = new Set<string>();
 
@@ -67,52 +48,15 @@ function getShortcutContext() {
   };
 }
 
-function optionalString(value: unknown, maxLength = 253): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed.slice(0, maxLength) : undefined;
-}
-
-function optionalNumber(value: unknown): number | undefined {
-  const number =
-    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
-}
-
-export const roadmapSearchFromUrl = (raw: Record<string, unknown>): RoadmapSearch => {
-  const environmentId = optionalString(raw.environmentId, 200);
-  const host = optionalString(raw.host);
-  const repository = optionalString(raw.repository, 200);
-  const number = optionalNumber(raw.number);
-  const issueQuery = optionalString(raw.issueQuery, 200);
-  const selectedEnvironmentId = optionalString(raw.selectedEnvironmentId, 200);
-  const selectedHost = optionalString(raw.selectedHost);
-  const selectedRepository = optionalString(raw.selectedRepository, 200);
-  const selectedNumber = optionalNumber(raw.selectedNumber);
-  const originThreadId = optionalString(raw.originThreadId, 200);
-  const result: RoadmapSearch = {
-    ...(environmentId === undefined ? {} : { environmentId: environmentId as EnvironmentId }),
-    ...(host === undefined ? {} : { host }),
-    ...(repository === undefined ? {} : { repository }),
-    ...(number === undefined ? {} : { number }),
-    ...(issueQuery === undefined ? {} : { issueQuery }),
-    ...(selectedEnvironmentId === undefined
-      ? {}
-      : { selectedEnvironmentId: selectedEnvironmentId as EnvironmentId }),
-    ...(selectedHost === undefined ? {} : { selectedHost }),
-    ...(selectedRepository === undefined ? {} : { selectedRepository }),
-    ...(selectedNumber === undefined ? {} : { selectedNumber }),
-    ...(originThreadId === undefined ? {} : { originThreadId: originThreadId as ThreadId }),
-  };
-  return result;
-};
-
-export function IssuesRoadmapPage() {
-  const search = useSearch({ from: "/_chat/roadmap" });
-  const navigate = useNavigate({ from: "/roadmap" });
+export function IssuesRoadmapPage({
+  headingRef,
+}: {
+  readonly headingRef: RefObject<HTMLHeadingElement | null>;
+}) {
+  const search = useSearch({ from: "/_chat/issues" });
+  const navigate = useNavigate({ from: "/issues" });
   const isNarrow = useMediaQuery("max-md");
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  useIssuePageCopyShortcut();
   const repositories = useIssueRepositoryTargets(search.environmentId);
   const projects = useProjects();
   const { repositoryTargets } = repositories;
@@ -131,26 +75,10 @@ export function IssuesRoadmapPage() {
           }),
         ) ?? null);
 
-  const updateSearch = (patch: IssuesSearchPatch) =>
+  const updateSearch = (patch: { [Key in keyof RoadmapSearch]?: RoadmapSearch[Key] | undefined }) =>
     void navigate({
       replace: true,
-      search: (previous: RoadmapSearch): RoadmapSearch => {
-        const next = { ...previous, ...patch };
-        return {
-          ...(next.environmentId ? { environmentId: next.environmentId } : {}),
-          ...(next.host ? { host: next.host } : {}),
-          ...(next.repository ? { repository: next.repository } : {}),
-          ...(next.number ? { number: next.number } : {}),
-          ...(next.issueQuery ? { issueQuery: next.issueQuery } : {}),
-          ...(next.selectedEnvironmentId
-            ? { selectedEnvironmentId: next.selectedEnvironmentId }
-            : {}),
-          ...(next.selectedHost ? { selectedHost: next.selectedHost } : {}),
-          ...(next.selectedRepository ? { selectedRepository: next.selectedRepository } : {}),
-          ...(next.selectedNumber ? { selectedNumber: next.selectedNumber } : {}),
-          ...(next.originThreadId ? { originThreadId: next.originThreadId } : {}),
-        };
-      },
+      search: (previous) => ({ ...roadmapSearchFromUrl({ ...previous, ...patch }), view: "board" }),
     });
 
   const rightPanelState = useRightPanelStore((state) =>
@@ -314,7 +242,6 @@ export function IssuesRoadmapPage() {
     });
   };
 
-  const listHeadingRef = useRef<HTMLHeadingElement>(null);
   const showNarrowDetail =
     isNarrow &&
     rightPanelState.isOpen &&
@@ -323,7 +250,7 @@ export function IssuesRoadmapPage() {
   const closeNarrowDetail = () => {
     useRightPanelStore.getState().close(ISSUES_PANEL_REF);
     syncSelectedSurface(null);
-    window.requestAnimationFrame(() => listHeadingRef.current?.focus());
+    window.requestAnimationFrame(() => headingRef.current?.focus());
   };
 
   const activeRepositoryIssue = activeIssueSurface ? repositoryIssueOf(activeIssueSurface) : null;
@@ -344,7 +271,6 @@ export function IssuesRoadmapPage() {
       onSearchChange={updateSearch}
       selectedIssue={selectedRepositoryIssue}
       onSelectIssue={selectIssue}
-      headingRef={listHeadingRef}
       className={showNarrowDetail ? "hidden md:flex" : undefined}
     />
   );
@@ -428,13 +354,11 @@ export function IssuesRoadmapPage() {
     ) : null;
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
-      <div className="relative flex min-h-0 flex-1">
-        {listColumn}
-        {rightPanel}
-        {narrowDetail}
-      </div>
-    </SidebarInset>
+    <div className="relative flex min-h-0 flex-1">
+      {listColumn}
+      {rightPanel}
+      {narrowDetail}
+    </div>
   );
 }
 

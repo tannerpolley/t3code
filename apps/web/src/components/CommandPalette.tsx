@@ -155,6 +155,7 @@ import { reportProjectFailure, useProjectPin } from "../hooks/useProjectGroupUpd
 import {
   useEnvironmentProviders,
   useEnvironments,
+  useIssuesWorkspaceSupported,
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import {
@@ -306,7 +307,7 @@ import {
 import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
-import { readIssueListPreferences } from "~/components/issue/issueListPreferences";
+import { readIssuesSearch } from "~/components/issue/issueViewPreferences";
 import { IssueGlyph } from "~/components/issue/issuePresentation";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
@@ -541,13 +542,14 @@ function OpenCommandPaletteDialog(props: {
       ? environments.some((environment) => environment.serverConfig !== null)
         ? PULL_REQUESTS_PANEL_REF
         : null
-      : pathname === "/issues" || pathname === "/roadmap"
+      : pathname === "/issues"
         ? ISSUES_PANEL_REF
         : activeThread
           ? scopeThreadRef(activeThread.environmentId, activeThread.id)
           : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
   const issueReferenceCopyTarget = useIssueReferenceCopyTarget(referenceThreadRef);
+  const issuesWorkspaceSupported = useIssuesWorkspaceSupported();
   const workflowsReachable = useWorkflowEnvironmentIds().length > 0;
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
@@ -558,7 +560,7 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null ||
     (pathname === "/pull-requests" && !openPanelPullRequestUrl) ||
-    ((pathname === "/issues" || pathname === "/roadmap") && issueReferenceCopyTarget === null)
+    (pathname === "/issues" && issueReferenceCopyTarget === null)
       ? null
       : (issueReferenceCopyTarget ??
         resolveThreadReferenceCopyTarget(
@@ -1677,18 +1679,8 @@ function OpenCommandPaletteDialog(props: {
             .getState()
             .openIssueList(scopeThreadRef(activeThread.environmentId, activeThread.id), scope);
         } else {
-          await navigate({ to: "/roadmap", search: {} });
+          await navigate({ to: "/issues", search: { view: "board" } });
         }
-      },
-    });
-    actionItems.push({
-      kind: "action",
-      value: "action:roadmap",
-      searchTerms: ["roadmap", "issues", "queue", "milestone", "orchestrator", "decisions"],
-      title: gt("Open roadmap"),
-      icon: <ListIcon className={ITEM_ICON_CLASS} />,
-      run: async () => {
-        await navigate({ to: "/roadmap", search: {} });
       },
     });
   }
@@ -1862,19 +1854,28 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (
-    environments.some(
-      (environment) => environment.serverConfig?.environment.capabilities.issues === true,
-    )
-  ) {
+  if (issuesWorkspaceSupported) {
     actionItems.push({
       kind: "action",
       value: "action:issues",
-      searchTerms: ["issues", "issue", "bugs", "tracker", "github", "triage"],
+      searchTerms: [
+        "issues",
+        "issue",
+        "bugs",
+        "tracker",
+        "github",
+        "triage",
+        "roadmap",
+        "board",
+        "queue",
+        "milestone",
+        "orchestrator",
+        "decisions",
+      ],
       title: gt("Open issues"),
       icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
       run: async () => {
-        await navigate({ to: "/issues", search: readIssueListPreferences() });
+        await navigate({ to: "/issues", search: readIssuesSearch() });
       },
     });
   }

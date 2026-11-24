@@ -1,8 +1,15 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { IssuesRoadmapPage, roadmapSearchFromUrl } from "../components/issues/IssuesRoadmapPage";
+import { roadmapSearchFromUrl } from "../components/issue/issuesSearch.logic";
 
 export const Route = createFileRoute("/_chat/roadmap")({
   validateSearch: roadmapSearchFromUrl,
-  component: IssuesRoadmapPage,
+  beforeLoad: ({ search, location }) => {
+    throw redirect({
+      to: "/issues",
+      search: { ...search, view: "board" },
+      hash: location.hash,
+      replace: true,
+    });
+  },
 });

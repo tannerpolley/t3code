@@ -7,7 +7,10 @@ import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
 import { useNavigate } from "@tanstack/react-router";
 import type { MouseEvent } from "react";
 
-import { readIssueListPreferences } from "../components/issue/issueListPreferences";
+import {
+  issueListPreferences,
+  readIssueListPreferences,
+} from "../components/issue/issueListPreferences";
 import { ISSUES_PANEL_REF, PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import { useProjects, useServerConfigs } from "../state/entities";
 
@@ -63,7 +66,7 @@ export function useOpenIssueLink(
       const selection = {
         selectedEnvironmentId: environmentId,
         selectedProjectId: target.ref.projectId,
-        ...(target.ref.host === undefined ? {} : { selectedHost: target.ref.host }),
+        selectedHost: target.ref.host,
         tracker: target.ref.tracker,
         scope: target.ref.scope,
         key: target.ref.key,
@@ -73,10 +76,19 @@ export function useOpenIssueLink(
         void navigate({
           from: "/issues",
           to: "/issues",
-          search: (previous) => ({ ...previous, ...selection }),
+          search: (previous) => ({
+            ...(previous.view === "list"
+              ? issueListPreferences(previous)
+              : readIssueListPreferences()),
+            ...selection,
+            view: "list",
+          }),
         });
       } else {
-        void navigate({ to: "/issues", search: { ...readIssueListPreferences(), ...selection } });
+        void navigate({
+          to: "/issues",
+          search: { ...readIssueListPreferences(), ...selection, view: "list" },
+        });
       }
       return true;
     }

@@ -1,9 +1,21 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect, type SearchSchemaInput } from "@tanstack/react-router";
 
-import { IssuesPage } from "../components/issue/IssuesPage";
-import { issuesSearchFromUrl } from "../components/issue/issuesSearch.logic";
+import { IssuesWorkspace } from "../components/issue/IssuesWorkspace";
+import { issuesPageSearchFromUrl } from "../components/issue/issuesSearch.logic";
+import { readIssuesSearch } from "../components/issue/issueViewPreferences";
 
 export const Route = createFileRoute("/_chat/issues")({
-  validateSearch: issuesSearchFromUrl,
-  component: IssuesPage,
+  validateSearch: (raw: Partial<ReturnType<typeof issuesPageSearchFromUrl>> & SearchSchemaInput) =>
+    issuesPageSearchFromUrl(raw),
+  beforeLoad: ({ search, location }) => {
+    if (search.view === undefined) {
+      throw redirect({
+        to: "/issues",
+        search: readIssuesSearch(),
+        hash: location.hash,
+        replace: true,
+      });
+    }
+  },
+  component: IssuesWorkspace,
 });

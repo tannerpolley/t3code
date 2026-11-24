@@ -48,6 +48,7 @@ import {
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
 import { readIssueListPreferences } from "./issue/issueListPreferences";
+import { readIssuesSearch } from "./issue/issueViewPreferences";
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -164,7 +165,17 @@ export function ReopenClosedViewShortcut() {
         search: (previous) => pullRequestsSearchForRestore(previous, selected),
       });
     } else if (globalIssues) {
-      destination = linkOptions({ to: "/issues", search: readIssueListPreferences() });
+      const selected = selectSelectedRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        ref,
+      );
+      destination = linkOptions({
+        to: "/issues",
+        search:
+          selected?.kind === "pull-request"
+            ? { ...readIssueListPreferences(), view: "list" }
+            : readIssuesSearch(),
+      });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
       destination =
