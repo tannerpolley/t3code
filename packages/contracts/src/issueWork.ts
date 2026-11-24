@@ -376,7 +376,8 @@ export type RepositoryChildrenStatus = typeof RepositoryChildrenStatus.Type;
 export const IssueWorkStartInput = Schema.Struct({
   ...RepositoryIssueRef.fields,
   projectId: ProjectId,
-  modelRoleId: ModelRoleId,
+  /** Explicit worker override from clients that expose a role picker. */
+  modelRoleId: Schema.optional(ModelRoleId),
   /** Selected existing lead; otherwise reuse the registered owner or explicitly create the first one. */
   orchestratorThreadId: Schema.optional(ThreadId),
   /** Explicit consent to create the first orchestrator when none is registered. */

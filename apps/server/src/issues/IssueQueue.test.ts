@@ -20,6 +20,8 @@ import {
   CommandId,
   EnvironmentId,
   IssueReadError,
+  IssueOperationError,
+  IssueTrackerKind,
   RepositoryChildrenStatus,
   RuntimeRequestId,
   EventId,
@@ -426,67 +428,135 @@ const finish = (
     });
   });
 
-it.effect("uses the Orchestrator and worker provider selections independently", () => {
-  const claude = {
-    ...adapter,
-    instanceId: ProviderInstanceId.make("claudeAgent"),
-    driver: ProviderDriverKind.make("claudeAgent"),
-  };
-  const adapters = [adapter, claude];
-  const base = makeHarness({
-    adapters,
-    providers: adapters.map((entry): ServerProvider => ({
-      instanceId: entry.instanceId,
-      driver: entry.driver,
-      enabled: true,
-      installed: true,
-      version: null,
-      status: "ready",
-      auth: { status: "authenticated" },
-      checkedAt: "2026-10-23T00:00:00Z",
-      availability: "available",
-      models: [],
-      slashCommands: [],
-      skills: [],
-    })),
-    issueServiceLayer: reads,
-    projectRepositoryIdentity,
-    localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
-    serverSettings: {
-      modelRoles: {
-        orchestrator: { complex: { provider: "codex", effort: "default" } },
-        implementor: { complex: { provider: "claude", effort: "default" } },
+it.effect.each([{}, { modelRoleId: "orchestrator-complex" }])(
+  "starts an implementor from the board with Start options %j",
+  (roleOverride) => {
+    const claude = {
+      ...adapter,
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+    };
+    const adapters = [adapter, claude];
+    const base = makeHarness({
+      adapters,
+      providers: adapters.map((entry): ServerProvider => ({
+        instanceId: entry.instanceId,
+        driver: entry.driver,
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-23T00:00:00Z",
+        availability: "available",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      })),
+      issueServiceLayer: reads,
+      projectRepositoryIdentity,
+      localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
+      serverSettings: {
+        modelRoles: {
+          orchestrator: { complex: { provider: "codex", effort: "default" } },
+          implementor: { complex: { provider: "claude", effort: "default" } },
+        },
+        modelTiers: {
+          2: { codex: { model: modelSelection.model }, claude: { model: "claude-sonnet-4-6" } },
+        },
       },
-      modelTiers: {
-        2: { codex: { model: modelSelection.model }, claude: { model: "claude-sonnet-4-6" } },
-      },
-    },
+    });
+    const dependencies = Layer.mergeAll(
+      base.layer,
+      reads,
+      IssueWorkStore.layer.pipe(Layer.provide(base.layer)),
+      IdAllocator.layer,
+    );
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const started = yield* service.start({
+        ...input(1, "worker-provider:root"),
+        ...roleOverride,
+        projectId,
+        createOrchestrator: true,
+      });
+      assert.deepEqual(
+        (yield* threads.getThreadRecords(started.rootThreadId, [])).thread.modelSelection,
+        modelSelection,
+      );
+      assert.isNotNull(started.issueThreadId);
+      const worker = (yield* threads.getThreadRecords(started.issueThreadId!, [])).thread;
+      assert.equal(worker.role, "implementor");
+      assert.equal(worker.modelSelection.instanceId, claude.instanceId);
+      assert.equal(
+        (yield* store.latestRequest(issue(1)))!.modelSelection.instanceId,
+        claude.instanceId,
+      );
+    }).pipe(Effect.provide(IssueWorkService.layer.pipe(Layer.provideMerge(dependencies))));
+  },
+);
+
+it.effect("Start queues before writing Todo and keeps the owner's hold in place", () => {
+  let status = "Backlog";
+  let failStatusWrite = true;
+  const writes: string[] = [];
+  const issueReads = Layer.mock(IssueService.IssueService)({
+    resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+    workRead: (input) =>
+      Effect.sync(() => ({
+        ...read(input.number),
+        planningStatus: input.number === 2 ? status : "Backlog",
+        labels: input.number === 2 ? ["Needs you"] : [],
+      })),
+    repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+    markChanged: () => Effect.void,
   });
-  const dependencies = Layer.mergeAll(
-    base.layer,
-    reads,
-    IssueWorkStore.layer.pipe(Layer.provide(base.layer)),
-    IdAllocator.layer,
-  );
+  const tracker = Layer.mock(TrackerIssueService.IssueService)({
+    resolveUrl: () =>
+      Effect.succeed({
+        projectId,
+        tracker: IssueTrackerKind.make("github"),
+        host: reference.host,
+        scope: reference.repository,
+        key: "2",
+        writable: true,
+      }),
+    setState: ({ state }) =>
+      Effect.gen(function* () {
+        if (failStatusWrite)
+          return yield* new IssueOperationError({
+            operation: "setState",
+            detail: "GitHub did not write Todo.",
+          });
+        writes.push(state);
+        status = state;
+      }),
+  });
   return Effect.gen(function* () {
     const service = yield* IssueWorkService.IssueWorkService;
-    const threads = yield* ThreadManagement.ThreadManagementService;
     const store = yield* IssueWorkStore.IssueWorkStore;
-    const started = yield* service.start({
-      ...input(1, "worker-provider:root"),
-      projectId,
-      modelRoleId: "implementor-complex",
-      createOrchestrator: true,
-    });
-    assert.deepEqual(
-      (yield* threads.getThreadRecords(started.rootThreadId, [])).thread.modelSelection,
-      modelSelection,
-    );
-    assert.equal(
-      (yield* store.latestRequest(issue(1)))!.modelSelection.instanceId,
-      claude.instanceId,
-    );
-  }).pipe(Effect.provide(IssueWorkService.layer.pipe(Layer.provideMerge(dependencies))));
+    const queue = store
+      .queue(reference)
+      .pipe(Effect.map((rows) => rows.map(({ issue }) => issue.number)));
+    const startInput = { ...input(2, "start-from-backlog"), projectId };
+    yield* createRoot();
+    yield* service.queueIssue(input(1));
+    const failure = yield* service.start(startInput).pipe(Effect.flip);
+    assert.include(failure.message, "GitHub did not write Todo");
+    assert.deepEqual(yield* queue, [1, 2]);
+    assert.equal(status, "Backlog");
+    failStatusWrite = false;
+    const queued = yield* service.start(startInput);
+    assert.equal(queued.status, "queued_preparing");
+    assert.equal(queued.rootThreadId, rootId);
+    assert.isNull(queued.issueThreadId);
+    yield* service.start(startInput);
+    assert.deepEqual(writes, ["Todo"]);
+    assert.deepEqual(yield* queue, [1, 2]);
+    assert.isNull(yield* store.issueOwner(issue(2)));
+  }).pipe(Effect.provide(harness(issueReads).pipe(Layer.provide(tracker))));
 });
 
 it.effect(

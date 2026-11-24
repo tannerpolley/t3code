@@ -419,8 +419,7 @@ orchestration** from the orchestrator actions. Finish or cancel outstanding work
 issues, and cancel any pending handoff first. Deleting a project ends its repository orchestration and drops queued issues and unclaimed start requests.
 Archiving or deleting an idle orchestrator thread also ends orchestration; live work must finish or be cancelled first. You can set up orchestration again through Start agent or Make repository orchestrator.
 
-To run issue work, open an issue, choose **Start agent**, then a model role and the
-matching repository project. Use a model role with an available Codex or Claude target.
+To run issue work, open an issue and choose **Start agent** in its repository project.
 **Start agent on issue…** in the command palette opens the Issues panel for the current
 repository, or the Board view on the Issues page when there is no current repository.
 If no repository orchestrator is registered, choose an existing lead in the matching project or
@@ -428,8 +427,9 @@ explicitly choose **Create first orchestrator**. When you open issues beside a t
 is selected for you. A thread becomes the repository orchestrator only from the main checkout on the
 default branch. While no issue workers run, it may switch that checkout to its own branch and use
 native subagents for its own work; issue work still goes to workers.
-Start agent registers the selected lead and starts or queues an issue worker, following the issue
-parent tree. Later starts use that orchestrator's project. Managed issue workers share a pool
+Start agent registers the selected lead, adds the issue to the repository queue, and moves it to
+**Todo**. The repository admits the worker when the issue is eligible and a slot is available.
+Later starts use that orchestrator's project. Managed issue workers share a pool
 of reusable worktrees at `.worktrees/slot-1`, `.worktrees/slot-2`, and so on, with one slot per
 allowed worker. Each worker starts on its own issue branch from the freshly fetched remote
 default branch. When existing workers hold every slot, new workers wait in the queue. A settled

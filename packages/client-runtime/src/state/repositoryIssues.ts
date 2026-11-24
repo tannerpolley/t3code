@@ -272,6 +272,7 @@ export function createRepositoryIssueEnvironmentAtoms<R, E>(
       onSuccess: (target, registry) =>
         Effect.sync(() => {
           const { host, repository, number } = target.input;
+          registry.update(localChanges(target.environmentId), (revision) => revision + 1);
           registry.refresh(
             workStatus({
               environmentId: target.environmentId,
