@@ -2063,6 +2063,9 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
           ],
         });
 
+        if (settlement === "automatic") {
+          yield* TestClock.adjust(Orchestrator.QUEUED_TURN_START_GRACE_MS);
+        }
         const beforeSettle = yield* orchestrator.getThreadProjection(threadId);
         yield* orchestrator.dispatch({
           ...(settlement === "automatic"

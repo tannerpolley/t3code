@@ -3899,6 +3899,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const titleThreads = ["a", "b", "c"].map((suffix) =>
         ThreadId.make(`thread:foundation-title-starvation:${suffix}`),
       );
+      const titleStarted = yield* Deferred.make<void>();
       const turnStarted = yield* Deferred.make<void>();
       const releaseTitles = yield* Deferred.make<void>();
       const layerWorker = EffectWorker.layerWithOptions({
@@ -3910,10 +3911,14 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             Layer.succeed(
               EffectWorker.OrchestrationEffectExecutorV2,
               EffectWorker.OrchestrationEffectExecutorV2.of({
-                execute: (effect) =>
-                  effect.request.type === "thread-title.generate"
-                    ? Deferred.await(releaseTitles)
-                    : Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid),
+                execute: (effect) => {
+                  if (effect.commandId !== commandId) return Effect.void;
+                  return effect.request.type === "thread-title.generate"
+                    ? Deferred.succeed(titleStarted, undefined).pipe(
+                        Effect.andThen(Deferred.await(releaseTitles)),
+                      )
+                    : Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid);
+                },
               }),
             ),
           ),
@@ -3921,10 +3926,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       );
 
       yield* Effect.gen(function* () {
-        yield* EffectWorker.runDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
-        yield* Effect.yieldNow;
-        yield* outbox.enqueue([
-          ...titleThreads.map((threadId, index) => ({
+        yield* outbox.enqueue(
+          titleThreads.map((threadId, index) => ({
             id: `effect:foundation-title-starvation:${index}-title`,
             commandId,
             threadId,
@@ -3933,6 +3936,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
               kind: { type: "regenerate" as const },
             },
           })),
+        );
+        yield* EffectWorker.runDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
+        yield* Deferred.await(titleStarted);
+        yield* outbox.enqueue([
           {
             id: "effect:foundation-title-starvation:turn-start",
             commandId,
@@ -3943,17 +3950,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             },
           },
         ]);
-        yield* outbox.notifyAvailable(titleThreads.length + 1);
-
-        const started = yield* Deferred.await(turnStarted).pipe(
-          Effect.timeoutOption(Duration.seconds(1)),
-          Effect.forkScoped,
-        );
-        yield* TestClock.adjust(Duration.seconds(1));
-        assert.isTrue(
-          Option.isSome(yield* Fiber.join(started)),
-          "provider-turn.start was never claimed: thread title generations occupied every effect worker",
-        );
+        yield* outbox.notifyAvailable();
+        yield* Deferred.await(turnStarted);
         assert.isFalse(yield* Deferred.isDone(releaseTitles));
 
         yield* Deferred.succeed(releaseTitles, undefined);

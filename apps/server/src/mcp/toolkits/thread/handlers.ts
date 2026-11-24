@@ -53,10 +53,7 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
     commandId: yield* newCommandId(),
     threadId: projection.thread.id,
   });
-  if (
-    resolvedCommand.type === "queued-run.edit" ||
-    resolvedCommand.type === "queued-message.promote-to-steer"
-  ) {
+  if (resolvedCommand.type === "queued-message.promote-to-steer") {
     yield* assertNotSendingToAncestor(threads, caller, projection.thread.id);
   }
   const result = yield* threads.dispatch(resolvedCommand).pipe(Effect.mapError(dispatchFailure));
@@ -402,7 +399,8 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         switch (input.action) {
           case "edit": {
             const text = yield* required(input.text, "text");
-            const { threads, projection } = yield* readThread(input.threadId);
+            const { threads, projection, caller } = yield* readThread(input.threadId);
+            yield* assertNotSendingToAncestor(threads, caller, projection.thread.id);
             // An agent must not turn a person's queued message into a provider sign-out.
             const command = yield* ThreadMessageIntake.withQueuedAttachmentsOnSignOutText({
               type: "queued-run.edit",

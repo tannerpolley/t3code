@@ -745,9 +745,7 @@ it.layer(layerTest)("thread workspace handoffs", (it) => {
               worktreePath,
               expectedWorktreePath: worktreePath,
             },
-            continuationCommandId: CommandId.make("workspace-stale-continuation"),
             continuationMessageId: MessageId.make("workspace-stale-continuation"),
-            projectId,
             provenance: { createdBy: "user", creationSource: "web" },
           })
           .pipe(Effect.exit);

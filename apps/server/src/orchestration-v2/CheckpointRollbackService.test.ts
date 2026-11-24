@@ -948,6 +948,7 @@ it.effect("keeps an issue-linked thread's rewound head after a concurrent messag
               Layer.succeed(ThreadCommandExecutor.ThreadCommandExecutor, locks),
               Layer.succeed(IdAllocator.IdAllocatorV2, ids),
               Layer.mock(CheckpointService.CheckpointServiceV2)({
+                discardRepositorySnapshots: () => Effect.void,
                 deleteStaleRefs: () => Effect.void,
               }),
               Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({

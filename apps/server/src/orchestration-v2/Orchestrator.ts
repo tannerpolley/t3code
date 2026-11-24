@@ -915,8 +915,8 @@ function metadataUpdateContinuation(
         text: command.continuation.text,
         attachments: [],
         dispatchMode: { type: "queue_after_active" },
-        createdBy: "agent",
-        creationSource: "mcp",
+        createdBy: command.continuation.createdBy ?? "agent",
+        creationSource: command.continuation.creationSource ?? "mcp",
       };
 }
 
@@ -16073,21 +16073,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const readDelegatedChildControls = Effect.fn("Orchestrator.readDelegatedChildControls")(
     function* (childThreadId: ThreadId, taskIds: ReadonlyArray<NodeId>) {
-      // Progress tells a held wake from a held message the user wrote by the run's message.
-      const withHeldMessages = Effect.fn("Orchestrator.readHeldRunMessages")(function* <
+      const openTaskIds = new Set(taskIds);
+      const withRunMessages = Effect.fn("Orchestrator.readTaskRunMessages")(function* <
         A extends Omit<DelegatedChildControls, "runsFloor">,
       >(read: A) {
-        const heldRunIds = read.runs.flatMap((run) =>
-          run.status === "queued" && run.queueHeld === true ? [run.id] : [],
+        // A promoted steer moves the message out of the cancelled queue holder.
+        const messageIds = read.runs.flatMap((run) =>
+          (run.status === "queued" && run.queueHeld === true) ||
+          (run.status === "cancelled" &&
+            run.startedAt === null &&
+            run.delegatedTaskId !== undefined &&
+            openTaskIds.has(run.delegatedTaskId))
+            ? [run.userMessageId]
+            : [],
         );
-        if (heldRunIds.length === 0) return read;
-        const { messages } = yield* projectionStore.getThreadRecords(childThreadId, ["messages"], {
-          messageRoles: ["user"],
-          messageRunIds: heldRunIds,
-        });
-        return { ...read, messages: [...read.messages, ...messages] };
+        if (messageIds.length === 0) return read;
+        const messages = yield* projectionStore.getMessagesById(childThreadId, messageIds);
+        return { ...read, messages: [...read.messages, ...messages.values()] };
       });
-      const controls: DelegatedChildControls = yield* withHeldMessages(
+      const controls: DelegatedChildControls = yield* withRunMessages(
         yield* projectionStore.getDelegatedChildControls(childThreadId, {
           taskIds,
           windowSize: DELEGATED_CHILD_RUN_WINDOW,
@@ -16099,7 +16103,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         controls.runsFloor !== undefined &&
         (progress.resultRun === undefined || !ranSince(progress.resultRun, controls.runsFloor))
       ) {
-        const all = yield* withHeldMessages(yield* readAllDelegatedChildControls(childThreadId));
+        const all = yield* withRunMessages(yield* readAllDelegatedChildControls(childThreadId));
         return { controls: all, progress: delegatedTaskProgress(all) };
       }
       return { controls, progress };

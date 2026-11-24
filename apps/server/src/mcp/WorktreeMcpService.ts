@@ -157,7 +157,6 @@ const make = Effect.gen(function* () {
           );
         return {
           commandId: CommandId.make(part("command", "worktree-handoff")),
-          continuationCommandId: CommandId.make(part("command", "worktree-continuation")),
           continuationMessageId: MessageId.make(part("message", "worktree-continuation")),
         };
       }),
@@ -373,9 +372,7 @@ const make = Effect.gen(function* () {
             ...(input.continuationPrompt === undefined
               ? {}
               : { continuationPrompt: input.continuationPrompt }),
-            continuationCommandId: ids.continuationCommandId,
             continuationMessageId: ids.continuationMessageId,
-            projectId: projection.thread.projectId,
             provenance: { createdBy: "agent", creationSource: "mcp" },
           });
         }).pipe(

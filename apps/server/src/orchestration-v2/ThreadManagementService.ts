@@ -122,6 +122,10 @@ export function withCreationProvenance(
       } = command;
       return { ...rest, ...provenance };
     }
+    case "thread.metadata.update":
+      return command.continuation === undefined
+        ? command
+        : { ...command, continuation: { ...command.continuation, ...provenance } };
     case "message.dispatch":
     case "issue.work.start":
     case "thread.fork":
