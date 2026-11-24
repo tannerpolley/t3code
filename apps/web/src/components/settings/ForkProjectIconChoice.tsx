@@ -1,8 +1,9 @@
-import { T } from "gt-react";
+import { msg, T } from "gt-react";
 import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
 import { FolderIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { projectIconColorClassName } from "../../projectIconOptions";
+import type { MessageResolver } from "~/i18n/messages";
+import { PROJECT_ICON_COLORS, projectIconColorClassName } from "../../projectIconOptions";
 import { Toggle } from "../ui/toggle-group";
 import { ForkSettingsTag } from "./ForkSettingsRow";
 
@@ -40,5 +41,11 @@ export function ForkProjectFolderPreview({ color }: { readonly color: ProjectIco
   );
 }
 
-export const forkProjectIconDescription = (icon: ProjectIconOverride | null) =>
-  icon?.kind === "folder" ? `Folder · ${icon.color}` : undefined;
+export function forkProjectIconDescription(
+  icon: ProjectIconOverride | null,
+  resolve: MessageResolver,
+) {
+  if (icon?.kind !== "folder") return undefined;
+  const color = PROJECT_ICON_COLORS.find((option) => option.value === icon.color);
+  return resolve(msg("Folder · {color}", { color: color ? resolve(color.label) : icon.color }));
+}

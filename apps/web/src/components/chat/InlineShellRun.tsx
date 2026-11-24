@@ -114,6 +114,12 @@ function InlineShellControls({
   );
   const record = resolveInlineShellRun(saved, output.data, output.error);
   const running = record !== null && inlineShellCanWrite(record.status);
+  const statusLabels = {
+    running: gt("Running"),
+    completed: gt("Completed"),
+    interrupted: gt("Interrupted"),
+    error: gt("Error"),
+  };
   const scrollRef = useRef<HTMLPreElement>(null);
   const pinned = useRef(true);
   const text = running ? (output.data?.output ?? record.output) : (record?.output ?? "");
@@ -196,7 +202,7 @@ function InlineShellControls({
             {running
               ? gt("Running")
               : gt("{status} · exit {code} · {seconds} s", {
-                  status: record.status,
+                  status: statusLabels[record.status],
                   code: record.exitCode ?? gt("unknown"),
                   seconds: (record.durationMs / 1000).toFixed(2),
                 })}

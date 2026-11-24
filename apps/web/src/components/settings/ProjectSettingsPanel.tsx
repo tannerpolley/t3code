@@ -272,6 +272,7 @@ function ProjectDetail({
   hasOtherMembers: boolean;
 }) {
   const gt = useGT();
+  const resolve = useMessages();
   const navigate = useNavigate({ from: "/settings" });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
@@ -607,7 +608,9 @@ function ProjectDetail({
                   ? `${projectIcon.text} · ${projectIcon.color}`
                   : projectIcon?.kind === "emoji"
                     ? projectIcon.emoji
-                    : (forkProjectIconDescription(projectIcon) ?? faviconPath ?? gt("Automatic"))
+                    : (forkProjectIconDescription(projectIcon, resolve) ??
+                      faviconPath ??
+                      gt("Automatic"))
             }
             resetAction={
               group.memberProjects.some((member) => !hasDefaultProjectIcon(member)) ? (

@@ -279,21 +279,21 @@ function ServerSwitchRow({
   );
 }
 
-const pluginDescription = (plugin: ServerProviderPlugin) =>
+const pluginDescription = (plugin: ServerProviderPlugin, gt: ReturnType<typeof useGT>) =>
   [
     plugin.marketplace,
-    `${plugin.skillCount} ${plugin.skillCount === 1 ? "skill" : "skills"}`,
-    plugin.requiresDesktopApp ? "Needs the ChatGPT desktop app" : undefined,
+    gt("{count, plural, one {{count} skill} other {{count} skills}}", { count: plugin.skillCount }),
+    plugin.requiresDesktopApp ? gt("Needs the ChatGPT desktop app") : undefined,
   ]
     .filter(Boolean)
     .join(" · ");
 
-const pluginRows = (plugins: ReadonlyArray<ServerProviderPlugin>) =>
+const pluginRows = (plugins: ReadonlyArray<ServerProviderPlugin>, gt: ReturnType<typeof useGT>) =>
   plugins.map((plugin) => (
     <SettingsRow
       key={`${plugin.name}@${plugin.marketplace ?? ""}`}
       title={plugin.name}
-      description={pluginDescription(plugin)}
+      description={pluginDescription(plugin, gt)}
     />
   ));
 
@@ -303,6 +303,7 @@ function UnavailablePlugins({
 }: {
   readonly plugins: ReadonlyArray<ServerProviderPlugin>;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -320,7 +321,7 @@ function UnavailablePlugins({
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
-          {pluginRows(plugins)}
+          {pluginRows(plugins, gt)}
         </div>
       </CollapsiblePanel>
     </Collapsible>
@@ -355,14 +356,20 @@ function ProviderPluginsSection() {
           id={`plugins-${group.key}`}
           title={group.label}
           summary={[
-            `${group.available.length} ${group.available.length === 1 ? "plugin" : "plugins"}`,
-            `${group.skillCount} ${group.skillCount === 1 ? "skill" : "skills"}`,
-            group.unavailable.length > 0 ? `${group.unavailable.length} unavailable` : undefined,
+            gt("{count, plural, one {{count} plugin} other {{count} plugins}}", {
+              count: group.available.length,
+            }),
+            gt("{count, plural, one {{count} skill} other {{count} skills}}", {
+              count: group.skillCount,
+            }),
+            group.unavailable.length > 0
+              ? gt("{count} unavailable", { count: group.unavailable.length })
+              : undefined,
           ]
             .filter(Boolean)
             .join(" · ")}
         >
-          {pluginRows(group.available)}
+          {pluginRows(group.available, gt)}
           {group.unavailable.length > 0 ? <UnavailablePlugins plugins={group.unavailable} /> : null}
         </FoldedSettingsSection>
       ))}

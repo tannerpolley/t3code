@@ -1,4 +1,4 @@
-import { T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   AVAILABLE_CONNECTION_STATE,
   connectionProjectionPhase,
@@ -134,8 +134,29 @@ export default function RunnableNotebookPreview(props: Props) {
   );
 }
 
+const NOTEBOOK_ERRORS = {
+  persist: msg(
+    "Save or reload failed: the file may have changed on disk, the revision changed, or access was lost. Retain the draft or reconnect before retrying.",
+  ),
+  execute: msg(
+    "Execution could not start. Check the configured project environment or reconnect; no automatic retry will run code.",
+  ),
+  interrupt: msg("Interrupt failed. Reconnect to recover kernel status."),
+  restart: msg("Restart failed. Reconnect to recover kernel status."),
+} as const;
+
+const notebookOutcomeLabels = {
+  none: msg("No execution yet"),
+  running: msg("Running"),
+  ok: msg("Completed"),
+  error: msg("Error"),
+  aborted: msg("Aborted"),
+  unknown: msg("Unknown"),
+} satisfies Record<NotebookSnapshot["outcome"], string>;
+
 function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect: () => void }) {
   const gt = useGT();
+  const resolve = useMessages();
   const [store] = useState(() => createNotebookStore(props.initial));
   const snapshot = useSyncExternalStore(store.subscribe, store.read);
   const [leaseId] = useState(() => randomUUID());
@@ -160,7 +181,17 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
     reconnecting: gt("Reconnecting"),
     disconnected: gt("Disconnected. Reconnect to recover current state"),
   };
-  const [error, setError] = useState<string | null>(null);
+  const kernelLabels = {
+    stopped: gt("Stopped"),
+    idle: gt("Idle"),
+    busy: gt("Busy"),
+    unknown: gt("Unknown"),
+  } satisfies Record<NotebookSnapshot["kernel"], string>;
+  const environmentLabels = {
+    unverified: gt("Unverified"),
+    verified: gt("Verified"),
+  } satisfies Record<NotebookSnapshot["environment"], string>;
+  const [error, setError] = useState<keyof typeof NOTEBOOK_ERRORS | null>(null);
   const [pending, setPending] = useState(false);
   const open = useAtomCommand(notebooks.open, { reportFailure: false });
   const registry = useContext(RegistryContext);
@@ -242,11 +273,7 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
           : acknowledged.revision === acknowledged.savedRevision)
       );
     }
-    setError(
-      gt(
-        "Save or reload failed: the file may have changed on disk, the revision changed, or access was lost. Retain the draft or reconnect before retrying.",
-      ),
-    );
+    setError("persist");
     return false;
   };
   const requestClose = useStableCallback(async () => {
@@ -296,12 +323,7 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
       input: { ...input, revision: store.read().revision, requestId: randomUUID(), cellIds },
     });
     setPending(false);
-    if (!AsyncResult.isSuccess(result))
-      setError(
-        gt(
-          "Execution could not start. Check the configured project environment or reconnect; no automatic retry will run code.",
-        ),
-      );
+    if (!AsyncResult.isSuccess(result)) setError("execute");
   });
   const cells = snapshot.document.cells as Record<string, unknown>[];
   const runnable =
@@ -343,8 +365,7 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
               environmentId: props.environmentId,
               input: { ...input, generation: snapshot.generation, runId: snapshot.runId! },
             });
-            if (!AsyncResult.isSuccess(result))
-              setError(gt("Interrupt failed. Reconnect to recover kernel status."));
+            if (!AsyncResult.isSuccess(result)) setError("interrupt");
           }}
         >
           <T>Interrupt</T>
@@ -366,8 +387,7 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
               input: { ...input, generation: snapshot.generation },
             });
             setPending(false);
-            if (!AsyncResult.isSuccess(result))
-              setError(gt("Restart failed. Reconnect to recover kernel status."));
+            if (!AsyncResult.isSuccess(result)) setError("restart");
           }}
         >
           <T>Restart</T>
@@ -396,9 +416,13 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
           <T>Reconnect</T>
         </Button>
         <span role="status" className="text-xs text-muted-foreground">
-          {connectionLabels[connection]} · {gt("Kernel {kernel}", { kernel: snapshot.kernel })} ·{" "}
-          {gt("Environment {environment}", { environment: snapshot.environment })} ·{" "}
-          {snapshot.outcome} · {dirty ? gt("Unsaved draft") : gt("Saved")}
+          {connectionLabels[connection]} ·{" "}
+          {gt("Kernel {kernel}", { kernel: kernelLabels[snapshot.kernel] })} ·{" "}
+          {gt("Environment {environment}", {
+            environment: environmentLabels[snapshot.environment],
+          })}{" "}
+          · {resolve(notebookOutcomeLabels[snapshot.outcome])} ·{" "}
+          {dirty ? gt("Unsaved draft") : gt("Saved")}
           {snapshot.idleDeadline
             ? gt(" · Idle shutdown {time}", {
                 time: new Date(snapshot.idleDeadline).toLocaleTimeString(),
@@ -408,7 +432,7 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
       </div>
       {error ? (
         <p role="alert" className="p-3 text-sm text-destructive">
-          {error}
+          {resolve(NOTEBOOK_ERRORS[error])}
         </p>
       ) : null}
       <LiveNotebookBody
@@ -495,6 +519,7 @@ function LiveCell({
   onRun: (ids: string[]) => Promise<void>;
 }) {
   const gt = useGT();
+  const resolve = useMessages();
   const cell = useSyncExternalStore(store.subscribe, () =>
     (store.read().document.cells as Record<string, unknown>[]).find((c) => c.id === id),
   );
@@ -532,12 +557,16 @@ function LiveCell({
             </Button>
             <span className="text-xs text-muted-foreground">
               [{String(cell.execution_count ?? " ")}] ·{" "}
-              {execution?.replyStatus ??
-                (execution
-                  ? outcome === "running"
-                    ? "running"
-                    : gt("no reply recorded")
-                  : gt("saved output"))}
+              {execution?.replyStatus === "ok" ||
+              execution?.replyStatus === "error" ||
+              execution?.replyStatus === "aborted"
+                ? resolve(notebookOutcomeLabels[execution.replyStatus])
+                : (execution?.replyStatus ??
+                  (execution
+                    ? outcome === "running"
+                      ? resolve(notebookOutcomeLabels.running)
+                      : gt("no reply recorded")
+                    : gt("saved output")))}
               {execution && execution.generation !== generation ? gt(" · previous kernel") : ""}
               {execution &&
               execution.sourceHash !== bytesToHex(sha256(new TextEncoder().encode(source)))

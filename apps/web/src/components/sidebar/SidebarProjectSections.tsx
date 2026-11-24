@@ -168,7 +168,7 @@ import {
   useSidebarRowSubscriptionLease,
   withChildNeeds,
 } from "../Sidebar.logic";
-import { ThreadStatusMark } from "../ThreadStatusMark";
+import { ThreadStatusMark, useThreadStatusLabel } from "../ThreadStatusMark";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import {
@@ -1462,6 +1462,7 @@ const SidebarProjectThreadRow = memo(
     );
     const status = codexStyle ? workStatus : threadStatus;
     const workerStatus = useSidebarIssueWorkerStatus(thread, status === "ready");
+    const statusLabel = useThreadStatusLabel(status);
     const workerLabels = useWorkerStatusLabels();
     const workerLabel = workerStatus == null ? workerStatus : workerLabels[workerStatus];
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
@@ -1594,7 +1595,17 @@ const SidebarProjectThreadRow = memo(
           <SidebarCaretToggle
             open={workOpen}
             count={workCount}
-            label={`${workOpen ? "Hide" : "Show"} ${workCount} running ${workCount === 1 ? "item" : "items"}`}
+            label={
+              workOpen
+                ? gt(
+                    "{count, plural, one {Hide {count} running item} other {Hide {count} running items}}",
+                    { count: workCount },
+                  )
+                : gt(
+                    "{count, plural, one {Show {count} running item} other {Show {count} running items}}",
+                    { count: workCount },
+                  )
+            }
             onToggle={toggleWork}
             className="top-0.5 h-5"
           />
@@ -1673,7 +1684,7 @@ const SidebarProjectThreadRow = memo(
               role: codexStyle ? role : undefined,
               title: thread.title,
               issueNumber: thread.source.linkedIssue?.number,
-              status: workerLabel ?? (status === "paused" ? gt("Paused") : status),
+              status: workerLabel ?? statusLabel,
               links: thread.pullRequests,
             },
             resolve,

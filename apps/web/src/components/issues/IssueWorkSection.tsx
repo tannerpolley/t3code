@@ -282,7 +282,10 @@ function IssueWorkFacts({
       ) : null}
       {issue.subIssues && issue.subIssues.total > 0 ? (
         <PullRequestMetaRow icon={<ListTreeIcon className="size-3.5" />} label={gt("Sub-issues")}>
-          {issue.subIssues.completed} / {issue.subIssues.total} completed
+          {gt("{completed} / {total} completed", {
+            completed: issue.subIssues.completed,
+            total: issue.subIssues.total,
+          })}
         </PullRequestMetaRow>
       ) : null}
       {issue.blockedBy?.length ? (

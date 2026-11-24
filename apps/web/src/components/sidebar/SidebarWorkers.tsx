@@ -22,7 +22,7 @@ import { resolveThreadRouteRef } from "../../threadRoutes";
 import { resolveSidebarThreadStatus, useSidebarRowSubscriptionLease } from "../Sidebar.logic";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
-import { ThreadStatusMark } from "../ThreadStatusMark";
+import { ThreadStatusMark, useThreadStatusLabel } from "../ThreadStatusMark";
 import { sidebarRoleLabel, sidebarThreadProvider } from "./SidebarBackgroundWork.logic";
 import { SidebarChildThreadColumns } from "./SidebarBackgroundWorkRows";
 import { PROJECTS_WORK_ROW_HEIGHT } from "./SidebarColumns";
@@ -195,6 +195,7 @@ function SidebarWorkerButton(
   const key = scopedThreadKey(ref);
   const selected = useThreadSelectionStore((store) => store.selectedThreadKeys.has(key));
   const status = resolveSidebarThreadStatus(thread);
+  const statusLabel = useThreadStatusLabel(status);
   const workerStatus = useSidebarIssueWorkerStatus(thread, status === "ready");
   const labels = useWorkerStatusLabels();
   const workerLabel = workerStatus == null ? workerStatus : labels[workerStatus];
@@ -214,7 +215,7 @@ function SidebarWorkerButton(
                 role: sidebarRoleLabel(thread.source, resolve),
                 title: thread.title,
                 issueNumber: thread.source.linkedIssue?.number,
-                status: workerLabel ?? status,
+                status: workerLabel ?? statusLabel,
                 links: thread.pullRequests,
               },
               resolve,

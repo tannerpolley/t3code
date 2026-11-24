@@ -125,6 +125,11 @@ export function SidebarThreadProcessesGroup(props: {
     "group/sidebar-caret w-full cursor-pointer text-left hover:bg-accent",
   );
   const single = group.count === 1 ? members[0] : undefined;
+  const remaining = group.count - members.length;
+  const more =
+    remaining > 0 ? (
+      <span className="fork-sidebar-title">{gt("+{count} more", { count: remaining })}</span>
+    ) : null;
   return (
     <>
       <li style={props.style}>
@@ -178,20 +183,10 @@ export function SidebarThreadProcessesGroup(props: {
               </ProcessDetails>
             </li>
           ))}
-          {group.count > members.length ? (
+          {more ? (
             <li style={props.style}>
               <div className={props.className}>
-                {props.columns ? (
-                  <SidebarThreadColumns
-                    name={
-                      <span className="fork-sidebar-title">
-                        +{group.count - members.length} more
-                      </span>
-                    }
-                  />
-                ) : (
-                  <span className="fork-sidebar-title">+{group.count - members.length} more</span>
-                )}
+                {props.columns ? <SidebarThreadColumns name={more} /> : more}
               </div>
             </li>
           ) : null}

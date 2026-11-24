@@ -7,13 +7,31 @@ import {
   MessageCircleQuestionIcon,
 } from "lucide-react";
 
-import { useGT } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import { cn } from "~/lib/utils";
 import type { SidebarThreadStatus } from "./Sidebar.logic";
 import { Spinner } from "./ui/spinner";
 
 /** A sidebar thread status, plus `done` for a finished run worth a green dot. */
 export type ThreadStatusMarkStatus = SidebarThreadStatus | "done";
+
+const THREAD_STATUS_LABELS = {
+  approval: msg("Needs approval"),
+  input: msg("Needs input"),
+  request: msg("Awaiting response"),
+  preparing: msg("Setting up"),
+  working: msg("Working"),
+  waiting: msg("Waiting on background work"),
+  failed: msg("Failed"),
+  limited: msg("Usage limited"),
+  paused: msg("Paused"),
+  ready: msg("Idle"),
+  done: msg("Done"),
+} satisfies Record<ThreadStatusMarkStatus, string>;
+
+export function useThreadStatusLabel(status: ThreadStatusMarkStatus): string {
+  return useMessages()(THREAD_STATUS_LABELS[status]);
+}
 
 /** Maps a Lineage edge status (subagent, fork run, or transfer) onto the shared mark. */
 export function lineageStatusMark(status: string | null): ThreadStatusMarkStatus {
@@ -49,25 +67,21 @@ export function lineageStatusMark(status: string | null): ThreadStatusMarkStatus
  * working, a green dot when done, an icon when it needs you or failed, a gray dot when settled.
  */
 export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMarkStatus }) {
-  const gt = useGT();
+  const label = useThreadStatusLabel(status);
   const iconClass = "size-3.5 shrink-0";
   switch (status) {
     case "working":
-      return <Spinner aria-label={gt("Working")} size="sm" tone="working" />;
+      return <Spinner aria-label={label} size="sm" tone="working" />;
     case "waiting":
       return (
         <CircleDotDashedIcon
-          aria-label={gt("Waiting on background work")}
+          aria-label={label}
           className={cn(iconClass, "text-muted-foreground")}
         />
       );
     case "done":
       return (
-        <span
-          aria-label={gt("Done")}
-          role="img"
-          className={cn(iconClass, "grid place-items-center")}
-        >
+        <span aria-label={label} role="img" className={cn(iconClass, "grid place-items-center")}>
           <span className="size-2 rounded-full bg-success" />
         </span>
       );
@@ -83,18 +97,14 @@ export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMark
       return (
         <CirclePauseIcon
           role="img"
-          aria-label={gt("Paused")}
+          aria-label={label}
           className={cn(iconClass, "text-warning-foreground")}
         />
       );
     case "ready":
       // A settled thread still fills the slot, so the time beside it never shifts.
       return (
-        <span
-          aria-label={gt("Idle")}
-          role="img"
-          className={cn(iconClass, "grid place-items-center")}
-        >
+        <span aria-label={label} role="img" className={cn(iconClass, "grid place-items-center")}>
           <span className="size-2 rounded-full bg-sidebar-muted-foreground/35" />
         </span>
       );
