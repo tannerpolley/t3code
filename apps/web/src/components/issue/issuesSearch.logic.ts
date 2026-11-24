@@ -11,6 +11,7 @@ import {
 import type { IssueListTarget } from "@t3tools/client-runtime/state/issues";
 
 import type { IssuesSearch } from "./IssuesPage";
+import { readIssuesSearch } from "./issueViewPreferences";
 
 // The router reads a bare `key=42` as a number.
 const bounded = (value: unknown, maxLength = 200): string | undefined => {
@@ -55,10 +56,10 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
 });
 
 export interface RoadmapSearch {
-  readonly environmentId?: EnvironmentId;
+  readonly environmentId?: EnvironmentId | undefined;
   readonly host?: string | undefined;
-  readonly repository?: string;
-  readonly number?: number;
+  readonly repository?: string | undefined;
+  readonly number?: number | undefined;
   readonly issueQuery?: string | undefined;
   readonly selectedEnvironmentId?: EnvironmentId | undefined;
   readonly selectedHost?: string | undefined;
@@ -74,13 +75,10 @@ function optionalNumber(value: unknown): number | undefined {
 }
 
 export function roadmapSearchFromUrl(raw: Record<string, unknown>): RoadmapSearch {
-  const environmentId = bounded(raw.environmentId) as EnvironmentId | undefined;
-  const repository = bounded(raw.repository);
-  const number = optionalNumber(raw.number);
   return {
-    ...(environmentId === undefined ? {} : { environmentId }),
-    ...(repository === undefined ? {} : { repository }),
-    ...(number === undefined ? {} : { number }),
+    environmentId: bounded(raw.environmentId) as EnvironmentId | undefined,
+    repository: bounded(raw.repository),
+    number: optionalNumber(raw.number),
     host: bounded(raw.host, 253),
     issueQuery: bounded(raw.issueQuery),
     selectedEnvironmentId: bounded(raw.selectedEnvironmentId) as EnvironmentId | undefined,
@@ -93,7 +91,10 @@ export function roadmapSearchFromUrl(raw: Record<string, unknown>): RoadmapSearc
 
 export type IssueView = "board" | "list";
 
-export function issuesPageSearchFromUrl(raw: Record<string, unknown>) {
+export function issuesPageSearchFromUrl(
+  raw: Record<string, unknown>,
+  readPreference = readIssuesSearch,
+) {
   const list = issuesSearchFromUrl(raw);
   const board = roadmapSearchFromUrl(raw);
   // Links to the original Issues page have list controls or a tracker-specific selection.
@@ -114,7 +115,9 @@ export function issuesPageSearchFromUrl(raw: Record<string, unknown>) {
     ].some((value) => value !== undefined);
   const view: IssueView | undefined =
     raw.view === "board" || raw.view === "list" ? raw.view : legacyList ? "list" : undefined;
-  return { ...board, ...list, ...(view === "board" ? board : {}), view };
+  // The router canonicalizes the URL with the validated fields before beforeLoad.
+  const selected = { ...list, ...(view === undefined ? readPreference() : { view }) };
+  return { ...board, ...selected, ...(selected.view === "board" ? board : {}) };
 }
 
 /**

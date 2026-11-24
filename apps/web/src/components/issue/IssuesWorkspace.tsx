@@ -15,7 +15,7 @@ import { writeIssueView } from "./issueViewPreferences";
 
 export function IssuesWorkspace() {
   const gt = useGT();
-  const { view = "board" } = useSearch({ from: "/_chat/issues" });
+  const { view } = useSearch({ from: "/_chat/issues" });
   const navigate = useNavigate({ from: "/issues" });
   const headingRef = useRef<HTMLHeadingElement>(null);
   useIssuePageCopyShortcut();

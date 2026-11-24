@@ -2,7 +2,7 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { OpenPreviewMutation } from "./browser/openFileInPreview";
 import type { ClosedView, ClosedViewEntry } from "./closedViewStore";
-import type { PullRequestListPreferences } from "./components/pullRequest/pullRequestListPreferences";
+import type { PullRequestsSearch } from "./components/pullRequest/usePullRequestListView";
 import { openPreviewSession } from "./components/preview/openPreviewSession";
 import {
   rightPanelHostRef,
@@ -53,19 +53,20 @@ export function planNextReopen(
   return { drop, restore: null };
 }
 
-type PullRequestsSearchLike = Partial<PullRequestListPreferences> & {
-  repository?: string;
-  number?: number;
-  selectedProjectId?: ProjectId | undefined;
-  selectedHost?: string | undefined;
-  selectedEnvironmentId?: EnvironmentId | undefined;
+type PullRequestsSearchLike = Partial<
+  Omit<PullRequestsSearch, "environmentId" | "repository" | "number">
+> & {
+  environmentId?: EnvironmentId | undefined;
+  repository?: string | undefined;
+  number?: number | undefined;
 };
 
-export function pullRequestsSearchForRestore<S extends PullRequestsSearchLike>(
-  previous: S,
+export function pullRequestsSearchForRestore(
+  previous: PullRequestsSearchLike,
   selected: RightPanelSurface | null,
-): S & PullRequestListPreferences {
+): PullRequestsSearch {
   const {
+    environmentId,
     repository: _repository,
     number: _number,
     selectedProjectId: _projectId,
@@ -75,6 +76,7 @@ export function pullRequestsSearchForRestore<S extends PullRequestsSearchLike>(
   } = previous;
   return {
     ...filters,
+    ...(environmentId === undefined ? {} : { environmentId }),
     involvement: previous.involvement ?? "all",
     state: previous.state ?? "open",
     ...(selected?.kind === "pull-request"
@@ -88,7 +90,7 @@ export function pullRequestsSearchForRestore<S extends PullRequestsSearchLike>(
             : { selectedEnvironmentId: selected.environmentId as EnvironmentId }),
         }
       : {}),
-  } as S & PullRequestListPreferences;
+  };
 }
 
 export async function reopenClosedView(
