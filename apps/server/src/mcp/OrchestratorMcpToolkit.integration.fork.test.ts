@@ -116,7 +116,8 @@ const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(
     Layer.mock(GitVcsDriver.GitVcsDriver)({
-      resolvePrimaryRemoteName: () => Effect.succeed(null),
+      resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+      resolveDefaultBranchName: () => Effect.succeed("main"),
       resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
     }),
   ),
@@ -2166,7 +2167,7 @@ describe("orchestrator MCP toolkit", () => {
                 action: "prompt",
                 prompt: "Check the nightly build",
                 threadId: null,
-                workspaceStrategy: { type: "worktree" },
+                workspaceStrategy: { type: "worktree", baseRef: "origin/main" },
               },
             ]);
             yield* invoke("delete_scheduled_task", { scheduledTaskId: reportId });
