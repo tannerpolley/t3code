@@ -1,4 +1,4 @@
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -13,6 +13,7 @@ import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
 import { useInlineActionConfirm } from "../pullRequest/useInlineActionConfirm";
 import { Button, InlineButton } from "../ui/button";
 import { toastManager } from "../ui/toast";
@@ -27,12 +28,20 @@ export function IssueDoneDetails({
   environmentId: EnvironmentId;
 }) {
   const gt = useGT();
+  const resolve = useMessages();
   const openPr = useOpenPrLink();
+  const closedLabel =
+    issue.stateReason === "completed"
+      ? gt("Closed as completed")
+      : issue.stateReason === "not_planned"
+        ? gt("Closed as not planned")
+        : issue.stateReason === "duplicate"
+          ? gt("Closed as duplicate")
+          : gt("Closed");
   return (
     <div className="flex flex-col gap-1 ps-6 text-xs text-muted-foreground">
       <p>
-        <T>Closed</T>
-        {issue.stateReason ? ` · ${issue.stateReason.replaceAll("_", " ")}` : ""}
+        {closedLabel}
         {issue.closedAt ? (
           <>
             {" "}
@@ -49,7 +58,14 @@ export function IssueDoneDetails({
             render={<a href={pr.url} target="_blank" rel="noopener noreferrer" />}
             onClick={(event) => openPr(event, pr.url, undefined, environmentId)}
           >
-            #{pr.number} {pr.title || pr.repository} · {pr.state ?? gt("state unavailable")}
+            #{pr.number} {pr.title || pr.repository} ·{" "}
+            {pr.state === null
+              ? gt("state unavailable")
+              : resolve(
+                  PULL_REQUEST_STATE_PRESENTATION[
+                    pr.state === "open" && pr.isDraft ? "draft" : pr.state
+                  ].label,
+                )}
           </InlineButton>
         </div>
       ))}
