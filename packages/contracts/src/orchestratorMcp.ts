@@ -24,6 +24,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import {
+  ScheduledTaskAction,
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
@@ -843,6 +844,12 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
+  action: Schema.optional(
+    ScheduledTaskAction.annotate({
+      description:
+        "`prompt` runs an agent (default on create). `usage_budget` saves a built-in report without starting an agent and requires a time-based schedule. Omit on update to keep the current action. When switching to `prompt`, supply the prompt.",
+    }),
+  ),
   repositoryTarget: Schema.optional(Schema.NullOr(RepositoryWorkTarget)),
   environmentId: OrchestratorMcpEnvironmentTarget,
   projectId: OrchestratorMcpProjectTarget,
@@ -877,6 +884,7 @@ export type OrchestratorMcpSaveScheduledTaskInput =
   typeof OrchestratorMcpSaveScheduledTaskInput.Type;
 
 export const OrchestratorMcpScheduledTask = Schema.Struct({
+  action: ScheduledTaskAction,
   repositoryTarget: Schema.optional(Schema.NullOr(RepositoryWorkTarget)),
   scheduledTaskId: ScheduledTaskId,
   title: Schema.String,
@@ -921,6 +929,7 @@ export type OrchestratorMcpListScheduledTasksResult =
   typeof OrchestratorMcpListScheduledTasksResult.Type;
 
 export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
+  action: OrchestratorMcpScheduleTaskInput.fields.action,
   repositoryTarget: Schema.optional(Schema.NullOr(RepositoryWorkTarget)),
   environmentId: OrchestratorMcpEnvironmentTarget,
   scheduledTaskId: ScheduledTaskId,

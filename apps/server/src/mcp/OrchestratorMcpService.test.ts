@@ -4342,6 +4342,44 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
+    it.effect("creates a usage budget report without a default model or Git checkout", () =>
+      Effect.gen(function* () {
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const report = {
+          ...existing,
+          action: "usage_budget",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "default" },
+        } satisfies ScheduledTask;
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              {},
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              report,
+              inputs,
+              { project: null },
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, {
+          projectId,
+          action: "usage_budget",
+          prompt: "Usage budget report",
+          schedule,
+        });
+        assert.deepEqual((yield* Ref.get(inputs))[0]!.modelSelection, report.modelSelection);
+        assert.deepEqual((yield* Ref.get(inputs))[0]!.workspaceStrategy, { type: "root" });
+        const refused = yield* mcp
+          .updateScheduledTask(client, {
+            scheduledTaskId: report.id,
+            action: "prompt",
+            prompt: "Check the build",
+          })
+          .pipe(Effect.flip);
+        assert.match(refused.message, /has no default model/);
+      }),
+    );
+
     it.effect.each([
       {
         name: "drops an emoji the limit splits",

@@ -197,26 +197,41 @@ const handlers = {
       () => ({}),
       ({ prompt, schedule, ...input }) =>
         Effect.gen(function* () {
-          if (prompt === undefined || schedule === undefined) {
+          if (schedule === undefined || (prompt === undefined && input.action !== "usage_budget")) {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
-              message: "A new scheduled task needs `prompt` and `schedule`.",
+              message:
+                "A new scheduled task needs `schedule`. The prompt action also needs `prompt`.",
             });
           }
           const scope = yield* McpInvocationContext.McpInvocationContext;
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          return yield* service.scheduleTask(scope, { ...input, prompt, schedule });
+          return yield* service.scheduleTask(scope, {
+            ...input,
+            prompt: prompt ?? "Usage budget report",
+            schedule,
+          });
         }),
       // A scheduled run starts long after its caller, with nothing to carry the link.
       { refused: "schedule tasks in this environment" },
     ),
     McpToolAccess.writes(
-      ({ scheduledTaskId, prompt, title, schedule, enabled, freshSession, bindToCurrentThread }) =>
+      ({
+        action,
+        scheduledTaskId,
+        prompt,
+        title,
+        schedule,
+        enabled,
+        freshSession,
+        bindToCurrentThread,
+      }) =>
         Effect.gen(function* () {
           if (scheduledTaskId === undefined) return yield* Effect.die("unreachable");
           const scope = yield* McpInvocationContext.McpInvocationContext;
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           return yield* service.updateScheduledTask(scope, {
+            action,
             scheduledTaskId,
             prompt,
             title,
