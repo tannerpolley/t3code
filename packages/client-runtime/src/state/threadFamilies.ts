@@ -1,4 +1,5 @@
 import {
+  isProviderNativeSubagentThread,
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
@@ -21,6 +22,7 @@ import type { EnvironmentShellState } from "./shell.ts";
 
 const EMPTY_FAMILY: OrchestrationV2ThreadFamily = { snapshotSequence: 0, threads: [] };
 const EMPTY_READS: ReadonlyArray<OrchestrationV2ThreadFamily> = [];
+const EMPTY_WORKER_IDS: ReadonlyArray<ThreadId> = [];
 
 interface MountedRows {
   readonly rows: Atom.Atom<ReadonlyArray<OrchestrationV2ThreadFamily>>;
@@ -94,11 +96,11 @@ export function createThreadFamilyAtoms<R, ER, E>(
     idleTtlMs: 60_000,
     execute: Effect.fn("ThreadFamilies.read")(function* ({
       generation: _generation,
-      removalSequence: _removalSequence,
+      workerChangeSequence: _workerChangeSequence,
       ...input
     }: OrchestrationV2GetThreadFamilyInput & {
       readonly generation: number;
-      readonly removalSequence?: number;
+      readonly workerChangeSequence?: number;
     }) {
       const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
       const session = yield* SubscriptionRef.get(supervisor.session);
@@ -140,9 +142,42 @@ export function createThreadFamilyAtoms<R, ER, E>(
       },
     ),
   );
+  const shellSnapshot = (state: AsyncResult.AsyncResult<EnvironmentShellState, E>) =>
+    Option.getOrUndefined(shellStateValue(state)?.snapshot ?? Option.none());
+  const shellWorkersByParent = Atom.family((environmentId: EnvironmentId) =>
+    Atom.map(
+      Atom.map(shellStateAtom(environmentId), (state) => shellSnapshot(state)?.threads),
+      (threads) => {
+        const byParent = new Map<ThreadId, ThreadId[]>();
+        for (const thread of threads ?? []) {
+          if (
+            thread.lineage.relationshipToParent !== "subagent" ||
+            isProviderNativeSubagentThread(thread)
+          )
+            continue;
+          for (const parent of [thread.lineage.rootThreadId, ...(thread.workerAncestorIds ?? [])]) {
+            const ids = byParent.get(parent);
+            if (ids === undefined) byParent.set(parent, [thread.id]);
+            else ids.push(thread.id);
+          }
+        }
+        return byParent;
+      },
+    ),
+  );
   const workerPages = Atom.family((key: string) => {
     const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
     const count = Atom.make(1);
+    const nestedPageCount = Atom.make(1);
+    const shellWorkerIds = Atom.map(
+      shellWorkersByParent(environmentId),
+      (byParent) => byParent.get(threadId) ?? EMPTY_WORKER_IDS,
+    ).pipe(Atom.withEquality<ReadonlyArray<ThreadId>>(arrayElementsEqual));
+    // The page count must come from a snapshot that includes restored workers in the shell.
+    const membershipSequence = Atom.make((get) => {
+      get(shellWorkerIds);
+      return shellSnapshot(get.once(shellStateAtom(environmentId)))?.snapshotSequence ?? 0;
+    });
     interface WorkerPageState {
       readonly generation: number;
       readonly pages: ReadonlyArray<OrchestrationV2ThreadFamily>;
@@ -153,8 +188,11 @@ export function createThreadFamilyAtoms<R, ER, E>(
       const generation = get(generationAtom(environmentId));
       if (generation === 0)
         return { generation, pages: EMPTY_READS, waiting: true, failedQuery: null };
-      const limit = get(count);
-      const removalSequence = get(removalSequenceAtom(environmentId));
+      const limit = Math.max(get(count), get(nestedPageCount));
+      const workerChangeSequence = Math.max(
+        get(removalSequenceAtom(environmentId)),
+        get(membershipSequence),
+      );
       const pages: OrchestrationV2ThreadFamily[] = [];
       let before: OrchestrationV2ThreadFamily["nextWorkerPage"];
       for (let index = 0; index < limit; index++) {
@@ -163,7 +201,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
           input: {
             threadId,
             generation,
-            removalSequence,
+            workerChangeSequence,
             workers: before === undefined ? {} : { before },
           },
         });
@@ -189,7 +227,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
       }
       return { generation, pages, waiting: false, failedQuery: null };
     });
-    return { count, state, rows: Atom.map(state, (result) => result.pages) };
+    return { count, nestedPageCount, state, rows: Atom.map(state, (result) => result.pages) };
   });
 
   const familyAtom = Atom.family((key: string) => {

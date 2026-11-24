@@ -42,6 +42,7 @@ vi.mock(import("../../state/threads"), async (original) => {
     const failed = Atom.make(AsyncResult.initial<never, never>());
     return {
       count,
+      nestedPageCount: Atom.make(1),
       rows,
       state: Atom.make((get) => ({
         generation: 1,

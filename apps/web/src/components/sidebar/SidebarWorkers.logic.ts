@@ -91,6 +91,18 @@ export function sidebarWorkerPage(
   return visible;
 }
 
+// SQLite's UTF-8 ordering follows code points, including for IDs with supplementary characters.
+function threadIdBefore(left: ThreadId, right: ThreadId) {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length;) {
+    const a = left.codePointAt(index)!;
+    const b = right.codePointAt(index)!;
+    if (a !== b) return a < b;
+    index += a > 0xffff ? 2 : 1;
+  }
+  return left.length < right.length;
+}
+
 export function remainingSidebarWorkers(
   idle: readonly SidebarThreadSummary[],
   running: readonly SidebarThreadSummary[],
@@ -103,7 +115,7 @@ export function remainingSidebarWorkers(
   if (cursor === undefined || remaining === 0) return hiddenIdle;
   const onLaterPage = (worker: SidebarThreadSummary) =>
     worker.createdAt < cursor.createdAt ||
-    (worker.createdAt === cursor.createdAt && worker.id < cursor.threadId);
+    (worker.createdAt === cursor.createdAt && threadIdBefore(worker.id, cursor.threadId));
   const knownLater = idle.filter(onLaterPage).length + running.filter(onLaterPage).length;
   return hiddenIdle + Math.max(0, remaining - knownLater);
 }
