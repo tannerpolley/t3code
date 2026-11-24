@@ -448,6 +448,7 @@ export interface OrchestratorV2DispatchResult {
 
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
+  readonly withThreadLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"];
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   readonly recoverDelegatedTask: (
     threadId: ThreadId,
@@ -15521,6 +15522,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const finalizeAppOwnedSubagent = Effect.fn("Orchestrator.finalizeAppOwnedSubagent")(function* (
     childThreadId: ThreadId,
+    parentThreadId: ThreadId,
     options?: { readonly settledContinuationOf?: RunId; readonly syncRunId?: RunId },
   ) {
     const childControls = yield* projectionStore.getThreadRecords(
@@ -15528,10 +15530,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
       { messageRoles: ["user"] },
     );
-    const parentThreadId = childControls.thread.lineage.parentThreadId;
     if (
       childControls.thread.lineage.relationshipToParent !== "subagent" ||
-      parentThreadId === null ||
+      childControls.thread.lineage.parentThreadId !== parentThreadId ||
       childControls.thread.forkedFrom?.type !== "node"
     )
       return;
@@ -17125,7 +17126,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (parentThreadId !== undefined) {
         yield* threadDispatch.withLock(
           parentThreadId,
-          finalizeAppOwnedSubagent(threadId, { syncRunId: run.id }),
+          finalizeAppOwnedSubagent(threadId, parentThreadId, { syncRunId: run.id }),
         );
         yield* withdrawReleasedUsageLimitContinuation(threadId);
       }
@@ -17284,7 +17285,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const childThreadId = stored.event.threadId;
           const parentThreadId = yield* appOwnedSubagentParentThreadId(childThreadId);
           if (parentThreadId === undefined) return;
-          yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(childThreadId));
+          yield* threadDispatch.withLock(
+            parentThreadId,
+            finalizeAppOwnedSubagent(childThreadId, parentThreadId),
+          );
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Failed to finalize a delegated child after its work settled", {
@@ -17312,7 +17316,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               const thread = yield* projectionStore.getThread(threadId);
               const parentThreadId = thread.lineage.parentThreadId;
               if (parentThreadId === null) return;
-              yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
+              yield* threadDispatch.withLock(
+                parentThreadId,
+                finalizeAppOwnedSubagent(threadId, parentThreadId),
+              );
               yield* withdrawReleasedUsageLimitContinuation(threadId);
             }).pipe(
               Effect.catchCause((cause) =>
@@ -17347,7 +17354,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     .subagents;
                   yield* forkDelegatedCompletion.recoverDeletedChildren(
                     tasks,
-                    finalizeAppOwnedSubagent,
+                    (childId) => finalizeAppOwnedSubagent(childId, threadId),
                     withdrawReleasedUsageLimitContinuation,
                   );
                   const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
@@ -17473,6 +17480,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           Effect.andThen(
             finalizeAppOwnedSubagent(
               threadId,
+              parentThreadId,
               sourceRunId === undefined ? undefined : { settledContinuationOf: sourceRunId },
             ),
           ),
@@ -17521,6 +17529,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* threadDispatch.withLock(
           command.threadId,
           Effect.gen(function* () {
+            const thread = yield* projectionStore
+              .getThread(command.threadId)
+              .pipe(mapDispatchError(command));
+            if (thread.lineage.parentThreadId !== input.parentThreadId)
+              return yield* new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: "The delegated child now belongs to another parent.",
+              });
             // Hold intake closed until descendants stop and this thread's Stop commits.
             yield* input.stopDescendants((command) =>
               commandThreadId(command) === input.command.threadId
@@ -17555,7 +17572,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             yield* dispatchWithReceiptEffect(command, [], cancelledTask);
           }),
         );
-        yield* finalizeAppOwnedSubagent(command.threadId).pipe(mapDispatchError(command));
+        yield* finalizeAppOwnedSubagent(command.threadId, input.parentThreadId).pipe(
+          mapDispatchError(command),
+        );
       }),
     );
   });
@@ -17565,6 +17584,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   return OrchestratorV2.of({
     resumeQueuedRuns,
+    withThreadLock: threadDispatch.withLock,
     recoverDelegatedTasks,
     recoverDelegatedTask,
     cancelDelegatedTask,

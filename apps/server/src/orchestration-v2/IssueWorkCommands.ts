@@ -158,18 +158,18 @@ export function makeIssueWorkCommands({
     const store = issueWorkStore.value;
     const successor = successorRoot ?? (yield* retainedWorkerSuccessor(store, thread));
     if (successor === null || (yield* store.issueOwner(issue)) !== thread.id) return null;
-    const read = yield* issueSnapshot(issue);
-    if (read === undefined || issueEligibility(read) !== "eligible") return null;
     const parent = thread.lineage.parentThreadId;
-    if (read.parent === null)
-      return parent === thread.lineage.rootThreadId
-        ? { ...thread.lineage, rootThreadId: successor, parentThreadId: successor }
-        : null;
+    // A handoff transfers management even when the issue host cannot admit a run yet.
+    if (parent === thread.lineage.rootThreadId)
+      return { ...thread.lineage, rootThreadId: successor, parentThreadId: successor };
+    if (parent === null) return null;
+    const currentParent = yield* projectionStore.findThread(parent);
+    const parentIssue = currentParent?.linkedIssue;
     if (
-      parent === null ||
-      !sameIssueRepository(read.parent, issue) ||
-      (yield* store.issueOwner(read.parent)) !== parent ||
-      (yield* projectionStore.getThread(parent)).lineage.rootThreadId !== successor
+      currentParent?.lineage.rootThreadId !== successor ||
+      parentIssue === undefined ||
+      !sameIssueRepository(parentIssue, issue) ||
+      (yield* store.issueOwner(parentIssue)) !== parent
     )
       return null;
     return { ...thread.lineage, rootThreadId: successor };
