@@ -224,6 +224,7 @@ describe("derivePendingBackgroundWork", () => {
           id: "item-1",
           type: "command_execution",
           status: "running",
+          title: null,
           input: "npm test",
           nativeItemRef: { nativeId: "toolu_1" },
         },
