@@ -73,6 +73,7 @@ const decodeItems = Schema.decodeEffect(
         ]),
         title: Schema.NullOr(Schema.String),
         input: Schema.Unknown,
+        monitor: Schema.BooleanFromBit,
       }),
     ),
   ),
@@ -171,7 +172,8 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
       'pendingBackgroundTasks', json(coalesce(json_extract(p.payload_json, '$.pendingBackgroundTasks'), '[]'))))
       FROM orchestration_v2_projection_provider_threads p WHERE p.thread_id = t.thread_id) AS provider_work,
     (SELECT json_group_array(json_object('id', i.turn_item_id, 'type', i.type, 'status', i.status,
-      'title', json_extract(i.payload_json, '$.title'), 'input', json_extract(i.payload_json, '$.input')))
+      'title', json_extract(i.payload_json, '$.title'), 'input', json_extract(i.payload_json, '$.input'),
+      'monitor', coalesce(json_extract(i.payload_json, '$.monitor'), 0)))
       FROM orchestration_v2_projection_turn_items i
       LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = i.run_id
       WHERE i.thread_id = t.thread_id AND i.type IN ('command_execution', 'dynamic_tool', 'subagent')

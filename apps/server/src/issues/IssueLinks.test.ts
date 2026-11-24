@@ -26,6 +26,7 @@ import * as IssueLinks from "./IssueLinks.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
 import * as IssueService from "./IssueService.ts";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
+import { classifyIssueWorker } from "@t3tools/shared/issueWorkerStatus";
 
 const ref = { host: "github.com", repository: "owner/repo", number: 13 };
 const threadId = ThreadId.make("ordinary-builder");
@@ -740,6 +741,50 @@ it.effect("does not count stale active IDs or parked background work as a runnin
     }
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect("distinguishes a running monitor from a background command in the issue projection", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const appThread = idleThreadProjection(liveThreadShell(threadId)).thread;
+    const thread = {
+      ...appThread,
+      role: "implementor",
+      lineage: { ...appThread.lineage, parentThreadId: "parent", relationshipToParent: "subagent" },
+      linkedIssue: {
+        ...ref,
+        repositoryId: "repo",
+        id: "13",
+        nodeId: "I_13",
+        title: "Fix",
+        url: "https://github.com/owner/repo/issues/13",
+      },
+    };
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_threads(
+        thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+        created_at, updated_at, payload_json
+      ) VALUES (${thread.id}, ${thread.projectId}, ${thread.title}, 'codex', 'full-access',
+        'default', '2026-10-13', '2026-10-13', ${JSON.stringify(thread)})`;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs(
+        run_id, thread_id, ordinal, provider, status, requested_at, completed_at, payload_json
+      ) VALUES ('run', ${thread.id}, 1, 'codex', 'completed', '2026-10-13', '2026-10-13', '{}')`;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_turn_items(
+        turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json
+      ) VALUES ('exec', ${thread.id}, 'run', 1, 'command_execution', 'running',
+        '2026-10-13', '{"input":"build","monitor":true}')`;
+    const [monitor] = yield* projections.getIssueWorkThreads([thread.id]);
+    assert.equal(classifyIssueWorker(monitor!).status, "idle");
+    yield* sql`UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = '{"input":"build"}' WHERE turn_item_id = 'exec'`;
+    const [command] = yield* projections.getIssueWorkThreads([thread.id]);
+    assert.equal(classifyIssueWorker(command!).status, "working");
+  }).pipe(
+    Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+  ),
+);
 
 it.effect("returns closing and linked-thread PRs with state, deduplicating the same PR", () => {
   const pr = {

@@ -20,6 +20,7 @@ import { Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
+import { isIssueWorkerChild, issueWorkerIsWorking } from "@t3tools/shared/issueWorkerStatus";
 import { hiddenThreadKeys, NO_HIDDEN_THREADS } from "./threadTagFilter.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import {
@@ -134,6 +135,7 @@ function sameApartFromStreaming(
   if (
     previous.environmentId !== next.environmentId ||
     previous.pendingSubagentRequest !== next.pendingSubagentRequest ||
+    previous.issueWorkerWorking !== next.issueWorkerWorking ||
     !threadRuntimeIsActive(next.runtime)
   ) {
     return false;
@@ -189,10 +191,17 @@ export function createEnvironmentThreadShellAtoms(input: {
       scopedThreads.set(thread, byEnvironment);
     }
     const request = subagentRequests.get(thread.id) ?? null;
-    const key = `${environmentId}:${request ?? ""}:${ownerVisible}`;
+    const lineageParentId = thread.lineage.parentThreadId;
+    const issueWorkerWorking =
+      isIssueWorkerChild(thread) &&
+      issueWorkerIsWorking(
+        thread,
+        lineageParentId === null ? undefined : index.get(lineageParentId)?.pendingBackgroundTasks,
+      );
+    const key = `${environmentId}:${request ?? ""}:${ownerVisible}:${issueWorkerWorking}`;
     let value = byEnvironment.get(key);
     if (value === undefined) {
-      value = presentThreadShell(environmentId, thread, request, parent);
+      value = presentThreadShell(environmentId, thread, request, parent, issueWorkerWorking);
       byEnvironment.set(key, value);
     }
     return value;

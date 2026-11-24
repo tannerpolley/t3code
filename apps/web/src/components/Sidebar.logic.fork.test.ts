@@ -95,18 +95,33 @@ describe("resolveSidebarThreadStatus", () => {
         },
         "waiting",
       ],
+      [
+        {
+          status: "failed",
+          pendingBackgroundTasks: [{ taskId: "child", kind: "subagent" }],
+        },
+        "failed",
+      ],
     ] as const) {
       const shell = presentThreadShell(localEnvironmentId, { ...worker, ...state });
       expect.soft(resolveSidebarThreadStatus(shell)).toBe(expected);
       expect.soft(resolveThreadStatusMark(shell, undefined)).toBe(expected);
       expect
         .soft(classifyIssueWorker(shell.source).status)
-        .toBe(expected === "working" ? "working" : "idle");
+        .toBe(expected === "ready" || expected === "waiting" ? "idle" : expected);
       const listedAsRunning = [...groupRunningSubagentsByParent([parent, shell]).values()]
         .flat()
         .some((thread) => thread.id === worker.id);
       expect.soft(listedAsRunning).toBe(expected !== "ready");
     }
+    const otherOwner = ThreadId.make("another-worker");
+    const shell = presentThreadShell(localEnvironmentId, {
+      ...worker,
+      status: "completed",
+      pendingBackgroundTasks: [{ taskId: "exec-fit", kind: "command", ownerThreadId: otherOwner }],
+    });
+    expect.soft(resolveSidebarThreadStatus(shell)).toBe("ready");
+    expect.soft(classifyIssueWorker(shell.source).status).toBe("idle");
   });
 
   const runtime = {

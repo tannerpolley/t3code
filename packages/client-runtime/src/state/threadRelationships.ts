@@ -4,6 +4,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { isIssueWorkerChild, issueWorkerIsWorking } from "@t3tools/shared/issueWorkerStatus";
 import {
   backgroundWorkHoldsCompletion,
   pendingBackgroundWorkOfThread,
@@ -64,21 +65,22 @@ export function deriveThreadRelationshipGraph(input: {
       threadsById.set(thread.id, thread);
     }
   }
-  const statusOf = (
-    thread:
-      | (Pick<
-          OrchestrationV2ThreadShell,
-          "id" | "lineage" | "activityRunStatus" | "pendingBackgroundTasks"
-        > & { readonly status: OrchestrationV2ThreadShell["status"] | null })
-      | undefined,
-  ) => {
+  const parentTasksOf = (thread: OrchestrationV2ThreadShell) =>
+    thread.lineage.parentThreadId === null
+      ? undefined
+      : threadsById.get(thread.lineage.parentThreadId)?.pendingBackgroundTasks;
+  const workerRuns = (thread: OrchestrationV2ThreadShell | undefined) =>
+    thread !== undefined &&
+    isIssueWorkerChild(thread) &&
+    issueWorkerIsWorking(thread, parentTasksOf(thread));
+  const statusOf = (thread: OrchestrationV2ThreadShell | undefined) => {
     if (thread === undefined) return null;
+    if (workerRuns(thread)) return "running";
     const status = thread.activityRunStatus ?? thread.status;
-    const parentId = thread.lineage.parentThreadId;
     const tasks = pendingBackgroundWorkOfThread(
       thread.id,
       thread.pendingBackgroundTasks,
-      parentId === null ? [] : threadsById.get(parentId)?.pendingBackgroundTasks,
+      parentTasksOf(thread),
     );
     return ["completed", "idle", "interrupted", "cancelled"].includes(status ?? "") &&
       backgroundWorkHoldsCompletion(tasks)
@@ -123,7 +125,7 @@ export function deriveThreadRelationshipGraph(input: {
       kind: thread.lineage.relationshipToParent === "subagent" ? "subagent" : "fork",
       status:
         thread.lineage.relationshipToParent === "subagent"
-          ? statusOf(thread)
+          ? statusOf(threadsById.get(thread.id))
           : (thread.activityRunStatus ?? thread.status),
     });
   }
@@ -137,11 +139,12 @@ export function deriveThreadRelationshipGraph(input: {
         sourceThreadId: ownerThreadId,
         targetThreadId: subagent.childThreadId,
         kind: "subagent",
-        status:
-          child?.activityRunStatus ??
-          (child?.latestRunId != null && !isOrchestrationV2WorkActive(subagent.status)
-            ? statusOf(child)
-            : subagent.status),
+        status: workerRuns(child)
+          ? "running"
+          : (child?.activityRunStatus ??
+            (child?.latestRunId != null && !isOrchestrationV2WorkActive(subagent.status)
+              ? statusOf(child)
+              : subagent.status)),
       });
     }
     for (const transfer of input.projection.contextTransfers) {
@@ -195,6 +198,14 @@ export function threadRelationshipRowStatus(
     return row.edge.status;
   }
   const thread = graph.nodes.get(row.threadId)?.thread;
+  const parentId = thread?.lineage.parentThreadId;
+  if (
+    thread &&
+    parentId != null &&
+    isIssueWorkerChild(thread) &&
+    issueWorkerIsWorking(thread, graph.nodes.get(parentId)?.thread?.pendingBackgroundTasks)
+  )
+    return "running";
   return thread?.activityRunStatus ?? thread?.status ?? null;
 }
 
