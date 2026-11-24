@@ -26,13 +26,12 @@ export const resolveDelegatedWorkspace = Effect.fn("resolveDelegatedWorkspace")(
   OrchestratorMcpFailure
 > {
   const { task } = input;
+  const role = resolveThreadRole(task.role ?? "");
+  if (role === "writer" || input.isRetry) return {};
   const explicit = task.isolation ?? (task.workspace === "inherit" ? "shared" : task.workspace);
   const requested =
-    explicit ??
-    (task.role !== "general" && resolveThreadRole(task.role ?? "") === "implementor"
-      ? "worktree"
-      : "shared");
-  if (requested === "shared" || input.isRetry) return {};
+    explicit ?? (task.role !== "general" && role === "implementor" ? "worktree" : "shared");
+  if (requested === "shared") return {};
   const base = yield* input.gitDriver
     .resolveCommit({ cwd: yield* input.checkout, revision: "HEAD" })
     .pipe(Effect.option);

@@ -3028,6 +3028,11 @@ const make = Effect.gen(function* () {
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
+        if (input.role === "writer")
+          return yield* failure(
+            "invalid_request",
+            "Writers run in the parent thread's checkout. Omit target.environmentId.",
+          );
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         if (Option.isNone(remoteDelegation))
           return yield* failure("invalid_request", "Linked-environment delegation is unavailable.");

@@ -173,6 +173,26 @@ it("targets the idle checker for clicks and context menus beneath a running impl
   expect(onContextMenu.mock.calls[0]?.[0]?.id).toBe(child.id);
 });
 
+it.each([false, true])("renders an idle Writer at full strength (columns: %s)", async (columns) => {
+  const parent = worker("Orchestrator");
+  const child = worker("Draft the report", parent);
+  const writer = { ...child, source: { ...child.source, role: "writer" as const } };
+  using _rows = setupRows([parent, writer]);
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <SidebarWorkerRows
+        columns={columns}
+        thread={parent}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+      />
+    </AppAtomRegistryProvider>,
+  );
+  const row = screen.getByRole("button", { name: /Draft the report/ });
+  await expect.element(row).toHaveClass("text-foreground");
+  await expect.element(row).not.toHaveClass("opacity-70");
+});
+
 it("updates the two selected rows without rendering an unrelated worker list", async () => {
   const parent = worker("Parent");
   const other = worker("Other");

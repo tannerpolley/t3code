@@ -203,7 +203,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({
       description:
-        "Managed issue workers always branch from the default branch in their own worktree. For other tasks, Implementor defaults to worktree and other roles, including legacy general, default to shared. Explicit isolation overrides the default. shared uses this checkout. worktree branches from this thread's current local commit, omits uncommitted edits, and runs project setup before the child starts.",
+        "Writers always share the parent checkout, even with an issue link. Managed issue workers get worktrees from the default branch. Otherwise, Implementor defaults to worktree and other roles (including general) to shared. Explicit isolation overrides those defaults. shared uses this checkout. worktree branches from the current commit, omits uncommitted edits, and runs project setup.",
     }),
   ),
   workspace: Schema.optional(

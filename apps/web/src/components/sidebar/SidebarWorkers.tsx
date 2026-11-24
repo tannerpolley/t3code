@@ -198,6 +198,7 @@ function SidebarWorkerButton(
   const labels = useWorkerStatusLabels();
   const workerLabel = workerStatus == null ? workerStatus : labels[workerStatus];
   const provider = sidebarThreadProvider(props.providerEntries, thread.providerInstanceId);
+  const writer = thread.source.role === "writer";
   const button = (
     <button
       type="button"
@@ -220,14 +221,15 @@ function SidebarWorkerButton(
         "flex w-full min-w-0 cursor-pointer items-center rounded-md px-2 text-start hover:bg-sidebar-row-hover hover:text-foreground",
         props.columns
           ? cn(
-              "fork-sidebar-agent gap-2 text-2xs text-foreground/85",
+              "fork-sidebar-agent gap-2 text-2xs",
+              writer ? "text-foreground" : "text-foreground/85",
               PROJECTS_WORK_ROW_HEIGHT,
               !active &&
                 !selected &&
                 sidebarWorkerRecedes(thread, workerStatus) &&
                 "opacity-70 hover:opacity-100 focus-visible:opacity-100",
             )
-          : "gap-1.5 py-0.5 text-xs text-muted-foreground",
+          : cn("gap-1.5 py-0.5 text-xs", writer ? "text-foreground" : "text-muted-foreground"),
         selected && "bg-sidebar-row-selected",
         active && "bg-sidebar-row-active text-sidebar-foreground",
       )}
