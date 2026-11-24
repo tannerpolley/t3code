@@ -46,6 +46,7 @@ function setup() {
     Effect.succeed({
       ...reviewRead(reviewIssue(input.number)),
       state: closed ? ("closed" as const) : ("open" as const),
+      blockedBy: input.number === 3 ? [{ issue: reviewIssue(4), state: "open" as const }] : [],
     }),
   );
   const readDefaultBranch = vi.fn(() => Effect.succeed("main"));
@@ -399,9 +400,9 @@ it.effect(
   },
 );
 
-it.effect(
-  "close-out requires the repository root and a closed, stopped attempt, clears suspension and survives Resume and retries",
-  () => {
+it.effect.each(["retained", "archived"] as const)(
+  "close-out (%s worker) requires the repository root, a closed issue and a stopped attempt, clears suspension and survives Resume and retries",
+  (disposition) => {
     const harness = setup();
     return Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
@@ -444,6 +445,15 @@ it.effect(
         .closeOut({ ...input, clientRequestId: CommandId.make("active-close-out") })
         .pipe(Effect.flip);
       assert.include(rejectedRetry.message, "remaining work");
+      if (disposition === "archived") {
+        yield* threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-closed-worker"),
+          threadId: childId,
+        });
+      }
+      const beforeCloseOut = (yield* threads.getThreadProjection(childId)).thread;
+      assert.equal(beforeCloseOut.archivedAt !== null, disposition === "archived");
       const accepted = {
         ...input,
         expectedRevision: config.revision,
@@ -453,7 +463,7 @@ it.effect(
       assert.lengthOf(closed.orchestration!.suspendedIssues, 0);
       assert.isTrue(yield* store.resultAvailable(childId));
       const afterCloseOut = (yield* threads.getThreadProjection(childId)).thread;
-      assert.isNull(afterCloseOut.archivedAt);
+      assert.deepEqual(afterCloseOut.archivedAt, beforeCloseOut.archivedAt);
       assert.isNull(afterCloseOut.deletedAt);
       assert.equal(afterCloseOut.worktreePath, retained.worktreePath);
       const parent = yield* threads.getThreadRecords(root, ["subagents"]);
