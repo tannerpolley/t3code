@@ -1,4 +1,4 @@
-import { issueStatePresentation } from "./IssueStateIcon";
+import { issueBadges } from "@t3tools/shared/issueStage";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ThreadId, type IssueMilestone, type RepositoryIssueSummary } from "@t3tools/contracts";
 import {
@@ -80,10 +80,7 @@ describe("live roadmap", () => {
       issue(431),
       issue(423),
     ]);
-    expect(numbers(inSection(sections, "ready").rows)).toEqual([423, 431]);
-    expect(numbers(inSection(sections, "blocked").rows)).toEqual([432, 434, 439, 435]);
-    const blocked = numbers(inSection(sections, "blocked").rows);
-    expect(blocked.indexOf(439)).toBeLessThan(blocked.indexOf(435));
+    expect(numbers(inSection(sections, "backlog").rows)).toEqual([423, 431, 432, 434, 439, 435]);
   });
   it("orders an open child before its parent, ignores closed children and closed blockers, and separates closed issues", () => {
     const sections = issueRoadmap(scope, [
@@ -92,8 +89,7 @@ describe("live roadmap", () => {
       issue(2, { blockedBy: [ref(99, "closed")] }),
       issue(5, { state: "closed", parent: ref(1) }),
     ]);
-    expect(numbers(inSection(sections, "ready").rows)).toEqual([2, 7, 1]);
-    expect(inSection(sections, "blocked").rows).toEqual([]);
+    expect(numbers(inSection(sections, "backlog").rows)).toEqual([2, 7, 1]);
   });
   it("uses Project Priority, then oldest issue number for available nodes", () => {
     const priority = (rank: number) => [
@@ -107,7 +103,7 @@ describe("live roadmap", () => {
       issue(7, { projects: priority(0) }),
       issue(3, { milestone: milestone(1, "Alpha") }),
     ]);
-    expect(numbers(inSection(sections, "ready").rows)).toEqual([2, 7, 8, 9, 1, 3]);
+    expect(numbers(inSection(sections, "backlog").rows)).toEqual([2, 7, 8, 9, 1, 3]);
   });
   it("dependency order beats priority in the same section", () => {
     const sections = issueRoadmap(scope, [
@@ -116,7 +112,7 @@ describe("live roadmap", () => {
         liveWork: work("working"),
         projects: [{ id: "p", title: "P", status: null, priority: { name: "High", rank: 0 } }],
       }),
-      // An open blocker would move #2 to Blocked; a child edge orders it within In progress.
+      // A child edge orders it within In progress.
       issue(3, { parent: ref(2), liveWork: work("working") }),
     ]);
     expect(numbers(inSection(sections, "in-progress").rows)).toEqual([3, 2]);
@@ -127,7 +123,7 @@ describe("live roadmap", () => {
       issue(2, { blockedBy: [ref(999)] }),
       issue(7, { blockedBy: [ref(1000)] }),
     ]);
-    expect(numbers(inSection(sections, "blocked").rows)).toEqual([1, 2, 7]);
+    expect(numbers(inSection(sections, "backlog").rows)).toEqual([1, 2, 7]);
   });
   it("numbers cycles deterministically, including child/blocker cycles and self edges, without badging their descendants", () => {
     const sections = issueRoadmap(scope, [
@@ -137,7 +133,6 @@ describe("live roadmap", () => {
       issue(3, { blockedBy: [ref(3)] }),
       issue(1),
     ]);
-    expect(numbers(inSection(sections, "ready").rows)).toEqual([1, 9]);
     expect(
       sections
         .flatMap((section) => section.rows)
@@ -145,12 +140,12 @@ describe("live roadmap", () => {
         .map((row) => row.issue.number)
         .sort((a, b) => a - b),
     ).toEqual([3, 4, 9]);
-    expect(numbers(inSection(sections, "blocked").rows)).toEqual([3, 4, 2]);
-    expect(inSection(sections, "blocked").rows.find((row) => row.issue.number === 2)?.cycle).toBe(
+    expect(numbers(inSection(sections, "backlog").rows)).toEqual([1, 3, 4, 9, 2]);
+    expect(inSection(sections, "backlog").rows.find((row) => row.issue.number === 2)?.cycle).toBe(
       false,
     );
   });
-  it("keeps working or waiting agents In progress, open PRs in Ready for review, and blockers ahead of both", () => {
+  it("runs stages in pipeline order and shows blockers as badges, not a stage", () => {
     const first = issueRoadmap(scope, [
       issue(1, { liveWork: work("working"), blockedBy: [ref(99)] }),
       issue(2, { liveWork: work("waiting_on_you") }),
@@ -171,14 +166,18 @@ describe("live roadmap", () => {
     ]);
     expect(first.map((section) => [section.id, numbers(section.rows)])).toEqual([
       ["done", []],
-      ["ready-for-review", [8]],
-      ["in-progress", [2, 7, 11, 12]],
+      ["ready-for-review", [8, 10]],
+      ["in-progress", [1, 2, 7, 11, 12]],
       ["queued", []],
-      ["ready", [3, 9, 13, 14]],
-      ["blocked", [1, 5, 10]],
-      ["dependencies-unknown", [4, 6]],
-      ["closed", []],
+      ["backlog", [3, 4, 5, 6, 9, 13, 14]],
     ]);
+    expect(
+      first.flatMap((section) =>
+        section.rows
+          .filter((row) => issueBadges(row.issue).includes("blocked"))
+          .map((row) => row.issue.number),
+      ),
+    ).toEqual([10, 1, 5]);
     expect(
       issueLiveStatus(
         issue(1, { liveWork: [...work("idle"), ...work("waiting_on_you"), ...work("working")] }),
@@ -194,14 +193,13 @@ describe("live roadmap", () => {
       [],
       [],
       [],
+      [],
       [1, 2, 3, 4],
-      [],
-      [],
     ]);
   });
 });
 
-it("puts queued issues above Ready in insertion order and removes them from their other sections", () => {
+it("puts queued issues above Backlog in insertion order, blocked or not", () => {
   const sections = issueRoadmap(
     scope,
     [issue(1), issue(2, { blockedBy: [ref(99)] }), issue(3), issue(4, { state: "closed" })],
@@ -209,15 +207,15 @@ it("puts queued issues above Ready in insertion order and removes them from thei
   );
   expect(sections.map((section) => [section.title, numbers(section.rows)])).toEqual([
     ["Done", []],
+    ["Ready for review", []],
     ["In progress", []],
     ["Queued", [2, 1]],
-    ["Ready", [3]],
-    ["Blocked", []],
+    ["Backlog", [3]],
     ["Closed", [4]],
   ]);
 });
 
-it("moves completed and not-planned issues from Done to Closed at exactly 24 hours, using closure time", () => {
+it("keeps completed issues in Done for 24 hours by closure time and sends not-planned ones to Closed", () => {
   const now = Date.parse("2026-10-20T12:00:00Z");
   const issues = [
     issue(1, { state: "closed", stateReason: "completed", closedAt: "2026-10-19T12:00:00.001Z" }),
@@ -234,8 +232,8 @@ it("moves completed and not-planned issues from Done to Closed at exactly 24 hou
     Object.fromEntries(
       issueRoadmap(scope, issues, [], at).map((section) => [section.id, numbers(section.rows)]),
     );
-  expect(groups(now)).toMatchObject({ ready: [5], done: [2, 1], closed: [3, 4] });
-  expect(groups(now + 1)).toMatchObject({ done: [2], closed: [1, 3, 4] });
+  expect(groups(now)).toMatchObject({ backlog: [5], done: [1], closed: [2, 3, 4] });
+  expect(groups(now + 1)).toMatchObject({ done: [], closed: [2, 1, 3, 4] });
 });
 
 it("notifies at closure expiry without polling and cancels its timer when the view leaves", () => {
@@ -279,8 +277,7 @@ it("holds unacknowledged openings out of every open section, then restores their
   const before = issueRoadmap(scope, issues, [], Date.parse("2026-10-31T00:00:00Z"), [1, 2, 3]);
   expect(before.flatMap((section) => numbers(section.rows))).toEqual([4]);
   const acknowledged = issueRoadmap(scope, issues, [], Date.parse("2026-10-31T00:00:00Z"), []);
-  expect(numbers(inSection(acknowledged, "ready").rows)).toEqual([1, 4]);
-  expect(numbers(inSection(acknowledged, "blocked").rows)).toEqual([2]);
+  expect(numbers(inSection(acknowledged, "backlog").rows)).toEqual([1, 2, 4]);
   expect(numbers(inSection(acknowledged, "in-progress").rows)).toEqual([3]);
 });
 
@@ -312,7 +309,7 @@ it("names the first thread in the issue's status, its role and how many more are
   expect(issueLiveWorkSummary(issue(3))).toBeNull();
 });
 
-it("keeps unknown dependencies distinct from confirmed blockers and Ready", () => {
+it("keeps unknown dependencies and confirmed blockers in Backlog as distinct badges", () => {
   const unknown = [
     issue(948, { blockedBy: undefined, relationshipsComplete: false }),
     issue(868, { relationshipsComplete: false }),
@@ -323,8 +320,13 @@ it("keeps unknown dependencies distinct from confirmed blockers and Ready", () =
     issue(859, { blockedBy: undefined }),
     issue(1, { blockedBy: [ref(2)] }),
   ]);
-  expect(numbers(inSection(sections, "dependencies-unknown").rows)).toEqual([868, 948]);
-  expect(numbers(inSection(sections, "ready").rows)).toEqual([859, 860]);
-  expect(numbers(inSection(sections, "blocked").rows)).toEqual([1]);
-  for (const row of unknown) expect(issueStatePresentation(row).label).toBe("Dependencies unknown");
+  expect(
+    inSection(sections, "backlog").rows.map((row) => [row.issue.number, issueBadges(row.issue)]),
+  ).toEqual([
+    [1, ["blocked"]],
+    [859, []],
+    [860, []],
+    [868, ["dependencies_unknown"]],
+    [948, ["dependencies_unknown"]],
+  ]);
 });

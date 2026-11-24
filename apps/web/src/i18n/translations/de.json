@@ -137,7 +137,6 @@
   "d54039a1d96a0e3c": "Worker erneut laden",
   "a0ab3b91869e52c7": "Ausgesetzt",
   "7342bfc328008926": "Läuft",
-  "8fb530f35f7911c1": "Wartet auf dich",
   "0d56b26a4db771a0": "Wartet auf eine Antwort",
   "60a7005770963ca5": "Wartet auf Freigabe",
   "2a1419da20c2bb27": "In der Warteschlange",
@@ -192,5 +191,12 @@
   "82e5d02834c683dd": "Übergabeschwelle (Token)",
   "50c54e168c9c4ab6": "Vorgänger",
   "759e59bb1b2ed0b6": "Nachfolger",
-  "447f20052e59a42d": "Orchestrierung"
+  "447f20052e59a42d": "Orchestrierung",
+  "9756b09ffd8a55c6": "In Arbeit",
+  "9a88f2c650ccc700": "Backlog",
+  "7f7f6116f1c8f3a9": "Geschlossen",
+  "4dccb48528cb04d2": "Blockiert",
+  "d25661576338fcf0": "Wartet auf dich",
+  "626069229ac7aa1a": "Abhängigkeiten unbekannt",
+  "bd19196b43a87b29": "Abhängigkeitszyklus"
 }

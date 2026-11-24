@@ -1,6 +1,6 @@
+import { ISSUE_WORK_STATUS_LABELS } from "@t3tools/shared/issueStage";
 import {
   ISSUE_HOSTS,
-  ISSUE_WORK_STATUS_LABELS,
   issueHostCapabilities,
   repositoryIssueHostKind,
   type EnvironmentId,

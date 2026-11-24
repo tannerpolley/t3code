@@ -34,7 +34,8 @@ content: its `/issues` page, its detail panel and its agent tools (`list_issues`
 `propose_issue_change` is their gated path). Upstream's other trackers come along unchanged.
 
 The fork adds the work on top: the roadmap at `/roadmap` and in the per-repository Issues panel
-beside a thread, with Ready / Paused / Queued / In progress / Done, and a work section inside
+beside a thread, with the stages Done / Ready for review / In progress / Queued / Backlog
+(`packages/shared/src/issueStage.ts` owns the rule and its names), and a work section inside
 upstream's issue panel. Queued and milestone issues share one admission path: the repository's
 periodic reconcile starts a managed worker for each unblocked queued issue, then for milestone
 issues, and the worker limit admits queued issues' workers first. The roadmap uses conditional GitHub REST issue pages for its unfiltered

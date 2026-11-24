@@ -14,7 +14,7 @@ import { useEnvironmentQuery, formatEnvironmentQueryError } from "~/state/query"
 import { useAtomCommand } from "~/state/use-atom-command";
 import { randomUUID } from "~/lib/utils";
 import { issueQueueRequestAfterResult, type IssueQueueRequest } from "./issueQueue.logic";
-import { issueProgress } from "./IssueStateIcon";
+import { issueStage } from "@t3tools/shared/issueStage";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -75,10 +75,10 @@ export function IssueQueueAction({
   const entry = status.data?.queue?.find((entry) => entry.issue.number === reference.number);
   const queued = entry !== undefined;
   const suspended = issue.suspensionReason !== undefined;
-  const progress = issueProgress(issue);
+  const stage = issueStage(issue);
   if (
     !status.supported ||
-    (!queued && (issue.state !== "open" || progress === "in_progress" || progress === "queued"))
+    (!queued && (issue.state !== "open" || stage === "in_progress" || stage === "queued"))
   )
     return null;
   const label = queued ? "Remove from queue" : "Add to queue";
