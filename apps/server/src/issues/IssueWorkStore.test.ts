@@ -211,6 +211,24 @@ it.effect("keeps roots with an unheld queued reader active for the admission swe
   }).pipe(Effect.provide(dependencies)),
 );
 
+it.effect("drains past an item left open by an ended run", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const root = ThreadId.make("root");
+    yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+      VALUES ('worker', 'project', 'Worker', 'codex', 'full-access', 'default', '2026-11-23', '2026-11-23',
+        '{"lineage":{"rootThreadId":"root","relationshipToParent":"subagent"}}')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_runs(run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      VALUES ('run', 'worker', 1, 'codex', 'running', '2026-11-23', '{}')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_turn_items(turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json)
+      VALUES ('message', 'worker', 'run', 1, 'user_message', 'pending', '2026-11-23', '{}')`;
+    assert.isFalse(yield* store.subtreeDrained(root));
+    yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'interrupted'`;
+    assert.isTrue(yield* store.subtreeDrained(root));
+  }).pipe(Effect.provide(dependencies)),
+);
+
 it.effect("admission visits only read-only threads with queued or preparing work", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
