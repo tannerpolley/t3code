@@ -1,5 +1,6 @@
 import { type ThreadId, workerListParentIds } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { isIssueWorkerChild } from "@t3tools/shared/issueWorkerStatus";
 
 import type { SidebarThreadSummary } from "../../types";
 import { groupRunningSubagentsByParent } from "../Sidebar.logic";
@@ -82,4 +83,13 @@ export function sidebarWorkerPage(
   const selected = idle.findIndex((child) => child.id === selectedId);
   if (selected >= limit) visible[visible.length - 1] = idle[selected]!;
   return visible;
+}
+
+/** Only finished, disposable rows recede; a Writer, a pinned thread, or an issue worker whose issue is not done will be used again. */
+export function sidebarWorkerRecedes(
+  thread: SidebarThreadSummary,
+  issueWorkerStatus: string | null | undefined,
+) {
+  if (thread.pinnedAt != null || thread.source.role === "writer") return false;
+  return !isIssueWorkerChild(thread.source) || issueWorkerStatus === "done";
 }
