@@ -1499,7 +1499,7 @@ const make = Effect.gen(function* () {
         ) {
           const pullRequest = yield* gitManager.branchPullRequest(
             { cwd: worktreePath, branch: thread.branch },
-            { refresh: true, includeUnpublished: releaseSlot },
+            { refresh: true, useLocalBranchName: releaseSlot },
           );
           eligible = storageCleanupPullRequestMerged(pullRequest, {
             branch: thread.branch,
