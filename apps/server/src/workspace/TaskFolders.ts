@@ -587,6 +587,8 @@ const make = Effect.gen(function* () {
   ) => Effect.Effect<void, PlatformError.PlatformError> = Effect.fnUntraced(
     function* (source, target, trackedRepositories, skip) {
       yield* fileSystem.makeDirectory(target, { recursive: true });
+      const realTarget = yield* fileSystem.realPath(target);
+      const targetInsideSource = isWithinRoot(path, realTarget, yield* fileSystem.realPath(source));
       for (const name of yield* fileSystem.readDirectory(source)) {
         const entry = path.join(source, name);
         const link = path.join(target, name);
@@ -602,6 +604,11 @@ const make = Effect.gen(function* () {
         if (trackedRepositories.some((repository) => isWithinRoot(path, repository, entry))) {
           yield* linkFolder(entry, link, trackedRepositories);
         } else {
+          if (targetInsideSource) {
+            const realEntry = yield* fileSystem.realPath(entry).pipe(Effect.option);
+            if (Option.exists(realEntry, (entry) => isWithinRoot(path, realTarget, entry)))
+              continue;
+          }
           yield* fileSystem.symlink(entry, link);
         }
       }

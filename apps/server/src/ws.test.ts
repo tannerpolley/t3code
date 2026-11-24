@@ -184,6 +184,7 @@ import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
+import * as TaskFolderStore from "./workspace/TaskFolderStore.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as SecretCheck from "./secrets/SecretCheck.ts";
@@ -1923,6 +1924,8 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
     yield* fileSystem.writeFileString(skillPath, "---\nname: finalize\n---\n");
     // Removed with `git worktree remove`; only the next turn start recreates it.
     const worktreePath = path.join(serverConfig.worktreesDir, "proj", "t3-6f94fb95");
+    const taskRoot = path.join(workspaceRoot, ".worktrees", "task-6f94fb95");
+    const taskProjectPath = path.join(taskRoot, path.basename(workspaceRoot));
     const thread = {
       id: ThreadId.make("thread:worktree"),
       projectId,
@@ -1930,6 +1933,11 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       worktreePath,
       branch: "t3/reply-ok",
     } as unknown as OrchestrationV2ThreadShell;
+    const taskThread = {
+      ...thread,
+      id: ThreadId.make("thread:task"),
+      worktreePath: taskProjectPath,
+    };
     const project = {
       id: projectId,
       title: "proj",
@@ -1991,7 +1999,7 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
                   Effect.succeed({
                     schemaVersion: 1,
                     snapshotSequence: 0,
-                    threads: [thread].filter(
+                    threads: [thread, taskThread].filter(
                       (candidate) =>
                         options?.worktreePath === undefined ||
                         candidate.worktreePath === options.worktreePath,
@@ -2003,7 +2011,23 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
             Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
             Layer.mock(SidebarLayout.SidebarLayoutService)({}),
             Layer.mock(ProjectStore.ProjectStoreV2)({
-              get: () => Effect.succeedSome(project as never),
+              get: () => Effect.succeedSome({ ...project, projectId } as never),
+            }),
+            Layer.mock(TaskFolderStore.TaskFolderStore)({
+              findContaining: (cwd) =>
+                Effect.succeed(
+                  cwd === taskProjectPath
+                    ? {
+                        root: taskRoot,
+                        projectId,
+                        projectRoot: workspaceRoot,
+                        anchor: path.dirname(workspaceRoot),
+                        projectPath: taskProjectPath,
+                        projectIsWorktree: true,
+                        repositories: [],
+                      }
+                    : null,
+                ),
             }),
             Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),
             Layer.mock(WorkspacePaths.WorkspacePaths)({}),
@@ -2054,24 +2078,26 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       ),
     );
 
-    yield* server.write(0, {
-      _tag: "Request",
-      id: RpcMessage.RequestId("refresh"),
-      tag: WS_METHODS.serverRefreshProviders,
-      payload: { instanceId, cwd: worktreePath, workspaceSnapshotsOnDemand: true },
-      headers: Headers.empty,
-    });
-    const refreshed = (yield* Queue.take(responses)) as {
-      readonly providers: ReadonlyArray<ServerProvider>;
-    };
-    const snapshot = refreshed.providers[0]?.workspaceSnapshots?.find(
-      (candidate) => candidate.cwd === worktreePath,
-    );
-    assert.deepEqual(
-      snapshot?.skills?.map((skill) => skill.name),
-      ["finalize"],
-      "the thread's removed worktree should list the project's skills",
-    );
+    for (const [index, cwd] of [worktreePath, taskProjectPath].entries()) {
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId(`refresh-${index}`),
+        tag: WS_METHODS.serverRefreshProviders,
+        payload: { instanceId, cwd, workspaceSnapshotsOnDemand: true },
+        headers: Headers.empty,
+      });
+      const refreshed = (yield* Queue.take(responses)) as {
+        readonly providers: ReadonlyArray<ServerProvider>;
+      };
+      const snapshot = refreshed.providers[0]?.workspaceSnapshots?.find(
+        (candidate) => candidate.cwd === cwd,
+      );
+      assert.deepEqual(
+        snapshot?.skills?.map((skill) => skill.name),
+        ["finalize"],
+        `the thread's removed worktree should list the project's skills (${cwd})`,
+      );
+    }
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

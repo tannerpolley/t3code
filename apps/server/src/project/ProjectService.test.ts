@@ -56,6 +56,7 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -224,6 +225,7 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
   CommandReceiptStore.layer,
   ProjectStore.layer,
+  TaskFolderStore.layer,
   ProjectionStore.layer,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
