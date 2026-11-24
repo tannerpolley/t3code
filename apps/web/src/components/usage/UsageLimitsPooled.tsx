@@ -614,8 +614,8 @@ function PoolWindowCard({
 }) {
   const gt = useGT();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const nextWindow = pool.resets[0]?.member.window;
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const nextWindow = pool.resets.find((reset) => reset.at > now)?.member.window;
+  const nextRefill = pool.resets.find((reset) => reset.at > now && reset.restoresPercent > 0);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
