@@ -5,6 +5,7 @@ import { expect, it } from "vite-plus/test";
 import { makeThreadFixture } from "~/test-fixtures";
 import {
   indexSidebarWorkers,
+  remainingSidebarWorkers,
   sidebarWorkerPage,
   sidebarWorkerRecedes,
 } from "./SidebarWorkers.logic";
@@ -42,6 +43,22 @@ it("keeps settled workers under their parent, bounds the initial page, and revea
   const revealed = sidebarWorkerPage(restored, SIDEBAR_WORKER_PAGE_SIZE, writer.id);
   expect(revealed).toHaveLength(10);
   expect(revealed).toContain(writer);
+
+  const firstPage = {
+    snapshotSequence: 1,
+    threads: [],
+    nextWorkerPage: { threadId: newest.id, createdAt: newest.createdAt },
+    remainingWorkers: 2,
+  };
+  expect(remainingSidebarWorkers([newest, writer], [], 10, firstPage)).toBe(1);
+  expect(
+    remainingSidebarWorkers([newest, writer], [], 10, { ...firstPage, remainingWorkers: 1 }),
+  ).toBe(0);
+  expect(remainingSidebarWorkers([newest], [writer], 10, firstPage)).toBe(1);
+  expect(remainingSidebarWorkers([newest, writer], [], 1, firstPage)).toBe(2);
+  expect(
+    remainingSidebarWorkers([newest], [{ ...writer, createdAt: newest.createdAt }], 10, firstPage),
+  ).toBe(1);
 });
 
 it("nests a worker's own children under that worker, and lists them under the root once it is archived", () => {

@@ -32,6 +32,7 @@ import type { SidebarProviderEntry } from "./SidebarThreadRow";
 import {
   idleWorkerHolding,
   indexSidebarWorkers,
+  remainingSidebarWorkers,
   sidebarWorkerPage,
   sidebarWorkerRecedes,
 } from "./SidebarWorkers.logic";
@@ -94,7 +95,7 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   const pageKey = JSON.stringify([environmentId, id]);
   const { count: pageCount, state, rows } = threadFamilies.workerPages(pageKey);
   const [count, setCount] = useAtom(pageCount);
-  const { pages, failedQuery } = useAtomValue(paging ? state : unpagedWorkers);
+  const { pages, waiting, failedQuery } = useAtomValue(paging ? state : unpagedWorkers);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- merges the mounted pages with authoritative shell deltas
   useEffect(() => {
     if (paging) return threadFamilies.mountRows(appAtomRegistry, environmentId, pageKey, rows);
@@ -117,7 +118,14 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
     ...(props.includeRunning ? running : EMPTY),
     ...sidebarWorkerPage(idle, limit, selectedOutsidePage),
   ];
-  const remaining = Math.max(idle.length - limit, pages.at(-1)?.remainingWorkers ?? 0);
+  const lastPage = pages.at(-1);
+  const remaining = remainingSidebarWorkers(idle, running, limit, lastPage);
+  const nextNestedPage =
+    remaining === 0 && !waiting && failedQuery === null ? lastPage?.nextWorkerPage : undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- remaining pages can carry nested workers for rows already shown
+  useEffect(() => {
+    if (nextNestedPage !== undefined) setCount((current) => current + 1);
+  }, [nextNestedPage, setCount]);
   if (workers.length === 0 && !canPage && failedQuery === null) return null;
   return (
     <ul

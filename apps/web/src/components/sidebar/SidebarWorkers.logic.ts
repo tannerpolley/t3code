@@ -1,5 +1,6 @@
 import {
   isProviderNativeSubagentThread,
+  type OrchestrationV2ThreadFamily,
   type ThreadId,
   workerListParentIds,
 } from "@t3tools/contracts";
@@ -88,6 +89,23 @@ export function sidebarWorkerPage(
   const selected = idle.findIndex((child) => child.id === selectedId);
   if (selected >= limit) visible[visible.length - 1] = idle[selected]!;
   return visible;
+}
+
+export function remainingSidebarWorkers(
+  idle: readonly SidebarThreadSummary[],
+  running: readonly SidebarThreadSummary[],
+  limit: number,
+  page: OrchestrationV2ThreadFamily | undefined,
+) {
+  const hiddenIdle = Math.max(0, idle.length - limit);
+  const cursor = page?.nextWorkerPage;
+  const remaining = page?.remainingWorkers ?? 0;
+  if (cursor === undefined || remaining === 0) return hiddenIdle;
+  const onLaterPage = (worker: SidebarThreadSummary) =>
+    worker.createdAt < cursor.createdAt ||
+    (worker.createdAt === cursor.createdAt && worker.id < cursor.threadId);
+  const knownLater = idle.filter(onLaterPage).length + running.filter(onLaterPage).length;
+  return hiddenIdle + Math.max(0, remaining - knownLater);
 }
 
 /** Only finished, disposable rows recede; a Writer, a pinned thread, or an issue worker whose issue is not done will be used again. */
