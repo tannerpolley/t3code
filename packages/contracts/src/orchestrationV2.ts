@@ -685,6 +685,8 @@ export function isProviderNativeSubagentThread(
   return thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider";
 }
 
+export const DELEGATED_TASK_TURN_ITEM_PREFIX = "turn-item:delegated-task:";
+
 export const IDLE_COMPACTION_TEXT = "/compact";
 
 interface CompactionMessageFields {

@@ -302,6 +302,23 @@ it("leaves older-server inherited work settled when an unlinked child runs", () 
       overlay.summary(old.issues[0]!, scope, environmentId, indexIssueWork([root, running])),
     ),
   ).toBe("backlog");
+  const native = {
+    ...running,
+    id: ThreadId.make("native"),
+    source: { ...running.source, creationSource: "provider" as const },
+  };
+  const stored = old.issues[0]!;
+  const issue = {
+    ...stored,
+    pullRequestCount: 3,
+    liveWork: [
+      ...stored.liveWork,
+      { ...stored.liveWork[1]!, threadId: native.id, status: "working" as const },
+    ],
+  };
+  expect(
+    withLiveIssueWork({ ...old, issues: [issue] }, [root, running, native]).issues[0],
+  ).toMatchObject({ liveWork: stored.liveWork, pullRequestCount: 3 });
 });
 
 it("combines closing PRs with linked threads' PRs, deduplicates identity and follows streamed PR state", () => {

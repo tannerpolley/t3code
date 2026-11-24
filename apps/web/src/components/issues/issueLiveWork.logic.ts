@@ -97,14 +97,18 @@ export function createLiveIssueWorkOverlay() {
     environmentId: EnvironmentId,
     index: IssueWorkIndex,
   ): T => {
-    // Older servers lack the provenance needed to safely replace their work and PR counts.
-    if (issue.closingPullRequests === undefined) return issue;
+    const closingPullRequests = issue.closingPullRequests;
     const key = scopeKey(environmentId, scope);
-    const storedWork = new Map((issue.liveWork ?? []).map((work) => [work.threadId, work]));
-    const direct = index.issues.get(key)?.get(issue.number) ?? [];
+    const existingWork = issue.liveWork ?? [];
+    const storedWork = new Map(existingWork.map((work) => [work.threadId, work]));
+    const direct =
+      closingPullRequests === undefined ? [] : (index.issues.get(key)?.get(issue.number) ?? []);
     const ids = new Set([...storedWork.keys(), ...direct.map((thread) => thread.id)]);
-    for (const id of ids) {
-      for (const child of index.children.get(threadKey(environmentId, id)) ?? []) ids.add(child.id);
+    if (closingPullRequests !== undefined) {
+      for (const id of ids) {
+        for (const child of index.children.get(threadKey(environmentId, id)) ?? [])
+          ids.add(child.id);
+      }
     }
     const removed = index.removedAt?.get(environmentId);
     const threads = [...ids].map(
@@ -126,6 +130,21 @@ export function createLiveIssueWorkOverlay() {
       sameItems(previous.parents, parents)
     )
       return previous.result as T;
+    // Older servers lack the provenance needed to replace their work and PR counts.
+    if (closingPullRequests === undefined) {
+      const liveWork = existingWork.filter(({ threadId }) => {
+        const thread = index.threads.get(threadKey(environmentId, threadId));
+        return thread === undefined || !isProviderNativeSubagentThread(thread.source);
+      });
+      const result =
+        liveWork.length === existingWork.length
+          ? issue
+          : previous?.result.liveWork !== undefined && sameItems(previous.result.liveWork, liveWork)
+            ? previous.result
+            : { ...issue, liveWork };
+      cached.set(key, { threads, parents, result });
+      return result as T;
+    }
     const active = threads
       .filter((thread) => thread != null)
       .filter((thread) => !isProviderNativeSubagentThread(thread.source))
@@ -163,7 +182,7 @@ export function createLiveIssueWorkOverlay() {
     );
     const pullRequests = issuePullRequests(
       [
-        ...issue.closingPullRequests,
+        ...closingPullRequests,
         ...(issue.pullRequests ?? []).filter((pr) =>
           omittedPrUrls.has(
             (pr.url ?? `https://${pr.host}/${pr.repository}/pull/${pr.number}`).toLowerCase(),

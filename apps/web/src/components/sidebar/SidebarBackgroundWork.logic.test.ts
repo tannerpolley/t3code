@@ -70,7 +70,16 @@ describe("describeSidebarBackgroundWork", () => {
       },
       { taskId: "native-agent", kind: "subagent", childThreadId: nativeChild.id },
       { taskId: "native-roster", kind: "subagent", origin: "provider_native" },
-      { taskId: "roster-agent", description: "Explore", kind: "subagent" },
+      {
+        taskId: "legacy-native-roster",
+        kind: "subagent",
+        providerInstanceId: runningChild.providerInstanceId,
+      },
+      {
+        taskId: "turn-item:delegated-task:remote",
+        kind: "subagent",
+        providerInstanceId: runningChild.providerInstanceId,
+      },
       { taskId: "command", description: "Run tests", kind: "command" },
       { taskId: "monitor", description: "Watch build", kind: "monitor" },
       { taskId: "unknown", kind: "background_task" },
@@ -84,7 +93,7 @@ describe("describeSidebarBackgroundWork", () => {
       ["monitor", "monitor"],
       ["unknown", "background_task"],
       [runningChild.id, "subagent"],
-      ["roster-agent", "subagent"],
+      ["turn-item:delegated-task:remote", "subagent"],
     ]);
     expect(rows[3]).toMatchObject({
       label: "Review the diff",

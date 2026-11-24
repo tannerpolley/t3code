@@ -10,6 +10,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import { fileBasename } from "@t3tools/shared/path";
 
 import {
+  DELEGATED_TASK_TURN_ITEM_PREFIX,
   effectiveThreadRole,
   type ModelSelection,
   type OrchestrationV2PendingBackgroundTask,
@@ -206,7 +207,15 @@ export function describeProjectSidebarWork(
   ownerWorktreePath?: string | null,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
   return describeSidebarBackgroundWork(
-    tasks.filter((task) => task.kind !== "subagent" || task.origin !== "provider_native"),
+    tasks.filter(
+      (task) =>
+        task.kind !== "subagent" ||
+        (task.origin !== "provider_native" &&
+          (task.origin === "app_owned" ||
+            task.childThreadId !== undefined ||
+            // Legacy remote delegations use T3's turn item ID in the roster.
+            task.taskId.startsWith(DELEGATED_TASK_TURN_ITEM_PREFIX))),
+    ),
     runningChildren,
     ownerThreadId,
     ownerWorktreePath,
