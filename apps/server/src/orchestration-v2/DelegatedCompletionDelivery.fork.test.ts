@@ -183,6 +183,8 @@ const finishedWorkerEvents = (
         payload: {
           ...parent.thread,
           id: childThreadId,
+          createdBy: "agent" as const,
+          creationSource: "mcp" as const,
           activeProviderThreadId: null,
           lineage: {
             parentThreadId: parent.threadId,
@@ -920,7 +922,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
 
 it.layer(layerTest)("workspace preparation failure for both cohort owners", (it) => {
   it.effect.each(cohortOwners)(
-    "a %s-owned worker whose workspace preparation fails wakes its parent with the failure",
+    "a %s-owned worker can retry after its delivered preparation failure archives it",
     (owner) =>
       Effect.gen(function* () {
         const engine = yield* Orchestrator.OrchestratorV2;
@@ -942,7 +944,7 @@ it.layer(layerTest)("workspace preparation failure for both cohort owners", (it)
           messageId: MessageId.make(`message:${parent.key}-worker-start`),
           text: "Implement the issue.",
           attachments: [],
-          dispatchMode: { type: "defer_start" },
+          dispatchMode: { type: "defer_start", workspaceStrategy: { type: "root" } },
           createdBy: "agent",
           creationSource: "server",
         });
@@ -975,6 +977,23 @@ it.layer(layerTest)("workspace preparation failure for both cohort owners", (it)
         assert.include(task.result, "Worktree setup failed: branch already exists");
         assert.equal(task.completionDelivery?.state, "claimed");
         assert.deepEqual(parent.cohortOf(after)?.delivery?.taskIds, [worker.task.id]);
+        yield* engine.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make(`${parent.key}-worker-preparation-observed`),
+          parentThreadId: parent.threadId,
+          taskId: task.id,
+          observedByRunId: parent.parentRunId ?? RunId.make("observing-run"),
+        });
+        assert.isNotNull((yield* engine.getThreadProjection(childThreadId)).thread.archivedAt);
+        yield* engine.dispatch({
+          type: "prepared-run.retry",
+          commandId: CommandId.make(`${parent.key}-worker-preparation-retry`),
+          threadId: childThreadId,
+          runId: preparing.id,
+        });
+        const retried = yield* engine.getThreadProjection(childThreadId);
+        assert.isNull(retried.thread.archivedAt);
+        assert.equal(retried.runs[0]?.status, "preparing");
       }),
   );
 });

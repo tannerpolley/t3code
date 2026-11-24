@@ -276,6 +276,7 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly willRetry?: boolean;
+    readonly archiveDelegatedCompletion?: (taskIds: ReadonlyArray<NodeId>) => Effect.Effect<void>;
   }) => Effect.Effect<void, ProviderTurnStartError>;
   readonly failStartingRun: (input: {
     readonly threadId: ThreadId;
@@ -567,11 +568,7 @@ export const layer: Layer.Layer<
     );
 
     const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (
-      input: {
-        readonly threadId: ThreadId;
-        readonly runId: RunId;
-        readonly willRetry?: boolean;
-      },
+      input: Parameters<ProviderTurnStartServiceV2Shape["start"]>[0],
       startingRun: OrchestrationV2Run,
       claimStartupDecision: Effect.Effect<boolean>,
     ) {
@@ -2427,6 +2424,14 @@ export const layer: Layer.Layer<
         attemptId: attempt.id,
         baseline,
         loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
+        ...(message.delegatedCompletion === undefined ||
+        input.archiveDelegatedCompletion === undefined
+          ? {}
+          : {
+              onPromptAccepted: input.archiveDelegatedCompletion(
+                message.delegatedCompletion.taskIds,
+              ),
+            }),
         relatedThreadIds: routableSubagents.flatMap((subagent) =>
           subagent.childThreadId === null ? [] : [subagent.childThreadId],
         ),

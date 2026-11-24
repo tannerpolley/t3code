@@ -318,7 +318,6 @@ export type ProjectionSettlementCandidate = Pick<
     readonly workerResult?: {
       readonly taskId: NodeId;
       readonly completedAt: number;
-      readonly availableAt: number;
     };
     readonly workerTemporaryCompletedAt?: number | null;
     /** A temporary worker in its parent's checkout, whose branch links belong to the parent. */
@@ -2234,6 +2233,7 @@ export function threadShellFromProjection(
     createdAt: projection.thread.createdAt,
     updatedAt: projection.thread.updatedAt,
     archivedAt: projection.thread.archivedAt,
+    archivedByDelegatedResult: projection.thread.archivedByDelegatedResult,
     settledOverride: projection.thread.settledOverride,
     settledAt: projection.thread.settledAt,
     unsettledAt: projection.thread.unsettledAt ?? null,
@@ -2604,6 +2604,7 @@ function shellFromState(input: {
     createdAt: input.state.thread.createdAt,
     updatedAt: input.state.updatedAt,
     archivedAt: input.state.thread.archivedAt,
+    archivedByDelegatedResult: input.state.thread.archivedByDelegatedResult,
     settledOverride: input.state.thread.settledOverride,
     settledAt: input.state.thread.settledAt,
     unsettledAt: input.state.thread.unsettledAt ?? null,
@@ -9731,7 +9732,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 readonly shares_parent_checkout: number | null;
                 readonly result_task_id: string | null;
                 readonly result_completed_at: string | null;
-                readonly result_available_at: string | null;
               }
             >`
             SELECT t.thread_id, t.payload_json,
@@ -9765,7 +9765,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               } AS shares_parent_checkout,
               ${workers === undefined ? sql`NULL` : sql`incoming.subagent_id`} AS result_task_id,
               ${resultCompletedAt} AS result_completed_at,
-              ${resultAvailableAt} AS result_available_at,
               ${nativeSubagentPayload} AS native_subagent_payload_json,
               ${
                 workers === undefined
@@ -10003,15 +10002,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     ? {}
                     : {
                         workerArchiveSequence: row.worker_archive_sequence,
-                        ...(row.result_task_id === null ||
-                        row.result_completed_at === null ||
-                        row.result_available_at === null
+                        ...(row.result_task_id === null || row.result_completed_at === null
                           ? {}
                           : {
                               workerResult: {
                                 taskId: NodeId.make(row.result_task_id),
                                 completedAt: Date.parse(row.result_completed_at),
-                                availableAt: Date.parse(row.result_available_at),
                               },
                             }),
                         ...(row.temporary_worker === 1

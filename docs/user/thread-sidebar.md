@@ -621,20 +621,17 @@ question and answer when the thread wakes; the question stays unanswered.
 
 ### Archived workers
 
-The orchestrator archives its delegated workers in the same environment when it
-receives their final results, including interrupted, failed, and cancelled work.
-A worker can be archived even if it has no pull request or issue. Workers with
-running or queued work, a pending question or approval, or unfinished child work
-stay visible. Pinned workers, Writers, and side chats are exempt from worker archiving.
+T3 Code archives delegated workers in the same environment as soon as their
+parent receives their final results, including interrupted, failed, and cancelled
+work. Workers with running or queued work, pending questions or approvals, or
+unfinished child work stay visible. Writers, orchestrators, pinned threads,
+side chats, and threads you created are exempt. Archive children on linked
+environments manually.
 
-If an eligible worker is still visible five minutes after its result arrives,
-T3 Code posts a reminder with the count and names of the workers to archive.
-When the parent is already finished or archived, T3 Code reminds the next active
-parent in the same environment. Archive children on linked environments manually.
-The reminder count includes only children in the orchestrator’s own environment.
+Sending a follow-up to an archived worker or retrying its work restores the
+thread automatically. You can also restore it from **Settings → Archived threads**.
+It stays visible until the parent receives a new result.
 
-Restore a worker from **Settings → Archived threads**. It stays visible until
-there is a new completion. Retrying an archived worker restores it for you.
 **Archived worker retention** controls when eligible archived workers and their
 history are permanently deleted. The default is 14 days. Choose
 **Never** to keep them indefinitely. Writers are exempt from automatic deletion.

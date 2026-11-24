@@ -69,6 +69,7 @@ import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { isLocalDelegatedWorker } from "./WorkerArchiveCandidates.ts";
 import { FORCE_STOP_REASON } from "./RunInterruptReason.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
@@ -637,6 +638,7 @@ export interface ThreadManagementServiceShape {
   readonly getThreadEventSequence: Orchestrator.OrchestratorV2["Service"]["getThreadEventSequence"];
   readonly recoverDelegatedTask: Orchestrator.OrchestratorV2["Service"]["recoverDelegatedTask"];
   readonly cancelDelegatedTask: Orchestrator.OrchestratorV2["Service"]["cancelDelegatedTask"];
+  readonly archiveDelegatedCompletion: Orchestrator.OrchestratorV2Shape["archiveDelegatedCompletion"];
   readonly delegatedTaskResultPending: Orchestrator.OrchestratorV2["Service"]["delegatedTaskResultPending"];
   readonly streamStoredEvents: Orchestrator.OrchestratorV2["Service"]["streamStoredEvents"];
   readonly streamStoredEventsFrom: Orchestrator.OrchestratorV2["Service"]["streamStoredEventsFrom"];
@@ -967,7 +969,13 @@ const make = Effect.gen(function* () {
     "ThreadManagementService.sendToThread",
   )(function* (input) {
     const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
-    if (target.thread.archivedAt !== null) {
+    if (
+      target.thread.archivedAt !== null &&
+      (!isLocalDelegatedWorker(target.thread) ||
+        input.linkedSender !== undefined ||
+        input.scheduledTaskId !== undefined ||
+        (input.createdBy !== "user" && input.creationSource !== "mcp"))
+    ) {
       return yield* new ThreadManagementThreadArchivedError({
         threadId: input.threadId,
       });
@@ -2162,6 +2170,7 @@ const make = Effect.gen(function* () {
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,
     cancelDelegatedTask: orchestrator.cancelDelegatedTask,
     delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
+    archiveDelegatedCompletion: orchestrator.archiveDelegatedCompletion,
     streamStoredEvents: orchestrator.streamStoredEvents,
     streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
     streamDomainEvents: orchestrator.streamDomainEvents,

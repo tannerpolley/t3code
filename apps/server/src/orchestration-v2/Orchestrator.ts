@@ -270,7 +270,11 @@ import {
   usageLimitRecoveryPending,
 } from "./usageLimitRecoveryPending.ts";
 import { isIdleWorker, isSnoozed, workerCompletionIsCurrent } from "./ThreadSettlementService.ts";
-import { finishedWorkerAt, finishedWorkers } from "./WorkerArchiveCandidates.ts";
+import {
+  finishedWorkerAt,
+  finishedWorkers,
+  isLocalDelegatedWorker,
+} from "./WorkerArchiveCandidates.ts";
 import {
   makeForkDelegatedCompletion,
   completionCohort,
@@ -475,6 +479,10 @@ export interface OrchestratorV2Shape {
     effect: Effect.Effect<void, E, R>,
   ) => Effect.Effect<void, E | OrchestratorProjectionError, R>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
+  readonly archiveDelegatedCompletion: (
+    parentThreadId: ThreadId,
+    taskIds: ReadonlyArray<NodeId>,
+  ) => Effect.Effect<void>;
   readonly recoverDelegatedTask: (
     threadId: ThreadId,
     options?: { readonly sourceRunId?: RunId; readonly completedRunId?: RunId },
@@ -950,6 +958,29 @@ function threadCreateInitialMessage(
         : { type: "defer_start", workspaceStrategy },
     createdBy: command.createdBy,
     creationSource: command.creationSource,
+  };
+}
+
+function unarchiveThread(thread: OrchestrationV2AppThread, now: DateTime.Utc) {
+  return {
+    ...thread,
+    archivedAt: null,
+    archivedBySettlement: undefined,
+    archivedByDelegatedResult: undefined,
+    ...(thread.lineage.relationshipToParent === "subagent"
+      ? { workerUnarchivedAt: DateTime.formatIso(now) }
+      : {}),
+    updatedAt: now,
+  };
+}
+
+function workerUnarchiveEvent(thread: OrchestrationV2AppThread, now: DateTime.Utc) {
+  return {
+    type: "thread.unarchived" as const,
+    threadId: thread.id,
+    providerInstanceId: thread.providerInstanceId,
+    occurredAt: now,
+    payload: unarchiveThread(thread, now),
   };
 }
 
@@ -5563,21 +5594,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             archivedAt: now,
+            ...(command.archiveDelegatedWorker ? { archivedByDelegatedResult: true as const } : {}),
             titleRegeneration: null,
             guestShare: null,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             updatedAt: now,
           };
         case "thread.unarchive":
-          return {
-            ...thread,
-            archivedAt: null,
-            archivedBySettlement: undefined,
-            ...(thread.lineage.relationshipToParent === "subagent"
-              ? { workerUnarchivedAt: DateTime.formatIso(now) }
-              : {}),
-            updatedAt: now,
-          };
+          return unarchiveThread(thread, now);
         case "thread.settle": {
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
@@ -7941,6 +7965,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: projection.thread,
       });
       return;
+    }
+    if (
+      projection.thread.archivedAt !== null &&
+      projection.thread.deletedAt === null &&
+      isLocalDelegatedWorker(projection.thread) &&
+      mayStartSubagentFollowup(command) &&
+      command.linkedSender === undefined &&
+      command.notification === undefined &&
+      command.delegatedCompletion === undefined
+    ) {
+      const event = yield* emit(
+        events,
+        command,
+      )(workerUnarchiveEvent(projection.thread, yield* DateTime.now));
+      projection = applyToProjection(projection, event);
     }
     const activeProviderInstanceId = projection.providerThreads.find(
       (candidate) => candidate.id === projection.thread.activeProviderThreadId,
@@ -13823,7 +13862,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       state === null ||
       state.run.workspacePreparation === undefined ||
       failureItem === undefined ||
-      projection.thread.archivedAt !== null ||
+      (projection.thread.archivedAt !== null && !isLocalDelegatedWorker(projection.thread)) ||
       projection.thread.deletedAt !== null
     ) {
       return yield* new OrchestratorDispatchError({
@@ -13843,6 +13882,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const admitted = admissionWait === null;
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
+    if (projection.thread.archivedAt !== null) {
+      yield* emitEvent(workerUnarchiveEvent(projection.thread, now));
+    }
     const scope = {
       threadId: command.threadId,
       runId: state.run.id,
@@ -16853,6 +16895,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...taskEvents,
       ...completionCohortEvents(projection.thread, parentRun, updatedCohort, now),
     ]);
+    yield* archiveDeliveredWorkers(taskEvents.map(({ payload }) => payload));
     if (nextDelivery !== null) {
       yield* offerDelegatedCompletionDelivery(threadId, messageOwnership.parentRunId);
     }
@@ -18165,6 +18208,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandThreadId,
       mapDispatchError,
     });
+    yield* archiveDeliveredWorkers(
+      result.storedEvents.flatMap(({ event }) =>
+        event.type === "subagent.updated" ? [event.payload] : [],
+      ),
+    );
     if (
       command.type === "repository.work.handoff" &&
       result.storedEvents.some(({ event }) => event.type === "thread.archived")
@@ -18242,6 +18290,68 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ? withSubagentParentLock(command.threadId, dispatch)
       : dispatch;
   });
+
+  const archiveDeliveredWorkers = Effect.fn("Orchestrator.archiveDeliveredWorkers")(function* (
+    tasks: ReadonlyArray<OrchestrationV2Subagent>,
+  ) {
+    for (const task of tasks) {
+      const state = task.completionDelivery?.state;
+      if (task.origin !== "app_owned" || (state !== "acknowledged" && state !== "delivered"))
+        continue;
+      yield* archiveObservedWorker(task.childThreadId, task.id);
+    }
+  });
+
+  const archiveObservedWorker = Effect.fn("Orchestrator.archiveObservedWorker")(function* (
+    threadId: ThreadId | null,
+    taskId: NodeId,
+  ) {
+    if (threadId === null) return;
+    yield* threadDispatch
+      .withLock(
+        threadId,
+        Effect.gen(function* () {
+          const [worker] = yield* projectionStore.getSettlementCandidates(threadId, {});
+          if (
+            worker?.workerResult?.taskId !== taskId ||
+            finishedWorkerAt(worker, yield* DateTime.now) === null
+          )
+            return;
+          yield* dispatchWithReceiptEffect({
+            type: "thread.archive",
+            commandId: CommandId.make(`archive-delivered-worker:${taskId}`),
+            threadId,
+            archiveDelegatedWorker: true,
+          });
+        }),
+      )
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not archive a worker after result delivery", {
+            threadId,
+            taskId,
+            cause,
+          }),
+        ),
+      );
+  });
+
+  const archiveDelegatedCompletion = Effect.fn("Orchestrator.archiveDelegatedCompletion")(
+    function* (parentThreadId: ThreadId, taskIds: ReadonlyArray<NodeId>) {
+      const { subagents } = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+        subagentIds: taskIds,
+      });
+      for (const task of subagents) {
+        if (task.origin === "app_owned") yield* archiveObservedWorker(task.childThreadId, task.id);
+      }
+    },
+    (effect, parentThreadId) =>
+      effect.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not read accepted delegated results", { parentThreadId, cause }),
+        ),
+      ),
+  );
 
   const archiveHandoffWorkers = Effect.fn("Orchestrator.archiveHandoffWorkers")(
     function* (rootThreadId: ThreadId, handoffCommandId: CommandId) {
@@ -18884,6 +18994,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     resumeQueuedRuns,
     withCurrentDelegatedChild,
     recoverDelegatedTasks,
+    archiveDelegatedCompletion,
     recoverDelegatedTask,
     cancelDelegatedTask,
     delegatedTaskResultPending,

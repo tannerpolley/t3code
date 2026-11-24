@@ -38,7 +38,14 @@ class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
 
 type RetainedWorker = Pick<
   OrchestrationV2AppThread,
-  "linkedIssue" | "role" | "lineage" | "projectId" | "worktreePath" | "archivedAt" | "deletedAt"
+  | "linkedIssue"
+  | "role"
+  | "lineage"
+  | "projectId"
+  | "worktreePath"
+  | "archivedAt"
+  | "archivedByDelegatedResult"
+  | "deletedAt"
 >;
 
 export const retainedWorkerSuccessor = Effect.fn("retainedWorkerSuccessor")(function* (

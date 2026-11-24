@@ -666,6 +666,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   >;
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
+  readonly onPromptAccepted?: Effect.Effect<void>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
@@ -2426,6 +2427,7 @@ export const layer: Layer.Layer<
               Effect.forkDetach,
             ),
           ),
+          Effect.tap(() => input.onPromptAccepted ?? Effect.void),
           Effect.catchCause((cause) =>
             Effect.logError("orchestration V2 provider turn start failed", {
               runId: input.run.id,
