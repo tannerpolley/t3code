@@ -127,7 +127,7 @@ it("matches projects in the selected environment, including fork and upstream", 
   expect(findIssueProject(projects, { ...issue, host: "different.test" }, null)).toBeNull();
 });
 
-it("addresses Forgejo origins with their port", () => {
+it("does not expose Issues for unsupported origins", () => {
   const identity: RepositoryIdentity = {
     provider: SourceControlProviderKind.make("forgejo"),
     canonicalKey: "forge.example:3000/upstream/repo",
@@ -139,10 +139,7 @@ it("addresses Forgejo origins with their port", () => {
     },
     origin: { canonicalKey: "forge.example:3000/owner/repo", displayName: "owner/repo" },
   };
-  expect(threadIssueRepository(identity)).toEqual({
-    host: "forge.example:3000",
-    repository: "owner/repo",
-  });
+  expect(threadIssueRepository(identity)).toBeNull();
   expect(
     threadIssueRepository({ ...identity, provider: SourceControlProviderKind.make("bitbucket") }),
   ).toBeNull();
