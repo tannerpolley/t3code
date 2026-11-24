@@ -2014,10 +2014,17 @@ it.effect("lets managed children stop their own PR watches", () =>
             McpToolAccessTestkit.liveThreadsLayer,
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
-            Layer.mock(PullRequestService.PullRequestService)({}),
+            Layer.mock(PullRequestService.PullRequestService)({
+              servesProject: () => Effect.succeed(true),
+            }),
             Layer.mock(GitManager.GitManager)({}),
             Layer.mock(Orchestrator.OrchestratorV2)({}),
-            Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadShell: (threadId) =>
+                Effect.succeed({
+                  projectId: ProjectId.make(threadId.replace("thread-", "project-")),
+                } as never),
+            }),
             Layer.mock(IssueChangeService.IssueChangeService)({
               isManagedCaller: (threadId) => Effect.succeed(threadId === "thread-managedToken"),
             }),

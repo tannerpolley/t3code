@@ -24,7 +24,6 @@ import { T, useGT } from "gt-react";
 import { useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
-import { ThreadLinkedIssueRow } from "./ThreadLinkedIssueRow";
 import { ThreadDetailsArtifactRows } from "./ThreadDetailsArtifactRows";
 import { ThreadDetailsRepositoryIssueRows } from "./ThreadDetailsRepositoryIssueRows";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -358,9 +357,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               </div>
             </div>
 
-            {!props.draftId && visible.issues ? (
-              <ThreadLinkedIssueRow environmentId={props.environmentId} threadId={props.threadId} />
-            ) : null}
             {density === "full" && !props.draftId && (visible.artifacts || visible.issues) ? (
               <div data-thread-details-lists>
                 {visible.artifacts ? (

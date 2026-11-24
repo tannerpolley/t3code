@@ -1731,6 +1731,16 @@ describe("CodexAdapterV2 session initialize", () => {
     return Predicate.isTagged(error, "CodexAppServerUnresponsiveError");
   };
 
+  const failedOnWireTimeout = (exit: Exit.Exit<unknown, unknown>): boolean => {
+    if (!Exit.isFailure(exit)) return false;
+    let error: unknown = Cause.squash(exit.cause);
+    while (Predicate.hasProperty(error, "cause")) {
+      if (Predicate.isTagged(error, "CodexAppServerRequestTimeoutError")) return true;
+      error = error.cause;
+    }
+    return Predicate.isTagged(error, "CodexAppServerRequestTimeoutError");
+  };
+
   // regression: #24300 a wedged shared app-server left thread/start pending and stayed ready
   it.effect("fails and retires a shared app-server that never answers thread/start", () =>
     Effect.gen(function* () {
@@ -1862,7 +1872,11 @@ describe("CodexAdapterV2 session initialize", () => {
         `startTurn was still waiting after ${UNANSWERED_REQUEST_BUDGET}`,
       );
       if (Option.isSome(settled)) {
-        assert.isTrue(failedOnDeadline(settled.value), "startTurn did not fail on the deadline");
+        // Fork: turn requests fail on the protocol's wire timeout and keep the shared app-server.
+        assert.isTrue(
+          failedOnDeadline(settled.value) || failedOnWireTimeout(settled.value),
+          "startTurn did not fail on the deadline",
+        );
       }
     }).pipe(
       Effect.scoped,
@@ -3887,6 +3901,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           cachedInputTokens: 2,
           outputTokens: 5,
           reasoningTokens: 1,
+          // Fork: usage budgets record the turn's context size.
+          firstInputContext: 10,
+          peakInputContext: 10,
         });
       }
       assert.isEmpty(assistantMessages(harness.events));

@@ -94,6 +94,7 @@ describe("fork migration ledger", () => {
           { migration_id: 32, name: "QuietThreadActivity" },
           { migration_id: 33, name: "ThreadLineageIndex" },
           { migration_id: 34, name: "UsageBudget" },
+          { migration_id: 35, name: "UpstreamUsageLimitIndex" },
         ],
       );
       const columns = yield* sql<{ name: string }>`PRAGMA table_info(owner_decisions)`;
@@ -229,6 +230,26 @@ describe("fork migration ledger", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("rebuilds a fork-built usage-limit index in upstream's form", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 98 });
+      // The index as fork 019 built it before upstream 099 existed.
+      yield* sql`
+        CREATE INDEX orchestration_v2_projection_turn_items_usage_limit_idx
+        ON orchestration_v2_projection_turn_items(thread_id)
+        WHERE type = 'error'
+          AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.failure.class') END = 'usage_limit'
+      `;
+      yield* runMigrations();
+      const [index] = yield* sql<{ readonly sql: string }>`
+        SELECT sql FROM sqlite_master
+        WHERE name = 'orchestration_v2_projection_turn_items_usage_limit_idx'
+      `;
+      assert.include(index?.sql ?? "", "status = 'failed'");
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("backfills existing artifact sections and initializes descriptions to null", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -309,6 +330,7 @@ describe("fork migration ledger", () => {
           { migration_id: 32, name: "QuietThreadActivity" },
           { migration_id: 33, name: "ThreadLineageIndex" },
           { migration_id: 34, name: "UsageBudget" },
+          { migration_id: 35, name: "UpstreamUsageLimitIndex" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

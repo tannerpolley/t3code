@@ -163,6 +163,8 @@ function makeLocalCommandHarness(input: {
       projectId: ProjectId.make("project-native-account-command"),
       branch: input.worktreePath === undefined ? null : "feature/restore",
       worktreePath: input.worktreePath ?? null,
+      runtimeMode: "full-access",
+      interactionMode: "default",
     } as OrchestrationV2ThreadProjection["thread"],
     runs: [
       ...(input.previousNativeSession
@@ -829,7 +831,13 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         failReadsAfterRunning: true,
       });
       harness.createWorktree.mockImplementation(() =>
-        fileSystem.makeDirectory(worktreePath).pipe(Effect.as({} as never), Effect.orDie),
+        fileSystem
+          .makeDirectory(worktreePath)
+          .pipe(
+            Effect.andThen(fileSystem.writeFileString(path.join(worktreePath, ".git"), "")),
+            Effect.as({} as never),
+            Effect.orDie,
+          ),
       );
       const open = harness.open.getMockImplementation()!;
       harness.open.mockImplementation(() =>

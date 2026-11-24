@@ -107,6 +107,7 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -2470,18 +2471,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         yield* client.awaitTermination.pipe(Effect.catch(retireAppServer), Effect.forkScoped);
         // The outcome of an unanswered request is unknown, so it fails rather than retries.
-        const withAppServerDeadline =
-          (method: string) =>
-          <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        // Fork: a wire timeout must reach the deadline below, not the best-effort config fallbacks.
+        const isNotWireTimeout = (error: unknown) =>
+          !Predicate.isTagged(error, "CodexAppServerRequestTimeoutError");
+        const withAppServerDeadline = (method: string) => {
+          const unresponsive = Effect.suspend(() => {
+            const error = new CodexAppServerUnresponsiveError({ method });
+            return retireAppServer(error).pipe(Effect.andThen(Effect.fail(error)));
+          });
+          return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
             effect.pipe(
               Effect.timeoutOrElse({
                 duration: CODEX_APP_SERVER_REQUEST_DEADLINE,
-                orElse: () => {
-                  const error = new CodexAppServerUnresponsiveError({ method });
-                  return retireAppServer(error).pipe(Effect.andThen(Effect.fail(error)));
-                },
+                orElse: () => unresponsive,
               }),
+              // Fork: the protocol's 60s wire timeout fires first; for these requests it means the same.
+              Effect.catchIf(
+                (error) => !isNotWireTimeout(error),
+                () => unresponsive,
+              ),
             );
+        };
         // Read per thread: a workspace's project config can add its own servers.
         const readStdioMcpServers = (cwd: string | null | undefined) =>
           ensureInitialized.pipe(
@@ -2492,7 +2502,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }),
             ),
             Effect.map((response) => codexStdioMcpServerNames(response.config.mcp_servers)),
-            Effect.catch(() =>
+            Effect.catchIf(isNotWireTimeout, () =>
               Effect.logDebug("Codex config read failed.").pipe(
                 Effect.as<ReadonlyArray<string>>([]),
               ),
@@ -8304,7 +8314,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             .request("config/read", { cwd: turnInput.runtimePolicy.cwd, includeLayers: false })
             .pipe(
               Effect.map((response) => response.config.model_reasoning_summary ?? undefined),
-              Effect.catch(() =>
+              Effect.catchIf(isNotWireTimeout, () =>
                 Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
               ),
               withAppServerDeadline("config/read"),
@@ -8535,6 +8545,29 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             detail,
             payload: cause,
           });
+        // Fork: a delegated thread's tool profile still applies; only cwd and model are left out.
+        const resumeRuntimeParams = Effect.fnUntraced(function* (
+          appThreadId: ThreadId | null,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
+        ) {
+          const mcpSession = yield* readMcpSession(appThreadId);
+          if (runtimePolicy?.enableTools === undefined)
+            return codexThreadRuntimeParams({
+              threadId: appThreadId,
+              mcpSession,
+              stdioMcpServers: yield* readStdioMcpServers(undefined),
+            });
+          const {
+            cwd: _cwd,
+            model: _model,
+            ...params
+          } = yield* resolveThreadRuntimeParams({
+            threadId: appThreadId,
+            mcpSession,
+            runtimePolicy,
+          });
+          return params;
+        });
         // Codex unloads idle threads; MCP requests against one fail until it is resumed.
         // The session's model and cwd belong to whichever thread opened this shared
         // app-server, so leave them out: Codex resumes with the thread's saved settings
@@ -8548,12 +8581,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           request.pipe(
             Effect.catchIf(isCodexThreadNotFoundError, () =>
               Effect.gen(function* () {
-                const params = yield* resolveThreadRuntimeParams({
-                  threadId: providerThread.appThreadId,
-                  mcpSession: yield* readMcpSession(providerThread.appThreadId),
-                  modelSelection: input.modelSelection,
-                  runtimePolicy: runtimePolicy ?? { cwd: input.runtimePolicy.cwd },
-                });
+                const params = yield* resumeRuntimeParams(
+                  providerThread.appThreadId,
+                  runtimePolicy,
+                );
                 yield* resumeNativeThread(threadId, { excludeTurns: true, ...params });
               }).pipe(Effect.andThen(request)),
             ),
@@ -9874,12 +9905,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (!loaded) {
                 yield* resumeNativeThread(threadId, {
                   excludeTurns: true,
-                  ...(yield* resolveThreadRuntimeParams({
-                    threadId: threadInput.providerThread.appThreadId,
-                    mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
-                    modelSelection: input.modelSelection,
-                    runtimePolicy: threadInput.runtimePolicy ?? { cwd: input.runtimePolicy.cwd },
-                  })),
+                  ...(yield* resumeRuntimeParams(
+                    threadInput.providerThread.appThreadId,
+                    threadInput.runtimePolicy,
+                  )),
                 });
               }
               const response = yield* ensureInitialized.pipe(

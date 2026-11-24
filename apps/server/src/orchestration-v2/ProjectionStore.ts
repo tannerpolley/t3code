@@ -5644,8 +5644,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       -- The type index would read every error of the thread to find a usage limit.
                       SELECT 1 FROM orchestration_v2_projection_turn_items error
                         INDEXED BY orchestration_v2_projection_turn_items_usage_limit_idx
-                      WHERE error.thread_id = child.thread_id AND error.type = 'error'
-                        AND CASE WHEN json_valid(error.payload_json) THEN json_extract(error.payload_json, '$.failure.class') END = 'usage_limit'
+                      -- Spelled as in 099_BackgroundRecoveryIndexes so the forced index applies.
+                      WHERE error.thread_id = child.thread_id
+                        AND error.type = 'error' AND error.status = 'failed'
+                        AND CASE WHEN json_valid(error.payload_json) THEN
+                          json_extract(error.payload_json, '$.failure.class') = 'usage_limit'
+                          ELSE 0 END
                     ))
                     AND NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_context_transfers
