@@ -434,12 +434,14 @@ it.effect("an outside agent launches by role, nested under its own thread", () =
     expect(parent.mcpClientSessionId).toBe("session-1");
     expect(parent.delegatedFrom).toBeUndefined();
 
-    yield* launch({
+    const nested = {
       title: "[FM] Fix the import",
       role: "implementor",
       level: "routine",
       parentThreadId: parent.threadId!,
-    });
+      clientRequestId: "fix-import",
+    } as const;
+    yield* launch(nested);
     expect(launched[1]).toMatchObject({
       modelSelection: { instanceId: codex, model: roleModel },
       role: "implementor",
@@ -452,6 +454,9 @@ it.effect("an outside agent launches by role, nested under its own thread", () =
       },
     });
 
+    // A retry naming the same parent passes the checks and reuses the first launch's thread.
+    expect(yield* launch(nested)).toMatchObject({ threadId: launched[1]!.threadId });
+
     // A nested thread cannot parent another, so nesting stays one level deep, and an agent
     // nests only under its own sign-in's threads.
     for (const parentThreadId of [launched[1]!.threadId!, OTHER_AGENT_THREAD]) {
@@ -459,7 +464,7 @@ it.effect("an outside agent launches by role, nested under its own thread", () =
         code: "invalid_request",
       });
     }
-    expect(launched).toHaveLength(2);
+    expect(launched).toHaveLength(3);
 
     // A retry replays the first launch, so it cannot add a parent the first one lacked.
     yield* launch({ title: "[FM] Unnested", clientRequestId: "unnested" });
@@ -470,7 +475,7 @@ it.effect("an outside agent launches by role, nested under its own thread", () =
         parentThreadId: parent.threadId!,
       }),
     ).toMatchObject({ code: "invalid_request" });
-    expect(launched).toHaveLength(3);
+    expect(launched).toHaveLength(4);
   }),
 );
 

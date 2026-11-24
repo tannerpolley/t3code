@@ -218,7 +218,7 @@ const nestingParent = Effect.fn("mcp.launchNestingParent")(function* (
     parent.deletedAt !== null ||
     parent.mcpClientSessionId !== outsideSessionId ||
     parent.lineage.parentThreadId !== null ||
-    parent.delegatedFrom !== undefined
+    parent.delegatedFrom != null
   )
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
