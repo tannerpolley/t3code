@@ -597,6 +597,7 @@ const make = Effect.gen(function* () {
     input: PreparationInput,
     threadId: ThreadId,
     runId: RunId | null,
+    preparationFiber: Fiber.Fiber<unknown, unknown>,
   ) {
     const project = yield* projects.getById(input.projectId).pipe(
       Effect.mapError(mapError(input, "resolve-project", threadId)),
@@ -628,7 +629,7 @@ const make = Effect.gen(function* () {
         branch: input.workspaceStrategy.branch ?? null,
         baseRef: input.workspaceStrategy.baseRef,
         stages: ["fetch", "checkout", "submodules", "setup-script", "agent"],
-        fiber: yield* Effect.fiber,
+        fiber: preparationFiber,
       });
     } else if (reused !== undefined) {
       yield* setupTracker.begin({
@@ -636,7 +637,7 @@ const make = Effect.gen(function* () {
         branch: input.workspaceStrategy.branch ?? null,
         baseRef: reused.baseRef,
         stages: ["setup-script", "agent"],
-        fiber: yield* Effect.fiber,
+        fiber: preparationFiber,
       });
     }
     yield* Effect.gen(function* () {
@@ -1458,7 +1459,8 @@ const make = Effect.gen(function* () {
     runId: RunId | null,
   ) {
     const preparation = Effect.gen(function* () {
-      const prepare = prepareInBackground(input, threadId, runId);
+      // Cancelling setup must join the fiber that persists failure, outside the race.
+      const prepare = prepareInBackground(input, threadId, runId, yield* Effect.fiber);
       if (
         runId === null ||
         (input.workspaceStrategy.type !== "worktree" && input.reusedWorktree === undefined)

@@ -2858,12 +2858,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
       };
+      const admissionTime = yield* DateTime.now;
+      if (
+        options?.userStarted !== true &&
+        automaticProviderSwitch.awaitsSwitchContinuation(projection, admissionTime)
+      ) {
+        return;
+      }
       // A limited provider would fail and consume every waiting message.
       if (
         usageLimitHoldsQueue(
           projection,
           queuedRun.providerInstanceId,
-          options?.userStarted === true ? undefined : yield* DateTime.now,
+          options?.userStarted === true ? undefined : admissionTime,
         )
       ) {
         return;
