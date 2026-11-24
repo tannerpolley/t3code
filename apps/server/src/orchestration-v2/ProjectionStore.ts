@@ -9690,7 +9690,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         sql<{ thread_id: ThreadId; archived_at: string }>`
           SELECT thread_id, archived_at FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL AND archived_at <= ${DateTime.formatIso(archivedBefore)}
-            AND json_extract(payload_json, '$.role') = 'orchestrator'
             AND json_extract(payload_json, '$.lineage.rootThreadId') = thread_id
             AND json_extract(payload_json, '$.lineage.parentThreadId') IS NULL
             AND json_extract(payload_json, '$.repositoryOrchestration.retiredToThreadId') =

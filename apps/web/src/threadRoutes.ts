@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
+import { hasHiddenTag, type EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
 import type {
   EnvironmentId,
   OrchestrationV2AppThread,
@@ -46,6 +46,7 @@ export function resolveThreadRouteRenderState(input: {
   serverThreadDeleted: boolean;
   unlistedThreadDetail: EnvironmentThreadState;
   draftThreadExists: boolean;
+  hiddenArchivedThreadTags?: ReadonlyArray<string> | null;
   /** The app has no enabled connection to the thread's environment, so its shell never goes live. */
   environmentUnreachable?: boolean;
 }): ThreadRouteRenderState {
@@ -66,10 +67,12 @@ export function resolveThreadRouteRenderState(input: {
   if (projection === null) {
     return "loading";
   }
-  return projection.thread.deletedAt !== null ||
-    (projection.thread.archivedAt !== null && !isArchivedRepositoryPredecessor(projection.thread))
-    ? "missing"
-    : "ready";
+  if (projection.thread.deletedAt !== null) return "missing";
+  if (projection.thread.archivedAt === null) return "ready";
+  if (!isArchivedRepositoryPredecessor(projection.thread)) return "missing";
+  if (input.hiddenArchivedThreadTags == null) return "ready";
+  if (input.unlistedThreadDetail.status !== "live") return "loading";
+  return hasHiddenTag(projection.thread.tags, input.hiddenArchivedThreadTags) ? "missing" : "ready";
 }
 
 export function buildThreadRouteParams(ref: ScopedThreadRef): {
