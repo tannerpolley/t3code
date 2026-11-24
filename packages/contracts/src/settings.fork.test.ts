@@ -1,4 +1,4 @@
-import { RepositoryMilestonePlan } from "./issueWork.ts";
+import { ModelRoleId } from "./threadRole.ts";
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
@@ -82,7 +82,7 @@ describe("model roles", () => {
   });
 
   it("keeps saved issue-work role references usable after the settings migration", () => {
-    const decode = Schema.decodeUnknownSync(RepositoryMilestonePlan);
+    const decode = Schema.decodeUnknownSync(ModelRoleId);
     const mappings = {
       "fast-builder": "implementor-routine",
       "bounded-worker": "implementor-routine",
@@ -101,15 +101,7 @@ describe("model roles", () => {
     const roleIds = resolveModelRoles(decodeServerSettings({})).map(({ id }) => id);
     for (const [oldId, id] of Object.entries(mappings)) {
       if (oldId !== "custom-role") expect(roleIds).toContain(id);
-      expect(
-        decode({
-          number: 1,
-          modelRoleId: oldId,
-          workspace: "project",
-          status: "running",
-          fingerprint: "",
-        }).modelRoleId,
-      ).toBe(id);
+      expect(decode(oldId)).toBe(id);
     }
   });
 });

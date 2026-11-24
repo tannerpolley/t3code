@@ -239,7 +239,7 @@ export function viewerRepositoriesFirst<T extends Pick<IssueRepositorySummary, "
 export function repositoryWorkStatus(
   config: Pick<
     RepositoryOrchestration,
-    "paused" | "handoff" | "automaticHandoff" | "retiredToThreadId"
+    "handoff" | "restore" | "automaticHandoff" | "retiredToThreadId"
   > & {
     readonly suspendedIssues: readonly unknown[];
   },
@@ -258,13 +258,14 @@ export function repositoryWorkStatus(
     };
   const phase = repositoryPhase(config);
   const suspended = config.suspendedIssues.length;
+  if (config.restore !== undefined)
+    return { label: resolve(msg("Restoring orchestrator")), needsAttention: true };
   if (
     phase === "draining" ||
     phase === "handoff_verifying" ||
     phase === "handoff_awaiting_approval"
   )
     return { label: resolve(msg("Handing off")), needsAttention: true };
-  if (config.paused) return { label: resolve(msg("Paused")), needsAttention: true };
   if (suspended > 0)
     return {
       label: resolve(

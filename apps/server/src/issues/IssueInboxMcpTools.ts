@@ -35,7 +35,7 @@ export const IssuePostTool = Tool.make("t3_issue_post", {
 
 export const IssueInboxTool = Tool.make("t3_issue_inbox", {
   description:
-    "The repository orchestrator's inbox of issues opened and comments posted through t3_issue_post with another project's source marker. Unmarked writes and other issue changes never enter the Inbox. Available to the repository orchestrator and its delegated children. action=list returns unread events without bodies; action=read requires ids from list and returns snippets and links without acknowledging them. Review each item and revise it if needed, for example with propose_issue_change, then acknowledge it with action=mark_read. An open issue's unacknowledged opening holds it in Inbox; acknowledgment places it in Ready, or the normal section its current state gives it. Comments leave their issue in its current section. mark_read acknowledges ids, or every unread item when ids are omitted. Nothing outside the selected milestones starts automatically.",
+    "Read cross-project issue activity and owner replies to Needs you. Use list for unread IDs, read for snippets and links, then mark_read to acknowledge. An unacknowledged opening holds admission. Acknowledged cards stay in their GitHub status. Todo admits workers after blockers and holds are cleared. Owner replies switch Needs you to Needs orchestrator. Apply the answer, then use a Todo status proposal with clearOrchestratorHold when ready to resume.",
   parameters: IssueInboxToolInput,
   success: IssueInboxToolResult,
   failure: OrchestratorMcpFailure,

@@ -1,6 +1,11 @@
 import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
 import { isDraftPrRepository, issueWorkerBrief } from "../issues/IssueWorkerBrief.ts";
-import { IssueTrackerKind, MessageId } from "@t3tools/contracts";
+import {
+  IssueTrackerKind,
+  MessageId,
+  repositoryAdmitsWork,
+  repositoryPhase,
+} from "@t3tools/contracts";
 import type {
   DelegatedToolAdditions,
   NodeId,
@@ -27,6 +32,7 @@ import * as Ref from "effect/Ref";
 
 import {
   issueEligibility,
+  issueAdmissionEligible,
   isReadOnlyIssueRole,
   isUnmanagedIssueRole,
   requiresManagedIssueAdmission,
@@ -38,7 +44,11 @@ import {
 import type { IssueWorkStore } from "../issues/IssueWorkStore.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
-import { IssueReadSnapshots, retainedWorkerSuccessor } from "./IssueWorkDispatch.ts";
+import {
+  IssueQueueSnapshot,
+  IssueReadSnapshots,
+  retainedWorkerSuccessor,
+} from "./IssueWorkDispatch.ts";
 import type { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
 import type { OrchestratorDispatchError, OrchestratorV2Error } from "./Orchestrator.ts";
 import type { ProjectionStoreV2, ProjectionRecords } from "./ProjectionStore.ts";
@@ -130,6 +140,8 @@ export const claimFields = (
         ],
       };
 
+const issueKey = (issue: ThreadLinkedIssue) => `${issue.host}:${issue.repositoryId}:${issue.id}`;
+
 // Decisions use the supplied committed reads and collector; dispatch owns locks and commit.
 export function makeIssueWorkCommands({
   issueWorkStore,
@@ -177,18 +189,21 @@ export function makeIssueWorkCommands({
   /** Why this thread's next run must wait for admission, or null when it may start now. */
   const issueRunAdmissionWait = Effect.fn("issueRunAdmissionWait")(
     function* (thread: OrchestrationV2AppThread) {
-      if (isReadOnlyIssueRole(thread.role) && thread.lineage.relationshipToParent === "subagent") {
+      if (
+        thread.linkedIssue === undefined &&
+        isReadOnlyIssueRole(thread.role) &&
+        thread.lineage.relationshipToParent === "subagent"
+      ) {
         if (Option.isNone(issueWorkStore)) return null;
         const store = issueWorkStore.value;
         const root = thread.lineage.rootThreadId;
         if (!(yield* store.isRepositoryOrchestrator(root))) return null;
         if (yield* store.canAdmitReadOnly(root, thread.id)) return null;
         const config = yield* store.configuration(root);
-        return config?.paused === true || config?.automaticHandoff?.status === "verifying"
+        return config?.automaticHandoff?.status === "verifying"
           ? "repository_paused"
           : "read_only_limit";
       }
-      if (thread.role === "writer") return null;
       const issue = thread.linkedIssue;
       if (issue === undefined) return null;
       if (Option.isNone(issueWorkStore)) return "repository_paused";
@@ -266,17 +281,12 @@ export function makeIssueWorkCommands({
         commandType: command.type,
         cause: `This repository root has retired. Route issue work to the current root ${repository?.rootThreadId ?? "(unavailable)"}.`,
       });
-    if (
-      repository.paused ||
-      (yield* store.configuration(command.threadId).pipe(mapDispatchError(command)))
-        ?.automaticHandoff?.status === "verifying"
-    )
+    const config = yield* store.configuration(command.threadId).pipe(mapDispatchError(command));
+    if (config === null || !repositoryAdmitsWork(config) || repositoryPhase(config) === "draining")
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: repository.paused
-          ? "The repository root is unavailable or paused."
-          : "The repository root is verifying a handoff.",
+        cause: "The repository root is unavailable or transferring ownership.",
       });
     const root = yield* projectionStore
       .getThreadShell(command.threadId)
@@ -297,11 +307,15 @@ export function makeIssueWorkCommands({
         detail: managedIssueProviderError,
       });
     const read = yield* issueSnapshot(command.issue);
-    if (read === undefined || issueEligibility(read) !== "eligible")
+    if (
+      read === undefined ||
+      !issueAdmissionEligible(read) ||
+      (yield* store.hasPendingOpening(command.issue).pipe(mapDispatchError(command)))
+    )
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: "Issue work is closed, blocked, or its eligibility is unknown.",
+        cause: "Only unheld Todo issues with complete, unblocked relationships can start.",
       });
     if (read.parent !== null && !sameIssueRepository(read.parent, command.issue))
       return yield* new OrchestratorDispatchError({
@@ -312,6 +326,64 @@ export function makeIssueWorkCommands({
     const owner = yield* store.issueOwner(command.issue).pipe(mapDispatchError(command));
     let issueThreadId: ThreadId | null = null;
     let retainedOwner: ThreadId | null = null;
+    if (
+      command.automatic === true &&
+      (yield* store.slotsInUse(command.threadId).pipe(mapDispatchError(command))) >=
+        config.workerLimit
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "No repository worker slot is available.",
+      });
+    if (command.automatic === true && owner !== null)
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "An issue worker already holds this claim.",
+      });
+    if (command.automatic === true && Option.isSome(issueWorkStore)) {
+      const queue = yield* issueWorkStore.value
+        .queue(command.issue)
+        .pipe(mapDispatchError(command));
+      const candidateIndex = queue.findIndex(
+        ({ issue }) => sameIssueRepository(issue, command.issue) && issue.id === command.issue.id,
+      );
+      const priorityQueue = candidateIndex < 0 ? queue : queue.slice(0, candidateIndex);
+      const reads = yield* IssueReadSnapshots;
+      const queuedSnapshot = yield* IssueQueueSnapshot;
+      for (const queued of priorityQueue) {
+        if (!queuedSnapshot.has(issueKey(queued.issue)))
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "A queued issue changed during admission; retry after refreshing its status.",
+          });
+        const queuedRead = reads.find(
+          (read) =>
+            sameIssueRepository(read.issue, queued.issue) && read.issue.id === queued.issue.id,
+        );
+        if (queuedRead === undefined) continue;
+        if (
+          !issueAdmissionEligible(queuedRead) ||
+          (yield* issueWorkStore.value
+            .hasPendingOpening(queued.issue)
+            .pipe(mapDispatchError(command))) ||
+          config.suspendedIssues.some((entry) => entry.id === queued.issue.id) ||
+          (queuedRead.parent !== null &&
+            (!sameIssueRepository(queuedRead.parent, queued.issue) ||
+              (yield* issueWorkStore.value
+                .currentIssueOwner(queuedRead.parent)
+                .pipe(mapDispatchError(command))) === null))
+        )
+          continue;
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Queued issues have priority over unqueued Todo issues.",
+        });
+      }
+    }
     if (owner !== null) {
       const current = yield* projectionStore
         .getThreadRecords(owner, ["runs", "messages", "subagents"])
@@ -346,6 +418,7 @@ export function makeIssueWorkCommands({
         issueThreadId,
         attemptKey,
         modelSelection: command.workerModelSelection,
+        ...(command.workerRole === undefined ? {} : { workerRole: command.workerRole }),
       },
     });
     if (issueThreadId !== null) return;
@@ -368,11 +441,17 @@ export function makeIssueWorkCommands({
         parentRunId: null,
         parentNodeId: null,
         issue: command.issue,
-        task: issueWorkerBrief(
-          command.issue,
-          command.issueWorktree !== undefined &&
-            isDraftPrRepository(draftPrRepositories, command.issue),
-        ),
+        task:
+          command.workerRole === "designer" || command.workerRole === "writer"
+            ? `Work as the ${command.workerRole} on issue #${command.issue.number}: ${command.issue.title}
+${command.issue.url}
+Read the issue and comments, produce the requested deliverable, and report when it is ready for review.`
+            : issueWorkerBrief(
+                command.issue,
+                command.issueWorktree !== undefined &&
+                  isDraftPrRepository(draftPrRepositories, command.issue),
+              ),
+        ...(command.workerRole === undefined ? {} : { role: command.workerRole }),
         modelSelection: command.workerModelSelection,
         runtimeMode: recipient.runtimeMode,
         interactionMode: recipient.interactionMode,
@@ -431,18 +510,22 @@ export function makeIssueWorkCommands({
       const repositoryOwner = yield* issueStore
         .repositoryOwner(request.issue)
         .pipe(mapDispatchError(command));
+      const repositoryConfig =
+        repositoryOwner === null
+          ? null
+          : yield* issueStore
+              .configuration(repositoryOwner.rootThreadId)
+              .pipe(mapDispatchError(command));
       if (
         repositoryOwner === null ||
-        repositoryOwner.paused ||
-        root.repositoryOrchestration?.automaticHandoff?.status === "verifying"
+        repositoryConfig === null ||
+        !repositoryAdmitsWork(repositoryConfig) ||
+        repositoryPhase(repositoryConfig) === "draining"
       )
         return yield* new OrchestratorDispatchError({
           commandId: request.commandId,
           commandType: request.type,
-          cause:
-            repositoryOwner === null || repositoryOwner.paused
-              ? "The repository is paused or issue relationships are unavailable."
-              : "The repository root is verifying a handoff.",
+          cause: "The repository root is unavailable or transferring ownership.",
         });
       const read = yield* issueSnapshot(request.issue);
       if (read === undefined)
@@ -483,6 +566,16 @@ export function makeIssueWorkCommands({
       const currentOwner = yield* issueStore
         .issueOwner(request.issue)
         .pipe(mapDispatchError(command));
+      if (
+        currentOwner === null &&
+        (!issueAdmissionEligible(read) ||
+          (yield* issueStore.hasPendingOpening(request.issue).pipe(mapDispatchError(command))))
+      )
+        return yield* new OrchestratorDispatchError({
+          commandId: request.commandId,
+          commandType: request.type,
+          cause: "Only unheld Todo issues can claim a new worker.",
+        });
       if (currentOwner !== null) {
         const current = yield* projectionStore
           .getThreadRecords(currentOwner, ["runs", "messages", "subagents"])
@@ -504,6 +597,17 @@ export function makeIssueWorkCommands({
                 : current.runs,
             pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
           }).state === "result_available";
+        if (
+          finished &&
+          !retained &&
+          (!issueAdmissionEligible(read) ||
+            (yield* issueStore.hasPendingOpening(request.issue).pipe(mapDispatchError(command))))
+        )
+          return yield* new OrchestratorDispatchError({
+            commandId: request.commandId,
+            commandType: request.type,
+            cause: "Only unheld Todo issues can start a successor worker.",
+          });
         if (!finished || retained) {
           const parent = current.thread.lineage.parentThreadId;
           const existing =
@@ -627,7 +731,7 @@ export function makeIssueWorkCommands({
     projectId: ProjectId,
     now: DateTime.Utc,
   ) => ({
-    ...(request.issue === undefined || isUnmanagedIssueRole(request.role)
+    ...(request.issue === undefined
       ? {}
       : { ...claimFields(request.issue, projectId, now), titleSource: "generated" as const }),
     ...(request.role === undefined ? {} : { role: request.role }),

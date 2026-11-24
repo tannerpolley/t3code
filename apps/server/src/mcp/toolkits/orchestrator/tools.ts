@@ -41,10 +41,8 @@ import {
   OrchestratorMcpThreadWaitResult,
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
-  RepositoryWorkInput,
   IssueQueueInput,
   RepositoryWorkEndInput,
-  RepositoryWorkControlInput,
   RepositoryConcurrencyLimitInput,
   RepositoryHandoffRequestInput,
   RepositoryWorkResult,
@@ -96,7 +94,7 @@ const threadMetadataDependencies = [
 ];
 const ProposeIssueChangeTool = Tool.make("propose_issue_change", {
   description:
-    "Propose an exact issue change from a repository-managed thread. Create needs title, body and milestoneNumber (null for none); split needs number and issues with those fields. Other operations need number and their action, state, body, milestoneNumber, childNumber or blockerNumber. Use a stable clientRequestId on retries. Create/split and milestone moves execute automatically. Body edits, close/reopen, standalone parent changes, and blocked_by add/remove also execute automatically, unless the requesting thread is in approval-required mode; then they wait for the user's approval in the issue panel. The returned change includes the exact preview, decision and result. Agents cannot approve changes. A conflict needs a new proposal and preview. Labels and assignees are outside this tool's scope.",
+    "Propose an exact issue change. Create and split drafts need title and body, with optional initialStatus (Todo by default, Backlog for redesign). Set needsOwnerDecision to apply Needs you before making a draft Todo. Use status to move a card. After reviewing the owner's answer, set status to Todo with clearOrchestratorHold to remove Needs orchestrator. Use a stable clientRequestId on retries. The result gives the decision and preview. Agents cannot approve changes. Submit a new proposal after a conflict.",
   parameters: IssueChangeProposeInput,
   success: IssueChange,
   failure: OrchestratorMcpFailure,
@@ -413,18 +411,9 @@ export const OrchestratorToolkit = Toolkit.make(
   })
     .annotate(Tool.Destructive, true)
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
-  Tool.make("work_through_milestone", {
-    description:
-      "Authorize the registered repository orchestrator to work through this milestone. Every issue worker gets its own new issue worktree and branch from the repository default branch. Parent ownership, blockers and shared worker capacity are enforced by the server.",
-    parameters: RepositoryWorkInput,
-    success: RepositoryWorkResult,
-    failure: OrchestratorMcpFailure,
-    failureMode: "return",
-    dependencies,
-  }).annotate(Tool.Destructive, true),
   Tool.make("queue_issue", {
     description:
-      "Add an open issue to the repository's ordered queue. While the repository is active, T3 starts a managed implementor for each unblocked queued issue, in queue order and ahead of milestone issues; it runs when a worker slot is free. Blocked issues wait until their blockers close. Without an orchestrator the queue waits. clientRequestId makes retries idempotent.",
+      "Add an open issue to the repository's ordered queue. Queued Todo issues take priority for worker slots. An issue with a blocker, Needs you, or Needs orchestrator waits. Without an orchestrator the queue waits. clientRequestId makes retries idempotent.",
     parameters: IssueQueueInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
@@ -452,7 +441,7 @@ export const OrchestratorToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("get_repository_orchestration", {
     description:
-      "Check the repository owner, revision, capacity, milestones, and ordered issue queue. The effective orchestratorHandoffCompactions setting gives the number of full-context compactions before automatic handoff, or null when disabled. The draining phase admits already queued work, and handoff_awaiting_approval is a saved handoff. Reconcile starts draining it if the root is in full-access, default mode.",
+      "Check the repository owner, revision, capacity and ordered Todo priority queue. The effective orchestratorHandoffCompactions setting gives the number of full-context compactions before automatic handoff, or null when disabled. The draining phase admits already queued work, and handoff_awaiting_approval is a saved handoff. Reconcile starts draining it if the root is in full-access, default mode.",
     parameters: IssueRepositoryRef,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
@@ -461,7 +450,7 @@ export const OrchestratorToolkit = Toolkit.make(
   }).annotate(Tool.Readonly, true),
   Tool.make("set_repository_worker_limit", {
     description:
-      "Set either independent repository limit (1–32): workerLimit for implementors, or readOnlyLimit for designer/reviewer children (default 4). Ask the owner before changing a limit unless they requested that size of work; only the repository root can apply it. Read get_repository_orchestration for the current revision. Raising admits queued work promptly; lowering holds new starts without stopping running children.",
+      "Set either independent repository limit (1–32): workerLimit for claimed issue workers, or readOnlyLimit for delegated designer/reviewer helpers (default 4). Ask the owner before changing a limit unless they requested that size of work; only the repository root can apply it. Read get_repository_orchestration for the current revision. Raising admits queued work promptly; lowering holds new starts without stopping running children.",
     parameters: RepositoryConcurrencyLimitInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
@@ -472,14 +461,6 @@ export const OrchestratorToolkit = Toolkit.make(
     description:
       "End an idle repository orchestration without a successor, allowing its project and root thread to be deleted. Read get_repository_orchestration for expectedRevision. Refuses unfinished runs, live workers, queued issues, unclaimed requests and pending handoffs. Repository orchestration can be set up again through the existing launch flow.",
     parameters: RepositoryWorkEndInput,
-    success: RepositoryWorkResult,
-    failure: OrchestratorMcpFailure,
-    failureMode: "return",
-    dependencies,
-  }).annotate(Tool.Destructive, true),
-  Tool.make("set_repository_work_paused", {
-    description: "Pause new worker admissions or resume after rechecking GitHub eligibility.",
-    parameters: RepositoryWorkControlInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
     failureMode: "return",
@@ -505,7 +486,7 @@ export const OrchestratorToolkit = Toolkit.make(
   }).annotate(Tool.Destructive, true),
   Tool.make("restore_repository_root", {
     description:
-      "Make another existing top-level thread in the repository's project the repository orchestrator. Read get_repository_orchestration for the current root and revision and pass them as expectations. Pause repository work first. Restore keeps it paused; use set_repository_work_paused to resume. The target must use the main checkout on the repository default branch. The current root must be idle: no unfinished runs or subagents, no unclaimed requests (see cancel_issue_request), and no handoff.",
+      "Make another existing top-level thread in the repository's project the repository orchestrator. Read get_repository_orchestration for the current root and revision and pass them as expectations. The target must use the main checkout on the repository default branch. New issue workers wait while active work and deliveries finish. Use cancel_issue_request to remove unclaimed starts, or cancel the restore in Project settings.",
     parameters: RepositoryWorkRestoreInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,

@@ -357,8 +357,9 @@ The roadmap needs a connected environment with GitHub Issues support. It appears
   **Settings → Source control & issues → Issue work & branch picker**.
 - **Board** is the default view on the Issues page. It lists the repositories your GitHub account owns and the organization repositories
   you administer, grouped by owner with your own account first. Repositories you only collaborate
-  on, including the upstream of a fork, are left out. Issues load only for a repository that is
-  a project in T3 Code; add any other repository as a project to see its issues.
+  on, including the upstream of a fork, are left out. Select a repository to open its own board.
+  Use **Repositories** to return to the directory. Add the repository as a project in T3 Code to
+  see its issues.
 
 Select an issue to open it in a tab next to the Issues panel or beside the board. Its work section holds **Start agent**,
 **Add to queue**, **Prepare draft**, the issue's work state, GitHub Project fields, sub-issues,
@@ -381,22 +382,17 @@ fork, show it once, then use the pin button on its row. A pinned repository igno
 repository filters but still follows the issue filters and search. Pins are remembered with your
 filter choices.
 
-Each repository's issues show as a stage board, in pipeline order: **Done**, **Ready for review**,
-**In progress**, **Queued**, the **Inbox**, then **Backlog**, which starts collapsed. Each open issue
-sits in one stage. **In progress** means a linked agent is working on the issue or waiting for your
-answer. **Queued** means it waits in the repository queue or its worker waits to start. **Ready for
-review** means it has an open or draft PR, no agent on it and no place in the queue. Everything else open is **Backlog**.
-**Blocked**, **Suspended**, **Needs you** and **Failed** are badges on the row, not stages; hover a row
-for its blockers, labels, author and comments. Within a stage, open blockers and sub-issues come before
-the issues that depend on them, then higher Project priority and older issues; closed blockers no
-longer hold work back. GitHub Project status does not change the stage.
+The board shows one repository's cards by GitHub issue status. Cards show labels, blockers,
+linked pull requests and live worker state. Open the board in the right panel while you work in
+a thread. When the panel is narrow, statuses stack with **Todo** at the top and the closed
+statuses collapsed. The **Issues** section in thread details
+groups the same issues by work stage so you can find running, queued and reviewable work while
+you chat. Hover an issue to see its author and comments.
 A thread’s own linked pull request also associates it with the issues that GitHub identifies
 that pull request as closing.
 
-Include **Closed** in Filter to see completed and closed issues. **Done** shows issues closed as
-completed in the last 24 hours, with their closure time and attached PR numbers, titles, states and
-links. At 24 hours they move to **Closed**, which starts collapsed and also holds issues closed as not
-planned. Archived worker links remain available
+Include **Closed** in Filter to see completed issues alongside issues closed as not planned or as
+duplicates. Archived worker links remain available
 on closed issues. Open a worker from its row, or confirm **Remove worktree** to remove its local
 checkout while keeping its branch. Removal checks for active workers, shared worktrees, open terminals
 and provider sessions, and local changes; a refusal appears on the row. This explicit action does not
@@ -449,23 +445,29 @@ worker exists; use the **Orchestrator** link in **Settings → Projects → Repo
 **Linked issue** in thread details opens the issue beside that thread. A worker labeled **Done**
 has a closed issue or a merged pull request. A merged pull request can leave the GitHub issue open.
 
-Use **Add to queue** on an open issue’s detail panel to put it in the repository’s
-ordered **Queued** section. A queued issue starts its own managed worker, the same way a milestone
-issue does, even while the orchestrator is busy. Queued issues go first, in queue order, ahead of
-milestone issues, and each worker runs as soon as a **Workers** slot is free. The worker uses the
-model role of the repository's running milestone, or the complex Implementor role when no milestone
-is running. A worker that has to wait for a slot usually keeps its queue position, but an issue
-that was blocked can start after a later queued issue that was not. A blocked issue stays queued until its blockers close, and a closed issue leaves the
-queue. Repository pause and paused issues apply. Without a registered orchestrator, the queue
-waits. Once its worker starts, the issue leaves the queue and is managed through its orchestrator
-or worker; use **Remove from queue** to withdraw it before then.
+The Issues board follows GitHub status: **Backlog**, **Todo**, **In progress**, **In review**,
+**Done**, **Not planned**, and **Duplicate**. Move a card with its handle or the issue’s state
+menu. Owner and agent drafts default to **Todo**. Use **Backlog** for triage or redesign.
+
+**Todo** is the starting point for managed workers. **Add to queue** gives a Todo issue priority.
+Queued issues go first in queue order, then other Todo issues go oldest first as worker slots
+open. A blocker, an existing claim, **Needs you**, or **Needs orchestrator** holds admission.
+The optional GitHub labels `writer`, `designer` and `routine` set the worker role or level.
+Unlabeled work uses the complex Implementor role.
+
+A claim moves the card to **In progress**. A ready pull request moves it to **In review**.
+Use a closing reference on a code PR so merging into the default branch closes the issue as
+**Done**. Moving the card leaves any existing worker running.
+After a failed attempt, T3 retries once and then applies **Needs you** with a failure note.
+An owner reply changes the hold to **Needs orchestrator**. The orchestrator reviews the reply,
+updates the issue, clears the hold, and returns actionable work to **Todo**.
 
 Repository orchestration is managed in **Settings → Projects**, under the project that holds the
 repository's checkout; the section is named **Repository orchestration**. It shows the
 orchestrator, the limits and the repository **Status**. Until a repository has
 an orchestrator the section only says so, because the limits need one. The roadmap keeps no
 such controls. It shows a single status line with a **Project settings** link while repository work
-is paused, a handoff is pending, or issues are on hold.
+has a pending handoff or issues on hold.
 
 To change how much issue work runs at once, edit **Workers** in that section. The limit starts at 4 and can be set from 1 to 32; **Workers** shows how many slots
 are in use. Raising it starts eligible queued work. Lowering it lets current workers finish and
@@ -481,11 +483,11 @@ Read-only children share their parent's checkout unless another isolation is req
 link gives visibility without claiming its work.
 
 An issue worker paused by an open GitHub blocker resumes by itself within about a minute after
-all its blockers close. Other pauses wait until you resume repository work from **Status** in **Repository orchestration**.
+all its blockers close.
 If an issue closes during work, cancel or finish its remaining work, then use **Close out attempt**
 under the repository's **Status** to finish the retained attempt and clear its hold.
 
-Issue agents can create issues, split work into sub-issues, and move issues between milestones.
+Issue agents can create issues, split work into sub-issues, and move cards between GitHub statuses.
 To require approval for these too, turn on **Ask before agents create, split or move issues** in
 **Settings → Source control & issues → Issue work & branch picker** for the server. This applies to new
 proposals; existing proposals keep their approval decision. Body edits, closing or reopening issues,
@@ -516,24 +518,21 @@ menu to read archived conversations. The server's **Archived worker retention** 
 also controls when it removes these conversations. The default is 14 days.
 For a routine provider or model change, keep the same thread.
 
-To restore orchestration to another existing thread, first pause repository work from **Status**. The
-current orchestrator must be stopped, with no active issue workers or unclaimed start requests.
-Then choose **Use another thread as orchestrator** from the orchestrator's menu to select a
-top-level thread in the same project.
-Only you can approve this restore. Existing issue workers keep their threads, and the repository
-remains paused after the change. Resume it from **Status** when you are ready to continue.
+To restore orchestration, choose **Use another thread as orchestrator** and select a top-level
+thread in the same project. T3 waits for active workers and pending deliveries before transferring
+ownership. Cancel any unclaimed start requests to unblock the transfer. Existing worker threads stay
+available and the new orchestrator takes over Todo admission.
 
 ### Cross-project issue inbox
 
 The **Inbox** section of a repository's roadmap holds issues opened and comments posted by
-another project through `t3_issue_post`. Unmarked writes and other issue changes do not appear.
+another project through `t3_issue_post`, as well as owner replies on issues marked **Needs you**.
 T3 checks repositories with an orchestrator every five minutes and other project repositories every
-15 minutes. It notifies the orchestrator of unacknowledged items at most once every 15 minutes. A paused repository catches up when resumed.
+15 minutes. It notifies the orchestrator of unacknowledged items at most once every 15 minutes.
 
 The orchestrator reviews each item, revises it if needed with `propose_issue_change`, then
 acknowledges it with `t3_issue_inbox` `mark_read`. You can also acknowledge it with **Mark read**.
-An open issue stays only in Inbox until its opening is acknowledged, then appears in its stage,
-usually Backlog. A comment leaves its issue in its current section.
+An open issue stays only in Inbox until its opening is acknowledged, and appears on the board under its GitHub status. A comment leaves its issue in its current section.
 Cross-project writes keep their `external`, `priority: high`, and `from:<project>` labels.
 
 ## Troubleshooting

@@ -85,16 +85,14 @@ export const makeManagedIssueDelegation = Effect.fn("ManagedIssueDelegation.make
       const repositoryOwner = yield* issueWorkStore.value
         .repositoryOwner(linkedIssue)
         .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
-      if (repositoryOwner === null || repositoryOwner.paused)
+      if (repositoryOwner === null)
         return yield* failure(
           "invalid_request",
-          repositoryOwner === null
-            ? yield* IssueWorkStore.missingOwnerMessage(
-                issueWorkStore.value,
-                linkedIssue,
-                "The repository orchestrator is unavailable or paused.",
-              ).pipe(Effect.mapError((error) => failure("orchestration_error", error.message)))
-            : "The repository orchestrator is unavailable or paused.",
+          yield* IssueWorkStore.missingOwnerMessage(
+            issueWorkStore.value,
+            linkedIssue,
+            "The repository orchestrator is unavailable.",
+          ).pipe(Effect.mapError((error) => failure("orchestration_error", error.message))),
         );
     }
     return { unmanaged, linkedIssue };

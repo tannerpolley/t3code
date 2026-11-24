@@ -411,7 +411,7 @@ function IssueStartControls({
           </p>
           <p className="text-xs text-muted-foreground">
             {gt(
-              'Creating, splitting, and moving issues between milestones require approval when "Ask before agents create, split or move issues" is on. Body edits, closing or reopening issues, and parent or blocker changes require approval when the agent thread is in Approval required mode.',
+              'Creating, splitting, and moving issues between GitHub statuses require approval when "Ask before agents create, split or move issues" is on. Body edits, closing or reopening issues, and parent or blocker changes require approval when the agent thread is in Approval required mode.',
             )}
           </p>
           {statusQuery.error ? (

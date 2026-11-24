@@ -60,7 +60,7 @@ export function useIssueComposerHandoff({
       environmentId,
       rootThreadId: repositoryWork?.rootThreadId,
       hasParent: issue.parent != null,
-      paused: repositoryWork?.orchestration?.paused === true,
+      paused: repositoryWork?.phase === "draining",
     },
     resolve,
   );

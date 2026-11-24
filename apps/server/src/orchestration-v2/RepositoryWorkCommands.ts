@@ -89,7 +89,6 @@ export const planRepositoryWorkEnd = Effect.fn("orchestrationV2.planRepositoryWo
       ...thread,
       repositoryOrchestration: {
         ...config,
-        paused: true,
         retiredToThreadId: null,
         revision: config.revision + 1,
       },
@@ -127,8 +126,6 @@ export function makeRepositoryWorkCommands({
       }
     >,
     thread: OrchestrationV2AppThread,
-    // A paused root moving to its project's new record stays the same thread, so its own turns may run.
-    moving = false,
   ) {
     if (
       thread.repositoryOrchestration === undefined ||
@@ -139,17 +136,16 @@ export function makeRepositoryWorkCommands({
       .getThreadRecords(thread.id, ["runs", "subagents"])
       .pipe(mapDispatchError(command));
     const unfinished =
-      !moving &&
-      (projection.runs.some(
+      projection.runs.some(
         (run) =>
           !["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(run.status),
       ) ||
-        projection.subagents.some(
-          (task) =>
-            !["completed", "failed", "cancelled", "interrupted"].includes(task.status) ||
-            task.completionDelivery?.state === "pending" ||
-            task.completionDelivery?.state === "claimed",
-        ));
+      projection.subagents.some(
+        (task) =>
+          !["completed", "failed", "cancelled", "interrupted"].includes(task.status) ||
+          task.completionDelivery?.state === "pending" ||
+          task.completionDelivery?.state === "claimed",
+      );
     const unclaimed = Option.isSome(issueWorkStore)
       ? yield* issueWorkStore.value.hasUnclaimedRequests(thread.id).pipe(mapDispatchError(command))
       : true;
@@ -159,22 +155,19 @@ export function makeRepositoryWorkCommands({
             .queue(thread.repositoryOrchestration)
             .pipe(mapDispatchError(command))).length > 0
         : false;
-    const activePlan =
-      !thread.repositoryOrchestration.paused &&
-      thread.repositoryOrchestration.milestones.some((plan) => plan.status !== "complete");
     const subtreeActive =
       Option.isNone(issueWorkStore) ||
-      (moving
-        ? (yield* issueWorkStore.value.slotsInUse(thread.id).pipe(mapDispatchError(command))) > 0
-        : !(yield* issueWorkStore.value.subtreeDrained(thread.id).pipe(mapDispatchError(command))));
+      !(yield* issueWorkStore.value.subtreeDrained(thread.id).pipe(mapDispatchError(command)));
     const blockers = [
       unfinished && "unfinished runs, subagents or final deliveries",
       queued && "queued issues (remove them from the queue)",
       unclaimed &&
         "unclaimed issue start requests (cancel them from the issue's Start agent controls)",
-      activePlan && "an unpaused milestone plan (pause the repository)",
       subtreeActive && "active issue workers",
       thread.repositoryOrchestration.handoff !== undefined && "a pending handoff",
+      thread.repositoryOrchestration.restore !== undefined &&
+        !(command.type === "repository.work.restore" && command.restorePhase === "complete") &&
+        "a pending restore",
       thread.repositoryOrchestration.automaticHandoff?.status === "verifying" &&
         "an automatic handoff being verified",
     ].filter((blocker) => blocker !== false);
@@ -241,8 +234,8 @@ export function makeRepositoryWorkCommands({
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     const restored = yield* issueWorkRecovery.restore(command).pipe(mapDispatchError(command));
-    if (restored.idleRoot !== null)
-      yield* guardRootLifecycle(command, restored.idleRoot, restored.ownTurnsMayRun);
+    if (command.restorePhase !== "request" && restored.idleRoot !== null)
+      yield* guardRootLifecycle(command, restored.idleRoot);
     for (const event of restored.events)
       yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
   });
@@ -402,6 +395,10 @@ export function makeRepositoryWorkCommands({
       for (const suspension of changedSuspensions) {
         const owner = workers.find((worker) => worker?.linkedIssue?.id === suspension.id);
         if (owner?.linkedIssue === undefined) continue;
+        if (suspension.kind === "closed") {
+          yield* notify(owner.linkedIssue, suspension);
+          continue;
+        }
         const branch = new Set([owner.id]);
         for (let size = -1; size !== branch.size;) {
           size = branch.size;
@@ -562,7 +559,7 @@ export function makeRepositoryWorkCommands({
             revision: config.revision + 1,
             ...(manual === undefined
               ? { automaticHandoff: { ...attempt!, status: "failed" as const } }
-              : { handoff: undefined, paused: manual.wasPaused }),
+              : { handoff: undefined }),
           },
           updatedAt: now,
         },
@@ -838,7 +835,6 @@ Your first authorized action is read-only. Use t3_thread_read on the source to r
       );
     }
 
-    const paused = config.handoff?.wasPaused ?? config.paused;
     const retiredRoot = {
       ...shell,
       handoffToThreadId: next.id,
@@ -874,7 +870,6 @@ Your first authorized action is read-only. Use t3_thread_read on the source to r
           ...config,
           handoff: undefined,
           automaticHandoff: undefined,
-          paused,
           revision: config.revision + 1,
           launchCommandId: command.commandId,
           handoffHistory: [
@@ -887,7 +882,7 @@ Your first authorized action is read-only. Use t3_thread_read on the source to r
     });
     yield* startMessage(
       idAllocator.derive.delegatedTaskMessage({ commandId: command.commandId }),
-      `Verification succeeded. You now own repository orchestration for ${config.repository}. Continue the approved work from the handoff brief. ${paused ? "Repository work remains paused until the user resumes it." : "Repository admissions may resume under this root."}`,
+      `Verification succeeded. You now own repository orchestration for ${config.repository}. Continue the approved work from the handoff brief. Repository admissions may resume under this root.`,
     );
   });
 

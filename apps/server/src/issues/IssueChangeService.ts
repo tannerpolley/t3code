@@ -26,7 +26,7 @@ import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as TrackerIssueService from "../issue/IssueService.ts";
 import * as IssueService from "./IssueService.ts";
-import { fromTrackerError, trackerIssueRef } from "./trackerIssueRef.ts";
+import { fromTrackerError, trackerIssueRef, setGitHubIssueStatus } from "./trackerIssueRef.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -102,6 +102,7 @@ const capabilityNames = {
   subIssues: "sub-issues",
   blockers: "blockers",
   milestones: "milestones",
+  labels: "labels",
 } satisfies Partial<Record<keyof IssueHostCapabilities, string>>;
 /** The relationship capabilities an operation needs that the host lacks, by readable name. */
 const unsupportedBy = (can: IssueHostCapabilities, op: IssueChangeOperation) => {
@@ -109,22 +110,26 @@ const unsupportedBy = (can: IssueHostCapabilities, op: IssueChangeOperation) => 
     op.type === "create"
       ? [
           ...(op.parentNumber === undefined ? [] : (["subIssues"] as const)),
-          ...(op.milestoneNumber === null ? [] : (["milestones"] as const)),
+          ...(op.milestoneNumber == null ? [] : (["milestones"] as const)),
+          ...(op.needsOwnerDecision ? (["labels"] as const) : []),
         ]
       : op.type === "split"
         ? [
             "subIssues",
-            ...(op.issues.some((draft) => draft.milestoneNumber !== null)
+            ...(op.issues.some((draft) => draft.milestoneNumber != null)
               ? (["milestones"] as const)
               : []),
+            ...(op.issues.some((draft) => draft.needsOwnerDecision) ? (["labels"] as const) : []),
           ]
         : op.type === "milestone"
           ? ["milestones"]
-          : op.type === "sub_issue"
-            ? ["subIssues"]
-            : op.type === "blocked_by"
-              ? ["blockers"]
-              : [];
+          : op.type === "status" && op.clearOrchestratorHold
+            ? ["labels"]
+            : op.type === "sub_issue"
+              ? ["subIssues"]
+              : op.type === "blocked_by"
+                ? ["blockers"]
+                : [];
   return needs.filter((name) => !can[name]).map((name) => capabilityNames[name]);
 };
 
@@ -289,6 +294,8 @@ const make = Effect.gen(function* () {
         return existing;
       }
       const op = input.operation;
+      if (op.type === "status" && op.clearOrchestratorHold && op.status !== "Todo")
+        return yield* invalid("Clear Needs orchestrator only when moving the issue to Todo.");
       const missing = unsupportedBy(yield* issues.capabilities(input.host), op);
       if (missing.length > 0)
         return yield* invalid(
@@ -344,7 +351,7 @@ const make = Effect.gen(function* () {
         SELECT runtime_mode FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`.pipe(
         Effect.mapError(storageError),
       );
-      const planning = ["create", "split", "milestone"].includes(op.type);
+      const planning = ["create", "split", "status"].includes(op.type);
       const auto = planning
         ? !policy.issueUpkeepRequiresApproval
         : mode?.runtime_mode !== "approval-required";
@@ -587,6 +594,9 @@ const make = Effect.gen(function* () {
                 current.state === op.state &&
                 current.body === expected.body &&
                 current.milestoneNumber === expected.milestoneNumber) ||
+              (op.type === "status" &&
+                current.planningStatus === op.status &&
+                current.body === expected.body) ||
               (op.type === "milestone" &&
                 current.milestoneNumber === op.milestoneNumber &&
                 current.body === expected.body &&
@@ -596,6 +606,7 @@ const make = Effect.gen(function* () {
             (!recoveredWrite &&
               (current.body !== expected.body ||
                 current.state !== expected.state ||
+                (op.type === "status" && current.planningStatus !== expected.planningStatus) ||
                 current.milestoneNumber !== expected.milestoneNumber))
           )
             return yield* conflict(
@@ -618,7 +629,7 @@ const make = Effect.gen(function* () {
                 repository: change.repository,
                 title: draft.title,
                 body: draft.body,
-                milestoneNumber: draft.milestoneNumber,
+                milestoneNumber: draft.milestoneNumber ?? null,
                 marker,
                 recover: row.in_flight_step === key,
               });
@@ -643,6 +654,28 @@ const make = Effect.gen(function* () {
                   .pipe(Effect.mapError(githubError));
               }
               yield* saveStep(`link:${index}`);
+            }
+            const holdKey = `hold:${index}`;
+            if (drafts[index]!.needsOwnerDecision && steps[holdKey] === undefined) {
+              yield* startStep(holdKey);
+              yield* issues.setLabels(child, ["Needs you"], []).pipe(Effect.mapError(githubError));
+              yield* saveStep(holdKey);
+            }
+            const statusKey = `status:${index}`;
+            if (steps[statusKey] === undefined) {
+              const status = drafts[index]!.initialStatus ?? "Todo";
+              yield* startStep(statusKey);
+              const current = yield* issues
+                .readChangeState(child)
+                .pipe(Effect.mapError(githubError));
+              if (current.state === "open" && current.planningStatus !== status) {
+                if (current.planningStatus !== undefined && current.planningStatus !== "Backlog")
+                  return yield* conflict("The newly created issue's status changed on GitHub.");
+                yield* setGitHubIssueStatus(tracker, child, status).pipe(
+                  Effect.mapError(githubError),
+                );
+              }
+              yield* saveStep(statusKey);
             }
           }
         } else if (steps.write === undefined) {
@@ -725,6 +758,12 @@ const make = Effect.gen(function* () {
                   .pipe(Effect.mapError(trackerDetailError));
               }
             }
+            if (op.type === "status" && op.status !== baseline.planningStatus) {
+              yield* startStep("write");
+              yield* setGitHubIssueStatus(tracker, baseline.issue, op.status).pipe(
+                Effect.mapError(githubError),
+              );
+            }
             if (op.type === "milestone") {
               yield* startStep("write");
               yield* issues
@@ -737,6 +776,13 @@ const make = Effect.gen(function* () {
             undefined,
             op.type === "body" ? { ...baseline, body: op.body } : undefined,
           );
+        }
+        if (op.type === "status" && op.clearOrchestratorHold && steps["clear-hold"] === undefined) {
+          yield* startStep("clear-hold");
+          yield* issues
+            .setLabels(change.baseline!.issue, [], ["Needs orchestrator"])
+            .pipe(Effect.mapError(githubError));
+          yield* saveStep("clear-hold");
         }
         yield* sql`UPDATE issue_changes SET status = 'succeeded', result = 'GitHub issue change completed.', in_flight_step = NULL WHERE change_id = ${id}`.pipe(
           Effect.mapError(storageError),

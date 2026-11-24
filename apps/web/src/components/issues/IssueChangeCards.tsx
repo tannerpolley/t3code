@@ -18,6 +18,10 @@ function title(change: IssueChange, resolve: MessageResolver) {
   switch (op.type) {
     case "body":
       return resolve(msg("Edit #{number} body", { number: op.number }));
+    case "status":
+      return op.clearOrchestratorHold
+        ? resolve(msg("Move #{number} to Todo and clear Needs orchestrator", { number: op.number }))
+        : resolve(msg("Move #{number} to {status}", { number: op.number, status: op.status }));
     case "state":
       return op.state === "closed"
         ? resolve(msg("Close #{number}", { number: op.number }))
@@ -156,7 +160,10 @@ function Cards({
                   #{result.issue.number} {result.issue.title}
                 </a>
               </>
-            ) : step === "write" ? (
+            ) : step === "write" ||
+              step === "clear-hold" ||
+              step.startsWith("status:") ||
+              step.startsWith("hold:") ? (
               gt("Issue updated")
             ) : (
               gt("Sub-issue linked")
@@ -164,7 +171,7 @@ function Cards({
           </p>
         ))}
       </details>
-      {change.decision === "pending" ? (
+      {change.operation.type !== "milestone" && change.decision === "pending" ? (
         <div className="mt-3 flex gap-2">
           <Button
             size="xs"
@@ -198,7 +205,7 @@ function Cards({
           </Button>
         </div>
       ) : null}
-      {change.status === "failed" ? (
+      {change.operation.type !== "milestone" && change.status === "failed" ? (
         <div className="mt-3">
           <Button
             size="xs"

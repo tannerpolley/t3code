@@ -9,7 +9,7 @@ import {
   ISSUE_HOSTS,
   ProjectId,
   ThreadId,
-  type IssueChangeOperation,
+  type IssueChangeProposeInput,
   type IssueChangeBaseline,
   type IssueState,
   type ThreadLinkedIssue,
@@ -58,6 +58,8 @@ function issue(number: number): ThreadLinkedIssue {
 const legacyStates = [
   { category: "open", name: "Open" },
   { category: "closed", name: "Completed", closeReason: "completed" },
+  { category: "open", name: "Todo" },
+  { category: "open", name: "Backlog" },
 ] as const satisfies ReadonlyArray<IssueState>;
 
 const setup = Effect.fnUntraced(function* (states: ReadonlyArray<IssueState>) {
@@ -72,6 +74,8 @@ const setup = Effect.fnUntraced(function* (states: ReadonlyArray<IssueState>) {
     [10, { issue: issue(10), body: "Original\n", state: "open", milestoneNumber: 1 }],
   ]);
   const stateWrites: string[] = [];
+  const clearedHolds: Array<{ status: string | undefined; labels: readonly string[] }> = [];
+  const ownerHolds: Array<{ status: string | undefined; labels: readonly string[] }> = [];
   const stateReasons = new Map<number, string>();
   const parents = new Map<number, ThreadLinkedIssue>();
   const blockers = new Map<number, ThreadLinkedIssue>();
@@ -202,7 +206,11 @@ const setup = Effect.fnUntraced(function* (states: ReadonlyArray<IssueState>) {
         const number = Number(input.key);
         if (state.closeReason === undefined) stateReasons.delete(number);
         else stateReasons.set(number, state.closeReason);
-        snapshots.set(number, { ...snapshots.get(number)!, state: state.category });
+        snapshots.set(number, {
+          ...snapshots.get(number)!,
+          state: state.category,
+          planningStatus: state.name,
+        });
       }),
   });
   let refreshes = 0;
@@ -215,6 +223,12 @@ const setup = Effect.fnUntraced(function* (states: ReadonlyArray<IssueState>) {
       }),
     capabilities: () => Effect.sync(() => capabilities),
     readChangeState: (input) => Effect.sync(() => snapshots.get(input.number)!),
+    setLabels: (input, add, remove) =>
+      Effect.sync(() => {
+        const status = snapshots.get(input.number)?.planningStatus;
+        if (add.length > 0) ownerHolds.push({ status, labels: add });
+        if (remove.length > 0) clearedHolds.push({ status, labels: remove });
+      }),
     findCreatedIssue: (input) =>
       Effect.sync(
         () => [...snapshots.values()].find((issue) => issue.body.includes(input.marker)) ?? null,
@@ -231,7 +245,8 @@ const setup = Effect.fnUntraced(function* (states: ReadonlyArray<IssueState>) {
       Effect.sync(() => ({
         issue: issue(input.number),
         state: "open" as const,
-        milestoneNumber: 1,
+        planningStatus: "Todo",
+        labels: [],
         parent: parents.get(input.number) ?? null,
         subIssues: [],
         blockedBy: blockers.has(input.number)
@@ -326,6 +341,8 @@ const setup = Effect.fnUntraced(function* (states: ReadonlyArray<IssueState>) {
     snapshots,
     stateWrites,
     stateReasons,
+    clearedHolds,
+    ownerHolds,
     refreshes: () => refreshes,
     setCapabilities: (value: typeof capabilities) => {
       capabilities = value;
@@ -382,7 +399,7 @@ const inDatabase = <A, E>(
     const harness = yield* setup(states);
     return yield* test(harness);
   }).pipe(Effect.scoped, Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
-const propose = (operation: IssueChangeOperation, clientRequestId = "request") =>
+const propose = (operation: IssueChangeProposeInput["operation"], clientRequestId = "request") =>
   IssueChangeService.IssueChangeService.pipe(
     Effect.flatMap((service) =>
       service.propose(threadId, { ...repository, clientRequestId, operation }),
@@ -392,23 +409,54 @@ const drain = EffectWorker.OrchestrationEffectWorkerV2.pipe(
   Effect.flatMap((worker) => worker.drain()),
 );
 
-it.effect("auto-approved create and milestone moves run once through the outbox", () =>
+it.effect("auto-approved create and Todo moves run once through the outbox", () =>
   inDatabase((h) =>
     Effect.gen(function* () {
       const service = yield* IssueChangeService.IssueChangeService;
-      const create = { type: "create" as const, title: "New", body: "Task", milestoneNumber: 1 };
+      const create = { type: "create" as const, title: "New", body: "Task" };
       const accepted = yield* propose(create);
       assert.equal(accepted.decision, "auto_approved");
       assert.equal(h.calls.create, 0);
       assert.equal(yield* drain, 1);
       assert.equal((yield* propose(create)).id, accepted.id);
       yield* service.execute(accepted.id);
-      yield* propose({ type: "milestone", number: 10, milestoneNumber: 2 }, "milestone");
+      yield* propose({ type: "status", number: 10, status: "Backlog" }, "status");
       assert.equal(yield* drain, 1);
-      assert.equal(h.snapshots.get(21)?.milestoneNumber, 1);
-      assert.deepStrictEqual(h.calls, { create: 1, body: 0, milestone: 1, state: 0, link: 0 });
+      assert.equal(h.snapshots.get(21)?.planningStatus, "Todo");
+      assert.deepEqual(h.stateWrites, ["Todo", "Backlog"]);
       const rows = yield* service.list({ threadId });
       assert.isTrue(rows.every((row) => row.status === "succeeded"));
+    }).pipe(Effect.provide(h.runtime)),
+  ),
+);
+
+it.effect("clears an orchestrator hold only after the requested Todo move", () =>
+  inDatabase((h) =>
+    Effect.gen(function* () {
+      yield* propose({ type: "status", number: 10, status: "Todo" }, "ordinary-move");
+      yield* drain;
+      assert.deepEqual(h.clearedHolds, []);
+      yield* propose({ type: "status", number: 10, status: "Backlog" }, "backlog");
+      yield* drain;
+      yield* propose({ type: "status", number: 10, status: "Todo", clearOrchestratorHold: true });
+      yield* drain;
+      assert.deepEqual(h.clearedHolds, [{ status: "Todo", labels: ["Needs orchestrator"] }]);
+    }).pipe(Effect.provide(h.runtime)),
+  ),
+);
+
+it.effect("places a hold before making an owner-decision draft Todo", () =>
+  inDatabase((h) =>
+    Effect.gen(function* () {
+      yield* propose({
+        type: "create",
+        title: "Choose a release channel",
+        body: "Which release channel should receive this change?",
+        needsOwnerDecision: true,
+      });
+      yield* drain;
+      assert.deepEqual(h.ownerHolds, [{ status: undefined, labels: ["Needs you"] }]);
+      assert.equal(h.snapshots.get(21)?.planningStatus, "Todo");
     }).pipe(Effect.provide(h.runtime)),
   ),
 );
@@ -484,8 +532,8 @@ it.effect("split resumes a failed link without recreating successful issues", ()
         type: "split",
         number: 10,
         issues: [
-          { title: "First", body: "A", milestoneNumber: 1 },
-          { title: "Second", body: "B", milestoneNumber: 1 },
+          { title: "First", body: "A" },
+          { title: "Second", body: "B" },
         ],
       });
       h.failNextLink();
@@ -501,7 +549,7 @@ it.effect("split resumes a failed link without recreating successful issues", ()
       assert.equal(h.calls.create, 2);
       assert.equal(h.parents.get(21)?.number, 10);
       assert.equal(h.parents.get(22)?.number, 10);
-      assert.equal(Object.keys(saved.completedSteps).length, 4);
+      assert.equal(Object.keys(saved.completedSteps).length, 6);
     }).pipe(Effect.provide(h.runtime)),
   ),
 );
@@ -724,7 +772,7 @@ it.effect("a user can retry an exhausted split using only unrecorded steps", () 
       const change = yield* propose({
         type: "split",
         number: 10,
-        issues: [{ title: "First", body: "A", milestoneNumber: 1 }],
+        issues: [{ title: "First", body: "A" }],
       });
       h.loseNextLinkResponse();
       assert.equal(yield* drain, 1);
@@ -769,7 +817,7 @@ it.effect(
         const change = yield* propose({
           type: "split",
           number: 10,
-          issues: [{ title: "Child", body: "Task", milestoneNumber: 1 }],
+          issues: [{ title: "Child", body: "Task" }],
         });
         h.failNextLink();
         h.holdFailureSettlement();
@@ -803,7 +851,7 @@ it.effect("stalled changes and change backoff leave the comment lane available",
       yield* propose({
         type: "split",
         number: 10,
-        issues: [{ title: "Child", body: "Task", milestoneNumber: 1 }],
+        issues: [{ title: "Child", body: "Task" }],
       });
       h.failNextLink();
       h.holdFailureSettlement();
@@ -836,7 +884,7 @@ it.effect("uncertain split creation needs user attention and cannot create anoth
       const change = yield* propose({
         type: "split",
         number: 10,
-        issues: [{ title: "Child", body: "Task", milestoneNumber: 1 }],
+        issues: [{ title: "Child", body: "Task" }],
       });
       h.failNextCreate("uncertain");
       assert.equal(yield* drain, 1);
@@ -877,10 +925,7 @@ it.effect(
         const service = yield* IssueChangeService.IssueChangeService;
         for (const refusal of ["rate-limited", "rejected"] as const) {
           h.failNextCreate(refusal);
-          yield* propose(
-            { type: "create", title: "Task", body: "Task", milestoneNumber: null },
-            refusal,
-          );
+          yield* propose({ type: "create", title: "Task", body: "Task" }, refusal);
           yield* drain;
           yield* TestClock.adjust(100);
           yield* drain;
@@ -893,7 +938,6 @@ it.effect(
             type: "create",
             title: "Lost response",
             body: "Task",
-            milestoneNumber: null,
           },
           "receipt",
         );
@@ -923,7 +967,6 @@ it.effect(
           type: "create" as const,
           title: "Task",
           body: "Task",
-          milestoneNumber: null,
         };
         const automatic = yield* propose(create, "automatic");
         h.requireApproval(true);
@@ -936,10 +979,10 @@ it.effect(
         };
         assert.equal((yield* service.propose(threadId, spoofedPolicy)).decision, "pending");
         assert.equal((yield* propose(create, "automatic")).decision, "auto_approved");
-        const operations: IssueChangeOperation[] = [
+        const operations: IssueChangeProposeInput["operation"][] = [
           create,
           { type: "split", number: 10, issues: [create] },
-          { type: "milestone", number: 10, milestoneNumber: 2 },
+          { type: "status", number: 10, status: "Todo" },
           { type: "blocked_by", number: 10, blockerNumber: 11, action: "add" },
           { type: "body", number: 10, body: "Edit" },
           { type: "state", number: 10, state: "closed" },
@@ -974,7 +1017,7 @@ it.effect("the daemon gives upkeep and comments separate worker slots", () =>
       yield* propose({
         type: "split",
         number: 10,
-        issues: [{ title: "Child", body: "Task", milestoneNumber: 1 }],
+        issues: [{ title: "Child", body: "Task" }],
       });
       h.failNextLink();
       h.holdFailureSettlement();
@@ -1006,7 +1049,6 @@ it.effect("creates a blocker and adds and removes its dependency through durable
           type: "create",
           title: "Outside blocker",
           body: "Required dependency",
-          milestoneNumber: null,
         },
         "blocker",
       );
@@ -1072,7 +1114,11 @@ it.effect("rejects unverifiable blockers and detects changed relationships befor
       yield* service.decide({ id: change.id, decision: "approved" }, user);
       h.blockers.set(10, issue(11));
       yield* drain;
-      assert.equal((yield* propose(change.operation)).status, "conflict");
+      assert.equal(
+        (yield* propose({ type: "blocked_by", number: 10, blockerNumber: 11, action: "add" }))
+          .status,
+        "conflict",
+      );
     }).pipe(Effect.provide(h.runtime)),
   ),
 );

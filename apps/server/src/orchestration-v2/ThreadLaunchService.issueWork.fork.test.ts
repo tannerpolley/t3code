@@ -1,9 +1,4 @@
-import {
-  ISSUE_HOSTS,
-  IssueTrackerKind,
-  ProjectId,
-  SourceControlProviderKind,
-} from "@t3tools/contracts";
+import { IssueTrackerKind, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -34,7 +29,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -65,7 +59,13 @@ import {
 
 describe("managed issue work", () => {
   const exercise = (
-    scenario: "baseline" | "archived" | "direct-resume" | "delegate-resume" | "deletion",
+    scenario:
+      | "baseline"
+      | "archived"
+      | "direct-resume"
+      | "delegate-resume"
+      | "deletion"
+      | "successor-blocked",
   ) => {
     const provider: ServerProvider = {
       instanceId: modelSelection.instanceId,
@@ -91,11 +91,14 @@ describe("managed issue work", () => {
       url: "https://github.com/tannerpolley/t3code/issues/8",
       title: "Single issue",
     };
+    let planningStatus = "Todo";
+    let labels: readonly string[] = [];
     const workRead = (input: { number: number }) =>
       Effect.succeed({
         issue: { ...issue, number: input.number },
         state: "open" as const,
-        milestoneNumber: null,
+        planningStatus,
+        labels,
         parent: null,
         subIssues: [],
         blockedBy: [],
@@ -624,6 +627,29 @@ describe("managed issue work", () => {
         threadId: child.thread.id,
       });
       assert.isNull((yield* threads.getThreadProjection(child.thread.id)).thread.settledOverride);
+      if (scenario === "successor-blocked") {
+        yield* threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("issue-worker:archive-before-blocked-successor"),
+          threadId: child.thread.id,
+        });
+        const archivedWorker = yield* threads.getThreadShell(child.thread.id);
+        assert.isNotNull(archivedWorker?.archivedAt);
+        planningStatus = "Backlog";
+        labels = ["Needs you"];
+        const blocked = yield* threads
+          .dispatch({
+            ...command,
+            commandId: CommandId.make("issue-delegate:blocked-successor"),
+          })
+          .pipe(Effect.result);
+        assert.equal(blocked._tag, "Failure");
+        if (blocked._tag === "Success")
+          assert.isFalse(
+            blocked.success.storedEvents.some((stored) => stored.event.type === "thread.created"),
+          );
+        return;
+      }
       if (scenario === "direct-resume" || scenario === "delegate-resume") {
         const originalTaskId = taskEvent.event.payload.id;
         yield* sink.stream({ afterSequence: 0, eventType: "message.updated" }).pipe(
@@ -855,6 +881,9 @@ describe("managed issue work", () => {
     "panel starts create one child without a root turn, and retries cannot start another attempt",
     () => exercise("baseline"),
   );
+  it.effect("a completed owner cannot delegate a held Backlog issue to a successor", () =>
+    exercise("successor-blocked"),
+  );
   it.effect(
     "a directly resumed worker publishes one closeout and delivers one parent result per task",
     () => exercise("direct-resume"),
@@ -870,7 +899,7 @@ describe("managed issue work", () => {
 });
 
 it.effect(
-  "shares four slots across a nested issue tree, guards parents and eligibility, queues resumes, pauses admission, and wakes the root on completion",
+  "shares four slots across a nested issue tree, guards parents and eligibility, queues resumes and wakes the root on completion",
   () => {
     const issue = (number: number) => ({
       host: "github.com",
@@ -886,7 +915,8 @@ it.effect(
       Effect.succeed({
         issue: issue(input.number),
         state: "open" as const,
-        milestoneNumber: 1,
+        planningStatus: "Todo",
+        labels: [],
         parent: input.number === 4 ? issue(1) : null,
         subIssues: input.number === 1 ? [issue(4)] : [],
         blockedBy: input.number === 6 ? [{ issue: issue(99), state: "open" as const }] : [],
@@ -942,11 +972,6 @@ it.effect(
         createdBy: "user",
         creationSource: "web",
       });
-      const saved = yield* threads.getThreadRecords(rootId, []);
-      assert.equal(
-        saved.thread.repositoryOrchestration?.milestones[0]?.modelRoleId,
-        "implementor-complex",
-      );
       yield* threads.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make("milestone-root-start"),
@@ -1150,13 +1175,6 @@ it.effect(
         creationSource: "web",
       });
       assert.equal(yield* status(first), "queued");
-      yield* threads.dispatch({
-        type: "repository.work.update",
-        commandId: CommandId.make("pause-plan"),
-        threadId: rootId,
-        expectedRevision: 1,
-        orchestration: { ...config, paused: true },
-      });
       yield* finish(rootId, "root-waits");
       const beforeLeafFinish = yield* sink.latestSequence();
       yield* finish(second, "second-done");
@@ -1165,24 +1183,7 @@ it.effect(
         Stream.take(1),
         Stream.runDrain,
       );
-      yield* threads.dispatch({
-        type: "queue.resume",
-        threadId: first,
-        commandId: CommandId.make("resume-while-paused"),
-      });
-      assert.equal(yield* status(first), "queued");
-      yield* threads.dispatch({
-        type: "repository.work.update",
-        commandId: CommandId.make("resume-plan"),
-        threadId: rootId,
-        expectedRevision: 2,
-        orchestration: { ...config, revision: 2, paused: false },
-      });
-      yield* threads.dispatch({
-        type: "queue.resume",
-        threadId: first,
-        commandId: CommandId.make("resume-after-pause"),
-      });
+      yield* waitForStart(first, beforeLeafFinish);
       assert.equal(yield* status(first), "starting");
       const preparingWorker = yield* delegate(8, rootId, "worktree-worker", true);
       assert.equal(yield* status(preparingWorker), "queued");
@@ -1241,303 +1242,6 @@ it.effect(
         ),
       );
     }).pipe(Effect.provide(harness.layer));
-  },
-);
-
-it.effect.each([
-  { configuredRepositories: undefined, canPublish: false },
-  { configuredRepositories: "github.com/tannerpolley/another-repo", canPublish: false },
-  {
-    configuredRepositories: " github.com/another/repo, GitHub.com/TannerPolley/T3Code ",
-    canPublish: true,
-  },
-])(
-  "starts milestone workers with draft PR authority $canPublish ($configuredRepositories) and respects issue relationships",
-  ({ configuredRepositories, canPublish }) => {
-    const linked = (number: number) => ({
-      host: "github.com",
-      repository: "tannerpolley/t3code",
-      repositoryId: "repo:plans",
-      id: `issue:${number}`,
-      nodeId: `node:${number}`,
-      number,
-      title: `Issue ${number}`,
-      url: `https://github.com/tannerpolley/t3code/issues/${number}`,
-    });
-    let newBlocker = false;
-    let reparented = false;
-    const milestoneNumber = (number: number) =>
-      number <= 2 ? 1 : number === 3 ? 2 : number === 4 ? 3 : number === 5 ? 4 : 6;
-    const summary = (number: number) => ({
-      number,
-      title: `Issue ${number}`,
-      url: linked(number).url,
-      state: "open" as const,
-      stateReason: null,
-      author: null,
-      assignees: [],
-      labels: [],
-      milestone: {
-        number: milestoneNumber(number),
-        title: `Milestone ${milestoneNumber(number)}`,
-        state: "open" as const,
-        dueAt: null,
-        url: "https://github.com/tannerpolley/t3code/milestone/1",
-        openCount: 1,
-        closedCount: 0,
-      },
-      createdAt: "2026-10-05T00:00:00Z",
-      updatedAt: "2026-10-05T00:00:00Z",
-      commentCount: 0,
-    });
-    const workRead = (input: { number: number }) =>
-      Effect.succeed({
-        issue: linked(input.number),
-        state: "open" as const,
-        milestoneNumber: milestoneNumber(input.number),
-        parent:
-          input.number === 2 && !reparented ? linked(1) : input.number === 3 ? linked(9) : null,
-        subIssues: input.number === 1 ? [linked(2)] : [],
-        blockedBy:
-          input.number === 4 || (input.number === 2 && newBlocker)
-            ? [{ issue: linked(99), state: "open" as const }]
-            : [],
-        parentComplete: true,
-        subIssuesComplete: true,
-        blockersComplete: input.number !== 5,
-      });
-    const reads = Layer.mock(IssueService.IssueService)({
-      workRead,
-      workReads: (_input, numbers) =>
-        Effect.forEach(numbers, (number) =>
-          workRead({ number }).pipe(Effect.map((read) => [number, read] as const)),
-        ).pipe(Effect.map((entries) => new Map(entries))),
-      repositoryIdentity: () =>
-        Effect.succeed({
-          host: "github.com",
-          repository: "tannerpolley/t3code",
-          repositoryId: "repo:plans",
-        }),
-      capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
-      milestoneIssues: (input) =>
-        Effect.succeed({
-          issues: [1, 2, 3, 4, 5]
-            .map(summary)
-            .filter((issue) => issue.milestone.number === input.milestoneNumber),
-          complete: true,
-        }),
-      resolveLinkedIssue: (input) => Effect.succeed(linked(input.number)),
-    });
-    const provider: ServerProvider = {
-      instanceId: modelSelection.instanceId,
-      driver: ProviderDriverKind.make("codex"),
-      enabled: true,
-      installed: true,
-      version: null,
-      status: "ready",
-      auth: { status: "authenticated" },
-      checkedAt: "2026-10-05T00:00:00Z",
-      availability: "available",
-      models: [],
-      slashCommands: [],
-      skills: [],
-    };
-    const harness = makeHarness({
-      issueServiceLayer: reads,
-      localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
-      hasCommit: () => Effect.succeed(true),
-      providers: [provider],
-      projectRepositoryIdentity: {
-        canonicalKey: "github.com/tannerpolley/t3code",
-        locator: {
-          source: "git-remote",
-          remoteName: "origin",
-          remoteUrl: "https://github.com/tannerpolley/t3code.git",
-        },
-        provider: SourceControlProviderKind.make("github"),
-        owner: "tannerpolley",
-        name: "t3code",
-        displayName: "tannerpolley/t3code",
-      },
-      serverSettings: {
-        modelRoles: {
-          orchestrator: { complex: { provider: "codex", effort: "default" } },
-          implementor: { complex: { effort: "default" } },
-        },
-        modelTiers: { 2: { codex: { model: modelSelection.model } } },
-      },
-    });
-    const dependencies = Layer.mergeAll(
-      harness.layer,
-      reads,
-      IssueWorkStore.layer.pipe(Layer.provide(harness.layer)),
-      IdAllocator.layer,
-      ProviderAdapterRegistry.layerFromAdapters([adapter]),
-    );
-    const serviceLayer = IssueWorkService.layer.pipe(Layer.provide(dependencies));
-    return Effect.gen(function* () {
-      const service = yield* IssueWorkService.IssueWorkService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const input = {
-        host: "github.com",
-        repository: "tannerpolley/t3code",
-        projectId,
-        modelRoleId: "implementor-complex",
-      };
-      const emptyPlan = yield* service.workMilestone({
-        ...input,
-        milestoneNumber: 5,
-        clientRequestId: CommandId.make("empty-plan"),
-      });
-      assert.isNotNull(emptyPlan.rootThreadId);
-      assert.equal(emptyPlan.orchestration?.milestones[0]?.status, "complete");
-      const plan = yield* service.workMilestone({
-        ...input,
-        milestoneNumber: 1,
-        clientRequestId: CommandId.make("plan:1"),
-      });
-      const rootId = plan.rootThreadId!;
-      const root = yield* threads.getThreadRecords(rootId, ["runs", "messages", "subagents"]);
-      assert.lengthOf(root.messages, 0);
-      assert.lengthOf(root.runs, 0);
-      assert.lengthOf(root.subagents, 1);
-      const store = yield* IssueWorkStore.IssueWorkStore;
-      const firstId = (yield* store.issueOwner(linked(1)))!;
-      const secondId = (yield* store.issueOwner(linked(2)))!;
-      yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(firstId).pipe(
-        Stream.filter((snapshot) => snapshot?.phase === "done"),
-        Stream.runHead,
-      );
-      assert.equal(
-        (yield* threads.getThreadRecords(firstId, ["runs"])).runs[0]!.status,
-        "starting",
-      );
-      assert.equal(
-        (yield* threads.getThreadRecords(secondId, [])).thread.lineage.parentThreadId,
-        firstId,
-      );
-      for (const [threadId, number] of [
-        [firstId, 1],
-        [secondId, 2],
-      ] as const) {
-        const { messages } = yield* threads.getThreadRecords(threadId, ["messages"]);
-        const brief = messages[0]!.text;
-        assert.include(brief, `Implement issue #${number}`);
-        assert.include(brief, "Status and closeout comments are authorized.");
-        if (canPublish) {
-          assert.include(
-            brief,
-            "The repository owner explicitly requests that you publish and merge after checks pass.",
-          );
-          assert.include(
-            brief,
-            "First have a fresh read-only reviewer subagent review this worktree's diff against the issue, and fix its blockers.",
-          );
-          assert.include(
-            brief,
-            `Then push only this issue branch to github.com/tannerpolley/t3code and open the PR there ready for review, or mark an existing draft ready, with Closes #${number} and the review verdict in the body; if blockers remain, keep any PR a draft and report them instead.`,
-          );
-          assert.include(
-            brief,
-            "Once the PR is ready and mergeable, merge it with gh pr merge --rebase, or --squash when the branch contains merge commits. If main moved and the PR conflicts, merge origin/main into the branch, re-run your checks, push, and retry. Then report the merge SHA and finish.",
-          );
-          assert.include(
-            brief,
-            "Force-pushing, issue edits, and other GitHub mutations retain separate approval.",
-          );
-          assert.notInclude(brief, "publishing retain separate approval");
-        } else {
-          assert.include(brief, "Other GitHub mutations and publishing retain separate approval.");
-          assert.notInclude(brief, "push only this issue branch");
-          assert.notInclude(brief, "reviewer subagent");
-          assert.notInclude(brief, "gh pr merge");
-        }
-      }
-      newBlocker = true;
-      yield* service.reconcile(rootId);
-      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-      let state = yield* service.repositoryStatus(input);
-      assert.isTrue(
-        state.orchestration!.suspendedIssues.some(
-          (entry) => entry.id === "issue:2" && entry.reason.includes("blocker"),
-        ),
-      );
-      assert.equal(
-        (yield* threads.getThreadRecords(secondId, ["runs"])).runs[0]?.status,
-        "interrupted",
-      );
-      newBlocker = false;
-      yield* service.setPaused({
-        ...input,
-        paused: false,
-        clientRequestId: CommandId.make("plan:resume-after-blocker"),
-      });
-      yield* threads.dispatch({
-        type: "message.dispatch",
-        threadId: secondId,
-        commandId: CommandId.make("plan:worker-resume"),
-        messageId: MessageId.make("plan:worker-resume"),
-        text: "Resume the issue",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-        createdBy: "user",
-        creationSource: "web",
-      });
-      reparented = true;
-      yield* service.setPaused({
-        ...input,
-        paused: true,
-        clientRequestId: CommandId.make("plan:pause"),
-      });
-      assert.isTrue((yield* service.repositoryStatus(input)).orchestration!.paused);
-      yield* service.setPaused({
-        ...input,
-        paused: false,
-        clientRequestId: CommandId.make("plan:resume"),
-      });
-      state = yield* service.repositoryStatus(input);
-      assert.isTrue(
-        state.orchestration!.suspendedIssues.some(
-          (entry) => entry.id === "issue:2" && entry.reason.includes("re-parented"),
-        ),
-      );
-      assert.equal(
-        (yield* threads.getThreadRecords(secondId, [])).thread.lineage.parentThreadId,
-        firstId,
-      );
-      for (const [number, status] of [
-        [2, "awaiting_approval"],
-        [3, "blocked"],
-        [4, "unreadable"],
-        [5, "complete"],
-      ] as const) {
-        const result = yield* service.workMilestone({
-          ...input,
-          milestoneNumber: number,
-          clientRequestId: CommandId.make(`plan:${number}`),
-        });
-        assert.equal(
-          result.orchestration!.milestones.find((entry) => entry.number === number)?.status,
-          status,
-        );
-      }
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(dependencies, serviceLayer, suspensionWorkerLayer(dependencies)).pipe(
-          Layer.provide(
-            ConfigProvider.layer(
-              ConfigProvider.fromEnv({
-                env:
-                  configuredRepositories === undefined
-                    ? {}
-                    : { T3CODE_ISSUE_DRAFT_PR_REPOSITORIES: configuredRepositories },
-              }),
-            ),
-          ),
-        ),
-      ),
-    );
   },
 );
 
@@ -2249,7 +1953,7 @@ it.effect("periodic root selection retains a blocker suspension without mileston
       commandId: CommandId.make("single-issue-without-milestones"),
       threadId: root,
       expectedRevision: initial.revision,
-      orchestration: { ...initial, milestones: [] },
+      orchestration: { ...initial },
     });
     yield* delegateReviewIssue(root, reviewIssue(1), "periodic-blocker-worker");
     const child = (yield* store.issueOwner(reviewIssue(1)))!;
@@ -2258,18 +1962,6 @@ it.effect("periodic root selection retains a blocker suspension without mileston
     yield* worker.drain();
     assert.equal((yield* threads.getThreadRecords(child, ["runs"])).runs[0]!.status, "interrupted");
     assert.deepEqual(yield* store.activeRoots(), [root]);
-
-    for (const paused of [true, false]) {
-      const config = (yield* store.configuration(root))!;
-      yield* threads.dispatch({
-        type: "repository.work.update",
-        commandId: CommandId.make(`periodic-root-paused:${paused}`),
-        threadId: root,
-        expectedRevision: config.revision,
-        orchestration: { ...config, paused },
-      });
-      assert.deepEqual(yield* store.activeRoots(), paused ? [] : [root]);
-    }
 
     blocked = false;
     for (const selected of yield* store.activeRoots()) yield* service.reconcile(selected);
@@ -2360,7 +2052,7 @@ it.effect.each(["inaccessible", "unauthenticated"] as const)(
         threadId: root,
         commandId: CommandId.make("unreadable-no-milestones"),
         expectedRevision: initial.revision,
-        orchestration: { ...initial, milestones: [] },
+        orchestration: { ...initial },
       });
       yield* delegateReviewIssue(root, reviewIssue(1), "unreadable-worker");
       const child = (yield* store.issueOwner(reviewIssue(1)))!;
@@ -2458,7 +2150,7 @@ it.effect("serializes per-issue Resume with reconcile without rejecting accepted
       commandId: CommandId.make("resume-race-no-milestones"),
       threadId: root,
       expectedRevision: initial.revision,
-      orchestration: { ...initial, milestones: [] },
+      orchestration: { ...initial },
     });
     yield* delegateReviewIssue(root, reviewIssue(1), "resume-race-first-worker");
     yield* delegateReviewIssue(root, reviewIssue(2), "resume-race-second-worker");
@@ -2618,12 +2310,7 @@ it.effect.each(["closed", "re-parented"] as const)(
       } else yield* resume;
       assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 2);
       changed = false;
-      yield* service.setPaused({
-        ...input,
-        paused: false,
-        clientRequestId: CommandId.make("resume-repository"),
-      });
-      assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, []);
+      assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 2);
     }).pipe(Effect.provide(harness.layer));
   },
 );
@@ -2682,12 +2369,6 @@ it.effect(
         ),
       );
 
-      yield* service.setPaused({
-        host: "github.com",
-        repository: "tannerpolley/t3code",
-        paused: false,
-        clientRequestId: CommandId.make("explicitly-clear-unreadable-suspension"),
-      });
       assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, []);
       assert.isTrue(yield* store.canAdmit(reviewIssue(1), child));
     }).pipe(Effect.provide(harness.layer));
@@ -2845,7 +2526,7 @@ it.effect("retains the continuation when a blocker closes before its interrupt e
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect.each(["paused", "draining"] as const)(
+it.effect.each(["draining"] as const)(
   "does not auto-resume a blocker-suspended worker while the repository is %s",
   (stopped) => {
     let blocked = false;
@@ -2874,7 +2555,6 @@ it.effect.each(["paused", "draining"] as const)(
         expectedRevision: config.revision,
         orchestration: {
           ...config,
-          paused: true,
           ...(stopped === "draining"
             ? {
                 handoff: {
@@ -2883,7 +2563,6 @@ it.effect.each(["paused", "draining"] as const)(
                   summary: "Transfer repository work",
                   modelSelection,
                   status: "draining" as const,
-                  wasPaused: false,
                 },
               }
             : {}),
@@ -3006,25 +2685,8 @@ it.effect(
       assert.equal(sent.run.admissionWait, "issue_suspended");
       // A run waiting for admission has not reached the transcript.
       assert.isNull(sent.turnItem);
-      // The reported case: the root pauses, clears the blocker, then unpauses.
-      const reference = { host: "github.com", repository: "tannerpolley/t3code" };
-      yield* service.setPaused({
-        ...reference,
-        paused: true,
-        clientRequestId: CommandId.make("waiting-worker-pause"),
-      });
       blocked = false;
       yield* service.reconcile(root);
-      yield* worker.drain();
-      const paused = (yield* threads.getThreadRecords(child, ["runs"])).runs.find(
-        (run) => run.id === sent.run.id,
-      )!;
-      assert.equal(paused.status, "queued");
-      yield* service.setPaused({
-        ...reference,
-        paused: false,
-        clientRequestId: CommandId.make("waiting-worker-unpause"),
-      });
       yield* worker.drain();
       const started = (yield* threads.getThreadRecords(child, ["runs"])).runs.find(
         (run) => run.id === sent.run.id,

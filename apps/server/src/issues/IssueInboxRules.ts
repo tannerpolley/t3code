@@ -140,7 +140,7 @@ function listEvents(events: ReadonlyArray<DigestEvent>): string {
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 const triageHint = (events: ReadonlyArray<DigestEvent>) =>
   events.some((event) => event.needsTriage)
-    ? " Review each item, revise it if needed with propose_issue_change, then acknowledge it with t3_issue_inbox mark_read to place the issue in Ready."
+    ? " Review each item, revise it if needed with propose_issue_change, acknowledge it with t3_issue_inbox mark_read, and move actionable issues to Todo."
     : "";
 
 /** The queued digest: counts and issue numbers, never bodies. */

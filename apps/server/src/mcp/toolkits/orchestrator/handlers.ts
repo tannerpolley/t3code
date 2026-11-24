@@ -32,13 +32,6 @@ const handlers = {
       return yield* service.requestRepositoryHandoff(scope, input);
     }),
   ),
-  work_through_milestone: McpToolAccess.writes((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.workMilestone(scope, input);
-    }),
-  ),
   queue_issue: McpToolAccess.writes((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
@@ -79,13 +72,6 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.endRepositoryOrchestration(scope, input);
-    }),
-  ),
-  set_repository_work_paused: McpToolAccess.writes((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.setRepositoryPaused(scope, input);
     }),
   ),
   close_out_issue_attempt: McpToolAccess.writes((input) =>

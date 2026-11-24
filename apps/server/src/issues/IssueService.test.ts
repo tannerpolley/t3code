@@ -533,57 +533,19 @@ it.effect(
     }),
 );
 
-it.effect("paginates only the selected milestone during repository reconciliation", () =>
+it.effect("lists Todo candidates by creation age and preserves the GitHub status", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
-      responses: [
-        httpResponse([rawIssue(1)], {
-          link: `<https://${HOST}/repos/${REPOSITORY}/issues?page=2>; rel="next"`,
-        }),
-        httpResponse([rawIssue(2)]),
-      ],
+      responses: [httpResponse([rawIssue(1, { status: { name: "Todo" } })])],
     });
-    const result = yield* (yield* service(harness)).milestoneIssues({
+    const page = yield* (yield* service(harness)).repositoryIssuesPage({
       ...listInput,
-      milestoneNumber: 7,
+      state: "open",
+      page: 1,
+      order: "oldest",
     });
-    assert.deepEqual(
-      result.issues.map((issue) => issue.number),
-      [1, 2],
-    );
-    assert.isTrue(result.complete);
-    assert.isTrue(harness.calls.every((call) => call.url.includes("milestone=7")));
-  }),
-);
-
-it.effect("treats a milestone as missing only when GitHub cannot find it", () =>
-  Effect.gen(function* () {
-    // [issue list status, milestone lookup status]; a 422 with a found milestone is the spam guard.
-    for (const [listStatus, lookupStatus] of [
-      [422, 404],
-      [422, 200],
-      [403, undefined],
-      [500, undefined],
-    ] as const) {
-      const harness = makeHarness({
-        responses: [
-          httpResponse({}, {}, listStatus),
-          ...(lookupStatus === undefined ? [] : [httpResponse({}, {}, lookupStatus)]),
-        ],
-      });
-      const result = yield* (yield* service(harness))
-        .milestoneIssues({ ...listInput, milestoneNumber: 23 })
-        .pipe(Effect.result);
-      if (lookupStatus === 404) {
-        assert.deepEqual(Result.getOrThrow(result), { issues: [], complete: true, missing: true });
-        assert.include(harness.calls[1]!.url, "/milestones/23");
-      } else {
-        assert.isTrue(Result.isFailure(result));
-        if (Result.isFailure(result))
-          assert.equal(result.failure.code, listStatus === 403 ? "inaccessible" : "upstream");
-      }
-      assert.include(harness.calls[0]!.url, "state=all");
-    }
+    assert.equal(page.items[0]?.planningStatus, "Todo");
+    assert.include(harness.calls[0]?.url, "sort=created&direction=asc");
   }),
 );
 
@@ -1013,18 +975,18 @@ it.effect("evicts old issue pages at the per-repository bound", () =>
       ],
     });
     const issues = yield* service(harness);
-    for (let milestoneNumber = 1; milestoneNumber <= 33; milestoneNumber++)
-      yield* issues.milestoneIssues({ ...listInput, milestoneNumber });
-    const retained = yield* issues.milestoneIssues({ ...listInput, milestoneNumber: 33 });
+    for (let page = 1; page <= 33; page++)
+      yield* issues.repositoryIssuesPage({ ...listInput, state: "open", page });
+    const retained = yield* issues.repositoryIssuesPage({ ...listInput, state: "open", page: 33 });
     assert.deepEqual(
-      retained.issues.map((issue) => issue.number),
+      retained.items.map((issue) => issue.number),
       [33],
     );
     assert.equal(harness.calls[33]!.ifNoneMatch, '"page-32"');
-    const refreshed = yield* issues.milestoneIssues({ ...listInput, milestoneNumber: 1 });
+    const refreshed = yield* issues.repositoryIssuesPage({ ...listInput, state: "open", page: 1 });
     assert.isUndefined(harness.calls[34]!.ifNoneMatch);
     assert.deepEqual(
-      refreshed.issues.map((issue) => issue.number),
+      refreshed.items.map((issue) => issue.number),
       [34],
     );
   }),
@@ -1040,16 +1002,16 @@ it.effect("drops cached pages after the repository stops being listed for five m
       ],
     });
     const issues = yield* service(harness);
-    const input = { ...listInput, milestoneNumber: 1 };
-    yield* issues.milestoneIssues(input);
+    const input = { ...listInput, state: "open" as const, page: 1 };
+    yield* issues.repositoryIssuesPage(input);
     yield* TestClock.adjust("4 minutes");
     assert.deepEqual(
-      (yield* issues.milestoneIssues(input)).issues.map((issue) => issue.number),
+      (yield* issues.repositoryIssuesPage(input)).items.map((issue) => issue.number),
       [7],
     );
     yield* TestClock.adjust("5 minutes");
     assert.deepEqual(
-      (yield* issues.milestoneIssues(input)).issues.map((issue) => issue.number),
+      (yield* issues.repositoryIssuesPage(input)).items.map((issue) => issue.number),
       [8],
     );
     assert.equal(harness.calls[1]!.ifNoneMatch, '"page-1"');

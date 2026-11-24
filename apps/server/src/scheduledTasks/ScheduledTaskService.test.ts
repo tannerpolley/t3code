@@ -352,7 +352,7 @@ it.effect(
 );
 
 it.effect(
-  "repository and legacy root-bound schedules follow ownership at each firing and refuse paused work",
+  "repository and legacy root-bound schedules follow ownership at each firing even with a legacy pause value",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -439,9 +439,9 @@ it.effect(
         assert.equal(sent.at(-1), "repository-owner-3");
         paused = true;
         const blocked = yield* tasks.runNow({ id });
-        assert.equal(blocked.task.lastRunStatus, "failed");
-        assert.equal((yield* tasks.runNow({ id: legacy })).task.lastRunStatus, "failed");
-        assert.equal(sent.length, 4);
+        assert.notEqual(blocked.task.lastRunStatus, "failed");
+        assert.notEqual((yield* tasks.runNow({ id: legacy })).task.lastRunStatus, "failed");
+        assert.equal(sent.length, 6);
       }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

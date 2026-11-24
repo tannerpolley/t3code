@@ -2,6 +2,7 @@ import { pendingSubagentRequestsByThread } from "@t3tools/shared/pendingSubagent
 import { issueQueueMailbox, QUEUED_ISSUE_START_PREFIX } from "./IssueQueueStore.ts";
 import {
   CommandId,
+  MessageId,
   type EnvironmentId,
   CLOSED_ISSUE_SUSPENSION_REASON,
   resolveModelRoles,
@@ -12,6 +13,7 @@ import {
   repositoryPhase,
   repositoryAdmitsWork,
   type IssueSuspensionKind,
+  type ThreadRole,
   IssueWorkError,
   type RepositoryIssueRef,
   type IssueWorkStartInput,
@@ -21,8 +23,6 @@ import {
   type RepositoryWorkRestoreInput,
   type IssueWorkStartResult,
   type IssueWorkStatusResult,
-  type RepositoryWorkInput,
-  type RepositoryWorkControlInput,
   RepositoryWorkerLimitInput,
   RepositoryReadOnlyLimitInput,
   type RepositoryHandoffInput,
@@ -62,6 +62,8 @@ import { sourceControlDefinitions } from "../sourceControl/sourceControlDefiniti
 import { issueRepositoryOf } from "./issueRepositoryOf.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import * as Layer from "effect/Layer";
+import * as TrackerIssueService from "../issue/IssueService.ts";
+import type { IssuePageResult } from "./IssueGitHubExtension.ts";
 import { IssueService, makeLiveReadCache } from "./IssueService.ts";
 import { IssueWorkStore, missingOwnerMessage } from "./IssueWorkStore.ts";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
@@ -78,6 +80,9 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { checkDelegateTarget } from "../mcp/delegateTaskTarget.ts";
 import { modelRoleStatuses, providerCreditStatuses } from "../provider/modelRolePolicy.ts";
 import {
+  admitsTodo,
+  issueAdmissionEligible,
+  issueAutomationEnabled,
   issueEligibility,
   isUnmanagedIssueRole,
   sameIssueRepository,
@@ -105,6 +110,16 @@ const decodeLimit = Schema.decodeEffect(
   Schema.Union([RepositoryWorkerLimitInput, RepositoryReadOnlyLimitInput]),
 );
 const encodeToolArgument = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const todoModelRole = (labels: readonly string[] = []) => {
+  const tags = labels.map((label) => label.toLowerCase());
+  const role: ThreadRole = tags.includes("writer")
+    ? "writer"
+    : tags.includes("designer")
+      ? "designer"
+      : "implementor";
+  return { role, modelRoleId: `${role}-${tags.includes("routine") ? "routine" : "complex"}` };
+};
 
 export class IssueWorkService extends Context.Service<
   IssueWorkService,
@@ -143,9 +158,6 @@ export class IssueWorkService extends Context.Service<
     readonly workStatus: (
       input: RepositoryIssueRef,
     ) => Effect.Effect<IssueWorkStatusResult, IssueWorkError>;
-    readonly workMilestone: (
-      input: RepositoryWorkInput,
-    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly childrenStatus: (
       rootThreadId: ThreadId,
       threadLink: (threadId: ThreadId, title: string, environmentId?: EnvironmentId) => string,
@@ -166,9 +178,6 @@ export class IssueWorkService extends Context.Service<
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly endRepository: (
       input: import("@t3tools/contracts").RepositoryWorkEndInput,
-    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
-    readonly setPaused: (
-      input: RepositoryWorkControlInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly assertCurrentCaller: (threadId: ThreadId) => Effect.Effect<void, IssueWorkError>;
     readonly requestHandoff: (
@@ -195,6 +204,8 @@ export const layer = Layer.effect(
     const assignments = yield* KeyedLock.make<string>();
     const projects = yield* ProjectService;
     const issues = yield* IssueService;
+    const tracker = yield* Effect.serviceOption(TrackerIssueService.IssueService);
+    const automation = yield* issueAutomationEnabled;
     const store = yield* IssueWorkStore;
     const sql = yield* SqlClient.SqlClient;
     const launch = yield* ThreadLaunchService;
@@ -323,11 +334,6 @@ export const layer = Layer.effect(
           message:
             "A different repository orchestrator is already registered. Use it, or explicitly restore ownership first.",
         });
-      if (root?.paused)
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: "Repository work is paused.",
-        });
       const serverSettings = yield* settings.getSettings.pipe(Effect.mapError(mapError));
       const availableProviders = yield* providers.getProviders;
       const capableIds = new Set<import("@t3tools/contracts").ProviderInstanceId>();
@@ -449,9 +455,7 @@ export const layer = Layer.effect(
               projectId: input.projectId,
               launchCommandId: commandId,
               revision: 1,
-              paused: false,
               ...DEFAULT_REPOSITORY_WORK_SETTINGS,
-              milestones: [],
               suspendedIssues: [],
             },
             createdBy: "user",
@@ -510,7 +514,10 @@ export const layer = Layer.effect(
           ),
         });
       let worktree: { baseRef: string; branch: string } | undefined;
-      if (!(yield* threads.hasReceipt(command.commandId))) {
+      if (
+        !(yield* threads.hasReceipt(command.commandId)) &&
+        !(command.type === "issue.work.start" && isUnmanagedIssueRole(command.workerRole))
+      ) {
         const baseRef = yield* launch
           .readDefaultBranch({ commandId: command.commandId, projectId: config.projectId })
           .pipe(Effect.mapError(mapError));
@@ -560,10 +567,10 @@ export const layer = Layer.effect(
       let read: IssueWorkRead | undefined;
       if (accepted === null) {
         read = yield* issues.workRead(input).pipe(Effect.mapError(mapError));
-        if (issueEligibility(read) !== "eligible")
+        if (!issueAdmissionEligible(read))
           return yield* new IssueWorkError({
             code: "issue-unavailable",
-            message: "Issue work is closed, blocked, or its eligibility is unknown.",
+            message: "Only unheld Todo issues with complete, unblocked relationships can start.",
           });
         const seen = new Set([read.issue.id]);
         let ancestor = read;
@@ -581,8 +588,7 @@ export const layer = Layer.effect(
             seen.has(ancestor.issue.id) ||
             seen.size > 32 ||
             ancestor.issue.host !== read.issue.host ||
-            ancestor.issue.repositoryId !== read.issue.repositoryId ||
-            ancestor.milestoneNumber !== read.milestoneNumber
+            ancestor.issue.repositoryId !== read.issue.repositoryId
           )
             return yield* new IssueWorkError({
               code: "invalid-request",
@@ -605,6 +611,7 @@ export const layer = Layer.effect(
     const startAccepted = Effect.fn("IssueWorkService.startAccepted")(function* (
       input: IssueWorkStartInput,
       verifiedRead: IssueWorkRead | undefined,
+      workerRole?: ThreadRole,
     ): Effect.fn.Return<IssueWorkStartResult, IssueWorkError> {
       const accepted = yield* store.request(input.clientRequestId);
       if (accepted !== null) {
@@ -632,10 +639,10 @@ export const layer = Layer.effect(
         };
       }
       const read = verifiedRead ?? (yield* issues.workRead(input).pipe(Effect.mapError(mapError)));
-      if (read.state !== "open")
+      if (!issueAdmissionEligible(read))
         return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: "Only open issues can start work.",
+          code: "issue-unavailable",
+          message: "Only unheld Todo issues with complete, unblocked relationships can start.",
         });
       const { issue } = read;
       const { root, selection, createdRoot } = yield* ensureRoot(input, issue, true);
@@ -654,8 +661,14 @@ export const layer = Layer.effect(
         threadId: root.rootThreadId,
         issue,
         workerModelSelection: selection,
-        createdBy: "user",
-        creationSource: "web",
+        ...(workerRole === undefined
+          ? { createdBy: "user" as const, creationSource: "web" as const }
+          : {
+              workerRole,
+              automatic: true,
+              createdBy: "agent" as const,
+              creationSource: "server" as const,
+            }),
       }).pipe(Effect.mapError(mapError));
       const requestEvent = dispatched.storedEvents.find(
         (stored) => stored.event.type === "issue.work.requested",
@@ -837,30 +850,19 @@ export const layer = Layer.effect(
       }
       return groups;
     }, Effect.mapError(mapError));
-    // Rejected commands are immutable; only a rejected attempt gets a new identity. Retries
-    // wait 1 minute after a rejection, doubling up to a day, so a lasting rejection (a
-    // deleted model role, an unavailable provider) adds a few receipts, not one per pass.
     const admissionCommandId = Effect.fn("IssueWorkService.admissionCommandId")(function* (
       first: string,
     ) {
-      const now = yield* Clock.currentTimeMillis;
-      let commandId = CommandId.make(first);
-      for (let retry = 1; ; retry++) {
-        const receipt = yield* commandReceipts
-          .getByCommandId(commandId)
-          .pipe(Effect.mapError(mapError));
-        if (Option.isNone(receipt) || receipt.value.status !== "rejected") return commandId;
-        const waitMs = Math.min(2 ** (retry - 1), 1440) * 60_000;
-        if (now < receipt.value.acceptedAt.epochMilliseconds + waitMs) return commandId;
-        commandId = CommandId.make(`${first}:retry:${retry}`);
-      }
-    });
-    // Queued issues start like milestone issues; their workers wait for a slot ahead of milestone workers.
+      const commandId = CommandId.make(first);
+      const receipt = yield* commandReceipts.getByCommandId(commandId);
+      return Option.isSome(receipt) && receipt.value.status === "rejected"
+        ? yield* ids.allocate.command({ fixtureName: "issue-admission", commandName: first })
+        : commandId;
+    }, Effect.mapError(mapError));
     const startQueuedIssues = Effect.fn("IssueWorkService.startQueuedIssues")(function* (
       rootThreadId: ThreadId,
     ) {
       const config = yield* store.configuration(rootThreadId);
-      // The same phases that admit milestone issues; a draining root takes no new work.
       if (
         config === null ||
         !repositoryAdmitsWork(config) ||
@@ -868,9 +870,6 @@ export const layer = Layer.effect(
       )
         return;
       const suspended = new Set(config.suspendedIssues.map((entry) => entry.id));
-      const modelRoleId =
-        config.milestones.find((plan) => plan.status === "running")?.modelRoleId ??
-        "implementor-complex";
       // shortcut: the entry is re-read after the slow issue-host read, not checked inside the
       // start command, so a withdrawal in the last moment can still start; cancel that worker.
       const stillQueued = (requestId: CommandId) =>
@@ -912,17 +911,34 @@ export const layer = Layer.effect(
             );
           continue;
         }
-        if (eligibility !== "eligible" || !(yield* stillQueued(entry.requestId))) continue;
-        yield* start({
-          host: entry.issue.host,
-          repository: entry.issue.repository,
-          number: entry.issue.number,
-          projectId: config.projectId,
-          modelRoleId,
-          clientRequestId: yield* admissionCommandId(
-            `${QUEUED_ISSUE_START_PREFIX}${entry.requestId}`,
-          ),
-        }).pipe(
+        if (
+          Option.isNone(read) ||
+          !issueAdmissionEligible(read.value) ||
+          eligibility !== "eligible" ||
+          !(yield* stillQueued(entry.requestId))
+        )
+          continue;
+        if ((yield* store.slotsInUse(rootThreadId)) >= config.workerLimit) break;
+        if (
+          read.value.parent !== null &&
+          (yield* store.currentIssueOwner(read.value.parent)) === null
+        )
+          continue;
+        const { role, modelRoleId } = todoModelRole(read.value.labels);
+        yield* startAccepted(
+          {
+            host: entry.issue.host,
+            repository: entry.issue.repository,
+            number: entry.issue.number,
+            projectId: config.projectId,
+            modelRoleId,
+            clientRequestId: yield* admissionCommandId(
+              `${QUEUED_ISSUE_START_PREFIX}${entry.requestId}`,
+            ),
+          },
+          read.value,
+          role,
+        ).pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Could not start a queued issue", {
               issue: entry.issue.number,
@@ -1019,12 +1035,6 @@ export const layer = Layer.effect(
       config: RepositoryOrchestration,
     ) {
       const sections = new Map<string, string[]>([
-        [
-          "Milestones",
-          config.milestones.map(
-            (plan) => `#${plan.number}: ${plan.status}; worker role ${plan.modelRoleId}`,
-          ),
-        ],
         ["Completed attempts", []],
         ["Remaining issues", []],
         ["Remaining issue requests", []],
@@ -1035,25 +1045,6 @@ export const layer = Layer.effect(
       ]);
       for (const entry of yield* store.recoveryInventory(config))
         sections.get(entry.section)!.push(entry.detail);
-      for (const plan of config.milestones) {
-        const listing = yield* issues
-          .milestoneIssues({
-            host: config.host,
-            repository: config.repository,
-            milestoneNumber: plan.number,
-          })
-          .pipe(Effect.mapError(mapError));
-        if (listing.missing) continue;
-        if (!listing.complete)
-          return yield* new IssueWorkError({
-            code: "issue-unavailable",
-            message:
-              "Handoff inventory is incomplete. Restore GitHub access before transferring ownership.",
-          });
-        for (const issue of listing.issues)
-          if (issue.state === "open" && issue.milestone?.number === plan.number)
-            sections.get("Remaining issues")!.push(`#${issue.number} ${issue.title}\n${issue.url}`);
-      }
       return [...sections]
         .map(
           ([name, entries]) =>
@@ -1134,7 +1125,7 @@ export const layer = Layer.effect(
       );
     });
     // A draining root lets queued turns and final deliveries finish through their original lineage;
-    // new requests and milestone admissions wait until the ownership pointer moves. Reconcile and
+    // new requests and Todo admissions wait until the ownership pointer moves. Reconcile and
     // the event loop both drain, so each pass re-reads the configuration the last one changed.
     const drainHandoff = coalescedPerRoot((rootThreadId) =>
       Effect.gen(function* () {
@@ -1168,12 +1159,48 @@ export const layer = Layer.effect(
           .pipe(Effect.mapError(mapError));
       }),
     );
+    const drainRestore = coalescedPerRoot((rootThreadId) =>
+      Effect.gen(function* () {
+        const config = yield* store.configuration(rootThreadId);
+        const restore = config?.restore;
+        if (config === null || restore === undefined || repositoryPhase(config) !== "draining")
+          return;
+        yield* threads
+          .dispatch({
+            type: "repository.work.continue",
+            threadId: rootThreadId,
+            commandId: CommandId.make(`restore-drain:${restore.requestId}:${config.revision}`),
+          })
+          .pipe(Effect.mapError(mapError));
+        if (!(yield* store.subtreeDrained(rootThreadId))) return;
+        yield* threads
+          .dispatch({
+            type: "repository.work.restore",
+            commandId: yield* ids.allocate
+              .command({ fixtureName: "repository-restore", commandName: "complete" })
+              .pipe(Effect.mapError(mapError)),
+            threadId: rootThreadId,
+            projectId: config.projectId,
+            host: config.host,
+            repository: config.repository,
+            repositoryId: config.repositoryId,
+            targetThreadId: restore.targetThreadId,
+            expectedRootThreadId: rootThreadId,
+            expectedRevision: restore.expectedRevision,
+            reason: restore.reason,
+            restorePhase: "complete",
+            restoreRequestId: restore.requestId,
+          })
+          .pipe(Effect.mapError(mapError));
+      }),
+    );
     const considerHandoff = coalescedPerRoot((rootThreadId) =>
       Effect.gen(function* () {
         const config = yield* store.configuration(rootThreadId);
         if (config?.handoff?.verification !== undefined) return yield* drainHandoff(rootThreadId);
         if (
           config === null ||
+          config.restore !== undefined ||
           config.handoff !== undefined ||
           repositoryPhase(config) === "retired"
         )
@@ -1250,6 +1277,7 @@ export const layer = Layer.effect(
       refreshRequests = false,
       eventSequence?: number,
     ) {
+      if (!automation) return;
       yield* considerHandoff(rootThreadId);
       const config = yield* store.configuration(rootThreadId);
       if (config === null || !repositoryAdmitsWork(config)) return;
@@ -1291,13 +1319,16 @@ export const layer = Layer.effect(
               }),
             ),
           );
-      if (draining) return yield* drainHandoff(rootThreadId);
+      if (draining)
+        return config.restore === undefined
+          ? yield* drainHandoff(rootThreadId)
+          : yield* drainRestore(rootThreadId);
       // Once an ancestor has a durable thread, deliver its selected sub-issues there.
       for (const request of yield* store.pendingRequests(rootThreadId)) {
         const read = refreshRequests
           ? yield* issues.workRead(request.issue).pipe(Effect.option)
           : Option.none();
-        if (refreshRequests && (Option.isNone(read) || issueEligibility(read.value) !== "eligible"))
+        if (refreshRequests && (Option.isNone(read) || !issueAdmissionEligible(read.value)))
           continue;
         const parent = Option.isSome(read) ? read.value.parent : request.parent;
         if (parent == null || !sameIssueRepository(parent, request.issue)) continue;
@@ -1330,6 +1361,7 @@ export const layer = Layer.effect(
           threadId: rootThreadId,
           issue: request.issue,
           workerModelSelection: request.modelSelection,
+          ...(request.workerRole === undefined ? {} : { workerRole: request.workerRole }),
           createdBy: "agent",
           creationSource: "server",
         }).pipe(
@@ -1349,9 +1381,89 @@ export const layer = Layer.effect(
         .pipe(Effect.mapError(mapError));
     });
 
+    const retryFailedWorker = Effect.fn("IssueWorkService.retryFailedWorker")(function* (
+      shell: NonNullable<Effect.Success<ReturnType<typeof threads.getThreadShell>>>,
+      issue: ThreadLinkedIssue,
+    ) {
+      if (
+        !automation ||
+        Option.isNone(tracker) ||
+        shell.status !== "failed" ||
+        shell.activeRunId !== null
+      )
+        return;
+      const read = yield* issues.workRead(issue);
+      if (
+        read.issue.id !== issue.id ||
+        read.labels === undefined ||
+        issueEligibility(read) !== "eligible" ||
+        !["In progress", "Todo"].includes(read.planningStatus ?? "")
+      )
+        return;
+      const held = !admitsTodo("Todo", read.labels);
+      const needsYou = read.labels.some((label) => label.toLowerCase() === "needs you");
+      if (held && !needsYou) return;
+      const { runs } = yield* threads.getThreadRecords(shell.id, ["runs"]);
+      const failedRun = runs.findLast((run) => run.status === "failed");
+      if (failedRun === undefined) return;
+      const retryPrefix = `issue-retry:${shell.id}:`;
+      const retryFailed = failedRun.userMessageId?.startsWith(retryPrefix) ?? false;
+      const exhaustionMarker = `<!-- t3-issue-retry-exhausted:${shell.id}:${failedRun.id} -->`;
+      const exhausted =
+        retryFailed &&
+        (yield* issues.findManagedComment({ issue, marker: exhaustionMarker })) !== null;
+      if (retryFailed && (needsYou || read.planningStatus !== "Todo" || !exhausted)) {
+        if (!needsYou) {
+          yield* issues.setLabels(issue, ["Needs you"], []);
+          yield* issues.markChanged(issue);
+        }
+        if (!exhausted) {
+          yield* issues.postComment(
+            issue,
+            `The issue worker failed after one retry. ${shell.lastError ?? "See the worker thread for the error."} Please decide what should change before T3 tries again.
+
+${exhaustionMarker}`,
+          );
+        }
+        return;
+      }
+      if (held) return;
+      const ownerApproved = retryFailed && exhausted && read.planningStatus === "Todo";
+      const messageId = MessageId.make(
+        ownerApproved
+          ? `issue-owner-resume:${shell.id}:${failedRun.id}`
+          : `${retryPrefix}${failedRun.id}`,
+      );
+      const commandId = CommandId.make(messageId);
+      const receipt = yield* commandReceipts.getByCommandId(commandId);
+      if (Option.isNone(receipt) || receipt.value.status === "rejected") {
+        const sendCommandId =
+          Option.isSome(receipt) && receipt.value.status === "rejected"
+            ? yield* ids.allocate
+                .command({ fixtureName: "issue-retry", commandName: messageId })
+                .pipe(Effect.mapError(mapError))
+            : commandId;
+        yield* threads.sendToThread({
+          projectId: shell.projectId,
+          threadId: shell.id,
+          commandId: sendCommandId,
+          messageId,
+          mode: "queue",
+          attachments: [],
+          text: ownerApproved
+            ? "The owner reviewed the issue and moved it back to Todo. Continue the existing work, incorporate the owner's latest reply, and report the result."
+            : "The issue attempt failed. Continue the existing work, fix the failure, and report any blocker.",
+          createdBy: "agent",
+          creationSource: "server",
+        });
+        return;
+      }
+    });
+
     const reconcilePass = Effect.fn("IssueWorkService.reconcilePass")(function* (
       rootThreadId: ThreadId,
     ) {
+      if (!automation) return;
       yield* considerHandoff(rootThreadId);
       let config = yield* store.configuration(rootThreadId);
       if (config?.handoff?.status === "awaiting_approval") {
@@ -1361,8 +1473,7 @@ export const layer = Layer.effect(
             rootThreadId,
             {
               ...config,
-              paused: true,
-              handoff: { ...config.handoff, status: "draining", wasPaused: config.paused },
+              handoff: { ...config.handoff, status: "draining" },
             },
             yield* ids.allocate
               .command({ fixtureName: "repository-handoff", commandName: "resume" })
@@ -1373,11 +1484,22 @@ export const layer = Layer.effect(
         }
       }
       if (config === null) return;
+      if (config.restore !== undefined) return yield* continueLocal(rootThreadId);
       const admitsWork = repositoryAdmitsWork(config);
       const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry]));
       for (const threadId of yield* store.workerThreads(rootThreadId)) {
         const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
         if (shell?.linkedIssue === undefined) continue;
+        if (admitsWork && repositoryPhase(config) !== "draining") {
+          yield* retryFailedWorker(shell, shell.linkedIssue).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not retry or park a failed issue worker", {
+                threadId,
+                cause,
+              }),
+            ),
+          );
+        }
         if (shell.activeRunId === null && shell.status !== "queued") {
           yield* threads.archiveObservedWorker(threadId);
         }
@@ -1423,7 +1545,6 @@ export const layer = Layer.effect(
         if (reason === null) {
           if (
             !isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) ||
-            config.paused ||
             repositoryPhase(config) === "draining"
           )
             continue;
@@ -1463,182 +1584,96 @@ export const layer = Layer.effect(
         config = (yield* store.configuration(rootThreadId))!;
       }
       if (!admitsWork) return;
-      // Queued issues start before continueLocal promotes waiting milestone workers into free slots.
-      yield* startQueuedIssues(rootThreadId).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Queued issue starts failed", { rootThreadId, cause }),
-        ),
-      );
+      yield* store
+        .withQueuedIssuePriority(rootThreadId, startQueuedIssues(rootThreadId))
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Queued issue starts failed", { rootThreadId, cause }),
+          ),
+        );
       yield* continueLocal(rootThreadId, true);
-      config = (yield* store.configuration(rootThreadId))!;
+      config = yield* store.configuration(rootThreadId);
       if (
+        config === null ||
         !repositoryAdmitsWork(config) ||
         repositoryPhase(config) === "draining" ||
-        config.milestones.length === 0
+        (yield* store.slotsInUse(rootThreadId)) >= config.workerLimit
       )
         return;
-      const plans: RepositoryOrchestration["milestones"][number][] = [];
-      for (const plan of config.milestones) {
-        const listing = yield* issues
-          .milestoneIssues({
-            host: config.host,
-            repository: config.repository,
-            milestoneNumber: plan.number,
+
+      const queued = new Set((yield* store.queue(config)).map(({ issue }) => issue.number));
+      let page: number | null = 1;
+      const visited = new Set<number>();
+      while (page !== null && !visited.has(page)) {
+        if ((yield* store.slotsInUse(rootThreadId)) >= config.workerLimit) return;
+        visited.add(page);
+        const listing: IssuePageResult = yield* issues
+          .repositoryIssuesPage({
+            ...config,
+            state: "open",
+            page,
+            order: "oldest",
           })
-          .pipe(Effect.result);
-        if (listing._tag === "Success" && listing.success.missing) {
-          yield* update(
-            rootThreadId,
-            { ...config, milestones: config.milestones.filter((p) => p.number !== plan.number) },
-            CommandId.make(`milestone-drop:${rootThreadId}:${config.revision}:${plan.number}`),
-          );
-          config = (yield* store.configuration(rootThreadId))!;
-          continue;
-        }
-        if (listing._tag === "Failure" || !listing.success.complete) {
-          plans.push({ ...plan, status: "unreadable", fingerprint: "unreadable" });
-          continue;
-        }
-        const selected = listing.success.issues.filter(
-          (issue) => issue.milestone?.number === plan.number && issue.state === "open",
+          .pipe(Effect.mapError(mapError));
+        page = listing.nextPage;
+        const candidates = listing.items.filter(
+          (item) =>
+            !queued.has(item.number) &&
+            admitsTodo(
+              item.planningStatus,
+              item.labels.map(({ name }) => name),
+            ),
         );
+        if (candidates.length === 0) continue;
+        if ((yield* store.slotsInUse(rootThreadId)) >= config.workerLimit) return;
         const reads = yield* issues
           .workReads(
             config,
-            selected.map((issue) => issue.number),
+            candidates.map(({ number }) => number),
           )
-          .pipe(Effect.option);
-        let unreadable = false,
-          blocked = false,
-          awaiting = false,
-          running = false;
-        const fingerprint: string[] = [];
-        for (const issue of selected) {
-          const read = reads._tag === "Some" ? reads.value.get(issue.number) : undefined;
-          if (read === undefined) {
-            unreadable = true;
-            fingerprint.push(`${issue.number}:unknown`);
+          .pipe(Effect.mapError(mapError));
+        for (const { number } of candidates) {
+          if ((yield* store.queue(config)).some((entry) => !queued.has(entry.issue.number))) return;
+
+          if ((yield* store.slotsInUse(rootThreadId)) >= config.workerLimit) return;
+          const read = reads.get(number);
+          if (
+            read === undefined ||
+            !issueAdmissionEligible(read) ||
+            read.issue.repositoryId !== config.repositoryId ||
+            suspended.has(read.issue.id) ||
+            (yield* store.issueOwner(read.issue)) !== null ||
+            (read.parent !== null &&
+              (!sameIssueRepository(read.parent, read.issue) ||
+                suspended.has(read.parent.id) ||
+                (yield* store.currentIssueOwner(read.parent)) === null))
+          )
             continue;
-          }
-          const eligibility = issueEligibility(read);
-          const owner = yield* store.issueOwner(read.issue);
-          fingerprint.push(
-            `${read.issue.id}:${eligibility}:${read.parent?.id ?? "root"}:${owner ?? "unclaimed"}`,
+          const { role, modelRoleId } = todoModelRole(read.labels);
+          yield* startAccepted(
+            {
+              host: config.host,
+              repository: config.repository,
+              number,
+              projectId: config.projectId,
+              modelRoleId,
+              clientRequestId: yield* admissionCommandId(
+                `todo-issue:${rootThreadId}:${read.issue.id}:first`,
+              ),
+            },
+            read,
+            role,
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not start a Todo issue", { number, cause }),
+            ),
           );
-          if (eligibility === "unknown") {
-            unreadable = true;
-            continue;
-          }
-          if (eligibility === "blocked") {
-            blocked = true;
-            continue;
-          }
-          if (eligibility === "closed") continue;
-          if (suspended.has(read.issue.id)) {
-            awaiting = true;
-            continue;
-          }
-          if (owner !== null) {
-            const shell = yield* threads.getThreadShell(owner).pipe(Effect.mapError(mapError));
-            if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) {
-              unreadable = true;
-              continue;
-            }
-            if (shell.status === "queued") running = true;
-            else if (shell.pendingRuntimeRequest !== null) awaiting = true;
-            else if (shell.activeRunId === null && (yield* store.resultAvailable(owner)))
-              awaiting = true;
-            else running = true;
-            continue;
-          }
-          const clientRequestId = yield* admissionCommandId(
-            `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`,
-          );
-          const started = yield* start({
-            host: config.host,
-            repository: config.repository,
-            number: issue.number,
-            projectId: config.projectId,
-            modelRoleId: plan.modelRoleId,
-            clientRequestId,
-          }).pipe(Effect.result);
-          if (started._tag === "Failure") {
-            if (started.failure.code === "invalid-request") awaiting = true;
-            else unreadable = true;
-          } else running = true;
         }
-        const status = unreadable
-          ? "unreadable"
-          : running
-            ? "running"
-            : awaiting
-              ? "awaiting_approval"
-              : blocked
-                ? "blocked"
-                : "complete";
-        plans.push({ ...plan, status, fingerprint: fingerprint.sort().join("|") });
       }
-      if (
-        plans.some(
-          (plan, index) =>
-            plan.fingerprint !== config!.milestones[index]?.fingerprint ||
-            plan.status !== config!.milestones[index]?.status,
-        )
-      )
-        yield* update(
-          rootThreadId,
-          { ...config, milestones: plans },
-          CommandId.make(`milestone-reconcile:${rootThreadId}:${config.revision}`),
-        );
     });
 
     const reconcile = coalescedPerRoot(reconcilePass);
 
-    const workMilestone = Effect.fn("IssueWorkService.workMilestone")(function* (
-      input: Parameters<IssueWorkService["Service"]["workMilestone"]>[0],
-    ) {
-      if (!(yield* issues.capabilities(input.host)).milestones)
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: `The issue host for ${input.repository} does not support milestones.`,
-        });
-      const listing = yield* issues.milestoneIssues(input).pipe(Effect.result);
-      if (listing._tag === "Success" && listing.success.missing)
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: `Milestone #${input.milestoneNumber} does not exist in ${input.repository}.`,
-        });
-      let owner = yield* store.repositoryOwnerByRef(input);
-      if (owner === null) {
-        const repository = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
-        owner = (yield* ensureRoot(input, repository)).root;
-      }
-      if (owner.projectId !== input.projectId)
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: "Select the registered repository orchestrator's project.",
-        });
-      const config = (yield* store.configuration(owner.rootThreadId))!;
-      if (!config.milestones.some((plan) => plan.number === input.milestoneNumber))
-        yield* update(
-          owner.rootThreadId,
-          {
-            ...config,
-            milestones: [
-              ...config.milestones,
-              {
-                number: input.milestoneNumber,
-                modelRoleId: input.modelRoleId,
-                status: "running",
-                fingerprint: "",
-              },
-            ],
-          },
-          input.clientRequestId,
-        );
-      yield* reconcile(owner.rootThreadId);
-      return yield* repositoryStatus(input);
-    });
     const setLimit = Effect.fn("IssueWorkService.setLimit")(function* (
       input: RepositoryWorkerLimitInput | RepositoryReadOnlyLimitInput,
     ) {
@@ -1672,7 +1707,7 @@ export const layer = Layer.effect(
       const limit = "workerLimit" in input ? input.workerLimit : input.readOnlyLimit;
       if (limit !== config[field])
         yield* update(owner.rootThreadId, { ...config, [field]: limit }, input.clientRequestId);
-      if (limit > config[field] && !config.paused)
+      if (limit > config[field])
         yield* reconcile(owner.rootThreadId).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Issue queue continuation after limit change failed", {
@@ -1722,28 +1757,16 @@ export const layer = Layer.effect(
     });
 
     const resumeWork = Effect.fn("IssueWorkService.resumeWork")(
-      function* (rootThreadId: ThreadId, commandId: CommandId, issueId?: string) {
+      function* (rootThreadId: ThreadId, commandId: CommandId, issueId: string) {
         const config = (yield* store.configuration(rootThreadId))!;
         if (repositoryPhase(config) === "draining")
           return yield* new IssueWorkError({
             code: "invalid-request",
             message: "A handoff is draining. Cancel the handoff before resuming work.",
           });
-        const suspendedIssues =
-          issueId === undefined
-            ? []
-            : config.suspendedIssues.filter((entry) => entry.id !== issueId);
-        const paused = issueId === undefined ? false : config.paused;
-        // Explicit Resume removes only the chosen suspensions; reconcile still validates GitHub.
-        if (paused === config.paused && suspendedIssues.length === config.suspendedIssues.length)
-          return;
-        const publish = update(rootThreadId, { ...config, paused, suspendedIssues }, commandId);
-        if (paused === config.paused) return yield* publish;
-        // Terminal reactions can try to fill a slot between unpausing and admitting queued issues.
-        yield* store.withQueuedIssuePriority(
-          rootThreadId,
-          publish.pipe(Effect.andThen(startQueuedIssues(rootThreadId))),
-        );
+        const suspendedIssues = config.suspendedIssues.filter((entry) => entry.id !== issueId);
+        if (suspendedIssues.length !== config.suspendedIssues.length)
+          yield* update(rootThreadId, { ...config, suspendedIssues }, commandId);
       },
       (effect, rootThreadId) => reconcile(rootThreadId, effect),
     );
@@ -1768,30 +1791,6 @@ export const layer = Layer.effect(
       return yield* repositoryStatus(input);
     });
 
-    const setPaused: IssueWorkService["Service"]["setPaused"] = Effect.fn(
-      "IssueWorkService.setPaused",
-    )(function* (input) {
-      const owner = yield* store.repositoryOwnerByRef(input);
-      if (owner === null)
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: "This repository has no registered orchestrator.",
-        });
-      const config = (yield* store.configuration(owner.rootThreadId))!;
-      if (repositoryPhase(config) === "draining")
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: "A handoff is draining. Cancel the handoff before changing the pause state.",
-        });
-      if (input.paused) {
-        if (!config.paused)
-          yield* update(owner.rootThreadId, { ...config, paused: true }, input.clientRequestId);
-      } else {
-        yield* resumeWork(owner.rootThreadId, input.clientRequestId);
-      }
-      return yield* repositoryStatus(input);
-    });
-
     const validateLead = Effect.fn("IssueWorkService.validateLead")(function* (
       input: RepositoryOrchestratorInput,
       moveTo?: RepositoryWorkRestoreInput,
@@ -1810,8 +1809,7 @@ export const layer = Layer.effect(
       const movable =
         moveTo !== undefined &&
         isMovableRepositoryRegistration(registered, moveTo, moveUnpaused) &&
-        // An unpaused record with queued issues is refused before any command is stored.
-        (registered.paused || (yield* store.queue(registered)).length === 0);
+        (yield* store.queue(registered)).length === 0;
       if (
         target === null ||
         !isRepositoryOrchestratorEligible(
@@ -1929,7 +1927,6 @@ export const layer = Layer.effect(
         owner.rootThreadId,
         {
           ...config,
-          paused: true,
           handoff: {
             requestId,
             nextThreadId:
@@ -1941,7 +1938,6 @@ export const layer = Layer.effect(
             summary: input.summary,
             modelSelection: selection,
             status: "draining",
-            wasPaused: config.paused,
             // A proposal from before requestedAt existed stays undated rather than dated at approval.
             requestedAt:
               config.handoff === undefined
@@ -1967,24 +1963,20 @@ export const layer = Layer.effect(
               return yield* refuse(
                 `No repository orchestrator is registered for ${input.host}/${input.repository}.`,
               );
-            if (config.handoff === undefined)
-              return yield* refuse(`${input.repository} has no pending handoff to cancel.`);
+            if (config.handoff === undefined && config.restore === undefined)
+              return yield* refuse(
+                `${input.repository} has no pending handoff or restore to cancel.`,
+              );
             if (config.revision !== input.expectedRevision)
               return yield* refuse(
                 `Repository work changed (revision ${config.revision}, expected ${input.expectedRevision}). Refresh before cancelling.`,
               );
             yield* update(
               owner.rootThreadId,
-              {
-                ...config,
-                paused:
-                  repositoryPhase(config) === "draining" ? config.handoff.wasPaused : config.paused,
-                handoff: undefined,
-              },
+              { ...config, handoff: undefined, restore: undefined },
               input.clientRequestId,
             );
-            if (repositoryPhase(config) === "draining" && !config.handoff.wasPaused)
-              yield* reconcile(owner.rootThreadId);
+            if (repositoryPhase(config) === "draining") yield* reconcile(owner.rootThreadId);
             return yield* repositoryStatus(input);
           });
 
@@ -2067,9 +2059,31 @@ export const layer = Layer.effect(
           expectedRevision: input.expectedRevision,
           targetThreadId: input.targetThreadId,
           reason: input.reason,
+          ...(input.expectedRootThreadId === null
+            ? {}
+            : { restorePhase: "request" as const, restoreRequestId: input.clientRequestId }),
           ...(moveUnpaused ? { moveUnpaused } : {}),
         })
         .pipe(Effect.mapError(mapError));
+      if (input.expectedRootThreadId !== null) {
+        if (
+          !dispatched.storedEvents.some(
+            (stored) =>
+              stored.event.type === "thread.metadata-updated" &&
+              stored.event.threadId === input.expectedRootThreadId &&
+              stored.event.payload.repositoryOrchestration?.restore?.requestId ===
+                input.clientRequestId,
+          )
+        )
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: "This command id was already used for another recovery operation.",
+          });
+        yield* reconcile(input.expectedRootThreadId);
+        return yield* repositoryStatus(input, {
+          verifyIdentity: options?.verifyStatusIdentity ?? true,
+        });
+      }
       if (
         !dispatched.storedEvents.some(
           (stored) =>
@@ -2245,7 +2259,7 @@ export const layer = Layer.effect(
                 ? null
                 : deriveIssueWorkStatus({
                     shell: rootShell,
-                    paused: root.paused,
+                    paused: false,
                     runtimeRequests: rootRequests,
                     waitingOnSubIssues: false,
                     queued: true,
@@ -2272,7 +2286,7 @@ export const layer = Layer.effect(
           projectId: root?.projectId ?? null,
           rootThreadId: root?.rootThreadId ?? null,
           threadId: owner,
-          status: (yield* progressFor(owner, (root?.paused ?? false) || suspended)).status,
+          status: (yield* progressFor(owner, suspended)).status,
           publishing: yield* store.publishing(owner, issue),
         };
       }),
@@ -2284,11 +2298,9 @@ export const layer = Layer.effect(
       startWorker,
       cancelRequest,
       restoreRoot,
-      workMilestone,
       childrenStatus,
       repositoryStatus,
       endRepository,
-      setPaused,
       closeOut,
       setWorkerLimit: setLimit,
       setReadOnlyLimit: setLimit,
@@ -2341,7 +2353,7 @@ export const layer = Layer.effect(
       );
     }
     const scheduler = yield* Effect.serviceOption(Scheduler.Scheduler);
-    if (Option.isSome(scheduler)) {
+    if (automation && Option.isSome(scheduler)) {
       let nextReadAt = 0;
       yield* scheduler.value.register(
         "repository-issue-work",
@@ -2361,7 +2373,7 @@ export const layer = Layer.effect(
       );
     }
     const sink = yield* Effect.serviceOption(EventSink.EventSinkV2);
-    if (Option.isSome(sink)) {
+    if (automation && Option.isSome(sink)) {
       const pendingRoots = new Map<ThreadId, number | null>();
       const wake = yield* Queue.sliding<void>(1);
       const queueHandoffCheck = (root: ThreadId) => {
