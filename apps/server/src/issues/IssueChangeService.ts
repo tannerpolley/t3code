@@ -704,25 +704,11 @@ const make = Effect.gen(function* () {
                   .update({ ...ref, body: op.body })
                   .pipe(Effect.mapError(trackerDetailError));
               } else {
-                const { states } = yield* tracker
-                  .detail(ref)
+                const write = yield* tracker
+                  .prepareStateChange({ ...ref, category: op.state })
                   .pipe(Effect.mapError(trackerDetailError));
-                const state = states.find(
-                  (state) =>
-                    state.category === op.state &&
-                    (state.category === "open" || state.closeReason === "completed"),
-                );
-                if (state === undefined)
-                  return yield* githubError({
-                    message:
-                      op.state === "open"
-                        ? "This repository has no open issue status."
-                        : "This repository has no issue status that closes an issue as completed.",
-                  });
                 yield* startStep("write");
-                yield* tracker
-                  .setState({ ...ref, state: state.name })
-                  .pipe(Effect.mapError(trackerDetailError));
+                yield* write.pipe(Effect.mapError(trackerDetailError));
               }
             }
             if (op.type === "milestone") {

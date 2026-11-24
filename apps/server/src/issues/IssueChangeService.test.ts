@@ -91,6 +91,15 @@ const setup = Effect.fnUntraced(function* (states: ReadonlyArray<IssueState>) {
   let loseLinkResponse = false;
   let capabilities = ISSUE_HOSTS.github!.capabilities;
   const lostResponse = (detail: string) => new IssueOperationError({ operation: "write", detail });
+  const writeState = (key: string, state: IssueState) =>
+    Effect.sync(() => {
+      stateWrites.push(state.name);
+      calls.state++;
+      const number = Number(key);
+      if (state.closeReason === undefined) stateReasons.delete(number);
+      else stateReasons.set(number, state.closeReason);
+      snapshots.set(number, { ...snapshots.get(number)!, state: state.category });
+    });
   // Upstream's service files, edits and closes; the fork's GitHub extension does the rest.
   const tracker = Layer.mock(TrackerIssueService.IssueService)({
     resolveUrl: (url) =>
@@ -142,52 +151,19 @@ const setup = Effect.fnUntraced(function* (states: ReadonlyArray<IssueState>) {
           return yield* lostResponse("Body write response lost");
         }
       }),
-    detail: (input) =>
-      Effect.sync(() => {
-        const snapshot = snapshots.get(Number(input.key))!;
-        return {
-          ...input,
-          host: repository.host,
-          projectTitle: "Project",
-          displayKey: `#${input.key}`,
-          title: snapshot.issue.title,
-          url: snapshot.issue.url,
-          author: null,
-          state: states.find((state) => state.category === snapshot.state)!,
-          createdAt: "2026-01-01T00:00:00Z",
-          updatedAt: "2026-01-01T00:00:00Z",
-          closedAt: null,
-          assignees: [],
-          labels: [],
-          commentCount: 0,
-          writable: true,
-          capabilities: {
-            create: true,
-            edit: true,
-            comment: true,
-            labels: true,
-            assignees: true,
-            reactions: true,
-            templates: true,
-            linkedPullRequests: true,
-            events: true,
-            search: true,
-          },
-          viewerPermissions: {
-            setState: true,
-            comment: true,
-            edit: true,
-            labels: true,
-            assignees: true,
-          },
-          states,
-          viewer: null,
-          body: snapshot.body,
-          comments: [],
-          commentsCursor: null,
-          events: [],
-          linkedPullRequests: [],
-        };
+    prepareStateChange: (input) =>
+      Effect.gen(function* () {
+        const state = states.find(
+          (candidate) =>
+            candidate.category === input.category &&
+            (candidate.category === "open" || candidate.closeReason === "completed"),
+        );
+        if (state === undefined)
+          return yield* new IssueOperationError({
+            operation: "setState",
+            detail: "This repository has no issue status that closes an issue as completed.",
+          });
+        return writeState(input.key, state);
       }),
     setState: (input) =>
       Effect.gen(function* () {
@@ -197,12 +173,7 @@ const setup = Effect.fnUntraced(function* (states: ReadonlyArray<IssueState>) {
             operation: "setState",
             detail: `This repository has no "${input.state}" issue status.`,
           });
-        stateWrites.push(input.state);
-        calls.state++;
-        const number = Number(input.key);
-        if (state.closeReason === undefined) stateReasons.delete(number);
-        else stateReasons.set(number, state.closeReason);
-        snapshots.set(number, { ...snapshots.get(number)!, state: state.category });
+        yield* writeState(input.key, state);
       }),
   });
   let refreshes = 0;
