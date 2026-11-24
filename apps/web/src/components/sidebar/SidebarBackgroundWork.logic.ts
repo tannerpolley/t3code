@@ -196,6 +196,16 @@ export function groupBackgroundWorkTaskRows(rows: ReadonlyArray<BackgroundWorkTa
   };
 }
 
+function isAppOwnedSubagentTask(
+  task: Extract<OrchestrationV2PendingBackgroundTask, { kind: "subagent" }>,
+): boolean {
+  return (
+    task.origin === "app_owned" ||
+    // Legacy remote delegations use T3's turn item ID in the roster.
+    (task.origin === undefined && task.taskId.startsWith(DELEGATED_TASK_TURN_ITEM_PREFIX))
+  );
+}
+
 /**
  * Joins provider-reported subagents to their thread rows, matching roster-only tasks by count.
  * Children in the owner's checkout (`ownerWorktreePath`) list first, inside its checkout lines.
@@ -211,10 +221,7 @@ export function describeProjectSidebarWork(
       (task) =>
         task.kind !== "subagent" ||
         (task.origin !== "provider_native" &&
-          (task.origin === "app_owned" ||
-            task.childThreadId !== undefined ||
-            // Legacy remote delegations use T3's turn item ID in the roster.
-            task.taskId.startsWith(DELEGATED_TASK_TURN_ITEM_PREFIX))),
+          (task.childThreadId !== undefined || isAppOwnedSubagentTask(task))),
     ),
     runningChildren,
     ownerThreadId,
@@ -239,7 +246,7 @@ export function describeSidebarBackgroundWork(
   );
   // ponytail: roster-only tasks have no child id, so the fallback can only pair by count; it
   // cannot prove which running child owns each task.
-  const unlinkedChildren = runningChildren.filter(
+  let unlinkedChildren = runningChildren.filter(
     (child) => !linked.some((task) => task.childThreadId === child.id),
   ).length;
 
@@ -281,7 +288,11 @@ export function describeSidebarBackgroundWork(
 
   const unmatchedSubagentRows: BackgroundWorkTaskRow[] = [
     ...linked.filter((task) => !listedChildIds.has(task.childThreadId)),
-    ...unlinked.slice(unlinkedChildren),
+    ...unlinked.filter((task) => {
+      if (isAppOwnedSubagentTask(task) || unlinkedChildren === 0) return true;
+      unlinkedChildren -= 1;
+      return false;
+    }),
   ].map((task) => ({
     taskId: task.taskId,
     label: task.description ?? task.taskId,

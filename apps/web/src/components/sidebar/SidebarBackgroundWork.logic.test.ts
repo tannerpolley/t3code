@@ -103,6 +103,21 @@ describe("describeSidebarBackgroundWork", () => {
       child: runningChild,
     });
     expect(rows[4]).toMatchObject({ childThreadId: null, startedAt: null });
+    const grandchild = makeThreadFixture({
+      id: ThreadId.make("grandchild"),
+      lineage: {
+        rootThreadId: parent.id,
+        parentThreadId: runningChild.id,
+        relationshipToParent: "subagent",
+      },
+      runtime: runningChild.runtime,
+    });
+    expect(
+      describeProjectSidebarWork(marked!.pendingBackgroundTasks, [runningChild, grandchild])
+        .filter((row) => row.kind === "subagent")
+        .map(({ taskId }) => taskId)
+        .toSorted(),
+    ).toEqual([runningChild.id, grandchild.id, "turn-item:delegated-task:remote"]);
     expect(describeSidebarBackgroundWork(tasks, [nativeChild, runningChild])).toContainEqual(
       expect.objectContaining({ childThreadId: nativeChild.id, child: nativeChild }),
     );
