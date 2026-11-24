@@ -206,7 +206,7 @@ export function presentThreadShell(
   thread: OrchestrationV2ThreadShell,
   pendingSubagentRequest: PendingSubagentRequest | null = null,
   parent?: RoutedRequestParent | null,
-  issueWorkerWorking = isIssueWorkerChild(thread) && issueWorkerIsWorking(thread),
+  issueWorkerWorking = isIssueWorkerChild(thread) ? issueWorkerIsWorking(thread) : undefined,
 ): EnvironmentThreadShell {
   const ownerVisible = runtimeRequestIsOwnerVisible(thread.pendingRuntimeRequest, parent);
   const updatedAt = iso(thread.updatedAt);
@@ -234,7 +234,7 @@ export function presentThreadShell(
     delegatedFrom: thread.delegatedFrom ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     ...threadActivityFromShell(thread, ownerVisible),
-    issueWorkerWorking,
+    ...(issueWorkerWorking === undefined ? {} : { issueWorkerWorking }),
     latestUserMessageAt: nullableIso(thread.latestUserMessageAt),
     ...(thread.latestUserAuthoredMessageAt === undefined
       ? {}

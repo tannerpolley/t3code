@@ -96,15 +96,15 @@ describe("v2 thread shell lists", () => {
         return registry.get(list).map(({ id, issueWorkerWorking }) => [id, issueWorkerWorking]);
       };
       expect(states([])).toEqual([
-        [parent.id, false],
+        [parent.id, undefined],
         [child.id, false],
       ]);
       expect(states([{ kind: "command", taskId: "fit", ownerThreadId: child.id }])).toEqual([
-        [parent.id, false],
+        [parent.id, undefined],
         [child.id, true],
       ]);
       expect(states([])).toEqual([
-        [parent.id, false],
+        [parent.id, undefined],
         [child.id, false],
       ]);
     } finally {

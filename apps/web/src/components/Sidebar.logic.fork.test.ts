@@ -90,6 +90,14 @@ describe("resolveSidebarThreadStatus", () => {
       [{ status: "completed", pendingBackgroundTasks: [] }, "ready"],
       [
         {
+          status: "waiting",
+          activityRunStatus: "waiting",
+          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }],
+        },
+        "waiting",
+      ],
+      [
+        {
           status: "completed",
           pendingBackgroundTasks: [{ taskId: "pr-check", kind: "monitor", awaited: true }],
         },

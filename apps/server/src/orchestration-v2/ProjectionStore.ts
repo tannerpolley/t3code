@@ -1993,6 +1993,7 @@ export function threadShellFromProjection(
   }
   const latestUserMessage = userMessages[0] ?? null;
   const pendingBackgroundTasks = derivePendingBackgroundWork({
+    threadId: projection.thread.id,
     latestRun,
     providerThreads: projection.providerThreads,
     turnItems: projection.turnItems,
@@ -9674,6 +9675,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         }
         const pendingBackgroundTasks = [
           ...derivePendingBackgroundWork({
+            threadId: thread.id,
             latestRun:
               latestRunId === null || latestRunStatus === "idle"
                 ? null
