@@ -240,6 +240,52 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([command]);
   });
 
+  it.each([
+    ["task ID", { taskId: "native-second" }, {}],
+    ["native item ID", { nativeItemId: "native-second" }, {}],
+    ["projected item ID", { itemId: TurnItemId.make("item-second") }, {}],
+    ["conflicting IDs", { itemId: TurnItemId.make("item-second") }, { taskId: "native-second" }],
+    ["another provider thread", { taskId: "native-second" }, {}],
+  ] as const)("resolves the roster child link by %s", (identity, secondIds, firstIds) => {
+    const providerThreadId = ProviderThreadId.make("pt-1");
+    const childThreadId = ThreadId.make("child-2");
+    const first = { taskId: "first", kind: "subagent", ...firstIds } as const;
+    const second = {
+      taskId: "second",
+      kind: "subagent",
+      description: "Second task",
+      ...secondIds,
+    } as const;
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+      providerThreads: [{ id: providerThreadId, pendingBackgroundTasks: [first, second] }],
+      turnItems: [
+        {
+          id: "item-second",
+          type: "subagent",
+          status: "running",
+          title: "Other description",
+          providerThreadId:
+            identity === "another provider thread"
+              ? ProviderThreadId.make("pt-2")
+              : providerThreadId,
+          nativeItemRef: { nativeId: "native-second" },
+          childThreadId,
+        },
+      ],
+    });
+    expect(tasks).toMatchObject([
+      { ...first, origin: "provider_native" },
+      { ...second, origin: "provider_native" },
+    ]);
+    expect(tasks.map((task) => task.childThreadId)).toEqual([
+      undefined,
+      identity === "conflicting IDs" || identity === "another provider thread"
+        ? undefined
+        : childThreadId,
+    ]);
+  });
+
   it("excludes Grok persistent monitors", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
