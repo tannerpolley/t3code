@@ -99,10 +99,11 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           cause: forkableSourceRunStatusError(sourceRun),
         });
       }
-      // The remote parent delegated the source thread, not its forks.
+      // The parent delegated, and the outside agent launched, the source thread, not its forks.
       // Nor is a fork a step of the run its source was one of.
       const {
         delegatedFrom: _delegatedFrom,
+        mcpClientSessionId: _mcpClientSessionId,
         delegatedCompletion: _delegatedCompletion,
         silentWakeAttention: _silentWakeAttention,
         workflowRun: _workflowRun,

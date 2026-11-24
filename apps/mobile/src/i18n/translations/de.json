@@ -762,6 +762,8 @@
   "024baab60525a419": "Die gespeicherten Anmeldedaten wurden abgelehnt.",
   "2613c232516f3c72": "Verbunden als {account} · noch keine Projekte verknüpft. Wähle für ein Projekt ein Team, um seine Issues aufzulisten.",
   "77d07bfe2f8ee19d": "{count, plural, one {Verbunden als {account} · {count} Projekt verknüpft} other {Verbunden als {account} · {count} Projekte verknüpft}}",
+  "ea2c2df54bb227cd": "GitHub update pending",
+  "b8782645b9d7f202": "GitHub update failed · retry pending",
   "3eb9a01099aaf799": "{count} s",
   "3618302947c280f0": "{count} Min.",
   "a856dc3afb8272cb": "{hours} Std. {minutes} Min.",

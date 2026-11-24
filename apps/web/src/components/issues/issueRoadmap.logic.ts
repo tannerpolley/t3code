@@ -9,7 +9,7 @@ import {
   type RepositoryIssueSummary,
 } from "@t3tools/contracts";
 import { issuePriorityRank } from "./issueProjects.logic";
-import { issueProgress } from "./IssueStateIcon";
+import { issueStage, ISSUE_STAGE_LABELS, type IssueStage } from "@t3tools/shared/issueStage";
 
 export function issueLiveStatus(issue: RepositoryIssueSummary) {
   const work = issue.liveWork ?? [];
@@ -146,36 +146,24 @@ export function issueRoadmap(
     for (const next of outgoing[id]!) if (--incoming[next]! === 0) insert(next);
   }
   const queueOrder = new Map(queuedNumbers.map((number, index) => [number, index]));
-  const section = (id: string, title: string) => ({ id, title, rows: [] as typeof ordered });
-  const closed = section("closed", "Closed");
-  const unknown = section("dependencies-unknown", "Dependencies unknown");
-  const blocked = section("blocked", "Blocked");
-  const readySection = section("ready", "Ready");
-  const queued = section("queued", "Queued");
-  const review = section("ready-for-review", "Ready for review");
-  const suspended = section("suspended", "Suspended");
-  const inProgress = section("in-progress", "In progress");
-  const done = section("done", "Done");
+  const section = (stage: IssueStage) => ({
+    id: stage.replaceAll("_", "-"),
+    stage,
+    title: ISSUE_STAGE_LABELS[stage],
+    rows: [] as typeof ordered,
+  });
+  const done = section("done");
+  const review = section("ready_for_review");
+  const inProgress = section("in_progress");
+  const queued = section("queued");
+  const backlog = section("backlog");
+  const closed = section("closed");
+  const byStage = { ready_for_review: review, in_progress: inProgress, queued, backlog };
   const pendingInbox = new Set(pendingInboxNumbers);
-  // Queue membership keeps its explicit order; dependency warnings remain visible on queued rows.
   for (const row of ordered) {
     if (pendingInbox.has(row.issue.number)) continue;
-    const progress = issueProgress({ ...row.issue, queued: queueOrder.has(row.issue.number) });
-    const target =
-      progress === "suspended"
-        ? suspended
-        : queueOrder.has(row.issue.number) || progress === "queued"
-          ? queued
-          : progress === "blocked"
-            ? blocked
-            : progress === "in_progress"
-              ? inProgress
-              : progress === "ready_for_review"
-                ? review
-                : progress === "dependencies_unknown"
-                  ? unknown
-                  : readySection;
-    target.rows.push(row);
+    const stage = issueStage({ ...row.issue, queued: queueOrder.has(row.issue.number) });
+    if (stage !== "done" && stage !== "closed") byStage[stage].rows.push(row);
   }
   queued.rows.sort(
     (left, right) =>
@@ -189,19 +177,13 @@ export function issueRoadmap(
         (Date.parse(b.closedAt ?? "") || 0) - (Date.parse(a.closedAt ?? "") || 0) ||
         b.number - a.number,
     )) {
-    (recentlyDone(issue, now) ? done : closed).rows.push({ issue, cycle: false });
+    (issueStage(issue) === "done" && recentlyDone(issue, now) ? done : closed).rows.push({
+      issue,
+      cycle: false,
+    });
   }
-  return [
-    done,
-    ...(review.rows.length === 0 ? [] : [review]),
-    inProgress,
-    ...(suspended.rows.length === 0 ? [] : [suspended]),
-    queued,
-    readySection,
-    blocked,
-    ...(unknown.rows.length === 0 ? [] : [unknown]),
-    closed,
-  ];
+  // Pipeline order; Closed holds older and unfinished closures, so it shows only when it has any.
+  return [done, review, inProgress, queued, backlog, ...(closed.rows.length === 0 ? [] : [closed])];
 }
 
 const RECENTLY_DONE_MS = 24 * 60 * 60 * 1000;

@@ -1,3 +1,4 @@
+import { automaticHandoffCompletion } from "./AutomaticRepositoryHandoff.ts";
 import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
 import { isDelegatedAppThread } from "@t3tools/contracts";
 import { silentWakeAction, SILENT_WAKE_FOLLOWUP, SILENT_WAKE_ATTENTION } from "./SilentWake.ts";
@@ -194,11 +195,7 @@ import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import {
-  IssueReadSnapshots,
-  IssueQueueRefreshRequired,
-  makeIssueWorkDispatch,
-} from "./IssueWorkDispatch.ts";
+import { IssueReadSnapshots, makeIssueWorkDispatch } from "./IssueWorkDispatch.ts";
 import { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
 import {
   claimFields,
@@ -275,8 +272,6 @@ import {
   currentDelegatedCompletionDelivery,
 } from "./ForkDelegatedCompletion.ts";
 import { makeIssueCloseout } from "../issues/IssueCommentEffects.ts";
-
-const isIssueQueueRefreshRequired = Schema.is(IssueQueueRefreshRequired);
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -776,7 +771,6 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "provider.switch":
       return command.threadId;
     case "issue.queue.change":
-    case "issue.queue.deliver":
     case "issue.work.close-out":
     case "issue.work.cancel":
     case "repository.work.restore":
@@ -4482,8 +4476,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       activeProviderThreadId: null,
       pullRequests: [],
       ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
-      // Only stamped work names a remote parent, so a client cannot claim one.
-      ...(command.linkOrigin === undefined || command.delegatedFrom === undefined
+      // Only server-stamped work names a parent: a linked environment's task, or an outside
+      // agent's launch nested under its own thread. Clients' thread.create drops both stamps.
+      ...((command.linkOrigin === undefined && command.mcpClientSessionId === undefined) ||
+      command.delegatedFrom === undefined
         ? {}
         : {
             delegatedFrom: command.delegatedFrom,
@@ -4492,6 +4488,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : { role: command.delegatedFrom.role }),
           }),
       ...(command.workflowRun === undefined ? {} : { workflowRun: command.workflowRun }),
+      ...(command.role === undefined ? {} : { role: command.role }),
+      ...(command.mcpClientSessionId === undefined
+        ? {}
+        : { mcpClientSessionId: command.mcpClientSessionId }),
       lineage: {
         parentThreadId: null,
         relationshipToParent: null,
@@ -4842,16 +4842,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    retiredRoot?: OrchestrationV2AppThread,
   ) {
-    let thread = yield* projectionStore.getThread(command.threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestratorProjectionError({
-            threadId: command.threadId,
-            cause,
-          }),
-      ),
-    );
+    let thread =
+      retiredRoot ??
+      (yield* projectionStore.getThread(command.threadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProjectionError({
+              threadId: command.threadId,
+              cause,
+            }),
+        ),
+      ));
     if (command.type === "thread.settle" && keepIssueWorktree(thread)) return;
     if (command.type === "thread.archive" && isRegisteredRepositoryRoot(thread)) {
       yield* repositoryWork.end(
@@ -11336,6 +11339,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { readonly type: "delegated_task.remote.complete" }
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     // Delivery planning reads only this task and the undelivered tasks of the queued delivery;
     // the task's own node and turn item are all it updates besides.
@@ -11431,6 +11435,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       updatedTask,
       now,
     }).pipe(mapDispatchError(command));
+    if (
+      parentProjection.thread.handoffToThreadId !== undefined &&
+      plan.task.completionDelivery?.state === "disposed"
+    ) {
+      yield* Ref.update(effects, (pending) => [
+        ...pending,
+        automaticHandoffCompletion(command.parentThreadId, updatedTask, command.commandId),
+      ]);
+    }
     const emitEvent = emit(events, command);
     yield* emitEvent({
       type: "subagent.updated",
@@ -16368,7 +16381,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: resultTransfer,
         },
       ];
-      yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
+      const wake =
+        parentProjection.thread.handoffToThreadId !== undefined &&
+        completionPlan.task.completionDelivery?.state === "disposed" &&
+        !cancelled
+          ? [automaticHandoffCompletion(parentThreadId, updatedTask, childRun.id)]
+          : [];
+      yield* writeSystemEvents(completionEvents, wake, { updateDelegatedCompletionOnly: true });
       yield* releaseFinishedDelegateSessions(childThreadId, childRun.id, task.id);
 
       if (completionPlan.offer) {
@@ -16966,7 +16985,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       recordSubagentFollowup(command, events).pipe(mapDispatchError(command)),
   });
 
-  const issueQueue = makeIssueQueueCommands({ ...forkCommandHooks, dispatchMessage });
+  const issueQueue = makeIssueQueueCommands(forkCommandHooks);
 
   const repositoryWork = makeRepositoryWorkCommands({
     recordSubagentFollowup: (command, events) =>
@@ -16977,6 +16996,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     dispatchThreadCreate,
     dispatchMessage,
     getProjectionWithPendingEvents,
+    archiveRetiredRoot: (commandId, thread, events, effects) =>
+      dispatchThreadMutation(
+        { type: "thread.archive", commandId, threadId: thread.id },
+        events,
+        effects,
+        thread,
+      ),
   });
 
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
@@ -17495,9 +17521,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "issue.queue.change":
         yield* issueQueue.change(command, events);
         break;
-      case "issue.queue.deliver":
-        yield* issueQueue.deliver(command, events, effects);
-        break;
       case "issue.work.close-out":
         yield* issueWork.closeOut(command, events);
         break;
@@ -17529,7 +17552,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchRemoteDelegatedTaskRequest(command, events);
         break;
       case "delegated_task.remote.complete":
-        yield* dispatchRemoteDelegatedTaskComplete(command, events);
+        yield* dispatchRemoteDelegatedTaskComplete(command, events, effects);
         break;
       case "delegated_task.remote.stop":
         yield* dispatchRemoteDelegatedTaskStop(command, events);
@@ -17690,7 +17713,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.type === "run.silence.check" ||
             command.type === "delegated_task.completion-delivery.flag" ||
             command.type === "issue.queue.change" ||
-            command.type === "issue.queue.deliver" ||
             command.type === "repository.work.continue" ||
             isUnobservedAcknowledgement(command) ||
             command.type === "thread.background-work.settle" ||
@@ -17720,9 +17742,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             // Refusals depend on modes the user can change; a recorded rejection would block the retry.
             if (
               cause._tag === "OrchestratorThreadAboveModeLimitError" ||
-              cause._tag === "OrchestratorRuntimeModeAboveCeilingError" ||
-              (cause._tag === "OrchestratorDispatchError" &&
-                isIssueQueueRefreshRequired(cause.cause))
+              cause._tag === "OrchestratorRuntimeModeAboveCeilingError"
             ) {
               return yield* cause;
             }
@@ -17939,10 +17959,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // dispatchWithReceiptEffect owns the span; issue policy supplies reads before locking.
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
-    return yield* withAdmissionReads(command, dispatchWithLocks, dispatchWithReceiptEffect, {
+    return yield* withAdmissionReads(command, dispatchWithLocks, {
       commandThreadId,
       mapDispatchError,
-      OrchestratorDispatchError,
     });
   });
   // The admission wrapper supplies snapshots before any planning locks are taken.

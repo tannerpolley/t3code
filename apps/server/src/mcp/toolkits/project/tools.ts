@@ -17,8 +17,10 @@ import {
   ProjectCreatePayload,
   ProjectUpdatePayload,
   ProjectId,
+  ModelRoleLevel,
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
+  OrchestratorMcpTaskRole,
   OrchestratorMcpFailure,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -26,6 +28,7 @@ import {
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../../../config.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Digest from "effect/crypto/Digest";
@@ -132,7 +135,7 @@ const ProjectCloneTool = Tool.make("t3_project_clone", {
 const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   ...shared,
   description:
-    "Create a top-level thread in its workspace before starting. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. On error or lost reply, reuse `clientRequestId`. Follow it with `t3_thread_read` or `t3_thread_wait`. Mention it with its `link`.",
+    "Create a top-level thread in its workspace before starting. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. Prefer `role` over a model. On error or lost reply, reuse `clientRequestId`. Follow it with `t3_thread_read` or `t3_thread_wait`. Mention it with its `link`.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: Schema.optional(ProjectId),
@@ -144,6 +147,19 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     ),
     title: TrimmedNonEmptyString,
     generateTitle: Schema.optional(Schema.Boolean),
+    role: Schema.optional(OrchestratorMcpTaskRole).annotate({
+      description:
+        "Thread role: orchestrator, designer, implementor, reviewer or writer. Without `modelSelection`, the role's current choice from orchestrator_capabilities picks the model.",
+    }),
+    level: Schema.optional(ModelRoleLevel).annotate({
+      description: "routine or complex (default) for `role`.",
+    }),
+    parentThreadId: Schema.optional(
+      ThreadId.annotate({
+        description:
+          "Outside agents only: your own top-level thread here, which this thread nests under.",
+      }),
+    ),
     modelSelection: Schema.optional(ModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),
@@ -189,6 +205,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     ProviderRegistry.ProviderRegistry,
     DocumentText.DocumentText,
     Digest.Digest,
+    ProviderAdapterRegistry.ProviderAdapterRegistryV2,
   ],
 })
   .annotate(Tool.Destructive, true)

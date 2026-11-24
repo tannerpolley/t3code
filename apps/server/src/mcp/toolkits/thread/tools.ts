@@ -132,7 +132,7 @@ const question = Schema.Struct({
 const PendingRequestTool = Tool.make("t3_pending_request", {
   ...commandTool,
   description:
-    "Pending user questions in a thread. Omit `threadId` for this thread. list: pending questions and approvals; read: one by `requestId`; respond: answer with `answers` or accept/decline with `decision`. Agents may answer their own questions or delegated descendants; approvals require a delegated descendant.",
+    "Pending user questions in a thread. Omit `threadId` for this thread. list: pending questions and approvals; read: one by `requestId`; respond: answer with `answers` or accept/decline with `decision`. Agents may answer their own questions or delegated descendants; approvals require a delegated descendant, or for an outside agent the owner's permission and a thread it launched.",
   parameters: Schema.Struct({
     action: Schema.Literals(["list", "read", "respond"]),
     environmentId: OrchestratorMcpEnvironmentTarget,

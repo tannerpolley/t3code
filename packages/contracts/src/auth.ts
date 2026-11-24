@@ -267,6 +267,9 @@ export type AuthWebSocketTicketUse = typeof AuthWebSocketTicketUse.Type;
 
 export const AuthWebSocketTicketParams = Schema.Struct({ use: AuthWebSocketTicketUse });
 
+/** The subject of every outside agent's MCP sign-in session. */
+export const MCP_CLIENT_SESSION_SUBJECT = "mcp-client";
+
 export const AuthMcpClientAccess = Schema.Literals([
   "read-only",
   "approval-required",

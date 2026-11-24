@@ -47,6 +47,13 @@ const githubIssueRef = (link: ThreadIssueLink): RepositoryIssueRef | null => {
     ? { host: link.host.toLowerCase(), repository: link.scope.toLowerCase(), number }
     : null;
 };
+const sharesParentBranch = (worker: ProjectionStore.ProjectionSettlementCandidate) =>
+  worker.workerTemporaryCompletedAt !== undefined && worker.workerSharesParentCheckout === true;
+
+/** Issue links that are the worker's own work, not inherited from its parent's branch. */
+const ownIssues = (worker: ProjectionStore.ProjectionSettlementCandidate) =>
+  sharesParentBranch(worker) ? [] : (worker.issues ?? []);
+
 const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -65,7 +72,7 @@ const make = Effect.gen(function* () {
   ) {
     const refs = workers.flatMap((worker) =>
       isIdleWorker(worker, now)
-        ? (worker.issues ?? []).flatMap((link) => githubIssueRef(link) ?? [])
+        ? ownIssues(worker).flatMap((link) => githubIssueRef(link) ?? [])
         : [],
     );
     const statuses = refs.length === 0 ? [] : yield* issues.issueStatuses(refs, refresh);
@@ -80,6 +87,7 @@ const make = Effect.gen(function* () {
   ) {
     if (!isIdleWorker(worker, now)) return null;
     const temporary = worker.workerTemporaryCompletedAt !== undefined;
+    const ownsBranchLinks = !sharesParentBranch(worker);
     const preserveOpenWork = worker.archivedAt === null || temporary;
     let completedAt = worker.workerTemporaryCompletedAt ?? null;
     if (completedAt !== null && !workerCompletionIsCurrent(worker, completedAt)) completedAt = null;
@@ -111,7 +119,7 @@ const make = Effect.gen(function* () {
       );
     };
     if (preserveOpenWork) {
-      for (const link of worker.issues ?? []) {
+      for (const link of ownIssues(worker)) {
         const decision = recordCompletion(yield* issueCompletion(link));
         if (decision !== undefined) return decision;
       }
@@ -139,7 +147,10 @@ const make = Effect.gen(function* () {
       if (decision !== undefined) return decision;
     }
 
-    for (const reference of [worker.linkedPullRequest, worker.branchPullRequest]) {
+    for (const reference of [
+      worker.linkedPullRequest,
+      ownsBranchLinks ? worker.branchPullRequest : null,
+    ]) {
       if (
         reference == null ||
         allLinks.some(
@@ -154,6 +165,7 @@ const make = Effect.gen(function* () {
       if (decision !== undefined) return decision;
     }
     if (
+      ownsBranchLinks &&
       (!temporary || worker.worktreePath !== null) &&
       worker.linkedPullRequest == null &&
       worker.branchPullRequest == null &&
@@ -176,7 +188,7 @@ const make = Effect.gen(function* () {
       }
     }
     if (!preserveOpenWork) {
-      for (const link of worker.issues ?? []) {
+      for (const link of ownIssues(worker)) {
         const decision = recordCompletion(yield* issueCompletion(link));
         if (decision !== undefined) return decision;
       }

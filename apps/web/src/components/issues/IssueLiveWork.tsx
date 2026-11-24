@@ -5,7 +5,7 @@ import {
   type EnvironmentId,
   type RepositoryIssueSummary,
 } from "@t3tools/contracts";
-import { useGT } from "gt-react";
+import { T, useGT, Var } from "gt-react";
 import { CirclePauseIcon, CirclePlayIcon, LinkIcon } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
@@ -52,7 +52,7 @@ export function IssueLiveWork({
         render={
           <button
             type="button"
-            aria-label={more > 0 ? `${label}, and ${more} more` : label}
+            aria-label={more > 0 ? gt("{label}, and {more} more", { label, more }) : label}
             className="flex min-w-0 max-w-full items-center gap-1 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             onClick={() =>
               void navigate({
@@ -84,10 +84,26 @@ export function IssueLiveWork({
                 {thread.title} ·{" "}
                 {status === "suspended" ? label : labels[issueWorkerStatus(thread, issue)]}
               </p>
-              {thread.branch ? <p>Branch: {thread.branch}</p> : null}
-              {thread.worktreePath ? <p>Worktree: {thread.worktreePath}</p> : null}
+              {thread.branch ? (
+                <p>
+                  <T>
+                    Branch: <Var>{thread.branch}</Var>
+                  </T>
+                </p>
+              ) : null}
+              {thread.worktreePath ? (
+                <p>
+                  <T>
+                    Worktree: <Var>{thread.worktreePath}</Var>
+                  </T>
+                </p>
+              ) : null}
               {thread.pullRequests.map((url) => (
-                <p key={url}>Pull request: {url}</p>
+                <p key={url}>
+                  <T>
+                    Pull request: <Var>{url}</Var>
+                  </T>
+                </p>
               ))}
             </div>
           ))}
@@ -103,7 +119,7 @@ export function useWorkerStatusLabels() {
     suspended: gt("Suspended"),
     paused: gt("Paused"),
     working: gt("Running"),
-    waiting_on_you: gt("Waiting on you"),
+    waiting_on_you: gt("Needs you"),
     question: gt("Waiting on question"),
     approval: gt("Waiting on approval"),
     queued: gt("Queued"),

@@ -381,19 +381,22 @@ fork, show it once, then use the pin button on its row. A pinned repository igno
 repository filters but still follows the issue filters and search. Pins are remembered with your
 filter choices.
 
-Each repository's issues show as a roadmap in dependency order, with **Closed**, **Blocked**,
-**Inbox**, **Ready**, **Queued**, **Paused**, **In progress** and **Done** sections. Blocked shows
-red warnings for open dependencies. Within a section, open blockers and sub-issues come before the
-issues that depend on them, then higher Project priority and older issues; closed blockers no
-longer hold work back. **In progress** means a linked agent is working on the issue or waiting for your
-answer. **Paused** means the issue has work, such as an open or draft PR or an idle linked thread,
-but no agent on it right now. GitHub Project status does not change these sections or the issue
-icon. A thread’s own linked pull request also associates it with the issues that GitHub identifies
+Each repository's issues show as a stage board, in pipeline order: **Done**, **Ready for review**,
+**In progress**, **Queued**, the **Inbox**, then **Backlog**, which starts collapsed. Each open issue
+sits in one stage. **In progress** means a linked agent is working on the issue or waiting for your
+answer. **Queued** means it waits in the repository queue or its worker waits to start. **Ready for
+review** means it has an open or draft PR, no agent on it and no place in the queue. Everything else open is **Backlog**.
+**Blocked**, **Suspended**, **Needs you** and **Failed** are badges on the row, not stages; hover a row
+for its blockers, labels, author and comments. Within a stage, open blockers and sub-issues come before
+the issues that depend on them, then higher Project priority and older issues; closed blockers no
+longer hold work back. GitHub Project status does not change the stage.
+A thread’s own linked pull request also associates it with the issues that GitHub identifies
 that pull request as closing.
 
-Include **Closed** in Filter to see completed and closed issues. **Done** shows those closed in the
-last 24 hours, with their closure reason and time and attached PR numbers, titles, states and links.
-At 24 hours they move to **Closed**, which starts collapsed. Archived worker links remain available
+Include **Closed** in Filter to see completed and closed issues. **Done** shows issues closed as
+completed in the last 24 hours, with their closure time and attached PR numbers, titles, states and
+links. At 24 hours they move to **Closed**, which starts collapsed and also holds issues closed as not
+planned. Archived worker links remain available
 on closed issues. Open a worker from its row, or confirm **Remove worktree** to remove its local
 checkout while keeping its branch. Removal checks for active workers, shared worktrees, open terminals
 and provider sessions, and local changes; a refusal appears on the row. This explicit action does not
@@ -430,8 +433,15 @@ is selected for you. A thread becomes the repository orchestrator only from the 
 default branch. While no issue workers run, it may switch that checkout to its own branch and use
 native subagents for its own work; issue work still goes to workers.
 Start agent registers the selected lead and starts or queues an issue worker, following the issue
-parent tree. Later starts use that orchestrator's project. Every worker gets a new worktree and
-branch named after the issue, created from the default branch; there is no checkout choice.
+parent tree. Later starts use that orchestrator's project. Managed issue workers share a pool
+of reusable worktrees at `.worktrees/slot-1`, `.worktrees/slot-2`, and so on, with one slot per
+allowed worker. Each worker starts on its own issue branch from the freshly fetched remote
+default branch. When existing workers hold every slot, new workers wait in the queue. A settled
+worker's slot can return to the pool once the checkout is safe to clean and its work is included in
+the default branch or its pull request has merged.
+On a closed issue, **Remove worktree** can return a clean slot while keeping the local issue branch.
+If Git can't clean a slot because it contains a nested repository, move that repository out of the
+slot or list its path in `issueWorktreeKeepPaths` in the default branch's `t3.json`.
 Starting allows T3 to update one status comment and publish a closeout comment for each finished
 attempt; the publishing policy is shown before you start. When a worker has been created, select
 its name to open its conversation with the issue beside it. A queued start can appear before a
@@ -439,17 +449,16 @@ worker exists; use the **Orchestrator** link in **Settings → Projects → Repo
 **Linked issue** in thread details opens the issue beside that thread. A worker labeled **Done**
 has a closed issue or a merged pull request. A merged pull request can leave the GitHub issue open.
 
-Use **Add to queue** on an open issue’s row or detail panel to put it in the repository’s
-ordered **Queued** section. When the registered orchestrator is idle and a worker slot is free,
-it receives a notification to review the next issue against the current code and the repository’s
-other issues. The orchestrator may start a worker as written, update the issue first, close it as
-already done or not planned with an explanatory comment, or leave it open and withdraw it from the
-queue. Each notice waits for the previous orchestrator turn to finish. A worker claim or withdrawal
-removes the issue from the queue; closed issues are removed on the next queue refresh. If the
-orchestrator finishes without any of these outcomes, the row shows **Orchestrator didn’t start it**; use
-**Retry** to remind it again, or **Remove from queue** to withdraw it. Failed or interrupted
-notices are retried when the orchestrator is next available. Repository pause and the **Workers** limit apply. Without a
-registered orchestrator, the queue waits. Claimed work is managed through its orchestrator or worker.
+Use **Add to queue** on an open issue’s detail panel to put it in the repository’s
+ordered **Queued** section. A queued issue starts its own managed worker, the same way a milestone
+issue does, even while the orchestrator is busy. Queued issues go first, in queue order, ahead of
+milestone issues, and each worker runs as soon as a **Workers** slot is free. The worker uses the
+model role of the repository's running milestone, or the complex Implementor role when no milestone
+is running. A worker that has to wait for a slot usually keeps its queue position, but an issue
+that was blocked can start after a later queued issue that was not. A blocked issue stays queued until its blockers close, and a closed issue leaves the
+queue. Repository pause and paused issues apply. Without a registered orchestrator, the queue
+waits. Once its worker starts, the issue leaves the queue and is managed through its orchestrator
+or worker; use **Remove from queue** to withdraw it before then.
 
 Repository orchestration is managed in **Settings → Projects**, under the project that holds the
 repository's checkout; the section is named **Repository orchestration**. It shows the
@@ -488,7 +497,12 @@ preview, the agent must propose a new change. If GitHub may have created an issu
 recover it, the change needs your attention. Check GitHub, then choose **Mark resolved** to stop
 its remaining writes. Propose another create only when you intend to create another issue.
 
-To replace the orchestrator's conversation, open **Repository orchestration** in the project's
+Repository orchestrators automatically hand off when their reported context reaches 200,000
+tokens and their work is idle. T3 archives the old thread after the successor verifies it can
+continue. Both threads link to each other in the sidebar. To turn this off or change the token
+threshold, open **Settings → Threads → Orchestration**. A project can use its own setting.
+
+To replace the orchestrator's conversation manually, open **Repository orchestration** in the project's
 settings, choose **Hand off to a fresh thread** from the menu beside its orchestrator, and provide a summary. Your approval pauses new issue admissions until existing
 workers and their final results finish; the fresh thread receives your summary and a recovery
 inventory. You can cancel a pending handoff there too, and the same menu opens previous
@@ -510,8 +524,8 @@ T3 checks repositories with an orchestrator every five minutes and other project
 
 The orchestrator reviews each item, revises it if needed with `propose_issue_change`, then
 acknowledges it with `t3_issue_inbox` `mark_read`. You can also acknowledge it with **Mark read**.
-An open issue stays only in Inbox until its opening is acknowledged, then appears in Ready or
-the normal section for its current state. A comment leaves its issue in its current section.
+An open issue stays only in Inbox until its opening is acknowledged, then appears in its stage,
+usually Backlog. A comment leaves its issue in its current section.
 Cross-project writes keep their `external`, `priority: high`, and `from:<project>` labels.
 
 ## Troubleshooting

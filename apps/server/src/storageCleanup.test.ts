@@ -28,6 +28,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
+import * as IssueWorktreeSlots from "./issues/IssueWorktreeSlots.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
@@ -385,7 +386,9 @@ const cleanupFixture = (
     };
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
-    const context = yield* Layer.build(StorageCleanup.layer).pipe(
+    const context = yield* Layer.build(
+      StorageCleanup.layer.pipe(Layer.provide(IssueWorktreeSlots.layer)),
+    ).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
         ...git,
         execute: (input) =>
@@ -486,6 +489,12 @@ const cleanupFixture = (
         dispatch: (command: OrchestrationV2ServerCommand) =>
           Effect.sync(() => {
             if (command.type === "thread.archive") archivedThreads.push(command.threadId);
+            if (command.type === "thread.metadata.update" && command.worktreePath === null)
+              threads = threads.map((thread) =>
+                thread.id === command.threadId
+                  ? { ...thread, worktreePath: null, branch: command.branch ?? null }
+                  : thread,
+              );
             return { sequence: 0, storedEvents: [] };
           }),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
@@ -571,6 +580,7 @@ const cleanupFixture = (
       config,
       command,
       archivedThreads,
+      getThreads: () => threads,
       setBranchPullRequest: (next: GitManager.GitBranchPullRequest) => {
         branchPullRequest = next;
       },
@@ -3727,6 +3737,179 @@ describe("storage cleanup reports and local file policies", () => {
         expect(
           (yield* command(repo, ["show-ref", "--verify", "refs/heads/feature"])).stdout,
         ).not.toBe("");
+      }),
+    ),
+  );
+  it.live.each([
+    "finished with no PR",
+    "interrupted during merged release",
+    "was removed explicitly with unmerged commits",
+    "received a merge update",
+    "interrupted",
+    "cancelled",
+    "failed",
+  ] as const)("applies issue slot cleanup for %s", (scenario) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const {
+          service,
+          fs,
+          repo,
+          worktree,
+          command,
+          setThreads,
+          getThreads,
+          archivedThreads,
+          setBranchPullRequest,
+          activate,
+        } = yield* cleanupFixture(DEFAULT_SERVER_SETTINGS.storageCleanup);
+        const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-slot-remote-" });
+        yield* command(remote, ["init", "--bare", "-b", "main"]);
+        yield* command(repo, ["remote", "add", "origin", remote]);
+        yield* command(repo, ["push", "origin", "main"]);
+        const slots = `${repo}/.worktrees`;
+        const slot = `${slots}/slot-1`;
+        yield* fs.makeDirectory(slots);
+        yield* command(repo, ["worktree", "move", worktree, slot]);
+        yield* command(slot, ["update-ref", "refs/worktree/t3-issue-slot", "HEAD"]);
+        const unsettledStatus =
+          scenario === "interrupted" || scenario === "cancelled" || scenario === "failed"
+            ? scenario
+            : null;
+        if (unsettledStatus === null && scenario !== "finished with no PR") {
+          yield* fs.writeFileString(`${slot}/tracked.txt`, "issue work\n");
+          yield* command(slot, ["commit", "-am", "issue work"]);
+        }
+        const head = (yield* command(slot, ["rev-parse", "HEAD"])).stdout.trim();
+        const merged: GitManager.GitBranchPullRequest = {
+          number: 2,
+          title: "Merged",
+          url: "https://github.com/owner/project/pull/2",
+          state: "merged",
+          headRef: "feature",
+          baseRef: "main",
+          headSha: head,
+          repositoryKey: "github.com/owner/project",
+          updatedAt: null,
+        };
+        if (scenario === "interrupted during merged release") {
+          setBranchPullRequest(merged);
+          yield* command(slot, ["switch", "--detach", "origin/main"]);
+        }
+        setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: slot,
+            archivedAt: unsettledStatus === null ? at(-DAY_MS) : null,
+            status: unsettledStatus ?? "idle",
+            linkedIssue: {
+              host: "github.com",
+              repository: "owner/project",
+              repositoryId: "repo",
+              id: "issue",
+              nodeId: "issue-node",
+              number: 1,
+              title: "Issue",
+              url: "https://github.com/owner/project/issues/1",
+            },
+          }),
+        ]);
+        if (unsettledStatus !== null) {
+          for (const pullRequest of [null, merged]) {
+            if (pullRequest !== null) setBranchPullRequest(pullRequest);
+            yield* service.runNow;
+            expect(archivedThreads).toEqual([]);
+            expect(getThreads()[0]).toMatchObject({ worktreePath: slot, branch: "feature" });
+            expect((yield* command(slot, ["branch", "--show-current"])).stdout.trim()).toBe(
+              "feature",
+            );
+          }
+          return;
+        }
+        if (scenario === "was removed explicitly with unmerged commits") {
+          expect((yield* service.runNow).entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Issue work is awaiting a merged pull request",
+          });
+          yield* fs.writeFileString(`${slot}/.env`, "private");
+          const remove = () =>
+            service.removeWorktreeNow({
+              projectId: ProjectId.make("project-1"),
+              worktreePath: slot,
+            });
+          expect(yield* remove()).toMatchObject({
+            outcome: "kept",
+            reason: "Has local files outside the keep paths",
+          });
+          expect(yield* fs.readFileString(`${slot}/.env`)).toBe("private");
+          yield* fs.remove(`${slot}/.env`);
+          expect(yield* remove()).toMatchObject({ outcome: "removed" });
+          expect(getThreads()[0]).toMatchObject({ worktreePath: null, branch: "feature" });
+          expect((yield* command(repo, ["rev-parse", "refs/heads/feature"])).stdout.trim()).toBe(
+            head,
+          );
+          expect((yield* command(slot, ["branch", "--show-current"])).stdout).toBe("");
+          expect(yield* fs.exists(slot)).toBe(true);
+          return;
+        }
+        if (scenario === "received a merge update") {
+          const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+          const processed = yield* Deferred.make<void>();
+          yield* activate(
+            Stream.fromQueue(events).pipe(
+              Stream.take(1),
+              Stream.concat(
+                Stream.fromEffect(Deferred.succeed(processed, undefined)).pipe(Stream.drain),
+              ),
+            ),
+          );
+          yield* service.reports.pipe(
+            Stream.filter((report) => report !== null),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+          expect((yield* service.latestReport)?.entries[0]?.reason).toBe(
+            "Issue work is awaiting a merged pull request",
+          );
+          setBranchPullRequest(merged);
+          yield* Queue.offer(events, {
+            id: EventId.make("slot-pr-merged"),
+            type: "thread.pull-request-link-updated",
+            threadId: getThreads()[0]!.id,
+            occurredAt: at(0),
+            payload: {
+              host: "github.com",
+              repository: "owner/project",
+              number: merged.number,
+              url: merged.url,
+              linkedAt: DateTime.formatIso(at(-DAY_MS)),
+              source: "agent",
+              snapshot: {
+                state: "merged",
+                title: merged.title,
+                headBranch: merged.headRef,
+                baseBranch: merged.baseRef,
+                isDraft: false,
+                updatedAt: null,
+                syncedAt: DateTime.formatIso(at(0)),
+              },
+              stack: null,
+            },
+          });
+          yield* Deferred.await(processed);
+          yield* service.drain;
+        }
+        const report =
+          scenario === "received a merge update"
+            ? yield* service.latestReport
+            : yield* service.runNow;
+        expect(report?.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Returned to the issue worktree pool",
+        });
+        expect(getThreads()[0]?.worktreePath).toBeNull();
+        expect(yield* fs.exists(slot)).toBe(true);
+        expect((yield* command(repo, ["branch", "--list", "feature"])).stdout).toBe("");
       }),
     ),
   );

@@ -1,8 +1,10 @@
 import {
   CommandId,
   MessageId,
+  type ModelRoleLevel,
   ThreadId,
   OrchestratorMcpFailure,
+  resolveThreadRole,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   type TaskFolderError,
@@ -41,10 +43,17 @@ import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
-import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import {
+  type Caller,
+  newCommandId,
+  readCaller,
+  resolveProjectId,
+  unavailable,
+} from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
+const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 
 function projectFailure(error: Project.ProjectServiceError) {
   if (error._tag === "ProjectOperationError") {
@@ -191,6 +200,60 @@ const launchCommandId = Effect.fn("mcp.launchCommandId")(function* (
   return CommandId.make(`mcp:launch:${Hex.encode(digest)}`);
 });
 
+const roleModelSelection = Effect.fn("mcp.launchRoleModel")(function* (
+  role: string,
+  level: ModelRoleLevel | undefined,
+) {
+  const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+  const choice = yield* OrchestrationMcp.loadRoleDefaultTargetFrom(
+    role,
+    level,
+    undefined,
+    providers,
+  );
+  if (isOrchestratorMcpFailure(choice)) return yield* choice;
+  if (choice === undefined) return undefined;
+  const { providerInstanceId: instanceId, model, options } = choice;
+  return { instanceId, model, ...(options === undefined ? {} : { options }) };
+});
+
+/** An outside agent nests launches only under a top-level thread its own sign-in launched. */
+const nestingParent = Effect.fn("mcp.launchNestingParent")(function* (
+  context: Caller,
+  parentThreadId: ThreadId,
+  outsideSessionId: string | undefined,
+) {
+  if (outsideSessionId === undefined)
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message:
+        "parentThreadId is for outside agents. Inside a thread, hand off work with delegate_task.",
+    });
+  // The shell tells a missing parent from an outage; only records carry the sign-in.
+  const shell = yield* context.threads
+    .getThreadShell(parentThreadId)
+    .pipe(Effect.mapError(unavailable));
+  const parent =
+    shell === null
+      ? null
+      : (yield* context.threads
+          .getThreadRecords(parentThreadId, [])
+          .pipe(Effect.mapError(unavailable))).thread;
+  if (
+    parent === null ||
+    parent.deletedAt !== null ||
+    parent.mcpClientSessionId !== outsideSessionId ||
+    parent.lineage.parentThreadId !== null ||
+    parent.delegatedFrom != null
+  )
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message:
+        "parentThreadId must be a top-level thread you started with t3_thread_launch since you last signed in.",
+    });
+  return parent;
+});
+
 const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;
@@ -311,6 +374,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             code: "invalid_request",
             message: "A launch retry must use the original project.",
           });
+        if (
+          launched !== null &&
+          replaying &&
+          input.parentThreadId !== undefined &&
+          launched.delegatedFrom?.threadId !== input.parentThreadId
+        )
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "A launch retry must use the original parentThreadId.",
+          });
         const project =
           replaying && input.workspaceStrategy?.type !== "existing_worktree"
             ? undefined
@@ -340,6 +413,22 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               }
             : input.workspaceStrategy;
+        // An outside agent's sign-in, which its threads record so the owner can let it answer
+        // their approvals. A linked environment carries its own origin instead.
+        const outsideSessionId =
+          caller === undefined && context.scope.client?.linked !== true
+            ? context.scope.client?.sessionId
+            : undefined;
+        // A retry replays the accepted launch, which already names its parent.
+        const parent =
+          input.parentThreadId === undefined || replaying
+            ? undefined
+            : yield* nestingParent(context, input.parentThreadId, outsideSessionId);
+        const role = input.role === undefined ? undefined : resolveThreadRole(input.role);
+        const roleModel =
+          replaying || input.role === undefined || input.modelSelection !== undefined
+            ? undefined
+            : yield* roleModelSelection(input.role, input.level);
         if (!replaying && input.modelSelection !== undefined) {
           const { instanceId, model } = input.modelSelection;
           const registry = yield* ProviderRegistry.ProviderRegistry;
@@ -428,6 +517,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const modelSelection =
           input.modelSelection ??
           launchedModel ??
+          roleModel ??
           caller?.modelSelection ??
           (projectDefaults
             ? resolveNewThreadModelSelection({
@@ -498,8 +588,20 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           createdBy: "agent",
           creationSource: "mcp",
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
-          // Kept only alongside linkOrigin: thread.create drops it otherwise.
-          ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
+          ...(parent !== undefined
+            ? {
+                delegatedFrom: {
+                  environmentId: scope.environmentId,
+                  threadId: parent.id,
+                  title: parent.title,
+                  ...(role === undefined ? {} : { role }),
+                },
+              }
+            : linkOrigin === undefined || input.delegatedFrom === undefined
+              ? {}
+              : { delegatedFrom: input.delegatedFrom }),
+          ...(outsideSessionId === undefined ? {} : { mcpClientSessionId: outsideSessionId }),
+          ...(role === undefined ? {} : { role }),
           // A link's word for it, like `delegatedFrom`: nothing else may name a run.
           ...(linkOrigin === undefined || input.workflowRun === undefined
             ? {}

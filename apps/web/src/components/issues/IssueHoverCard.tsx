@@ -1,3 +1,5 @@
+import { T, useGT, Var } from "gt-react";
+import { RelativeTime } from "~/components/RelativeTime";
 import { issueWorkerStatus } from "@t3tools/shared/issueWorkerStatus";
 import { useWorkerStatusLabels } from "./IssueLiveWork";
 import type { EnvironmentId, RepositoryIssueRef, RepositoryIssueSummary } from "@t3tools/contracts";
@@ -30,6 +32,7 @@ interface IssueHoverContentProps {
 
 /** Mounted only in an open hover: the detail cache and streamed shell overlay stay shared. */
 function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverContentProps) {
+  const gt = useGT();
   const { environmentId, input } = target;
   const labels = useWorkerStatusLabels();
   const query = useEnvironmentQuery(repositoryIssueEnvironment.detail({ environmentId, input }));
@@ -61,27 +64,46 @@ function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverCon
         {input.repository} #{input.number}
       </div>
       {issue === undefined ? (
-        <div>{query.error === null ? "Loading issue…" : "Issue details unavailable"}</div>
+        <div>{query.error === null ? gt("Loading issue…") : gt("Issue details unavailable")}</div>
       ) : (
         <>
           <div className="flex items-center gap-2">
             <IssueStateIcon issue={{ ...issue, queued }} />
             <span>{label}</span>
           </div>
+          <div>
+            {gt("Opened by {author}", { author: issue.author?.login ?? "ghost" })}
+            {issue.commentCount > 0
+              ? ` · ${gt("{count, plural, one {# comment} other {# comments}}", { count: issue.commentCount })}`
+              : ""}
+            {" · "}
+            <T>
+              updated <Var>{<RelativeTime timestamp={issue.updatedAt} />}</Var>
+            </T>
+          </div>
           {issue.labels.length > 0 ? (
-            <div className="flex flex-wrap gap-1" aria-label="Labels">
+            <div className="flex flex-wrap gap-1" aria-label={gt("Labels")}>
               {issue.labels.map((label) => (
                 <PullRequestLabelChip key={label.name} label={label} />
               ))}
             </div>
           ) : null}
           {issue.assignees.length > 0 ? (
-            <div>Assigned to {issue.assignees.map((assignee) => assignee.login).join(", ")}</div>
+            <div>
+              {gt("Assigned to {assignees}", {
+                assignees: issue.assignees.map((assignee) => assignee.login).join(", "),
+              })}
+            </div>
           ) : null}
           {blockers.length > 0 ? (
             <div className="grid gap-1">
               <span>
-                Blocked by {blockers.length} open {blockers.length === 1 ? "issue" : "issues"}
+                {gt(
+                  "{count, plural, one {Blocked by # open issue} other {Blocked by # open issues}}",
+                  {
+                    count: blockers.length,
+                  },
+                )}
               </span>
               {blockers.map((blocker) => {
                 const url = `https://${blocker.host}/${blocker.repository}/issues/${blocker.number}`;
@@ -101,16 +123,23 @@ function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverCon
             </div>
           ) : null}
           {issue.blockedBy === undefined || issue.relationshipsComplete === false ? (
-            <div>Blocker information incomplete</div>
+            <div>
+              <T>Blocker information incomplete</T>
+            </div>
           ) : null}
           {issue.subIssues && issue.subIssues.total > 0 ? (
             <div>
-              Sub-issues: {issue.subIssues.completed} / {issue.subIssues.total} completed
+              {gt("Sub-issues: {completed} / {total} completed", {
+                completed: issue.subIssues.completed,
+                total: issue.subIssues.total,
+              })}
             </div>
           ) : null}
           {(issue.liveWork?.length ?? 0) > 0 ? (
             <div className="grid gap-1">
-              <span>Linked agents</span>
+              <span>
+                <T>Linked agents</T>
+              </span>
               {issue.liveWork?.map((work) => (
                 <Link
                   key={work.threadId}
@@ -124,7 +153,9 @@ function IssueHoverCardContent({ target, issue: fallback, title }: IssueHoverCon
             </div>
           ) : null}
           {query.error !== null ? (
-            <div>Issue details unavailable; showing cached information</div>
+            <div>
+              <T>Issue details unavailable; showing cached information</T>
+            </div>
           ) : null}
         </>
       )}

@@ -591,6 +591,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedIssue: Schema.optional(ThreadLinkedIssue),
   repositoryOrchestration: Schema.optional(RepositoryOrchestration),
+  handoffFromThreadId: Schema.optional(ThreadId),
+  handoffToThreadId: Schema.optional(ThreadId),
   silentWakeAttention: Schema.optional(
     Schema.Union([
       Schema.Struct({ runId: RunId, reason: Schema.String, createdAt: IsoDateTime }),
@@ -616,6 +618,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
   enableTools: Schema.optional(DelegatedToolAdditions),
+  /** The outside agent's MCP sign-in that launched this thread. Only the server sets it. */
+  mcpClientSessionId: Schema.optional(TrimmedNonEmptyString),
   roleSkillSelection: Schema.optionalKey(Schema.NullOr(RoleSkillSelection)),
   workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
   lineage: OrchestrationV2AppThreadLineage,
@@ -2664,6 +2668,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(GitRefName),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  handoffFromThreadId: OrchestrationV2AppThread.fields.handoffFromThreadId,
+  handoffToThreadId: OrchestrationV2AppThread.fields.handoffToThreadId,
   linkedIssue: Schema.optional(ThreadLinkedIssue),
 
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -3661,10 +3667,16 @@ export const OrchestrationV2Command = Schema.Union([
     repositoryOrchestration: Schema.optional(RepositoryOrchestration),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
-    /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
+    /**
+     * Only the server sets this: with `linkOrigin` for a linked environment's delegated task, or
+     * with `mcpClientSessionId` for an outside agent's launch nested under its own thread here.
+     */
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
     /** Only the server sets this, for a thread that is a workflow run's agent step. */
     workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
+    /** Only the server sets this, for a launch by an outside agent's MCP sign-in. */
+    mcpClientSessionId: Schema.optional(TrimmedNonEmptyString),
+    role: Schema.optional(ThreadRole),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -4276,11 +4288,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
     queued: Schema.Boolean,
   }),
   Schema.Struct({
-    type: Schema.Literal("issue.queue.deliver"),
-    commandId: CommandId,
-    threadId: ThreadId,
-  }),
-  Schema.Struct({
     type: Schema.Literal("issue.work.close-out"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -4316,6 +4323,12 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     expectedRevision: Schema.Int,
     inventory: Schema.String,
+    automatic: Schema.optional(
+      Schema.Union([
+        Schema.Struct({ type: Schema.Literal("start"), sourceRunId: RunId, threshold: Schema.Int }),
+        Schema.Struct({ type: Schema.Literal("verify"), enabled: Schema.Boolean }),
+      ]),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),

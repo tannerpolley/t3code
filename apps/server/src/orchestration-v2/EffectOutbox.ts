@@ -37,6 +37,7 @@ import { forkParked } from "../serverActivation.ts";
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({ type: Schema.Literal("run.silence.check"), runId: RunId }),
+  Schema.Struct({ type: Schema.Literal("repository.handoff-completion"), text: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,

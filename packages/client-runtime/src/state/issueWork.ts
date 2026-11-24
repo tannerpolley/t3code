@@ -1,6 +1,8 @@
+import { ISSUE_WORK_STATUS_LABELS } from "@t3tools/shared/issueStage";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import {
   ISSUE_HOSTS,
-  ISSUE_WORK_STATUS_LABELS,
   issueHostCapabilities,
   repositoryIssueHostKind,
   type EnvironmentId,
@@ -66,6 +68,7 @@ export function findIssueProject<
 export function issueWorkPresentation(
   status: IssueWorkStatusResult | null,
   accepted: IssueWorkStartResult | null = null,
+  resolve: MFunctionType = mFallback,
 ) {
   const current = status?.status != null ? status : accepted;
   const workStatus = current?.status ?? null;
@@ -78,9 +81,9 @@ export function issueWorkPresentation(
     label: workStatus === null ? null : ISSUE_WORK_STATUS_LABELS[workStatus],
     publishingLabel:
       status?.publishing === "pending"
-        ? "GitHub update pending"
+        ? resolve(msg("GitHub update pending"))
         : status?.publishing === "failed"
-          ? "GitHub update failed · retry pending"
+          ? resolve(msg("GitHub update failed · retry pending"))
           : null,
   };
 }

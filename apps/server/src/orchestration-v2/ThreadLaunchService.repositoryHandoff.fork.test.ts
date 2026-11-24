@@ -24,8 +24,12 @@ import {
   CommandId,
   EnvironmentId,
   MessageId,
+  NodeId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
+  RuntimeRequestId,
+  TurnItemId,
   ScheduledTaskId,
   ThreadId,
   type ServerProvider,
@@ -41,12 +45,17 @@ import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as OrchestratorMcp from "../mcp/OrchestratorMcpService.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import {
+  automaticHandoffThreadId,
+  REPOSITORY_HANDOFF_READY,
+} from "./AutomaticRepositoryHandoff.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -58,6 +67,7 @@ import {
   modelSelection,
   otherProjectId,
   projectId,
+  suspensionWorkerLayer,
 } from "./ThreadLaunchService.testHarness.ts";
 
 describe("fresh-thread repository handoff", () => {
@@ -135,6 +145,7 @@ describe("fresh-thread repository handoff", () => {
       inventoryComplete?: () => boolean;
       providerAvailable?: () => boolean;
       continuation?: boolean;
+      handoffWake?: boolean;
       continuationRequests?: Context.Service.Shape<
         typeof ProviderContinuationRequests.ProviderContinuationRequests
       >;
@@ -292,6 +303,7 @@ describe("fresh-thread repository handoff", () => {
       Layer.merge(ProjectionMaintenance.layer, ProjectionReplay.layer).pipe(
         Layer.provide(dependencies),
       ),
+      ...(options.handoffWake ? [suspensionWorkerLayer(harness.layer)] : []),
       ...(options.recovery
         ? [
             // Memoized: the same lock instance the orchestrator dispatches under.
@@ -544,7 +556,7 @@ describe("fresh-thread repository handoff", () => {
     capabilities: new Set(["orchestration"]),
     issuedAt: 1,
   });
-  const finish = (threadId: ThreadId, key: string) =>
+  const finish = (threadId: ThreadId, key: string, verify = false) =>
     Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
       const sink = yield* EventSink.EventSinkV2;
@@ -566,7 +578,9 @@ describe("fresh-thread repository handoff", () => {
               runId: run.id,
               nodeId: run.rootNodeId,
               role: "assistant",
-              text: `Finished ${key}. Evidence retained.`,
+              text: verify
+                ? `Read source and recovered the milestone.\n${REPOSITORY_HANDOFF_READY}`
+                : `Finished ${key}. Evidence retained.`,
               attachments: [],
               streaming: false,
               createdAt: now,
@@ -575,6 +589,37 @@ describe("fresh-thread repository handoff", () => {
               creationSource: "provider",
             },
           },
+          ...(verify
+            ? [
+                {
+                  id: EventId.make(`${key}:read`),
+                  type: "turn-item.updated" as const,
+                  threadId,
+                  runId: run.id,
+                  occurredAt: now,
+                  payload: {
+                    id: TurnItemId.make(`${key}:read`),
+                    type: "dynamic_tool" as const,
+                    threadId,
+                    runId: run.id,
+                    nodeId: run.rootNodeId,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 1,
+                    status: "completed" as const,
+                    title: null,
+                    startedAt: now,
+                    completedAt: now,
+                    updatedAt: now,
+                    toolName: "t3_code.t3_thread_read",
+                    input: { threadId: rootId },
+                    output: { threadId: rootId },
+                  },
+                },
+              ]
+            : []),
           {
             id: EventId.make(`${key}:finish`),
             type: "run.updated",
@@ -586,6 +631,302 @@ describe("fresh-thread repository handoff", () => {
         ],
       });
     });
+  it.effect("rolls over only after context, a safe boundary and verified continuation", () => {
+    let verificationStarts = 0;
+    return Effect.gen(function* () {
+      yield* createRoot;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const settings = yield* ServerSettingsService;
+      const nextId = automaticHandoffThreadId(rootId);
+      yield* threads.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("auto:watch"),
+        threadId: rootId,
+        ...reference,
+        number: 12,
+        watching: true,
+        link: { url: "https://github.com/tannerpolley/t3code/pull/12", source: "manual" },
+      });
+      const watch = (yield* threads.getThreadShell(rootId))?.pullRequests?.[0]?.watch;
+      assert.isDefined(watch);
+      yield* service.setPaused({
+        ...reference,
+        paused: true,
+        clientRequestId: CommandId.make("auto:pause-issue-admissions"),
+      });
+      const send = (id: string) =>
+        threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(id),
+          messageId: MessageId.make(id),
+          threadId: rootId,
+          text: "Continue the approved milestone.",
+          dispatchMode: { type: "start_immediately" },
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        });
+      yield* send("auto:source");
+      const run = (yield* threads.getThreadRecords(rootId, ["runs"])).runs.at(-1)!;
+      const now = yield* DateTime.now;
+      const provider = {
+        id: ProviderThreadId.make("auto:provider"),
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: modelSelection.instanceId,
+        providerSessionId: null,
+        appThreadId: rootId,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "idle" as const,
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const usage = (usedTokens: number, key = String(usedTokens)) =>
+        sink.write({
+          events: [
+            {
+              id: EventId.make(`auto:usage:${key}`),
+              type: "provider-thread.updated",
+              threadId: rootId,
+              occurredAt: now,
+              payload: { ...provider, contextUsage: { usedTokens } },
+            },
+          ],
+        });
+      yield* usage(199_999);
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      const request = {
+        id: RuntimeRequestId.make("auto:approval"),
+        nodeId: run.rootNodeId!,
+        providerTurnId: null,
+        nativeRequestRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "auto:approval",
+          strength: "strong" as const,
+        },
+        kind: "permission" as const,
+        status: "pending" as const,
+        responseCapability: { type: "message" as const },
+        createdAt: now,
+        resolvedAt: null,
+      };
+      yield* usage(200_000);
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      const approval = (resolved: boolean) =>
+        sink.write({
+          events: [
+            {
+              id: EventId.make(`auto:approval:${resolved}`),
+              type: "runtime-request.updated",
+              threadId: rootId,
+              runId: run.id,
+              occurredAt: now,
+              payload: resolved ? { ...request, status: "resolved", resolvedAt: now } : request,
+            },
+          ],
+        });
+      yield* approval(false);
+      yield* finish(rootId, "auto:source");
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      yield* usage(199_999, "idle-below");
+      yield* approval(true);
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { orchestratorHandoffTokens: null } },
+      });
+      yield* usage(200_000, "idle-threshold");
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      const taskId = NodeId.make("auto:late-remote");
+      const remoteTask = (status: "running" | "cancelled") =>
+        sink.write({
+          events: [
+            {
+              id: EventId.make(`auto:late-remote:${status}`),
+              type: "subagent.updated",
+              threadId: rootId,
+              nodeId: taskId,
+              occurredAt: now,
+              payload: {
+                id: taskId,
+                threadId: rootId,
+                runId: run.id,
+                parentNodeId: run.rootNodeId!,
+                origin: "app_owned",
+                createdBy: "agent",
+                driver: ProviderDriverKind.make("codex"),
+                providerInstanceId: modelSelection.instanceId,
+                providerThreadId: null,
+                childThreadId: null,
+                remoteChild: {
+                  threadId: ThreadId.make("auto:remote-child"),
+                  environmentId: EnvironmentId.make("auto:remote-environment"),
+                  label: "Remote child",
+                },
+                nativeTaskRef: null,
+                prompt: "Review the retained change.",
+                title: "Review",
+                model: null,
+                status,
+                result: null,
+                startedAt: now,
+                completedAt: status === "cancelled" ? now : null,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+      yield* remoteTask("running");
+      yield* settings.updateSettings({ projectSettingsOverrides: { [projectId]: null } });
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO owner_decisions
+        (id, requesting_thread_id, requesting_project_id, client_request_id, host,
+          repository, issue_number, request_json, state, created_at, updated_at)
+        VALUES ('auto:decision', ${rootId}, ${projectId}, 'auto:decision', ${reference.host},
+          ${reference.repository}, 9, '{}', 'open', '2026-11-23', '2026-11-23')`;
+      yield* remoteTask("cancelled");
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      yield* sql`UPDATE owner_decisions SET chosen_option_id = 'continue', pending_delivery = 1
+        WHERE id = 'auto:decision'`;
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      yield* sql`UPDATE owner_decisions SET pending_delivery = 0 WHERE id = 'auto:decision'`;
+      const afterSequence = yield* sink.latestSequence();
+      yield* usage(200_000, "idle-inherited-threshold");
+      yield* awaitFollowup(nextId, afterSequence);
+      assert.equal((yield* store.configuration(rootId))?.automaticHandoff?.status, "verifying");
+      assert.equal((yield* store.repositoryOwnerByRef(reference))?.rootThreadId, rootId);
+      assert.isNull((yield* threads.getThreadShell(rootId))?.archivedAt);
+
+      yield* finish(nextId, "auto:failed");
+      yield* service.reconcile(rootId);
+      assert.equal((yield* store.configuration(rootId))?.automaticHandoff?.status, "failed");
+      assert.isNull((yield* threads.getThreadShell(rootId))?.archivedAt);
+      yield* service.reconcile(rootId);
+      assert.lengthOf((yield* threads.getThreadRecords(nextId, ["runs"])).runs, 1);
+
+      const archive = (type: "thread.archive" | "thread.unarchive") =>
+        threads.dispatch({
+          type,
+          threadId: nextId,
+          commandId: CommandId.make(`auto:${type}`),
+        });
+      yield* archive("thread.archive");
+      yield* send("auto:retry");
+      yield* finish(rootId, "auto:retry");
+      const previousAttempt = (yield* store.configuration(rootId))?.automaticHandoff;
+      yield* service.reconcile(rootId);
+      assert.deepEqual((yield* store.configuration(rootId))?.automaticHandoff, previousAttempt);
+      assert.equal(verificationStarts, 1);
+      yield* archive("thread.unarchive");
+
+      yield* service.queueIssue({
+        ...reference,
+        number: 9,
+        clientRequestId: CommandId.make("auto:queue"),
+      });
+      yield* service.reconcile(rootId);
+      assert.lengthOf((yield* threads.getThreadRecords(nextId, ["runs"])).runs, 2);
+      yield* service.setPaused({
+        ...reference,
+        paused: false,
+        clientRequestId: CommandId.make("auto:resume-issue-admissions"),
+      });
+      const start = yield* threads
+        .dispatch({
+          type: "issue.work.start",
+          commandId: CommandId.make("auto:start-during-verification"),
+          threadId: rootId,
+          issue: linked(9),
+          workerModelSelection: modelSelection,
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.result);
+      assert.equal(start._tag, "Failure");
+      if (start._tag === "Failure") assert.include(start.failure.message, "verifying a handoff");
+      const queue = yield* store.queue(config);
+      assert.equal(queue[0]?.issue.number, 9);
+      assert.isNull((yield* threads.getThreadShell(rootId))?.activeRunId);
+      yield* finish(nextId, "auto:verified", true);
+      yield* service.reconcile(rootId);
+
+      assert.equal((yield* store.repositoryOwnerByRef(reference))?.rootThreadId, nextId);
+      assert.isFalse((yield* store.configuration(nextId))?.paused);
+      const old = yield* threads.getThreadShell(rootId);
+      assert.isNotNull(old?.archivedAt);
+      assert.equal(old?.handoffToThreadId, nextId);
+      const successor = yield* threads.getThreadRecords(nextId, ["messages", "turnItems"]);
+      assert.equal(successor.thread.handoffFromThreadId, rootId);
+      assert.deepEqual(successor.thread.modelSelection, old?.modelSelection);
+      assert.equal(successor.thread.runtimeMode, old?.runtimeMode);
+      assert.equal(successor.thread.interactionMode, old?.interactionMode);
+      assert.isTrue(
+        successor.messages.some((message) =>
+          message.text.includes("You now own repository orchestration"),
+        ),
+      );
+      assert.isTrue(
+        successor.turnItems.some(
+          (item) => item.type === "system_notice" && item.message?.includes("at 200k context"),
+        ),
+      );
+      assert.isUndefined(old?.pullRequests?.[0]?.watch);
+      assert.deepEqual(successor.thread.pullRequests?.[0]?.watch, watch);
+
+      const completed = {
+        type: "delegated_task.remote.complete",
+        commandId: CommandId.make("auto:late-result"),
+        parentThreadId: rootId,
+        taskId,
+        status: "completed",
+        result: "Late completion report.",
+      } as const;
+      yield* threads.dispatch(completed);
+      yield* threads.dispatch(completed);
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+      const reportCount = (threadId: ThreadId) =>
+        threads
+          .getThreadRecords(threadId, ["messages"])
+          .pipe(
+            Effect.map(
+              ({ messages }) =>
+                messages.filter((message) => message.text.includes(completed.result)).length,
+            ),
+          );
+      assert.equal(yield* reportCount(rootId), 0);
+      assert.equal(yield* reportCount(nextId), 1);
+    }).pipe(
+      Effect.provide(
+        fixture({
+          handoffWake: true,
+          wrapThreads: (threads) => ({
+            ...threads,
+            dispatch: (command) => {
+              if (command.type === "repository.work.handoff" && command.automatic?.type === "start")
+                verificationStarts++;
+              return threads.dispatch(command);
+            },
+          }),
+        }),
+      ),
+    );
+  });
   const awaitFollowup = (threadId: ThreadId, afterSequence: number) =>
     EventSink.EventSinkV2.use((sink) =>
       sink.stream({ afterSequence }).pipe(
@@ -1289,6 +1630,7 @@ describe("fresh-thread repository handoff", () => {
             type: "thread.stop",
             threadId: rootId,
             commandId: CommandId.make("stop-mailbox:stop"),
+            stopDelegatedTasks: false,
           });
         else
           yield* threads.dispatch({
@@ -1954,7 +2296,24 @@ describe("fresh-thread repository handoff", () => {
           ],
           { concurrency: 2 },
         );
-        assert.equal(results.filter((result) => result._tag === "Success").length, 1);
+        assert.isTrue(results.some((result) => result._tag === "Success"));
+        const request = (yield* store.request(cancelInput.requestId))!;
+        if (results[0]._tag === "Success" && results[1]._tag === "Success") {
+          const sink = yield* EventSink.EventSinkV2;
+          const cancellation = yield* sink
+            .readByCommandId({
+              commandId: cancelInput.clientRequestId,
+            })
+            .pipe(Stream.runCollect);
+          const cancelled = cancellation.find(({ event }) => event.type === "issue.work.cancelled");
+          const claimed = results[0].success.storedEvents.find(
+            ({ event }) => event.type === "thread.created",
+          );
+          assert.isDefined(request.cancellation);
+          assert.isDefined(cancelled);
+          assert.isDefined(claimed);
+          assert.isBelow(cancelled!.sequence, claimed!.sequence);
+        }
         if (results[0]._tag === "Success") {
           const owner = yield* store.issueOwner(linked(9));
           assert.isNotNull(owner);
@@ -1962,13 +2321,15 @@ describe("fresh-thread repository handoff", () => {
             (yield* threads.getThreadRecords(owner!, ["runs"])).runs.at(-1)!.status,
             "starting",
           );
-          assert.isUndefined((yield* store.request(cancelInput.requestId))!.cancellation);
-          const retryCancel = yield* service
-            .cancelRequest({ ...cancelInput, clientRequestId: CommandId.make("claimed:cancel") })
-            .pipe(Effect.result);
-          assert.equal(retryCancel._tag, "Failure");
-          if (retryCancel._tag === "Failure")
-            assert.include(retryCancel.failure.message, "unclaimed");
+          if (results[1]._tag === "Failure") {
+            assert.isUndefined(request.cancellation);
+            const retryCancel = yield* service
+              .cancelRequest({ ...cancelInput, clientRequestId: CommandId.make("claimed:cancel") })
+              .pipe(Effect.result);
+            assert.equal(retryCancel._tag, "Failure");
+            if (retryCancel._tag === "Failure")
+              assert.include(retryCancel.failure.message, "unclaimed");
+          }
         } else {
           assert.isNull(yield* store.issueOwner(linked(9)));
           assert.isFalse(yield* store.hasAttempt(linked(9), "first"));

@@ -67,7 +67,7 @@ export interface ProjectSetupScriptRunnerInput {
   readonly projectId?: string;
   readonly projectCwd?: string;
   readonly worktreePath: string;
-  readonly trigger?: "setup" | "settle";
+  readonly trigger?: "setup" | "settle" | "slot-upkeep";
   readonly project?: {
     readonly id: ProjectId;
     readonly workspaceRoot: string;
@@ -502,11 +502,11 @@ export const make = Effect.gen(function* () {
       } as const;
     }
 
-    // Earlier settle shells may still run foreground programs; do not type resumed settles into them.
+    // Settle and upkeep runs must never write to the thread's interactive setup terminal.
     const terminalId =
-      trigger === "settle"
-        ? `settle-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`
-        : `setup-${script.id}`;
+      trigger === "setup"
+        ? `setup-${script.id}`
+        : `${trigger}-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`;
     // A surviving setup shell may still hold a deleted worktree directory.
     if (trigger === "setup") {
       yield* terminalManager.close({ threadId: input.threadId, terminalId }).pipe(

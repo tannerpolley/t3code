@@ -762,6 +762,8 @@
   "024baab60525a419": "저장된 자격 증명이 거부되었습니다.",
   "2613c232516f3c72": "{account}(으)로 연결됨 · 아직 연결된 프로젝트가 없습니다. 이슈 목록을 보려면 프로젝트의 팀을 선택하세요.",
   "77d07bfe2f8ee19d": "{count, plural, other {{account}(으)로 연결됨 · 프로젝트 {count}개 연결됨}}",
+  "ea2c2df54bb227cd": "GitHub update pending",
+  "b8782645b9d7f202": "GitHub update failed · retry pending",
   "3eb9a01099aaf799": "{count}초",
   "3618302947c280f0": "{count}분",
   "a856dc3afb8272cb": "{hours}시간 {minutes}분",

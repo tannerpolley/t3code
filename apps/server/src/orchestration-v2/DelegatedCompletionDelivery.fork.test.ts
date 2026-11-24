@@ -1247,6 +1247,82 @@ it.layer(layerTest)("delegated request routing", (it) => {
       }),
   );
 
+  it.effect("lets an outside agent the owner allows approve only in threads it launched", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const child = yield* seedChildWaitingOnUser({
+        name: "outside-relay",
+        requestKind: "command",
+      });
+      const parent = yield* orchestrator.getThreadProjection(child.parentThreadId);
+      // The bot launched the parent; its subagent's approval is the one waiting.
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:outside-relay-launched"),
+            type: "thread.metadata-updated",
+            threadId: child.parentThreadId,
+            occurredAt: yield* DateTime.now,
+            payload: { ...parent.thread, mcpClientSessionId: "session-bot" },
+          },
+        ],
+      });
+      const respond = (callerClientSessionId: string, name: string) =>
+        threads.respondToPendingRequest({
+          projectId: child.projectId,
+          threadId: child.childThreadId,
+          requestId: child.requestId,
+          callerClientSessionId,
+          commandId: CommandId.make(`command:${name}`),
+          decision: "accept",
+        });
+      const refused = (callerClientSessionId: string, name: string) =>
+        respond(callerClientSessionId, name).pipe(
+          Effect.flip,
+          Effect.map((error) => error._tag),
+        );
+      assert.equal(
+        yield* refused("session-bot", "relay-not-granted"),
+        "ThreadManagementPendingRequestError",
+      );
+      // Each Settings switch saves its own key; two saves both stick.
+      yield* settings.updateSettings({ mcpApprovalRelaySessions: { "session-other": true } });
+      yield* settings.updateSettings({ mcpApprovalRelaySessions: { "session-bot": true } });
+      assert.equal(
+        yield* refused("session-other", "relay-not-launched"),
+        "ThreadManagementPendingRequestError",
+      );
+      // A fork of the bot's thread keeps its root but is not the bot's own work.
+      const forked = (yield* orchestrator.getThreadProjection(child.childThreadId)).thread;
+      const setLineage = (name: string, lineage: typeof forked.lineage) =>
+        sink.write({
+          events: [
+            {
+              id: EventId.make(`event:outside-relay-${name}`),
+              type: "thread.metadata-updated",
+              threadId: child.childThreadId,
+              occurredAt: forked.updatedAt,
+              payload: { ...forked, lineage },
+            },
+          ],
+        });
+      yield* setLineage("fork", { ...forked.lineage, relationshipToParent: "fork" });
+      assert.equal(
+        yield* refused("session-bot", "relay-fork"),
+        "ThreadManagementPendingRequestError",
+      );
+      yield* setLineage("subagent", forked.lineage);
+      yield* respond("session-bot", "relay-granted");
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(child.childThreadId)).runtimeRequests[0]?.decision,
+        "accept",
+      );
+    }),
+  );
+
   it.effect("keeps Writer questions visible to the owner and refuses parent answers", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -300,11 +300,15 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           threadId: input.threadId,
           requestId,
         });
+        const { client } = yield* McpInvocationContext.McpInvocationContext;
         const result = yield* threads
           .respondToPendingRequest({
             projectId: projection.thread.projectId,
             threadId: projection.thread.id,
             ...(caller === undefined ? {} : { callerThreadId: caller.id }),
+            ...(caller !== undefined || client === undefined || client.linked === true
+              ? {}
+              : { callerClientSessionId: client.sessionId }),
             commandId: yield* newCommandId(),
             requestId,
             ...(input.answers === undefined ? {} : { answers: input.answers }),

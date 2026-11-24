@@ -303,6 +303,18 @@ thread is deleted, including archived threads and worktrees left by deletions in
 server waits for sessions and terminals to stop and retries skipped worktrees after restart.
 Existing prompts for deleting a worktree manually remain available when this policy is off.
 
+Reusable issue worktrees follow the repository's worker limit. T3 refreshes idle slots from the
+remote default branch and runs the project setup action during hourly cleanup. The same sweep
+releases safe slots after a worker's pull request merges or their work is included in the default
+branch, and removes idle surplus slots after
+the limit is lowered. T3 keeps slots with uncommitted changes, untracked files outside the keep
+paths, or unmerged commits and reports why it kept them.
+
+To retain caches and build outputs between issue workers, add their repository-relative paths to
+`t3.json` on the default branch, for example `"issueWorktreeKeepPaths": [".venv", "build"]`.
+Ignored files outside those paths are cleared during preparation. Keep paths should contain only
+files you intend to share between issue workers.
+
 Choose **Delete now** to run the enabled rules immediately. The latest results show which
 worktrees were removed or kept and why, plus any failures.
 Results also list folders in the worktree folder that no thread uses, with their sizes; cleanup never removes them, so remove them manually if you want.

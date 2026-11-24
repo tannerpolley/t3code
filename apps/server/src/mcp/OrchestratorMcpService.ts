@@ -278,6 +278,47 @@ export class OrchestratorMcpService extends Context.Service<
 export const isThreadManagementError = Schema.is(ThreadManagementService.ThreadManagementError);
 const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 
+/** A role's current first choice, as `delegate_task` and `t3_thread_launch` resolve it. */
+export const loadRoleDefaultTargetFrom = Effect.fn("OrchestratorMcpService.loadRoleDefaultTarget")(
+  function* (
+    requestedRole: string,
+    level: OrchestratorMcpDelegateTaskInput["level"],
+    target: OrchestratorMcpDelegateTaskInput["target"],
+    providers: ReadonlyArray<ServerProvider>,
+  ) {
+    const settings = yield* ServerSettings.ServerSettingsService.pipe(
+      Effect.flatMap((service) => service.getSettings),
+      Effect.mapError(
+        () =>
+          new OrchestratorMcpFailure({
+            code: "orchestration_error",
+            message: "Unable to read server settings.",
+          }),
+      ),
+    );
+    const orchestrationCapableInstanceIds = new Set(
+      yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2.pipe(
+        Effect.flatMap((adapters) => adapters.list()),
+      ),
+    );
+    const now = yield* Clock.currentTimeMillis;
+    const roles = modelRoleStatuses(
+      resolveModelRoles(settings),
+      providers,
+      orchestrationCapableInstanceIds,
+      now,
+      providerCreditStatuses(providers, settings.providerCreditsApproved, now),
+    );
+    return roleDefaultTarget(
+      roles,
+      requestedRole,
+      level,
+      target,
+      (id) => providers.find((provider) => provider.instanceId === id)?.driver,
+    );
+  },
+);
+
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
 }
@@ -1640,34 +1681,11 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(threadManagementFailure));
 
-  const loadRoleDefaultTarget = Effect.fn("OrchestratorMcpService.loadRoleDefaultTarget")(
-    function* (
-      requestedRole: string,
-      level: OrchestratorMcpDelegateTaskInput["level"],
-      target: OrchestratorMcpDelegateTaskInput["target"],
-      providers: ReadonlyArray<ServerProvider>,
-    ) {
-      const settings = yield* serverSettings.getSettings.pipe(
-        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
-      );
-      const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
-      const now = yield* Clock.currentTimeMillis;
-      const roles = modelRoleStatuses(
-        resolveModelRoles(settings),
-        providers,
-        orchestrationCapableInstanceIds,
-        now,
-        providerCreditStatuses(providers, settings.providerCreditsApproved, now),
-      );
-      return roleDefaultTarget(
-        roles,
-        requestedRole,
-        level,
-        target,
-        (id) => providers.find((provider) => provider.instanceId === id)?.driver,
-      );
-    },
-  );
+  const loadRoleDefaultTarget = (...args: Parameters<typeof loadRoleDefaultTargetFrom>) =>
+    loadRoleDefaultTargetFrom(...args).pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+      Effect.provideService(ProviderAdapterRegistry.ProviderAdapterRegistryV2, providerAdapters),
+    );
 
   const resolveTargetRechecking = (
     input: Parameters<typeof resolveTarget>[0] & { readonly cwd: string | undefined },

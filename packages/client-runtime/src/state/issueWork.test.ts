@@ -36,7 +36,7 @@ describe("issue work presentation", () => {
     expect(issueWorkPresentation(null, accepted)).toMatchObject({
       threadId: rootThreadId,
       isWorker: false,
-      label: "Queued / preparing",
+      label: "Queued",
     });
     expect(issueWorkPresentation({ ...status, status: "queued_preparing" })).toMatchObject({
       threadId: rootThreadId,
@@ -59,7 +59,7 @@ describe("issue work presentation", () => {
         { ...status, status: "queued_preparing" },
         { ...accepted, issueThreadId: workerId },
       ),
-    ).toMatchObject({ threadId: rootThreadId, isWorker: false, label: "Queued / preparing" });
+    ).toMatchObject({ threadId: rootThreadId, isWorker: false, label: "Queued" });
   });
 
   it("shows the completed worker while its GitHub comment is still pending", () => {

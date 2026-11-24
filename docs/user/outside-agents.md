@@ -90,7 +90,8 @@ T3 Code.
 
 - To hand off work, start a thread with `t3_thread_launch`, then follow it with
   `t3_thread_wait` or `t3_thread_read`, instead of `create_threads` or
-  `delegate_task`.
+  `delegate_task`. Pass `role` (and `level`) instead of a model to use that
+  role's current choice from `orchestrator_capabilities`.
 - Tools that default to the caller's own project or thread need an explicit
   `projectId` or `threadId`.
 - To list threads across projects, call `t3_thread_list` with
@@ -151,6 +152,43 @@ the bot out ends its subscriptions. To test with a receiver on your own machine
 or network, start the environment with `T3CODE_MCP_WEBHOOK_ALLOWED_HOSTS` set to
 its host names, for example `localhost,127.0.0.1`; those hosts may also use
 plain `http`.
+
+## Bots that hand off work
+
+A bot that plans with you and hands the work to T3, such as a Grok Bot, can
+keep its threads together and wait on them without a shell on your computer.
+
+1. Add the environment as a custom MCP connector with the T3 Connect address
+   (for Grok Bot, a **Remote HTTPS** connector) and approve the sign-in, for
+   example at **Auto**.
+2. The bot starts one idle thread for itself with `t3_thread_launch` and no
+   `message`. Move that thread into a sidebar section of its own if you like.
+   Jobs nest only under a thread the same sign-in started, so after you
+   approve the bot again it starts a new one.
+3. For each job, the bot calls `t3_thread_launch` with `role`, the project, a
+   self-contained `message`, and its own thread as `parentThreadId`. The job
+   shows under the bot's thread, titled by role, and an approval it waits on
+   is flagged on the bot's thread.
+4. The bot follows the job with `t3_thread_wait` for short work, or reads it
+   later with `t3_thread_read`. A wait returns after about 45 seconds, so a
+   long job is read on a schedule rather than waited on in a loop.
+
+An outside agent can answer a job's questions with `t3_pending_request`. It
+cannot accept or decline a command approval unless you let it: in
+**Settings → Sharing & access**, turn on **Answers approvals** for that agent.
+It then answers approvals only in threads it started and their subagents. The
+permission is off by default and ends with that sign-in.
+
+Text like this keeps a bot's own usage low:
+
+> Use the T3 Code connector for coding and analysis work. Call
+> `orchestrator_capabilities` once per conversation and pick a role; never pick
+> a model yourself. Start one bounded job with `t3_thread_launch`, passing
+> `role`, the project, a self-contained `message`, and your T3 thread as
+> `parentThreadId`. For a job with several steps, launch one thread with
+> `role: "orchestrator"` and give it the whole plan. Read only the job's final
+> message with `t3_thread_read`. Send questions about money or direction to the
+> owner, and accept a command approval only after the owner says yes.
 
 ## Scripts on the host
 

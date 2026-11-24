@@ -24,6 +24,7 @@ import {
   DpopFailureReason,
   type DpopFailureReason as DpopFailureReasonType,
   mcpClientScopes,
+  MCP_CLIENT_SESSION_SUBJECT,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
@@ -83,7 +84,7 @@ export interface IssuedBearerSession {
 }
 
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
-const MCP_CLIENT_SUBJECT = "mcp-client";
+const MCP_CLIENT_SUBJECT = MCP_CLIENT_SESSION_SUBJECT;
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 // A peer link's session moves back out to its full lifetime when a call finds it this far
 // short, so a used link never expires and a busy one writes at most once per step.

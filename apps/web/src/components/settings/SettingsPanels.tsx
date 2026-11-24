@@ -19,6 +19,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import {
+  DEFAULT_ORCHESTRATOR_HANDOFF_TOKENS,
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -2062,6 +2063,67 @@ export function ThreadsSettingsPanel() {
       </SettingsSection>
 
       <ProjectDefaultsSettings category="general" />
+
+      <SettingsSection id="orchestrator-handoff" title={gt("Orchestration")}>
+        <SettingsRow
+          serverScoped
+          settingKeys={["orchestratorHandoffTokens"]}
+          title={gt("Automatic orchestrator handoff")}
+          description={gt(
+            "Start a fresh repository orchestrator when its context reaches the token threshold and its work is idle.",
+          )}
+          control={
+            <ScopedSwitch
+              settingKeys={["orchestratorHandoffTokens"]}
+              checked={settings.orchestratorHandoffTokens !== null}
+              onCheckedChange={(enabled) =>
+                updateSettings({
+                  orchestratorHandoffTokens: enabled ? DEFAULT_ORCHESTRATOR_HANDOFF_TOKENS : null,
+                })
+              }
+              aria-label={gt("Automatic orchestrator handoff")}
+            />
+          }
+        />
+        {settings.orchestratorHandoffTokens !== null ? (
+          <SettingsRow
+            serverScoped
+            settingKeys={["orchestratorHandoffTokens"]}
+            title={gt("Handoff threshold (tokens)")}
+            control={
+              <Input
+                key={settings.orchestratorHandoffTokens}
+                type="number"
+                size="sm"
+                min={1}
+                step={1}
+                className="w-full sm:w-32"
+                aria-label={gt("Handoff threshold (tokens)")}
+                defaultValue={settings.orchestratorHandoffTokens}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+                onBlur={(event) => {
+                  const input = event.currentTarget;
+                  const value = input.valueAsNumber;
+                  const previous = settings.orchestratorHandoffTokens;
+                  if (previous === null) return;
+                  if (!Number.isSafeInteger(value) || value < 1) input.value = String(previous);
+                  else if (value !== previous)
+                    updateSettings(
+                      { orchestratorHandoffTokens: value },
+                      {
+                        onFailed: () => {
+                          input.value = String(previous);
+                        },
+                      },
+                    );
+                }}
+              />
+            }
+          />
+        ) : null}
+      </SettingsSection>
 
       {!isProjectScope ? (
         <SettingsSection id="snooze" title={gt("Snooze")}>
