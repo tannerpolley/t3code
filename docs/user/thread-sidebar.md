@@ -615,17 +615,21 @@ question and answer when the thread wakes; the question stays unanswered.
 
 ### Archived workers
 
-Idle workers archive automatically when a linked pull request merges or closes, or
-a linked issue closes, regardless of when it finished. An open pull request or issue,
-a running or queued turn, a pending question or approval, or unfinished child work
-keeps the worker visible. Pinned workers stay visible.
+The orchestrator archives its delegated workers in the same environment when it
+receives their final results, including interrupted, failed, and cancelled work.
+A worker can be archived even if it has no pull request or issue. Workers with
+running or queued work, a pending question or approval, or unfinished child work
+stay visible. Pinned workers, Writers, side chats, and threads you create stay
+visible.
 
-Reviewers, designers, and checkers archive after their result reaches the parent or
-the parent is archived, once the same safety checks pass. Writer and orchestrator
-threads, side chats, and threads created by you are exempt from automatic archiving.
+If an eligible worker is still visible five minutes after its result arrives,
+T3 Code posts a reminder with the count and names of the workers to archive.
+When the parent is already finished or archived, T3 Code reminds the next active
+parent in the same environment. Archive children on linked environments manually.
+The reminder count includes only children in the orchestrator’s own environment.
 
-Restore a worker from **Settings → Archived threads**. It stays visible until there
-is a new completion. In the same settings page, **Archived worker retention** controls
-when eligible archived workers and their history are permanently deleted. The default
-is 14 days. Choose **Never** to keep them indefinitely. Writers are exempt from automatic
-deletion.
+Restore a worker from **Settings → Archived threads**. It stays visible until
+there is a new completion. Retrying an archived worker restores it for you.
+**Archived worker retention** controls when eligible archived workers and their
+history are permanently deleted. The default is 14 days. Choose
+**Never** to keep them indefinitely. Writers are exempt from automatic deletion.

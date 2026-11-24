@@ -907,6 +907,11 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const message = projection.messages.find((candidate) => candidate.id === messageId)!;
       assert.equal(message.text.includes(testCase.first), testCase.inlineFirst);
       assert.equal(message.text.includes(testCase.second), testCase.inlineSecond);
+      const inlineTaskId = testCase.inlineFirst ? firstTaskId : secondTaskId;
+      assert.include(
+        message.text,
+        `Delegated task ${inlineTaskId} (Inspect regression) in child thread thread:inline-budget-child:${inlineTaskId} [${testCase.inlineFirst ? "failed" : "cancelled"}]:`,
+      );
       const deferredTaskId = testCase.inlineFirst ? secondTaskId : firstTaskId;
       assert.include(
         message.text,

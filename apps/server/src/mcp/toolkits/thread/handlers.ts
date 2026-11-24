@@ -7,6 +7,7 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
@@ -458,7 +459,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })
           .pipe(Effect.mapError(dispatchFailure));
       }
-      let command: OrchestrationV2Command;
+      let command: OrchestrationV2ServerCommand;
       switch (input.action) {
         case "snooze":
           if (input.snoozedUntil === undefined) {
@@ -482,6 +483,22 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           // command can be stale if an unpin commits in between.
           const orderKey = yield* topOfPinnedRunKey(threads);
           command = { ...common, type: "thread.pin", ...(orderKey ? { orderKey } : {}) };
+          break;
+        }
+        case "archive": {
+          const thread = projection.thread;
+          const localWorker =
+            thread.delegatedFrom == null &&
+            thread.createdBy !== "user" &&
+            thread.lineage.relationshipToParent === "subagent" &&
+            thread.lineage.sideChat !== true;
+          command = {
+            ...common,
+            type: "thread.archive",
+            ...(input.delegatedWorker === true || (caller !== undefined && localWorker)
+              ? { archiveDelegatedWorker: true }
+              : {}),
+          };
           break;
         }
         default:

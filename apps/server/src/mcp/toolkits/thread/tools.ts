@@ -50,6 +50,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "unarchive",
       "mark_unread",
     ]),
+    delegatedWorker: Schema.optional(Schema.Literal(true)),
     snoozedUntil: Schema.optional(IsoDateTime),
   }),
   success: Schema.Union([
