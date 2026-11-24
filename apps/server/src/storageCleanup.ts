@@ -1093,13 +1093,14 @@ const make = Effect.gen(function* () {
     additionalRoots: ReadonlyArray<string> = [],
   ) {
     const roots: Array<string> = [];
-    const repositoryRoots = yield* Effect.forEach(
-      [...new Set([...projects.map((project) => project.workspaceRoot), ...additionalRoots])],
-      (cwd) =>
-        git.listWorktreePaths(cwd).pipe(
-          Effect.map((paths) => paths.slice(0, 1)),
-          Effect.orElseSucceed(() => []),
-        ),
+    const workspaceRoots = [
+      ...new Set([...projects.map((project) => project.workspaceRoot), ...additionalRoots]),
+    ];
+    const repositoryRoots = yield* Effect.forEach(workspaceRoots, (cwd) =>
+      git.listWorktreePaths(cwd).pipe(
+        Effect.map((paths) => paths.slice(0, 1)),
+        Effect.orElseSucceed(() => []),
+      ),
     ).pipe(Effect.map((roots) => roots.flat()));
     // A git worktree's dev home is seeded from real data, so its threads and any
     // copied settings can point at the developer's real worktrees.
@@ -1115,7 +1116,7 @@ const make = Effect.gen(function* () {
           config.worktreesDir,
           path,
           yield* HostProcess.HomeDirectory,
-          repositoryRoots,
+          [...workspaceRoots, ...repositoryRoots],
         )) {
       const root = yield* fs.exists(directory).pipe(
         Effect.flatMap((exists) => (exists ? canonicalPath(directory) : Effect.succeed(null))),

@@ -36,6 +36,7 @@ import * as ServerConfig from "../config.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import { prepareTaskFolderParent } from "../projectLocalWorktrees.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -43,7 +44,6 @@ import {
   removeEmptyDirectory,
   type RemoveEmptyDirectoryError,
 } from "../vcs/removeEmptyDirectory.ts";
-import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
 import { projectFolders, parseGitmodulesPaths } from "./WorkspaceFolders.ts";
@@ -590,7 +590,14 @@ const make = Effect.gen(function* () {
       for (const name of yield* fileSystem.readDirectory(source)) {
         const entry = path.join(source, name);
         const link = path.join(target, name);
-        if (name === ".git" || name === skip || trackedRepositories.includes(entry)) continue;
+        // A folder inside the source must not link back to its own parent.
+        if (
+          name === ".git" ||
+          name === skip ||
+          isWithinRoot(path, target, entry) ||
+          trackedRepositories.includes(entry)
+        )
+          continue;
         if (yield* exists(link)) continue;
         if (trackedRepositories.some((repository) => isWithinRoot(path, repository, entry))) {
           yield* linkFolder(entry, link, trackedRepositories);
@@ -663,12 +670,21 @@ const make = Effect.gen(function* () {
     taskPlan: TaskFolderPlan,
     branch: string,
   ) {
-    const parent = resolveWorktreesDirectory(
-      (yield* settings.getSettings.pipe(Effect.orElseSucceed(() => ({ worktreesDirectory: "" }))))
-        .worktreesDirectory,
-      config.worktreesDir,
-      path,
-      yield* HostProcess.HomeDirectory,
+    const { worktreesDirectory } = yield* settings.getSettings.pipe(
+      Effect.orElseSucceed(() => ({ worktreesDirectory: "" })),
+    );
+    const allocateFailed = fail("create", "Could not create the worktree folder");
+    const parent = yield* prepareTaskFolderParent({
+      setting: worktreesDirectory,
+      defaultDir: config.worktreesDir,
+      home: yield* HostProcess.HomeDirectory,
+      projectRoot: taskPlan.projectRoot,
+      anchor: taskPlan.anchor,
+      executeGit: gitDriver.execute,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError(allocateFailed),
     );
     if (parent === null) {
       return yield* new TaskFolderError({
@@ -687,12 +703,7 @@ const make = Effect.gen(function* () {
       if (Buffer.byteLength(prefix + character) > 23) break;
       prefix += character;
     }
-    const base = path.join(
-      parent,
-      path.basename(taskPlan.anchor) || "workspace",
-      `${prefix}-${Hex.encode(hash).slice(0, 16)}`,
-    );
-    const allocateFailed = fail("create", "Could not create the worktree folder");
+    const base = path.join(parent, `${prefix}-${Hex.encode(hash).slice(0, 16)}`);
     yield* fileSystem
       .makeDirectory(path.dirname(base), { recursive: true })
       .pipe(Effect.mapError(allocateFailed));
