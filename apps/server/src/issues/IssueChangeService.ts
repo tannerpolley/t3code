@@ -7,6 +7,7 @@ import {
   IssueChangeOperation,
   type IssueChangeBaseline,
   type IssueChangeDecisionInput,
+  type IssueError,
   type IssueHostCapabilities,
   type IssueChangesListInput,
   type ThreadId,
@@ -95,6 +96,7 @@ const githubError = (cause: {
     ...(cause.createOutcome === undefined ? {} : { createOutcome: cause.createOutcome }),
     ...(cause.retryAt === undefined ? {} : { retryAt: cause.retryAt }),
   });
+const trackerDetailError = (error: IssueError) => githubError(fromTrackerError("detail")(error));
 
 const capabilityNames = {
   subIssues: "sub-issues",
@@ -697,11 +699,30 @@ const make = Effect.gen(function* () {
               const ref = yield* trackerIssueRef(tracker, "detail", baseline.issue).pipe(
                 Effect.mapError(githubError),
               );
-              yield* (
-                op.type === "body"
-                  ? tracker.update({ ...ref, body: op.body })
-                  : tracker.setState({ ...ref, state: op.state === "open" ? "Open" : "Completed" })
-              ).pipe(Effect.mapError((error) => githubError(fromTrackerError("detail")(error))));
+              if (op.type === "body") {
+                yield* tracker
+                  .update({ ...ref, body: op.body })
+                  .pipe(Effect.mapError(trackerDetailError));
+              } else {
+                const { states } = yield* tracker
+                  .detail(ref)
+                  .pipe(Effect.mapError(trackerDetailError));
+                const state = states.find(
+                  (state) =>
+                    state.category === op.state &&
+                    (state.category === "open" || state.closeReason === "completed"),
+                );
+                if (state === undefined)
+                  return yield* githubError({
+                    message:
+                      op.state === "open"
+                        ? "This repository has no open issue status."
+                        : "This repository has no issue status that closes an issue as completed.",
+                  });
+                yield* tracker
+                  .setState({ ...ref, state: state.name })
+                  .pipe(Effect.mapError(trackerDetailError));
+              }
             }
             if (op.type === "milestone")
               yield* issues

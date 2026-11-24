@@ -11,6 +11,7 @@ import {
   ThreadId,
   type IssueChangeOperation,
   type IssueChangeBaseline,
+  type IssueState,
   type ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -54,7 +55,12 @@ function issue(number: number): ThreadLinkedIssue {
   };
 }
 
-const setup = Effect.gen(function* () {
+const legacyStates = [
+  { category: "open", name: "Open" },
+  { category: "closed", name: "Completed", closeReason: "completed" },
+] as const satisfies ReadonlyArray<IssueState>;
+
+const setup = Effect.fnUntraced(function* (states: ReadonlyArray<IssueState>) {
   const sql = yield* SqlClient.SqlClient;
   yield* runMigrations();
   const rootJson = yield* encodeJson({ repositoryOrchestration: repository });
@@ -136,18 +142,67 @@ const setup = Effect.gen(function* () {
           return yield* lostResponse("Body write response lost");
         }
       }),
-    setState: (input) =>
+    detail: (input) =>
       Effect.sync(() => {
-        assert.include(["Open", "Completed"], input.state);
+        const snapshot = snapshots.get(Number(input.key))!;
+        return {
+          ...input,
+          host: repository.host,
+          projectTitle: "Project",
+          displayKey: `#${input.key}`,
+          title: snapshot.issue.title,
+          url: snapshot.issue.url,
+          author: null,
+          state: states.find((state) => state.category === snapshot.state)!,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          closedAt: null,
+          assignees: [],
+          labels: [],
+          commentCount: 0,
+          writable: true,
+          capabilities: {
+            create: true,
+            edit: true,
+            comment: true,
+            labels: true,
+            assignees: true,
+            reactions: true,
+            templates: true,
+            linkedPullRequests: true,
+            events: true,
+            search: true,
+          },
+          viewerPermissions: {
+            setState: true,
+            comment: true,
+            edit: true,
+            labels: true,
+            assignees: true,
+          },
+          states,
+          viewer: null,
+          body: snapshot.body,
+          comments: [],
+          commentsCursor: null,
+          events: [],
+          linkedPullRequests: [],
+        };
+      }),
+    setState: (input) =>
+      Effect.gen(function* () {
+        const state = states.find((candidate) => candidate.name === input.state);
+        if (state === undefined)
+          return yield* new IssueOperationError({
+            operation: "setState",
+            detail: `This repository has no "${input.state}" issue status.`,
+          });
         stateWrites.push(input.state);
         calls.state++;
         const number = Number(input.key);
-        if (input.state === "Open") stateReasons.delete(number);
-        else stateReasons.set(number, "completed");
-        snapshots.set(number, {
-          ...snapshots.get(number)!,
-          state: input.state === "Open" ? "open" : "closed",
-        });
+        if (state.closeReason === undefined) stateReasons.delete(number);
+        else stateReasons.set(number, state.closeReason);
+        snapshots.set(number, { ...snapshots.get(number)!, state: state.category });
       }),
   });
   let refreshes = 0;
@@ -318,10 +373,13 @@ const setup = Effect.gen(function* () {
 });
 
 const inDatabase = <A, E>(
-  test: (h: Effect.Success<typeof setup>) => Effect.Effect<A, E, SqlClient.SqlClient | Scope.Scope>,
+  test: (
+    h: Effect.Success<ReturnType<typeof setup>>,
+  ) => Effect.Effect<A, E, SqlClient.SqlClient | Scope.Scope>,
+  states: ReadonlyArray<IssueState> = legacyStates,
 ) =>
   Effect.gen(function* () {
-    const harness = yield* setup;
+    const harness = yield* setup(states);
     return yield* test(harness);
   }).pipe(Effect.scoped, Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
 const propose = (operation: IssueChangeOperation, clientRequestId = "request") =>
@@ -381,6 +439,40 @@ it.effect("full-access and auto threads edit and close issues without waiting fo
       assert.equal(h.snapshots.get(10)?.state, "open");
       assert.deepEqual(h.stateWrites, ["Completed", "Open"]);
     }).pipe(Effect.provide(h.runtime)),
+  ),
+);
+
+it.effect("closes and reopens issues with repository-defined status names", () =>
+  inDatabase(
+    (h) =>
+      Effect.gen(function* () {
+        const service = yield* IssueChangeService.IssueChangeService;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE orchestration_v2_projection_threads SET runtime_mode = 'auto' WHERE thread_id = 'root'`;
+        const close = yield* propose({ type: "state", number: 10, state: "closed" }, "close");
+        assert.equal(yield* drain, 1);
+        const closed = (yield* service.list({ threadId })).find(
+          (change) => change.id === close.id,
+        )!;
+        assert.equal(closed.status, "succeeded", closed.result ?? undefined);
+        assert.equal(h.snapshots.get(10)?.state, "closed");
+        assert.equal(h.stateReasons.get(10), "completed");
+
+        const reopen = yield* propose({ type: "state", number: 10, state: "open" }, "reopen");
+        assert.equal(yield* drain, 1);
+        const reopened = (yield* service.list({ threadId })).find(
+          (change) => change.id === reopen.id,
+        )!;
+        assert.equal(reopened.status, "succeeded", reopened.result ?? undefined);
+        assert.equal(h.snapshots.get(10)?.state, "open");
+        assert.deepEqual(h.stateWrites, ["Done", "Backlog"]);
+      }).pipe(Effect.provide(h.runtime)),
+    [
+      { category: "open", name: "Backlog" },
+      { category: "open", name: "In review" },
+      { category: "closed", name: "Not planned", closeReason: "not-planned" },
+      { category: "closed", name: "Done", closeReason: "completed" },
+    ],
   ),
 );
 
