@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type EnvironmentId,
@@ -380,12 +381,12 @@ function RoadmapIssueDetail(props: {
         <div className="flex shrink-0 items-center gap-2 px-4 pt-2">
           {props.onBack ? (
             <Button size="xs" variant="ghost" onClick={props.onBack}>
-              Back to issues
+              <T>Back to issues</T>
             </Button>
           ) : null}
           {props.threadRef !== null ? (
             <Button size="xs" variant="outline" onClick={props.onOpenBesideThread}>
-              Open beside thread
+              <T>Open beside thread</T>
             </Button>
           ) : null}
         </div>

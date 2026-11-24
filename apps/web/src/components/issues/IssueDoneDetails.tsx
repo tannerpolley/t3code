@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -25,18 +26,20 @@ export function IssueDoneDetails({
   scope: IssueRepositoryRef;
   environmentId: EnvironmentId;
 }) {
+  const gt = useGT();
   const openPr = useOpenPrLink();
   return (
     <div className="flex flex-col gap-1 ps-6 text-xs text-muted-foreground">
       <p>
-        Closed{issue.stateReason ? ` · ${issue.stateReason.replaceAll("_", " ")}` : ""}
+        <T>Closed</T>
+        {issue.stateReason ? ` · ${issue.stateReason.replaceAll("_", " ")}` : ""}
         {issue.closedAt ? (
           <>
             {" "}
             · <time dateTime={issue.closedAt}>{new Date(issue.closedAt).toLocaleString()}</time>
           </>
         ) : (
-          " · closure time unavailable"
+          gt(" · closure time unavailable")
         )}
       </p>
       {(issue.pullRequests ?? []).map((pr) => (
@@ -46,7 +49,7 @@ export function IssueDoneDetails({
             render={<a href={pr.url} target="_blank" rel="noopener noreferrer" />}
             onClick={(event) => openPr(event, pr.url, undefined, environmentId)}
           >
-            #{pr.number} {pr.title || pr.repository} · {pr.state ?? "state unavailable"}
+            #{pr.number} {pr.title || pr.repository} · {pr.state ?? gt("state unavailable")}
           </InlineButton>
         </div>
       ))}
@@ -71,6 +74,7 @@ function IssueWorkCleanup({
   reference: IssueRepositoryRef & { number: number };
   environmentId: EnvironmentId;
 }) {
+  const gt = useGT();
   const navigate = useNavigate();
   const cleanup = useAtomCommand(repositoryIssueEnvironment.cleanup, { reportFailure: false });
   const permitted = useAtomValue(repositoryIssueEnvironment.cleanup.permissionAtom(environmentId));
@@ -109,7 +113,7 @@ function IssueWorkCleanup({
       setFailure(formatEnvironmentQueryError(result.cause));
       toastManager.add({
         type: "error",
-        title: "Could not clean up issue work",
+        title: gt("Could not clean up issue work"),
         description: formatEnvironmentQueryError(result.cause),
       });
       return;
@@ -136,7 +140,7 @@ function IssueWorkCleanup({
           })
         }
       >
-        Open worker · {work.title}
+        <T>Open worker ·</T> {work.title}
       </Button>
       {work.worktreePath && work.worktreeExists ? (
         <Button
@@ -145,7 +149,7 @@ function IssueWorkCleanup({
           disabled={!permitted || busy || work.status !== "idle"}
           {...confirm.props("worktree", () => void remove("remove-worktree"))}
         >
-          {confirm.isArmed("worktree") ? "Confirm remove worktree?" : "Remove worktree"}
+          {confirm.isArmed("worktree") ? gt("Confirm remove worktree?") : gt("Remove worktree")}
         </Button>
       ) : null}
       {work.branch && !removed ? (
@@ -157,11 +161,11 @@ function IssueWorkCleanup({
         >
           {confirm.isArmed("branch")
             ? unmerged
-              ? "Confirm delete unmerged work?"
-              : "Confirm delete branch?"
+              ? gt("Confirm delete unmerged work?")
+              : gt("Confirm delete branch?")
             : unmerged
-              ? "Delete unmerged branch"
-              : "Delete local branch"}{" "}
+              ? gt("Delete unmerged branch")
+              : gt("Delete local branch")}{" "}
           · {work.branch}
         </Button>
       ) : null}

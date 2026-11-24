@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import type { ThreadProcessGroup, ThreadProcessMember } from "@t3tools/contracts";
 import { CpuIcon } from "lucide-react";
@@ -23,20 +24,26 @@ function ProcessDetails(props: {
       <PopoverTrigger render={props.children} />
       <PopoverPopup side="right" align="start" width="lg">
         <div className="space-y-3 text-xs">
-          <PopoverTitle>Process {member.pid}</PopoverTitle>
+          <PopoverTitle>
+            <T>Process</T> {member.pid}
+          </PopoverTitle>
           <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono">
             {member.commandLine}
           </pre>
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
             <dt>PID</dt>
             <dd>{member.pid}</dd>
-            <dt>Started</dt>
+            <dt>
+              <T>Started</T>
+            </dt>
             <dd>
               <time dateTime={member.startedAt}>{new Date(member.startedAt).toLocaleString()}</time>
             </dd>
             <dt>CPU</dt>
             <dd>{member.cpuPercent.toFixed(1)}%</dd>
-            <dt>Memory</dt>
+            <dt>
+              <T>Memory</T>
+            </dt>
             <dd>{formatBytes(member.residentBytes)}</dd>
           </dl>
         </div>
@@ -52,6 +59,7 @@ export function SidebarThreadProcessesGroup(props: {
   readonly className: string;
   readonly style: CSSProperties | undefined;
 }) {
+  const gt = useGT();
   const { group } = props;
   const key = `processes:${props.expansionKey}:group:${group.label}`;
   const open = useUiStateStore((state) => state.lineageDetailsExpandedById[key] === true);
@@ -91,7 +99,10 @@ export function SidebarThreadProcessesGroup(props: {
         </TooltipTrigger>
         <TooltipPopup side="right">
           {group.count > 1
-            ? `${group.count} processes, such as ${group.commandLine}`
+            ? gt("{count} processes, such as {commandLine}", {
+                count: group.count,
+                commandLine: group.commandLine,
+              })
             : group.commandLine}
         </TooltipPopup>
       </Tooltip>
@@ -124,8 +135,18 @@ export function SidebarThreadProcessesGroup(props: {
             aria-expanded={open}
             aria-label={
               props.columns
-                ? `${open ? "Hide" : "Show"} ${group.count} ${group.label} processes`
-                : `${open ? "Hide" : "Show"} ${group.label} processes`
+                ? open
+                  ? gt("Hide {count} {program} processes", {
+                      count: group.count,
+                      program: group.label,
+                    })
+                  : gt("Show {count} {program} processes", {
+                      count: group.count,
+                      program: group.label,
+                    })
+                : open
+                  ? gt("Hide {program} processes", { program: group.label })
+                  : gt("Show {program} processes", { program: group.label })
             }
             onClick={() => setExpanded([key], !open)}
           >

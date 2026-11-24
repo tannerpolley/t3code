@@ -6,7 +6,7 @@ import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import { SIDEBAR_WORKER_PAGE_SIZE, type EnvironmentId } from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import { CornerDownRightIcon } from "lucide-react";
 import { useEffect, useState, type ComponentProps, type MouseEvent } from "react";
 
@@ -184,6 +184,7 @@ function SidebarWorkerButton(
     readonly parent: string;
   },
 ) {
+  const resolve = useMessages();
   const { thread } = props;
   const active = useParams({
     strict: false,
@@ -208,13 +209,16 @@ function SidebarWorkerButton(
       aria-current={active || undefined}
       aria-label={
         props.columns
-          ? sidebarProjectThreadAccessibleName({
-              role: sidebarRoleLabel(thread.source),
-              title: thread.title,
-              issueNumber: thread.source.linkedIssue?.number,
-              status: workerLabel ?? status,
-              links: thread.pullRequests,
-            })
+          ? sidebarProjectThreadAccessibleName(
+              {
+                role: sidebarRoleLabel(thread.source, resolve),
+                title: thread.title,
+                issueNumber: thread.source.linkedIssue?.number,
+                status: workerLabel ?? status,
+                links: thread.pullRequests,
+              },
+              resolve,
+            )
           : undefined
       }
       className={cn(

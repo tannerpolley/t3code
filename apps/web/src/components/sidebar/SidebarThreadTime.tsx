@@ -1,5 +1,5 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
-import { useMessages } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import type { SidebarThreadSummary } from "../../types";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import {
@@ -30,10 +30,9 @@ export function SidebarThreadTime(props: {
   if (duration === null) return null;
   const age = formatRelativeTimeLabel(
     props.thread.latestUserMessageAt ?? props.thread.updatedAt,
-  ).replace(/(\d+)([mhd])\b/g, (_, count: string, unit: string) => {
-    const name = unit === "m" ? "minute" : unit === "h" ? "hour" : "day";
-    return `${count} ${name}${count === "1" ? "" : "s"}`;
-  });
+    undefined,
+    resolve,
+  );
   return (
     <Tooltip>
       <TooltipTrigger
@@ -43,7 +42,7 @@ export function SidebarThreadTime(props: {
       </TooltipTrigger>
       <TooltipPopup>
         <span>
-          Last active {age}
+          {resolve(msg("Last active {age}", { age }))}
           {props.snoozeWakeLabel ? (
             <>
               <br />

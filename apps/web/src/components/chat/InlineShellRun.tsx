@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type EnvironmentId,
@@ -87,6 +88,7 @@ function InlineShellControls({
   onOpenTerminal: (terminalId: string) => void;
   children: (action: ReactNode, output: ReactNode) => ReactNode;
 }) {
+  const gt = useGT();
   const canRun = useAtomValue(terminalEnvironment.runInline.permissionAtom(context.environmentId));
   const canWrite = useAtomValue(terminalEnvironment.write.permissionAtom(context.environmentId));
   const run = useAtomCommand(terminalEnvironment.runInline, "inline shell run");
@@ -136,7 +138,7 @@ function InlineShellControls({
       variant="ghost-muted"
       size="icon-xs"
       disabled={!canRun || running || pending}
-      aria-label="Run inline"
+      aria-label={gt("Run inline")}
       onClick={() => {
         if (!canRun || running || pending) return;
         setSecret(null);
@@ -180,20 +182,24 @@ function InlineShellControls({
           ref={scrollRef}
           className="h-48 overflow-auto whitespace-pre-wrap break-all font-mono"
           tabIndex={0}
-          aria-label="Inline shell output"
+          aria-label={gt("Inline shell output")}
           onScroll={(event) => {
             const element = event.currentTarget;
             pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 16;
           }}
         >
-          {displayText || "No output yet."}
+          {displayText || gt("No output yet.")}
         </pre>
         {record.error ? <p role="alert">{record.error}</p> : null}
         <div className="mt-2 flex items-center gap-2">
           <span>
             {running
-              ? "Running"
-              : `${record.status} · exit ${record.exitCode ?? "unknown"} · ${(record.durationMs / 1000).toFixed(2)} s`}
+              ? gt("Running")
+              : gt("{status} · exit {code} · {seconds} s", {
+                  status: record.status,
+                  code: record.exitCode ?? gt("unknown"),
+                  seconds: (record.durationMs / 1000).toFixed(2),
+                })}
           </span>
           {running ? (
             <Button
@@ -203,7 +209,7 @@ function InlineShellControls({
               disabled={!canWrite}
               onClick={() => void send("\u0003")}
             >
-              Stop
+              <T>Stop</T>
             </Button>
           ) : null}
           <Button
@@ -212,7 +218,7 @@ function InlineShellControls({
             variant="outline"
             onClick={() => onOpenTerminal(record.terminalId)}
           >
-            Open in terminal
+            <T>Open in terminal</T>
           </Button>
         </div>
         {running ? (
@@ -222,7 +228,7 @@ function InlineShellControls({
                 size="compact"
                 font="mono"
                 type={hideInput ? "password" : "text"}
-                aria-label="Process input"
+                aria-label={gt("Process input")}
                 value={input}
                 disabled={!canWrite}
                 autoComplete={hideInput ? "new-password" : "off"}
@@ -243,7 +249,7 @@ function InlineShellControls({
               aria-pressed={hideInput}
               onClick={() => setSecret(!hideInput)}
             >
-              {hideInput ? "Show input" : "Hide input"}
+              {hideInput ? gt("Show input") : gt("Hide input")}
             </Button>
             <Button
               type="button"
@@ -252,7 +258,7 @@ function InlineShellControls({
               disabled={!canWrite}
               onClick={() => void send(`${input}\r`)}
             >
-              Send
+              <T>Send</T>
             </Button>
           </div>
         ) : null}

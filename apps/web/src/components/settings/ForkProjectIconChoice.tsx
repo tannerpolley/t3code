@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
 import { FolderIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -21,7 +22,7 @@ export function ForkProjectIconToggle() {
   return (
     <Toggle value="folder">
       <span className="inline-flex items-center gap-2">
-        Folder
+        <T>Folder</T>
         <ForkSettingsTag />
       </span>
     </Toggle>
@@ -33,7 +34,7 @@ export function ForkProjectFolderPreview({ color }: { readonly color: ProjectIco
     <div className="flex items-center gap-4 py-2">
       <FolderIcon className={cn("size-12", projectIconColorClassName(color))} />
       <p className="flex-1 text-sm text-muted-foreground">
-        The sidebar's folder icon opens while the project is expanded.
+        <T>The sidebar's folder icon opens while the project is expanded.</T>
       </p>
     </div>
   );

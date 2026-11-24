@@ -17,7 +17,7 @@ import {
   PlayIcon,
   ReplaceIcon,
 } from "lucide-react";
-import { useGT } from "gt-react";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 import { useServerConfigs, useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
@@ -73,6 +73,7 @@ export function ProjectRepositoryOrchestration({
 }: {
   members: Parameters<typeof projectIssueRepositories>[0];
 }) {
+  const gt = useGT();
   const environments = useEnvironments().environments;
   const repositories = projectIssueRepositories(members);
   return repositories.map((entry, index) => (
@@ -82,10 +83,13 @@ export function ProjectRepositoryOrchestration({
       reference={{ host: entry.host, repository: entry.repository }}
       {...(repositories.length > 1
         ? {
-            title: `Repository orchestration: ${entry.repository} on ${
-              environments.find((environment) => environment.environmentId === entry.environmentId)
-                ?.label ?? entry.environmentId
-            }`,
+            title: gt("Repository orchestration: {repository} on {environment}", {
+              repository: entry.repository,
+              environment:
+                environments.find(
+                  (environment) => environment.environmentId === entry.environmentId,
+                )?.label ?? entry.environmentId,
+            }),
           }
         : {})}
       {...(index === 0 ? { id: REPOSITORY_ORCHESTRATION_SECTION_ID } : {})}
@@ -163,7 +167,7 @@ function SettingsLink({
         })
       }
     >
-      Project settings
+      <T>Project settings</T>
     </Button>
   );
 }
@@ -171,7 +175,7 @@ function SettingsLink({
 function RepositoryControls({
   environmentId,
   reference,
-  title = "Repository orchestration",
+  title,
   id,
 }: {
   environmentId: EnvironmentId;
@@ -225,10 +229,15 @@ function RepositoryControls({
   if (data == null) return null;
   if (config == null || data.rootThreadId == null)
     return (
-      <SettingsSection title={title} {...(id === undefined ? {} : { id })}>
+      <SettingsSection
+        title={title ?? gt("Repository orchestration")}
+        {...(id === undefined ? {} : { id })}
+      >
         <SettingsRow
-          title="Orchestrator"
-          description="No orchestrator yet. Start an agent on an issue, or choose Make repository orchestrator from a thread's menu."
+          title={gt("Orchestrator")}
+          description={gt(
+            "No orchestrator yet. Start an agent on an issue, or choose Make repository orchestrator from a thread's menu.",
+          )}
         />
       </SettingsSection>
     );
@@ -253,7 +262,7 @@ function RepositoryControls({
     if (result._tag === "Failure")
       toastManager.add({
         type: "error",
-        title: "Could not change the repository orchestrator",
+        title: gt("Could not change the repository orchestrator"),
         description: formatEnvironmentQueryError(result.cause),
       });
     else {
@@ -261,8 +270,10 @@ function RepositoryControls({
       setRestoreTargetId(null);
       toastManager.add({
         type: "success",
-        title: "Repository orchestrator changed",
-        description: "Repository work remains paused. Choose Resume repository work to continue.",
+        title: gt("Repository orchestrator changed"),
+        description: gt(
+          "Repository work remains paused. Choose Resume repository work to continue.",
+        ),
       });
     }
     appAtomRegistry.refresh(statusAtom);
@@ -286,7 +297,7 @@ function RepositoryControls({
     if (result._tag === "Failure")
       toastManager.add({
         type: "error",
-        title: "Could not hand off repository work",
+        title: gt("Could not hand off repository work"),
         description: formatEnvironmentQueryError(result.cause),
       });
     else {
@@ -311,7 +322,7 @@ function RepositoryControls({
     if (result._tag === "Failure")
       toastManager.add({
         type: "error",
-        title: "Could not close out the issue attempt",
+        title: gt("Could not close out the issue attempt"),
         description: formatEnvironmentQueryError(result.cause),
       });
     appAtomRegistry.refresh(statusAtom);
@@ -331,7 +342,7 @@ function RepositoryControls({
     if (result._tag === "Failure")
       toastManager.add({
         type: "error",
-        title: "Could not end repository orchestration",
+        title: gt("Could not end repository orchestration"),
         description: formatEnvironmentQueryError(result.cause),
       });
     appAtomRegistry.refresh(statusAtom);
@@ -347,19 +358,22 @@ function RepositoryControls({
     if (result._tag === "Failure")
       toastManager.add({
         type: "error",
-        title: "Could not update repository work",
+        title: gt("Could not update repository work"),
         description: formatEnvironmentQueryError(result.cause),
       });
     else appAtomRegistry.refresh(statusAtom);
   };
   const status = repositoryWorkStatus(config, data.idMismatch);
-  const pauseLabel = canResume ? "Resume repository work" : "Pause repository work";
+  const pauseLabel = canResume ? gt("Resume repository work") : gt("Pause repository work");
   const canHandOff = config.handoff === undefined;
   return (
-    <SettingsSection title={title} {...(id === undefined ? {} : { id })}>
+    <SettingsSection
+      title={title ?? gt("Repository orchestration")}
+      {...(id === undefined ? {} : { id })}
+    >
       <SettingsRow
-        title="Orchestrator"
-        description="The thread that starts and coordinates issue work for this repository."
+        title={gt("Orchestrator")}
+        description={gt("The thread that starts and coordinates issue work for this repository.")}
         control={
           <span className="flex min-w-0 items-center gap-1">
             <button
@@ -373,25 +387,29 @@ function RepositoryControls({
               <Menu>
                 <MenuTrigger
                   render={
-                    <Button variant="ghost" size="icon-xs" aria-label="Orchestrator actions" />
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={gt("Orchestrator actions")}
+                    />
                   }
                 >
                   <MoreHorizontalIcon />
                 </MenuTrigger>
                 <MenuPopup align="start">
                   <MenuItem disabled={busy || !canEnd} onClick={() => void end()}>
-                    End repository orchestration
+                    <T>End repository orchestration</T>
                   </MenuItem>
                   {canHandOff ? (
                     <MenuItem disabled={busy} onClick={() => setHandoffExpanded(true)}>
                       <ArrowRightLeftIcon className="size-3.5" />
-                      Hand off to a fresh thread
+                      <T>Hand off to a fresh thread</T>
                     </MenuItem>
                   ) : null}
                   {canHandOff && canRestore ? (
                     <MenuItem disabled={busy} onClick={() => setRestoreExpanded(true)}>
                       <ReplaceIcon className="size-3.5" />
-                      Use another thread as orchestrator
+                      <T>Use another thread as orchestrator</T>
                     </MenuItem>
                   ) : null}
                   {config.handoffHistory?.length ? (
@@ -411,8 +429,11 @@ function RepositoryControls({
         {restoreExpanded && config.handoff === undefined ? (
           <div className="flex w-full max-w-md flex-col gap-2 pt-1">
             <span className="text-xs text-muted-foreground">
-              Pause the repository first. The current orchestrator must be stopped, with no active
-              issue workers or unclaimed start requests. Existing issue workers keep their threads.
+              <T>
+                Pause the repository first. The current orchestrator must be stopped, with no active
+                issue workers or unclaimed start requests. Existing issue workers keep their
+                threads.
+              </T>
             </span>
             <Select
               items={restoreCandidates.map((lead) => ({ value: lead.id, label: lead.title }))}
@@ -421,8 +442,8 @@ function RepositoryControls({
                 setRestoreTargetId(restoreCandidates.find((lead) => lead.id === value)?.id ?? null)
               }
             >
-              <SelectTrigger size="compact" aria-label="New repository orchestrator">
-                <SelectValue placeholder="Choose a lead thread" />
+              <SelectTrigger size="compact" aria-label={gt("New repository orchestrator")}>
+                <SelectValue placeholder={gt("Choose a lead thread")} />
               </SelectTrigger>
               <SelectContent>
                 {restoreCandidates.map((lead) => (
@@ -434,7 +455,7 @@ function RepositoryControls({
             </Select>
             {restoreCandidates.length === 0 ? (
               <span className="text-xs text-muted-foreground">
-                No other top-level thread in this project can lead.
+                <T>No other top-level thread in this project can lead.</T>
               </span>
             ) : null}
             <div className="flex justify-end gap-1">
@@ -444,14 +465,14 @@ function RepositoryControls({
                 disabled={busy}
                 onClick={() => setRestoreExpanded(false)}
               >
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button
                 size="xs"
                 disabled={busy || !config.paused || restoreTarget === undefined}
                 onClick={() => void replaceRoot()}
               >
-                Make orchestrator
+                <T>Make orchestrator</T>
               </Button>
             </div>
           </div>
@@ -471,8 +492,8 @@ function RepositoryControls({
               )}
             </span>
             <Textarea
-              aria-label="Handoff summary"
-              placeholder="Summarize decisions and remaining work for the new root"
+              aria-label={gt("Handoff summary")}
+              placeholder={gt("Summarize decisions and remaining work for the new root")}
               value={summary}
               onChange={(event) => setSummary(event.target.value)}
             />
@@ -483,7 +504,7 @@ function RepositoryControls({
                 disabled={busy}
                 onClick={() => setHandoffExpanded(false)}
               >
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button
                 size="xs"
@@ -497,8 +518,8 @@ function RepositoryControls({
         ) : null}
       </SettingsRow>
       <SettingsRow
-        title="Workers"
-        description="How many issue workers can run at once."
+        title={gt("Workers")}
+        description={gt("How many issue workers can run at once.")}
         control={
           <IssueWorkerLimitControl
             key={`${data.rootThreadId}:${config.revision}`}
@@ -511,8 +532,10 @@ function RepositoryControls({
         }
       />
       <SettingsRow
-        title="Read-only"
-        description="How many read-only agents, such as designers and reviewers, can run at once."
+        title={gt("Read-only")}
+        description={gt(
+          "How many read-only agents, such as designers and reviewers, can run at once.",
+        )}
         control={
           <IssueWorkerLimitControl
             key={`read-only:${data.rootThreadId}:${config.revision}`}
@@ -526,8 +549,8 @@ function RepositoryControls({
         }
       />
       <SettingsRow
-        title="Status"
-        description="Pause stops new issue work from starting; resume continues it."
+        title={gt("Status")}
+        description={gt("Pause stops new issue work from starting; resume continues it.")}
         control={
           <span className="flex min-w-0 items-center gap-1">
             <span className="truncate" role="status">
@@ -558,7 +581,7 @@ function RepositoryControls({
             <div key={entry.id} className="flex items-center justify-between gap-2 text-xs">
               <span className="text-muted-foreground">
                 {issueThreads.find((thread) => thread.linkedIssue?.id === entry.id)?.title ??
-                  "Closed issue"}
+                  gt("Closed issue")}
                 : {entry.reason}
               </span>
               <Button
@@ -567,7 +590,7 @@ function RepositoryControls({
                 disabled={busy || !canCloseOut || repositoryPhase(config) === "draining"}
                 onClick={() => void finishAttempt(entry.id)}
               >
-                Close out attempt
+                <T>Close out attempt</T>
               </Button>
             </div>
           ))}
@@ -647,7 +670,9 @@ function PreviousRootsMenu({
     <>
       {separator ? <MenuSeparator /> : null}
       <MenuGroup>
-        <MenuGroupLabel>Previous orchestrators</MenuGroupLabel>
+        <MenuGroupLabel>
+          <T>Previous orchestrators</T>
+        </MenuGroupLabel>
         {previous.map(({ threadId, transferredAt }) => (
           <MenuItem key={threadId} onClick={() => onOpen(threadId)}>
             <span className="min-w-0 flex-1 truncate">{data?.[threadId] ?? threadId}</span>

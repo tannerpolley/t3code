@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { EnvironmentId, IssueContextRecord, ScopedThreadRef } from "@t3tools/contracts";
 import { CircleDashedIcon } from "lucide-react";
 import { useOpenIssueLink } from "~/lib/openIssueLink";
@@ -19,6 +20,7 @@ export function IssueContextChip({
   threadRef?: ScopedThreadRef | null;
   environmentId?: EnvironmentId | null;
 }) {
+  const gt = useGT();
   const environmentId = threadRef?.environmentId ?? draftEnvironmentId;
   const projects = useProjects();
   const configs = useServerConfigs();
@@ -32,7 +34,7 @@ export function IssueContextChip({
   const openIssue = useOpenIssueLink(threadRef ?? undefined);
   const issue = record.state === null ? null : { ...record, state: record.state };
   const state = useIssueStateLabel(
-    issue === null ? "State unavailable" : issueStatePresentation(issue).label,
+    issue === null ? gt("State unavailable") : issueStatePresentation(issue).label,
   );
   if (target !== null && environmentId != null)
     return (
@@ -43,7 +45,11 @@ export function IssueContextChip({
           <ContextChip
             kind="issue"
             render={<a href={record.url} target="_blank" rel="noopener noreferrer" />}
-            aria-label={`Open issue #${record.number}: ${record.title}, ${state}`}
+            aria-label={gt("Open issue #{number}: {title}, {state}", {
+              number: record.number,
+              title: record.title,
+              state,
+            })}
             data-markdown-copy={copyMarkdown}
             onClick={(event) => openIssue(event, record.url, environmentId)}
           >
@@ -60,12 +66,16 @@ export function IssueContextChip({
       kind="issue"
       icon={issue === null ? <CircleDashedIcon /> : <IssueStateIcon issue={issue} />}
       label={`#${record.number} ${record.title}`}
-      accessibleLabel={`Issue #${record.number}: ${record.title}, ${state}`}
+      accessibleLabel={gt("Issue #{number}: {title}, {state}", {
+        number: record.number,
+        title: record.title,
+        state,
+      })}
       {...(copyMarkdown === undefined ? {} : { copyMarkdown })}
     >
       <div className="max-w-80 space-y-1 overflow-hidden py-0.5 text-left">
         <div className="text-xs font-medium">
-          Issue #{record.number} · {state}
+          {gt("Issue #{number}", { number: record.number })} · {state}
         </div>
         <div className="wrap-break-word">{record.title}</div>
         <div className="text-secondary-label text-3xs">

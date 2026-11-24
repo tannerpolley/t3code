@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { EnvironmentId } from "@t3tools/contracts";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -56,6 +57,7 @@ export function NewSectionProjectDialog(props: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const gt = useGT();
   const { target } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentId = sectionTarget(target.sectionId)?.[0] ?? primaryEnvironmentId;
@@ -79,7 +81,7 @@ export function NewSectionProjectDialog(props: {
   const [name, setName] = useState("");
   const [initGit, setInitGit] = useState(true);
   const [busy, setBusy] = useState(false);
-  const problem = projectFolderNameProblem(name);
+  const problem = projectFolderNameProblem(name, useMessages());
   const path = folder === null ? null : `${ensureBrowseDirectoryPath(folder)}${name.trim()}`;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -106,8 +108,8 @@ export function NewSectionProjectDialog(props: {
         const error = squashAtomCommandFailure(created);
         toastManager.add({
           type: "error",
-          title: "Couldn't create the project",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: gt("Couldn't create the project"),
+          description: error instanceof Error ? error.message : gt("An error occurred."),
         });
       }
       return;
@@ -122,8 +124,10 @@ export function NewSectionProjectDialog(props: {
       if (initialized._tag === "Failure" && !isAtomCommandInterrupted(initialized)) {
         toastManager.add({
           type: "warning",
-          title: "Project created without git",
-          description: "The folder was created, but git init failed. Run it yourself when needed.",
+          title: gt("Project created without git"),
+          description: gt(
+            "The folder was created, but git init failed. Run it yourself when needed.",
+          ),
         });
       }
     }
@@ -140,43 +144,45 @@ export function NewSectionProjectDialog(props: {
       <DialogPopup className="max-w-md">
         <form onSubmit={(event) => void submit(event)}>
           <DialogHeader>
-            <DialogTitle>New project in {where}</DialogTitle>
+            <DialogTitle>{gt("New project in {section}", { section: where })}</DialogTitle>
             <DialogDescription>
               {folder === null
-                ? "Set a full folder path under Settings → General → Organize by folder, so sections know where their projects live."
-                : "Creates the folder and adds it to this section."}
+                ? gt(
+                    "Set a full folder path under Settings → General → Organize by folder, so sections know where their projects live.",
+                  )
+                : gt("Creates the folder and adds it to this section.")}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <Input
-              aria-label="Project folder name"
+              aria-label={gt("Project folder name")}
               autoFocus
               disabled={folder === null}
               maxLength={120}
               onChange={(event) => setName(event.target.value)}
-              placeholder="e.g. new-model"
+              placeholder={gt("e.g. new-model")}
               spellCheck={false}
               value={name}
             />
             {path !== null && name.trim().length > 0 ? (
               <p className="break-all text-xs text-muted-foreground">
-                {problem ?? `Creates ${path}`}
+                {problem ?? gt("Creates {path}", { path })}
               </p>
             ) : null}
             <label className="flex items-center gap-2 text-sm">
               <Checkbox checked={initGit} onCheckedChange={(checked) => setInitGit(checked)} />
-              Initialize git repository
+              <T>Initialize git repository</T>
             </label>
           </DialogPanel>
           <DialogFooter>
             <Button onClick={() => props.onOpenChange(false)} type="button" variant="outline">
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button
               disabled={!canWrite || !placementReady || folder === null || problem !== null || busy}
               type="submit"
             >
-              Create
+              <T>Create</T>
             </Button>
           </DialogFooter>
         </form>

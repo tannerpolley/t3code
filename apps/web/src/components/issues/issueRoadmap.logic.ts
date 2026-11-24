@@ -1,13 +1,11 @@
+import type { MessageResolver } from "~/i18n/messages";
+import { threadRoleLabel } from "../threadRoleDisplay";
 import {
   issueWorkerIsLive,
   issueWorkerNeedsOwner,
   issueWorkerStatus,
 } from "@t3tools/shared/issueWorkerStatus";
-import {
-  THREAD_ROLE_LABELS,
-  type IssueRepositoryRef,
-  type RepositoryIssueSummary,
-} from "@t3tools/contracts";
+import { type IssueRepositoryRef, type RepositoryIssueSummary } from "@t3tools/contracts";
 import { issuePriorityRank } from "./issueProjects.logic";
 import { issueStage, ISSUE_STAGE_LABELS, type IssueStage } from "@t3tools/shared/issueStage";
 
@@ -35,7 +33,7 @@ export function issueLiveStatus(issue: RepositoryIssueSummary) {
 }
 
 /** Put the actionable worker first so the compact row opens the right thread. */
-export function issueLiveWorkSummary(issue: RepositoryIssueSummary) {
+export function issueLiveWorkSummary(issue: RepositoryIssueSummary, resolve?: MessageResolver) {
   const status = issueLiveStatus(issue);
   if (status === null) return null;
   const work = [...(issue.liveWork ?? [])].sort(
@@ -47,7 +45,9 @@ export function issueLiveWorkSummary(issue: RepositoryIssueSummary) {
   );
   const first = work[0]!;
   const agent =
-    first.role === undefined ? first.title : `${THREAD_ROLE_LABELS[first.role]}: ${first.title}`;
+    first.role === undefined
+      ? first.title
+      : `${threadRoleLabel(first.role, resolve)}: ${first.title}`;
   return { status, work, agent, more: work.length - 1 };
 }
 export function openIssueBlockers(issue: RepositoryIssueSummary) {

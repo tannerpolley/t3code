@@ -1,10 +1,12 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import "./ForkSidebarDebug.css";
 import { observeResize } from "../../lib/observeResize";
 
 export const SIDEBAR_DEBUG_OPTIONS = [
-  { key: "columns", title: "Outline sidebar columns" },
-  { key: "width", title: "Show sidebar width" },
-  { key: "separators", title: "Label separator lines" },
+  { key: "columns", title: msg("Outline sidebar columns") },
+  { key: "width", title: msg("Show sidebar width") },
+  { key: "separators", title: msg("Label separator lines") },
 ] as const;
 type DebugOption = (typeof SIDEBAR_DEBUG_OPTIONS)[number]["key"];
 const storageKey = (key: DebugOption) => `t3code:debug-sidebar-${key}`;
@@ -71,11 +73,18 @@ function showWidth() {
     const width = sidebar?.getBoundingClientRect().width;
     const lines = [
       width === undefined
-        ? "Sidebar unavailable"
-        : `Sidebar ${width.toFixed(0)}px / ${(width / rem).toFixed(2)}rem`,
+        ? m(msg("Sidebar unavailable"))
+        : m(
+            msg("Sidebar {pixels}px / {rem}rem", {
+              pixels: width.toFixed(0),
+              rem: (width / rem).toFixed(2),
+            }),
+          ),
     ];
     for (const container of containers)
-      lines.push(`Rows ${container.getBoundingClientRect().width.toFixed(0)}px`);
+      lines.push(
+        m(msg("Rows {pixels}px", { pixels: container.getBoundingClientRect().width.toFixed(0) })),
+      );
     const text = lines.join("\n");
     if (label.textContent !== text) label.textContent = text;
   };

@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { prepareResetCreditUsage } from "./ResetCreditUsageNavigation";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentPresentations } from "../state/presentation";
@@ -67,7 +69,7 @@ function EnvironmentResetCreditReminders({
           const showNative = (body: string, tag: string) => {
             if (!nativeAllowed) return false;
             try {
-              const notification = new Notification("Banked reset", {
+              const notification = new Notification(m(msg("Banked reset")), {
                 body,
                 tag: notificationTag(tag),
                 silent: false,
@@ -100,10 +102,10 @@ function EnvironmentResetCreditReminders({
               // Desktop notifications can be silent or blocked, so the reminder also stays in the app.
               toastManager.add({
                 type: "warning",
-                title: "Banked reset expiring",
+                title: m(msg("Banked reset expiring")),
                 description: body,
                 timeout: 0,
-                actionProps: { children: "Open Usage", onClick: openUsage },
+                actionProps: { children: m(msg("Open Usage")), onClick: openUsage },
               });
               localStorage.setItem(key, "shown");
             }
@@ -120,15 +122,24 @@ function EnvironmentResetCreditReminders({
             if (!localStorage.getItem(key)) {
               const body =
                 result.status === "used"
-                  ? `Used your banked ${label} reset before it expired`
-                  : `Could not use your banked ${label} reset before expiry. Use now from Usage.`;
+                  ? m(
+                      msg("Used your banked {provider} reset before it expired", {
+                        provider: label,
+                      }),
+                    )
+                  : m(
+                      msg(
+                        "Could not use your banked {provider} reset before expiry. Use now from Usage.",
+                        { provider: label },
+                      ),
+                    );
               showNative(body, key);
               toastManager.add({
                 type: result.status === "used" ? "success" : "error",
                 title: body,
                 timeout: 0,
                 actionProps: {
-                  children: result.status === "used" ? "View usage" : "Use now",
+                  children: result.status === "used" ? m(msg("View usage")) : m(msg("Use now")),
                   onClick: openUsage,
                 },
               });

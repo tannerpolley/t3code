@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, OwnerDecision, OwnerDecisionsListInput } from "@t3tools/contracts";
 import { useRef, useState, type ComponentProps } from "react";
@@ -15,6 +16,7 @@ function OwnerDecisionCard({
   environmentId: EnvironmentId;
   decision: OwnerDecision;
 }) {
+  const gt = useGT();
   const canChoose = useAtomValue(ownerDecisions.choose.permissionAtom(environmentId));
   const choose = useAtomCommand(ownerDecisions.choose, { reportFailure: false });
   const busy = useRef(false);
@@ -37,7 +39,7 @@ function OwnerDecisionCard({
   return (
     <article
       className="space-y-2 rounded-lg border border-border bg-background p-3 text-xs"
-      aria-label={`Owner decision: ${decision.question}`}
+      aria-label={gt("Owner decision: {question}", { question: decision.question })}
     >
       <p className="font-medium">{decision.question}</p>
       <p className="break-words text-muted-foreground">
@@ -53,13 +55,13 @@ function OwnerDecisionCard({
         {decision.requestingProjectTitle} / {decision.requestingThreadTitle}
       </p>
       <p>
-        Recommended:{" "}
+        <T>Recommended:</T>{" "}
         <strong>
           {decision.options.find((option) => option.id === decision.recommendedOptionId)?.label}
         </strong>
         . {decision.recommendationReason}{" "}
         <a className="underline" href={decision.evidenceUrl} target="_blank" rel="noreferrer">
-          Evidence
+          <T>Evidence</T>
         </a>
       </p>
       <div className="space-y-2">
@@ -78,7 +80,7 @@ function OwnerDecisionCard({
               aria-describedby={`${decision.id}-${option.id}-consequence`}
             >
               {option.label}
-              {option.id === decision.recommendedOptionId ? " (recommended)" : ""}
+              {option.id === decision.recommendedOptionId ? gt(" (recommended)") : ""}
             </Button>
             <p
               id={`${decision.id}-${option.id}-consequence`}
@@ -90,28 +92,28 @@ function OwnerDecisionCard({
         ))}
       </div>
       <p role="status" className="text-muted-foreground">
-        {chosen ? `Owner chose ${chosen.label}. ` : ""}
+        {chosen ? gt("Owner chose {label}. ", { label: chosen.label }) : ""}
         {decision.state === "publication_mismatch"
-          ? "GitHub comment mismatch; publication stopped."
+          ? gt("GitHub comment mismatch; publication stopped.")
           : decision.state === "delivery_failed"
-            ? "Choice published; requester notification could not be delivered."
+            ? gt("Choice published; requester notification could not be delivered.")
             : decision.state === "withdrawn"
-              ? `Withdrawn: ${decision.withdrawalReason}`
+              ? gt("Withdrawn: {withdrawalReason}", { withdrawalReason: decision.withdrawalReason })
               : decision.pendingPublish !== null ||
                   (selected !== null && decision.chosenOptionId === null)
-                ? "Publishing to GitHub…"
+                ? gt("Publishing to GitHub…")
                 : decision.pendingDelivery
-                  ? "Choice recorded; notification awaiting delivery."
+                  ? gt("Choice recorded; notification awaiting delivery.")
                   : decision.state === "awaiting_choice"
-                    ? "Awaiting your choice"
+                    ? gt("Awaiting your choice")
                     : decision.deliveredAt !== null
-                      ? "Choice published and requester notified."
+                      ? gt("Choice published and requester notified.")
                       : decision.state.replaceAll("_", " ")}
-        {publishing && decision.state === "publication_failed" ? " Retrying publication." : ""}
+        {publishing && decision.state === "publication_failed" ? gt(" Retrying publication.") : ""}
       </p>
       {decision.choiceComment ? (
         <a className="underline" href={decision.choiceComment.url} target="_blank" rel="noreferrer">
-          Owner record
+          <T>Owner record</T>
         </a>
       ) : null}
       {(error ?? decision.lastError) ? (
@@ -130,6 +132,7 @@ export function OwnerDecisionCards({
   environmentId: EnvironmentId;
   input: OwnerDecisionsListInput;
 }) {
+  const gt = useGT();
   const configs = useServerConfigs();
   const supported = configs.get(environmentId)?.environment.capabilities.ownerDecisions === true;
   const query = useEnvironmentQuery(
@@ -137,7 +140,7 @@ export function OwnerDecisionCards({
   );
   if (!supported || (!query.error && !query.data?.length)) return null;
   return (
-    <section aria-label="Owner decisions" className="mb-3 space-y-2">
+    <section aria-label={gt("Owner decisions")} className="mb-3 space-y-2">
       {query.error ? <p role="alert">{query.error}</p> : null}
       {query.data?.map((decision) => (
         <OwnerDecisionCard key={decision.id} environmentId={environmentId} decision={decision} />
@@ -173,6 +176,7 @@ export function OwnerDecisionsToggle({
   onPressedChange: (pressed: boolean) => void;
   size?: ComponentProps<typeof Button>["size"];
 }) {
+  const gt = useGT();
   const count = view.records.filter(
     (record) =>
       record.decision.chosenOptionId === null &&
@@ -186,7 +190,7 @@ export function OwnerDecisionsToggle({
       aria-pressed={pressed}
       onClick={() => onPressedChange(!pressed)}
     >
-      Decisions ({count})
+      {gt("Decisions ({count})", { count })}
     </Button>
   );
 }
@@ -211,6 +215,7 @@ export function OwnerDecisionsView({
   view: ReturnType<typeof useOwnerDecisions>;
   query: string;
 }) {
+  const gt = useGT();
   const [project, setProject] = useState("");
   const [target, setTarget] = useState("");
   const projects = new Map(
@@ -232,15 +237,17 @@ export function OwnerDecisionsView({
         .includes(query.trim().toLowerCase()),
   );
   return (
-    <section aria-label="Decisions" className="space-y-3 px-4 pb-4">
+    <section aria-label={gt("Decisions")} className="space-y-3 px-4 pb-4">
       <div className="flex gap-2">
         <Menu>
           <MenuTrigger render={<Button size="xs" variant="outline" />}>
-            {projects.get(project)?.title ?? "All projects"}
+            {projects.get(project)?.title ?? gt("All projects")}
           </MenuTrigger>
           <MenuPopup>
             <MenuRadioGroup value={project} onValueChange={setProject}>
-              <MenuRadioItem value="">All projects</MenuRadioItem>
+              <MenuRadioItem value="">
+                <T>All projects</T>
+              </MenuRadioItem>
               {[...projects].map(([key, entry]) => (
                 <MenuRadioItem key={key} value={key}>
                   {entry.title} · {view.labels.get(entry.environmentId)}
@@ -252,11 +259,13 @@ export function OwnerDecisionsView({
         {!scope.repository ? (
           <Menu>
             <MenuTrigger render={<Button size="xs" variant="outline" />}>
-              {target || "All repositories"}
+              {target || gt("All repositories")}
             </MenuTrigger>
             <MenuPopup>
               <MenuRadioGroup value={target} onValueChange={setTarget}>
-                <MenuRadioItem value="">All repositories</MenuRadioItem>
+                <MenuRadioItem value="">
+                  <T>All repositories</T>
+                </MenuRadioItem>
                 {targets.map((value) => (
                   <MenuRadioItem key={value} value={value}>
                     {value}
@@ -269,7 +278,9 @@ export function OwnerDecisionsView({
       </div>
       {view.unavailable.map((environment) => (
         <p key={environment.environmentId} role="alert" className="text-xs text-muted-foreground">
-          {environment.label} is offline or connecting; its decisions may be missing.
+          {gt("{environment} is offline or connecting; its decisions may be missing.", {
+            environment: environment.label,
+          })}
         </p>
       ))}
       {view.errors.map((error) => (
@@ -279,7 +290,7 @@ export function OwnerDecisionsView({
       ))}
       {view.waiting ? (
         <p role="status" className="text-xs text-muted-foreground">
-          Loading decisions…
+          <T>Loading decisions…</T>
         </p>
       ) : null}
       {records.map(({ environmentId, decision }) => (
@@ -290,7 +301,9 @@ export function OwnerDecisionsView({
         />
       ))}
       {!view.waiting && records.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No decisions match these filters.</p>
+        <p className="text-sm text-muted-foreground">
+          <T>No decisions match these filters.</T>
+        </p>
       ) : null}
     </section>
   );

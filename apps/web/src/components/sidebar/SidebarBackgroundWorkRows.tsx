@@ -12,7 +12,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { CornerDownRightIcon } from "lucide-react";
 import {
   Fragment,
@@ -84,7 +84,7 @@ export function SidebarChildThreadColumns(props: {
   readonly workerLabel?: string | null | undefined;
 }) {
   const { thread, provider, status } = props;
-  const role = sidebarRoleLabel(thread.source);
+  const role = sidebarRoleLabel(thread.source, useMessages());
   return (
     <SidebarThreadColumns
       location={props.location}
@@ -194,6 +194,7 @@ export type SidebarBackgroundWorkRowsProps = {
 export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps) {
   const navigate = useNavigate();
   const gt = useGT();
+  const resolve = useMessages();
   const owner = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
   const ownerProvider =
     owner === null
@@ -205,7 +206,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
     threads: draggedChild.current
       ? [scopeThreadRef(props.environmentId, draggedChild.current.threadId)]
       : [],
-    title: draggedChild.current?.title ?? "Thread",
+    title: draggedChild.current?.title ?? gt("Thread"),
   }));
   // Rows keep describeSidebarBackgroundWork's order: the thread's own tasks, then its agents.
   // `afterTasks` goes between them.
@@ -239,10 +240,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           row.kind === "subagent"
             ? row.child
               ? isProviderNativeSubagentThread(row.child.source)
-                ? "Native subagent · Runs on its own"
-                : "Child thread · Accepts messages"
-              : "Subagent"
-            : backgroundProcessKindLabel(row.kind, row.commandKind);
+                ? gt("Native subagent · Runs on its own")
+                : gt("Child thread · Accepts messages")
+              : gt("Subagent")
+            : backgroundProcessKindLabel(row.kind, row.commandKind, resolve);
         const taskThreadId =
           row.kind === "subagent" ? props.threadId : (row.ownerThreadId ?? props.threadId);
         const childThreadId = row.kind === "subagent" ? row.childThreadId : null;
@@ -304,7 +305,12 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           const nameDetail =
             row.kind === "subagent"
               ? undefined
-              : `${sameProgram ? `${sameProgram} running, such as ` : ""}${row.command ?? row.label}`;
+              : sameProgram
+                ? gt("{count} running, such as {command}", {
+                    count: sameProgram,
+                    command: row.command ?? row.label,
+                  })
+                : (row.command ?? row.label);
           const modelLabel =
             row.kind === "subagent" && row.child
               ? resolveSidebarThreadModelLabel(row.child, provider, shortModelNames)
@@ -489,13 +495,13 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                     {modelLabel ? (
                       <>
                         <br />
-                        Selected model and effort: {modelLabel}
+                        <T>Selected model and effort:</T> {modelLabel}
                       </>
                     ) : null}
                     {worktree ? (
                       <>
                         <br />
-                        Worktree: {worktree}
+                        <T>Worktree:</T> {worktree}
                       </>
                     ) : null}
                   </TooltipPopup>
@@ -520,7 +526,17 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 <SidebarCaretToggle
                   open={toggle.open}
                   count={props.columns ? toggle.count : undefined}
-                  label={`${toggle.open ? "Hide" : "Show"} ${toggle.count} running ${toggle.count === 1 ? "task" : "tasks"} under ${row.label}`}
+                  label={
+                    toggle.open
+                      ? gt(
+                          "{count, plural, one {Hide {count} running task under {label}} other {Hide {count} running tasks under {label}}}",
+                          { count: toggle.count, label: row.label },
+                        )
+                      : gt(
+                          "{count, plural, one {Show {count} running task under {label}} other {Show {count} running tasks under {label}}}",
+                          { count: toggle.count, label: row.label },
+                        )
+                  }
                   onToggle={toggle.onToggle}
                   className="top-0.5 h-5"
                 />

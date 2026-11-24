@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { useState, useSyncExternalStore } from "react";
 import { Button } from "~/components/ui/button";
 import {
@@ -60,34 +61,40 @@ export default function NotebookCloseDialog() {
     >
       <DialogPopup>
         <DialogHeader>
-          <DialogTitle>Unsaved notebook</DialogTitle>
+          <DialogTitle>
+            <T>Unsaved notebook</T>
+          </DialogTitle>
           <DialogDescription>
-            Save to disk, retain this process-local draft, or discard it and reload the disk file.
-            Discard affects every connected viewer.
+            <T>
+              Save to disk, retain this process-local draft, or discard it and reload the disk file.
+              Discard affects every connected viewer.
+            </T>
           </DialogDescription>
         </DialogHeader>
         {error ? (
           <p role="alert" className="px-6 text-sm text-destructive">
-            Save or reload failed. The draft remains open. Check for disk conflicts, changed
-            revisions, or lost permissions.
+            <T>
+              Save or reload failed. The draft remains open. Check for disk conflicts, changed
+              revisions, or lost permissions.
+            </T>
           </p>
         ) : null}
         <DialogFooter>
           <Button variant="outline" disabled={pending} onClick={() => finish(false)}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button variant="outline" disabled={pending} onClick={() => finish(true)}>
-            Retain draft
+            <T>Retain draft</T>
           </Button>
           <Button
             variant="destructive"
             disabled={!current?.canDiscard || pending}
             onClick={() => void persist(true)}
           >
-            Discard
+            <T>Discard</T>
           </Button>
           <Button disabled={!current?.canSave || pending} onClick={() => void persist(false)}>
-            Save and close
+            <T>Save and close</T>
           </Button>
         </DialogFooter>
       </DialogPopup>

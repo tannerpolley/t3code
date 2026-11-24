@@ -1,3 +1,4 @@
+import { T, msg, useGT, useMessages } from "gt-react";
 import { IssueHoverCard } from "./IssueHoverCard";
 import { startIssueDrag } from "./issueComposerContext";
 import { useAtomValue } from "@effect/atom-react";
@@ -20,6 +21,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { environmentServerConfigsAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { cn } from "~/lib/utils";
+import type { MessageResolver } from "~/i18n/messages";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import {
   PULL_REQUEST_ROW_CLASS,
@@ -60,9 +62,13 @@ const threadUnread = Atom.family((key: string) =>
 
 /** Unread external issue activity on a repository orchestrator's sidebar row. */
 export function IssueInboxBadge({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const gt = useGT();
   const unread = useAtomValue(threadUnread(scopedThreadKey(threadRef)));
   if (unread === 0) return null;
-  const label = `${unread} unread external issue event${unread === 1 ? "" : "s"}`;
+  const label = gt(
+    "{count, plural, one {{count} unread external issue event} other {{count} unread external issue events}}",
+    { count: unread },
+  );
   return (
     <Badge aria-label={label} size="sm" title={label} variant="info">
       {unread > 99 ? "99+" : unread}
@@ -71,26 +77,26 @@ export function IssueInboxBadge({ threadRef }: { readonly threadRef: ScopedThrea
 }
 
 const KIND_LABELS: Record<IssueInboxEvent["kind"], string> = {
-  issue_opened: "Opened",
-  comment: "Comment",
-  closed: "Closed",
-  reopened: "Reopened",
-  labeled: "Labeled",
-  unlabeled: "Unlabeled",
-  milestoned: "Milestoned",
-  demilestoned: "Milestone removed",
-  renamed: "Renamed",
-  missed_activity: "Missed activity",
+  issue_opened: msg("Opened"),
+  comment: msg("Comment"),
+  closed: msg("Closed"),
+  reopened: msg("Reopened"),
+  labeled: msg("Labeled"),
+  unlabeled: msg("Unlabeled"),
+  milestoned: msg("Milestoned"),
+  demilestoned: msg("Milestone removed"),
+  renamed: msg("Renamed"),
+  missed_activity: msg("Missed activity"),
 };
 
-function describe(event: IssueInboxEvent): string {
-  const source =
-    event.sourceProject !== null
-      ? ` from ${event.sourceProject}`
-      : event.author !== null
-        ? ` by ${event.author}`
-        : "";
-  return `${KIND_LABELS[event.kind]}${source} · ${formatRelativeTimeLabel(event.occurredAt)}`;
+function describe(event: IssueInboxEvent, resolve: MessageResolver): string {
+  const kind = resolve(KIND_LABELS[event.kind]);
+  const time = formatRelativeTimeLabel(event.occurredAt, undefined, resolve);
+  return event.sourceProject !== null
+    ? resolve(msg("{kind} from {project} · {time}", { kind, project: event.sourceProject, time }))
+    : event.author !== null
+      ? resolve(msg("{kind} by {author} · {time}", { kind, author: event.author, time }))
+      : `${kind} · ${time}`;
 }
 
 export function useIssueInbox(environmentId: EnvironmentId, reference: IssueRepositoryRef) {
@@ -121,6 +127,8 @@ function InboxList({
   readonly reference: IssueRepositoryRef;
   readonly issues?: readonly RepositoryIssueSummary[] | undefined;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const { data } = useIssueInbox(environmentId, reference);
   const markRead = useAtomCommand(repositoryIssueEnvironment.markInboxRead);
   const canMark = useAtomValue(
@@ -141,19 +149,21 @@ function InboxList({
       input: { ...reference, ...(ids === undefined ? {} : { ids }) },
     });
   return (
-    <section aria-label="Inbox">
+    <section aria-label={gt("Inbox")}>
       <div className="flex items-center gap-1 pe-2">
         <div className="min-w-0 flex-1">
           <CollapsibleSectionHeader
             expanded={!collapsed}
             onClick={toggleCollapsed}
-            accessory={<span className="tabular-nums">{events.length} unread</span>}
+            accessory={
+              <span className="tabular-nums">{gt("{count} unread", { count: events.length })}</span>
+            }
           >
-            Inbox
+            <T>Inbox</T>
           </CollapsibleSectionHeader>
         </div>
         {canMark ? (
-          <MarkReadButton label="Mark all read" onClick={() => mark()}>
+          <MarkReadButton label={gt("Mark all read")} onClick={() => mark()}>
             <CheckCheckIcon />
           </MarkReadButton>
         ) : null}
@@ -206,12 +216,12 @@ function InboxList({
                             <>
                               {event.highPriority ? (
                                 <Badge size="sm" variant="warning">
-                                  High priority
+                                  <T>High priority</T>
                                 </Badge>
                               ) : null}
                               {event.tagged ? (
                                 <Badge size="sm" variant="info">
-                                  Tagged
+                                  <T>Tagged</T>
                                 </Badge>
                               ) : null}
                             </>
@@ -223,7 +233,7 @@ function InboxList({
                                   #{event.issueNumber}
                                 </span>
                               ) : null}
-                              <span className="truncate">{describe(event)}</span>
+                              <span className="truncate">{describe(event, resolve)}</span>
                             </>
                           }
                         />
@@ -234,7 +244,7 @@ function InboxList({
                         ) : null}
                       </a>
                       {canMark ? (
-                        <MarkReadButton label="Mark read" onClick={() => mark([event.id])}>
+                        <MarkReadButton label={gt("Mark read")} onClick={() => mark([event.id])}>
                           <CheckIcon />
                         </MarkReadButton>
                       ) : null}

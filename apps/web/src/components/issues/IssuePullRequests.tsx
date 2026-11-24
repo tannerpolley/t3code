@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { MouseEvent } from "react";
 import type { EnvironmentId, IssuePullRequest } from "@t3tools/contracts";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
@@ -20,12 +21,16 @@ export function IssuePullRequests({
   count?: number | undefined;
   environmentId?: EnvironmentId | undefined;
 }) {
+  const gt = useGT();
   if (pullRequests === undefined) {
     if (!count) return null;
     return (
       <span
         className="inline-flex items-center gap-0.5 text-muted-foreground"
-        aria-label={`${count} linked pull requests`}
+        aria-label={gt(
+          "{count, plural, one {{count} linked pull request} other {{count} linked pull requests}}",
+          { count },
+        )}
       >
         <PullRequestGlyph.pullRequest aria-hidden className="size-3" />
         <span>{count}</span>
@@ -42,6 +47,7 @@ function DetailedIssuePullRequests({
   pullRequests: readonly IssuePullRequest[];
   environmentId?: EnvironmentId | undefined;
 }) {
+  const gt = useGT();
   const openPrLink = useOpenPrLink();
   const openPr = (event: MouseEvent<HTMLElement>, url: string) =>
     openPrLink(event, url, undefined, environmentId);
@@ -53,7 +59,11 @@ function DetailedIssuePullRequests({
         tone="muted"
         render={<a href={pr.url} target="_blank" rel="noopener noreferrer" />}
         onClick={(event) => openPr(event, pr.url)}
-        aria-label={`Open pull request ${pr.repository}#${pr.number}: ${pr.title}`}
+        aria-label={gt("Open pull request {repository}#{number}: {title}", {
+          repository: pr.repository,
+          number: pr.number,
+          title: pr.title,
+        })}
       >
         {pr.state === null ? (
           <PullRequestGlyph.pullRequest aria-hidden className="size-3" />
@@ -68,7 +78,10 @@ function DetailedIssuePullRequests({
       <PopoverTrigger
         render={<InlineButton tone="muted" />}
         onClick={(event) => event.stopPropagation()}
-        aria-label={`Show ${pullRequests.length} linked pull requests`}
+        aria-label={gt(
+          "Show {count, plural, one {{count} linked pull request} other {{count} linked pull requests}}",
+          { count: pullRequests.length },
+        )}
       >
         <PullRequestGlyph.pullRequest aria-hidden className="size-3" />
         <span>{pullRequests.length}</span>

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   defaultArtifactSection,
@@ -107,6 +108,7 @@ function ArtifactMetadataForm({
   onSave: (label: string | null, description: string | null) => Promise<boolean>;
   onCancel: () => void;
 }) {
+  const gt = useGT();
   const [label, setLabel] = useState(artifact.label ?? "");
   const [description, setDescription] = useState(artifact.description ?? "");
   const [saving, setSaving] = useState(false);
@@ -127,7 +129,7 @@ function ArtifactMetadataForm({
     >
       <Input
         size="sm"
-        aria-label="Artifact label (optional)"
+        aria-label={gt("Artifact label (optional)")}
         placeholder={artifact.name}
         value={label}
         onChange={(event) => setLabel(event.target.value)}
@@ -137,8 +139,8 @@ function ArtifactMetadataForm({
       />
       <Input
         size="sm"
-        aria-label="Artifact description (optional)"
-        placeholder="Description (optional)"
+        aria-label={gt("Artifact description (optional)")}
+        placeholder={gt("Description (optional)")}
         value={description}
         onChange={(event) => setDescription(event.target.value)}
         maxLength={200}
@@ -146,10 +148,10 @@ function ArtifactMetadataForm({
       />
       <div className="flex gap-1">
         <Button size="xs" type="submit" disabled={saving || !canUpdate}>
-          Save
+          <T>Save</T>
         </Button>
         <Button size="xs" variant="ghost-muted" disabled={saving} onClick={onCancel}>
-          Cancel
+          <T>Cancel</T>
         </Button>
       </div>
     </form>
@@ -168,6 +170,7 @@ export function ThreadDetailsArtifactRows({
   /** The thread's checkout; HTML inside it opens as a workspace page so its CSS and images load. */
   workspaceRoot: string | null;
 }) {
+  const gt = useGT();
   const project = useProjects().find(
     (item) => item.environmentId === environmentId && item.id === projectId,
   );
@@ -242,7 +245,8 @@ export function ThreadDetailsArtifactRows({
         createAssetUrl,
         openPreview,
       });
-      if (opened._tag === "Failure") setMessage("The artifact could not be opened in the browser.");
+      if (opened._tag === "Failure")
+        setMessage(gt("The artifact could not be opened in the browser."));
     } else {
       useRightPanelStore.getState().openFile(threadRef, fresh.resolvedPath);
     }
@@ -250,7 +254,7 @@ export function ThreadDetailsArtifactRows({
   return (
     <ThreadDetailsSection
       headingId="thread-details-artifacts-heading"
-      title="Artifacts"
+      title={gt("Artifacts")}
       showHeading={false}
     >
       <div className="mb-1 flex min-h-8 items-center justify-between gap-2 px-1.5">
@@ -261,7 +265,8 @@ export function ThreadDetailsArtifactRows({
             className="flex cursor-pointer items-center gap-1.5 rounded-sm text-2xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             onClick={() => setCollapsed(!collapsed)}
           >
-            Artifacts {artifacts ? <span className="tabular-nums">{artifacts.length}</span> : null}
+            <T>Artifacts</T>{" "}
+            {artifacts ? <span className="tabular-nums">{artifacts.length}</span> : null}
             <ChevronDownIcon aria-hidden className={`size-3${collapsed ? " -rotate-90" : ""}`} />
           </button>
         </h3>
@@ -274,7 +279,7 @@ export function ThreadDetailsArtifactRows({
             setCollapsed(false);
           }}
         >
-          <PlusIcon aria-hidden className="size-3" /> Add
+          <PlusIcon aria-hidden className="size-3" /> <T>Add</T>
         </Button>
       </div>
       {!collapsed ? (
@@ -308,8 +313,8 @@ export function ThreadDetailsArtifactRows({
               <div className="flex gap-1">
                 <Input
                   size="sm"
-                  aria-label="Artifact file path"
-                  placeholder="Project-relative or absolute file path"
+                  aria-label={gt("Artifact file path")}
+                  placeholder={gt("Project-relative or absolute file path")}
                   value={path}
                   onChange={(event) => setPath(event.target.value)}
                   required
@@ -320,7 +325,7 @@ export function ThreadDetailsArtifactRows({
                   disabled={!project}
                   onClick={() => setPickerOpen(true)}
                 >
-                  Browse
+                  <T>Browse</T>
                 </Button>
               </div>
               {project && pickerOpen ? (
@@ -336,24 +341,24 @@ export function ThreadDetailsArtifactRows({
               ) : null}
               <Input
                 size="sm"
-                aria-label="Artifact label (optional)"
-                placeholder="Label (optional)"
+                aria-label={gt("Artifact label (optional)")}
+                placeholder={gt("Label (optional)")}
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
                 maxLength={200}
               />
               <Input
                 size="sm"
-                aria-label="Artifact description (optional)"
-                placeholder="Description (optional)"
+                aria-label={gt("Artifact description (optional)")}
+                placeholder={gt("Description (optional)")}
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
                 maxLength={200}
               />
               <Input
                 size="sm"
-                aria-label="Artifact section"
-                placeholder="Section"
+                aria-label={gt("Artifact section")}
+                placeholder={gt("Section")}
                 list={sectionListId}
                 value={sectionValue}
                 onChange={(event) => setSection(event.target.value)}
@@ -361,10 +366,10 @@ export function ThreadDetailsArtifactRows({
               />
               <div className="flex gap-1">
                 <Button size="xs" type="submit" disabled={busy || !canAdd || !path.trim()}>
-                  Pin file
+                  <T>Pin file</T>
                 </Button>
                 <Button size="xs" variant="ghost-muted" onClick={() => setAdding(false)}>
-                  Cancel
+                  <T>Cancel</T>
                 </Button>
               </div>
             </form>
@@ -381,7 +386,7 @@ export function ThreadDetailsArtifactRows({
                 <div className="group flex min-h-7 min-w-0 items-center gap-1 px-1.5">
                   {renaming === group.name ? (
                     <SectionNameForm
-                      label={`Rename section ${group.name}`}
+                      label={gt("Rename section {name}", { name: group.name })}
                       initial={group.name}
                       listId={sectionListId}
                       onCancel={() => setRenaming(null)}
@@ -423,7 +428,7 @@ export function ThreadDetailsArtifactRows({
                           variant="ghost-muted"
                           size="icon-xs"
                           disabled={!canReorder || index === 0}
-                          aria-label={`Move section ${group.name} up`}
+                          aria-label={gt("Move section {name} up", { name: group.name })}
                           onClick={() => reorder(index, -1)}
                         >
                           <ArrowUpIcon aria-hidden className="size-3" />
@@ -432,7 +437,7 @@ export function ThreadDetailsArtifactRows({
                           variant="ghost-muted"
                           size="icon-xs"
                           disabled={!canReorder || index === sections.length - 1}
-                          aria-label={`Move section ${group.name} down`}
+                          aria-label={gt("Move section {name} down", { name: group.name })}
                           onClick={() => reorder(index, 1)}
                         >
                           <ArrowDownIcon aria-hidden className="size-3" />
@@ -441,7 +446,7 @@ export function ThreadDetailsArtifactRows({
                           variant="ghost-muted"
                           size="icon-xs"
                           disabled={!canRename}
-                          aria-label={`Rename section ${group.name}`}
+                          aria-label={gt("Rename section {name}", { name: group.name })}
                           onClick={() => setRenaming(group.name)}
                         >
                           <PencilIcon aria-hidden className="size-3" />
@@ -482,12 +487,16 @@ export function ThreadDetailsArtifactRows({
                               <TooltipPopup>
                                 {artifact.description ? <div>{artifact.description}</div> : null}
                                 <div>{artifact.resolvedPath}</div>
-                                {artifact.addedBy === "agent" ? <div>Added by an agent</div> : null}
+                                {artifact.addedBy === "agent" ? (
+                                  <div>
+                                    <T>Added by an agent</T>
+                                  </div>
+                                ) : null}
                               </TooltipPopup>
                             </Tooltip>
                             {missing ? (
                               <span className="shrink-0 text-2xs text-muted-foreground">
-                                File missing
+                                <T>File missing</T>
                               </span>
                             ) : null}
                             <div className={HOVER_REVEAL}>
@@ -495,7 +504,9 @@ export function ThreadDetailsArtifactRows({
                                 variant="ghost-muted"
                                 size="icon-xs"
                                 disabled={!canUpdate}
-                                aria-label={`Edit ${artifact.label ?? artifact.name}`}
+                                aria-label={gt("Edit {name}", {
+                                  name: artifact.label ?? artifact.name,
+                                })}
                                 aria-expanded={editing === artifact.id}
                                 onClick={() =>
                                   setEditing(editing === artifact.id ? null : artifact.id)
@@ -507,7 +518,9 @@ export function ThreadDetailsArtifactRows({
                                 variant="ghost-muted"
                                 size="icon-xs"
                                 disabled={!canMove}
-                                aria-label={`Move ${artifact.label ?? artifact.name} to another section`}
+                                aria-label={gt("Move {name} to another section", {
+                                  name: artifact.label ?? artifact.name,
+                                })}
                                 onClick={() =>
                                   setMoving(moving === artifact.id ? null : artifact.id)
                                 }
@@ -518,7 +531,9 @@ export function ThreadDetailsArtifactRows({
                                 variant="ghost-muted"
                                 size="icon-xs"
                                 disabled={!canRemove}
-                                aria-label={`Remove ${artifact.label ?? artifact.name}`}
+                                aria-label={gt("Remove {name}", {
+                                  name: artifact.label ?? artifact.name,
+                                })}
                                 onClick={() => {
                                   void remove({
                                     environmentId,
@@ -547,7 +562,9 @@ export function ThreadDetailsArtifactRows({
                           {moving === artifact.id ? (
                             <div className="flex px-1.5">
                               <SectionNameForm
-                                label={`Section for ${artifact.label ?? artifact.name}`}
+                                label={gt("Section for {name}", {
+                                  name: artifact.label ?? artifact.name,
+                                })}
                                 initial={artifact.section}
                                 listId={sectionListId}
                                 onCancel={() => setMoving(null)}
@@ -569,12 +586,12 @@ export function ThreadDetailsArtifactRows({
           })}
           {artifacts?.length === 0 ? (
             <p className="px-2.5 py-1.5 text-xs text-muted-foreground">
-              Pin files used across this project.
+              <T>Pin files used across this project.</T>
             </p>
           ) : null}
           {result._tag === "Failure" ? (
             <p role="status" className="px-2.5 text-xs text-muted-foreground">
-              Artifacts unavailable
+              <T>Artifacts unavailable</T>
             </p>
           ) : null}
           {message ? (

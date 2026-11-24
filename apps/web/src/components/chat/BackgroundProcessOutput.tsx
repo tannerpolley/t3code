@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -147,6 +148,7 @@ export function BackgroundProcessPopupHost() {
 }
 
 function BackgroundProcessPopup(props: BackgroundProcessDetails) {
+  const gt = useGT();
   // The thread's running list, polled like task usage, says when this one has ended.
   const processes = useEnvironmentQuery(
     serverEnvironment.threadProcesses({
@@ -168,10 +170,14 @@ function BackgroundProcessPopup(props: BackgroundProcessDetails) {
       ) : null}
       <p className="flex items-center gap-1 text-2xs text-muted-foreground">
         {running === false ? (
-          "Ended"
+          gt("Ended")
         ) : (
           <>
-            {running ? <span>Running</span> : null}
+            {running ? (
+              <span>
+                <T>Running</T>
+              </span>
+            ) : null}
             {running && props.startedAt ? <span>·</span> : null}
             {props.startedAt ? (
               <BackgroundShellElapsed startedAt={props.startedAt} commandKind={props.commandKind} />
@@ -183,7 +189,7 @@ function BackgroundProcessPopup(props: BackgroundProcessDetails) {
         <BackgroundProcessOutputView {...props} />
       ) : (
         <p className="text-muted-foreground text-xs">
-          Claude shows a foreground command&apos;s output when it finishes.
+          <T>Claude shows a foreground command&apos;s output when it finishes.</T>
         </p>
       )}
     </div>
@@ -192,6 +198,7 @@ function BackgroundProcessPopup(props: BackgroundProcessDetails) {
 
 /** Mounted only while open: the subscription, and the server's file tail, end on unmount. */
 export function BackgroundProcessOutputView(props: BackgroundProcessTarget) {
+  const gt = useGT();
   const output = useEnvironmentQuery(
     orchestrationEnvironment.backgroundTaskOutput({
       environmentId: props.environmentId,
@@ -222,7 +229,11 @@ export function BackgroundProcessOutputView(props: BackgroundProcessTarget) {
           }}
           className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/40 p-2 font-mono text-2xs leading-relaxed"
         >
-          {text.length > 0 ? text : <span className="text-muted-foreground">No output yet.</span>}
+          {text.length > 0 ? (
+            text
+          ) : (
+            <span className="text-muted-foreground">{gt("No output yet.")}</span>
+          )}
         </pre>
       )}
     </div>
@@ -255,9 +266,9 @@ export function BackgroundShellElapsed(props: {
         {elapsed}
       </TooltipTrigger>
       <TooltipPopup className="max-w-72">
-        Possibly stuck: running for over 2 hours. A wait loop such as{" "}
-        <code>until ! pgrep -f …</code> can match itself and never end. Stop it if it should have
-        finished.
+        <T>Possibly stuck: running for over 2 hours. A wait loop such as</T>{" "}
+        <code>until ! pgrep -f …</code>{" "}
+        <T>can match itself and never end. Stop it if it should have finished.</T>
       </TooltipPopup>
     </Tooltip>
   );
@@ -277,6 +288,7 @@ export const STOP_SHELL_ON_ROW_HOVER_CLASS =
 export function StopBackgroundShellButton(
   props: BackgroundProcessTarget & { readonly className?: string },
 ) {
+  const gt = useGT();
   const stop = useAtomCommand(orchestrationEnvironment.stopBackgroundTask, {
     reportFailure: false,
   });
@@ -287,7 +299,7 @@ export function StopBackgroundShellButton(
         render={
           <button
             type="button"
-            aria-label={`Stop ${props.label}`}
+            aria-label={gt("Stop {label}", { label: props.label })}
             disabled={stopping}
             className={cn(
               "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-destructive disabled:cursor-default disabled:opacity-50",
@@ -305,8 +317,8 @@ export function StopBackgroundShellButton(
                 const error = squashAtomCommandFailure(result);
                 toastManager.add({
                   type: "error",
-                  title: "Could not stop the task",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: gt("Could not stop the task"),
+                  description: error instanceof Error ? error.message : gt("An error occurred."),
                 });
               }
             }}
@@ -315,7 +327,9 @@ export function StopBackgroundShellButton(
       >
         <SquareIcon aria-hidden className="size-3 fill-current" />
       </TooltipTrigger>
-      <TooltipPopup>Stop this task</TooltipPopup>
+      <TooltipPopup>
+        <T>Stop this task</T>
+      </TooltipPopup>
     </Tooltip>
   );
 }

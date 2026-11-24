@@ -6,10 +6,10 @@ import {
   ProviderDriverKind,
   resolveModelRoles,
   THREAD_ROLES,
-  THREAD_ROLE_LABELS,
   TIER_PROVIDERS,
 } from "@t3tools/contracts";
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
+import { threadRoleLabel } from "../threadRoleDisplay";
 import { ShuffleIcon } from "lucide-react";
 import {
   usePrimarySettings,
@@ -61,6 +61,7 @@ export function SidebarRoleProvidersItem() {
   const credits = usePrimarySettings((settings) => settings.providerCreditsApproved);
   const updateSettings = useUpdatePrimarySettings();
   const gt = useGT();
+  const resolve = useMessages();
   if (!available) return null;
 
   const label = gt("Role providers");
@@ -95,7 +96,7 @@ export function SidebarRoleProvidersItem() {
           <PopoverTitle>{label}</PopoverTitle>
           <div className="mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-1.5 divide-y">
             {THREAD_ROLES.map((role) => {
-              const name = THREAD_ROLE_LABELS[role];
+              const name = threadRoleLabel(role, resolve);
               return (
                 <div
                   key={role}

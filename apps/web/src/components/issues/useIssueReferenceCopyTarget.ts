@@ -1,4 +1,4 @@
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -17,7 +17,7 @@ export function useIssueReferenceCopyTarget(threadRef: ScopedThreadRef | null) {
   const surface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, threadRef),
   );
-  return issueReferenceCopyTarget(surface?.kind === "issue" ? surface : null);
+  return issueReferenceCopyTarget(surface?.kind === "issue" ? surface : null, useMessages());
 }
 
 /** The Issues page owns one shortcut listener, even when both responsive panes are mounted. */

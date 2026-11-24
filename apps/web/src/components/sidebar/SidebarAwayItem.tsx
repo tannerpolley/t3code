@@ -1,5 +1,5 @@
 import { BellIcon, BellOffIcon, BellRingIcon } from "lucide-react";
-import { useGT } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 import {
   usePrimarySettings,
   usePrimarySettingsAvailable,
@@ -19,9 +19,14 @@ import { SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const modes = [
-  { value: "auto", label: "Auto", detail: "Alert when idle or locked", icon: BellIcon },
-  { value: "away", label: "Away", detail: "Always alert", icon: BellRingIcon },
-  { value: "here", label: "Here", detail: "Silence input and approval alerts", icon: BellOffIcon },
+  { value: "auto", label: msg("Auto"), detail: msg("Alert when idle or locked"), icon: BellIcon },
+  { value: "away", label: msg("Away"), detail: msg("Always alert"), icon: BellRingIcon },
+  {
+    value: "here",
+    label: msg("Here"),
+    detail: msg("Silence input and approval alerts"),
+    icon: BellOffIcon,
+  },
 ] as const;
 
 export function SidebarAwayItem() {
@@ -30,10 +35,11 @@ export function SidebarAwayItem() {
   const idleMinutes = usePrimarySettings((settings) => settings.awayIdleMinutes);
   const updateSettings = useUpdatePrimarySettings();
   const gt = useGT();
+  const resolve = useMessages();
   if (!available) return null;
   const selected = modes.find((option) => option.value === mode) ?? modes[0];
   const Icon = selected.icon;
-  const label = `Phone alerts: ${selected.label}`;
+  const label = gt("Phone alerts: {mode}", { mode: resolve(selected.label) });
   return (
     <SidebarMenuItem className="shrink-0">
       <Menu>
@@ -46,7 +52,10 @@ export function SidebarAwayItem() {
             }
           />
           <TooltipPopup side="top">
-            {label}: {selected.detail}. Finished and failed alerts always reach your phone.
+            {gt(
+              "Phone alerts: {mode}: {detail}. Finished and failed alerts always reach your phone.",
+              { mode: resolve(selected.label), detail: resolve(selected.detail) },
+            )}
           </TooltipPopup>
         </Tooltip>
         <MenuPopup side="top" align="end">
@@ -62,7 +71,7 @@ export function SidebarAwayItem() {
               <MenuRadioItem key={option.value} value={option.value}>
                 <span className="flex items-center gap-2">
                   <span className="flex-1">
-                    {option.label}: {option.detail}
+                    {resolve(option.label)}: {resolve(option.detail)}
                   </span>
                   <MenuRadioItemIndicator />
                 </span>
@@ -81,7 +90,10 @@ export function SidebarAwayItem() {
               <MenuRadioItem key={minutes} value={String(minutes)}>
                 <span className="flex items-center gap-2">
                   <span className="flex-1">
-                    Auto after {minutes} {minutes === 1 ? "minute" : "minutes"} idle
+                    {gt(
+                      "{minutes, plural, one {Auto after {minutes} minute idle} other {Auto after {minutes} minutes idle}}",
+                      { minutes },
+                    )}
                   </span>
                   <MenuRadioItemIndicator />
                 </span>

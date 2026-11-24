@@ -5,13 +5,13 @@ import {
   ModelRoleEffort,
   ModelTier,
   THREAD_ROLES,
-  THREAD_ROLE_LABELS,
   ProviderDriverKind,
   resolveModelRoles,
   TIER_PROVIDERS,
   TIER_PROVIDER_INSTANCES,
 } from "@t3tools/contracts";
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
+import { threadRoleLabel } from "../threadRoleDisplay";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -39,6 +39,7 @@ export function ModelRolesSection() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const gt = useGT();
+  const resolve = useMessages();
   const { environment } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const providersByEnvironment = useEnvironmentProviders();
@@ -157,12 +158,12 @@ export function ModelRolesSection() {
         settingKeys={["modelRoles"]}
       />
       {THREAD_ROLES.map((name) => (
-        <div key={name} role="group" aria-label={THREAD_ROLE_LABELS[name]}>
+        <div key={name} role="group" aria-label={threadRoleLabel(name, resolve)}>
           {roles
             .filter((role) => role.role === name)
             .map((role) => {
               const { level } = role;
-              const label = `${THREAD_ROLE_LABELS[name]} · ${levelLabels[level]}`;
+              const label = `${threadRoleLabel(name, resolve)} · ${levelLabels[level]}`;
               const { tier, provider, effort } = settings.modelRoles[name][level];
               return (
                 <SettingsRow

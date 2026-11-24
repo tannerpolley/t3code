@@ -13,14 +13,13 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-const MODE_LABELS = {
-  home: "T3 home (default)",
-  custom: "One custom folder",
-  project: "Inside each project",
-};
-
 export function WorktreesDirectoryRow() {
   const gt = useGT();
+  const modeLabels = {
+    home: gt("T3 home (default)"),
+    custom: gt("One custom folder"),
+    project: gt("Inside each project"),
+  };
   const searchableSetting = useSearchableSetting();
   const { connectedEnvironments, targets } = useSettingsScope();
   const settings = useScopedSettings();
@@ -86,14 +85,14 @@ export function WorktreesDirectoryRow() {
           >
             <SelectTrigger size="sm" aria-label={gt("Worktree location")}>
               <SelectValue>
-                {mixed && customFor !== scopeKey ? gt("Mixed") : MODE_LABELS[mode]}
+                {mixed && customFor !== scopeKey ? gt("Mixed") : modeLabels[mode]}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value="home">{MODE_LABELS.home}</SelectItem>
-              <SelectItem value="custom">{MODE_LABELS.custom}</SelectItem>
+              <SelectItem value="home">{modeLabels.home}</SelectItem>
+              <SelectItem value="custom">{modeLabels.custom}</SelectItem>
               <SelectItem value="project" disabled={!projectLocalSupported}>
-                {MODE_LABELS.project}
+                {modeLabels.project}
               </SelectItem>
             </SelectPopup>
           </Select>

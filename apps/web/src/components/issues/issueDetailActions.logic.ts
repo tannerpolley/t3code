@@ -1,30 +1,35 @@
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, RepositoryIssueSummary, ThreadId } from "@t3tools/contracts";
 
 export type IssueComposerAction = "ask" | "explain" | "implement";
 
-export function issueImplementDestination(input: {
-  environmentId: EnvironmentId;
-  rootThreadId: ThreadId | null | undefined;
-  hasParent: boolean;
-  paused: boolean;
-}) {
+export function issueImplementDestination(
+  input: {
+    environmentId: EnvironmentId;
+    rootThreadId: ThreadId | null | undefined;
+    hasParent: boolean;
+    paused: boolean;
+  },
+  resolve: MessageResolver = m,
+) {
   if (input.hasParent) {
     return {
       threadRef: null,
-      disabledReason: "Implement sub-issues from the parent issue's worker",
+      disabledReason: resolve(msg("Implement sub-issues from the parent issue's worker")),
     };
   }
   if (input.paused) {
     return {
       threadRef: null,
-      disabledReason: "Repository work is paused; resume it in Project settings",
+      disabledReason: resolve(msg("Repository work is paused; resume it in Project settings")),
     };
   }
   if (input.rootThreadId == null) {
     return {
       threadRef: null,
-      disabledReason: "No orchestrator for this repository; use Start agent",
+      disabledReason: resolve(msg("No orchestrator for this repository; use Start agent")),
     };
   }
   return {
@@ -42,8 +47,10 @@ export function issueComposerPrompt(
     case "ask":
       return reference;
     case "explain":
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Agents receive this prompt in English.
       return `Explain this issue: ${reference}\n\nRead the issue and its latest comments. Explain the problem, intended outcome, and relevant code. Leave implementation for a separate request.`;
     case "implement":
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Agents receive this prompt in English.
       return `Implement this issue: ${reference}\n\nRead the issue and its latest comments, then delegate it with delegate_task using the issue argument, following the repository's model roles.`;
   }
 }
@@ -51,6 +58,7 @@ export function issueComposerPrompt(
 /** An issue tab's link: the one it was opened from, else its GitHub page; other trackers need a URL. */
 export function issueReferenceCopyTarget(
   issue: { tracker: string; host?: string; scope: string; key: string; url?: string } | null,
+  resolve: MessageResolver = m,
 ) {
   const value =
     issue?.url ??
@@ -63,8 +71,8 @@ export function issueReferenceCopyTarget(
         kind: "issue" as const,
         value,
         clipboardTarget: "issue link",
-        successTitle: "Issue link copied",
-        failureTitle: "Failed to copy issue link",
+        successTitle: resolve(msg("Issue link copied")),
+        failureTitle: resolve(msg("Failed to copy issue link")),
       };
 }
 

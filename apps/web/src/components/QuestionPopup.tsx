@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
@@ -80,6 +81,7 @@ function QuestionPopupCard({
   onLater: () => void;
   onClose: () => void;
 }) {
+  const gt = useGT();
   const { environmentId, threadId, requestId } = question;
   const threadRef = scopeThreadRef(environmentId, threadId);
   const thread = useThreadShell(threadRef);
@@ -89,7 +91,7 @@ function QuestionPopupCard({
     <div
       data-question-popup
       role="dialog"
-      aria-label="Question from an agent"
+      aria-label={gt("Question from an agent")}
       className="fixed right-4 bottom-4 z-40 w-[min(26rem,calc(100vw-2rem))]"
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
@@ -101,13 +103,20 @@ function QuestionPopupCard({
         <div className="flex items-start gap-2 px-1 pb-2">
           <MessageCircleQuestionIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-info" />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{thread?.title ?? "Thread"}</div>
+            <div className="truncate text-sm font-medium">{thread?.title ?? gt("Thread")}</div>
             {project ? (
               <div className="truncate text-muted-foreground text-xs">{project.title}</div>
             ) : null}
           </div>
-          <span className="shrink-0 text-muted-foreground text-xs tabular-nums">1 of {total}</span>
-          <Button size="icon-xs" variant="ghost" aria-label="Close questions" onClick={onClose}>
+          <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
+            {gt("1 of {total}", { total })}
+          </span>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={gt("Close questions")}
+            onClick={onClose}
+          >
             <XIcon />
           </Button>
         </div>
@@ -126,10 +135,10 @@ function QuestionPopupCard({
               })
             }
           >
-            Open thread
+            <T>Open thread</T>
           </Button>
           <Button size="xs" variant="ghost" onClick={onLater}>
-            Later
+            <T>Later</T>
           </Button>
           <span className="flex-1" />
         </PendingQuestionForm>

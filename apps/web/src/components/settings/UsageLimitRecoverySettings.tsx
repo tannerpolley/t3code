@@ -19,10 +19,9 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
-const MODE_LABELS = { off: "Off", wait: "Wait for reset", switch: "Switch provider" };
-
 export function UsageLimitRecoverySettings() {
   const gt = useGT();
+  const modeLabels = { off: gt("Off"), wait: gt("Wait for reset"), switch: gt("Switch provider") };
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
@@ -64,12 +63,12 @@ export function UsageLimitRecoverySettings() {
             }}
           >
             <SelectTrigger size="sm" aria-label={gt("Usage limit recovery")}>
-              <SelectValue>{MODE_LABELS[settings.usageLimitRecovery]}</SelectValue>
+              <SelectValue>{modeLabels[settings.usageLimitRecovery]}</SelectValue>
             </SelectTrigger>
             <SelectPopup>
               {UsageLimitRecoveryMode.literals.map((mode) => (
                 <SelectItem key={mode} value={mode}>
-                  {MODE_LABELS[mode]}
+                  {modeLabels[mode]}
                 </SelectItem>
               ))}
             </SelectPopup>

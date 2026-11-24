@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import type { FilesystemBrowseEntry } from "@t3tools/contracts";
 import {
   isHostPath,
@@ -30,11 +32,14 @@ export function sectionFolderPath(
 }
 
 /** Why a new project folder name can't be used, or null when it can. */
-export function projectFolderNameProblem(name: string): string | null {
+export function projectFolderNameProblem(
+  name: string,
+  resolve: MessageResolver = m,
+): string | null {
   const trimmed = name.trim();
-  if (trimmed.length === 0) return "Enter a name.";
-  if (trimmed === "." || trimmed === "..") return "Choose a different name.";
-  if (/[/\\\0]/.test(trimmed)) return "A name can't contain slashes.";
+  if (trimmed.length === 0) return resolve(msg("Enter a name."));
+  if (trimmed === "." || trimmed === "..") return resolve(msg("Choose a different name."));
+  if (/[/\\\0]/.test(trimmed)) return resolve(msg("A name can't contain slashes."));
   return null;
 }
 

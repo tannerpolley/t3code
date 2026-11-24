@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react";
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
@@ -39,6 +40,8 @@ export function useIssueComposerHandoff({
   readonly issue: Pick<RepositoryIssueSummary, "number" | "title" | "url" | "parent">;
   readonly threadRef: ScopedThreadRef | null;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const projects = useProjects();
   const thread = useThreadShell(threadRef);
   const navigate = useNavigate();
@@ -52,12 +55,15 @@ export function useIssueComposerHandoff({
         })
       : null,
   );
-  const implementation = issueImplementDestination({
-    environmentId,
-    rootThreadId: repositoryWork?.rootThreadId,
-    hasParent: issue.parent != null,
-    paused: repositoryWork?.orchestration?.paused === true,
-  });
+  const implementation = issueImplementDestination(
+    {
+      environmentId,
+      rootThreadId: repositoryWork?.rootThreadId,
+      hasParent: issue.parent != null,
+      paused: repositoryWork?.orchestration?.paused === true,
+    },
+    resolve,
+  );
   const project = findIssueProject(
     projects,
     { environmentId, ...reference },
@@ -77,11 +83,11 @@ export function useIssueComposerHandoff({
       if (!target) {
         toastManager.add({
           type: "error",
-          title: "Could not prepare the composer",
+          title: gt("Could not prepare the composer"),
           description:
             implementation.disabledReason && action === "implement"
               ? implementation.disabledReason
-              : "Add a project for this repository to open a thread.",
+              : gt("Add a project for this repository to open a thread."),
         });
         setPending(false);
         return;
@@ -110,13 +116,13 @@ export function useIssueComposerHandoff({
       }
       toastManager.add({
         type: "success",
-        title: "Added to the composer",
-        description: "Read it over, then send.",
+        title: gt("Added to the composer"),
+        description: gt("Read it over, then send."),
       });
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not prepare the composer",
+        title: gt("Could not prepare the composer"),
         description: error instanceof Error ? error.message : String(error),
       });
     }

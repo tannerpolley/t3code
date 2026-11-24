@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
@@ -18,6 +19,7 @@ export function ArtifactFilePickerDialog(props: {
   onOpenChange: (open: boolean) => void;
   onSelect: (path: string) => void;
 }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const result = useProjectFilePickerQuery(
@@ -42,16 +44,16 @@ export function ArtifactFilePickerDialog(props: {
   return (
     <CommandDialog open onOpenChange={props.onOpenChange}>
       <CommandDialogPopup
-        aria-label="Choose artifact file"
+        aria-label={gt("Choose artifact file")}
         className="overflow-hidden"
         onBackdropPointerDown={() => props.onOpenChange(false)}
       >
         <CommandPaletteContent
-          aria-label="Choose artifact file"
+          aria-label={gt("Choose artifact file")}
           autoHighlight="always"
-          escapeLabel="Close"
-          footerActionLabel="Select file"
-          inputProps={{ placeholder: "Search project files…" }}
+          escapeLabel={gt("Close")}
+          footerActionLabel={gt("Select file")}
+          inputProps={{ placeholder: gt("Search project files…") }}
           mode="none"
           onItemHighlighted={(value) => setHighlighted(typeof value === "string" ? value : null)}
           onValueChange={(value) => {
@@ -63,7 +65,7 @@ export function ArtifactFilePickerDialog(props: {
           value={query}
         >
           <CommandPaletteResults
-            groups={items.length ? [{ value: "files", label: "Project files", items }] : []}
+            groups={items.length ? [{ value: "files", label: gt("Project files"), items }] : []}
             highlightedItemValue={highlighted}
             isActionsOnly={false}
             keybindings={keybindings}
@@ -73,7 +75,8 @@ export function ArtifactFilePickerDialog(props: {
               void item.run();
             }}
             emptyStateMessage={
-              result.error ?? (result.isPending ? "Searching project files…" : "No matching files.")
+              result.error ??
+              (result.isPending ? gt("Searching project files…") : gt("No matching files."))
             }
           />
         </CommandPaletteContent>

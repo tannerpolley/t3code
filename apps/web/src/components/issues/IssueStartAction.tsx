@@ -1,7 +1,7 @@
+import { threadRoleLabel } from "../threadRoleDisplay";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
-  THREAD_ROLE_LABELS,
   isRepositoryOrchestratorEligible,
   resolveModelRoles,
   type IssueRepositoryRef,
@@ -15,7 +15,7 @@ import {
 import { issueWorkPresentation } from "@t3tools/client-runtime/state/issue-work";
 import { useNavigate } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { PlayIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -94,6 +94,7 @@ function IssueStartControls({
   const thread = useThreadShell(threadRef);
   const settings = useEnvironmentSettings(environmentId);
   const gt = useGT();
+  const resolve = useMessages();
   const levelLabels = { routine: gt("Routine"), complex: gt("Complex") };
   const roles = resolveModelRoles(settings);
   const statusAtom = repositoryIssueEnvironment.workStatus({ environmentId, input: reference });
@@ -176,7 +177,7 @@ function IssueStartControls({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "Could not cancel the start request",
+        title: gt("Could not cancel the start request"),
         description: formatEnvironmentQueryError(result.cause),
       });
       return;
@@ -213,8 +214,8 @@ function IssueStartControls({
       appAtomRegistry.refresh(statusAtom);
       toastManager.add({
         type: "warning",
-        title: "That start request was cancelled",
-        description: "Start again to send a new request.",
+        title: gt("That start request was cancelled"),
+        description: gt("Start again to send a new request."),
       });
       return;
     }
@@ -222,7 +223,8 @@ function IssueStartControls({
     setExpanded(false);
     toastManager.add({
       type: "success",
-      title: result.value.issueThreadId === null ? "Issue work queued" : "Issue worker started",
+      title:
+        result.value.issueThreadId === null ? gt("Issue work queued") : gt("Issue worker started"),
       description: issueWorkPresentation(null, result.value).label ?? undefined,
     });
   };
@@ -233,7 +235,7 @@ function IssueStartControls({
         {work.label ? (
           <span className="text-xs text-muted-foreground" role="status">
             {work.label}
-            {statusQuery.error ? " (last known)" : null}
+            {statusQuery.error ? gt(" (last known)") : null}
             {work.publishingLabel ? ` · ${work.publishingLabel}` : null}
           </span>
         ) : null}
@@ -243,7 +245,7 @@ function IssueStartControls({
             <Button onClick={openWorkThread} size="xs" variant="ghost">
               <span className="max-w-56 truncate">
                 {worker?.title ??
-                  (work.isWorker ? "Open worker thread" : "Open repository orchestrator")}
+                  (work.isWorker ? gt("Open worker thread") : gt("Open repository orchestrator"))}
               </span>
             </Button>
           </div>
@@ -255,7 +257,7 @@ function IssueStartControls({
             size="xs"
             variant="ghost"
           >
-            {cancelling ? "Cancelling…" : "Cancel start request"}
+            {cancelling ? gt("Cancelling…") : gt("Cancel start request")}
           </Button>
         ) : null}
         <Button
@@ -266,24 +268,27 @@ function IssueStartControls({
           aria-expanded={expanded}
         >
           <PlayIcon aria-hidden />
-          Start agent
+          <T>Start agent</T>
         </Button>
       </div>
       {statusQuery.error ? (
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
-          <span>Work status unavailable: {statusQuery.error}</span>
+          <span>
+            <T>Work status unavailable:</T> {statusQuery.error}
+          </span>
           <Button onClick={statusQuery.refresh} size="xs" variant="ghost">
-            Retry status
+            <T>Retry status</T>
           </Button>
         </div>
       ) : statusQuery.data === null && work.label === null ? (
         <p className="text-xs text-muted-foreground" role="status">
-          Checking work status…
+          <T>Checking work status…</T>
         </p>
       ) : null}
       {startError ? (
         <p className="max-w-72 text-xs text-destructive" role="alert">
-          Start request failed: {startError.replace(/\.$/, "")}. Retry uses the same request.
+          <T>Start request failed:</T> {startError.replace(/\.$/, "")}
+          <T>. Retry uses the same request.</T>
         </p>
       ) : null}
       {expanded ? (
@@ -296,24 +301,24 @@ function IssueStartControls({
         >
           {matchingProjects.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              Add a project for this repository in this environment to start work.
+              <T>Add a project for this repository in this environment to start work.</T>
             </p>
           ) : null}
           {roles.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              Configure a model role in Customizations to start work.
+              <T>Configure a model role in Customizations to start work.</T>
             </p>
           ) : null}
           <label className="flex flex-col gap-1 text-xs">
-            Model role
+            <T>Model role</T>
             <Select value={role?.id ?? null} onValueChange={setSelectedRoleId}>
-              <SelectTrigger size="compact" aria-label="Issue model role">
+              <SelectTrigger size="compact" aria-label={gt("Issue model role")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {roles.map((entry) => (
                   <SelectItem key={entry.id} value={entry.id}>
-                    {`${THREAD_ROLE_LABELS[entry.role]} · ${levelLabels[entry.level]}`}
+                    {`${threadRoleLabel(entry.role, resolve)} · ${levelLabels[entry.level]}`}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -325,13 +330,13 @@ function IssueStartControls({
             </p>
           ) : null}
           <label className="flex flex-col gap-1 text-xs">
-            Repository project
+            <T>Repository project</T>
             <Select
               items={matchingProjects.map((entry) => ({ value: entry.id, label: entry.title }))}
               value={project?.id ?? null}
               onValueChange={setSelectedProjectId}
             >
-              <SelectTrigger size="compact" aria-label="Issue project">
+              <SelectTrigger size="compact" aria-label={gt("Issue project")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -348,16 +353,16 @@ function IssueStartControls({
           ) : null}
           {status?.projectId ? (
             <p className="text-xs text-muted-foreground">
-              Uses the registered repository orchestrator’s project.
+              <T>Uses the registered repository orchestrator’s project.</T>
             </p>
           ) : null}
           {status?.rootThreadId == null ? (
             <label className="flex flex-col gap-1 text-xs">
-              Repository orchestrator
+              <T>Repository orchestrator</T>
               <Select
                 items={[
                   ...leads.map((lead) => ({ value: lead.id, label: lead.title })),
-                  { value: "create", label: "Create first orchestrator" },
+                  { value: "create", label: gt("Create first orchestrator") },
                 ]}
                 value={createOrchestrator ? "create" : (selectedLead?.id ?? null)}
                 onValueChange={(value) =>
@@ -368,8 +373,8 @@ function IssueStartControls({
                   )
                 }
               >
-                <SelectTrigger size="compact" aria-label="Repository orchestrator">
-                  <SelectValue placeholder="Choose or create a lead" />
+                <SelectTrigger size="compact" aria-label={gt("Repository orchestrator")}>
+                  <SelectValue placeholder={gt("Choose or create a lead")} />
                 </SelectTrigger>
                 <SelectContent>
                   {leads.map((lead) => (
@@ -377,22 +382,32 @@ function IssueStartControls({
                       {lead.title}
                     </SelectItem>
                   ))}
-                  <SelectItem value="create">Create first orchestrator</SelectItem>
+                  <SelectItem value="create">
+                    <T>Create first orchestrator</T>
+                  </SelectItem>
                 </SelectContent>
               </Select>
               {leads.length === 0 ? (
-                <span>Choose Create first orchestrator to start with a new lead.</span>
+                <span>
+                  <T>Choose Create first orchestrator to start with a new lead.</T>
+                </span>
               ) : null}
-              <span>Issue workers run beneath this lead, following the issue parent tree.</span>
+              <span>
+                <T>Issue workers run beneath this lead, following the issue parent tree.</T>
+              </span>
             </label>
           ) : null}
           <p className="text-xs text-muted-foreground">
-            Each worker gets a new issue-named worktree from the default branch. The repository
-            orchestrator stays on the default branch in the main checkout.
+            <T>
+              Each worker gets a new issue-named worktree from the default branch. The repository
+              orchestrator stays on the default branch in the main checkout.
+            </T>
           </p>
           <p className="text-xs text-muted-foreground">
-            Starting authorizes one updated T3 status comment and one closeout comment per finished
-            attempt.
+            <T>
+              Starting authorizes one updated T3 status comment and one closeout comment per
+              finished attempt.
+            </T>
           </p>
           <p className="text-xs text-muted-foreground">
             {gt(
@@ -401,7 +416,7 @@ function IssueStartControls({
           </p>
           {statusQuery.error ? (
             <p className="text-xs text-muted-foreground">
-              Work status is unavailable. The server will check ownership when starting.
+              <T>Work status is unavailable. The server will check ownership when starting.</T>
             </p>
           ) : null}
           <div className="flex justify-end gap-1.5">
@@ -412,14 +427,14 @@ function IssueStartControls({
               type="button"
               variant="ghost"
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button
               disabled={starting || project === null || role === undefined || !hasOrchestrator}
               size="xs"
               type="submit"
             >
-              {starting ? "Starting…" : "Start agent"}
+              {starting ? gt("Starting…") : gt("Start agent")}
             </Button>
           </div>
         </form>

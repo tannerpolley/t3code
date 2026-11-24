@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   AVAILABLE_CONNECTION_STATE,
   connectionProjectionPhase,
@@ -60,6 +61,7 @@ type Props = {
   onPendingChange: (path: string, pending: boolean) => void;
 };
 export default function RunnableNotebookPreview(props: Props) {
+  const gt = useGT();
   const openCommand = useAtomCommand(notebooks.open, { reportFailure: false });
   const open = useStableCallback(openCommand);
   const [opened, setOpened] = useState<NotebookSnapshot | null>(null);
@@ -110,8 +112,10 @@ export default function RunnableNotebookPreview(props: Props) {
     <>
       <div role="status" className="p-4 text-sm text-muted-foreground">
         {error
-          ? "Notebook session unavailable. Opening never runs code. The retained draft limit is 16 notebooks."
-          : "Opening notebook…"}
+          ? gt(
+              "Notebook session unavailable. Opening never runs code. The retained draft limit is 16 notebooks.",
+            )
+          : gt("Opening notebook…")}
         {error ? (
           <Button
             variant="outline"
@@ -121,7 +125,7 @@ export default function RunnableNotebookPreview(props: Props) {
               setAttempt(attempt + 1);
             }}
           >
-            Reconnect
+            <T>Reconnect</T>
           </Button>
         ) : null}
       </div>
@@ -131,10 +135,13 @@ export default function RunnableNotebookPreview(props: Props) {
 }
 
 function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect: () => void }) {
+  const gt = useGT();
   const [store] = useState(() => createNotebookStore(props.initial));
   const snapshot = useSyncExternalStore(store.subscribe, store.read);
   const [leaseId] = useState(() => randomUUID());
-  const [streamConnection, setConnection] = useState("Connecting");
+  const [streamConnection, setConnection] = useState<
+    "connecting" | "connected" | "reconnecting" | "disconnected"
+  >("connecting");
   const [synchronizedGeneration, setSynchronizedGeneration] = useState<number | null>(null);
   const connectionAtom = notebooks.connectionStateAtom(props.environmentId);
   const transport = AsyncResult.getOrElse(
@@ -143,10 +150,16 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
   );
   const connection =
     connectionProjectionPhase(transport) !== "ready"
-      ? "Disconnected. Reconnect to recover current state"
+      ? "disconnected"
       : synchronizedGeneration !== transport.generation
-        ? "Reconnecting"
+        ? "reconnecting"
         : streamConnection;
+  const connectionLabels = {
+    connecting: gt("Connecting"),
+    connected: gt("Connected"),
+    reconnecting: gt("Reconnecting"),
+    disconnected: gt("Disconnected. Reconnect to recover current state"),
+  };
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const open = useAtomCommand(notebooks.open, { reportFailure: false });
@@ -188,12 +201,12 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
                     () => AVAILABLE_CONNECTION_STATE,
                   ).generation,
                 );
-              setConnection("Connected");
+              setConnection("connected");
             } else {
-              setConnection("Reconnecting");
+              setConnection("reconnecting");
               registry.refresh(events);
             }
-          } else setConnection("Disconnected. Reconnect to recover current state");
+          } else setConnection("disconnected");
         },
         { immediate: true },
       ),
@@ -230,7 +243,9 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
       );
     }
     setError(
-      "Save or reload failed: the file may have changed on disk, the revision changed, or access was lost. Retain the draft or reconnect before retrying.",
+      gt(
+        "Save or reload failed: the file may have changed on disk, the revision changed, or access was lost. Retain the draft or reconnect before retrying.",
+      ),
     );
     return false;
   };
@@ -283,12 +298,14 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
     setPending(false);
     if (!AsyncResult.isSuccess(result))
       setError(
-        "Execution could not start. Check the configured project environment or reconnect; no automatic retry will run code.",
+        gt(
+          "Execution could not start. Check the configured project environment or reconnect; no automatic retry will run code.",
+        ),
       );
   });
   const cells = snapshot.document.cells as Record<string, unknown>[];
   const runnable =
-    connection === "Connected" &&
+    connection === "connected" &&
     snapshot.availability === "available" &&
     snapshot.kernel !== "unknown" &&
     snapshot.outcome !== "running" &&
@@ -315,22 +332,22 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
             )
           }
         >
-          Run all
+          <T>Run all</T>
         </Button>
         <Button
           size="sm"
           variant="outline"
-          disabled={!canInterrupt || pending || !snapshot.runId || connection !== "Connected"}
+          disabled={!canInterrupt || pending || !snapshot.runId || connection !== "connected"}
           onClick={async () => {
             const result = await interrupt({
               environmentId: props.environmentId,
               input: { ...input, generation: snapshot.generation, runId: snapshot.runId! },
             });
             if (!AsyncResult.isSuccess(result))
-              setError("Interrupt failed. Reconnect to recover kernel status.");
+              setError(gt("Interrupt failed. Reconnect to recover kernel status."));
           }}
         >
-          Interrupt
+          <T>Interrupt</T>
         </Button>
         <Button
           size="sm"
@@ -339,7 +356,7 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
             !canRestart ||
             pending ||
             snapshot.availability !== "available" ||
-            connection !== "Connected" ||
+            connection !== "connected" ||
             snapshot.kernel === "stopped"
           }
           onClick={async () => {
@@ -350,10 +367,10 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
             });
             setPending(false);
             if (!AsyncResult.isSuccess(result))
-              setError("Restart failed. Reconnect to recover kernel status.");
+              setError(gt("Restart failed. Reconnect to recover kernel status."));
           }}
         >
-          Restart
+          <T>Restart</T>
         </Button>
         <Button
           size="sm"
@@ -363,11 +380,11 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
             !dirty ||
             pending ||
             snapshot.outcome === "running" ||
-            connection !== "Connected"
+            connection !== "connected"
           }
           onClick={() => void persist()}
         >
-          Save
+          <T>Save</T>
         </Button>
         <Button
           size="sm"
@@ -376,13 +393,16 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
             props.onReconnect();
           }}
         >
-          Reconnect
+          <T>Reconnect</T>
         </Button>
         <span role="status" className="text-xs text-muted-foreground">
-          {connection} · Kernel {snapshot.kernel} · Environment {snapshot.environment} ·{" "}
-          {snapshot.outcome} · {dirty ? "Unsaved draft" : "Saved"}
+          {connectionLabels[connection]} · {gt("Kernel {kernel}", { kernel: snapshot.kernel })} ·{" "}
+          {gt("Environment {environment}", { environment: snapshot.environment })} ·{" "}
+          {snapshot.outcome} · {dirty ? gt("Unsaved draft") : gt("Saved")}
           {snapshot.idleDeadline
-            ? ` · Idle shutdown ${new Date(snapshot.idleDeadline).toLocaleTimeString()}`
+            ? gt(" · Idle shutdown {time}", {
+                time: new Date(snapshot.idleDeadline).toLocaleTimeString(),
+              })
             : ""}
         </span>
       </div>
@@ -398,10 +418,16 @@ function NotebookSession(props: Props & { initial: NotebookSnapshot; onReconnect
         onRun={run}
         notice={
           snapshot.availability === "unavailable"
-            ? "Saved outputs only. Execution unavailable; configure the project Jupyter environment on the destination server. No kernel starts on opening or reconnecting."
+            ? gt(
+                "Saved outputs only. Execution unavailable; configure the project Jupyter environment on the destination server. No kernel starts on opening or reconnecting.",
+              )
             : snapshot.truncated
-              ? "Output limit reached. Drafts are process-local and may be lost if the server restarts."
-              : "Drafts are process-local (up to 16 notebooks) and may be lost if the server restarts. Execution starts only when you choose Run."
+              ? gt(
+                  "Output limit reached. Drafts are process-local and may be lost if the server restarts.",
+                )
+              : gt(
+                  "Drafts are process-local (up to 16 notebooks) and may be lost if the server restarts. Execution starts only when you choose Run.",
+                )
         }
       />
     </>
@@ -468,6 +494,7 @@ function LiveCell({
   runnable: boolean;
   onRun: (ids: string[]) => Promise<void>;
 }) {
+  const gt = useGT();
   const cell = useSyncExternalStore(store.subscribe, () =>
     (store.read().document.cells as Record<string, unknown>[]).find((c) => c.id === id),
   );
@@ -479,7 +506,11 @@ function LiveCell({
   try {
     preview = notebookPreviewCell(cell);
   } catch {
-    return <p role="alert">Cell output exceeds safe preview limits.</p>;
+    return (
+      <p role="alert">
+        <T>Cell output exceeds safe preview limits.</T>
+      </p>
+    );
   }
   const source = Array.isArray(cell.source) ? cell.source.join("") : String(cell.source ?? "");
   return (
@@ -497,7 +528,7 @@ function LiveCell({
               disabled={!runnable || !source.trim()}
               onClick={() => void onRun([id])}
             >
-              Run cell {index + 1}
+              {gt("Run cell {number}", { number: index + 1 })}
             </Button>
             <span className="text-xs text-muted-foreground">
               [{String(cell.execution_count ?? " ")}] ·{" "}
@@ -505,12 +536,12 @@ function LiveCell({
                 (execution
                   ? outcome === "running"
                     ? "running"
-                    : "no reply recorded"
-                  : "saved output")}
-              {execution && execution.generation !== generation ? " · previous kernel" : ""}
+                    : gt("no reply recorded")
+                  : gt("saved output"))}
+              {execution && execution.generation !== generation ? gt(" · previous kernel") : ""}
               {execution &&
               execution.sourceHash !== bytesToHex(sha256(new TextEncoder().encode(source)))
-                ? " · previous source"
+                ? gt(" · previous source")
                 : ""}
             </span>
           </div>

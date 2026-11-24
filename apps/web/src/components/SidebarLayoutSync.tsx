@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import {
   createLegacySidebarRetirement,
   readPendingSidebarImport,
@@ -81,7 +83,7 @@ export function SidebarLayoutSync() {
         if (result._tag !== "Success") throw new Error("Could not save sidebar layout.");
         return result.value;
       },
-      () => toastManager.add({ type: "error", title: "Could not save sidebar layout" }),
+      () => toastManager.add({ type: "error", title: m(msg("Could not save sidebar layout")) }),
     ),
   );
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
@@ -226,8 +228,8 @@ export function SidebarLayoutSync() {
             if (projectKeys.length === 0) {
               toastManager.add({
                 type: "error",
-                title: "This section belongs to another environment",
-                description: "Place the project in a section on its own environment.",
+                title: m(msg("This section belongs to another environment")),
+                description: m(msg("Place the project in a section on its own environment.")),
               });
               continue;
             }

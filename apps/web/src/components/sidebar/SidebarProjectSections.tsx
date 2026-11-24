@@ -43,7 +43,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { getAddProjectInitialQuery } from "@t3tools/client-runtime/operations/projects";
-import { msg, T, useGT } from "gt-react";
+import { T, msg, useGT, useMessages } from "gt-react";
 import { m, type MessageResolver } from "~/i18n/messages";
 import {
   CheckIcon,
@@ -1434,6 +1434,7 @@ const SidebarProjectThreadRow = memo(
     readonly familyBlockText: string | undefined;
   }) {
     const gt = useGT();
+    const resolve = useMessages();
     const { assembly, codexStyle, thread } = props;
     const threadRef = scopeThreadRef(thread.environmentId, thread.id);
     const threadKey = scopedThreadKey(threadRef);
@@ -1481,7 +1482,7 @@ const SidebarProjectThreadRow = memo(
       props.familyBlockText === undefined ? undefined : JSON.parse(props.familyBlockText);
     const familySeparators = familyBlock && new Map(familyBlock.separators);
     const locationLeadKeys = familyBlock && new Set(familyBlock.leads);
-    const role = sidebarRoleLabel(thread.source);
+    const role = sidebarRoleLabel(thread.source, resolve);
     const onChildClick = (event: ReactMouseEvent, child: SidebarThreadSummary) =>
       assembly.onThreadClick(event, scopeThreadRef(child.environmentId, child.id));
     const onChildContextMenu = (
@@ -1667,13 +1668,16 @@ const SidebarProjectThreadRow = memo(
           render: renderColumns,
           after,
           lease,
-          label: sidebarProjectThreadAccessibleName({
-            role: codexStyle ? role : undefined,
-            title: thread.title,
-            issueNumber: thread.source.linkedIssue?.number,
-            status: workerLabel ?? (status === "paused" ? gt("Paused") : status),
-            links: thread.pullRequests,
-          }),
+          label: sidebarProjectThreadAccessibleName(
+            {
+              role: codexStyle ? role : undefined,
+              title: thread.title,
+              issueNumber: thread.source.linkedIssue?.number,
+              status: workerLabel ?? (status === "paused" ? gt("Paused") : status),
+              links: thread.pullRequests,
+            },
+            resolve,
+          ),
           className: cn(
             "fork-sidebar-thread sidebar-caret-row group/project-thread @container/thread-row flex min-w-0 items-center gap-2 px-2",
             PROJECTS_WORK_ROW_HEIGHT,

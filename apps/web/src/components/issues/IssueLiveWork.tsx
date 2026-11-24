@@ -1,11 +1,8 @@
 import { issueWorkerStatus } from "@t3tools/shared/issueWorkerStatus";
 import { useNavigate } from "@tanstack/react-router";
-import {
-  THREAD_ROLE_LABELS,
-  type EnvironmentId,
-  type RepositoryIssueSummary,
-} from "@t3tools/contracts";
-import { T, useGT, Var } from "gt-react";
+import { type EnvironmentId, type RepositoryIssueSummary } from "@t3tools/contracts";
+import { threadRoleLabel } from "../threadRoleDisplay";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { CirclePauseIcon, CirclePlayIcon, LinkIcon } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
@@ -38,7 +35,8 @@ export function IssueLiveWork({
   const navigate = useNavigate();
   const gt = useGT();
   const labels = useWorkerStatusLabels();
-  const summary = issueLiveWorkSummary(issue);
+  const resolve = useMessages();
+  const summary = issueLiveWorkSummary(issue, resolve);
   if (summary === null) return null;
   const { status, work, agent, more } = summary;
   const label =
@@ -80,7 +78,7 @@ export function IssueLiveWork({
           {work.map((thread) => (
             <div key={thread.threadId}>
               <p>
-                {thread.role === undefined ? "" : `${THREAD_ROLE_LABELS[thread.role]}: `}
+                {thread.role === undefined ? "" : `${threadRoleLabel(thread.role, resolve)}: `}
                 {thread.title} ·{" "}
                 {status === "suspended" ? label : labels[issueWorkerStatus(thread, issue)]}
               </p>

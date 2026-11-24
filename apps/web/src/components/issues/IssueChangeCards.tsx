@@ -1,3 +1,5 @@
+import { T, msg, useGT, useMessages } from "gt-react";
+import type { MessageResolver } from "~/i18n/messages";
 import type {
   EnvironmentId,
   IssueChange,
@@ -11,23 +13,56 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { Button } from "../ui/button";
 
-function title(change: IssueChange) {
+function title(change: IssueChange, resolve: MessageResolver) {
   const op = change.operation;
   switch (op.type) {
     case "body":
-      return `Edit #${op.number} body`;
+      return resolve(msg("Edit #{number} body", { number: op.number }));
     case "state":
-      return `${op.state === "closed" ? "Close" : "Reopen"} #${op.number}`;
+      return op.state === "closed"
+        ? resolve(msg("Close #{number}", { number: op.number }))
+        : resolve(msg("Reopen #{number}", { number: op.number }));
     case "milestone":
-      return `Move #${op.number} to ${op.milestoneNumber === null ? "no milestone" : `milestone #${op.milestoneNumber}`}`;
+      return op.milestoneNumber === null
+        ? resolve(msg("Move #{number} to no milestone", { number: op.number }))
+        : resolve(
+            msg("Move #{number} to milestone #{milestone}", {
+              number: op.number,
+              milestone: op.milestoneNumber,
+            }),
+          );
     case "split":
-      return `Split #${op.number} into ${op.issues.length} sub-issues`;
+      return resolve(
+        msg(
+          "{count, plural, one {Split issue {number} into {count} sub-issue} other {Split issue {number} into {count} sub-issues}}",
+          {
+            number: op.number,
+            count: op.issues.length,
+          },
+        ),
+      );
     case "create":
-      return `Create issue: ${op.title}`;
+      return resolve(msg("Create issue: {title}", { title: op.title }));
     case "blocked_by":
-      return `${op.action === "add" ? "Add" : "Remove"} #${op.blockerNumber} as a blocker of #${op.number}`;
+      return op.action === "add"
+        ? resolve(
+            msg("Add #{blocker} as a blocker of #{number}", {
+              blocker: op.blockerNumber,
+              number: op.number,
+            }),
+          )
+        : resolve(
+            msg("Remove #{blocker} as a blocker of #{number}", {
+              blocker: op.blockerNumber,
+              number: op.number,
+            }),
+          );
     case "sub_issue":
-      return `${op.action === "add" ? "Add" : "Remove"} #${op.childNumber} ${op.action === "add" ? "under" : "from"} #${op.number}`;
+      return op.action === "add"
+        ? resolve(msg("Add #{child} under #{number}", { child: op.childNumber, number: op.number }))
+        : resolve(
+            msg("Remove #{child} from #{number}", { child: op.childNumber, number: op.number }),
+          );
   }
 }
 
@@ -51,6 +86,8 @@ function Cards({
   input: IssueChangesListInput;
   compact?: boolean;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const query = useEnvironmentQuery(repositoryIssueEnvironment.changes({ environmentId, input }));
   const decide = useAtomCommand(repositoryIssueEnvironment.decideChange, { reportFailure: false });
   const [responding, setResponding] = useState<string | null>(null);
@@ -65,25 +102,46 @@ function Cards({
     if (result._tag === "Failure") setError(formatEnvironmentQueryError(result.cause));
     query.refresh();
   };
+  const decisions = {
+    pending: gt("Pending"),
+    auto_approved: gt("Auto-approved"),
+    approved: gt("Approved"),
+    rejected: gt("Rejected"),
+  };
+  const statuses = {
+    pending: decisions.pending,
+    queued: gt("Queued"),
+    executing: gt("Executing"),
+    succeeded: gt("Succeeded"),
+    failed: gt("Failed"),
+    conflict: gt("Conflict"),
+    needs_attention: gt("Needs attention"),
+    resolved: gt("Resolved"),
+    rejected: decisions.rejected,
+  };
+  const issueStates = { open: gt("Open", { $context: "issue state" }), closed: gt("Closed") };
   const card = (change: IssueChange) => (
     <article key={change.id} className="rounded-lg border border-border bg-background p-3 text-xs">
-      <p className="font-medium">{title(change)}</p>
+      <p className="font-medium">{title(change, resolve)}</p>
       <p className="mt-1 text-muted-foreground" role="status">
         {change.decision === "pending"
-          ? "Waiting for your approval"
-          : `${change.decision.replaceAll("_", " ")} · ${change.status.replaceAll("_", " ")}`}
+          ? gt("Waiting for your approval")
+          : `${decisions[change.decision]} · ${statuses[change.status]}`}
         {change.result ? ` · ${change.result}` : ""}
       </p>
       <details className="mt-2" open={change.decision === "pending"}>
-        <summary className="cursor-pointer">Exact change preview</summary>
+        <summary className="cursor-pointer">
+          <T>Exact change preview</T>
+        </summary>
         {change.operation.type === "state" ? (
           <p className="my-2">
-            State: {change.baseline?.state} → {change.operation.state}
+            <T>State:</T> {change.baseline ? issueStates[change.baseline.state] : ""} →{" "}
+            {issueStates[change.operation.state]}
           </p>
         ) : null}
         {change.t3AuthoredBody ? (
           <p className="my-2 text-muted-foreground">
-            Current body matches the last body written by T3.
+            <T>Current body matches the last body written by T3.</T>
           </p>
         ) : null}
         <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2 font-mono">
@@ -93,15 +151,15 @@ function Cards({
           <p key={step} className="mt-1">
             {result.issue ? (
               <>
-                Created issue:{" "}
+                <T>Created issue:</T>{" "}
                 <a href={result.issue.url} target="_blank" rel="noreferrer" className="underline">
                   #{result.issue.number} {result.issue.title}
                 </a>
               </>
             ) : step === "write" ? (
-              "Issue updated"
+              gt("Issue updated")
             ) : (
-              "Sub-issue linked"
+              gt("Sub-issue linked")
             )}
           </p>
         ))}
@@ -113,7 +171,7 @@ function Cards({
             disabled={responding !== null}
             onClick={() => void respond(change.id, "approved")}
           >
-            Approve
+            <T>Approve</T>
           </Button>
           <Button
             size="xs"
@@ -121,14 +179,14 @@ function Cards({
             disabled={responding !== null}
             onClick={() => void respond(change.id, "rejected")}
           >
-            Reject
+            <T>Reject</T>
           </Button>
         </div>
       ) : null}
       {change.status === "needs_attention" ? (
         <div className="mt-3">
           <p className="mb-2 text-muted-foreground">
-            Check GitHub before resolving. Mark resolved stops all remaining steps.
+            <T>Check GitHub before resolving. Mark resolved stops all remaining steps.</T>
           </p>
           <Button
             size="xs"
@@ -136,7 +194,7 @@ function Cards({
             disabled={responding !== null}
             onClick={() => void respond(change.id, "resolved")}
           >
-            Mark resolved
+            <T>Mark resolved</T>
           </Button>
         </div>
       ) : null}
@@ -148,7 +206,7 @@ function Cards({
             disabled={responding !== null}
             onClick={() => void respond(change.id, "retry")}
           >
-            Retry remaining steps
+            <T>Retry remaining steps</T>
           </Button>
         </div>
       ) : null}
@@ -161,7 +219,7 @@ function Cards({
     (change) => change.decision !== "pending" && change.status !== "needs_attention",
   );
   return (
-    <section aria-label="Issue changes" className="mb-3 max-h-96 overflow-y-auto">
+    <section aria-label={gt("Issue changes")} className="mb-3 max-h-96 overflow-y-auto">
       {(error ?? query.error) ? (
         <p role="alert" className="mb-2 text-xs text-destructive">
           {error ?? query.error}
@@ -171,7 +229,7 @@ function Cards({
       {decided.length > 0 ? (
         <details className="mt-2" open={!compact && actionable.length === 0}>
           <summary className="cursor-pointer text-xs text-muted-foreground">
-            Issue change results ({decided.length})
+            {gt("Issue change results ({count})", { count: decided.length })}
           </summary>
           <div className="mt-2 space-y-2">{decided.map(card)}</div>
         </details>
