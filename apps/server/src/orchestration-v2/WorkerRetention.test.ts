@@ -468,8 +468,18 @@ it.effect("archives only eligible children and keeps restored children active", 
 
 it.effect("archives during the running result wake and leaves the worker’s side chat active", () =>
   Effect.gen(function* () {
-    const { sql, parent, seed, recordTask, recordRun, sink, createdAt, orchestrator, projections } =
-      yield* makeFixture();
+    const {
+      sql,
+      parent,
+      seed,
+      recordTask,
+      recordRun,
+      service,
+      sink,
+      createdAt,
+      orchestrator,
+      projections,
+    } = yield* makeFixture();
     yield* seed(parent, "open", {
       lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
     });
@@ -536,6 +546,12 @@ it.effect("archives during the running result wake and leaves the worker’s sid
         archiveDelegatedWorker: true,
       });
     yield* archive("archive-before-wake").pipe(Effect.flip);
+    yield* service.remindMissedArchives();
+    assert.isEmpty(
+      (yield* projections.getThreadRecords(parent, ["messages"])).messages.filter(
+        (message) => message.notification?.source.kind === "system",
+      ),
+    );
     yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'running',
       payload_json = json_set(payload_json, '$.startedAt', ${DateTime.formatIso(createdAt)})
       WHERE run_id = ${wake}`;

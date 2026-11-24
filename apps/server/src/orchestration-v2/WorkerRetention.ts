@@ -220,11 +220,6 @@ const make = Effect.gen(function* () {
 
     const parents = new Map<ThreadId, ThreadId | null>();
     const byRecipient = new Map<ThreadId, ReminderChild[]>();
-    const include = (recipient: ThreadId, child: ReminderChild) => {
-      const group = byRecipient.get(recipient);
-      if (group === undefined) byRecipient.set(recipient, [child]);
-      else group.push(child);
-    };
     for (const worker of finished.values()) {
       if (worker.workerResult === undefined || worker.workerResult.availableAt > dueBy) continue;
       const recipient = yield* reminderRecipient(
@@ -233,12 +228,11 @@ const make = Effect.gen(function* () {
         parents,
         finished,
       );
-      if (recipient !== null)
-        include(recipient, {
-          id: worker.id,
-          title: worker.title,
-          taskId: worker.workerResult.taskId,
-        });
+      if (recipient === null) continue;
+      const child = { id: worker.id, title: worker.title, taskId: worker.workerResult.taskId };
+      const group = byRecipient.get(recipient);
+      if (group === undefined) byRecipient.set(recipient, [child]);
+      else group.push(child);
     }
 
     for (const [threadId, workers] of byRecipient) {
