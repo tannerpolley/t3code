@@ -1625,6 +1625,64 @@ it.effect.each(["reactor-first", "retry-first"] as const)(
     }),
 );
 
+it.effect("a delegated issue worker binds its claimed worktree slot and starts its run", () => {
+  const slot = "/repo/.worktrees/slot-1";
+  const harness = reviewHarness(
+    (input) => Effect.succeed(reviewRead(reviewIssue(input.number, input.repository))),
+    false,
+    undefined,
+    false,
+    {
+      claim: (input) =>
+        input.bind(slot, input.branch).pipe(Effect.as({ path: slot, branch: input.branch })),
+      maintain: () => Effect.void,
+      release: () => Effect.succeed(null),
+      localChanges: () => Effect.succeed(null),
+    },
+  );
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const sink = yield* EventSink.EventSinkV2;
+    const root = yield* createReviewRoot();
+    const parent = yield* threads.getThreadRecords(root, ["runs"]);
+    const parentRun = parent.runs.findLast((run) =>
+      ["starting", "running", "waiting"].includes(run.status),
+    )!;
+    const delegated = yield* threads.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("slot-worker"),
+      parentThreadId: root,
+      parentRunId: parentRun.id,
+      parentNodeId: parentRun.rootNodeId!,
+      issue: reviewIssue(7),
+      task: "Finish issue",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      completionWake: "always",
+      workspaceStrategy: { type: "worktree", baseRef: "main", branch: "issue-7" },
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const workerId = delegated.storedEvents.find(
+      (stored) => stored.event.type === "thread.created",
+    )!.event.threadId;
+    yield* sink.stream({ threadId: workerId, eventType: "run.updated" }).pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "run.updated" &&
+          (stored.event.payload.status === "starting" || stored.event.payload.status === "failed"),
+      ),
+      Stream.take(1),
+      Stream.runDrain,
+    );
+    const projection = yield* threads.getThreadProjection(workerId);
+    assert.equal(projection.runs[0]!.status, "starting");
+    assert.equal(projection.thread.worktreePath, slot);
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect(
   "rejects an already-owned parent from another repository at start and delegation, and refuses mismatched lineage admission",
   () => {

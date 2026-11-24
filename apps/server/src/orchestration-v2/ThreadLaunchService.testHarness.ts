@@ -13,6 +13,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import * as IssueWorktreeSlots from "../issues/IssueWorktreeSlots.ts";
 import * as IssueService from "../issues/IssueService.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
@@ -118,6 +119,7 @@ interface HarnessOptions {
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
   readonly issueServiceLayer?: Layer.Layer<IssueService.IssueService>;
+  readonly issueSlots?: IssueWorktreeSlots.IssueWorktreeSlots["Service"];
   readonly runContinuationWorker?: boolean;
   readonly continuationRequests?: Context.Service.Shape<
     typeof ProviderContinuationRequests.ProviderContinuationRequests
@@ -290,6 +292,12 @@ function makeHarness(options: HarnessOptions = {}) {
         layerThreadManagement,
         layerReceipts,
         IdAllocator.layer,
+        options.issueSlots === undefined
+          ? Layer.empty
+          : Layer.mergeAll(
+              Layer.succeed(IssueWorktreeSlots.IssueWorktreeSlots, options.issueSlots),
+              IssueWorkStore.layer.pipe(Layer.provide(layerDatabase)),
+            ),
       ),
     ),
   );
@@ -449,6 +457,7 @@ function reviewHarness(
   unavailableRole = false,
   failInterrupt?: (threadId: ThreadId) => boolean,
   runContinuationWorker = false,
+  issueSlots?: IssueWorktreeSlots.IssueWorktreeSlots["Service"],
 ) {
   const openCode = {
     ...adapter,
@@ -497,6 +506,7 @@ function reviewHarness(
   });
   const harness = makeHarness({
     runContinuationWorker,
+    ...(issueSlots === undefined ? {} : { issueSlots }),
     adapters: [adapter, openCode, claude],
     providers,
     issueServiceLayer: reads,
