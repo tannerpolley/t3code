@@ -20,6 +20,12 @@ type RepositoryRecord = Pick<RepositoryOrchestration, "projectId" | "host" | "re
   readonly repositoryId?: string;
 };
 
+export function hasRepositoryControllerModes(
+  thread: Pick<OrchestrationV2AppThread, "runtimeMode" | "interactionMode">,
+): boolean {
+  return thread.runtimeMode === "full-access" && thread.interactionMode === "default";
+}
+
 /** Ownership decisions must apply this to the current projection while holding the target lock. */
 export function isRepositoryOrchestratorEligible(
   thread: Candidate | null,
