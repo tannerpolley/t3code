@@ -325,7 +325,8 @@ it("opens the correct chat for every workflow phase and unphased member", async 
     environmentId: EnvironmentId.make("remote"),
     threadId: ThreadId.make("parent"),
   };
-  const panelState = () => selectThreadRightPanelState(useRightPanelStore.getState(), parentRef);
+  const panelState = () =>
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, parentRef);
   for (const agent of agents) {
     const button = byLabel(`Open ${agent.label} chat`);
     expect(button.disabled).toBe(false);
