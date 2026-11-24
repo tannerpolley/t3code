@@ -33,6 +33,7 @@ export type AuthSessionClientMetadataRecord = typeof AuthSessionClientMetadataRe
 
 export const AuthSessionRecord = Schema.Struct({
   sessionId: AuthSessionId,
+  peerLink: Schema.Boolean,
   subject: Schema.String,
   scopes: AuthEnvironmentScopes,
   method: ServerAuthSessionMethod,
@@ -53,6 +54,7 @@ export const CreateAuthSessionInput = Schema.Struct({
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
   proofKeyThumbprint: Schema.optionalKey(Schema.String),
+  peerLink: Schema.optionalKey(Schema.Boolean),
 });
 export type CreateAuthSessionInput = typeof CreateAuthSessionInput.Type;
 
@@ -126,6 +128,9 @@ export class AuthSessionRepository extends Context.Service<
     readonly listActive: (
       input: ListActiveAuthSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionRecord>, AuthSessionRepositoryError>;
+    readonly markPeerLink: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
     readonly revoke: (
       input: RevokeAuthSessionInput,
     ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
@@ -150,6 +155,7 @@ export class AuthSessionRepository extends Context.Service<
 
 const AuthSessionDbRow = Schema.Struct({
   sessionId: AuthSessionId,
+  peerLink: Schema.Literals([0, 1]),
   subject: Schema.String,
   scopes: Schema.fromJsonString(AuthEnvironmentScopes),
   method: ServerAuthSessionMethod,
@@ -167,6 +173,7 @@ const AuthSessionDbRow = Schema.Struct({
 
 const AuthSessionRawDbRow = Schema.Struct({
   sessionId: Schema.String,
+  peerLink: Schema.Unknown,
   subject: Schema.Unknown,
   scopes: Schema.Unknown,
   method: Schema.Unknown,
@@ -187,6 +194,7 @@ const decodeAuthSessionDbRow = Schema.decodeUnknownEffect(AuthSessionDbRow);
 function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionRecord {
   return {
     sessionId: row.sessionId,
+    peerLink: row.peerLink === 1,
     subject: row.subject,
     scopes: row.scopes,
     method: row.method,
@@ -243,7 +251,8 @@ export const make = Effect.gen(function* () {
           issued_at,
           expires_at,
           revoked_at,
-          proof_key_thumbprint
+          proof_key_thumbprint,
+          peer_link
         )
         VALUES (
           ${input.sessionId},
@@ -259,7 +268,8 @@ export const make = Effect.gen(function* () {
           ${input.issuedAt},
           ${input.expiresAt},
           NULL,
-          ${input.proofKeyThumbprint ?? null}
+          ${input.proofKeyThumbprint ?? null},
+          ${input.peerLink === true ? 1 : 0}
         )
         ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
@@ -274,6 +284,7 @@ export const make = Effect.gen(function* () {
       sql`
         SELECT
           session_id AS "sessionId",
+          peer_link AS "peerLink",
           subject AS "subject",
           scopes AS "scopes",
           method AS "method",
@@ -318,6 +329,7 @@ export const make = Effect.gen(function* () {
       sql`
         SELECT
           session_id AS "sessionId",
+          peer_link AS "peerLink",
           subject AS "subject",
           scopes AS "scopes",
           method AS "method",
@@ -513,6 +525,26 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const markPeerLink: AuthSessionRepository["Service"]["markPeerLink"] = (sessionId) =>
+    sql`
+      UPDATE auth_sessions
+      SET peer_link = 1
+      WHERE session_id = ${sessionId}
+        AND peer_link = 0
+        AND revoked_at IS NULL
+      RETURNING session_id
+    `.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.mapError(
+        (cause) =>
+          new PersistenceSqlError({
+            operation: "AuthSessionRepository.markPeerLink:query",
+            correlation: { sessionId },
+            cause,
+          }),
+      ),
+    );
+
   const revoke: AuthSessionRepository["Service"]["revoke"] = (input) =>
     revokeSessionRows(input).pipe(
       Effect.mapError(
@@ -592,6 +624,7 @@ export const make = Effect.gen(function* () {
     createIfAbsent,
     getById,
     listActive,
+    markPeerLink,
     revoke,
     extend,
     revokeAllExcept,

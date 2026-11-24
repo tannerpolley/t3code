@@ -619,6 +619,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
           {environmentId !== null &&
+          !clientSession.peerLink &&
           clientSession.subject === MCP_CLIENT_SESSION_SUBJECT &&
           clientSession.scopes.includes(AuthOrchestrationOperateScope) ? (
             <ApprovalRelaySwitch

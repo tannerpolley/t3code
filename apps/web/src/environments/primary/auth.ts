@@ -124,6 +124,7 @@ export interface ServerPairingLinkRecord {
 
 export interface ServerClientSessionRecord {
   readonly sessionId: AuthSessionId;
+  readonly peerLink?: true;
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly method: ServerAuthSessionMethod;
