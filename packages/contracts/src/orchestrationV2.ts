@@ -4567,6 +4567,7 @@ export type OrchestrationV2ServerCommand = (
   readonly releaseIssueWorktreeSlot?: true;
   /** Suspension interrupts retain their provider action until it succeeds. */
   readonly retryInterruptUntilDone?: boolean;
+  readonly archiveDelegatedWorker?: true;
   readonly workerArchiveSequence?: number;
   readonly workerDeleteArchivedAt?: DateTime.Utc;
   /** Completion read outside the lock, valid for the worker's checked event sequence. */

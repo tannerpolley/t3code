@@ -4,7 +4,6 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   EventId,
-  IssueTrackerKind,
   MessageId,
   NodeId,
   ProviderThreadId,
@@ -15,7 +14,6 @@ import {
   SourceControlProviderKind,
   ThreadId,
   type OrchestrationV2AppThread,
-  type RepositoryIssueRef,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -30,7 +28,6 @@ import * as TrackerIssues from "../issue/IssueService.ts";
 import * as IssueService from "../issues/IssueService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import WorkerArchiveBacklog from "../persistence/ForkMigrations/031_WorkerArchiveBacklog.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -93,66 +90,63 @@ const layerIdentity = Layer.mock(RepositoryIdentityResolver.RepositoryIdentityRe
     }),
 });
 
-const makeRetentionLayer = (statusBatches: Array<ReadonlyArray<RepositoryIssueRef>> = []) =>
-  WorkerRetention.layer.pipe(
-    Layer.provideMerge(layerTest),
-    Layer.provide(
-      Layer.mergeAll(
-        NodeCrypto.layer,
-        ServerSettings.layerTest({}),
-        Layer.mock(TrackerIssues.IssueService)({}),
-        Layer.mock(IssueService.IssueService)({
-          issueStatuses: (refs) =>
-            Effect.sync(() => {
-              statusBatches.push(refs);
-              return refs
-                .filter(({ number }) => number !== 42)
-                .map((ref) => ({
-                  ...ref,
-                  state: ref.number === 43 ? ("closed" as const) : ("open" as const),
-                  closedAt: ref.number === 43 ? "1970-01-01T00:00:00.000Z" : null,
-                }));
-            }),
-        }),
-        FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
-        Path.layer,
-        Layer.mock(GitManager.GitManager)({
-          branchPullRequest: ({ cwd, branch }) =>
-            Effect.succeed(
-              cwd !== workspaceRoot
-                ? null
-                : {
-                    number: 48,
-                    title: "Merged pull request",
-                    url: `https://github.com/owner/${branch === "foreign" ? "another" : "project"}/pull/48`,
-                    repositoryKey: `github.com/owner/${branch === "foreign" ? "another" : "project"}`,
-                    state: "merged",
-                    headRef: branch,
-                    baseRef: "main",
-                    updatedAt: "1970-01-01T00:00:00.000Z",
-                    mergedAt: "1970-01-01T00:00:00.000Z",
-                  },
-            ),
-        }),
-        Layer.mock(PullRequestService.PullRequestService)({
-          summary: (reference) =>
-            Effect.succeed({
-              ...reference,
-              provider: SourceControlProviderKind.make("github"),
-              title: "Pull request",
-              url: "https://github.com/owner/project/pull/42",
-              state: reference.number === 42 ? "open" : "merged",
-              headBranch: "feature",
-              baseBranch: "main",
-              updatedAt: "1970-01-01T00:00:00.000Z",
-              mergedAt: "1970-01-01T00:00:00.000Z",
-            }),
-        }),
-      ),
+const layerRetentionBase = WorkerRetention.layer.pipe(
+  Layer.provideMerge(layerTest),
+  Layer.provide(
+    Layer.mergeAll(
+      NodeCrypto.layer,
+      ServerSettings.layerTest({}),
+      Layer.mock(TrackerIssues.IssueService)({}),
+      Layer.mock(IssueService.IssueService)({
+        issueStatuses: (refs) =>
+          Effect.sync(() => {
+            return refs
+              .filter(({ number }) => number !== 42)
+              .map((ref) => ({
+                ...ref,
+                state: ref.number === 43 ? ("closed" as const) : ("open" as const),
+                closedAt: ref.number === 43 ? "1970-01-01T00:00:00.000Z" : null,
+              }));
+          }),
+      }),
+      FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
+      Path.layer,
+      Layer.mock(GitManager.GitManager)({
+        branchPullRequest: ({ cwd, branch }) =>
+          Effect.succeed(
+            cwd !== workspaceRoot
+              ? null
+              : {
+                  number: 48,
+                  title: "Merged pull request",
+                  url: `https://github.com/owner/${branch === "foreign" ? "another" : "project"}/pull/48`,
+                  repositoryKey: `github.com/owner/${branch === "foreign" ? "another" : "project"}`,
+                  state: "merged",
+                  headRef: branch,
+                  baseRef: "main",
+                  updatedAt: "1970-01-01T00:00:00.000Z",
+                  mergedAt: "1970-01-01T00:00:00.000Z",
+                },
+          ),
+      }),
+      Layer.mock(PullRequestService.PullRequestService)({
+        summary: (reference) =>
+          Effect.succeed({
+            ...reference,
+            provider: SourceControlProviderKind.make("github"),
+            title: "Pull request",
+            url: "https://github.com/owner/project/pull/42",
+            state: reference.number === 42 ? "open" : "merged",
+            headBranch: "feature",
+            baseBranch: "main",
+            updatedAt: "1970-01-01T00:00:00.000Z",
+            mergedAt: "1970-01-01T00:00:00.000Z",
+          }),
+      }),
     ),
-  );
+  ),
+);
 
-const layerRetentionBase = makeRetentionLayer();
 const layerRetention = layerRetentionBase.pipe(Layer.provide(layerIdentity));
 
 const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
@@ -236,284 +230,360 @@ const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
     return id;
   });
 
-  return { sql, service, orchestrator, projections, sink, cutoff, createdAt, parent, seed };
-});
-
-it.effect("pages through finished workers from before the cutoff", () =>
-  Effect.gen(function* () {
-    const { service, projections, seed } = yield* makeFixture();
-    for (let index = 0; index < 32; index++) {
-      yield* seed(`finished-${index.toString().padStart(2, "0")}`, "merged");
-    }
-    const last = yield* seed("finished-next-page", "merged");
-    const first = yield* service.autoArchive();
-    assert.equal(first.archived, 32);
-    assert.isNull((yield* projections.getThread(last)).archivedAt);
-    const second = yield* service.autoArchive(undefined, first.cursor);
-    assert.equal(second.archived, 1);
-    assert.isNotNull((yield* projections.getThread(last)).archivedAt);
-  }).pipe(Effect.provide(layerRetention)),
-);
-
-it.effect("keeps a top-level thread with completed work out of worker archive", () =>
-  Effect.gen(function* () {
-    const { sql, orchestrator, projections, seed, parent } = yield* makeFixture();
-    const threadId = yield* seed("owner", "merged", {
-      lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
-    });
-    const [event] = yield* sql<{ sequence: number }>`
-      SELECT MAX(sequence) AS sequence FROM orchestration_events WHERE stream_id = ${threadId}
-    `;
-    assert.isAbove(event!.sequence, 0);
-    yield* orchestrator.dispatch({
-      type: "thread.archive",
-      commandId: CommandId.make("auto-archive-owner"),
-      threadId,
-      workerArchiveSequence: event!.sequence,
-    });
-    assert.isNull((yield* projections.getThread(threadId)).archivedAt);
-  }).pipe(Effect.provide(layerRetention)),
-);
-
-it.effect(
-  "archives only finished workers and keeps restored workers active until new work finishes",
-  () =>
-    Effect.gen(function* () {
-      const { sql, service, orchestrator, projections, createdAt, parent, seed } =
-        yield* makeFixture();
-      const done = yield* seed("done", "merged");
-      const open = yield* seed("open", "open");
-      const queued = yield* seed("queued", "merged");
-      yield* sql`INSERT INTO orchestration_v2_projection_runs
-      (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
-      VALUES ('queued-run', ${queued}, 1, 'codex', 'queued', ${DateTime.formatIso(createdAt)}, '{}')`;
-      const owner = yield* seed("owner-child", "merged", { createdBy: "user" });
-      const root = yield* seed("orchestrator", "merged", { role: "orchestrator" });
-      const writer = yield* seed("backlog-writer", "merged", { role: "writer" });
-      const sideChat = yield* seed("side-chat", "merged", {
-        lineage: {
-          rootThreadId: parent,
-          parentThreadId: parent,
-          relationshipToParent: "subagent",
-          sideChat: true,
-        },
-      });
-      assert.equal((yield* service.autoArchive()).archived, 1);
-      assert.isNotNull((yield* projections.getThread(done)).archivedAt);
-      for (const thread of [open, queued, owner, root, writer, sideChat]) {
-        assert.isNull((yield* projections.getThread(thread)).archivedAt, thread);
-      }
-
-      yield* TestClock.adjust("1 second");
-      const freshAt = yield* DateTime.now;
-      const fresh = yield* seed("fresh", "merged", { createdAt: freshAt, archivedAt: freshAt });
-      yield* TestClock.adjust("1 second");
-      yield* orchestrator.dispatch({
-        type: "thread.unarchive",
-        commandId: CommandId.make("restore"),
-        threadId: fresh,
-      });
-      yield* service.autoArchive(fresh);
-      assert.isNull((yield* projections.getThread(fresh)).archivedAt);
-
-      yield* TestClock.adjust("1 second");
-      const now = yield* DateTime.now;
-      const iso = DateTime.formatIso(now);
-      const restored = yield* projections.getThread(fresh);
-      const [link] = restored.pullRequests!;
-      const key = { host: "github.com", repository: "owner/project", number: 43 };
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request.link",
-        commandId: CommandId.make("link-new-work"),
-        threadId: fresh,
-        ...key,
-        url: "https://github.com/owner/project/pull/43",
-        source: "agent",
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request-link.sync",
-        commandId: CommandId.make("another-pr-merged"),
-        threadId: fresh,
-        ...key,
-        snapshot: { ...link!.snapshot!, mergedAt: iso, updatedAt: iso, syncedAt: iso },
-        stack: null,
-      });
-      yield* service.autoArchive(fresh);
-      assert.isNotNull((yield* projections.getThread(fresh)).archivedAt);
-      yield* TestClock.adjust("13 days");
-      yield* service.removeExpired();
-      assert.isNull((yield* projections.getThread(fresh)).deletedAt);
-      yield* TestClock.adjust("1 day");
-      yield* service.removeExpired();
-      assert.isNotNull((yield* projections.getThread(fresh)).deletedAt);
-    }).pipe(Effect.provide(layerRetention)),
-);
-
-it.effect("archives temporary workers after delivery or parent archive when they are idle", () =>
-  Effect.gen(function* () {
-    const { service, projections, orchestrator, sink, sql, parent, createdAt, seed } =
-      yield* makeFixture();
-    const worktreePath = "/workspace/worktree";
-    yield* seed(parent, "open", {
-      lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
-      worktreePath,
-    });
-    const delivered = yield* seed("reviewer-delivered", "open", {
-      role: "reviewer",
-      pullRequests: [],
-    });
-    // The parent's open PR and issue reach a child in its checkout through the shared branch.
-    const branchLinks = {
-      branch: "feature",
-      pullRequests: [],
-      branchPullRequest: {
-        projectId,
-        repository: "owner/project",
-        number: 42,
-        url: "https://github.com/owner/project/pull/42",
-      },
-      issues: [
+  const recordTask = Effect.fn("WorkerRetention.test.recordTask")(function* (
+    owner: ThreadId,
+    child: ThreadId,
+    delivery: "delivered" | "acknowledged" | "claimed" | "pending" | "disposed" | undefined,
+    status: "completed" | "running" | "interrupted" = "completed",
+    endedAt = createdAt,
+    options: {
+      taskKey?: string;
+      result?: string;
+      startedAt?: DateTime.Utc;
+      updatedAt?: DateTime.Utc;
+    } = {},
+  ) {
+    const driver = ProviderDriverKind.make("codex");
+    const id = NodeId.make(`task:${options.taskKey ?? child}`);
+    const updatedAt = options.updatedAt ?? endedAt;
+    yield* sink.write({
+      events: [
         {
-          tracker: IssueTrackerKind.make("github"),
-          host: "github.com",
-          scope: "owner/project",
-          key: "44",
-          projectId,
-          displayKey: "#44",
-          title: "Issue",
-          url: "https://github.com/owner/project/issues/44",
-          source: "agent" as const,
-          linkedAt: DateTime.formatIso(createdAt),
-        },
-      ],
-    };
-    const sharedCheckout = yield* seed("reviewer-shared-checkout", "open", {
-      role: "reviewer",
-      worktreePath,
-      ...branchLinks,
-    });
-    const ownCheckout = yield* seed("reviewer-own-checkout", "open", {
-      role: "reviewer",
-      worktreePath: "/workspace/own",
-      ...branchLinks,
-    });
-    const pending = yield* seed("checker-pending", "open", { role: "reviewer", pullRequests: [] });
-    yield* sql`UPDATE orchestration_v2_projection_threads
-      SET payload_json = json_set(payload_json, '$.role', 'checker') WHERE thread_id = ${pending}`;
-    const question = yield* seed("reviewer-question", "open", {
-      role: "reviewer",
-      pullRequests: [],
-    });
-    const openPr = yield* seed("reviewer-open-pr", "open", { role: "reviewer" });
-    const writer = yield* seed("writer-delivered", "open", { role: "writer", pullRequests: [] });
-
-    const recordTask = Effect.fn("WorkerRetention.test.recordTask")(function* (
-      owner: ThreadId,
-      child: ThreadId,
-      delivery: "delivered" | "pending",
-      status: "completed" | "running" = "completed",
-    ) {
-      const driver = ProviderDriverKind.make("codex");
-      const id = NodeId.make(`task:${child}`);
-      yield* sink.write({
-        events: [
-          {
-            type: "subagent.updated",
-            id: EventId.make(`event:${child}:${delivery}`),
+          type: "subagent.updated",
+          id: EventId.make(`event:${id}:${delivery}:${DateTime.toEpochMillis(updatedAt)}`),
+          threadId: owner,
+          nodeId: id,
+          driver,
+          providerInstanceId: instanceId,
+          occurredAt: updatedAt,
+          payload: {
+            id,
             threadId: owner,
-            nodeId: id,
+            runId: null,
+            parentNodeId: id,
+            origin: "app_owned",
+            createdBy: "agent",
             driver,
             providerInstanceId: instanceId,
-            occurredAt: createdAt,
-            payload: {
-              id,
-              threadId: owner,
-              runId: null,
-              parentNodeId: id,
-              origin: "app_owned",
-              createdBy: "agent",
-              driver,
-              providerInstanceId: instanceId,
-              providerThreadId: null,
-              childThreadId: child,
-              nativeTaskRef: null,
-              prompt: "Review",
-              title: null,
-              model: null,
-              status,
-              result: status === "completed" ? "Finished" : null,
-              startedAt: createdAt,
-              completedAt: status === "completed" ? createdAt : null,
-              updatedAt: createdAt,
-              completionDelivery: { state: delivery, observedByRunId: null },
-            },
+            providerThreadId: null,
+            childThreadId: child,
+            nativeTaskRef: null,
+            prompt: "Review",
+            title: null,
+            model: null,
+            status,
+            result: options.result ?? (status === "completed" ? "Finished" : null),
+            startedAt: options.startedAt ?? createdAt,
+            completedAt: status === "running" ? null : endedAt,
+            updatedAt,
+            ...(delivery === undefined
+              ? {}
+              : { completionDelivery: { state: delivery, observedByRunId: null } }),
           },
-        ],
-      });
+        },
+      ],
     });
+  });
 
-    for (const child of [delivered, sharedCheckout, ownCheckout, question, openPr, writer]) {
+  const recordRun = Effect.fn("WorkerRetention.test.recordRun")(function* (
+    id: string,
+    threadId: ThreadId,
+    status: "completed" | "running" | "interrupted",
+    startedAt: DateTime.Utc,
+    delegatedTaskId?: NodeId,
+  ) {
+    const runId = RunId.make(id);
+    yield* sink.write({
+      events: [
+        {
+          type: "run.created",
+          id: EventId.make(id),
+          threadId,
+          occurredAt: startedAt,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId: instanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`prompt:${id}`),
+            rootNodeId: null,
+            ...(delegatedTaskId === undefined ? {} : { delegatedTaskId }),
+            activeAttemptId: null,
+            status,
+            requestedAt: startedAt,
+            startedAt,
+            completedAt: status === "running" ? null : startedAt,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+      ],
+    });
+  });
+
+  return {
+    sql,
+    service,
+    orchestrator,
+    projections,
+    sink,
+    createdAt,
+    parent,
+    seed,
+    recordTask,
+    recordRun,
+  };
+});
+
+it.effect("flags the #636 interrupted worker after its PR merged", () =>
+  Effect.gen(function* () {
+    const { service, projections, parent, seed, recordTask, recordRun, createdAt } =
+      yield* makeFixture();
+    yield* seed(parent, "open", {
+      role: "orchestrator",
+      lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+    });
+    const mergedAt = DateTime.add(createdAt, { hours: 1 });
+    const worker = yield* seed("interrupted-worker", "merged", {}, mergedAt);
+    const interruptedAt = DateTime.add(mergedAt, { hours: 1 });
+    yield* recordRun("interrupted-handoff", worker, "interrupted", interruptedAt);
+    yield* recordTask(parent, worker, "disposed", "interrupted", interruptedAt);
+
+    yield* service.remindMissedArchives();
+    assert.isNull((yield* projections.getThread(worker)).archivedAt);
+    const { messages } = yield* projections.getThreadRecords(parent, ["messages"]);
+    assert.include(
+      messages.map((message) => message.notification?.summary),
+      "Finished children still visible (1)",
+    );
+    assert.include(messages[0]?.text, worker);
+  }).pipe(Effect.provide(layerRetention)),
+);
+
+it.effect("flags finished children as a group after the grace period and never archives them", () =>
+  Effect.gen(function* () {
+    const { service, projections, parent, seed, recordTask } = yield* makeFixture();
+    yield* seed(parent, "open", {
+      role: "orchestrator",
+      lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+    });
+    const now = yield* DateTime.now;
+    const children: ThreadId[] = [];
+    for (let index = 0; index < 33; index++) {
+      const recipient = index === 32 ? children[0]! : parent;
+      const child = yield* seed(`finished-${index}`, "open", {
+        pullRequests: [],
+        role: "reviewer",
+        lineage: {
+          rootThreadId: parent,
+          parentThreadId: recipient,
+          relationshipToParent: "subagent",
+        },
+      });
+      yield* recordTask(recipient, child, "delivered", "completed", now);
+      children.push(child);
+    }
+    yield* service.remindMissedArchives();
+    assert.isEmpty((yield* projections.getThreadRecords(parent, ["messages"])).messages);
+    yield* TestClock.adjust("5 minutes");
+    yield* service.remindMissedArchives();
+    yield* service.remindMissedArchives();
+    const { messages } = yield* projections.getThreadRecords(parent, ["messages"]);
+    assert.lengthOf(messages, 1);
+    assert.equal(messages[0]?.notification?.summary, "Finished children still visible (33)");
+    assert.isEmpty((yield* projections.getThreadRecords(children[0]!, ["messages"])).messages);
+    for (const child of children) {
+      assert.include(messages[0]?.text, child);
+      assert.isNull((yield* projections.getThread(child)).archivedAt);
+    }
+  }).pipe(Effect.provide(layerRetention)),
+);
+
+it.effect("archives only eligible children and keeps restored children active", () =>
+  Effect.gen(function* () {
+    const { service, orchestrator, projections, parent, sql, createdAt, seed, recordTask } =
+      yield* makeFixture();
+    yield* seed(parent, "open", {
+      role: "orchestrator",
+      lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+    });
+    const archive = (child: ThreadId, id: string = child) =>
+      orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make(`archive:${id}`),
+        threadId: child,
+        archiveDelegatedWorker: true,
+      });
+    const done = yield* seed("done-open-pr", "open");
+    const sameTurn = yield* DateTime.now;
+    yield* recordTask(parent, done, "delivered", "completed", sameTurn);
+    const pinned = yield* seed("pinned", "merged", { pinnedAt: createdAt });
+    const writer = yield* seed("writer", "merged", { role: "writer" });
+    const owner = yield* seed("owner", "merged", { createdBy: "user" });
+    const queued = yield* seed("queued", "merged");
+    const question = yield* seed("question", "merged");
+    const approval = yield* seed("approval", "merged");
+    const withChild = yield* seed("with-child", "merged");
+    const waiting = yield* seed("waiting-for-delivery", "merged");
+    yield* recordTask(parent, waiting, "pending");
+    for (const child of [pinned, writer, owner, queued, question, approval, withChild]) {
       yield* recordTask(parent, child, "delivered");
     }
-    yield* recordTask(parent, pending, "pending");
-    const withOpenChild = yield* seed("designer-with-child", "open", {
-      role: "designer",
-      pullRequests: [],
-    });
-    yield* recordTask(parent, withOpenChild, "delivered");
-    yield* recordTask(withOpenChild, ThreadId.make("open-child"), "pending", "running");
+    yield* recordTask(withChild, ThreadId.make("open-child"), "pending", "running");
+    yield* sql`INSERT INTO orchestration_v2_projection_runs
+      (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      VALUES ('queued-run', ${queued}, 1, 'codex', 'queued', ${DateTime.formatIso(createdAt)}, '{}')`;
     yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
       (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
       VALUES ('question', ${question}, 'question-node', 'user_input', 'pending',
+              ${DateTime.formatIso(createdAt)}, '{}'),
+             ('approval', ${approval}, 'approval-node', 'approval', 'pending',
               ${DateTime.formatIso(createdAt)}, '{}')`;
 
-    yield* service.autoArchive();
-    assert.isNotNull((yield* projections.getThread(delivered)).archivedAt);
-    assert.isNotNull((yield* projections.getThread(sharedCheckout)).archivedAt);
-    for (const child of [pending, ownCheckout, question, openPr, writer, withOpenChild]) {
+    yield* archive(done);
+    assert.isNotNull((yield* projections.getThread(done)).archivedAt);
+    for (const child of [pinned, writer, owner, queued, question, approval, withChild, waiting]) {
+      yield* archive(child).pipe(Effect.flip);
       assert.isNull((yield* projections.getThread(child)).archivedAt, child);
     }
-
-    yield* orchestrator.dispatch({
-      type: "thread.archive",
-      commandId: CommandId.make("archive-parent"),
-      threadId: parent,
-    });
-    yield* service.autoArchive();
-    assert.isNotNull((yield* projections.getThread(pending)).archivedAt);
-    for (const child of [ownCheckout, question, openPr, writer, withOpenChild]) {
-      assert.isNull((yield* projections.getThread(child)).archivedAt, child);
-    }
-
-    yield* sql`DELETE FROM orchestration_v2_projection_runtime_requests
-      WHERE thread_id = ${question}`;
-    yield* service.autoArchive(question);
-    assert.isNotNull((yield* projections.getThread(question)).archivedAt);
-
+    yield* service.remindMissedArchives();
+    assert.isEmpty((yield* projections.getThreadRecords(parent, ["messages"])).messages);
     yield* TestClock.adjust("1 second");
     yield* orchestrator.dispatch({
       type: "thread.unarchive",
-      commandId: CommandId.make("restore-reviewer"),
-      threadId: pending,
+      commandId: CommandId.make("restore-worker"),
+      threadId: done,
     });
-    yield* service.autoArchive(pending);
-    assert.isNull((yield* projections.getThread(pending)).archivedAt);
-
+    yield* archive(done, "old-result").pipe(Effect.flip);
+    yield* TestClock.adjust("1 second");
+    yield* recordTask(parent, done, "delivered", "completed", yield* DateTime.now);
+    yield* archive(done, "fresh-result");
     yield* TestClock.adjust("14 days");
     yield* service.removeExpired();
-    assert.isNotNull((yield* projections.getThread(delivered)).deletedAt);
+    assert.isNotNull((yield* projections.getThread(done)).deletedAt);
+  }).pipe(Effect.provide(layerRetention)),
+);
+
+it.effect("archives during the running result wake and leaves the worker’s side chat active", () =>
+  Effect.gen(function* () {
+    const { sql, parent, seed, recordTask, recordRun, sink, createdAt, orchestrator, projections } =
+      yield* makeFixture();
+    yield* seed(parent, "open", {
+      lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+    });
+    const worker = yield* seed("claimed-worker", "open", { pullRequests: [] });
+    const side = yield* seed("owner-side-chat", "open", {
+      createdBy: "user",
+      lineage: {
+        rootThreadId: parent,
+        parentThreadId: worker,
+        relationshipToParent: "subagent",
+        sideChat: true,
+      },
+    });
+    yield* recordTask(parent, worker, "delivered", "completed", createdAt, {
+      taskKey: "z-previous-task",
+    });
+    const followupTask = NodeId.make("task:a-newer-followup");
+    yield* recordTask(parent, worker, "claimed", "completed", createdAt, {
+      taskKey: "a-newer-followup",
+    });
+    yield* recordRun("child-followup-run", worker, "completed", createdAt, followupTask);
+    const wake = RunId.make("archive-wake");
+    const messageId = MessageId.make("archive-wake-message");
+    yield* sink.write({
+      events: [
+        {
+          type: "message.updated",
+          id: EventId.make("archive-wake-message"),
+          threadId: parent,
+          runId: wake,
+          occurredAt: createdAt,
+          payload: {
+            id: messageId,
+            threadId: parent,
+            runId: wake,
+            nodeId: null,
+            role: "user",
+            text: "Child completed",
+            attachments: [],
+            createdBy: "agent",
+            creationSource: "server",
+            streaming: false,
+            createdAt,
+            updatedAt: createdAt,
+            delegatedCompletion: {
+              parentRunId: null,
+              generation: 1,
+              taskIds: [followupTask],
+            },
+          },
+        },
+      ],
+    });
+    yield* sql`INSERT INTO orchestration_v2_projection_runs
+      (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      VALUES (${wake}, ${parent}, 1, 'codex', 'queued', ${DateTime.formatIso(createdAt)},
+        json_object('userMessageId', ${messageId}, 'startedAt', NULL)),
+      ('side-chat-queue', ${side}, 1, 'codex', 'queued', ${DateTime.formatIso(createdAt)}, '{}')`;
+    const archive = (commandId: string) =>
+      orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make(commandId),
+        threadId: worker,
+        archiveDelegatedWorker: true,
+      });
+    yield* archive("archive-before-wake").pipe(Effect.flip);
+    yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'running',
+      payload_json = json_set(payload_json, '$.startedAt', ${DateTime.formatIso(createdAt)})
+      WHERE run_id = ${wake}`;
+    yield* archive("archive-in-wake");
+    assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
+    assert.isNull((yield* projections.getThread(side)).archivedAt);
+    const [sideRun] = yield* sql<{ status: string }>`
+      SELECT status FROM orchestration_v2_projection_runs WHERE run_id = 'side-chat-queue'`;
+    assert.equal(sideRun?.status, "queued");
+  }).pipe(Effect.provide(layerRetention)),
+);
+
+it.effect("an acknowledgment of an old task cannot hide the current result", () =>
+  Effect.gen(function* () {
+    const { orchestrator, parent, seed, createdAt, recordTask, recordRun, projections } =
+      yield* makeFixture();
+    const worker = yield* seed("follow-up-worker", "open", { pullRequests: [] });
+    const followUp = DateTime.add(createdAt, { hours: 1 });
+    yield* recordTask(parent, worker, "delivered", "completed", followUp, {
+      taskKey: "follow-up",
+      startedAt: followUp,
+    });
+    yield* recordTask(parent, worker, "acknowledged", "completed", createdAt, {
+      updatedAt: DateTime.add(followUp, { hours: 1 }),
+    });
+    yield* recordRun("follow-up", worker, "completed", followUp);
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-follow-up"),
+      threadId: worker,
+      archiveDelegatedWorker: true,
+    });
+    assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
   }).pipe(Effect.provide(layerRetention)),
 );
 
 it.effect("keeps expired Writers and unfinished workers", () =>
   Effect.gen(function* () {
-    const { service, orchestrator, projections, createdAt, seed, sql } = yield* makeFixture();
+    const { service, orchestrator, projections, createdAt, seed, sql, recordTask } =
+      yield* makeFixture();
     const sweep = yield* seed("open-sweep", "open", { archivedAt: createdAt });
     const locked = yield* seed("open-locked", "open", { archivedAt: createdAt });
     const writer = yield* seed("expired-writer", "merged", {
       role: "writer",
       archivedAt: createdAt,
     });
+    const legacy = yield* seed("legacy-archived", "merged", { archivedAt: createdAt });
+    yield* recordTask(legacy, ThreadId.make("legacy-descendant"), undefined);
     yield* TestClock.adjust("15 days");
     const [event] = yield* sql<{ sequence: number }>`
       SELECT MAX(sequence) AS sequence FROM orchestration_events WHERE stream_id = ${locked}
@@ -526,6 +596,7 @@ it.effect("keeps expired Writers and unfinished workers", () =>
       workerArchiveSequence: event!.sequence,
     });
     yield* service.removeExpired();
+    assert.isNotNull((yield* projections.getThread(legacy)).deletedAt);
     assert.deepEqual(
       [
         (yield* projections.getThread(locked)).deletedAt === null,
@@ -545,7 +616,7 @@ it.effect("keeps pinned workers in both active and archive views", () =>
       pinnedAt: createdAt,
       archivedAt: createdAt,
     });
-    yield* service.autoArchive();
+    yield* service.remindMissedArchives();
     yield* TestClock.adjust("15 days");
     yield* service.removeExpired();
     assert.deepEqual(
@@ -560,7 +631,8 @@ it.effect("keeps pinned workers in both active and archive views", () =>
 
 it.effect("keeps a worker with a background command in its parent's provider session", () =>
   Effect.gen(function* () {
-    const { service, sink, createdAt, parent, projections, seed } = yield* makeFixture();
+    const { service, sink, createdAt, parent, projections, seed, recordTask, orchestrator } =
+      yield* makeFixture();
     const worker = yield* seed("background", "merged");
     yield* seed("parent", "open", {
       lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
@@ -595,176 +667,44 @@ it.effect("keeps a worker with a background command in its parent's provider ses
         },
       ],
     });
-    assert.equal((yield* service.autoArchive()).archived, 0);
+    yield* recordTask(parent, worker, "delivered");
+    yield* service.remindMissedArchives();
+    assert.isEmpty((yield* projections.getThreadRecords(parent, ["messages"])).messages);
+    yield* orchestrator
+      .dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("archive-with-background-work"),
+        threadId: worker,
+        archiveDelegatedWorker: true,
+      })
+      .pipe(Effect.flip);
     assert.isNull((yield* projections.getThread(worker)).archivedAt);
   }).pipe(Effect.provide(layerRetention)),
 );
 
-it.effect("archives pre-cutoff work and rejects obsolete completion for a new worker", () =>
-  Effect.gen(function* () {
-    const { service, sink, projections, seed, cutoff } = yield* makeFixture();
-    const now = yield* DateTime.now;
-    const oldWorker = yield* seed("older-worker", "merged", {}, cutoff);
-    const freshWorker = yield* seed(
-      "newer-worker",
-      "merged",
-      { createdAt: now, updatedAt: now },
-      now,
-    );
-    yield* TestClock.adjust("1 second");
-    const later = yield* DateTime.now;
-    for (const [threadId, requestedAt] of [
-      [oldWorker, cutoff],
-      [freshWorker, later],
-    ] as const) {
-      yield* sink.write({
-        events: [
-          {
-            type: "run.created",
-            id: EventId.make(`created:run:${threadId}`),
-            threadId,
-            occurredAt: requestedAt,
-            payload: {
-              id: RunId.make(`run:${threadId}`),
-              threadId,
-              ordinal: 1,
-              providerInstanceId: instanceId,
-              modelSelection,
-              providerThreadId: null,
-              userMessageId: MessageId.make(`message:${threadId}`),
-              rootNodeId: null,
-              activeAttemptId: null,
-              status: "completed",
-              requestedAt,
-              startedAt: requestedAt,
-              completedAt: requestedAt,
-              checkpointId: null,
-              contextHandoffId: null,
-            },
-          },
-        ],
-      });
-      yield* service.autoArchive(threadId);
-    }
-    assert.deepEqual(
-      [
-        (yield* projections.getThread(oldWorker)).archivedAt === null,
-        (yield* projections.getThread(freshWorker)).archivedAt === null,
-      ],
-      [false, true],
-    );
-  }).pipe(Effect.provide(layerRetention)),
-);
-
-it.effect("backfills the protection timestamp for restores before the upgrade", () =>
-  Effect.gen(function* () {
-    const { service, sql, sink, projections, createdAt, seed } = yield* makeFixture();
-    const worker = yield* seed("previously-restored", "merged");
-    const restoredAt = DateTime.add(createdAt, { hours: 1 });
-    const thread = yield* projections.getThread(worker);
-    yield* sink.write({
-      events: [
-        {
-          type: "thread.unarchived",
-          id: EventId.make("historical-restore"),
-          threadId: worker,
-          occurredAt: restoredAt,
-          payload: { ...thread, updatedAt: restoredAt },
-        },
-      ],
-    });
-    yield* sql`DROP TABLE IF EXISTS worker_archive_prior_restores`;
-    yield* sql`DROP TABLE worker_archive_backlog`;
-    yield* WorkerArchiveBacklog;
-    assert.equal((yield* service.autoArchive()).archived, 0);
-    assert.isNull((yield* projections.getThread(worker)).archivedAt);
-  }).pipe(Effect.provide(layerRetention)),
-);
-
-it.effect("discovers branch completion only in the project repository", () =>
+it.effect("discovers legacy archived completion only in the project repository", () =>
   Effect.gen(function* () {
     const { service, seed, projections, createdAt } = yield* makeFixture();
     const own = yield* seed("own-pr", "open", {
       pullRequests: [],
       branch: "own",
       worktreePath: "/workspace/missing-worktree",
+      archivedAt: createdAt,
     });
-    const foreign = yield* seed("foreign-pr", "open", { pullRequests: [], branch: "foreign" });
-    const archived = yield* seed("foreign-archived-pr", "open", {
+    const foreign = yield* seed("foreign-pr", "open", {
       pullRequests: [],
       branch: "foreign",
       archivedAt: createdAt,
     });
-    yield* service.autoArchive();
     yield* TestClock.adjust("15 days");
     yield* service.removeExpired();
-    assert.deepEqual(
-      [
-        (yield* projections.getThread(own)).archivedAt !== null,
-        (yield* projections.getThread(foreign)).archivedAt,
-        (yield* projections.getThread(archived)).deletedAt,
-      ],
-      [true, null, null],
-    );
+    assert.isNotNull((yield* projections.getThread(own)).deletedAt);
+    assert.isNull((yield* projections.getThread(foreign)).deletedAt);
   }).pipe(Effect.provide(layerRetention)),
 );
 
-it.effect(
-  "archives completed issues and discovered pull requests while keeping open or unresolved links visible",
-  () => {
-    const statusBatches: Array<ReadonlyArray<RepositoryIssueRef>> = [];
-    return Effect.gen(function* () {
-      const { service, projections, seed } = yield* makeFixture();
-      const branchWorker = yield* seed("branch", "open", {
-        pullRequests: [],
-        branchPullRequest: {
-          projectId: ProjectId.make("project:worker"),
-          repository: "owner/project",
-          number: 43,
-          url: "https://github.com/owner/project/pull/43",
-        },
-      });
-      const link = (key: string) => ({
-        projectId,
-        tracker: IssueTrackerKind.make("github"),
-        host: "github.com",
-        scope: "owner/project",
-        key,
-        displayKey: `#${key}`,
-        title: "Issue",
-        url: `https://github.com/owner/project/issues/${key}`,
-        source: "agent" as const,
-        linkedAt: "1969-12-31T00:00:00.000Z",
-      });
-      const closed = yield* seed("closed-issue", "open", {
-        pullRequests: [],
-        issues: [link("43")],
-      });
-      const openPr = yield* seed("open-pr-closed-issue", "open", { issues: [link("43")] });
-      const openIssue = yield* seed("open-issue-merged-pr", "merged", { issues: [link("44")] });
-      const unknown = yield* seed("unknown-issue-merged-pr", "merged", { issues: [link("42")] });
-      for (let index = 0; index < 20; index++) {
-        yield* seed(`open-issue-${index}`, "open", {
-          pullRequests: [],
-          branch: "own",
-          issues: [link(`${50 + index}`)],
-        });
-      }
-      assert.equal((yield* service.autoArchive()).archived, 2);
-      assert.equal(statusBatches.length, 1);
-      assert.lengthOf(statusBatches[0]!, 24);
-      for (const thread of [branchWorker, closed]) {
-        assert.isNotNull((yield* projections.getThread(thread)).archivedAt, thread);
-      }
-      for (const thread of [openPr, openIssue, unknown]) {
-        assert.isNull((yield* projections.getThread(thread)).archivedAt, thread);
-      }
-    }).pipe(Effect.provide(makeRetentionLayer(statusBatches).pipe(Layer.provide(layerIdentity))));
-  },
-);
-
 it.effect.each(["timeout", "failed exit"] as const)(
-  "defers archive and deletion after a Git %s during repository identification",
+  "defers legacy deletion after a Git %s during repository identification",
   (failure) => {
     let gitAvailable = false;
     let rootProbes = 0;
@@ -814,11 +754,6 @@ it.effect.each(["timeout", "failed exit"] as const)(
 
     return Effect.gen(function* () {
       const { service, seed, createdAt, projections } = yield* makeFixture();
-      const worker = yield* seed("unidentified", "open", { pullRequests: [], branch: "own" });
-      const other = yield* seed("unidentified-other", "open", {
-        pullRequests: [],
-        branch: "other",
-      });
       const archived = yield* seed("archived", "open", {
         pullRequests: [],
         branch: "own",
@@ -830,17 +765,10 @@ it.effect.each(["timeout", "failed exit"] as const)(
         archivedAt: createdAt,
       });
       yield* TestClock.adjust("15 days");
-      yield* service.autoArchive();
-      gitAvailable = true;
-      yield* service.autoArchive();
       yield* service.removeExpired();
-      assert.equal(
-        rootProbes,
-        1,
-        "Both sweeps share the failed checkout probe during its cooldown",
-      );
-      assert.isNull((yield* projections.getThread(worker)).archivedAt);
-      assert.isNull((yield* projections.getThread(other)).archivedAt);
+      gitAvailable = true;
+      yield* service.removeExpired();
+      assert.equal(rootProbes, 1, "Cleanup shares the failed checkout probe during its cooldown");
       assert.isNull((yield* projections.getThread(archived)).deletedAt);
       assert.isNull((yield* projections.getThread(archivedOther)).deletedAt);
 
@@ -849,10 +777,6 @@ it.effect.each(["timeout", "failed exit"] as const)(
       assert.equal(rootProbes, 2, "The cleanup sweep refreshes a shared checkout once");
       assert.isNotNull((yield* projections.getThread(archived)).deletedAt);
       assert.isNotNull((yield* projections.getThread(archivedOther)).deletedAt);
-
-      yield* service.autoArchive();
-      assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
-      assert.isNotNull((yield* projections.getThread(other)).archivedAt);
     }).pipe(Effect.provide(layerRetentionBase.pipe(Layer.provide(identities))));
   },
 );

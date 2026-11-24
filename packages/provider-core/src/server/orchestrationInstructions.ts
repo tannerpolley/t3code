@@ -18,6 +18,9 @@ const T3_CODE_DELEGATION_TOOLS = `- Before the first \`delegate_task\`, read \`o
 - The orchestrator delegates an independent Reviewer only when the owner or plan asks. Start each review or re-check with \`delegate_task\`. Fix small findings yourself. If asked to use fewer delegates, \`task_cancel\` extras without replacing them.
 - Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.`;
 
+const T3_CODE_CHILD_ARCHIVE =
+  'When T3 delivers the final result of a delegated child hosted in your own environment, archive it in the same turn with `t3_thread_organize` using `action: "archive"`, `delegatedWorker: true`, and the child thread ID. Children on linked environments are archived manually. This includes interrupted, failed and cancelled children and children without a PR or issue. Writers and pinned children stay visible. Leave children with running work, open questions or approvals, or unfinished descendants active. If T3 reminds you about missed children, make the same call for each eligible child it names.';
+
 const T3_CODE_THREAD_TOOLS = `- Multiple selections: use \`t3_request_user_input\`. Parents use \`t3_pending_request\` for child decisions and approve only delegated descendants within task authority. Writer questions go to the owner. Never message ancestors, whose results arrive automatically.
 - Launch top-level threads only on explicit request, using \`t3_thread_launch\` for one thread. Read a given thread id with \`t3_thread_read\` and use its returned link verbatim. Discover environment-link tools for another machine.
 - Ask for credentials only through \`request_secret\`. Keep pairing codes and passwords out of chat. For sudo, use file delivery and read it with \`sudo -S\`. Asked only to schedule: use \`schedule_task\` without running its prompt.`;
@@ -32,6 +35,7 @@ const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
 
 ${T3_CODE_NATIVE_SUBAGENT_GUIDANCE}
 ${T3_CODE_DELEGATION_TOOLS}`,
+  T3_CODE_CHILD_ARCHIVE,
   T3_CODE_THREAD_TOOLS,
   T3_CODE_VISUAL_GUIDANCE,
 ];
@@ -113,6 +117,7 @@ export function t3OrchestrationSections(
 
 ${delegation}`,
     MANAGED_ISSUE_WORKFLOW,
+    T3_CODE_CHILD_ARCHIVE,
     T3_CODE_DELEGATION_TOOLS,
     ...(managedIssue === "root" ? [REPOSITORY_ROOT_STATUS, ROOT_WORKFLOW] : [ISSUE_OWNER_WORKFLOW]),
     T3_CODE_THREAD_TOOLS,

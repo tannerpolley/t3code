@@ -695,11 +695,9 @@ const layerOrchestrationApplication = Layer.merge(
 
 const layerThreadSettlementWorker = Layer.effectDiscard(
   Effect.gen(function* () {
-    const retention = yield* WorkerRetention.WorkerRetention;
     const settlement = yield* ThreadSettlementService.make;
-    yield* settlement.start((threadId) =>
-      retention.autoArchive(threadId).pipe(Effect.ignore({ log: true })),
-    );
+    yield* settlement.start();
+    const retention = yield* WorkerRetention.WorkerRetention;
     yield* retention.start();
   }),
 ).pipe(Layer.provide(layerPullRequestService), Layer.provide(ProjectionStoreV2.layer));

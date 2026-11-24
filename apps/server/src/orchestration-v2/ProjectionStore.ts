@@ -289,6 +289,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "branch"
   | "worktreePath"
   | "lineage"
+  | "title"
   | "pullRequests"
   | "linkedPullRequest"
   | "branchPullRequest"
@@ -313,6 +314,11 @@ export type ProjectionSettlementCandidate = Pick<
   | "pendingGuestMessageCount"
 > &
   Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt" | "issues" | "workerUnarchivedAt"> & {
+    readonly workerResult?: {
+      readonly taskId: NodeId;
+      readonly completedAt: number;
+      readonly availableAt: number;
+    };
     readonly workerTemporaryCompletedAt?: number | null;
     /** A temporary worker in its parent's checkout, whose branch links belong to the parent. */
     readonly workerSharesParentCheckout?: boolean;
@@ -607,7 +613,6 @@ export type ActiveThreadListEntry = Pick<
   | "projectId"
   | "title"
   | "lineage"
-  | "delegatedFrom"
   | "settledOverride"
   | "settledAt"
   | "snoozedUntil"
@@ -9646,6 +9651,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     });
     const isTemporaryWorker = sql`json_extract(t.payload_json, '$.role') IN ${sql.in(temporaryWorkerRoles)}`;
 
+    // A claimed result is observable once the wake carrying that exact task starts running.
+    const workerResultAvailableAt = sql`CASE
+      WHEN incoming.completed_at IS NULL
+        OR incoming.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted') THEN NULL
+      WHEN incoming.completion_delivery_state IN ('acknowledged', 'delivered')
+        OR (incoming.status IN ('failed', 'cancelled', 'interrupted')
+          AND COALESCE(incoming.completion_delivery_state, 'disposed') = 'disposed')
+        THEN incoming.updated_at
+      WHEN incoming.completion_delivery_state = 'claimed' THEN (
+        SELECT json_extract(wake.payload_json, '$.startedAt')
+        FROM orchestration_v2_projection_runs wake
+        JOIN orchestration_v2_projection_messages message
+          ON message.message_id = json_extract(wake.payload_json, '$.userMessageId')
+        JOIN json_each(message.payload_json, '$.delegatedCompletion.taskIds') delivered
+          ON delivered.value = incoming.subagent_id
+        WHERE wake.thread_id = incoming.thread_id
+          AND wake.status = 'running'
+          AND json_extract(message.payload_json, '$.delegatedCompletion.parentRunId') IS incoming.run_id
+        LIMIT 1
+      )
+    END`;
+
     const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (
       threadId,
       workers,
@@ -9653,6 +9680,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
+            // Linked children are archived manually and have no local child_thread_id.
+            const resultAvailableAt = workers === undefined ? sql`NULL` : workerResultAvailableAt;
+            const resultCompletedAt =
+              workers === undefined
+                ? sql`NULL`
+                : sql`CASE WHEN (${workerResultAvailableAt}) IS NOT NULL THEN incoming.completed_at END`;
             const rows = yield* sql<
               SettlementThreadRow & {
                 readonly worker_archive_sequence: number;
@@ -9661,7 +9694,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 readonly temporary_worker: number | null;
                 readonly parent_archived_at: string | null;
                 readonly shares_parent_checkout: number | null;
-                readonly delivered_at: string | null;
+                readonly result_task_id: string | null;
+                readonly result_completed_at: string | null;
+                readonly result_available_at: string | null;
               }
             >`
             SELECT t.thread_id, t.payload_json,
@@ -9693,18 +9728,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     IS json_extract(t.payload_json, '$.worktreePath')
               ) END`
               } AS shares_parent_checkout,
-              ${
-                workers === undefined
-                  ? sql`NULL`
-                  : sql`CASE WHEN ${isTemporaryWorker} THEN (
-                SELECT MAX(task.completed_at) FROM orchestration_v2_projection_subagents task
-                WHERE task.child_thread_id = t.thread_id AND task.origin = 'app_owned'
-                  AND task.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
-                  AND task.status IN ('completed', 'failed', 'cancelled', 'interrupted')
-                  AND task.completion_delivery_state IN ('acknowledged', 'delivered')
-                  AND json_extract(task.payload_json, '$.result') IS NOT NULL
-              ) END`
-              } AS delivered_at,
+              ${workers === undefined ? sql`NULL` : sql`incoming.subagent_id`} AS result_task_id,
+              ${resultCompletedAt} AS result_completed_at,
+              ${resultAvailableAt} AS result_available_at,
               ${nativeSubagentPayload} AS native_subagent_payload_json,
               ${
                 workers === undefined
@@ -9752,6 +9778,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY latest.ordinal DESC, latest.run_id DESC
               LIMIT 1
             )
+            ${
+              workers === undefined
+                ? sql``
+                : sql`
+            LEFT JOIN orchestration_v2_projection_subagents incoming ON incoming.subagent_id = (
+              SELECT task.subagent_id FROM orchestration_v2_projection_subagents task
+              WHERE task.child_thread_id = t.thread_id AND task.origin = 'app_owned'
+                AND task.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                AND (
+                  json_extract(r.payload_json, '$.delegatedTaskId') IS NULL
+                  OR task.subagent_id = json_extract(r.payload_json, '$.delegatedTaskId')
+                )
+              ORDER BY task.started_at DESC, task.completed_at DESC, task.subagent_id DESC
+              LIMIT 1
+            )`
+            }
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
               ${
                 workers === undefined
@@ -9775,19 +9817,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND t.thread_id > ${workers.afterThreadId ?? ""}
               AND ${
                 workers.archivedBefore === undefined
-                  ? sql`t.archived_at IS NULL AND (
-                    json_array_length(t.payload_json, '$.pullRequests') > 0
-                    OR json_array_length(t.payload_json, '$.issues') > 0
-                    OR json_type(t.payload_json, '$.linkedPullRequest') = 'object'
-                    OR json_type(t.payload_json, '$.branchPullRequest') = 'object'
-                    OR json_extract(t.payload_json, '$.branch') IS NOT NULL
-                    OR ${isTemporaryWorker}
-                  )`
+                  ? sql`t.archived_at IS NULL AND (${resultAvailableAt}) IS NOT NULL`
                   : sql`t.archived_at <= ${DateTime.formatIso(workers.archivedBefore)}`
               }
               AND json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
               AND json_extract(t.payload_json, '$.lineage.parentThreadId') IS NOT NULL
               AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
+              AND json_type(t.payload_json, '$.delegatedFrom') IS NOT 'object'
               AND json_extract(t.payload_json, '$.createdBy') IS NOT 'user'
               AND json_extract(t.payload_json, '$.role') IS NOT 'orchestrator'
               AND json_extract(t.payload_json, '$.role') IS NOT 'writer'
@@ -9814,15 +9850,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT 1 FROM orchestration_v2_projection_subagents task
                 WHERE task.thread_id = t.thread_id
                   AND (task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
-                    OR (${isTemporaryWorker} AND task.origin = 'app_owned'
+                    OR ((${workers.archivedBefore === undefined ? sql`1` : isTemporaryWorker})
+                      AND task.origin = 'app_owned'
                       AND COALESCE(task.completion_delivery_state, '') NOT IN ('acknowledged', 'delivered', 'disposed')))
               )
-              AND (
-                (${isTemporaryWorker}) IS NOT 1 OR NOT EXISTS (
-                  SELECT 1 FROM orchestration_v2_projection_subagents task
-                  WHERE task.child_thread_id = t.thread_id AND task.origin = 'app_owned'
-                    AND task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
-                )
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_subagents task
+                WHERE task.child_thread_id = t.thread_id AND task.origin = 'app_owned'
+                  AND task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
               )
               `
               }
@@ -9920,15 +9955,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     ? {}
                     : {
                         workerArchiveSequence: row.worker_archive_sequence,
+                        ...(row.result_task_id === null ||
+                        row.result_completed_at === null ||
+                        row.result_available_at === null
+                          ? {}
+                          : {
+                              workerResult: {
+                                taskId: NodeId.make(row.result_task_id),
+                                completedAt: Date.parse(row.result_completed_at),
+                                availableAt: Date.parse(row.result_available_at),
+                              },
+                            }),
                         ...(row.temporary_worker === 1
                           ? {
                               workerTemporaryCompletedAt:
-                                row.delivered_at === null && row.parent_archived_at === null
+                                row.result_completed_at === null && row.parent_archived_at === null
                                   ? null
                                   : Math.max(
-                                      row.delivered_at === null
+                                      row.result_completed_at === null
                                         ? -Infinity
-                                        : Date.parse(row.delivered_at),
+                                        : Date.parse(row.result_completed_at),
                                       row.parent_archived_at === null
                                         ? -Infinity
                                         : Date.parse(row.parent_archived_at),
@@ -9950,7 +9996,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                                   parent.pendingBackgroundTasks,
                                 ).length > 0,
                             )) ||
-                          (row.parent_archived_at === null &&
+                          (row.result_completed_at === null &&
+                            row.parent_archived_at === null &&
                             (yield* hasPendingDelegatedCompletion(thread.id))),
                       }),
                   pendingBackgroundTasks: derivePendingBackgroundWork({

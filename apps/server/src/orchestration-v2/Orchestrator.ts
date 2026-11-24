@@ -266,6 +266,7 @@ import {
   usageLimitRecoveryPending,
 } from "./usageLimitRecoveryPending.ts";
 import { isIdleWorker, isSnoozed, workerCompletionIsCurrent } from "./ThreadSettlementService.ts";
+import { finishedWorkerAt } from "./WorkerArchiveCandidates.ts";
 import {
   makeForkDelegatedCompletion,
   completionCohort,
@@ -17286,19 +17287,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       case "thread.archive":
       case "thread.unarchive": {
-        if (command.type === "thread.archive" && command.workerArchiveSequence !== undefined) {
+        if (command.type === "thread.archive" && command.archiveDelegatedWorker) {
           const [worker] = yield* projectionStore
             .getSettlementCandidates(command.threadId, {})
             .pipe(mapDispatchError(command));
-          if (
-            worker === undefined ||
-            worker.workerArchiveSequence !== command.workerArchiveSequence ||
-            !isIdleWorker(worker, yield* DateTime.now) ||
-            (worker.workerTemporaryCompletedAt !== undefined &&
-              (worker.workerTemporaryCompletedAt === null ||
-                !workerCompletionIsCurrent(worker, worker.workerTemporaryCompletedAt)))
-          )
-            return { events: [], effects: [] };
+          if (worker === undefined || finishedWorkerAt(worker, yield* DateTime.now) === null) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause:
+                "The child is not eligible to archive. Check its result, pending work and pin state.",
+            });
+          }
         }
         const parentArchivedAt = (yield* findThread(command.threadId))?.archivedAt ?? null;
         yield* dispatchThreadMutation(command, events, effects);
@@ -17844,7 +17844,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.type === "subagent.stop" ||
             // Closing a share again, or after it ended, is not an error.
             command.type === "thread.guest-share.close" ||
-            (command.type === "thread.archive" && command.workerArchiveSequence !== undefined) ||
             (command.type === "thread.delete" &&
               (command.onlyIfUnused === true || command.workerDeleteArchivedAt !== undefined)),
           (_planned) =>
@@ -18116,7 +18115,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (
       command.type === "thread.delete" ||
-      command.type === "thread.archive" ||
+      (command.type === "thread.archive" && !command.archiveDelegatedWorker) ||
       command.type === "thread.unarchive"
     ) {
       const cascade = threadDispatch.withLock(
