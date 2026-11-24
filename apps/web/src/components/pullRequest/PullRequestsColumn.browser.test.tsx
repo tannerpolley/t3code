@@ -25,6 +25,7 @@ function createColumn(maximizedAway: boolean, scrollRef: RefObject<HTMLDivElemen
       searchInput={<input aria-label="Search pull requests" />}
       sortMenu={null}
       filtersMenu={null}
+      decisionsToggle={null}
       savedViewsMenu={null}
       rightPanelControl={null}
       titlebarControls={null}
@@ -95,6 +96,7 @@ function CondensedSearchColumn({
         }
         sortMenu={null}
         filtersMenu={null}
+        decisionsToggle={null}
         savedViewsMenu={null}
         rightPanelControl={null}
         titlebarControls={null}

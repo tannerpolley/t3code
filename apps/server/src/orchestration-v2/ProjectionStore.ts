@@ -10256,7 +10256,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const workers =
         workerPage === undefined
           ? undefined
-          : yield* sql<{ thread_id: ThreadId; created_at: string; total: number }>`
+          : yield* sql<{
+              thread_id: ThreadId;
+              created_at: string;
+              nested: number;
+              total: number | null;
+            }>`
           WITH RECURSIVE descendants(thread_id) AS (
             VALUES (${workerPage.parentThreadId})
             UNION
@@ -10265,20 +10270,51 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             CROSS JOIN orchestration_v2_projection_threads child
             WHERE CASE WHEN json_valid(child.payload_json)
                 THEN json_extract(child.payload_json, '$.lineage.parentThreadId') END = +descendants.thread_id
+          ),
+          workers AS (
+            -- A worker whose parent is a live worker below the paged parent shows under that worker.
+            SELECT child.thread_id, child.created_at, parent.thread_id AS parent_id, coalesce(
+              parent.thread_id <> ${workerPage.parentThreadId}
+                AND parent.archived_at IS NULL AND parent.deleted_at IS NULL
+                AND CASE WHEN json_valid(parent.payload_json)
+                  THEN json_extract(parent.payload_json, '$.lineage.relationshipToParent') END = 'subagent',
+              0
+            ) AS nested
+            FROM descendants
+            JOIN orchestration_v2_projection_threads child USING (thread_id)
+            LEFT JOIN orchestration_v2_projection_threads parent
+              ON parent.thread_id = CASE WHEN json_valid(child.payload_json)
+                THEN json_extract(child.payload_json, '$.lineage.parentThreadId') END
+            WHERE child.thread_id <> ${workerPage.parentThreadId}
+              AND child.archived_at IS NULL AND child.deleted_at IS NULL
+              AND CASE WHEN json_valid(child.payload_json)
+                THEN json_extract(child.payload_json, '$.lineage.relationshipToParent') END = 'subagent'
+          ),
+          listed AS (
+            SELECT thread_id, count(*) OVER () AS total
+            FROM workers
+            WHERE NOT nested
+              ${workerPage.before === undefined ? sql`` : sql`AND (created_at, thread_id) < (${workerPage.before.createdAt}, ${workerPage.before.threadId})`}
+            ORDER BY created_at DESC, thread_id DESC
+            LIMIT ${SIDEBAR_WORKER_PAGE_SIZE}
+          ),
+          -- Pages count listed rows; each carries the workers nested beneath it.
+          paged(thread_id) AS (
+            SELECT thread_id FROM listed
+            UNION
+            SELECT workers.thread_id FROM paged JOIN workers ON workers.parent_id = paged.thread_id
+            WHERE workers.nested
           )
-          SELECT thread_id, created_at, count(*) OVER () AS total
-          FROM descendants
-          JOIN orchestration_v2_projection_threads USING (thread_id)
-          WHERE thread_id <> ${workerPage.parentThreadId} AND archived_at IS NULL AND deleted_at IS NULL
-            AND CASE WHEN json_valid(payload_json)
-              THEN json_extract(payload_json, '$.lineage.relationshipToParent') END = 'subagent'
-            ${workerPage.before === undefined ? sql`` : sql`AND (created_at, thread_id) < (${workerPage.before.createdAt}, ${workerPage.before.threadId})`}
-          ORDER BY created_at DESC, thread_id DESC
-          LIMIT ${SIDEBAR_WORKER_PAGE_SIZE}
+          SELECT workers.thread_id, workers.created_at, workers.nested, listed.total
+          FROM paged
+          JOIN workers USING (thread_id)
+          LEFT JOIN listed USING (thread_id)
+          ORDER BY workers.created_at DESC, workers.thread_id DESC
         `;
+      const listed = workers?.filter((row) => !row.nested);
       const remainingWorkers =
-        workers === undefined ? undefined : (workers[0]?.total ?? 0) - workers.length;
-      const lastVisible = workers?.at(-1);
+        listed === undefined ? undefined : (listed[0]?.total ?? 0) - listed.length;
+      const lastVisible = listed?.at(-1);
       const nextWorkerPage =
         lastVisible !== undefined && (remainingWorkers ?? 0) > 0
           ? { createdAt: lastVisible.created_at, threadId: lastVisible.thread_id }
