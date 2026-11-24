@@ -94,11 +94,17 @@ it("dims only finished, disposable workers", () => {
   const issueWorker = { ...reviewer, source: { ...reviewer.source, linkedIssue } };
   const writer = { ...reviewer, source: { ...reviewer.source, role: "writer" as const } };
   const pinned = { ...reviewer, pinnedAt: "2026-11-20T00:00:00Z" };
+  const nativeWriter = {
+    ...writer,
+    source: { ...writer.source, creationSource: "provider" as const },
+  };
 
   expect(sidebarWorkerRecedes(reviewer, undefined)).toBe(true);
   expect(sidebarWorkerRecedes(issueWorker, "done")).toBe(true);
   expect(sidebarWorkerRecedes(issueWorker, "paused")).toBe(false);
+  expect(sidebarWorkerRecedes(issueWorker, "suspended")).toBe(false);
   expect(sidebarWorkerRecedes(issueWorker, "idle")).toBe(false);
   expect(sidebarWorkerRecedes(writer, undefined)).toBe(false);
   expect(sidebarWorkerRecedes(pinned, undefined)).toBe(false);
+  expect(sidebarWorkerRecedes(nativeWriter, undefined)).toBe(true);
 });

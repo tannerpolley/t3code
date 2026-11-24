@@ -172,6 +172,7 @@ export function useSidebarIssueWorkerStatus(thread: EnvironmentThreadShell, idle
       : sidebarIssueStatus(JSON.stringify([thread.environmentId, issue.host, issue.nodeId])),
   );
   if (issue === undefined) return undefined;
+  if (status?.suspensionReason !== undefined) return "suspended";
   const links = visibleThreadPullRequests(thread.pullRequests);
   const workerStatus = issueWorkerStatus(
     { ...classifyIssueWorker(thread.source), pullRequests: links.map((pr) => pr.url) },
