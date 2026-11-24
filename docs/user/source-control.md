@@ -500,14 +500,15 @@ its remaining writes. Propose another create only when you intend to create anot
 By default, T3 automatically hands off a Claude or Codex repository orchestrator at the first
 safe idle boundary after its eighth provider compaction of a full context. Idle and manual
 `/compact` are excluded. The count starts at zero in the successor. T3 archives the old thread
-after the successor verifies it can continue. Both threads link to each other in the sidebar.
+after the successor verifies it can continue.
 Open **Settings → Threads → Orchestration** to turn this off or change the count for the
 environment or a project.
 
 To replace the orchestrator's conversation manually, open **Repository orchestration** in the project's
 settings, choose **Hand off to a fresh thread** from the menu beside its orchestrator, and provide a
 summary. Starting the handoff pauses new issue admissions while existing workers and their final
-results finish. The fresh thread receives your summary and a recovery inventory. Saved requests
+results finish. T3 archives the previous orchestrator when the fresh thread takes over. The fresh
+thread receives your summary and a recovery inventory. Saved requests
 from an older build proceed when their source thread has full access and is in default mode.
 You can cancel a pending handoff in Settings, and the same menu opens previous orchestrators.
 For a routine provider or model change, keep the same thread.

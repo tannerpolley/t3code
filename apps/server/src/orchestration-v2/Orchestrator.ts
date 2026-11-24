@@ -266,7 +266,7 @@ import {
   usageLimitRecoveryPending,
 } from "./usageLimitRecoveryPending.ts";
 import { isIdleWorker, isSnoozed, workerCompletionIsCurrent } from "./ThreadSettlementService.ts";
-import { finishedWorkerAt } from "./WorkerArchiveCandidates.ts";
+import { finishedWorkerAt, finishedWorkers } from "./WorkerArchiveCandidates.ts";
 import {
   makeForkDelegatedCompletion,
   completionCohort,
@@ -4368,10 +4368,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           } as const);
     const thread = (yield* Ref.get(input.events)).findLast(
       (event) =>
-        event.threadId === input.projection.thread.id && event.type === "thread.metadata-updated",
+        event.threadId === input.projection.thread.id &&
+        (event.type === "thread.metadata-updated" || event.type === "thread.archived"),
     );
     for (const event of completionCohortEvents(
-      thread?.type === "thread.metadata-updated" ? thread.payload : input.projection.thread,
+      thread?.type === "thread.metadata-updated" || thread?.type === "thread.archived"
+        ? thread.payload
+        : input.projection.thread,
       parentRun,
       nextCohort,
       input.now,
@@ -18075,10 +18078,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // dispatchWithReceiptEffect owns the span; issue policy supplies reads before locking.
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
-    return yield* withAdmissionReads(command, dispatchWithLocks, {
+    const result = yield* withAdmissionReads(command, dispatchWithLocks, {
       commandThreadId,
       mapDispatchError,
     });
+    if (
+      command.type === "repository.work.handoff" &&
+      result.storedEvents.some(({ event }) => event.type === "thread.archived")
+    ) {
+      yield* archiveHandoffWorkers(command.threadId, command.commandId);
+    }
+    return result;
   });
   // The admission wrapper supplies snapshots before any planning locks are taken.
   const dispatchWithLocks = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
@@ -18149,6 +18159,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ? withSubagentParentLock(command.threadId, dispatch)
       : dispatch;
   });
+
+  const archiveHandoffWorkers = Effect.fn("Orchestrator.archiveHandoffWorkers")(
+    function* (rootThreadId: ThreadId, handoffCommandId: CommandId) {
+      const workers = yield* finishedWorkers(projectionStore, yield* DateTime.now, rootThreadId);
+      for (const threadId of workers.keys()) {
+        // The archive command rechecks eligibility under each worker's dispatch lock.
+        yield* dispatchWithLocks({
+          type: "thread.archive",
+          threadId,
+          commandId: CommandId.make(`${handoffCommandId}:archive-child:${threadId}`),
+          archiveDelegatedWorker: true,
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not archive a finished handoff worker", { threadId, cause }),
+          ),
+        );
+      }
+    },
+    (effect, rootThreadId) =>
+      effect.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not find finished handoff workers", { rootThreadId, cause }),
+        ),
+      ),
+  );
 
   const parentTaskSyncRetries = yield* FiberSet.make();
   const syncDelegatedParentTask = Effect.fn("Orchestrator.syncDelegatedParentTask")(function* (

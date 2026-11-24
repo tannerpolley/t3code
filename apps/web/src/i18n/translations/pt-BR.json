@@ -12449,8 +12449,6 @@
   "f31a95961de19433": "Issue {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} issue vinculada} other {{count} issues vinculadas}}",
   "8cf699ae75fd8067": "Fixadas",
-  "50c54e168c9c4ab6": "Predecessor",
-  "759e59bb1b2ed0b6": "Sucessor",
   "be451f475c514b37": "Dispensar notificação de despertar",
   "e9ced65134f2f36c": "Despertar thread agora",
   "aca5896600bf173e": "Você está com outro branch em checkout no momento.",
