@@ -4,6 +4,8 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { describeSidebarBackgroundWork } from "../sidebar/SidebarBackgroundWork.logic";
@@ -32,23 +34,40 @@ function describeTask(
   );
   const command = task.command ?? (item?.type === "command_execution" ? item.input : undefined);
   const description = task.description?.trim();
-  const title =
-    description && description !== command?.trim()
-      ? description
-      : command
-        ? "Command"
-        : task.kind.replaceAll("_", " ");
   const itemId = task.itemId ?? (item?.type === "command_execution" ? item.id : undefined);
-  return { task, item, command, title, itemId };
+  return { task, item, command, description, itemId };
 }
 
 function TaskDetails({ detail }: { readonly detail: ReturnType<typeof describeTask> }) {
+  const gt = useGT();
+  const kindLabel = (kind: string) => {
+    switch (kind) {
+      case "subagent":
+        return gt("subagent", { $context: "kind of background work" });
+      case "command":
+        return gt("command", { $context: "kind of background work" });
+      case "monitor":
+        return gt("monitor", { $context: "kind of background work" });
+      case "background_task":
+        return gt("background task", { $context: "kind of background work" });
+      default:
+        return kind.replaceAll("_", " ");
+    }
+  };
+  const title =
+    detail.description && detail.description !== detail.command?.trim()
+      ? detail.description
+      : detail.command
+        ? gt("Command", { $context: "title of a background shell command" })
+        : kindLabel(detail.task.kind);
   return (
     <section className="space-y-2 text-sm">
       <div className="flex items-baseline justify-between gap-3">
-        <h3 className="font-medium">{detail.title}</h3>
+        <h3 className="font-medium">{title}</h3>
         <span className="shrink-0 text-xs text-muted-foreground">
-          {detail.task.awaited ? "Waiting" : "Running"}
+          {backgroundWorkHoldsCompletion([detail.task])
+            ? gt("Waiting", { $context: "status of background work" })
+            : gt("Running", { $context: "status of background work" })}
         </span>
       </div>
       {detail.command ? (
@@ -84,10 +103,14 @@ export function BackgroundWorkDetails(props: {
   };
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<InlineButton />}>Details</DialogTrigger>
+      <DialogTrigger render={<InlineButton />}>
+        <T>Details</T>
+      </DialogTrigger>
       <DialogPopup>
         <DialogHeader>
-          <DialogTitle>Background work</DialogTitle>
+          <DialogTitle>
+            <T>Background work</T>
+          </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <BackgroundWorkTaskList
@@ -112,7 +135,7 @@ export function BackgroundWorkDetails(props: {
                         props.onOpenThread(childThreadId);
                       }}
                     >
-                      Open subagent
+                      <T>Open subagent</T>
                     </InlineButton>
                   ) : null}
                 </li>

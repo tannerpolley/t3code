@@ -35,7 +35,6 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     sidebarMode: "activity",
     sidebarProjectScopeKeys: [],
     threadLastVisitedAtById: {},
-    threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     pullRequestMergeMethod: "merge",
     lineageDetailsExpandedById: {},
@@ -159,13 +158,6 @@ describe("parsePersistedState", () => {
         invalid: "not-a-date",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
-      threadChangedFilesExpansionVersion: 2,
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-          "turn-2": true,
-        },
-      },
     });
 
     expect(parsed).toEqual({
@@ -186,12 +178,6 @@ describe("parsePersistedState", () => {
       lineageAgentsClearedAtById: {},
       issueMilestoneCollapsedById: {},
       branchPickerCollapsedGroups: [],
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-          "turn-2": true,
-        },
-      },
     });
   });
 });
@@ -241,12 +227,6 @@ describe("uiStateStore persistence", () => {
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-          "turn-2": true,
-        },
-      },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
     });
 
@@ -267,13 +247,6 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
-      threadChangedFilesExpansionVersion: 2,
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-          "turn-2": true,
-        },
-      },
       pullRequestMergeMethod: "merge",
       lineageDetailsExpandedById: {},
       lineageAgentsClearedAtById: {},

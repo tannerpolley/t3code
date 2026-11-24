@@ -579,81 +579,105 @@ it.effect.each([false, true])(
   "queued issue workers take a free slot ahead of earlier waiting workers (queued while paused: %s)",
   (pausedWhileQueued) =>
     Effect.gen(function* () {
-      const service = yield* IssueWorkService.IssueWorkService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const store = yield* IssueWorkStore.IssueWorkStore;
-      const sink = yield* EventSink.EventSinkV2;
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      yield* createRoot(false);
-      const startIssue = (number: number, key: string) =>
-        service.start({
-          ...input(number, key),
-          projectId,
-          modelRoleId: "implementor-complex",
-        });
-      const setPaused = (paused: boolean) =>
-        service.setPaused({
-          ...reference,
-          paused,
-          clientRequestId: CommandId.make(`ordering-paused:${paused}`),
-        });
-      const runOf = (threadId: ThreadId) =>
-        threads.getThreadRecords(threadId, ["runs"]).pipe(Effect.map(({ runs }) => runs[0]!));
-      yield* startIssue(3, "a-running-worker");
-      yield* TestClock.adjust("1 second");
-      // Sorts before the queue's request ids, so only the admission order can put issue 5 first.
-      yield* startIssue(4, "a-waiting-worker");
-      yield* TestClock.adjust("1 second");
-      yield* worker.drain();
-      const running = (yield* store.issueOwner(issue(3)))!;
-      const earlier = (yield* store.issueOwner(issue(4)))!;
-      assert.equal(yield* store.slotsInUse(rootId), 1);
-      assert.equal((yield* runOf(earlier)).status, "queued");
-      const sequence = yield* sink.latestSequence();
-      if (pausedWhileQueued) {
-        // The slot frees while paused; resuming must offer it to the queue entry first.
-        yield* setPaused(true);
-        yield* service.queueIssue(input(5));
-        const paused = yield* sink.latestSequence();
-        yield* finish(yield* runOf(running), "running-worker-finished");
-        // The completion's promotion attempt finishes while paused, before the resume.
-        yield* sink.stream({ afterSequence: paused }).pipe(
+      const resumeStarted = yield* Deferred.make<void>();
+      const readingQueuedIssue = yield* Deferred.make<void>();
+      const releaseQueuedIssueRead = yield* Deferred.make<void>();
+      const issueReads = Layer.effect(
+        IssueService.IssueService,
+        Effect.map(IssueService.IssueService, (service) => ({
+          ...service,
+          workRead: (input, options) =>
+            Effect.gen(function* () {
+              if (input.number === 5 && (yield* Deferred.isDone(resumeStarted))) {
+                yield* Deferred.succeed(readingQueuedIssue, undefined);
+                yield* Deferred.await(releaseQueuedIssueRead);
+              }
+              return yield* service.workRead(input, options);
+            }),
+        })),
+      ).pipe(Layer.provide(reads));
+      yield* Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        const sink = yield* EventSink.EventSinkV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* createRoot(false);
+        const startIssue = (number: number, key: string) =>
+          service.start({
+            ...input(number, key),
+            projectId,
+            modelRoleId: "implementor-complex",
+          });
+        const setPaused = (paused: boolean) =>
+          service.setPaused({
+            ...reference,
+            paused,
+            clientRequestId: CommandId.make(`ordering-paused:${paused}`),
+          });
+        const runOf = (threadId: ThreadId) =>
+          threads.getThreadRecords(threadId, ["runs"]).pipe(Effect.map(({ runs }) => runs[0]!));
+        yield* startIssue(3, "a-running-worker");
+        yield* TestClock.adjust("1 second");
+        // Sorts before the queue's request ids, so only the admission order can put issue 5 first.
+        yield* startIssue(4, "a-waiting-worker");
+        yield* TestClock.adjust("1 second");
+        yield* worker.drain();
+        const running = (yield* store.issueOwner(issue(3)))!;
+        const earlier = (yield* store.issueOwner(issue(4)))!;
+        assert.equal(yield* store.slotsInUse(rootId), 1);
+        assert.equal((yield* runOf(earlier)).status, "queued");
+        const sequence = yield* sink.latestSequence();
+        if (pausedWhileQueued) {
+          // The slot frees while paused; resuming must offer it to the queue entry first.
+          yield* setPaused(true);
+          yield* service.queueIssue(input(5));
+          yield* finish(yield* runOf(running), "running-worker-finished");
+          // An in-flight promotion can record the pause before the completed run retries it.
+          yield* sink.stream({ afterSequence: sequence }).pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "run.updated" &&
+                stored.event.threadId === earlier &&
+                stored.event.payload.admissionWait === "repository_paused",
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+          );
+          yield* worker.drain();
+          assert.isNull(yield* store.issueOwner(issue(5)));
+          yield* Deferred.succeed(resumeStarted, undefined);
+          const resume = yield* setPaused(false).pipe(Effect.forkScoped);
+          yield* Deferred.await(readingQueuedIssue);
+          yield* orchestrator.resumeQueuedRuns;
+          yield* Deferred.succeed(releaseQueuedIssueRead, undefined);
+          yield* Fiber.join(resume);
+        } else {
+          yield* service.queueIssue(input(5));
+          const waiting = (yield* store.issueOwner(issue(5)))!;
+          assert.equal((yield* runOf(waiting)).status, "queued");
+          assert.deepEqual(yield* store.admissionThreads(rootId), [waiting, earlier]);
+          yield* finish(yield* runOf(running), "running-worker-finished");
+        }
+        const queued = (yield* store.issueOwner(issue(5)))!;
+        // Workspace preparation runs before admission; the first run to start took the freed slot.
+        const [admitted] = yield* sink.stream({ afterSequence: sequence }).pipe(
           Stream.filter(
             (stored) =>
-              stored.event.type === "run.updated" &&
-              stored.event.threadId === earlier &&
-              stored.event.payload.admissionWait === "repository_paused",
+              (stored.event.type === "run.updated" || stored.event.type === "run.created") &&
+              (stored.event.threadId === queued || stored.event.threadId === earlier) &&
+              stored.event.payload.status === "starting",
           ),
           Stream.take(1),
           Stream.runCollect,
         );
+        assert.equal(admitted!.event.threadId, queued);
         yield* worker.drain();
-        assert.isNull(yield* store.issueOwner(issue(5)));
-        yield* setPaused(false);
-      } else {
-        yield* service.queueIssue(input(5));
-        const waiting = (yield* store.issueOwner(issue(5)))!;
-        assert.equal((yield* runOf(waiting)).status, "queued");
-        assert.deepEqual(yield* store.admissionThreads(rootId), [waiting, earlier]);
-        yield* finish(yield* runOf(running), "running-worker-finished");
-      }
-      const queued = (yield* store.issueOwner(issue(5)))!;
-      // Workspace preparation runs before admission; the first run to start took the freed slot.
-      const [admitted] = yield* sink.stream({ afterSequence: sequence }).pipe(
-        Stream.filter(
-          (stored) =>
-            (stored.event.type === "run.updated" || stored.event.type === "run.created") &&
-            (stored.event.threadId === queued || stored.event.threadId === earlier) &&
-            stored.event.payload.status === "starting",
-        ),
-        Stream.take(1),
-        Stream.runCollect,
-      );
-      assert.equal(admitted!.event.threadId, queued);
-      yield* worker.drain();
-      assert.equal((yield* runOf(earlier)).status, "queued");
-      assert.equal(yield* store.slotsInUse(rootId), 1);
-    }).pipe(Effect.provide(harness())),
+        assert.equal((yield* runOf(earlier)).status, "queued");
+        assert.equal(yield* store.slotsInUse(rootId), 1);
+      }).pipe(Effect.provide(harness(issueReads)));
+    }),
 );
 
 const createRoot = (paused = true) =>

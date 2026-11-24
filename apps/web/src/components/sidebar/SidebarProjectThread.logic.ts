@@ -27,7 +27,7 @@ export function sidebarProjectThreadPullRequests(links: ReadonlyArray<ThreadPull
   return {
     ...presentation,
     count,
-    label: `${count} pull ${count === 1 ? "request" : "requests"}, ${presentation.label.toLowerCase()} (last recorded)`,
+    label: `${count} pull ${count === 1 ? "request" : "requests"}, ${badge.state} (last recorded)`,
   };
 }
 

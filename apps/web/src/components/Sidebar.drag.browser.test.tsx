@@ -1,4 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
+import { EMPTY_SIDEBAR_LAYOUT } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -7,8 +8,9 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { AppRoot } from "~/AppRoot";
 // The thread route loads ChatView lazily; its first transform would eat the test's timeout.
 import "~/components/ChatView";
-import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
+import { SIDEBAR_DISPLAY_KEY, useUiStateStore } from "~/uiStateStore";
 import {
   ENVIRONMENT_ID,
   installFakeEnvironment,
@@ -38,9 +40,27 @@ it("shows the titled preview inside and outside search results from a collapsed 
   await page.viewport(1400, 900);
   const [first, second] = [threadWithHistory("visible", 1), threadWithHistory("search-target", 1)];
   using _environment = installFakeEnvironment([first, second]);
+  using cleanup = new DisposableStack();
+  const localLayoutKey = `t3code:sidebar-local:${ENVIRONMENT_ID}`;
+  const sidebarOpenKey = "chat_thread_sidebar_open";
+  for (const key of [localLayoutKey, SIDEBAR_DISPLAY_KEY, sidebarOpenKey]) {
+    const savedValue = localStorage.getItem(key);
+    cleanup.defer(() => {
+      if (savedValue === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, savedValue);
+    });
+  }
+  localStorage.setItem(localLayoutKey, JSON.stringify(EMPTY_SIDEBAR_LAYOUT));
+  localStorage.setItem(sidebarOpenKey, "true");
+  const savedState = useUiStateStore.getState();
+  cleanup.defer(() => useUiStateStore.setState(savedState, true));
+  useUiStateStore.setState({ sidebarDisplaySnapshot: null, sidebarProjectScopeKeys: [] });
+  const settings = getClientSettings();
+  cleanup.defer(() => __setClientSettingsForTests(settings));
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     boringSidebarEnabled: true,
+    projectsView: false,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const router = getRouter(
@@ -129,6 +149,7 @@ it("keeps focus in the search box when a click picks a search result", async () 
           searchQuery="invoice"
           onHighlight={() => {}}
           onSelect={onSelect}
+          onContextMenu={() => {}}
           onFileDropThreads={() => {}}
         />
       </ul>

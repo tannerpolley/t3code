@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
@@ -61,6 +62,7 @@ export function IssueQueueAction({
   reference: RepositoryIssueRef;
   issue: RepositoryIssueSummary;
 }) {
+  const gt = useGT();
   const status = useIssueQueue(environmentId, reference);
   const enqueue = useAtomCommand(repositoryIssueEnvironment.queueIssue, { reportFailure: false });
   const dequeue = useAtomCommand(repositoryIssueEnvironment.unqueueIssue, { reportFailure: false });
@@ -97,7 +99,9 @@ export function IssueQueueAction({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: `Could not ${remove ? "remove issue from" : "add issue to"} queue`,
+        title: remove
+          ? gt("Could not remove issue from queue")
+          : gt("Could not add issue to queue"),
         description: formatEnvironmentQueryError(result.cause),
       });
       return;
@@ -108,7 +112,7 @@ export function IssueQueueAction({
     <>
       {queued ? (
         <Badge variant="secondary" size="sm">
-          Queued
+          <T>Queued</T>
         </Badge>
       ) : null}
       {queued && suspended ? (
@@ -118,7 +122,7 @@ export function IssueQueueAction({
           disabled={busy || !canQueue}
           onClick={() => void change(false)}
         >
-          Resume
+          <T>Resume</T>
         </Button>
       ) : null}
       <Tooltip>
@@ -127,19 +131,19 @@ export function IssueQueueAction({
             <Button
               variant={resumable ? "outline" : "ghost"}
               size={resumable ? "xs" : "icon-xs"}
-              aria-label={resumable ? "Resume issue" : label}
+              aria-label={resumable ? gt("Resume issue") : label}
               disabled={busy || status.data === null || (queued ? !canUnqueue : !canQueue)}
               onClick={() => void change()}
             />
           }
         >
           {queued ? <ListMinusIcon aria-hidden /> : <ListPlusIcon aria-hidden />}
-          {resumable ? "Resume" : null}
+          {resumable ? gt("Resume") : null}
         </TooltipTrigger>
         <TooltipPopup side="top">
-          {resumable ? "Resume issue" : label}
+          {resumable ? gt("Resume issue") : label}
           {queued && status.data?.rootThreadId === null
-            ? " · Waiting for a repository orchestrator"
+            ? gt(" · Waiting for a repository orchestrator")
             : ""}
         </TooltipPopup>
       </Tooltip>

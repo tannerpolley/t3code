@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 import type { AnyRouter } from "@tanstack/react-router";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -150,16 +152,16 @@ export function startThreadNotifications(
         : { environmentId, threadId: thread.id };
     const title =
       kind === "completion"
-        ? "Thread completed"
+        ? m(msg("Thread completed"))
         : status === "approval"
-          ? "Approval needed"
+          ? m(msg("Approval needed"))
           : status === "limited"
-            ? "Usage limit reached"
+            ? m(msg("Usage limit reached"))
             : status === "failed"
-              ? "Thread failed"
+              ? m(msg("Thread failed"))
               : status === "request"
-                ? "Guest request"
-                : "Input needed";
+                ? m(msg("Guest request"))
+                : m(msg("Input needed"));
     const failureReason =
       status === "failed" ? (attention?.reason ?? thread.runtime?.lastError) : null;
     const description = failureReason ? `${thread.title}: ${failureReason}` : thread.title;
@@ -196,7 +198,7 @@ export function startThreadNotifications(
             ),
         },
         actionProps: {
-          children: "Open thread",
+          children: m(msg("Open thread")),
           onClick: () => {
             toastManager.close(toastId);
             void router.navigate({
@@ -340,6 +342,8 @@ export function startThreadNotifications(
       });
     }
     if (hasNotificationSound(nextMode)) {
+      // Electron's default autoplay policy needs no gesture, unlike browsers.
+      if (window.desktopBridge) unlockNotificationAudio();
       document.addEventListener("pointerdown", unlockNotificationAudio);
       document.addEventListener("keydown", unlockNotificationAudio);
       stops.push(() => {

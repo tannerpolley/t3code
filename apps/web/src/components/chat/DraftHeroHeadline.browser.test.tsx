@@ -1,6 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { ProjectId } from "@t3tools/contracts";
+import { EMPTY_SIDEBAR_LAYOUT, ProjectId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -12,7 +12,6 @@ import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
-import { useUiStateStore } from "~/uiStateStore";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
@@ -51,14 +50,21 @@ it("the new-thread project picker follows the manual sidebar project order", asy
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
     sidebarProjectSortOrder: "manual",
   });
-  useUiStateStore.setState({
-    projectOrder: [
-      `${ENVIRONMENT_ID}:/workspace/beta`,
-      `${ENVIRONMENT_ID}:/workspace/render`,
-      `${ENVIRONMENT_ID}:/workspace/alpha`,
-    ],
-  });
-  using _order = { [Symbol.dispose]: () => useUiStateStore.setState({ projectOrder: [] }) };
+  const layoutKey = `t3code:sidebar-local:${ENVIRONMENT_ID}`;
+  const savedLayout = localStorage.getItem(layoutKey);
+  using _layout = {
+    [Symbol.dispose]: () => {
+      if (savedLayout === null) localStorage.removeItem(layoutKey);
+      else localStorage.setItem(layoutKey, savedLayout);
+    },
+  };
+  localStorage.setItem(
+    layoutKey,
+    JSON.stringify({
+      ...EMPTY_SIDEBAR_LAYOUT,
+      projectOrder: [ProjectId.make("project-beta"), PROJECT_ID, ProjectId.make("project-alpha")],
+    }),
+  );
   const draftId = DraftId.make("draft-manual-order");
   useComposerDraftStore
     .getState()

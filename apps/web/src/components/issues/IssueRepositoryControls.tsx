@@ -612,7 +612,7 @@ function PendingHandoffLine({
       <span className="min-w-0 break-words">
         {draining
           ? gt("Handoff to {target} is draining", { target })
-          : gt("Handoff to {target} is pending", { target })}
+          : gt("Handoff to {target} awaits approval", { target })}
       </span>
       {handoff.requestedAt === undefined ? null : (
         <span className="shrink-0">

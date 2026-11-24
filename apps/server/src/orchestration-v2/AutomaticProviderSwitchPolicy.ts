@@ -35,6 +35,7 @@ import type {
 import type * as ServerSettings from "../serverSettings.ts";
 import type { isSnoozed } from "./ThreadSettlementService.ts";
 import { usageLimitQueuedRunEvents } from "./usageLimitQueuedRuns.ts";
+import { USAGE_LIMIT_SWITCH_HOLD_MS } from "./usageLimitRecoveryPending.ts";
 import type {
   usageLimitRecoveryPending,
   usageLimitSwitchMessageId,
@@ -247,6 +248,23 @@ export function makeAutomaticProviderSwitchPolicy<RestartError>({
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))))
     );
   });
+  const awaitsSwitchContinuation = (
+    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+    now: DateTime.Utc,
+  ): boolean => {
+    const { thread, runs } = projection;
+    const marker = thread.autoProviderSwitch;
+    if (!marker?.to || !modelSelectionsEqual(thread.modelSelection, marker.to)) return false;
+    const source = latestExecutedRun(runs);
+    return (
+      source?.id === marker.runId &&
+      source.status === "failed" &&
+      DateTime.toEpochMillis(now) <
+        DateTime.toEpochMillis(source.completedAt ?? source.requestedAt) +
+          USAGE_LIMIT_SWITCH_HOLD_MS &&
+      !runs.some((run) => run.userMessageId === usageLimitSwitchMessageId(thread.id, source.id))
+    );
+  };
   const withdrawReleasedContinuation = Effect.fnUntraced(function* (threadId: ThreadId) {
     const { thread, runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
     const marker = thread.autoProviderSwitch;
@@ -348,6 +366,7 @@ export function makeAutomaticProviderSwitchPolicy<RestartError>({
     guardContinuation,
     continuedTaskId,
     queuedContinuationReleased,
+    awaitsSwitchContinuation,
     withdrawReleasedContinuation,
     retargetQueuedRuns,
     childAwaitsRecoveryContinuation,

@@ -15,11 +15,8 @@ function isInside(path: string, folder: string): boolean {
 }
 
 /**
- * Arranges sections to mirror the folders under `root`: a project in `root/A/B/project` lands in
- * section A, subsection B; deeper folders fold into B. Existing sections are reused by name, so
- * running it again only moves what changed. A project inside another project's folder (a
- * superproject with submodules) goes wherever that project goes. Projects directly in `root`, or
- * outside it, keep their current place.
+ * Reuses sections by name. Deeper folders fold into the first subsection, and projects inside
+ * another project's folder follow that project. Projects outside or directly in root stay put.
  */
 export function organizeSectionsByFolder(input: {
   readonly sections: readonly SidebarProjectSection[];

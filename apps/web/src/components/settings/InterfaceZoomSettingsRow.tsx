@@ -1,10 +1,11 @@
+import { useGT } from "gt-react";
 import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import { INTERFACE_ZOOM_FACTORS, nearestInterfaceZoom } from "@t3tools/shared/interfaceZoom";
 import { useEffect, useState } from "react";
 
 import { isMacPlatform } from "~/lib/utils";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const percent = (factor: number) => `${Math.round(factor * 100)}%`;
 
@@ -14,9 +15,12 @@ const percent = (factor: number) => `${Math.round(factor * 100)}%`;
  * shortcuts change it too, which shows up here as a window resize.
  */
 export function InterfaceZoomSettingsRow() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge?.interfaceZoom;
   const [factor, setFactor] = useState<number | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the desktop shell's zoom factor and follows window resizes, which the bridge does not push.
   useEffect(() => {
     if (!bridge) return;
     let cancelled = false;
@@ -40,7 +44,10 @@ export function InterfaceZoomSettingsRow() {
   return (
     <SettingsRow
       {...searchableSetting("interface-zoom")}
-      description={`Make everything larger or smaller. ${mod}+= and ${mod}+- change it, ${mod}+0 resets it.`}
+      description={gt(
+        "Make everything larger or smaller. {mod}+= and {mod}+- change it, {mod}+0 resets it.",
+        { mod },
+      )}
       control={
         <Select
           value={String(factor)}
@@ -50,7 +57,7 @@ export function InterfaceZoomSettingsRow() {
             void bridge.set(next).catch(() => undefined);
           }}
         >
-          <SelectTrigger size="sm" className="w-full sm:w-28" aria-label="Interface zoom">
+          <SelectTrigger size="sm" className="w-full sm:w-28" aria-label={gt("Interface zoom")}>
             <SelectValue>{percent(factor)}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>

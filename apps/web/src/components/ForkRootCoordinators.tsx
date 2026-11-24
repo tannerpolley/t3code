@@ -7,7 +7,7 @@ import { QuestionPopup } from "./QuestionPopup";
 
 export function ForkRootCoordinators() {
   const fastShimmer = useClientSettings((settings) => settings.fastShimmer);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Synchronizes the fork setting with the document attribute used by CSS.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronizes the fork setting with the document attribute used by CSS.
   useEffect(() => {
     document.documentElement.toggleAttribute("data-fast-shimmer", fastShimmer);
   }, [fastShimmer]);

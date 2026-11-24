@@ -1,4 +1,6 @@
 import * as SqlClient from "effect/sql/SqlClient";
+import * as ModelManifest from "../provider/ModelManifest.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { USAGE_LIMIT_SWITCH_HOLD_MS } from "./usageLimitRecoveryPending.ts";
@@ -77,10 +79,13 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
-const layerPlatformTest = Layer.merge(
+const layerPlatformTest = Layer.mergeAll(
   Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
+  }),
+  Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+    runForThread: () => Effect.succeed({ status: "no-script" } as const),
   }),
 );
 
@@ -103,10 +108,13 @@ const layerVcsDriverRegistryTest = VcsDriverRegistry.layer.pipe(
 const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
   Layer.provide(layerVcsDriverRegistryTest),
 );
-const layerGitWorkflowTest = Layer.mock(GitWorkflow.GitWorkflowService)({
-  pruneWorktrees: () => Effect.void,
-  createWorktree: () => Effect.succeed({} as never),
-});
+const layerGitWorkflowTest = Layer.merge(
+  Layer.mock(GitWorkflow.GitWorkflowService)({
+    pruneWorktrees: () => Effect.void,
+    createWorktree: () => Effect.succeed({} as never),
+  }),
+  layerNoTaskFolders,
+);
 const layerProjectServiceTest = Layer.mock(ProjectService.ProjectService)({
   getById: () => Effect.succeedNone,
 });
@@ -160,7 +168,7 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
     streamChanges: Stream.empty,
     subscribeChanges: Effect.never,
   },
-);
+).pipe(Layer.merge(ModelManifest.layerTest));
 
 const watchedPullRequestDetail = (input: {
   readonly projectId: ProjectId;
@@ -552,6 +560,7 @@ it.layer(layerTest)("thread workspace handoffs", (it) => {
             removeWorktree: () => Effect.void,
             deleteLocalBranch: () => Effect.void,
           }),
+          layerNoTaskFolders,
           Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
             runForThread: () => Effect.succeed({ status: "no-script" } as const),
           }),
@@ -736,9 +745,7 @@ it.layer(layerTest)("thread workspace handoffs", (it) => {
               worktreePath,
               expectedWorktreePath: worktreePath,
             },
-            continuationCommandId: CommandId.make("workspace-stale-continuation"),
             continuationMessageId: MessageId.make("workspace-stale-continuation"),
-            projectId,
             provenance: { createdBy: "user", creationSource: "web" },
           })
           .pipe(Effect.exit);
@@ -849,7 +856,7 @@ const layerSwitchInstances = Layer.succeed(ProviderInstanceRegistry.ProviderInst
   listUnavailable: Effect.succeed([]),
   streamChanges: Stream.empty,
   subscribeChanges: Effect.never,
-});
+}).pipe(Layer.merge(ModelManifest.layerTest));
 const makeUsageSwitchTest = (preferences: Parameters<typeof ServerSettings.layerTest>[0] = {}) =>
   Layer.mergeAll(
     RuntimeLayer.layer,

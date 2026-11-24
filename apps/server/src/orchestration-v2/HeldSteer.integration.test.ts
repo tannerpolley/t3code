@@ -269,11 +269,11 @@ it.effect("runs an early steer as a queued turn when the turn ends before going 
       yield* sendSteer("steer");
       const now = yield* DateTime.now;
       const turn = providerTurnFor(started[0]!, "completed", now);
-      const waiting = yield* watch(
+      const settled = yield* watch(
         (event) =>
           event.type === "run.updated" &&
           event.payload.id === first.id &&
-          event.payload.status === "waiting",
+          event.payload.status === "completed",
       );
       yield* Queue.offer(events, turn);
       yield* Queue.offer(events, {
@@ -286,8 +286,8 @@ it.effect("runs an early steer as a queued turn when the turn ends before going 
         failure: null,
         threadDisposition: "reusable",
       });
-      yield* Fiber.join(waiting);
-      // Never starts during checkpoint capture: still queued while waiting.
+      yield* Fiber.join(settled);
+      // The checkpoint effect precedes the next provider start on the lifecycle lane.
       const duringCapture = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(
         duringCapture.runs.find((run) => run.userMessageId === "message:steer")?.status,
@@ -353,11 +353,11 @@ it.effect.each(["live", "held", "held-switch", "promoted"] as const)(
         const finish = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
           Effect.gen(function* () {
             const now = yield* DateTime.now;
-            const waiting = yield* watch(
+            const settled = yield* watch(
               (event) =>
                 event.type === "run.updated" &&
                 event.payload.id === turn.runId &&
-                event.payload.status === "waiting",
+                event.payload.status === "completed",
             );
             const completed = providerTurnFor(turn, "completed", now);
             yield* Queue.offer(events, completed);
@@ -371,7 +371,7 @@ it.effect.each(["live", "held", "held-switch", "promoted"] as const)(
               failure: null,
               threadDisposition: "reusable",
             });
-            yield* Fiber.join(waiting);
+            yield* Fiber.join(settled);
             yield* worker.drain();
             yield* orchestrator.recoverDelegatedTasks;
           });

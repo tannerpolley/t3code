@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   FoldersIcon,
   ListPlusIcon,
@@ -28,6 +29,7 @@ export interface SidebarThreadHeaderProps {
   onNewSection: () => void;
 
   projectScope: ReactNode;
+  /** The Projects view has no folder picker, so it keeps its own Add project button. */
   onNewProject: () => void;
   onNewThread: (event: ReactMouseEvent) => void;
   newThreadDisabled: boolean;
@@ -65,6 +67,7 @@ export function SidebarThreadHeader({
   activeSearchResultIndex,
   onClearSearch,
 }: SidebarThreadHeaderProps) {
+  const gt = useGT();
   const canWriteLayout = useSidebarLayoutPermission();
   const projectsViewEnabled = useClientSettings((s) => s.projectsView);
   const codexStyleSidebar = useClientSettings((s) => s.codexStyleSidebar);
@@ -73,8 +76,8 @@ export function SidebarThreadHeader({
   // Shrinking results can remove the active option; never leave aria-activedescendant pointing at it.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
   const newThreadLabel = newThreadShortcutLabel
-    ? `New thread (${newThreadShortcutLabel})`
-    : "New thread";
+    ? gt("New thread ({shortcut})", { shortcut: newThreadShortcutLabel })
+    : gt("New thread");
 
   return (
     <div className="space-y-1">
@@ -88,8 +91,8 @@ export function SidebarThreadHeader({
             value={searchQuery}
             onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
             onKeyDown={onSearchKeyDown}
-            placeholder="Search"
-            aria-label="Search threads"
+            placeholder={gt("Search")}
+            aria-label={gt("Search threads")}
             role="combobox"
             aria-autocomplete="list"
             aria-expanded={resultsVisible}
@@ -107,7 +110,7 @@ export function SidebarThreadHeader({
               size="icon-micro"
               variant="ghost-muted"
               className="shrink-0"
-              aria-label="Clear thread search"
+              aria-label={gt("Clear thread search")}
               onClick={() => {
                 onClearSearch();
                 searchInputRef.current?.focus();
@@ -123,11 +126,11 @@ export function SidebarThreadHeader({
         <div className="flex shrink-0 items-center">
           {projectsViewEnabled ? (
             <>
-              <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
+              <SidebarHeaderIconButton label={gt("Add project")} onClick={onNewProject}>
                 <FolderPlusIcon />
               </SidebarHeaderIconButton>
               <SidebarHeaderIconButton
-                label={showingProjects ? "Show activity" : "Show projects"}
+                label={showingProjects ? gt("Show activity") : gt("Show projects")}
                 aria-pressed={showingProjects}
                 className={
                   showingProjects
@@ -140,22 +143,17 @@ export function SidebarThreadHeader({
               </SidebarHeaderIconButton>
             </>
           ) : hasProjects ? (
-            <>
-              {projectScope}
-              <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
-                <FolderPlusIcon />
-              </SidebarHeaderIconButton>
-            </>
+            projectScope
           ) : null}
           {!projectsViewEnabled ? (
             <SidebarHeaderIconButton
-              label="New thread"
+              label={gt("New thread")}
               tooltip={
                 showNewThreadInProjectHint ? (
                   <span className="flex flex-col gap-0.5">
                     <span>{newThreadLabel}</span>
                     <span className="text-muted-foreground">
-                      New thread in current project: Shift+click
+                      <T>New thread in current project: Shift+click</T>
                       {newThreadInProjectShortcutLabel
                         ? ` (${newThreadInProjectShortcutLabel})`
                         : ""}
@@ -182,7 +180,9 @@ export function SidebarThreadHeader({
               data-testid="sidebar-create-project-section"
             >
               <ListPlusIcon />
-              <span>New section</span>
+              <span>
+                <T>New section</T>
+              </span>
             </SidebarHeaderLabeledButton>
           ) : (
             <>
@@ -193,7 +193,9 @@ export function SidebarThreadHeader({
                 aria-label={newThreadLabel}
               >
                 <SquarePenIcon />
-                <span>New thread</span>
+                <span>
+                  <T>New thread</T>
+                </span>
               </SidebarHeaderLabeledButton>
             </>
           )}

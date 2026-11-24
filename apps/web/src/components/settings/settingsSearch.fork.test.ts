@@ -1,8 +1,28 @@
+import { getTranslationsSnapshot, initializeGT } from "gt-react";
 import { describe, expect, it } from "vite-plus/test";
 
+import { getActiveLocale, m, setActiveLocale } from "../../i18n/messages";
+import ja from "../../i18n/translations/ja.json";
 import { searchSettings } from "./settingsSearch";
 
 describe("searchSettings", () => {
+  it("finds the worktree location by its Japanese and fork-specific keywords", async () => {
+    initializeGT({
+      defaultLocale: "en",
+      locales: ["en", "ja"],
+      loadTranslations: async (locale) => (locale === "ja" ? ja : {}),
+    });
+    await getTranslationsSnapshot("ja");
+    const previous = getActiveLocale();
+    using _locale = { [Symbol.dispose]: () => setActiveLocale(previous) };
+    setActiveLocale("ja");
+
+    for (const query of ["外付け", "inside project local .worktrees"]) {
+      expect(searchSettings(query, undefined, m).map((item) => item.id)).toContain(
+        "storage-worktrees-location",
+      );
+    }
+  });
   it("finds keybinding commands by label, command id, and default key", () => {
     expect(searchSettings("toggle sidebar").map((item) => item.id)).toContain(
       "keybinding-sidebar.toggle",

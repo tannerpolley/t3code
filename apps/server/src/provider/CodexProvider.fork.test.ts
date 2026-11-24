@@ -91,7 +91,3 @@ it("tags plugin skills and lists only enabled plugins", () => {
     { name: "browser", marketplace: "openai-bundled", skillCount: 1, requiresDesktopApp: true },
   ]);
 });
-const account = {
-  account: { type: "chatgpt", email: "test@example.com", planType: "pro" },
-  requiresOpenaiAuth: false,
-} as const;

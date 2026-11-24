@@ -79,7 +79,9 @@ it.effect("rejects client commands that bypass managed issue admission before di
       },
     ];
     for (const command of commands) {
-      const rejected = yield* dispatchCommand(command).pipe(Effect.result);
+      const rejected = yield* dispatchCommand(command, { managesProviders: true }).pipe(
+        Effect.result,
+      );
       expect(rejected._tag).toBe("Failure");
       if (rejected._tag === "Failure")
         expect(String(rejected.failure)).toContain("issue work service");

@@ -1,6 +1,8 @@
 import type { LocalServerHideRule, ScopedThreadRef } from "@t3tools/contracts";
 import { EyeOff } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 
+import type { MessageResolver } from "../../i18n/messages";
 import { Button } from "../ui/button";
 import { DiscoveryListRow } from "../ui/discovery-list";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -16,8 +18,10 @@ interface Props {
 }
 
 export function PreviewLocalServerCard({ threadRef, server, onOpen, onHide }: Props) {
-  const subtitle = describeServer(server);
-  const label = discoveryLabel(server);
+  const gt = useGT();
+  const m = useMessages();
+  const subtitle = describeServer(server, m);
+  const label = discoveryLabel(server, m);
   const processName = server.processName;
   return (
     <div className="group relative">
@@ -37,7 +41,7 @@ export function PreviewLocalServerCard({ threadRef, server, onOpen, onHide }: Pr
                 variant="ghost"
                 size="icon-xs"
                 type="button"
-                aria-label={`Hide ${server.host}:${server.port}`}
+                aria-label={gt("Hide {host}:{port}", { host: server.host, port: server.port })}
               />
             }
           >
@@ -45,11 +49,15 @@ export function PreviewLocalServerCard({ threadRef, server, onOpen, onHide }: Pr
           </MenuTrigger>
           <MenuPopup align="end">
             <MenuItem onClick={() => onHide({ kind: "ports", from: server.port, to: server.port })}>
-              Hide port {server.port}
+              <T>
+                Hide port <Var>{server.port}</Var>
+              </T>
             </MenuItem>
             {processName ? (
               <MenuItem onClick={() => onHide({ kind: "process", processName })}>
-                Hide every {processName} server
+                <T>
+                  Hide every <Var>{processName}</Var> server
+                </T>
               </MenuItem>
             ) : null}
           </MenuPopup>
@@ -59,23 +67,23 @@ export function PreviewLocalServerCard({ threadRef, server, onOpen, onHide }: Pr
   );
 }
 
-function describeServer(server: PreviewableServer): string {
+function describeServer(server: PreviewableServer, resolve: MessageResolver): string {
   if (server.processName) return server.processName;
-  return "Listening";
+  return resolve(msg("Listening", { $context: "a local server is listening on a port" }));
 }
 
 /** Why the server is listed. Servers from before discovery labels carry no reason. */
-function discoveryLabel(server: PreviewableServer): string | null {
-  if (server.source === "configured") return "Configured";
+function discoveryLabel(server: PreviewableServer, resolve: MessageResolver): string | null {
+  if (server.source === "configured") return resolve(msg("Configured"));
   switch (server.reason) {
     case "t3":
-      return "Started by T3";
+      return resolve(msg("Started by T3"));
     case "systemd":
       return server.systemdUnit ?? "systemd service";
     case "project":
-      return "Project directory";
+      return resolve(msg("Project directory"));
     case "common-port":
-      return "Common port";
+      return resolve(msg("Common port"));
     case undefined:
       return null;
   }

@@ -77,11 +77,12 @@ vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
+  // Doubles as the add-project folder scan, which finds nothing to track.
   useAtomQueryRunner:
     () =>
-    async ({ input }: { input: { partialPath?: string } }) => ({
+    async ({ input }: { input?: { partialPath?: string } }) => ({
       _tag: "Success",
-      value: input.partialPath === undefined ? undefined : { parentPath: input.partialPath },
+      value: input?.partialPath === undefined ? { folders: [] } : { parentPath: input.partialPath },
     }),
 }));
 vi.mock("../projectSectionPlacement", async (original) => {
@@ -281,27 +282,32 @@ it("reports that the subsection could not be saved if its parent disappeared bef
 
 it("leaves a reopened subsection picker open when the previous save finishes", async () => {
   setup();
-  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-  const originalSections = useUiStateStore.getState().sidebarProjectSections;
+  const { sidebarProjectSections, sidebarDisplaySnapshot } = useUiStateStore.getState();
   using _sections = {
-    [Symbol.dispose]: () => useUiStateStore.setState({ sidebarProjectSections: originalSections }),
+    [Symbol.dispose]: () =>
+      useUiStateStore.setState({ sidebarProjectSections, sidebarDisplaySnapshot }),
   };
   useUiStateStore.setState({
+    sidebarDisplaySnapshot: null,
     sidebarProjectSections: [
       { id: parentSectionId, name: "Work", projectKeys: [], collapsed: false },
     ],
   });
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   const save = Promise.withResolvers<string | null>();
   using add = vi
     .spyOn(useUiStateStore.getState(), "addSidebarProjectSection")
     .mockReturnValue(save.promise);
   await act(openFolderSubsection);
   await page.getByRole("combobox").fill("/workspace/First");
-  await userEvent.keyboard("{Enter}");
-  await vi.waitFor(() => expect(add).toHaveBeenCalledOnce());
+  const submit = page.getByRole("button", { name: /^Add subsection/ });
+  await expect.element(submit).toBeEnabled();
+  await act(() => (submit.element() as HTMLElement).click());
+  expect(add).toHaveBeenCalledExactlyOnceWith("First", parentSectionId, "/workspace/First");
   await act(() => dispatchCommandPalette({ _tag: "SetOpen", open: false }));
   await act(openFolderSubsection);
   await page.getByRole("combobox").fill("/workspace/Second");
   await act(() => save.resolve("first-section"));
   expect(useCommandPaletteStore.getState().open).toBe(true);
+  await expect.element(page.getByRole("combobox")).toHaveValue("/workspace/Second");
 });

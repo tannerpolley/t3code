@@ -2,7 +2,6 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2Command,
-  type ProjectId,
   ThreadId,
   WorktreeMcpFailure,
   type WorktreeMcpContinuationStatus,
@@ -23,9 +22,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 type BindingInput = {
   readonly command: Extract<OrchestrationV2Command, { type: "thread.metadata.update" }>;
   readonly continuationPrompt?: string | undefined;
-  readonly continuationCommandId: CommandId;
   readonly continuationMessageId: MessageId;
-  readonly projectId: ProjectId;
   readonly provenance: ThreadManagementService.ThreadManagementProvenance;
 };
 
@@ -55,50 +52,38 @@ const make = Effect.gen(function* () {
   const git = yield* GitWorkflowService.GitWorkflowService;
   const random = yield* SecureRandom.SecureRandom;
 
-  // Both directions use the metadata command's serialized safety checks and detach effect.
-  // Keep the continuation durable before the detach can interrupt the caller's request.
+  // The same command changes the workspace and queues its continuation before detach.
   const bind = Effect.fn("ThreadWorkspaceService.bind")(function* (input: BindingInput) {
-    return yield* Effect.uninterruptible(
-      Effect.gen(function* () {
-        yield* threads
-          .dispatch(input.command)
-          .pipe(
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.failCause(cause as Cause.Cause<never>)
-                : Effect.fail(operationFailed(Cause.squash(cause))),
-            ),
-          );
-        if (input.continuationPrompt === undefined) return { status: "skipped" } as const;
-        return yield* threads
-          .sendToThread({
-            projectId: input.projectId,
-            commandId: input.continuationCommandId,
-            threadId: input.command.threadId,
+    const continuation =
+      input.continuationPrompt === undefined
+        ? undefined
+        : {
             messageId: input.continuationMessageId,
             text: input.continuationPrompt,
-            attachments: [],
-            mode: "queue",
             ...input.provenance,
-          })
-          .pipe(
-            Effect.map((result): WorktreeMcpContinuationStatus => ({
-              status: "scheduled",
-              delivery: result.delivery,
-            })),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Workspace continuation failed to queue", {
-                threadId: input.command.threadId,
-              }).pipe(
-                Effect.as({
-                  status: "failed",
-                  detail: operationFailed(Cause.squash(cause)).message,
-                } as const),
-              ),
-            ),
-          );
-      }),
-    );
+          };
+    const binding = yield* threads
+      .dispatch({
+        ...input.command,
+        ...(continuation === undefined ? {} : { continuation }),
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause as Cause.Cause<never>)
+            : Effect.fail(operationFailed(Cause.squash(cause))),
+        ),
+        Effect.uninterruptible,
+      );
+    if (continuation === undefined) return { status: "skipped" } as const;
+    return {
+      status: "scheduled",
+      delivery: binding.storedEvents.some(
+        ({ event }) => event.type === "run.created" && event.payload.status !== "queued",
+      )
+        ? "started"
+        : "queued",
+    } as const;
   });
 
   const returnToRoot = Effect.fn("ThreadWorkspaceService.returnToRoot")(function* (
@@ -148,9 +133,7 @@ const make = Effect.gen(function* () {
         expectedWorktreePath: thread.worktreePath,
       },
       ...input,
-      continuationCommandId: CommandId.make(`workspace-root-continuation:${uuid}`),
       continuationMessageId: MessageId.make(`workspace-root-continuation:${uuid}`),
-      projectId: thread.projectId,
       provenance,
     });
     return {

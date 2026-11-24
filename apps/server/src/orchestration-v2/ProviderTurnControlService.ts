@@ -9,6 +9,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   ThreadId,
+  withMessageSenderNote,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -19,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -114,6 +116,7 @@ export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
   | EventSink.EventSinkV2
+  | McpAppModelContext.McpAppModelContext
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
 > = Layer.effect(
@@ -131,6 +134,7 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -456,6 +460,10 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const appContext = yield* McpAppModelContext.forProvider(
+            mcpAppModelContext,
+            input.threadId,
+          );
           const session = loaded.session.value;
           yield* inlineShell
             .deliver(
@@ -466,10 +474,13 @@ export const layer: Layer.Layer<
                 attemptId: null,
                 providerTurnId: loaded.providerTurn.id,
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
-                }),
+                text: withMessageSenderNote(
+                  message,
+                  projectComposerContextForProvider({
+                    text: message.text,
+                    records: message.context?.records ?? [],
+                  }),
+                ),
                 compact: message.text.trim().toLowerCase() === "/compact",
               },
               (text) =>
@@ -481,6 +492,7 @@ export const layer: Layer.Layer<
                   runId: run.id,
                   providerThread: loaded.providerThread,
                   providerTurnId: loaded.providerTurn.id,
+                  ...(appContext.length === 0 ? {} : { appContext }),
                   message: {
                     messageId: message.id,
                     text,

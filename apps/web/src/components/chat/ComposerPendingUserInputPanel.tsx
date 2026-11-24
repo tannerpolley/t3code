@@ -1,5 +1,6 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
+import { T, useGT } from "gt-react";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -89,6 +90,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onDismiss: (requestId: RuntimeRequestId) => void;
   keyboardShortcuts: boolean;
 }) {
+  const gt = useGT();
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
@@ -164,7 +166,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     )
       return;
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
       if (isInSideChatPane(target)) return;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
@@ -217,7 +219,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsibleTrigger
         render={<ComposerBanner.Row render={<button type="button" />} />}
         title={
-          isCollapsed ? "Show the question and its options" : "Hide the question and its options"
+          isCollapsed
+            ? gt("Show the question and its options")
+            : gt("Hide the question and its options")
         }
         data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
         className="px-4 py-1.5"
@@ -230,7 +234,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             {activeQuestion.header}
           </span>
           {prompt.routedTo ? (
-            <span className="text-muted-foreground">Waiting on the orchestrator</span>
+            <span className="text-muted-foreground">
+              <T>Waiting on the orchestrator</T>
+            </span>
           ) : null}
           {isCollapsed ? (
             <>
@@ -254,8 +260,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           {prompt.dismissible ? (
             <ComposerBanner.Dismiss
               render={<span role="button" tabIndex={0} />}
-              aria-label="Dismiss question without answering"
-              title="Dismiss question without answering"
+              aria-label={gt("Dismiss question without answering")}
+              title={gt("Dismiss question without answering")}
               disabled={isResponding}
               data-pending-user-input-dismiss
               onClick={(event) => {

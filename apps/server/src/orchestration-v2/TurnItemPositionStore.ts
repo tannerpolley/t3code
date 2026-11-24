@@ -54,25 +54,30 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           placement = "append",
           keepExisting = false,
         }) {
-          const existing = yield* sql<{ readonly ordinal: number }>`
-          SELECT ordinal
-          FROM orchestration_v2_turn_item_positions
-          WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
-          LIMIT 1
-        `;
-          const runRows =
+          const runOrdinalSql =
             runId === null || suppliedRunOrdinal !== undefined
-              ? []
-              : yield* sql<{ readonly ordinal: number }>`
+              ? sql`${suppliedRunOrdinal ?? null}`
+              : sql`(
                 SELECT ordinal
                 FROM orchestration_v2_projection_runs
                 WHERE thread_id = ${threadId} AND run_id = ${runId}
                 LIMIT 1
-              `;
-          const runOrdinal = suppliedRunOrdinal ?? runRows[0]?.ordinal ?? null;
+              )`;
+          const [existing] = yield* sql<{
+            readonly ordinal: number | null;
+            readonly run_ordinal: number | null;
+          }>`
+            SELECT (
+              SELECT ordinal
+              FROM orchestration_v2_turn_item_positions
+              WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
+              LIMIT 1
+            ) AS ordinal, ${runOrdinalSql} AS run_ordinal
+          `;
+          const runOrdinal = existing?.run_ordinal ?? null;
           const lowerBound = runOrdinal === null ? 0 : runOrdinal * 1_000_000;
           const upperBound = runOrdinal === null ? 999_999 : lowerBound + 999_999;
-          const current = existing[0]?.ordinal;
+          const current = existing?.ordinal ?? undefined;
           if (current !== undefined) {
             // A steer that missed its turn starts the next run; it moves into that run's range.
             if (

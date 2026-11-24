@@ -6,7 +6,8 @@ import { SidebarProvider } from "../ui/sidebar";
 import { SidebarAskModeItem } from "./SidebarAskModeItem";
 
 const state = vi.hoisted(() => ({ updateSettings: (_patch: unknown) => {} }));
-vi.mock("../../hooks/useSettings", () => ({
+vi.mock("../../hooks/useSettings", async (original) => ({
+  ...(await original<typeof import("../../hooks/useSettings")>()),
   usePrimarySettings: (select: (settings: { dontAskMode: boolean }) => unknown) =>
     select({ dontAskMode: false }),
   usePrimarySettingsAvailable: () => true,

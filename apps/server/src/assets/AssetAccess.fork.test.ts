@@ -36,6 +36,7 @@ import {
   resolveAsset,
 } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import * as WorkspacePreviewRevisions from "./WorkspacePreviewRevisions.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
@@ -117,6 +118,7 @@ const layerTest = Layer.mergeAll(
   NativeAppIconResolver.layer.pipe(Layer.provide(layerConfig)),
   AssetSigner.layer.pipe(Layer.provide(ServerSecretStore.layer), Layer.provide(layerConfig)),
   ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
+  WorkspacePreviewRevisions.layer,
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("AssetAccess", () => {

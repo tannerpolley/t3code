@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -21,6 +22,7 @@ import { toastManager } from "~/components/ui/toast";
 export function useRepositoryOrchestratorAction(
   activeThread: EnvironmentThreadShell | null = null,
 ) {
+  const gt = useGT();
   const projects = useProjects();
   const configs = useServerConfigs();
   const providers = useEnvironmentProviders();
@@ -69,7 +71,7 @@ export function useRepositoryOrchestratorAction(
     const current = status?.rootThreadId === thread.id;
     const item: ContextMenuItem<"make-repository-orchestrator"> = {
       id: "make-repository-orchestrator",
-      label: current ? "Repository orchestrator (current)" : "Make repository orchestrator",
+      label: current ? gt("Repository orchestrator (current)") : gt("Make repository orchestrator"),
       disabled:
         current ||
         status === null ||
@@ -80,19 +82,21 @@ export function useRepositoryOrchestratorAction(
     return {
       item,
       run: async () => {
-        const result = await repositoryIssueEnvironment.assignOrchestrator.run(appAtomRegistry, {
-          environmentId: thread.environmentId,
-          input: {
-            ...repository,
-            projectId: thread.projectId,
-            targetThreadId: thread.id,
-            clientRequestId: CommandId.make(randomUUID()),
-          },
-        });
+        const result = await Effect.runPromiseExit(
+          repositoryIssueEnvironment.assignOrchestrator.run(appAtomRegistry, {
+            environmentId: thread.environmentId,
+            input: {
+              ...repository,
+              projectId: thread.projectId,
+              targetThreadId: thread.id,
+              clientRequestId: CommandId.make(randomUUID()),
+            },
+          }),
+        );
         if (result._tag === "Failure") {
           toastManager.add({
             type: "error",
-            title: "Could not assign repository orchestrator",
+            title: gt("Could not assign repository orchestrator"),
             description: formatEnvironmentQueryError(result.cause),
           });
           return;
@@ -101,8 +105,8 @@ export function useRepositoryOrchestratorAction(
           type: "success",
           title:
             result.value.rootThreadId === thread.id
-              ? "Repository orchestrator assigned"
-              : "Repository handoff is draining live work",
+              ? gt("Repository orchestrator assigned")
+              : gt("Repository handoff is draining live work"),
         });
       },
     };

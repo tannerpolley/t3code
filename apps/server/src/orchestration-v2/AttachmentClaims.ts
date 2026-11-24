@@ -161,7 +161,9 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
               Effect.ignore,
             );
           } else {
-            const extracted = Option.isSome(documents) ? yield* documents.value.ensure(claim.finalPath) : undefined;
+            const extracted = Option.isSome(documents)
+              ? yield* documents.value.ensure(claim.finalPath)
+              : undefined;
             if (extracted) claimedPaths.push(extracted);
           }
           return normalized;

@@ -76,6 +76,9 @@ function layerExecutorFor(input: {
       ProviderSessionManager.ProviderSessionManagerV2.of({
         subscribePromptSuggestion: () => Stream.empty,
         shutdown: Effect.void,
+        forgetLoadedProviderThread: Effect.fn(
+          "ProviderSessionManager.ProviderSessionManagerV2.forgetLoadedProviderThread",
+        )(function* () {}),
         releaseUnlessBusy: Effect.fn(
           "ProviderSessionManager.ProviderSessionManagerV2.releaseUnlessBusy",
         )(() => Effect.succeed(true)),

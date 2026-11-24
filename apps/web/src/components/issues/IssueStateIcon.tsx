@@ -1,4 +1,5 @@
-import { useGT } from "gt-react";
+import { msg, useGT } from "gt-react";
+import { m, type MessageResolver } from "../../i18n/messages";
 import {
   ISSUE_STAGE_LABELS,
   issueBadges,
@@ -52,19 +53,25 @@ const ISSUE_STAGE_PRESENTATION = {
     Icon: CircleCheckIcon,
   },
   closed: {
-    label: "Closed as not planned",
+    label: ISSUE_STAGE_LABELS.closed,
     toneClassName: "text-zinc-500 dark:text-zinc-400/80",
     badgeVariant: "secondary",
     Icon: CircleSlashIcon,
   },
 } as const;
 
-export function issueStatePresentation(issue: IssueStageInput) {
-  const presentation = ISSUE_STAGE_PRESENTATION[issueStage(issue)];
+export function issueStatePresentation(issue: IssueStageInput, resolve: MessageResolver = m) {
+  const stage = issueStage(issue);
+  const presentation = ISSUE_STAGE_PRESENTATION[stage];
   if (issue.state === "open" && issue.suspensionReason !== undefined)
-    return { ...presentation, label: `Suspended: ${issue.suspensionReason}` };
-  return issue.stateReason === "duplicate"
-    ? { ...presentation, label: "Closed as duplicate" }
+    return {
+      ...presentation,
+      label: resolve(msg("Suspended: {reason}", { reason: issue.suspensionReason })),
+    };
+  if (issue.stateReason === "duplicate")
+    return { ...presentation, label: resolve(msg("Closed as duplicate")) };
+  return stage === "closed"
+    ? { ...presentation, label: resolve(msg("Closed as not planned")) }
     : presentation;
 }
 

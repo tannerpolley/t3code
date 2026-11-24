@@ -105,6 +105,7 @@ export function ThreadPullRequestBadge(props: { readonly thread: SidebarThreadSu
 export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(props: {
   readonly thread: SidebarThreadSummary;
   readonly badges?: boolean;
+  readonly issueBadge?: ReactNode;
   readonly children: ReactNode;
 }) {
   const { showIssue, showPr } = useClientSettings((settings) => ({
@@ -116,12 +117,14 @@ export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(p
     <span className="flex min-w-0 items-center gap-1.5">
       <span className="fork-sidebar-title min-w-0 flex-1 truncate">{props.children}</span>
       <SidebarProjectThreadMachine environmentId={props.thread.environmentId} />
-      {badges && showIssue ? (
-        <ThreadIssueBadge
-          environmentId={props.thread.environmentId}
-          issue={props.thread.source.linkedIssue}
-        />
-      ) : null}
+      {badges && showIssue
+        ? (props.issueBadge ?? (
+            <ThreadIssueBadge
+              environmentId={props.thread.environmentId}
+              issue={props.thread.source.linkedIssue}
+            />
+          ))
+        : null}
       {badges && showPr ? <ThreadPullRequestBadge thread={props.thread} /> : null}
     </span>
   );

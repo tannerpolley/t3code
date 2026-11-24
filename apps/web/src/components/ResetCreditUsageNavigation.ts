@@ -14,6 +14,7 @@ export function prepareResetCreditUsage(): void {
 
 export function useResetCreditUsageNavigation(open: () => void): void {
   const onOpen = useEffectEvent(open);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Listen for usage navigation requests from other screens while mounted.
   useEffect(() => {
     const listener = () => onOpen();
     window.addEventListener(OPEN_RESET_CREDIT_USAGE, listener);

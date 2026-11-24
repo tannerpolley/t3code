@@ -49,7 +49,9 @@ export const appendUserInputAttachmentPaths = Effect.fn("appendUserInputAttachme
             issue: `Attachment '${attachment.name}' is no longer available. Attach it again.`,
           });
         }
-        const extracted = Option.isSome(documents) ? yield* documents.value.ensure(path) : undefined;
+        const extracted = Option.isSome(documents)
+          ? yield* documents.value.ensure(path)
+          : undefined;
         references.push(
           `Attached ${attachment.type} ${quoteReference(attachment.name)}: ${quoteReference(path)}${extracted ? ` (text extracted to: ${quoteReference(extracted)})` : ""}`,
         );

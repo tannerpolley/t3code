@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "../../i18n/messages";
 import {
   repositoryPhase,
   type IssueHostCapabilities,
@@ -242,10 +244,16 @@ export function repositoryWorkStatus(
     readonly suspendedIssues: readonly unknown[];
   },
   idMismatch?: RepositoryWorkResult["idMismatch"],
+  resolve: MessageResolver = m,
 ): { readonly label: string; readonly needsAttention: boolean } {
   if (idMismatch !== undefined)
     return {
-      label: `Repository recreated: registered ID ${idMismatch.registeredRepositoryId}, now ${idMismatch.liveRepositoryId}. Move it with restore_repository_root.`,
+      label: resolve(
+        msg(
+          "Repository recreated: registered ID {registered}, now {live}. Move it with restore_repository_root.",
+          { registered: idMismatch.registeredRepositoryId, live: idMismatch.liveRepositoryId },
+        ),
+      ),
       needsAttention: true,
     };
   const phase = repositoryPhase(config);
@@ -255,14 +263,18 @@ export function repositoryWorkStatus(
     phase === "handoff_verifying" ||
     phase === "handoff_awaiting_approval"
   )
-    return { label: "Handing off", needsAttention: true };
-  if (config.paused) return { label: "Paused", needsAttention: true };
+    return { label: resolve(msg("Handing off")), needsAttention: true };
+  if (config.paused) return { label: resolve(msg("Paused")), needsAttention: true };
   if (suspended > 0)
     return {
-      label: `Active, ${suspended} ${suspended === 1 ? "issue" : "issues"} on hold`,
+      label: resolve(
+        msg("{count, plural, one {Active, # issue on hold} other {Active, # issues on hold}}", {
+          count: suspended,
+        }),
+      ),
       needsAttention: true,
     };
-  return { label: "Active", needsAttention: false };
+  return { label: resolve(msg("Active")), needsAttention: false };
 }
 
 /** The distinct issue repositories of a project group's checkouts, one per environment. */

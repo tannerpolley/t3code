@@ -43,7 +43,8 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { getAddProjectInitialQuery } from "@t3tools/client-runtime/operations/projects";
-import { useGT } from "gt-react";
+import { msg, T, useGT } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import {
   CheckIcon,
   CornerDownRightIcon,
@@ -280,8 +281,11 @@ function projectDropOverOf(
   };
 }
 
-function projectSectionName(section: SidebarProjectSectionRender): string {
-  return section.custom ? section.name : "Other projects";
+function projectSectionName(
+  section: SidebarProjectSectionRender,
+  resolve: MessageResolver = m,
+): string {
+  return section.custom ? section.name : resolve(msg("Other projects"));
 }
 
 interface SidebarProjectSectionsProps {
@@ -307,6 +311,7 @@ interface SidebarProjectSectionsProps {
 }
 
 function SidebarProjectSections(props: SidebarProjectSectionsProps) {
+  const gt = useGT();
   const {
     isProjectExpanded,
     onAddProject,
@@ -437,12 +442,15 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       .flatMap((key) => projectByKey.get(key)?.memberProjects ?? [])
       .filter((member) => member.projectIcon != null || member.faviconPath != null);
     if (members.length === 0) {
-      toastManager.add({ type: "info", title: "These projects already use automatic icons" });
+      toastManager.add({ type: "info", title: gt("These projects already use automatic icons") });
       return;
     }
     if (
       !window.confirm(
-        `Reset the icons of ${members.length} project checkout${members.length === 1 ? "" : "s"} in ${section.name} to automatic? Their custom icons will be cleared.`,
+        gt(
+          "{count, plural, one {Reset the icons of # project checkout in {section} to automatic? Their custom icons will be cleared.} other {Reset the icons of # project checkouts in {section} to automatic? Their custom icons will be cleared.}}",
+          { count: members.length, section: section.name },
+        ),
       )
     ) {
       return;
@@ -457,11 +465,20 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     }
     toastManager.add(
       failed === 0
-        ? { type: "success", title: `Reset ${members.length} project icons in ${section.name}` }
+        ? {
+            type: "success",
+            title: gt("Reset {count} project icons in {section}", {
+              count: members.length,
+              section: section.name,
+            }),
+          }
         : {
             type: "error",
-            title: `Couldn't reset ${failed} of ${members.length} project icons`,
-            description: "Connect the project's environment and try again.",
+            title: gt("Couldn't reset {failed} of {count} project icons", {
+              failed,
+              count: members.length,
+            }),
+            description: gt("Connect the project's environment and try again."),
           },
     );
   };
@@ -603,7 +620,9 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     <ForkSidebarTextSizes className="group-data-[collapsible=icon]:hidden px-1 py-1">
       {codexStyle ? null : (
         <div className="mb-1 px-2">
-          <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
+          <span className="text-xs font-medium text-sidebar-muted-foreground/80">
+            <T>Projects</T>
+          </span>
           <div className="mt-1 grid grid-cols-2 gap-1">
             <Button
               className="justify-start"
@@ -612,7 +631,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
               variant="ghost-muted"
             >
               <PlusIcon />
-              Add project
+              <T>Add project</T>
             </Button>
             <Button
               className="justify-start"
@@ -623,7 +642,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
               variant="ghost-muted"
             >
               <FolderPlusIcon />
-              New section
+              <T>New section</T>
             </Button>
           </div>
         </div>
@@ -645,7 +664,9 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                 size="sm"
               >
                 <FolderIcon className="text-icon-muted" />
-                <span>All projects</span>
+                <span>
+                  <T>All projects</T>
+                </span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
@@ -743,6 +764,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
 }) {
+  const gt = useGT();
   const canWrite = useSidebarLayoutPermission();
   const { setNodeRef: setDropRef } = useDroppable({
     disabled: !canWrite,
@@ -840,7 +862,7 @@ const ProjectSection = memo(function ProjectSection(props: {
           {drop?.beforeKey === null ? <ProjectDropLine /> : null}
           {sectionProjectKeys.length === 0 && props.subsections.length === 0 ? (
             <li className="px-2 py-1 text-2xs text-sidebar-muted-foreground/55">
-              {props.section.custom ? "Drop projects here" : "No ungrouped projects"}
+              {props.section.custom ? gt("Drop projects here") : gt("No ungrouped projects")}
             </li>
           ) : null}
         </ul>
@@ -863,6 +885,7 @@ function SortableSectionHeader(props: {
   readonly onDelete: (sectionId: string) => void;
   readonly onSetExpanded: (sectionId: string, expanded: boolean) => void;
 }) {
+  const gt = useGT();
   const { section } = props;
   const canWrite = useSidebarLayoutPermission(section.custom ? section.id : null);
   const placementReady = useProjectSectionPlacementReady(
@@ -963,7 +986,7 @@ function SortableSectionHeader(props: {
         <>
           {codexStyle || !draggable ? null : (
             <button
-              aria-label={`Reorder ${section.name} section`}
+              aria-label={gt("Reorder {section} section", { section: section.name })}
               className="inline-flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
               ref={setActivatorNodeRef}
               type="button"
@@ -978,7 +1001,7 @@ function SortableSectionHeader(props: {
               render={
                 <button
                   disabled={!canWrite}
-                  aria-label={`Actions for ${section.name}`}
+                  aria-label={gt("Actions for {name}", { name: section.name })}
                   className={cn(
                     "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100",
                     // Codex style overlays the empty time and status slots, as on project rows.
@@ -996,14 +1019,14 @@ function SortableSectionHeader(props: {
                 onClick={() => openCommandPalette({ open: "add-project", sectionId: section.id })}
               >
                 <FolderPlusIcon />
-                Add project
+                <T>Add project</T>
               </MenuItem>
               <MenuItem
                 disabled={!canWrite || !placementReady}
                 onClick={() => props.onNewProjectInSection(section)}
               >
                 <FilePlusIcon />
-                New project…
+                <T>New project…</T>
               </MenuItem>
               {props.onNewSubsection ? (
                 <MenuItem
@@ -1017,24 +1040,24 @@ function SortableSectionHeader(props: {
                   }
                 >
                   <FolderTreeIcon />
-                  Add folder as subsection…
+                  <T>Add folder as subsection…</T>
                 </MenuItem>
               ) : null}
               {props.onNewSubsection ? (
                 <MenuItem disabled={!canWrite} onClick={() => props.onNewSubsection?.(section)}>
                   <FolderTreeIcon />
-                  New subsection
+                  <T>New subsection</T>
                 </MenuItem>
               ) : null}
               <MenuItem disabled={!canWrite} onClick={() => props.onOpenRename(section)}>
                 <SettingsIcon />
-                Rename section
+                <T>Rename section</T>
               </MenuItem>
               {props.folderColors ? (
                 <MenuSub>
                   <MenuSubTrigger>
                     <PaletteIcon />
-                    Folder color
+                    <T>Folder color</T>
                   </MenuSubTrigger>
                   <MenuSubPopup>
                     <MenuItem
@@ -1042,7 +1065,7 @@ function SortableSectionHeader(props: {
                       onClick={() => setSectionColor(section.id, null)}
                     >
                       <span aria-hidden className="size-3 rounded-full border border-border" />
-                      None
+                      <T>None</T>
                       {section.ownColor === undefined ? <CheckIcon className="ms-auto" /> : null}
                     </MenuItem>
                     {PROJECT_ICON_COLORS.map((color) => (
@@ -1069,12 +1092,12 @@ function SortableSectionHeader(props: {
                 onClick={() => setSectionFolderIcons(section.id, !section.ownFolderIcons)}
               >
                 <FolderIcon />
-                Use folder icons
+                <T>Use folder icons</T>
                 {section.ownFolderIcons ? <CheckIcon className="ms-auto" /> : null}
               </MenuItem>
               <MenuItem disabled={!canWrite} onClick={() => props.onResetIcons(section)}>
                 <RotateCcwIcon />
-                Reset project icons…
+                <T>Reset project icons…</T>
               </MenuItem>
               <MenuSeparator />
               <MenuItem
@@ -1083,7 +1106,7 @@ function SortableSectionHeader(props: {
                 variant="destructive"
               >
                 <Trash2Icon />
-                Delete section
+                <T>Delete section</T>
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -1112,6 +1135,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly threads: readonly SidebarThreadSummary[];
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
 }) {
+  const gt = useGT();
   const { project, codexStyle } = props;
   const canWrite = useSidebarLayoutPermission(null, project.environmentId);
   const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef } = useSortable({
@@ -1227,7 +1251,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             <div className="pointer-events-none absolute inset-y-0 end-1 flex items-center gap-px">
               {codexStyle ? null : (
                 <button
-                  aria-label={`Reorder ${project.displayName}`}
+                  aria-label={gt("Reorder {name}", { name: project.displayName })}
                   className="pointer-events-auto inline-flex size-6 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing group-hover/project-folder:opacity-100 group-focus-within/project-folder:opacity-100"
                   ref={setActivatorNodeRef}
                   type="button"
@@ -1241,7 +1265,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                 <MenuTrigger
                   render={
                     <button
-                      aria-label={`Actions for ${project.displayName}`}
+                      aria-label={gt("Actions for {name}", { name: project.displayName })}
                       className="pointer-events-auto inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-pointer group-hover/project-folder:opacity-100 group-focus-within/project-folder:opacity-100"
                       type="button"
                     />
@@ -1252,7 +1276,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                 <MenuPopup align="end" className="min-w-52">
                   <MenuItem onClick={() => props.onNewThreadInProject(project)}>
                     <SquarePenIcon />
-                    New thread
+                    <T>New thread</T>
                   </MenuItem>
                   <MenuItem
                     onClick={() =>
@@ -1260,17 +1284,17 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                     }
                   >
                     <FilterIcon />
-                    {props.selected ? "Show all projects" : "Filter to this project"}
+                    {props.selected ? gt("Show all projects") : gt("Filter to this project")}
                   </MenuItem>
                   <MenuItem onClick={() => props.onOpenProjectSettings(project)}>
                     <SettingsIcon />
-                    Project settings
+                    <T>Project settings</T>
                   </MenuItem>
                   {otherSections.length > 0 || props.sectionId !== null ? (
                     <MenuSub>
                       <MenuSubTrigger>
                         <FolderIcon />
-                        Move project to section
+                        <T>Move project to section</T>
                       </MenuSubTrigger>
                       <MenuSubPopup>
                         {otherSections.map((section) => (
@@ -1291,7 +1315,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                               disabled={!canWrite}
                               onClick={() => props.onMoveProject(project.projectKey, null)}
                             >
-                              Other projects
+                              <T>Other projects</T>
                             </MenuItem>
                           </>
                         ) : null}
@@ -1304,7 +1328,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                     variant="destructive"
                   >
                     <Trash2Icon />
-                    Remove project
+                    <T>Remove project</T>
                   </MenuItem>
                 </MenuPopup>
               </Menu>
@@ -1341,7 +1365,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           ))}
           {props.threads.length === 0 ? (
             <li className="fork-sidebar-empty px-2 py-1 text-2xs text-sidebar-muted-foreground/55">
-              No threads yet
+              <T>No threads yet</T>
             </li>
           ) : null}
         </ul>
@@ -1466,6 +1490,7 @@ const SidebarProjectThreadRow = memo(
     ) => assembly.onContextMenu(scopeThreadRef(child.environmentId, child.id), position, "mouse");
     const renderColumns = (parts: {
       readonly pin: ReactNode;
+      readonly issueBadge: ReactNode;
       readonly lastVisitedAt: string | undefined;
     }) => {
       // Finished while you were away and not opened since: a green dot where the spinner was.
@@ -1490,7 +1515,9 @@ const SidebarProjectThreadRow = memo(
             <ThreadLocationIcon thread={thread} tooltip={false} />
             <ThreadRoleIcon thread={thread.source} />
             <span className="min-w-0 flex-1">
-              <SidebarProjectThreadName thread={thread}>{thread.title}</SidebarProjectThreadName>
+              <SidebarProjectThreadName thread={thread} issueBadge={parts.issueBadge}>
+                {thread.title}
+              </SidebarProjectThreadName>
             </span>
             {parts.pin}
             {workerLabel && (
@@ -1538,14 +1565,16 @@ const SidebarProjectThreadRow = memo(
           }
           badgeKind={sidebarBadgeKind(
             role,
-            !!thread.source.linkedIssue,
+            parts.issueBadge !== null || !!thread.source.linkedIssue,
             thread.pullRequests.length > 0,
           )}
           issue={
-            <ThreadIssueBadge
-              environmentId={thread.environmentId}
-              issue={thread.source.linkedIssue}
-            />
+            parts.issueBadge ?? (
+              <ThreadIssueBadge
+                environmentId={thread.environmentId}
+                issue={thread.source.linkedIssue}
+              />
+            )
           }
           pr={<ThreadPullRequestBadge thread={thread} />}
           time={
@@ -1572,7 +1601,11 @@ const SidebarProjectThreadRow = memo(
           <button
             type="button"
             aria-expanded={workOpen}
-            aria-label={`${workOpen ? "Hide" : "Show"} ${workCount} running background tasks`}
+            aria-label={
+              workOpen
+                ? gt("Hide {count} running background tasks", { count: workCount })
+                : gt("Show {count} running background tasks", { count: workCount })
+            }
             className="fork-sidebar-work-toggle absolute top-0.5 right-2 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-3xs text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover"
             onClick={toggleWork}
           >
@@ -2010,20 +2043,20 @@ function ProjectSectionDialog(props: {
           <DialogHeader>
             <DialogTitle>
               {target.kind === "rename"
-                ? "Rename project section"
+                ? gt("Rename project section")
                 : target.parent
-                  ? `New subsection in ${target.parent.name}`
-                  : "Create project section"}
+                  ? gt("New subsection in {name}", { name: target.parent.name })
+                  : gt("Create project section")}
             </DialogTitle>
             <DialogDescription>
-              Group projects in the sidebar without changing their T3 project settings.
+              <T>Group projects in the sidebar without changing their T3 project settings.</T>
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <Input
-                  aria-label="Project section name"
+                  aria-label={gt("Project section name")}
                   autoFocus
                   disabled={busy}
                   maxLength={80}
@@ -2031,7 +2064,7 @@ function ProjectSectionDialog(props: {
                     setName(event.target.value);
                     if (!pickedPath) setCheckedPaths([]);
                   }}
-                  placeholder="e.g. Work"
+                  placeholder={gt("e.g. Work")}
                   value={name}
                 />
               </div>
@@ -2084,10 +2117,10 @@ function ProjectSectionDialog(props: {
               type="button"
               variant="outline"
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button disabled={!canSubmit} type="submit">
-              Save
+              <T>Save</T>
             </Button>
           </DialogFooter>
         </form>

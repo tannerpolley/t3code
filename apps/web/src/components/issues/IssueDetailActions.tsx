@@ -1,7 +1,8 @@
+import { T, useGT } from "gt-react";
 import type { RepositoryIssueSummary } from "@t3tools/contracts";
 import { CopyIcon, MoreHorizontalIcon, RefreshCwIcon } from "lucide-react";
 
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
@@ -19,8 +20,9 @@ export function IssueDetailActions({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
+  const gt = useGT();
   const { copyToClipboard } = useCopyToClipboard<string>({
-    target: "issue reference",
+    target: namedClipboardTarget("issue reference"),
     onCopy: (label) => toastManager.add({ type: "success", title: `${label} copied` }),
     onError: (error) => toastManager.add({ type: "error", title: error.message }),
   });
@@ -29,7 +31,7 @@ export function IssueDetailActions({
       <MenuTrigger
         render={
           <Button
-            aria-label={refreshing ? "Refreshing issue" : "More issue actions"}
+            aria-label={refreshing ? gt("Refreshing issue") : gt("More issue actions")}
             size="icon-xs"
             variant="ghost-muted"
           />
@@ -44,11 +46,11 @@ export function IssueDetailActions({
       <MenuPopup align="end" side="bottom">
         <MenuItem disabled={refreshing} onClick={onRefresh}>
           <RefreshCwIcon />
-          Refresh
+          <T>Refresh</T>
         </MenuItem>
         <MenuItem onClick={() => copyToClipboard(`#${issue.number}`, "Issue number")}>
           <CopyIcon />
-          Copy issue number
+          <T>Copy issue number</T>
         </MenuItem>
       </MenuPopup>
     </Menu>

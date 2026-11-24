@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { IssueHoverCard } from "./IssueHoverCard";
 import { useIssueQueued } from "./IssueQueueAction";
 import { parseIssueUrl, knownIssueHosts } from "~/lib/openRepositoryIssueLink";
@@ -33,6 +34,7 @@ export function IssueRow({
   readonly referenceLabel?: string;
   readonly cycle?: boolean;
 }) {
+  const gt = useGT();
   const projects = useProjects();
   const reference = parseIssueUrl(issue.url, knownIssueHosts(projects));
   const queued = useIssueQueued(environmentId, reference);
@@ -50,7 +52,10 @@ export function IssueRow({
     >
       <button
         type="button"
-        aria-label={`Open issue #${issue.number}: ${issue.title}`}
+        aria-label={gt("Open issue #{number}: {title}", {
+          number: issue.number,
+          title: issue.title,
+        })}
         aria-current={selected ? "page" : undefined}
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-sm text-left focus-visible:outline-none"
         onClick={onSelect}
@@ -59,7 +64,7 @@ export function IssueRow({
         <span className={PULL_REQUEST_ROW_NUMBER_CLASS}>
           {referenceLabel ?? `#${issue.number}`}
         </span>
-        <span className="min-w-0 truncate text-sm">{issue.title || "Untitled issue"}</span>
+        <span className="min-w-0 truncate text-sm">{issue.title || gt("Untitled issue")}</span>
       </button>
       <span className="flex min-w-0 max-w-1/2 items-center gap-1.5 text-2xs text-muted-foreground">
         <IssueStageBadges issue={issue} cycle={cycle} liveStatus={liveStatus} />

@@ -1,4 +1,5 @@
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 import type { OrchestrationMessageContext } from "@t3tools/contracts";
 import { ComposerContextId } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
@@ -44,6 +45,8 @@ import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -160,6 +163,8 @@ function makeLocalCommandHarness(input: {
       projectId: ProjectId.make("project-native-account-command"),
       branch: input.worktreePath === undefined ? null : "feature/restore",
       worktreePath: input.worktreePath ?? null,
+      runtimeMode: "full-access",
+      interactionMode: "default",
     } as OrchestrationV2ThreadProjection["thread"],
     runs: [
       ...(input.previousNativeSession
@@ -458,7 +463,16 @@ function makeLocalCommandHarness(input: {
   );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({})),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+          runForThread: () => Effect.succeed({ status: "no-script" } as const),
+        }),
+        Layer.mock(ThreadWorktreeRestore)({ takeRecreated: () => Effect.undefined }),
+      ),
+    ),
     Layer.provide(input.inlineLayer ?? InlineShellStore.layerEmpty),
+    Layer.provide(layerNoTaskFolders),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
@@ -817,7 +831,13 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         failReadsAfterRunning: true,
       });
       harness.createWorktree.mockImplementation(() =>
-        fileSystem.makeDirectory(worktreePath).pipe(Effect.as({} as never), Effect.orDie),
+        fileSystem
+          .makeDirectory(worktreePath)
+          .pipe(
+            Effect.andThen(fileSystem.writeFileString(path.join(worktreePath, ".git"), "")),
+            Effect.as({} as never),
+            Effect.orDie,
+          ),
       );
       const open = harness.open.getMockImplementation()!;
       harness.open.mockImplementation(() =>

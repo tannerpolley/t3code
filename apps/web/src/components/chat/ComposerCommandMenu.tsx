@@ -26,6 +26,7 @@ import {
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
+import { msg, useGT, useMessages } from "gt-react";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -128,6 +129,8 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const listRef = useRef<HTMLDivElement>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the highlighted menu item's DOM node into view
@@ -157,7 +160,9 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         {props.items.length > 0 ? (
           <CommandList
             id={props.listId}
-            aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
+            aria-label={
+              props.triggerKind ? m(LISTBOX_LABEL_BY_TRIGGER[props.triggerKind]) : undefined
+            }
             className="max-h-72 min-h-0 scroll-pb-6"
           >
             {(props.triggerKind === "pull-request"
@@ -170,7 +175,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                 <CommandGroup key={type ?? "all"}>
                   {type !== null ? (
                     <CommandGroupLabel>
-                      {type === "issue" ? "Issues" : "Pull requests"}
+                      {type === "issue" ? gt("Issues") : gt("Pull requests")}
                     </CommandGroupLabel>
                   ) : null}
                   {items.map((item) => (
@@ -194,16 +199,16 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             <p className="text-secondary-label text-xs">
               {props.isLoading
                 ? props.triggerKind === "skill" || props.triggerKind === "slash-command"
-                  ? "Searching workspace skills..."
+                  ? gt("Searching workspace skills...")
                   : props.triggerKind === "pull-request"
-                    ? "Finding issues and pull requests..."
-                    : "Searching workspace files..."
+                    ? gt("Finding issues and pull requests...")
+                    : gt("Searching workspace files...")
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
-                    ? "No skills found. Try / to browse provider commands."
+                    ? gt("No skills found. Try / to browse provider commands.")
                     : props.triggerKind === "path"
-                      ? "No matching files or folders."
-                      : "No matching command."))}
+                      ? gt("No matching files or folders.")
+                      : gt("No matching command.")))}
             </p>
           </div>
         )}
@@ -221,12 +226,13 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const m = useMessages();
   const skillSourceKind =
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
   const isSlashSkill =
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
   const pullRequestPresentation =
-    props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest) : null;
+    props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest, m) : null;
   const descriptionRef = useRef<HTMLSpanElement>(null);
   const [descriptionTruncated, setDescriptionTruncated] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the rendered description so only cut-off text gets a tooltip
@@ -339,10 +345,10 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
 }
 
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
-  path: "Files and folders",
-  "pull-request": "Pull requests and issues",
-  "slash-command": "Commands",
-  skill: "Skills",
+  path: msg("Files and folders"),
+  "pull-request": msg("Pull requests and issues"),
+  "slash-command": msg("Commands"),
+  skill: msg("Skills"),
 };
 
 const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
@@ -354,24 +360,52 @@ const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
   other: PackageIcon,
 };
 
-const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
-  plugin: "Plugin",
-  repo: "Repo",
-  project: "Project",
-  personal: "Personal",
-  system: "System",
-  other: "Provider",
+const SKILL_SOURCE_LABEL_BY_KIND: Record<
+  ProviderSkillSourceKind,
+  { readonly label: string; readonly skillLabel: string }
+> = {
+  plugin: {
+    label: msg("App", { $context: "skill source badge" }),
+    skillLabel: msg("App Skill"),
+  },
+  repo: {
+    label: msg("Repo", { $context: "skill source badge" }),
+    skillLabel: msg("Repo Skill"),
+  },
+  project: {
+    label: msg("Project", { $context: "skill source badge" }),
+    skillLabel: msg("Project Skill"),
+  },
+  personal: {
+    label: msg("Personal", { $context: "skill source badge" }),
+    skillLabel: msg("Personal Skill"),
+  },
+  system: {
+    label: msg("System", { $context: "skill source badge" }),
+    skillLabel: msg("System Skill"),
+  },
+  other: {
+    label: msg("Provider", { $context: "skill source badge" }),
+    skillLabel: msg("Provider Skill"),
+  },
 };
 
 function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffix: boolean }) {
+  const m = useMessages();
   const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
   // The original app called plugin skills "App"; the pluginSkills switch renames them.
-  const pluginLabel = useClientSettings((settings) => settings.pluginSkills) ? "Plugin" : "App";
+  const pluginSkills = useClientSettings((settings) => settings.pluginSkills);
+  const labels =
+    props.kind === "plugin" && pluginSkills
+      ? {
+          label: msg("Plugin", { $context: "skill source badge" }),
+          skillLabel: msg("Plugin Skill"),
+        }
+      : SKILL_SOURCE_LABEL_BY_KIND[props.kind];
   return (
     <Badge className="ms-auto" variant="secondary">
       <Icon aria-hidden="true" className="text-current" />
-      {props.kind === "plugin" ? pluginLabel : SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
-      {props.showSkillSuffix ? " Skill" : null}
+      {m(props.showSkillSuffix ? labels.skillLabel : labels.label)}
     </Badge>
   );
 }

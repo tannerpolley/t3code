@@ -396,6 +396,7 @@ it.effect.each([false, true])(
               record: (event, properties) =>
                 Effect.sync(() => {
                   records.push({ event, properties });
+                  return true;
                 }),
               recordOwners: () => Effect.void,
             }),

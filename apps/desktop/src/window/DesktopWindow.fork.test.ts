@@ -70,6 +70,13 @@ function makeFakeBrowserWindow() {
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
   const webContents = {
+    id: 1,
+    session: {
+      setPermissionRequestHandler: vi.fn(),
+      webRequest: {
+        onBeforeSendHeaders: vi.fn(),
+      },
+    },
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
@@ -188,6 +195,7 @@ const layerElectronMenu = Layer.succeed(ElectronMenu.ElectronMenu, {
   setApplicationMenu: () => Effect.void,
   popupTemplate: () => Effect.void,
   showContextMenu: () => Effect.succeedNone,
+  pasteAndMatchStyle: Effect.void,
 } satisfies ElectronMenu.ElectronMenu["Service"]);
 
 const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
@@ -311,6 +319,7 @@ function layerTest(input: {
           setApplicationMenu: () => Effect.void,
           showContextMenu: () => Effect.succeedNone,
           popupTemplate: input.onPopupTemplate ?? (() => Effect.void),
+          pasteAndMatchStyle: Effect.void,
         }),
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>

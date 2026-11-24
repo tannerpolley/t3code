@@ -2,6 +2,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { memo, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -21,10 +22,10 @@ const FOLDER_DOT_CLASS_NAME = {
 } as const;
 
 const FOLDER_DOT_LABEL = {
-  attention: ", needs you",
-  failed: ", failed",
-  unread: ", done",
-  working: ", working",
+  attention: msg(", needs you", { $context: "project folder status, read after its name" }),
+  failed: msg(", failed", { $context: "project folder status, read after its name" }),
+  unread: msg(", done", { $context: "project folder status, read after its name" }),
+  working: msg(", working", { $context: "project folder status, read after its name" }),
 } as const;
 
 /** The folder's sidebar tree row; its thread rows name it as their parent. */
@@ -65,6 +66,8 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   ) => void;
   placement?: SidebarProjectFolderPlacement | undefined;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { group, collapsed, hiddenThreads, placement } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
   // Selecting the dot, not the visit map, keeps other visits from redrawing every folder.
@@ -85,7 +88,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   );
   const dotMark = dot ? (
     <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
-      <span className="sr-only">{FOLDER_DOT_LABEL[dot]}</span>
+      <span className="sr-only">{m(FOLDER_DOT_LABEL[dot])}</span>
     </span>
   ) : null;
   if (placement) {
@@ -163,14 +166,18 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
                 data-sidebar-action-for={rowId}
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={`New thread in ${group.displayName}`}
+                aria-label={gt("New thread in {project}", { project: group.displayName })}
                 onClick={() => props.onNewThread(group)}
               />
             }
           >
             <SquarePenIcon aria-hidden />
           </TooltipTrigger>
-          <TooltipPopup>New thread in {group.displayName}</TooltipPopup>
+          <TooltipPopup>
+            <T>
+              New thread in <Var>{group.displayName}</Var>
+            </T>
+          </TooltipPopup>
         </Tooltip>
       </span>
     </li>

@@ -100,11 +100,13 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         });
       }
       // The parent delegated, and the outside agent launched, the source thread, not its forks.
+      // Nor is a fork a step of the run its source was one of.
       const {
         delegatedFrom: _delegatedFrom,
         mcpClientSessionId: _mcpClientSessionId,
         delegatedCompletion: _delegatedCompletion,
         silentWakeAttention: _silentWakeAttention,
+        workflowRun: _workflowRun,
         ...inherited
       } = input.sourceProjection.thread;
       const targetThread: OrchestrationV2AppThread = {
@@ -119,8 +121,10 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         title: input.title ?? `${input.sourceProjection.thread.title} fork`,
         linkedIssue: undefined,
         repositoryOrchestration: undefined,
-        // The source's title job completes only on the source thread.
+        // The source's title job and rename stay with the source thread.
         titleRegeneration: null,
+        titleRenamed: false,
+        titleSource: undefined,
         activeProviderThreadId: null,
         lineage: {
           parentThreadId: input.sourceProjection.thread.id,

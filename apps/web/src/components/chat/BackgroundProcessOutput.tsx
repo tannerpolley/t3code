@@ -5,7 +5,7 @@ import {
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { SquareIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 import { create } from "zustand";
 
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -38,7 +38,11 @@ export interface BackgroundProcessDetails extends BackgroundProcessTarget {
 const processKey = (target: BackgroundProcessTarget) =>
   `${target.environmentId}\0${target.threadId}\0${target.taskId}`;
 
-type OpenPopup = { readonly details: BackgroundProcessDetails; readonly anchor: Element };
+type OpenPopup = {
+  readonly details: BackgroundProcessDetails;
+  readonly anchor: Element;
+  readonly placement: ReturnType<typeof lastPlaceOf>;
+};
 const useOutputPopup = create<{ readonly open: OpenPopup | null }>(() => ({ open: null }));
 
 /**
@@ -90,6 +94,7 @@ export function BackgroundProcessOutputButton(
                     followable,
                   },
                   anchor,
+                  placement: lastPlaceOf(anchor),
                 },
         }));
       }}
@@ -116,7 +121,6 @@ export function BackgroundProcessPopupHost() {
   // The closing popup keeps its content while it fades; it unmounts, with its queries, after.
   const [shown, setShown] = useState(open);
   if (open !== null && open !== shown) setShown(open);
-  const anchor = useMemo(() => (shown === null ? null : lastPlaceOf(shown.anchor)), [shown]);
   return (
     <Popover
       open={open !== null}
@@ -128,7 +132,12 @@ export function BackgroundProcessPopupHost() {
         useOutputPopup.setState({ open: null });
       }}
     >
-      <PopoverPopup anchor={anchor} side="right" align="start" className="w-[min(40rem,90vw)]">
+      <PopoverPopup
+        anchor={shown?.placement ?? null}
+        side="right"
+        align="start"
+        className="w-[min(40rem,90vw)]"
+      >
         {shown ? (
           <BackgroundProcessPopup key={processKey(shown.details)} {...shown.details} />
         ) : null}
@@ -193,6 +202,7 @@ export function BackgroundProcessOutputView(props: BackgroundProcessTarget) {
   const scrollRef = useRef<HTMLPreElement>(null);
   const pinnedToBottom = useRef(true);
   // Follow new output unless the reader scrolled up; renders only happen when output changes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the output DOM scrolled to the bottom while pinned.
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (element && pinnedToBottom.current) element.scrollTop = element.scrollHeight;
@@ -229,6 +239,7 @@ export function BackgroundShellElapsed(props: {
 }) {
   // Rows are keyed by task, so a shell's start never changes under this state.
   const [stuck, setStuck] = useState(() => msUntilPossiblyStuck(props.startedAt, Date.now()) === 0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Wake at the stuck threshold and cancel the timer on unmount.
   useEffect(() => {
     if (stuck || props.commandKind === "server") return;
     const id = setTimeout(() => setStuck(true), msUntilPossiblyStuck(props.startedAt, Date.now()));

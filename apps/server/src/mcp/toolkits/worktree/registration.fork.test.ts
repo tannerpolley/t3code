@@ -1,4 +1,9 @@
 import * as EnvironmentThemeService from "../../../environmentTheme.ts";
+import * as FeedbackStore from "../../../feedback/FeedbackStore.ts";
+import * as GitManager from "../../../git/GitManager.ts";
+import * as MilestoneHub from "../../../milestones/MilestoneHub.ts";
+import * as TaskFolders from "../../../workspace/TaskFolders.ts";
+import * as Workflows from "../../../workflows/Workflows.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
@@ -59,6 +64,11 @@ import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueServic
 
 const layerStubServices = Layer.mergeAll(
   NodeCrypto.layer,
+  Layer.mock(FeedbackStore.FeedbackStore)({}),
+  Layer.mock(GitManager.GitManager)({}),
+  Layer.mock(MilestoneHub.MilestoneHub)({}),
+  Layer.mock(TaskFolders.TaskFolders)({}),
+  Layer.mock(Workflows.Workflows)({}),
   Layer.mock(AssetSigner.AssetSigner)({}),
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(Sidebar.SidebarLayoutService)({
@@ -70,7 +80,7 @@ const layerStubServices = Layer.mergeAll(
     }),
   }),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
-  Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+  Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),

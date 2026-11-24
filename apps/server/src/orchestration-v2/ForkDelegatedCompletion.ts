@@ -66,7 +66,12 @@ export function currentDelegatedCompletionDelivery(
     OrchestrationV2ThreadProjection,
     "thread" | "messages" | "runs" | "providerTurns"
   >,
-  completion: { parentRunId: RunId | null; generation: number; messageId: MessageId },
+  completion: {
+    parentRunId: RunId | null;
+    generation: number;
+    messageId: MessageId;
+    steerFollowUpOfRunId?: RunId | undefined;
+  },
 ) {
   const cohort = completionCohort(projection, completion.parentRunId);
   const delivery = cohort?.delivery;
@@ -81,7 +86,9 @@ export function currentDelegatedCompletionDelivery(
     delivery === undefined ||
     delivery.generation !== completion.generation ||
     delivery.messageId !== completion.messageId ||
-    (alreadyDispatched && !isUndeliveredMailboxSteer(projection, completion.messageId))
+    (alreadyDispatched &&
+      completion.steerFollowUpOfRunId === undefined &&
+      !isUndeliveredMailboxSteer(projection, completion.messageId))
   ) {
     return undefined;
   }

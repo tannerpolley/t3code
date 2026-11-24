@@ -4,6 +4,7 @@ import type {
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadShell,
   PlanId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   ThreadId,
@@ -30,6 +31,13 @@ export interface ThreadRunSummary {
    * instead of "Thinking".
    */
   readonly providerStartingLabel?: string;
+  /** `providerStartingLabel` as a `msg()` string; display sites resolve this one. */
+  readonly providerStartingLabelMsg?: string;
+  /** The starting provider, so clients can show its logo beside the label. */
+  readonly providerStarting?: {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+  };
   readonly sourcePlanRef?: {
     readonly threadId: ThreadId;
     readonly planId: PlanId;
@@ -46,6 +54,8 @@ export interface ThreadRuntimeSummary {
   readonly lastError: string | null;
   readonly lastErrorClass?: OrchestrationV2ProviderFailureClass | null;
   readonly lastErrorCode?: string | null;
+  /** The record `lastError` came from, with its change time so a repeated failure differs. */
+  readonly lastErrorSource?: string | null;
   readonly usageLimitResetAt?: string | null;
   readonly updatedAt: string;
 }
@@ -124,17 +134,12 @@ function threadActivityShellRuntime(
   const parkAtIdle =
     activityStatus !== "preparing" &&
     activityStatus !== "starting" &&
-    activityStatus !== "running" &&
+    thread.activityRunStatus !== "running" &&
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
     resolveThreadActivity({ runtime: { status: thread.status } }) !== "failed";
   // A pull request watch can hold a thread that never ran, and a provider-native
   // child without an app run still reports its own status.
-  if (
-    thread.latestRunId === null &&
-    thread.activeProviderThreadId === null &&
-    thread.status === "idle" &&
-    !parkAtIdle
-  ) {
+  if (thread.latestRunId === null && activityStatus === "idle" && !parkAtIdle) {
     return null;
   }
   const status = parkAtIdle ? "idle" : activityStatus;

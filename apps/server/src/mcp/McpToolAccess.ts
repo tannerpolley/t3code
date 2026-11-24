@@ -24,10 +24,16 @@ import {
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as IssueService from "../issues/IssueService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
-import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
+import {
+  assertFullAccessNamingLink,
+  assertNotLinked,
+  assertSameLink,
+  callerLinkOrigin,
+} from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import {
+  assertBroadestAccess,
   assertFullAccess,
   assertLiveCaller,
   assertTargetWithinLimits,
@@ -186,6 +192,24 @@ export const writes = <P, A, E, R>(
     () => orchestratingCaller,
   );
 
+/**
+ * Drives work that runs for this environment's owner in modes its definition picks, such as a
+ * workflow run. `what` names it in a refusal, after "can" or "cannot".
+ */
+export const writesOwnerWork = <P, A, E, R>(
+  what: string,
+  handle: (params: P) => Effect.Effect<A, E, R>,
+) => {
+  const check = orchestratingCaller.pipe(
+    Effect.tap((caller) => assertNotLinked(caller, what)),
+    Effect.tap((caller) => assertBroadestAccess(caller, what)),
+  );
+  return declare(
+    (params: P) => check.pipe(Effect.flatMap(() => handle(params))),
+    () => check,
+  );
+};
+
 /** Requires handler capability checks, not thread control; linked work is refused the same way. */
 export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare(
@@ -321,6 +345,7 @@ export const afterForwarding = <P, A, E, R, E2, R2>(
 
 const fullAccessRequired =
   "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
+const changesEnvironment = "change projects or environment settings";
 
 /** Recheck after waits before writing; caller modes may have changed. */
 export const writesEnvironment = <P, A, E, R>(
@@ -340,9 +365,11 @@ export const writesEnvironment = <P, A, E, R>(
     Effect.tap((caller) =>
       options?.linkedCallers === "allowed"
         ? Effect.void
-        : assertNotLinked(caller, "change projects or environment settings"),
+        : assertNotLinked(caller, changesEnvironment),
     ),
-    Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+    Effect.tap((caller) =>
+      assertFullAccessNamingLink(caller, fullAccessRequired, changesEnvironment),
+    ),
   );
   return declare(
     (params: P) => check.pipe(Effect.flatMap(() => handle(params, check))),
@@ -422,6 +449,11 @@ const withCanonicalHosts = Effect.fn("McpToolAccess.withCanonicalHosts")(functio
       : {}),
   };
 });
+const THREAD_ONLY = new Set<unknown>([
+  McpInvocationContext.hiddenFromOutsideClients,
+  McpInvocationContext.hiddenWithoutBackgroundWait,
+  McpInvocationContext.topLevelThreadOnly,
+]);
 
 /**
  * Every tool that takes a linked environment runs there the same way: its
@@ -453,11 +485,7 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
     if (tool === undefined) continue;
     const remote = remoteCheckOf(declaration);
     const enabledWhen = Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen);
-    if (
-      remote === undefined &&
-      enabledWhen !== McpInvocationContext.hiddenFromOutsideClients &&
-      enabledWhen !== McpInvocationContext.topLevelThreadOnly
-    )
+    if (remote === undefined && !THREAD_ONLY.has(enabledWhen))
       return yield* Effect.die(
         `${name} acts as its calling thread, so outside clients must not be offered it.`,
       );

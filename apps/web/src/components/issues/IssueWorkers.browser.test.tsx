@@ -25,7 +25,10 @@ vi.mock("~/state/entities", () => ({
     ref === null ? null : (state.shells.get(ref.threadId) ?? null),
 }));
 vi.mock("../ChatMarkdown", () => ({ default: () => null }));
-vi.mock("~/state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock(import("~/state/session"), async (original) => ({
+  ...(await original()),
+  useEnvironmentScope: () => true,
+}));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => state.respond }));
 vi.mock("~/state/threads", () => ({
   childThreadApprovalsAtom: () => null,

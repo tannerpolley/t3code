@@ -1,4 +1,5 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { useMessages } from "gt-react";
 import type { SidebarThreadSummary } from "../../types";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import {
@@ -15,6 +16,7 @@ export function SidebarThreadTime(props: {
   readonly status?: SidebarThreadStatus;
   readonly snoozeWakeLabel?: string | null;
 }) {
+  const resolve = useMessages();
   const status = props.status ?? resolveSidebarThreadStatus(props.thread);
   const startedAt =
     status === "working" || status === "waiting"
@@ -23,7 +25,7 @@ export function SidebarThreadTime(props: {
   const duration = startedAt ? (
     <AgentElapsed agent={{ status: "running", startedAt, completedAt: null }} />
   ) : (
-    formatStoppedThreadDuration(props.thread)
+    formatStoppedThreadDuration(props.thread, resolve)
   );
   if (duration === null) return null;
   const age = formatRelativeTimeLabel(

@@ -14,7 +14,10 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
-vi.mock("gt-react", () => ({ useGT: () => (message: string) => message }));
+vi.mock(import("gt-react"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useGT: () => (message: string) => message,
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: <T,>(select: (settings: { backgroundProcessOutput: boolean }) => T) =>

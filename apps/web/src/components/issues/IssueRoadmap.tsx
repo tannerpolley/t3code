@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { Fragment, useSyncExternalStore, type ReactNode } from "react";
 import { IssueInboxSection, useIssueInbox } from "./IssueInbox";
 import { IssueDoneDetails } from "./IssueDoneDetails";
@@ -30,6 +31,7 @@ export function IssueRoadmap({
   /** Rendered above Backlog, where the owner triages new activity. */
   inbox?: ReactNode;
 }) {
+  const gt = useGT();
   const stageLabels = useIssueStageLabels();
   const clock = createIssueRoadmapClock(issues);
   const now = useSyncExternalStore(clock.subscribe, clock.snapshot, clock.snapshot);
@@ -53,13 +55,15 @@ export function IssueRoadmap({
       .map((row) => row.issue.number),
   );
   return (
-    <div aria-label={`Roadmap for ${scope.repository}`}>
+    <div aria-label={gt("Roadmap for {repository}", { repository: scope.repository })}>
       {queue.supported &&
       queue.data?.rootThreadId === null &&
       (queue.data.queue?.length ?? 0) > 0 ? (
         <p className="px-3 py-1 text-xs text-muted-foreground" role="status">
-          Waiting for a repository orchestrator. Right-click a thread and choose Make repository
-          orchestrator to hand off queued issues.
+          <T>
+            Waiting for a repository orchestrator. Right-click a thread and choose Make repository
+            orchestrator to hand off queued issues.
+          </T>
         </p>
       ) : null}
       {sections

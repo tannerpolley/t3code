@@ -30,6 +30,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -363,7 +364,7 @@ const failedChildTest = (
                 ({ event }) =>
                   event.type === "run.updated" &&
                   event.threadId === childThreadId &&
-                  (event.payload.status === "failed" || event.payload.status === "waiting"),
+                  isTerminalRunStatus(event.payload.status),
               ),
               Stream.take(1),
               Stream.runDrain,

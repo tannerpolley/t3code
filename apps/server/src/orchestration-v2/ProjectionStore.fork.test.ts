@@ -1468,7 +1468,7 @@ it.effect("subagent discovery retains usage-limit failures behind held continuat
     assert.deepEqual(yield* store.getRecoveryThreadIds("subagent-results"), []);
     yield* sql`INSERT INTO orchestration_v2_projection_turn_items
       (turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json)
-      VALUES ('limit-discovery', ${child}, 1, 'error', 'completed', '2026-10-20', '{"failure":{"class":"usage_limit"}}')`;
+      VALUES ('limit-discovery', ${child}, 1, 'error', 'failed', '2026-10-20', '{"failure":{"class":"usage_limit"}}')`;
     const { statements, tracer } = traceSqlStatements();
     assert.deepEqual(
       yield* store.getRecoveryThreadIds("subagent-results").pipe(Effect.withTracer(tracer)),

@@ -157,7 +157,8 @@ const handlers = {
         );
       }),
   ),
-  t3_background_wait: McpToolAccess.actsAsCaller((input) =>
+  // Claude can start a turn by itself before T3 starts its run, so a live-run check would refuse the mark.
+  t3_background_wait: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       if (input.taskId === undefined && input.taskIds === undefined) {
         return yield* new OrchestratorMcpFailure({
@@ -337,7 +338,7 @@ const handlers = {
   t3_environment_unlink: McpToolAccess.writesEnvironment(({ environmentId }) =>
     Effect.gen(function* () {
       const links = yield* PeerLinks.PeerLinks;
-      const removed = yield* links
+      const result = yield* links
         .unlink(environmentId)
         .pipe(
           Effect.mapError(
@@ -345,7 +346,7 @@ const handlers = {
               new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
           ),
         );
-      return { environmentId, removed };
+      return { environmentId, ...result };
     }),
   ),
   t3_thread_interrupt: McpToolAccess.writesThreads(

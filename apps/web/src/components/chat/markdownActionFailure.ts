@@ -1,3 +1,5 @@
+export type TableCopyFormat = "markdown" | "csv" | "html";
+
 interface MarkdownActionFailureContext {
   readonly operation: string;
   readonly target?: string;

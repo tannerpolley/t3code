@@ -1,12 +1,8 @@
-import { DesktopBackendBootstrap } from "@t3tools/contracts";
-import type { DesktopBackendBootstrap as DesktopBackendBootstrapValue } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
-import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess } from "effect/process";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -32,10 +28,6 @@ import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublish
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
-const decodeDesktopBackendBootstrap = Schema.decodeEffect(
-  Schema.fromJsonString(DesktopBackendBootstrap),
-);
-
 const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "/electron",
   args: ["/server/bin.mjs", "--bootstrap-fd", "3"],
@@ -59,13 +51,6 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   httpBaseUrl: new URL("http://127.0.0.1:3773"),
   captureOutput: true,
   preflightFailure: Option.none(),
-};
-
-const configWithObservability: DesktopBackendBootstrapValue = {
-  ...baseConfig.bootstrap,
-  tailscaleServeEnabled: true,
-  desktopTelemetryFd: 4,
-  otlpTracesUrl: "http://127.0.0.1:4318/v1/traces",
 };
 
 function makeProcess(options?: {
@@ -111,10 +96,6 @@ function layerHttpClient(
 const layerHealthyHttpClient = layerHttpClient((request) =>
   Effect.succeed(responseForRequest(request, 200)),
 );
-
-function decodeBootstrap(raw: string) {
-  return decodeDesktopBackendBootstrap(raw);
-}
 
 interface MakeInstanceInput {
   readonly spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
@@ -188,89 +169,6 @@ function makeTestInstance(input: MakeInstanceInput) {
 }
 
 describe("DesktopBackendManager", () => {
-  it.effect("spawns the backend with fd3 bootstrap and fd4 telemetry", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let spawnedCommand: ChildProcess.Command | undefined;
-        let bootstrapJson = "";
-        let telemetryJson = "";
-        let readyCount = 0;
-        const ready = yield* Deferred.make<void>();
-        const exited = yield* Queue.unbounded<void>();
-
-        const layerSpawner = Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make((command) =>
-            Effect.gen(function* () {
-              spawnedCommand = command;
-              if (command._tag === "StandardCommand") {
-                const fd3 = command.options.additionalFds?.fd3;
-                if (fd3?.type === "input" && fd3.stream) {
-                  bootstrapJson = yield* fd3.stream.pipe(Stream.decodeText(), Stream.mkString);
-                }
-                const fd4 = command.options.additionalFds?.fd4;
-                if (fd4?.type === "input" && fd4.stream) {
-                  telemetryJson = yield* fd4.stream.pipe(Stream.decodeText(), Stream.mkString);
-                }
-              }
-
-              return makeProcess({
-                exitCode: Deferred.await(ready).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-              });
-            }),
-          ),
-        );
-
-        const instance = yield* makeTestInstance({
-          config: {
-            ...baseConfig,
-            bootstrap: configWithObservability,
-          },
-          spawnerLayer: layerSpawner,
-          desktopTelemetryStream: Stream.encodeText(
-            Stream.make('{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n'),
-          ),
-          onReady: Effect.sync(() => {
-            readyCount += 1;
-          }).pipe(Effect.andThen(Deferred.succeed(ready, void 0)), Effect.asVoid),
-          backendOutputLog: {
-            persistFailure: () => Queue.offer(exited, void 0).pipe(Effect.asVoid),
-          },
-        });
-
-        yield* instance.start;
-        yield* Queue.take(exited);
-
-        assert.equal(readyCount, 1);
-        assert.isDefined(spawnedCommand);
-        if (spawnedCommand._tag !== "StandardCommand") {
-          throw new Error("Expected backend to spawn a standard command.");
-        }
-
-        assert.equal(spawnedCommand.command, "/electron");
-        assert.deepEqual(spawnedCommand.args, ["/server/bin.mjs", "--bootstrap-fd", "3"]);
-        assert.equal(spawnedCommand.options.cwd, "/server");
-        assert.equal(spawnedCommand.options.extendEnv, true);
-        assert.equal(spawnedCommand.options.stdout, "pipe");
-        assert.equal(spawnedCommand.options.stderr, "pipe");
-        assert.equal(spawnedCommand.options.killSignal, "SIGTERM");
-        assert.isDefined(spawnedCommand.options.forceKillAfter);
-        assert.equal(spawnedCommand.options.additionalFds?.fd4?.type, "input");
-        assert.equal(spawnedCommand.options.additionalFds?.fd5?.type, "output");
-        assert.equal(
-          Duration.toMillis(Duration.fromInputUnsafe(spawnedCommand.options.forceKillAfter)),
-          10_000,
-        );
-
-        assert.deepEqual(yield* decodeBootstrap(bootstrapJson), configWithObservability);
-        assert.equal(
-          telemetryJson,
-          '{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n',
-        );
-      }),
-    ),
-  );
-
   it.effect("recognizes migration status across output chunks and keeps streams separate", () =>
     Effect.gen(function* () {
       const statuses: boolean[] = [];

@@ -1,5 +1,6 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -13,19 +14,22 @@ import {
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
+import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useUiStateStore } from "../uiStateStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
@@ -38,6 +42,7 @@ vi.mock(import("../state/olderSettledShelf"), async (original) => {
   return { ...actual, useOlderSettledShelf: vi.fn(actual.useOlderSettledShelf) };
 });
 vi.mock("../state/entities", { spy: true });
+vi.mock("../state/environments", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../hooks/useNowMinute", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
@@ -52,6 +57,7 @@ vi.mock(import("../state/server"), async (original) => {
   const keybindings = compileResolvedKeybindingsConfig([
     { key: "mod+1", command: "thread.jump.1" },
     { key: "mod+2", command: "thread.jump.2" },
+    { key: "mod+shift+[", command: "thread.previous" },
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
@@ -75,6 +81,15 @@ function project(id: string): Project {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     scripts: [],
+  };
+}
+
+async function setupActivitySidebar(): Promise<Disposable> {
+  await page.viewport(1400, 900);
+  const { sidebarMode, sidebarProjectScopeKeys } = useUiStateStore.getState();
+  useUiStateStore.setState({ sidebarMode: "activity", sidebarProjectScopeKeys: [] });
+  return {
+    [Symbol.dispose]: () => useUiStateStore.setState({ sidebarMode, sidebarProjectScopeKeys }),
   };
 }
 
@@ -109,13 +124,14 @@ describe("sidebar header new thread", () => {
       routeThreadRef: null,
     });
     vi.mocked(openCommandPalette).mockClear();
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
       </SidebarProvider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "New thread", exact: true }), {
+    await userEvent.click(screen.getByRole("button", { name: /^New thread(?: \(|$)/ }), {
       modifiers: scenario.shift ? ["Shift"] : [],
     });
 
@@ -126,6 +142,129 @@ describe("sidebar header new thread", () => {
       expect(openCommandPalette).not.toHaveBeenCalled();
       expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
     }
+  });
+});
+
+// regression: #41549 a grouped project's folder New thread went to the primary copy
+describe("sidebar project folder new thread", () => {
+  it("starts in the copy of the viewed thread, as the new-thread shortcut does", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: true });
+    const primary = EnvironmentId.make("local");
+    const dev1 = EnvironmentId.make("dev1");
+    const repositoryIdentity = {
+      canonicalKey: "github.com/acme/demo-repo",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/acme/demo-repo.git",
+      },
+      displayName: "acme/demo-repo",
+    };
+    const primaryCopy = { ...project("demo-primary"), repositoryIdentity };
+    const dev1Copy = {
+      ...project("demo-dev1"),
+      environmentId: dev1,
+      repositoryIdentity,
+    };
+    vi.mocked(usePrimaryEnvironmentId).mockReturnValue(primary);
+    vi.mocked(useConnectedEnvironmentIds).mockReturnValue([primary, dev1]);
+    vi.mocked(useProjects).mockReturnValue([primaryCopy, dev1Copy]);
+    const dev1Thread = makeThreadFixture({
+      environmentId: dev1,
+      id: ThreadId.make("dev1-thread"),
+      projectId: dev1Copy.id,
+      title: "dev1 work",
+    });
+    vi.mocked(useQuietThreadShells).mockReturnValue([dev1Thread]);
+    const threadRef = scopeThreadRef(dev1, dev1Thread.id);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
+    const dev1ProjectRef = scopeProjectRef(dev1, dev1Copy.id);
+    const startThread = vi.fn().mockResolvedValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: dev1Thread,
+      defaultProjectRef: dev1ProjectRef,
+      defaultProjectFallbackReady: true,
+      handleNewThread: startThread,
+      routeDraftId: null,
+      routeThreadRef: threadRef,
+    });
+
+    using _sidebar = await setupActivitySidebar();
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "New thread in acme/demo-repo" }));
+
+    expect(startThread).toHaveBeenCalledExactlyOnceWith(dev1ProjectRef);
+  });
+});
+
+// regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them
+describe("sidebar numbered jumps", () => {
+  it("numbers the unsent draft at the top before the threads below it", async () => {
+    const initial = useComposerDraftStore.getState();
+    using stack = new DisposableStack();
+    stack.defer(() => useComposerDraftStore.setState(initial, true));
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    const web = project("web");
+    vi.mocked(useProjects).mockReturnValue([web]);
+    const thread = threadShell(web.id, 0);
+    vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+    const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn(),
+      routeDraftId: null,
+      routeThreadRef: threadRef,
+    });
+    const draftId = DraftId.make("unsent-draft");
+    initial.setProjectDraftThreadId(scopeProjectRef(web.environmentId, web.id), draftId, {
+      threadId: ThreadId.make("unsent-draft-thread"),
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    initial.setPrompt(draftId, "Unsent prompt");
+
+    using _sidebar = await setupActivitySidebar();
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const draftRow = screen.getByTestId("sidebar-draft-row");
+    await expect.element(draftRow).toBeInTheDocument();
+    await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
+    await userEvent.keyboard("{Control>}");
+    await expect.element(screen.getByText("Ctrl+1")).toBeVisible();
+    await expect.element(draftRow.getByText("Ctrl+1")).toBeVisible();
+    await expect.element(screen.getByText("Ctrl+2")).toBeVisible();
+    await userEvent.keyboard("{/Control}");
+
+    // Previous thread from the open thread steps up to the draft above it.
+    await userEvent.keyboard("{Control>}{Shift>}{BracketLeft}{/Shift}{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).toBe(`/draft/${draftId}`),
+    );
+    await userEvent.keyboard("{Control>}2{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).not.toBe(`/draft/${draftId}`),
+    );
+    await userEvent.keyboard("{Control>}1{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).toBe(`/draft/${draftId}`),
+    );
   });
 });
 
@@ -173,6 +312,7 @@ describe("sidebar render isolation", () => {
     document.body.append(terminal);
     stack.defer(() => terminal.remove());
     stack.defer(() => useTerminalUiStateStore.getState().setTerminalOpen(routeThreadRef, false));
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
@@ -249,6 +389,7 @@ describe("sidebar thread rename", () => {
           <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
         </SidebarProvider>
       );
+      using _sidebar = await setupActivitySidebar();
       await using screen = await render(tree());
       await userEvent.dblClick(screen.getByText("Fix the login redirect").first());
       const input = screen.getByRole("textbox", { name: "Thread title" });
@@ -262,6 +403,58 @@ describe("sidebar thread rename", () => {
       expect(updateMetadata).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("sidebar thread click", () => {
+  // regression: #40715 macOS counts quick clicks on different rows, so the next row got detail 2 and was ignored
+  it("opens another thread when the click arrives with a double-click count", async () => {
+    const activeProject = project("active");
+    const threads = [threadShell(activeProject.id, 0), threadShell(activeProject.id, 1)];
+    const routeThreadRef: ScopedThreadRef = {
+      environmentId: activeProject.environmentId,
+      threadId: threads[0]!.id,
+    };
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef,
+    });
+    using _sidebar = await setupActivitySidebar();
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
+      </SidebarProvider>,
+      { router: "/local/thread-0" },
+    );
+    const navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
+
+    const openRow = screen.getByText("Thread 0").first().element();
+    await act(() => {
+      openRow.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, detail: 2 }),
+      );
+    });
+    expect(navigate).not.toHaveBeenCalled();
+
+    const row = screen.getByText("Thread 1").first().element();
+    await act(() => {
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 2 }));
+    });
+
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ params: expect.objectContaining({ threadId: "thread-1" }) }),
+    );
+  });
 });
 
 describe("sidebar thread menu", () => {
@@ -286,6 +479,7 @@ describe("sidebar thread menu", () => {
       routeDraftId: null,
       routeThreadRef: threadRef,
     });
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
@@ -362,6 +556,7 @@ describe("sidebar settled pagination", () => {
         ],
       ]),
     );
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider
         {...workspaceAreaProps("sidebar", 0, "Threads")}

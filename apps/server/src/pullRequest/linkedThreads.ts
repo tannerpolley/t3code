@@ -8,6 +8,7 @@ import {
   PullRequestLinkedThreadsResult,
   PullRequestOperationError,
   isProviderNativeSubagentThread,
+  threadIssueKeyOf,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type ThreadId,
@@ -85,7 +86,7 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
   ),
 );
 
-// Mirrors the rows and filters of `listLinkedPullRequestThreads`.
+// Mirrors the rows and filters of `listLinkedPullRequestThreads` and `listLinkedIssueThreads`.
 function linkedKeys(thread: OrchestrationV2AppThread): ReadonlyArray<string> {
   if (
     thread.deletedAt !== null ||
@@ -93,9 +94,10 @@ function linkedKeys(thread: OrchestrationV2AppThread): ReadonlyArray<string> {
     isProviderNativeSubagentThread(thread)
   )
     return [];
-  return visibleThreadPullRequests(thread.pullRequests ?? [])
-    .map(threadPullRequestKeyOf)
-    .toSorted();
+  return [
+    ...visibleThreadPullRequests(thread.pullRequests ?? []).map(threadPullRequestKeyOf),
+    ...(thread.issues ?? []).map(threadIssueKeyOf),
+  ].toSorted();
 }
 
 function linkedThreadsView(
@@ -114,8 +116,8 @@ function linkedThreadsView(
 }
 
 /**
- * Tells how a domain event changed `pullRequests.linkedThreads` answers, so readers can refresh on
- * change instead of polling. `reordered` means activity on a linked thread, or on one whose links
+ * Tells how a domain event changed `pullRequests.linkedThreads` and `issues.linkedThreads`
+ * answers, so readers can refresh on change instead of polling. `reordered` means activity on a linked thread, or on one whose links
  * are unknown since a restart, which can reorder answers. A thread's first full event after a
  * restart counts as a change, since its earlier links are unknown.
  */

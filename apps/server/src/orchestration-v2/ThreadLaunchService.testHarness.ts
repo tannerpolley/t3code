@@ -1,4 +1,5 @@
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as TaskFolders from "../workspace/TaskFolders.ts";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { ISSUE_HOSTS, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -278,6 +279,7 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     layerServerSettings,
     ProviderRegistryMock.layer(options.providers),
+    Layer.mock(TaskFolders.TaskFolders)({ plan: () => Effect.succeed(null) }),
     options.managedFolders ??
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -321,6 +323,7 @@ function makeHarness(options: HarnessOptions = {}) {
               deletedAt: project.deletedAt,
               pinnedAt: null,
               archivedAt: null,
+              trackedFolders: [],
             })
           : Option.none(),
       ),

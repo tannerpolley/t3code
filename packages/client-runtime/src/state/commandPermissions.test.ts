@@ -42,7 +42,7 @@ import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
-import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createEnvironmentRpcCommand, runAtomCommand } from "./runtime.ts";
 import { createOwnerDecisionAtoms } from "./ownerDecisions.ts";
 import { createIssueEnvironmentAtoms } from "./issues.ts";
 import { createRepositoryIssueEnvironmentAtoms } from "./repositoryIssues.ts";
@@ -156,23 +156,23 @@ describe("command permissions", () => {
         });
         const projectId = ProjectId.make("science");
         expect(
-          (yield* Effect.promise(() =>
+          (yield* Effect.exit(
             add.run(registry, { environmentId: other, input: { projectId, path: "paper.qmd" } }),
           ))._tag,
         ).toBe("Failure");
         expect(
-          (yield* Effect.promise(() =>
+          (yield* Effect.exit(
             remove.run(registry, { environmentId: other, input: { projectId, id: "pin" } }),
           ))._tag,
         ).toBe("Failure");
         expect(calls).toEqual([]);
         expect(
-          (yield* Effect.promise(() =>
+          (yield* Effect.exit(
             add.run(registry, { environmentId: env, input: { projectId, path: "paper.qmd" } }),
           ))._tag,
         ).toBe("Success");
         expect(
-          (yield* Effect.promise(() =>
+          (yield* Effect.exit(
             remove.run(registry, { environmentId: env, input: { projectId, id: "pin" } }),
           ))._tag,
         ).toBe("Success");
@@ -216,12 +216,11 @@ describe("command permissions", () => {
           operations: [{ type: "otherExpanded" as const, expanded: false }],
         };
         expect(
-          (yield* Effect.promise(() => command.run(registry, { environmentId: env, input })))._tag,
+          (yield* Effect.exit(command.run(registry, { environmentId: env, input })))._tag,
         ).toBe("Failure");
         expect(calls).toBe(0);
         expect(
-          (yield* Effect.promise(() => command.run(registry, { environmentId: other, input })))
-            ._tag,
+          (yield* Effect.exit(command.run(registry, { environmentId: other, input })))._tag,
         ).toBe("Success");
         expect(calls).toBe(1);
       }),
@@ -372,51 +371,51 @@ describe("command permissions", () => {
         const scopeWithTarget = { ...scope, targetThreadId: ThreadId.make("lead") };
         for (const environmentId of [other, env]) {
           const outcome = environmentId === env ? "Success" : "Failure";
-          const chosen = yield* Effect.promise(() =>
+          const chosen = yield* Effect.exit(
             decisions.choose.run(registry, {
               environmentId,
               input: { id: "D1", optionId: "adopt" },
             }),
           );
           expect(chosen._tag).toBe(outcome);
-          const ended = yield* Effect.promise(() =>
+          const ended = yield* Effect.exit(
             issues.endRepository.run(registry, {
               environmentId,
               input: { ...scope, expectedRevision: 2 },
             }),
           );
           expect(ended._tag).toBe(outcome);
-          const closedOut = yield* Effect.promise(() =>
+          const closedOut = yield* Effect.exit(
             issues.closeOut.run(registry, {
               environmentId,
               input: { ...scope, issueId: "issue", expectedRevision: 2 },
             }),
           );
-          const cancelled = yield* Effect.promise(() =>
+          const cancelled = yield* Effect.exit(
             issues.cancelRequest.run(registry, { environmentId, input: cancel }),
           );
-          const restored = yield* Effect.promise(() =>
+          const restored = yield* Effect.exit(
             issues.restoreRoot.run(registry, { environmentId, input: restore }),
           );
-          const assigned = yield* Effect.promise(() =>
+          const assigned = yield* Effect.exit(
             issues.assignOrchestrator.run(registry, { environmentId, input: scopeWithTarget }),
           );
-          const limited = yield* Effect.promise(() =>
+          const limited = yield* Effect.exit(
             issues.setWorkerLimit.run(registry, {
               environmentId,
               input: { ...scope, workerLimit: 8, expectedRevision: 2 },
             }),
           );
-          const readOnlyLimited = yield* Effect.promise(() =>
+          const readOnlyLimited = yield* Effect.exit(
             issues.setReadOnlyLimit.run(registry, {
               environmentId,
               input: { ...scope, readOnlyLimit: 8, expectedRevision: 2 },
             }),
           );
-          const queued = yield* Effect.promise(() =>
+          const queued = yield* Effect.exit(
             issues.queueIssue.run(registry, { environmentId, input: { ...scope, number: 1 } }),
           );
-          const unqueued = yield* Effect.promise(() =>
+          const unqueued = yield* Effect.exit(
             issues.unqueueIssue.run(registry, { environmentId, input: { ...scope, number: 1 } }),
           );
           expect([
@@ -498,22 +497,17 @@ describe("command permissions", () => {
           expect(registry.get(issues.cleanup.permissionAtom(env))).toBe(true);
           expect(registry.get(issues.cleanup.permissionAtom(other))).toBe(false);
           expect(
-            (yield* Effect.promise(() =>
-              issues.cleanup.run(registry, { environmentId: other, input }),
-            ))._tag,
+            (yield* Effect.exit(issues.cleanup.run(registry, { environmentId: other, input })))
+              ._tag,
           ).toBe("Failure");
           expect(calls).toBe(0);
           expect(
-            (yield* Effect.promise(() =>
-              issues.cleanup.run(registry, { environmentId: env, input }),
-            ))._tag,
+            (yield* Effect.exit(issues.cleanup.run(registry, { environmentId: env, input })))._tag,
           ).toBe("Success");
           expect(calls).toBe(1);
           registry.set(sessions(env), AsyncResult.success(grant(false)));
           expect(
-            (yield* Effect.promise(() =>
-              issues.cleanup.run(registry, { environmentId: env, input }),
-            ))._tag,
+            (yield* Effect.exit(issues.cleanup.run(registry, { environmentId: env, input })))._tag,
           ).toBe("Failure");
           expect(calls).toBe(1);
         }),
@@ -606,6 +600,9 @@ describe("command permissions", () => {
   it.effect.each([
     { method: WS_METHODS.serverRunStorageCleanup, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
+    { method: WS_METHODS.workspaceAddTaskFolderRepository, scope: AuthSourceControlWriteScope },
+    { method: WS_METHODS.providerMcpSignInStart, scope: AuthProvidersManageScope },
+    { method: WS_METHODS.providerMcpSignInComplete, scope: AuthProvidersManageScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.gen(function* () {
       const registry = yield* setup;
@@ -672,21 +669,43 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect.each([WS_METHODS.scheduledTasksDelete, ORCHESTRATION_V2_WS_METHODS.stopWorkflow])(
-    "uses the target grant for both availability and execution of %s",
-    (method) =>
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        const permissions = createCommandPermissions(runtime, method);
-        registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(permissions.permissionAtom(env))).toBe(true);
-        expect(permissions.permissionAtom(env)).toBe(permissions.permissionAtom(env));
-        yield* permissions.authorize(registry, env);
-        registry.set(sessions(other), AsyncResult.success(grant(false)));
-        expect(registry.get(permissions.permissionAtom(other))).toBe(false);
-        const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
-        expect(denied._tag).toBe("EnvironmentAuthorizationError");
-      }),
+  it.effect.each([
+    WS_METHODS.scheduledTasksDelete,
+    ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
+    WS_METHODS.workflowsAnswer,
+    WS_METHODS.workflowsResume,
+    WS_METHODS.workflowsCancel,
+  ])("uses the target grant for both availability and execution of %s", (method) =>
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const permissions = createCommandPermissions(runtime, method);
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(permissions.permissionAtom(env))).toBe(true);
+      expect(permissions.permissionAtom(env)).toBe(permissions.permissionAtom(env));
+      yield* permissions.authorize(registry, env);
+      registry.set(sessions(other), AsyncResult.success(grant(false)));
+      expect(registry.get(permissions.permissionAtom(other))).toBe(false);
+      const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
+      expect(denied._tag).toBe("EnvironmentAuthorizationError");
+    }),
+  );
+  it.effect("saving workflow definitions takes more than operating threads", () =>
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const saving = createCommandPermissions(runtime, WS_METHODS.workflowsSaveDefinition);
+      // The server runs that file, so the grant that answers a question does not cover it.
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(saving.permissionAtom(env))).toBe(false);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(true),
+          scopes: [AuthTerminalOperateScope],
+          permissions: [AuthTerminalOperateScope],
+        }),
+      );
+      expect(registry.get(saving.permissionAtom(env))).toBe(true);
+    }),
   );
   it.effect("waits for an initial grant", () =>
     Effect.gen(function* () {
@@ -741,9 +760,10 @@ describe("command permissions", () => {
     });
     const target = { environmentId: env, input: { id: ScheduledTaskId.make("task") } };
     try {
-      const first = command.run(registry, target);
+      const quiet = { reportFailure: false, reportDefect: false };
+      const first = runAtomCommand(registry, command, target, quiet);
       await entered;
-      const second = command.run(registry, target);
+      const second = runAtomCommand(registry, command, target, quiet);
       registry.set(sessions(env), AsyncResult.success(grant(false)));
       release();
       expect((await first)._tag).toBe("Success");
@@ -939,10 +959,10 @@ it.effect(
       setAccess(false);
       expect(yield* readLinks).toEqual({ links: [] });
       const linkInput = { url: peer.urls[0]!, pairingCode: "test-code", access: peer.access };
-      const link = Effect.promise(() =>
+      const link = Effect.exit(
         peerLinks.link.run(registry, { environmentId: env, input: linkInput }),
       );
-      const unlink = Effect.promise(() =>
+      const unlink = Effect.exit(
         peerLinks.unlink.run(registry, {
           environmentId: env,
           input: { environmentId: peer.environmentId },
@@ -1003,6 +1023,21 @@ it.effect("requires access management to answer a link request", () =>
         permissions: [AuthAccessWriteScope],
       }),
     );
+    expect(registry.get(answer.permissionAtom(env))).toBe(true);
+    yield* answer.authorize(registry, env);
+  }),
+);
+
+it.effect("requires thread operation to answer a feedback card", () =>
+  Effect.gen(function* () {
+    const registry = yield* setup;
+    registry.set(sessions(env), AsyncResult.success(grant(false)));
+    const answer = createCommandPermissions(runtime, WS_METHODS.agentFeedbackAnswerRequest);
+    expect(registry.get(answer.permissionAtom(env))).toBe(false);
+    expect((yield* answer.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    registry.set(sessions(env), AsyncResult.success(grant(true)));
     expect(registry.get(answer.permissionAtom(env))).toBe(true);
     yield* answer.authorize(registry, env);
   }),
@@ -1101,7 +1136,7 @@ it.effect("issue state writes check the destination's exact grant", () =>
       expect(registry.get(statePermission)).toBe(true);
       registry.set(sessions(env), AsyncResult.success(grant(true)));
       expect(registry.get(statePermission)).toBe(false);
-      const failed = yield* Effect.promise(() =>
+      const failed = yield* Effect.exit(
         issues.setState.run(registry, {
           environmentId: env,
           input: {

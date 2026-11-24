@@ -38,6 +38,11 @@ import {
 } from "./terminalSession.ts";
 import { terminalOutputText } from "./terminalOutput.ts";
 
+interface TerminalMetadataFeed {
+  readonly terminals: ReadonlyArray<TerminalSummary>;
+  readonly snapshotId: string | symbol;
+}
+
 export function createTerminalEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -58,6 +63,24 @@ export function createTerminalEnvironmentAtoms<R, E>(
     readonly input: { readonly threadId: string; readonly terminalId?: string | undefined };
   }) => JSON.stringify([environmentId, input.threadId, input.terminalId ?? null]);
   const lifecycleConcurrency = { mode: "serial" as const, key: terminalThreadKey };
+  const metadataFeed = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:terminal:metadata",
+    subscribe: (_input: null) =>
+      subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
+        Stream.scan(
+          (): TerminalMetadataFeed => ({ terminals: [], snapshotId: Symbol() }),
+          (feed, event): TerminalMetadataFeed => ({
+            terminals: applyTerminalMetadataStreamEvent(feed.terminals, event),
+            snapshotId: event.type === "snapshot" ? (event.managerId ?? Symbol()) : feed.snapshotId,
+          }),
+        ),
+        // The scan seed is not an authoritative empty server snapshot.
+        Stream.drop(1),
+      ),
+  });
+  const terminalMetadataSummaries = Atom.family((feed: ReturnType<typeof metadataFeed>) =>
+    Atom.mapResult(feed, ({ terminals }) => terminals),
+  );
   const atoms = {
     inlineRun: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:terminal:inline-run",
@@ -120,15 +143,9 @@ export function createTerminalEnvironmentAtoms<R, E>(
         );
       },
     }),
-    metadata: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:terminal:metadata",
-      subscribe: (_input: null) =>
-        subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
-          Stream.scan((): ReadonlyArray<TerminalSummary> => [], applyTerminalMetadataStreamEvent),
-          // The scan seed is not an authoritative empty server snapshot.
-          Stream.drop(1),
-        ),
-    }),
+    metadataFeed,
+    metadata: (target: { readonly environmentId: EnvironmentId; readonly input: null }) =>
+      terminalMetadataSummaries(metadataFeed(target)),
     runInline: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:run-inline",
       tag: WS_METHODS.terminalRunInline,

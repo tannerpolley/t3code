@@ -87,7 +87,7 @@ describe("Projects persisted PR glyph", () => {
       expect(sidebarProjectThreadPullRequests([link(1, state, draft)])).toEqual({
         ...presentation,
         count: 1,
-        label: `1 pull request, ${presentation.label.toLowerCase()} (last recorded)`,
+        label: `1 pull request, ${expected} (last recorded)`,
       });
     },
   );

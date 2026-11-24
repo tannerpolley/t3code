@@ -1,10 +1,11 @@
+import { T, useGT } from "gt-react";
 import { useClientSettings, updateClientSettings as updateSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ForkSettingsRow } from "./ForkSettingsRow";
 import { SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const DISPLAY_ROWS = [
   { key: "sidebarShowLocation", searchId: "sidebar-show-location" },
@@ -17,12 +18,14 @@ const DISPLAY_ROWS = [
 ] as const;
 
 export function ForkSidebarDisplaySettings() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const settings = useClientSettings();
   return (
-    <SettingsSection title="Sidebar & projects">
+    <SettingsSection title={gt("Sidebar & projects")}>
       <ForkSettingsRow
         {...searchableSetting("sidebar-role-display")}
-        description="Show the role as a name or save title space with an explained icon."
+        description={gt("Show the role as a name or save title space with an explained icon.")}
         control={
           <Select
             value={settings.sidebarRoleDisplay}
@@ -31,14 +34,18 @@ export function ForkSidebarDisplaySettings() {
                 updateSettings({ sidebarRoleDisplay: value });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Role display">
+            <SelectTrigger size="sm" aria-label={gt("Role display")}>
               <SelectValue>
-                {settings.sidebarRoleDisplay === "icon" ? "Icons" : "Names"}
+                {settings.sidebarRoleDisplay === "icon" ? gt("Icons") : gt("Names")}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value="name">Names</SelectItem>
-              <SelectItem value="icon">Icons</SelectItem>
+              <SelectItem value="name">
+                <T>Names</T>
+              </SelectItem>
+              <SelectItem value="icon">
+                <T>Icons</T>
+              </SelectItem>
             </SelectPopup>
           </Select>
         }
@@ -49,7 +56,9 @@ export function ForkSidebarDisplaySettings() {
           <ForkSettingsRow
             key={key}
             {...setting}
-            description="Show in Codex-style Projects rows. Hidden columns leave more room for the title."
+            description={gt(
+              "Show in Codex-style Projects rows. Hidden columns leave more room for the title.",
+            )}
             control={
               <Switch
                 checked={settings[key]}
@@ -62,7 +71,7 @@ export function ForkSidebarDisplaySettings() {
       })}
       <ForkSettingsRow
         {...searchableSetting("sidebar-location-icon-style")}
-        description="Choose the worktree mark; the main checkout keeps its folder icon."
+        description={gt("Choose the worktree mark; the main checkout keeps its folder icon.")}
         control={
           <Select
             value={settings.sidebarLocationIconStyle}
@@ -71,21 +80,27 @@ export function ForkSidebarDisplaySettings() {
                 updateSettings({ sidebarLocationIconStyle: value });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Location icon style">
+            <SelectTrigger size="sm" aria-label={gt("Location icon style")}>
               <SelectValue>
-                {settings.sidebarLocationIconStyle === "branch" ? "Branch" : "Worktree"}
+                {settings.sidebarLocationIconStyle === "branch" ? gt("Branch") : gt("Worktree")}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value="worktree">Worktree</SelectItem>
-              <SelectItem value="branch">Branch</SelectItem>
+              <SelectItem value="worktree">
+                <T>Worktree</T>
+              </SelectItem>
+              <SelectItem value="branch">
+                <T>Branch</T>
+              </SelectItem>
             </SelectPopup>
           </Select>
         }
       />
       <ForkSettingsRow
         {...searchableSetting("sidebar-family-style")}
-        description="Connect related threads with color tints or subtle solid family lines and dashed worker lines."
+        description={gt(
+          "Connect related threads with color tints or subtle solid family lines and dashed worker lines.",
+        )}
         control={
           <Select
             value={settings.sidebarFamilyStyle}
@@ -94,21 +109,27 @@ export function ForkSidebarDisplaySettings() {
                 updateSettings({ sidebarFamilyStyle: value });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Family style">
+            <SelectTrigger size="sm" aria-label={gt("Family style")}>
               <SelectValue>
-                {settings.sidebarFamilyStyle === "lines" ? "Lines" : "Colors"}
+                {settings.sidebarFamilyStyle === "lines" ? gt("Lines") : gt("Colors")}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value="colors">Colors</SelectItem>
-              <SelectItem value="lines">Lines</SelectItem>
+              <SelectItem value="colors">
+                <T>Colors</T>
+              </SelectItem>
+              <SelectItem value="lines">
+                <T>Lines</T>
+              </SelectItem>
             </SelectPopup>
           </Select>
         }
       />
       <ForkSettingsRow
         {...searchableSetting("sidebar-line-color")}
-        description="Color of the solid family lines and dashed checkout lines; reset to follow the theme."
+        description={gt(
+          "Color of the solid family lines and dashed checkout lines; reset to follow the theme.",
+        )}
         control={
           <span className="flex items-center gap-2">
             {settings.sidebarLineColor === null ? null : (
@@ -117,12 +138,12 @@ export function ForkSidebarDisplaySettings() {
                 variant="ghost"
                 onClick={() => updateSettings({ sidebarLineColor: null })}
               >
-                Reset
+                <T>Reset</T>
               </Button>
             )}
             <input
               type="color"
-              aria-label="Line color"
+              aria-label={gt("Line color")}
               value={settings.sidebarLineColor ?? "#8a8a8a"}
               onChange={(event) => updateSettings({ sidebarLineColor: event.target.value })}
               className="h-7 w-9 cursor-pointer rounded-md border border-input bg-transparent p-0.5"

@@ -25,7 +25,8 @@
     "@t3tools/source-control-forgejo": "workspace:*",
     "@t3tools/source-control-gitcafe": "workspace:*",
     "@t3tools/source-control-github": "workspace:*",
-    "@t3tools/source-control-gitlab": "workspace:*"
+    "@t3tools/source-control-gitlab": "workspace:*",
+    "@t3tools/source-control-tanstack-source": "workspace:*"
   },
   "devDependencies": {
     "vite-plus": "catalog:"

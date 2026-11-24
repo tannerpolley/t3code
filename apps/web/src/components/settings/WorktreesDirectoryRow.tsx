@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import { PROJECT_LOCAL_WORKTREES } from "@t3tools/contracts";
 import { useRef, useState } from "react";
@@ -5,7 +6,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingResetButton } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -19,6 +20,8 @@ const MODE_LABELS = {
 };
 
 export function WorktreesDirectoryRow() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const { connectedEnvironments, targets } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -53,12 +56,17 @@ export function WorktreesDirectoryRow() {
   return (
     <SettingsRow
       {...searchableSetting("storage-worktrees-location")}
-      description="Choose where new worktrees are created; existing worktrees stay where they are. Inside each project uses .worktrees at the Git repository's top level, even when the project is a subfolder."
+      description={gt(
+        "Choose where new worktrees are created; existing worktrees stay where they are. Inside each project uses .worktrees at the Git repository's top level, even when the project is a subfolder.",
+      )}
       serverScoped
       settingKeys={["worktreesDirectory"]}
       resetAction={
         mixed || settings.worktreesDirectory !== "" || customFor === scopeKey ? (
-          <SettingResetButton label="worktree location" onClick={reset} />
+          <SettingResetButton
+            ariaLabel={gt("Reset worktree location to default")}
+            onClick={reset}
+          />
         ) : null
       }
       control={
@@ -76,9 +84,9 @@ export function WorktreesDirectoryRow() {
               }
             }}
           >
-            <SelectTrigger size="sm" aria-label="Worktree location">
+            <SelectTrigger size="sm" aria-label={gt("Worktree location")}>
               <SelectValue>
-                {mixed && customFor !== scopeKey ? "Mixed" : MODE_LABELS[mode]}
+                {mixed && customFor !== scopeKey ? gt("Mixed") : MODE_LABELS[mode]}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -92,10 +100,10 @@ export function WorktreesDirectoryRow() {
           {mode === "custom" && (!mixed || customFor === scopeKey) ? (
             <Input
               key={scopeKey}
-              aria-label="Custom worktree folder"
+              aria-label={gt("Custom worktree folder")}
               autoCapitalize="none"
               spellCheck={false}
-              placeholder="Absolute folder, e.g. ~/worktrees"
+              placeholder={gt("Absolute folder, e.g. ~/worktrees")}
               defaultValue={
                 mixed || settings.worktreesDirectory === PROJECT_LOCAL_WORKTREES
                   ? ""

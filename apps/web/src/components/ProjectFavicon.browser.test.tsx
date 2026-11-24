@@ -7,7 +7,8 @@ import { render } from "../../test/render";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 
 const state = vi.hoisted(() => ({ favicon: undefined as Atom.Atom<string | null> | undefined }));
-vi.mock(import("../state/assets"), () => ({
+vi.mock(import("../state/assets"), async (original) => ({
+  ...(await original()),
   projectFaviconUrlAtom: () => {
     if (!state.favicon) throw new Error("Favicon resource not configured");
     return state.favicon;

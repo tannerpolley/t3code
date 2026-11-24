@@ -1,4 +1,5 @@
 import type { ProviderDriverKind } from "@t3tools/contracts";
+import { T } from "gt-react";
 import { FolderRootIcon, GitBranchIcon } from "lucide-react";
 import { WorktreeIcon } from "./WorktreeIcon";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
@@ -110,7 +111,9 @@ export function ThreadCommandSubtitle(props: {
       {props.isCurrent ? (
         <>
           {projectLabel || branchLabel || showHarness ? <CommandPaletteMetaDot /> : null}
-          <span className="shrink-0">Current thread</span>
+          <span className="shrink-0">
+            <T>Current thread</T>
+          </span>
         </>
       ) : null}
     </span>

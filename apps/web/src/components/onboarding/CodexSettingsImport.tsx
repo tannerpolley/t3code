@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type { AgentSessionProjectCandidate, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
@@ -35,9 +36,8 @@ export function useCodexSettingsImport(selected: ReadonlyArray<CodexSettingsCand
   });
   const [enabled, setEnabled] = useState(false);
   const readProjectOverrides = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
-    const settings = environments.find(
-      (environment) => environment.environmentId === environmentId,
-    )?.serverConfig?.settings;
+    const settings = environments.find((environment) => environment.environmentId === environmentId)
+      ?.serverConfig?.settings;
     if (settings === undefined) return null;
     return projectId === null ? undefined : settings.projectSettingsOverrides[projectId];
   };
@@ -79,24 +79,29 @@ export function CodexSettingsPreview({
   readonly onCheckedChange: (checked: boolean) => void;
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
   if (preview.length === 0) return null;
   return (
     <div className="mt-3 space-y-2 rounded-md border border-border/70 bg-muted/20 p-3 text-xs">
       <div>
-        <p className="font-medium text-foreground">Codex settings preview — no changes yet</p>
+        <p className="font-medium text-foreground">
+          <T>Codex settings preview: no changes yet</T>
+        </p>
         <p className="mt-1 text-muted-foreground">
-          Codex <code>trusted</code> maps to T3 <strong>Auto-accept edits</strong>;{" "}
-          <code>untrusted</code> maps to <strong>Approval required</strong>.
+          <T>
+            Codex <code>trusted</code> maps to T3 <strong>Auto-accept edits</strong>;{" "}
+            <code>untrusted</code> maps to <strong>Approval required</strong>.
+          </T>
         </p>
       </div>
       <ul className="space-y-1 text-muted-foreground">
         {preview.map(({ candidate, preview: settings, plan }) => (
           <li key={candidate.key} className="break-words">
             <span className="font-mono">{candidate.path}</span>:{" "}
-            {settings.trustLevel ?? "no supported trust value"}
-            {plan.action === "conflict" ? "; existing T3 runtime mode will be kept" : ""}
+            {settings.trustLevel ?? gt("no supported trust value")}
+            {plan.action === "conflict" ? gt("; existing T3 runtime mode will be kept") : ""}
             {settings.unsupportedKeys.length > 0
-              ? `; unsupported: ${settings.unsupportedKeys.join(", ")}`
+              ? gt("; unsupported: {keys}", { keys: settings.unsupportedKeys.join(", ") })
               : ""}
           </li>
         ))}
@@ -107,7 +112,7 @@ export function CodexSettingsPreview({
           onCheckedChange={(next) => onCheckedChange(next === true)}
           disabled={disabled}
         />
-        Apply supported Codex settings when importing
+        <T>Apply supported Codex settings when importing</T>
       </label>
     </div>
   );
