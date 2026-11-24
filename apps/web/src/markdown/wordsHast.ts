@@ -817,40 +817,43 @@ function breakLines(paragraph: Element, breaks: boolean) {
   }
 }
 
-/**
- * The wrapper copying reads (markdown-clipboard's MATH_SELECTOR): the formula's TeX, as the source
- * Words drew it from, so copying any part of a formula copies the whole of it.
- */
 // A formula wider than its block scrolls, with room for the glyphs that reach past its box; in a
 // table it keeps its width and the table scrolls.
 const MATH_SCROLL = [
   "max-w-full",
   "overflow-x-auto",
   "overflow-y-hidden",
-  "px-0.5",
-  "py-0.75",
   "in-[.chat-markdown-table-container]:max-w-none",
   "in-[.chat-markdown-table-container]:overflow-visible",
 ];
 
-function mathWrapper(svg: Element): Element {
+function mathWrapper(
+  svg: Element,
+  display = /display:\s*block/.test(String(svg.properties.style ?? "")),
+): Element {
   const tex = String(svg.properties.ariaLabel ?? "").trim();
-  const display = /display:\s*block/.test(String(svg.properties.style ?? ""));
+  // Words gives SVGs 1,000 units per em and puts the math baseline at y = 0.
+  const top = Number(String(svg.properties.viewBox ?? "").split(" ")[1] ?? 0);
   return {
     type: "element",
     tagName: "span",
     properties: display
       ? {
-          className: ["chat-markdown-math-display", "block", ...MATH_SCROLL],
+          className: ["chat-markdown-math-display", "block", "px-0.5", "py-0.75", ...MATH_SCROLL],
           dataMarkdownMath: "display",
           dataMarkdownCopy: `\\[\n${tex}\n\\]\n\n`,
         }
       : {
-          className: ["inline-block", "align-middle", ...MATH_SCROLL],
+          className: MATH_SCROLL,
           dataMarkdownMath: "inline",
           dataMarkdownCopy: `\\(${tex}\\)`,
+          style: `--math-ascent:${-top / 1000}em`,
         },
-    children: [svg],
+    children: [
+      display
+        ? svg
+        : { ...svg, properties: { ...svg.properties, style: "display:block;overflow:visible" } },
+    ],
   };
 }
 
@@ -1034,13 +1037,7 @@ function flattenPreview(tree: Root, preview: NonNullable<MarkdownExtensions["pre
       const svg = node.children[0];
       children.push(
         node.properties.dataMarkdownMath === "display" && svg?.type === "element"
-          ? mathWrapper({
-              ...svg,
-              properties: {
-                ...svg.properties,
-                style: "display:inline;vertical-align:middle;overflow:visible",
-              },
-            })
+          ? mathWrapper(svg, false)
           : node,
       );
       return;
