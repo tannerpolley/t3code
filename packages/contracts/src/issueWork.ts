@@ -158,6 +158,12 @@ export const RepositoryOrchestration = Schema.Struct({
       status: Schema.Literals(["awaiting_approval", "draining"]),
       wasPaused: Schema.Boolean,
       requestedAt: Schema.optional(Schema.String),
+      verification: Schema.optional(
+        Schema.Struct({
+          startedAt: Schema.String,
+          sourceRunId: Schema.NullOr(RunId),
+        }),
+      ),
     }),
   ),
   automaticHandoff: Schema.optional(

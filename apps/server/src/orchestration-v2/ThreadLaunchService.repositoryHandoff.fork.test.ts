@@ -567,7 +567,13 @@ describe("fresh-thread repository handoff", () => {
     capabilities: new Set(["orchestration"]),
     issuedAt: 1,
   });
-  const finish = (threadId: ThreadId, key: string, verify = false) =>
+  const finish = (
+    threadId: ThreadId,
+    key: string,
+    verify = false,
+    sourceThreadId = rootId,
+    status: "completed" | "failed" = "completed",
+  ) =>
     Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
       const sink = yield* EventSink.EventSinkV2;
@@ -625,8 +631,8 @@ describe("fresh-thread repository handoff", () => {
                     completedAt: now,
                     updatedAt: now,
                     toolName: "t3_code.t3_thread_read",
-                    input: { threadId: rootId },
-                    output: { threadId: rootId },
+                    input: { threadId: sourceThreadId },
+                    output: { threadId: sourceThreadId },
                   },
                 },
               ]
@@ -637,11 +643,57 @@ describe("fresh-thread repository handoff", () => {
             threadId,
             runId: run.id,
             occurredAt: now,
-            payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+            payload: { ...run, status, startedAt: now, completedAt: now },
           },
         ],
       });
     });
+  const verifyManualHandoff = (source: ThreadId, successor: ThreadId, key: string) =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      yield* finish(successor, key, true, source);
+      yield* service.reconcile(source);
+      const result = yield* service.repositoryStatus(reference);
+      assert.equal(result.rootThreadId, successor);
+      return result;
+    });
+  it.effect.each(["no proof", "failed", "verified"] as const)(
+    "keeps the manual source active until successor verification (%s)",
+    (outcome) =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* createRoot;
+        const pending = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: 1,
+          summary: "Recover the repository's active decisions.",
+          clientRequestId: CommandId.make("manual-verification"),
+        });
+        assert.isNull((yield* threads.getThreadShell(rootId))!.archivedAt);
+        assert.equal(pending.rootThreadId, rootId);
+        const successor = pending.orchestration!.handoff!.nextThreadId;
+        yield* finish(
+          successor,
+          "manual-verification",
+          outcome !== "no proof",
+          rootId,
+          outcome === "failed" ? "failed" : "completed",
+        );
+        yield* service.reconcile(rootId);
+        const result = yield* service.repositoryStatus(reference);
+        assert.equal(result.rootThreadId, outcome === "verified" ? successor : rootId);
+        assert.isUndefined(result.orchestration!.handoff);
+        const source = (yield* threads.getThreadShell(rootId))!;
+        if (outcome === "verified") assert.isNotNull(source.archivedAt);
+        else {
+          assert.isNull(source.archivedAt);
+          assert.isFalse(result.orchestration!.paused);
+        }
+      }).pipe(Effect.provide(fixture())),
+  );
+
   it.effect("hands off after eight context-full compactions at a safe boundary", () => {
     let verificationStarts = 0;
     return Effect.gen(function* () {
@@ -1496,8 +1548,8 @@ describe("fresh-thread repository handoff", () => {
           summary: "Continue work in the retained issue worktree.",
           clientRequestId: CommandId.make("retained-worker:handoff"),
         });
-        const successor = moved.rootThreadId!;
-        assert.notEqual(successor, rootId);
+        const successor = moved.orchestration!.handoff!.nextThreadId;
+        yield* verifyManualHandoff(rootId, successor, "retained-worker:verify");
         const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
         const cancelFormerTask = (clientRequestId: string) =>
           mcp
@@ -2652,14 +2704,16 @@ describe("fresh-thread repository handoff", () => {
         yield* finish(target, "assign:finished");
         yield* service.reconcile(target);
         yield* worker.drain();
-        const moved = yield* service.repositoryStatus(reference);
-        assert.equal(moved.rootThreadId, successor);
+        const moved = yield* verifyManualHandoff(target, successor, "assign:verify");
         assert.deepEqual(
           moved.orchestration!.handoffHistory?.map((entry) => entry.threadId),
           [target],
         );
         const messages = (yield* threads.getThreadRecords(successor, ["messages"])).messages;
-        assert.lengthOf(messages, 1);
+        assert.lengthOf(
+          messages.filter(({ role }) => role === "user"),
+          2,
+        );
         assert.include(messages[0]!.text, "Server recovery inventory");
         assert.equal((yield* service.assignOrchestrator(move)).rootThreadId, successor);
         const sql = yield* SqlClient.SqlClient;
@@ -2879,12 +2933,13 @@ describe("fresh-thread repository handoff", () => {
         .requestHandoff(rootId, { ...proposal, targetThreadId: rootId })
         .pipe(Effect.result);
       assert.equal(self._tag, "Failure");
-      const result = yield* service.requestHandoff(rootId, {
+      const pending = yield* service.requestHandoff(rootId, {
         ...proposal,
         targetThreadId: target,
       });
-      assert.equal(result.rootThreadId, target);
+      assert.equal(pending.orchestration!.handoff?.nextThreadId, target);
       yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+      yield* verifyManualHandoff(rootId, target, "agent-target:verify");
     }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
@@ -3330,8 +3385,9 @@ describe("fresh-thread repository handoff", () => {
         );
         assert.equal(results.filter((result) => result._tag === "Success").length, 1);
         assert.equal(results.filter((result) => result._tag === "Failure").length, 1);
-        const first = yield* service.repositoryStatus(reference);
-        assert.notEqual(first.rootThreadId, rootId);
+        const pending = yield* service.repositoryStatus(reference);
+        const firstId = pending.orchestration!.handoff!.nextThreadId;
+        const first = yield* verifyManualHandoff(rootId, firstId, "first-root-verify");
         assert.deepEqual(
           first.orchestration!.handoffHistory?.map((entry) => entry.threadId),
           [rootId],
@@ -3341,7 +3397,12 @@ describe("fresh-thread repository handoff", () => {
         assert.include(firstThread.messages[0]!.text, "Milestones:");
         assert.include(firstThread.messages[0]!.text, "#9 Issue 9");
         assert.include(firstThread.messages[0]!.text, "Pending changes:");
-        assert.equal(firstThread.messages.filter((message) => message.role === "user").length, 1);
+        assert.deepEqual(
+          firstThread.messages
+            .filter((message) => message.role === "user")
+            .map(({ text }) => text.startsWith("Verification succeeded.")),
+          [false, true],
+        );
         const retired = yield* threads
           .dispatch({
             type: "issue.work.start",
@@ -3357,14 +3418,18 @@ describe("fresh-thread repository handoff", () => {
         assert.equal(retired._tag, "Failure");
         if (retired._tag === "Failure") assert.include(retired.failure.message, "retired");
         yield* finish(first.rootThreadId!, "first-root-closeout");
-        const second = yield* service.handoff({
+        const secondPending = yield* service.handoff({
           ...reference,
           action: "approve",
           expectedRevision: first.orchestration!.revision,
           summary: "Continue with the retained repository decisions.",
           clientRequestId: CommandId.make("handoff:second-generation"),
         });
-        assert.notEqual(second.rootThreadId, first.rootThreadId);
+        const second = yield* verifyManualHandoff(
+          firstId,
+          secondPending.orchestration!.handoff!.nextThreadId,
+          "second-root-verify",
+        );
         yield* finish(second.rootThreadId!, "second-root-closeout");
         const paused = yield* service.setPaused({
           ...reference,
@@ -3488,6 +3553,14 @@ describe("fresh-thread repository handoff", () => {
         yield* finish(rootId, "root-delivery");
         yield* sink.stream({ afterSequence: beforeRoot, eventType: "thread.created" }).pipe(
           Stream.filter((stored) => stored.event.threadId === nextId),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
+        assert.isNull((yield* threads.getThreadShell(rootId))!.archivedAt);
+        yield* finish(nextId, "nested-successor-verification", true);
+        yield* sink.stream({ afterSequence: beforeRoot, eventType: "thread.archived" }).pipe(
+          Stream.filter(({ event }) => event.threadId === rootId),
           Stream.take(1),
           Stream.runDrain,
         );
@@ -3655,7 +3728,7 @@ describe("fresh-thread repository handoff", () => {
         Stream.take(1),
         Stream.runDrain,
       );
-      assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
+      yield* verifyManualHandoff(rootId, nextId, "stranded:verify");
     }).pipe(Effect.provide(fixture({ continuation: true }))),
   );
 
@@ -3709,7 +3782,10 @@ describe("fresh-thread repository handoff", () => {
         assert.isDefined(runDueWork);
         yield* runDueWork!;
         yield* worker.drain();
-        const result = yield* service.repositoryStatus(reference);
+        const result =
+          mode === "full-access"
+            ? yield* verifyManualHandoff(rootId, target, "saved-handoff:verify")
+            : yield* service.repositoryStatus(reference);
         if (mode !== "full-access") {
           assert.equal(result.rootThreadId, rootId);
           assert.equal(result.orchestration!.handoff?.status, "awaiting_approval");
@@ -3828,7 +3904,7 @@ describe("fresh-thread repository handoff", () => {
       }).pipe(Effect.provide(fixture())),
   );
 
-  it.effect("an MCP request starts draining and transfers ownership after the current turn", () =>
+  it.effect("an MCP request drains the current turn and verifies before transferring", () =>
     Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
       const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
@@ -3880,7 +3956,7 @@ describe("fresh-thread repository handoff", () => {
       yield* finish(rootId, "mcp-handoff:root-finished");
       yield* service.reconcile(rootId);
       yield* worker.drain();
-      const result = yield* service.repositoryStatus(reference);
+      const result = yield* verifyManualHandoff(rootId, target, "mcp-handoff:verify");
       assert.equal(result.rootThreadId, target);
       assert.isFalse(result.orchestration!.paused);
       assert.isUndefined(result.orchestration!.handoff);
@@ -3919,11 +3995,12 @@ describe("fresh-thread repository handoff", () => {
         available = true;
         yield* service.reconcile(rootId);
         yield* service.reconcile(rootId);
-        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
         const messages = (yield* threads.getThreadRecords(nextId, ["messages"])).messages;
         assert.equal(messages.length, 1);
         assert.include(messages[0]!.text, "Recover this handoff after access returns.");
         assert.include(messages[0]!.text, "Server recovery inventory:");
+        yield* verifyManualHandoff(rootId, nextId, "handoff:recovery-proof");
       }).pipe(
         Effect.provide(
           fixture({ inventoryComplete: () => complete, providerAvailable: () => available }),
@@ -3974,8 +4051,8 @@ describe("fresh-thread repository handoff", () => {
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(reconcile);
 
-        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
         assert.lengthOf((yield* threads.getThreadRecords(nextId, ["messages"])).messages, 1);
+        yield* verifyManualHandoff(rootId, nextId, "handoff:race-proof");
       }).pipe(
         Effect.provide(
           fixture({
@@ -4065,7 +4142,7 @@ describe("fresh-thread repository handoff", () => {
           reason: "The continuation settled.",
         });
         yield* service.reconcile(rootId);
-        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
+        yield* verifyManualHandoff(rootId, nextId, "handoff:restart-proof");
         // A continuation that reaches dispatch after retirement is accepted as a no-op.
         yield* threads.dispatch({
           type: "message.dispatch",
@@ -4145,9 +4222,10 @@ describe("fresh-thread repository handoff", () => {
           summary: "Take over scheduled check-ins.",
           clientRequestId: CommandId.make("handoff:schedule"),
         });
-        assert.notEqual(moved.rootThreadId, rootId);
+        const nextId = moved.orchestration!.handoff!.nextThreadId;
+        yield* verifyManualHandoff(rootId, nextId, "handoff:schedule-proof");
         yield* Deferred.succeed(release, undefined);
-        return { run: yield* Fiber.join(fiber), nextId: moved.rootThreadId! };
+        return { run: yield* Fiber.join(fiber), nextId };
       }).pipe(
         Effect.provide(
           ScheduledTasks.layer.pipe(
@@ -4247,8 +4325,8 @@ describe("fresh-thread repository handoff", () => {
           summary: "Continue the remaining sub-issue.",
           clientRequestId: CommandId.make("handoff:successor"),
         });
-        const nextId = moved.rootThreadId!;
-        assert.notEqual(nextId, rootId);
+        const nextId = moved.orchestration!.handoff!.nextThreadId;
+        yield* verifyManualHandoff(rootId, nextId, "handoff:successor-proof");
         const oldParentMessages = (yield* texts(oldParent)).length;
         const rootMessages = (yield* texts(nextId)).length;
 
