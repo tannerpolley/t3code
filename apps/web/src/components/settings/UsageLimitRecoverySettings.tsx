@@ -85,7 +85,7 @@ export function UsageLimitRecoverySettings() {
                 key={entry.instanceId}
                 serverScoped
                 settingKeys={["usageLimitFallbackModels"]}
-                title={`${entry.displayName} fallback`}
+                title={gt("{provider} fallback", { provider: entry.displayName })}
                 description={gt(
                   "Model and effort used when the thread’s role has no available choice on another provider, or no role matches. Choose effort separately for each provider.",
                 )}

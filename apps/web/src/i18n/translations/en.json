@@ -13738,5 +13738,22 @@
   "3909c936e840c651": "Hide {program} processes",
   "c46678420ef16190": "Show {program} processes",
   "8f34226efbd18a89": "Started",
-  "84cf4340a24234c1": "Last active {age}"
+  "84cf4340a24234c1": "Last active {age}",
+  "9e8a30593cf1dc7d": "Needs input",
+  "babb6e505414db76": "Awaiting response",
+  "0759a5207e5bc145": "Usage limited",
+  "5808d7e3a8b65bf0": "No execution yet",
+  "f18600057b25c554": "Aborted",
+  "515c7f97f4763f1b": "Busy",
+  "b9296e46dc68b1f0": "Unverified",
+  "5030552f64818ac6": "Verified",
+  "092ccc16ea30716d": "{completed} / {total} completed",
+  "6ce06fa31e36dce7": "Folder · {color}",
+  "9caf4ddf4356e88f": "{count, plural, one {{count} skill} other {{count} skills}}",
+  "1c0025f823648a0a": "Needs the ChatGPT desktop app",
+  "88809ddc7260b86f": "{count, plural, one {{count} plugin} other {{count} plugins}}",
+  "f553e72106ba669e": "{count} unavailable",
+  "8bac228bbe798379": "{count, plural, one {Hide {count} running item} other {Hide {count} running items}}",
+  "73beacabd7ca1993": "{count, plural, one {Show {count} running item} other {Show {count} running items}}",
+  "98515f1201b25dcc": "+{count} more"
 }

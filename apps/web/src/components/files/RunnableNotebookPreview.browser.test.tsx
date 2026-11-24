@@ -1,3 +1,5 @@
+import * as Cause from "effect/Cause";
+import { getTranslationsSnapshot, GTProvider } from "gt-react";
 import {
   EnvironmentRegistry,
   EnvironmentSupervisor,
@@ -355,4 +357,30 @@ it("keeps a conflicted draft and closes only after server reload acknowledges di
       diskHash: "disk",
     },
   });
+});
+
+it("updates a visible execution error and notebook status when the language changes", async () => {
+  using h = setup();
+  const translations = { en: {}, ...(await getTranslationsSnapshot("es")) };
+  const renderLocale = (locale: string) => (
+    <GTProvider locale={locale} translations={translations}>
+      {h.ui}
+    </GTProvider>
+  );
+  (notebooks.execute as unknown as FakeCommand).run.mockResolvedValueOnce(
+    AsyncResult.failure(Cause.fail(new Error("Execution refused"))),
+  );
+  await using screen = await render(renderLocale("en"));
+  await screen.getByRole("button", { name: "Run cell 1", exact: true }).click();
+  await expect
+    .element(screen.getByRole("alert").filter({ hasText: "Execution could not start." }))
+    .toBeVisible();
+  await expect.element(screen.getByText(/No execution yet/)).toBeVisible();
+
+  await screen.rerender(renderLocale("es"));
+
+  await expect
+    .element(screen.getByRole("alert").filter({ hasText: "No se pudo iniciar la ejecución." }))
+    .toBeVisible();
+  await expect.element(screen.getByText(/Aún no se ha ejecutado/)).toBeVisible();
 });
