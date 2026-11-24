@@ -16,6 +16,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -33,20 +34,21 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
-it.effect("rejects a stale save after an action change or deletion", () =>
+it.effect("keeps later edits when saves race a conversion or deletion", () =>
   Effect.gen(function* () {
-    const checkingWorkspace = yield* Deferred.make<void>();
-    const checkedWorkspace = yield* Deferred.make<void>();
+    const workspaces = yield* Queue.unbounded<Deferred.Deferred<void>>();
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Scheduler.layer,
       ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
         isNonGitProject: () =>
-          Deferred.succeed(checkingWorkspace, undefined).pipe(
-            Effect.andThen(Deferred.await(checkedWorkspace)),
-            Effect.as(false),
-          ),
+          Effect.gen(function* () {
+            const release = yield* Deferred.make<void>();
+            yield* Queue.offer(workspaces, release);
+            yield* Deferred.await(release);
+            return false;
+          }),
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -73,13 +75,16 @@ it.effect("rejects a stale save after an action change or deletion", () =>
       const edit = yield* decodeUpsertInput({ ...input, requireExisting: true, title: "Edited" });
       expect((yield* service.upsert(edit)).task.title).toBe("Edited");
       const pending = yield* service
-        .upsert({ ...edit, workspaceStrategy: { type: "worktree", baseRef: "main" } }, "prompt")
+        .upsert(
+          { ...edit, workspaceStrategy: { type: "worktree", baseRef: "main" } },
+          { expectedAction: "prompt" },
+        )
         .pipe(Effect.flip, Effect.forkChild);
-      yield* Deferred.await(checkingWorkspace);
+      const releasePending = yield* Queue.take(workspaces);
       yield* service.upsert({ ...input, action: "usage_budget" });
-      yield* Deferred.succeed(checkedWorkspace, undefined);
+      yield* Deferred.succeed(releasePending, undefined);
       expect((yield* Fiber.join(pending)).message).toContain("action changed");
-      const stale = yield* service.upsert(edit, "prompt").pipe(Effect.flip);
+      const stale = yield* service.upsert(edit, { expectedAction: "prompt" }).pipe(Effect.flip);
       expect(stale.message).toContain("action changed");
       expect((yield* service.list()).tasks[0]).toMatchObject({
         action: "usage_budget",
@@ -93,6 +98,25 @@ it.effect("rejects a stale save after an action change or deletion", () =>
       expect((yield* service.list()).tasks).toEqual([]);
 
       expect((yield* service.upsert(input)).task.id).toBe(created.task.id);
+
+      const keyed = yield* decodeUpsertInput({
+        ...input,
+        id: undefined,
+        action: "prompt",
+        commandId: "concurrent-create",
+      });
+      const concurrent = yield* service
+        .upsert(
+          { ...keyed, workspaceStrategy: { type: "worktree", baseRef: "main" } },
+          { createOnly: true },
+        )
+        .pipe(Effect.forkChild);
+      const releaseConcurrent = yield* Queue.take(workspaces);
+      const first = (yield* service.upsert(keyed, { createOnly: true })).task;
+      const converted = (yield* service.upsert({ ...keyed, id: first.id, action: "usage_budget" }))
+        .task;
+      yield* Deferred.succeed(releaseConcurrent, undefined);
+      expect((yield* Fiber.join(concurrent)).task).toEqual(converted);
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -628,7 +652,8 @@ it.effect(
         const service = yield* ScheduledTaskService.ScheduledTaskService;
         const budget = yield* UsageBudget.UsageBudget;
         const input = yield* decodeUpsertInput({
-          id: "weekly-usage",
+          commandId: "create-weekly-usage",
+          action: "prompt",
           title: "Weekly model usage report",
           prompt: "Delegate a session log scan",
           enabled: true,
@@ -639,9 +664,10 @@ it.effect(
           runtimeMode: "full-access",
           interactionMode: "default",
         });
-        const before = (yield* service.upsert(input)).task;
+        const before = (yield* service.upsert(input, { createOnly: true })).task;
         const converted = (yield* service.upsert({
           ...input,
+          id: before.id,
           action: "usage_budget",
           requireExisting: true,
         })).task;
@@ -652,10 +678,16 @@ it.effect(
           schedule: before.schedule,
           prompt: "Usage budget report",
         });
-        const edited = (yield* service.upsert({ ...input, title: "Weekly usage budget" })).task;
+        expect((yield* service.upsert(input, { createOnly: true })).task).toEqual(converted);
+        const { action: _action, ...createWithoutAction } = input;
+        const editWithoutAction = { ...createWithoutAction, id: before.id };
+        const edited = (yield* service.upsert({
+          ...editWithoutAction,
+          title: "Weekly usage budget",
+        })).task;
         expect(edited.action).toBe("usage_budget");
         const webhook = yield* service
-          .upsert({ ...input, enabled: false, schedule: { type: "webhook" } })
+          .upsert({ ...editWithoutAction, enabled: false, schedule: { type: "webhook" } })
           .pipe(Effect.flip);
         expect(webhook.message).toBe("Usage budget reports require a time-based schedule.");
         yield* TestClock.adjust("1 second");
