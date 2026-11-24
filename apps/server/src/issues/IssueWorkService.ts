@@ -202,8 +202,9 @@ export const layer = Layer.effect(
     const settings = yield* ServerSettingsService;
     const handoffThreshold = (projectId: ProjectId) =>
       Effect.map(settings.getSettings, (current) => {
-        const override = current.projectSettingsOverrides[projectId]?.orchestratorHandoffTokens;
-        return override === undefined ? current.orchestratorHandoffTokens : override;
+        const override =
+          current.projectSettingsOverrides[projectId]?.orchestratorHandoffCompactions;
+        return override === undefined ? current.orchestratorHandoffCompactions : override;
       });
     const providers = yield* ProviderRegistry;
     const adapters = yield* ProviderAdapterRegistryV2;
@@ -705,7 +706,7 @@ export const layer = Layer.effect(
         Effect.option,
       );
       const status = Option.isSome(threshold)
-        ? { ...snapshot, orchestratorHandoffTokens: threshold.value }
+        ? { ...snapshot, orchestratorHandoffCompactions: threshold.value }
         : snapshot;
       if (options?.verifyIdentity === false) return status;
       // A host that cannot answer must not hide the registration, so only a successful read can report a mismatch.
@@ -1186,22 +1187,17 @@ export const layer = Layer.effect(
             root.deletedAt !== null ||
             root.activeRunId !== null ||
             root.pendingRuntimeRequest !== null ||
-            root.activeProviderThreadId === null ||
             root.latestRunId === null ||
             root.latestRunId === attempt?.sourceRunId ||
             root.status !== "completed"
           )
             return;
-          const { providerThreads } = yield* threads
-            .getThreadRecords(root.id, ["providerThreads"], {
-              providerThreadIds: [root.activeProviderThreadId],
-            })
-            .pipe(Effect.mapError(mapError));
-          // Read after the usage, so a threshold changed meanwhile is the one that applies.
+          const compactions = yield* store.contextFullCompactionCount(rootThreadId);
+          // Read after the count so a setting changed meanwhile is the one that applies.
           const threshold = yield* readThreshold;
           if (
             threshold == null ||
-            (providerThreads[0]?.contextUsage?.usedTokens ?? 0) < threshold ||
+            compactions < threshold ||
             !(yield* store.subtreeDrained(rootThreadId)) ||
             !(yield* store.handoffSafe(rootThreadId)) ||
             !(yield* store.subtreeDrained(targetId))
@@ -2392,6 +2388,10 @@ export const layer = Layer.effect(
                   stored.event.payload.status,
                 )) ||
               stored.event.type === "runtime-request.updated" ||
+              (stored.event.type === "turn-item.updated" &&
+                stored.event.payload.type === "compaction" &&
+                stored.event.payload.status === "completed" &&
+                stored.event.payload.contextFull === true) ||
               (stored.event.type === "provider-thread.updated" &&
                 (stored.event.payload.pendingBackgroundTasks?.length ?? 0) === 0) ||
               ((stored.event.type === "run.updated" || stored.event.type === "run.created") &&

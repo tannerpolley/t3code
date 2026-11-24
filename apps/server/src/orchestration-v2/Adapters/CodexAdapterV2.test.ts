@@ -5034,6 +5034,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ["running", "completed"],
       );
       assert.equal(items[0]?.id, items[1]?.id);
+      assert.isUndefined(items[1]?.contextFull);
       assert.equal(harness.terminalEvents()[0]?.status, "completed");
     }).pipe(
       Effect.provide(
@@ -5193,6 +5194,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           completed.map((item) => item.status),
           ["running", "completed"],
         );
+        if (completed[1]?.type === "compaction" && unfinished[1]?.type === "compaction") {
+          assert.isTrue(completed[1].contextFull);
+          assert.isUndefined(unfinished[1].contextFull);
+        }
         assert.deepEqual(completed[1]?.startedAt, DateTime.makeUnsafe(1782622441000));
         assert.deepEqual(
           completed[1]?.completedAt,

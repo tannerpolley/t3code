@@ -42,6 +42,7 @@ import {
   type OrchestrationV2GoalCommand,
   OrchestrationV2ProviderGoal,
   parseGoalCommand,
+  isCompactionCommandMessage,
   ProviderDriverKind,
   ProviderMcpSignInError,
   ProviderSetupError,
@@ -5947,6 +5948,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ordinal,
               type: "compaction",
               driver: CODEX_PROVIDER,
+              ...(status === "completed" &&
+              context.subagent === null &&
+              !isCompactionCommandMessage({ role: "user", ...context.input.message })
+                ? { contextFull: true as const }
+                : {}),
               status,
               title:
                 status === "running"

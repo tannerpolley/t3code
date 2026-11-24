@@ -246,6 +246,20 @@ describe("scoped settings writes", () => {
     ]);
   });
 
+  it("turns off automatic handoffs for a project with handoffs enabled on its environment", () => {
+    const plan = planScopedSettingsPatch(checkout, environments, {
+      orchestratorHandoffCompactions: null,
+    });
+    expect(plan.serverWrites).toEqual([
+      expect.objectContaining({
+        environmentId: server.environmentId,
+        patch: {
+          projectSettingsOverrides: { [projectId]: { orchestratorHandoffCompactions: null } },
+        },
+      }),
+    ]);
+  });
+
   it("writes an aggregate preference only to connected environments with loaded configuration", async () => {
     const persistServer = vi.fn().mockResolvedValue({ _tag: "Success" });
     const persistClient = vi.fn();

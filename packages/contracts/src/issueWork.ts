@@ -2,13 +2,20 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Effect from "effect/Effect";
 
-import { CommandId, ProjectId, RunId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  CommandId,
+  NonNegativeInt,
+  ProjectId,
+  RunId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ModelRoleId } from "./threadRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import { RepositoryIssueRef, IssueRepositoryRef } from "./repositoryIssue.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { OrchestratorHandoffTokens } from "./settings.ts";
+import { OrchestratorHandoffCompactions } from "./settings.ts";
 
 export const CLOSED_ISSUE_SUSPENSION_REASON =
   "Issue closed during work. Decide whether to resume or close out the retained result.";
@@ -157,7 +164,7 @@ export const RepositoryOrchestration = Schema.Struct({
     Schema.Struct({
       sourceRunId: RunId,
       requestId: CommandId,
-      contextTokens: Schema.Int,
+      contextCompactions: Schema.optional(NonNegativeInt),
       startedAt: Schema.String,
       status: Schema.Literals(["verifying", "failed"]),
     }),
@@ -338,8 +345,8 @@ export const RepositoryWorkResult = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed(0)),
   ),
   queue: Schema.optional(Schema.Array(IssueQueueEntry)),
-  /** The registration's effective context threshold. Null disables automatic handoffs. */
-  orchestratorHandoffTokens: Schema.optional(OrchestratorHandoffTokens),
+  /** The registration's effective context-full compaction count. Null disables automatic handoffs. */
+  orchestratorHandoffCompactions: Schema.optional(OrchestratorHandoffCompactions),
   /** Set when the host now reports another ID for this name, so the registration cannot admit work. */
   idMismatch: Schema.optional(
     Schema.Struct({

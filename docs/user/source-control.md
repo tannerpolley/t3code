@@ -497,18 +497,18 @@ preview, the agent must propose a new change. If GitHub may have created an issu
 recover it, the change needs your attention. Check GitHub, then choose **Mark resolved** to stop
 its remaining writes. Propose another create only when you intend to create another issue.
 
-Repository orchestrators automatically hand off when their reported context reaches 200,000
-tokens and their work is idle. T3 archives the old thread after the successor verifies it can
-continue. Both threads link to each other in the sidebar. To turn this off or change the token
-threshold, open **Settings → Threads → Orchestration**. A project can use its own setting.
+By default, T3 automatically hands off a Claude or Codex repository orchestrator at the first
+safe idle boundary after its eighth provider compaction of a full context. Idle and manual
+`/compact` are excluded. The count starts at zero in the successor. T3 archives the old thread
+after the successor verifies it can continue. Both threads link to each other in the sidebar.
+Open **Settings → Threads → Orchestration** to turn this off or change the count for the
+environment or a project.
 
 To replace the orchestrator's conversation manually, open **Repository orchestration** in the project's
 settings, choose **Hand off to a fresh thread** from the menu beside its orchestrator, and provide a
 summary. Starting the handoff pauses new issue admissions while existing workers and their final
-results finish. The fresh thread receives your summary and a recovery inventory. With automatic
-handoffs enabled, the orchestrator can also request one after its context compacts. Either request
-starts draining right away. Saved requests from an older build proceed when their source thread
-has full access and is in default mode.
+results finish. The fresh thread receives your summary and a recovery inventory. Saved requests
+from an older build proceed when their source thread has full access and is in default mode.
 You can cancel a pending handoff in Settings, and the same menu opens previous orchestrators.
 For a routine provider or model change, keep the same thread.
 

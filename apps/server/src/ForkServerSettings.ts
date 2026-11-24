@@ -1,5 +1,6 @@
 import {
   DEFAULT_MODEL_TIERS,
+  DEFAULT_ORCHESTRATOR_HANDOFF_COMPACTIONS,
   DEFAULT_SERVER_SETTINGS,
   ModelRole,
   ModelRoleEffort,
@@ -136,6 +137,31 @@ function migrateLegacyRoles(saved: readonly unknown[], workerProvider: unknown) 
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
+
+function migrateHandoffSetting(value: unknown) {
+  if (!isRecord(value) || !Object.hasOwn(value, "orchestratorHandoffTokens")) return value;
+  const { orchestratorHandoffTokens: tokens, ...settings } = value;
+  if (!Object.hasOwn(settings, "orchestratorHandoffCompactions")) {
+    if (tokens === null) settings.orchestratorHandoffCompactions = null;
+    else if (typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens > 0)
+      settings.orchestratorHandoffCompactions = DEFAULT_ORCHESTRATOR_HANDOFF_COMPACTIONS;
+  }
+  return settings;
+}
+
+export function migrateForkPersistedHandoffSettings(value: unknown) {
+  const settings = migrateHandoffSetting(value);
+  if (!isRecord(settings) || !isRecord(settings.projectSettingsOverrides)) return settings;
+  return {
+    ...settings,
+    projectSettingsOverrides: Object.fromEntries(
+      Object.entries(settings.projectSettingsOverrides).map(([project, override]) => [
+        project,
+        migrateHandoffSetting(override),
+      ]),
+    ),
+  };
+}
 
 function isLegacyRoleObject(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value)) return false;

@@ -1,6 +1,7 @@
 import {
   ForkPersistedServerSettingsFields,
   migrateForkPersistedModelRoles,
+  migrateForkPersistedHandoffSettings,
   migrateForkPersistedServerSettings,
 } from "./ForkServerSettings.ts";
 
@@ -408,7 +409,9 @@ const decodeSettingsFileJsonExit = (raw: string) => {
   const parsed = decodeSettingsJsonExit(raw);
   return Exit.isFailure(parsed)
     ? parsed
-    : Effect.runSyncExit(migrateForkPersistedModelRoles(parsed.value));
+    : Effect.runSyncExit(
+        migrateForkPersistedModelRoles(migrateForkPersistedHandoffSettings(parsed.value)),
+      );
 };
 const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(
   PersistedServerSettings.pipe(

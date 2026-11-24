@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ManagedPolicyDocument,
+  ProjectId,
   ProviderInstanceId,
   resolveModelRoles,
   resolveModelRoleName,
@@ -88,6 +89,50 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.isFalse(
         (yield* service.updateSettings({ issueUpkeepRequiresApproval: false }))
           .issueUpkeepRequiresApproval,
+      );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect.each([
+    { saved: null, expected: null },
+    { saved: 260_000, expected: 8 },
+  ])("migrates saved orchestrator handoff tokens ($saved)", ({ saved, expected }) =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          orchestratorHandoffTokens: saved,
+          dontAskMode: true,
+          projectSettingsOverrides: {
+            off: { orchestratorHandoffTokens: null },
+            on: { orchestratorHandoffTokens: 250_000, responseStreamingMode: "paragraph" },
+            inherit: { sidebarAutoSettleOnMerge: true },
+            current: { orchestratorHandoffTokens: null, orchestratorHandoffCompactions: 12 },
+          },
+        }),
+      );
+      const settings = yield* service.getSettings;
+      assert.isTrue(settings.dontAskMode);
+      assert.equal(settings.orchestratorHandoffCompactions, expected);
+      assert.deepEqual(settings.projectSettingsOverrides, {
+        [ProjectId.make("off")]: { orchestratorHandoffCompactions: null },
+        [ProjectId.make("on")]: {
+          orchestratorHandoffCompactions: 8,
+          responseStreamingMode: "paragraph",
+        },
+        [ProjectId.make("inherit")]: { sidebarAutoSettleOnMerge: true },
+        [ProjectId.make("current")]: { orchestratorHandoffCompactions: 12 },
+      });
+
+      yield* service.updateSettings({ dontAskMode: false });
+      const persisted = yield* fs.readFileString(config.settingsPath);
+      assert.notInclude(persisted, "orchestratorHandoffTokens");
+      assert.equal(
+        (yield* decodeServerSettingsJson(persisted)).orchestratorHandoffCompactions,
+        expected,
       );
     }).pipe(Effect.provide(layerServerSettings())),
   );
