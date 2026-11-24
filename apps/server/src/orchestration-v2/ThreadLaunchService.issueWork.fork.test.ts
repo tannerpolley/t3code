@@ -1245,15 +1245,14 @@ it.effect(
 );
 
 it.effect.each([
-  { configuredRepositories: undefined, canPublish: false },
-  { configuredRepositories: "github.com/tannerpolley/another-repo", canPublish: false },
+  { configuredRepositories: undefined },
+  { configuredRepositories: "github.com/tannerpolley/another-repo" },
   {
     configuredRepositories: " github.com/another/repo, GitHub.com/TannerPolley/T3Code ",
-    canPublish: true,
   },
 ])(
-  "starts milestone workers with draft PR authority $canPublish ($configuredRepositories) and respects issue relationships",
-  ({ configuredRepositories, canPublish }) => {
+  "hands off fork branches for orchestrator validation ($configuredRepositories) and respects issue relationships",
+  ({ configuredRepositories }) => {
     const linked = (number: number) => ({
       host: "github.com",
       repository: "tannerpolley/t3code",
@@ -1424,34 +1423,10 @@ it.effect.each([
         const brief = messages[0]!.text;
         assert.include(brief, `Implement issue #${number}`);
         assert.include(brief, "Status and closeout comments are authorized.");
-        if (canPublish) {
-          assert.include(
-            brief,
-            "The repository owner explicitly requests that you publish and merge after checks pass.",
-          );
-          assert.include(
-            brief,
-            "First have a fresh read-only reviewer subagent review this worktree's diff against the issue, and fix its blockers.",
-          );
-          assert.include(
-            brief,
-            `Then push only this issue branch to github.com/tannerpolley/t3code and open the PR there ready for review, or mark an existing draft ready, with Closes #${number} and the review verdict in the body; if blockers remain, keep any PR a draft and report them instead.`,
-          );
-          assert.include(
-            brief,
-            "Once the PR is ready and mergeable, merge it with gh pr merge --rebase, or --squash when the branch contains merge commits. If main moved and the PR conflicts, merge origin/main into the branch, re-run your checks, push, and retry. Then report the merge SHA and finish.",
-          );
-          assert.include(
-            brief,
-            "Force-pushing, issue edits, and other GitHub mutations retain separate approval.",
-          );
-          assert.notInclude(brief, "publishing retain separate approval");
-        } else {
-          assert.include(brief, "Other GitHub mutations and publishing retain separate approval.");
-          assert.notInclude(brief, "push only this issue branch");
-          assert.notInclude(brief, "reviewer subagent");
-          assert.notInclude(brief, "gh pr merge");
-        }
+        assert.include(brief, "fresh read-only reviewer");
+        assert.include(brief, "exact commit SHA");
+        assert.include(brief, "The repository orchestrator owns full validation and publication.");
+        assert.notInclude(brief, "you publish and merge");
       }
       newBlocker = true;
       yield* service.reconcile(rootId);

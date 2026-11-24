@@ -77,8 +77,9 @@ See [00_development.md](docs/operations/00_development.md) for setup, ports, see
 
 ## Verifying
 
-- Before you push, run `vp run check:changed`. **Do not run repo-wide checks** (`vp check`, `vp run -r test`, `vp run -r typecheck`) unless asked—CI owns the full suite.
-- Iterate with `vp test run <files>` (add `-t "<name>"` for large files) and `vp run typecheck` (`effect-tsgo tsrs --noEmit`). Run `node -e` snippets from the owning package (`effect` does not resolve from repo root).
+- Managed workers in this fork run only focused lint, format, and unit checks. Run one targeted Vitest invocation at a time with `VITEST_MAX_WORKERS=1`. Use a file filter and add `-t` when the file is large. Leave typecheck, `check:changed`, full suites, browser/Playwright tests, and builds to the repository orchestrator. The orchestrator owns the [serialized branch validation](docs/operations/fork.md#checks) before publishing, merging, or building.
+- For other work, before you push, run `vp run check:changed`. Do not run repo-wide checks unless asked.
+- Outside managed worker sessions, iterate with `vp test run <files>` (add `-t "<name>"` for large files) and `vp run typecheck` (`effect-tsgo tsrs --noEmit`). Run `node -e` snippets from the owning package (`effect` does not resolve from repo root).
 - Follow [15_testing.md](docs/internals/15_testing.md) for what to test, bug-fix proof, draining async work (no sleeps/polling), web browser tests (`await using screen = await render(...)`), and real-app [Scenarios](docs/internals/15_testing.md#scenarios) (`vp run scenarios:prove`).
 - Give user-visible frontend changes one integrated pass in a real client: `test-t3-app` for web, `test-t3-mobile` for mobile (primary agent only; subagents do not launch dev servers). Inspect the rendered result and walk the flow as a user using the feature—checking layout, visual hierarchy, and ergonomics—and fix anything rough until you are satisfied before handing back. Use the free `Replay (dev)` provider unless the change depends on a real provider (then pick its cheapest model, e.g. Haiku or Luna). On mobile, run `vp run mobile:install <ios|android> [device-id]` before Metro rather than rebuilding from scratch.
 

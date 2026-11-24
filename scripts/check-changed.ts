@@ -10,6 +10,7 @@
 //   vp run check:changed                  compare against the closest merge base with any remote main
 //   vp run check:changed <ref>            compare against the merge base with <ref>
 //   vp run check:changed --concurrency 1  run the steps one at a time
+//   --full-validation                     full typecheck and affected suites, fit for a locked branch gate
 //
 // Uncommitted and untracked files count. Affected packages come from
 // .github/scripts/ci-changes.cjs, the same mapping CI uses to gate its jobs.
@@ -259,6 +260,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
   readonly timeout: Option.Option<number>;
+  readonly fullValidation: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -269,14 +271,16 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   // macOS counts its file cache as used, so available memory there would
   // starve a large Mac. Elsewhere availableMemory() honors a cgroup limit.
   const platform = yield* HostProcess.Platform;
-  const concurrency = Option.getOrElse(
-    yield* override("concurrency", input.concurrency, "CHECK_CHANGED_CONCURRENCY"),
-    () =>
-      defaultConcurrency(
-        NodeOS.availableParallelism(),
-        platform === "darwin" ? NodeOS.totalmem() : process.availableMemory(),
-      ),
-  );
+  const concurrency = input.fullValidation
+    ? 1
+    : Option.getOrElse(
+        yield* override("concurrency", input.concurrency, "CHECK_CHANGED_CONCURRENCY"),
+        () =>
+          defaultConcurrency(
+            NodeOS.availableParallelism(),
+            platform === "darwin" ? NodeOS.totalmem() : process.availableMemory(),
+          ),
+      );
   const timeoutSeconds = Option.getOrElse(
     yield* override("timeout", input.timeout, "CHECK_CHANGED_TIMEOUT"),
     () => 900,
@@ -303,7 +307,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const inputKey = Effect.gen(function* () {
     const hash = NodeCrypto.createHash("sha256");
     // CI changes test behavior (vite.config.ts rejects .only under CI).
-    hash.update(`${process.version}\0${base}\0${ci}\0`);
+    hash.update(`${process.version}\0${base}\0${ci}\0${input.fullValidation}\0`);
     hash.update(
       yield* git(root, [
         "diff",
@@ -439,14 +443,14 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
 
   // Output is piped, so keep the colors a terminal would get.
   const env = process.stdout.isTTY ? { FORCE_COLOR: "1" } : {};
-  const vp = (args: ReadonlyArray<string>, cwd = root) =>
+  const vp = (args: ReadonlyArray<string>, cwd = root, testWorkers = 2) =>
     Effect.scoped(
       Effect.gen(function* () {
         const [command, commandArgs] = vitePlusCommand(args, platform);
         const handle = yield* spawner.spawn(
           ChildProcess.make(command, commandArgs, {
             cwd,
-            env,
+            env: { ...env, VITEST_MAX_WORKERS: String(testWorkers) },
             extendEnv: true,
             forceKillAfter: "5 seconds",
           }),
@@ -521,44 +525,63 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...graphql.map((dir) =>
       command(`graphql (${dir})`, ["run", "--filter", `./${dir}`, "generate", "--check"]),
     ),
-    ...(affected.length > 0
+    ...(input.fullValidation && affected.length > 0
       ? [
-          {
-            // `effect-tsgo tsrs --noEmit` writes nothing another package reads, so dependency order
-            // only made dependents wait: --parallel cut a contracts change from 13 s to 9 s.
-            ...command(`typecheck (${affected.length} packages)`, [
-              "run",
-              "--cache",
-              "--parallel",
-              "--concurrency-limit",
-              String(typecheckWorkers),
-              ...filters(affected),
-              "typecheck",
-            ]),
-            weight: typecheckWorkers,
-          },
+          command("full typecheck", [
+            "run",
+            "-r",
+            "--cache",
+            "--concurrency-limit",
+            "1",
+            "typecheck",
+          ]),
         ]
-      : []),
+      : affected.length > 0
+        ? [
+            {
+              // `effect-tsgo tsrs --noEmit` writes nothing another package reads, so dependency order
+              // only made dependents wait: --parallel cut a contracts change from 13 s to 9 s.
+              ...command(`typecheck (${affected.length} packages)`, [
+                "run",
+                "--cache",
+                "--parallel",
+                "--concurrency-limit",
+                String(typecheckWorkers),
+                ...filters(affected),
+                "typecheck",
+              ]),
+              weight: typecheckWorkers,
+            },
+          ]
+        : []),
     // From the repo root, the root vite.config.ts hands each file to its package's config.
-    ...(vitestTests.length > 0
-      ? [
-          {
-            ...command(`test (${vitestTests.length} files)`, [
-              "test",
-              "run",
-              "--passWithNoTests",
-              ...vitestTests,
-            ]),
-            serial: true,
-          },
-        ]
-      : []),
+    ...(input.fullValidation
+      ? packages
+          .filter((pkg) => pkg.hasTest && affected.includes(pkg.name))
+          .map((pkg) => ({
+            name: `test (${pkg.name})`,
+            run: vp(
+              ["run", "--filter", pkg.name, "test"],
+              root,
+              pkg.name === "@t3tools/web" || pkg.name === "t3" ? 1 : 2,
+            ),
+          }))
+      : vitestTests.length > 0
+        ? [
+            {
+              name: `test (${vitestTests.length} files)`,
+              run: vp(["test", "run", "--passWithNoTests", ...vitestTests], root, 1),
+              serial: true,
+            },
+          ]
+        : []),
     ...(nodeTests.length > 0
       ? [
           command(`node --test (${nodeTests.length} files)`, [
             "exec",
             "node",
             "--test",
+            "--test-concurrency=1",
             ...nodeTests,
           ]),
         ]
@@ -592,7 +615,8 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     );
   }
   const ciOnly = Object.entries({
-    "full test suites": outputs.test || outputs.test_web || outputs.test_server,
+    "full test suites":
+      !input.fullValidation && (outputs.test || outputs.test_web || outputs.test_server),
     build: outputs.build,
     rust: outputs.rust,
     "mobile native lint": outputs.mobile_native,
@@ -606,7 +630,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   if (results.some((result) => result.outcome !== "pass")) return false;
   if ((yield* inputKey) !== key) {
     yield* Console.log("  pass not cached: files changed during the run");
-    return true;
+    return !input.fullValidation;
   }
   // Write then rename, so a concurrent run never reads half a file.
   const temp = `${cachePath}.${process.pid}`;
@@ -636,6 +660,12 @@ export const checkChangedCommand = Command.make(
         "Seconds before a step is killed; also CHECK_CHANGED_TIMEOUT. Defaults to 900.",
       ),
       Flag.optional,
+    ),
+    fullValidation: Flag.Boolean("full-validation").pipe(
+      Flag.withDescription(
+        "Run full typecheck and affected test suites serially, including browser tests.",
+      ),
+      Flag.withDefault(false),
     ),
   },
   (input) =>

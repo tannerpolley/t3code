@@ -395,7 +395,22 @@ function launcherFixture() {
       },
     }),
   );
-  write("packages/example/package.json", JSON.stringify({ name: "example" }));
+  write(
+    "packages/example/package.json",
+    JSON.stringify({ name: "example", scripts: { test: "vp test run" } }),
+  );
+  write(
+    "packages/web/package.json",
+    JSON.stringify({
+      name: "@t3tools/web",
+      dependencies: { example: "workspace:*" },
+      scripts: { test: "vp test run --project browser" },
+    }),
+  );
+  write(
+    "packages/unaffected/package.json",
+    JSON.stringify({ name: "unaffected", scripts: { test: "vp test run" } }),
+  );
   const source = "packages/example/space & (draft) %PATH% ! 研究.ts";
   write(source, "export const value = 1;\n");
   write(
@@ -408,7 +423,7 @@ function launcherFixture() {
     import fs from 'node:fs';
     import path from 'node:path';
     const args = process.argv.slice(2);
-    fs.writeFileSync(path.join(process.env.RECORDS, process.pid + '.json'), JSON.stringify({ args, cwd: process.cwd() }));
+    fs.writeFileSync(path.join(process.env.RECORDS, process.pid + '.json'), JSON.stringify({ args, cwd: process.cwd(), maxWorkers: process.env.VITEST_MAX_WORKERS }));
     console.log('fixture stdout: ' + args[0]);
     console.error('fixture stderr: ' + args[0]);
     process.exit(args[0] === process.env.FAIL_STEP ? 23 : 0);
@@ -454,14 +469,18 @@ function launcherFixture() {
     root,
     source,
     write,
-    run(failStep = "") {
-      return NodeChildProcess.spawnSync(process.execPath, ["scripts/check-changed.ts", "HEAD"], {
-        cwd: root,
-        encoding: "utf8",
-        env: { ...env, TEMP: NodeOS.tmpdir(), RECORDS: records, FAIL_STEP: failStep },
-      });
+    run(failStep = "", flags: ReadonlyArray<string> = []) {
+      return NodeChildProcess.spawnSync(
+        process.execPath,
+        ["scripts/check-changed.ts", "HEAD", ...flags],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: { ...env, TEMP: NodeOS.tmpdir(), RECORDS: records, FAIL_STEP: failStep },
+        },
+      );
     },
-    calls: (): Array<{ args: Array<string>; cwd: string }> =>
+    calls: (): Array<{ args: Array<string>; cwd: string; maxWorkers: string }> =>
       NodeFS.readdirSync(records).map((file) =>
         JSON.parse(NodeFS.readFileSync(NodePath.join(records, file), "utf8")),
       ),
@@ -470,6 +489,31 @@ function launcherFixture() {
     },
   };
 }
+
+it("runs full typecheck and affected suites after a passing fast check", () => {
+  using project = launcherFixture();
+  project.write(project.source, "export const value = 2;\n");
+  const fast = project.run();
+  assert.strictEqual(fast.status, 0, fast.stderr);
+  assert.isFalse(project.calls().some(({ args }) => args.at(-1) === "test"));
+
+  const full = project.run("", ["--full-validation"]);
+  assert.strictEqual(full.status, 0, full.stderr);
+  assert.include(full.stdout, "full typecheck");
+  const calls = project.calls();
+  assert.isTrue(
+    calls.some(({ args }) => args.join(" ") === "run -r --cache --concurrency-limit 1 typecheck"),
+  );
+  assert.sameDeepMembers(
+    calls
+      .filter(({ args }) => args.at(-1) === "test")
+      .map(({ args, maxWorkers }) => [args, maxWorkers]),
+    [
+      [["run", "--filter", "example", "test"], "2"],
+      [["run", "--filter", "@t3tools/web", "test"], "1"],
+    ],
+  );
+});
 
 it("checks changed source paths through the Windows launcher", () => {
   using project = launcherFixture();
@@ -480,6 +524,7 @@ it("checks changed source paths through the Windows launcher", () => {
   expect(calls.find(({ args }) => args[0] === "lint")).toEqual({
     args: ["lint", "--no-error-on-unmatched-pattern", project.source],
     cwd: project.root,
+    maxWorkers: "2",
   });
   expect(calls.some(({ args }) => args[0] === "fmt" && args.includes(project.source))).toBe(true);
   expect(calls.some(({ args }) => args[0] === "run" && args.includes("typecheck"))).toBe(true);
