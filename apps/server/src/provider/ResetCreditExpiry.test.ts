@@ -1,6 +1,7 @@
 import { ProviderInstanceRegistryMutator } from "./ProviderInstanceRegistryMutator.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ServerConfig from "../config.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
@@ -792,6 +793,8 @@ it.effect("paces failed refreshes when the registry retains a stale selected cre
         ProviderLatestVersions.layer,
       ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
+    // Keep the virtual-clock test independent of a real login shell.
+    Effect.provideService(HostProcess.Platform, "freebsd"),
     Effect.scoped,
   ),
 );
