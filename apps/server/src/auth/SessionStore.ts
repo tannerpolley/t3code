@@ -634,6 +634,7 @@ const make = Effect.gen(function* () {
     return Option.some(
       toAuthClientSession({
         sessionId: row.value.sessionId,
+        ...(row.value.peerLink ? { peerLink: true } : {}),
         subject: row.value.subject,
         scopes: row.value.scopes,
         method: row.value.method,
@@ -771,6 +772,7 @@ const make = Effect.gen(function* () {
         issuedAt,
         expiresAt: sessionExpiresAt,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
+        ...(claims.plk === 1 ? { peerLink: true } : {}),
       } satisfies AuthSessions.CreateAuthSessionInput;
       const replacedSessionIds = yield* (
         input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod
@@ -800,6 +802,7 @@ const make = Effect.gen(function* () {
       yield* emitUpsert(
         toAuthClientSession({
           sessionId,
+          ...(claims.plk === 1 ? { peerLink: true } : {}),
           subject: claims.sub,
           scopes: claims.scopes,
           method: claims.method,
@@ -918,6 +921,19 @@ const make = Effect.gen(function* () {
           expiresAt: row.value.expiresAt,
           observedAt,
         });
+      }
+
+      // Older sessions carried the peer-link marker only in the signed token.
+      if (rowHoldsDeadline && !row.value.peerLink) {
+        yield* authSessions.markPeerLink(claims.sid).pipe(
+          Effect.flatMap((changed) =>
+            changed ? loadActiveSession(claims.sid) : Effect.succeedNone,
+          ),
+          Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: emitUpsert })),
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not classify a peer link session.", cause),
+          ),
+        );
       }
 
       return {
@@ -1167,6 +1183,7 @@ const make = Effect.gen(function* () {
       return rows.map((row) =>
         toAuthClientSession({
           sessionId: row.sessionId,
+          ...(row.peerLink ? { peerLink: true } : {}),
           subject: row.subject,
           scopes: row.scopes,
           method: row.method,

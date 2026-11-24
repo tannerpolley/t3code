@@ -177,6 +177,12 @@ keep its threads together and wait on them without a shell on your computer.
    later with `t3_thread_read`. A wait returns after about 45 seconds, so a
    long job is read on a schedule rather than waited on in a loop.
 
+For Grok Bot, use the scheduled read for long jobs. T3's MCP Events webhook
+requires a receiver that echoes a verification challenge and accepts Standard
+Webhooks signatures. [Grok Bot's routine webhook](https://docs.x.ai/grok-bot/skills-routines-and-automations)
+expects a bearer key to start a run, so direct delivery would require the
+routine endpoint to support MCP Events verification and signing as well.
+
 An outside agent can answer a job's questions with `t3_pending_request`. It
 cannot accept or decline a command approval unless you let it: in
 **Settings → Sharing & access**, turn on **Answers approvals** for that agent.

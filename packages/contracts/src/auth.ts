@@ -393,6 +393,7 @@ export type AuthConnectDevice = typeof AuthConnectDevice.Type;
 
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
+  peerLink: Schema.optionalKey(Schema.Literal(true)),
   subject: TrimmedNonEmptyString,
   ...authScopeResponseFields,
   method: ServerAuthSessionMethod,

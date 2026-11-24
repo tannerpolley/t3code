@@ -10,6 +10,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
@@ -533,10 +534,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
     it.effect("renews a peer link's session while it is used, and no other MCP client's", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sql = yield* SqlClient.SqlClient;
         const day = 24 * 60 * 60 * 1000;
         const issue = (peerLink: boolean) =>
           serverAuth.issueMcpClientSession({
-            label: peerLink ? "T3 Code · A" : "ChatGPT",
+            label: "T3 Code · A",
             access: "auto",
             peerLink,
             client: requestMetadata,
@@ -563,11 +565,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const idle = yield* issue(true);
         const revoked = yield* issue(true);
         const outside = yield* issue(false);
+        const listed = yield* serverAuth.listClientSessions(outside.sessionId);
+        expect(listed.find((session) => session.sessionId === used.sessionId)).toMatchObject({
+          peerLink: true,
+        });
+        expect(
+          listed.find((session) => session.sessionId === outside.sessionId),
+        ).not.toHaveProperty("peerLink");
+        yield* sql`UPDATE auth_sessions SET peer_link = 0 WHERE session_id = ${used.sessionId}`;
 
         // Within a day of its full lifetime, a call leaves the session row alone.
         yield* TestClock.adjust("12 hours");
         expect(yield* use(used)).toBe(issuedAt + 30 * day);
         expect(yield* listedExpiry(used)).toBe(issuedAt + 30 * day);
+        expect(
+          (yield* serverAuth.listClientSessions(outside.sessionId)).find(
+            (session) => session.sessionId === used.sessionId,
+          ),
+        ).toMatchObject({ peerLink: true });
 
         yield* TestClock.adjust("468 hours");
         expect(yield* use(used)).toBe(issuedAt + 50 * day);
