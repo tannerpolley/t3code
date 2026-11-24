@@ -363,7 +363,7 @@ function ProviderPluginsSection() {
               count: group.skillCount,
             }),
             group.unavailable.length > 0
-              ? gt("{count} unavailable", { count: group.unavailable.length })
+              ? gt("Unavailable: {count}", { count: group.unavailable.length })
               : undefined,
           ]
             .filter(Boolean)
