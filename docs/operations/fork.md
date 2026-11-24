@@ -34,7 +34,8 @@ content: its `/issues` page, its detail panel and its agent tools (`list_issues`
 `propose_issue_change` is their gated path). Upstream's other trackers come along unchanged.
 
 The fork adds the work on top: the roadmap at `/roadmap` and in the per-repository Issues panel
-beside a thread, with Ready / Paused / Queued / In progress / Done, and a work section inside
+beside a thread, with the stages Done / Ready for review / In progress / Queued / Backlog
+(`packages/shared/src/issueStage.ts` owns the rule and its names), and a work section inside
 upstream's issue panel. The roadmap uses conditional GitHub REST issue pages for its unfiltered
 listing, avoiding the search and viewer GraphQL queries. Issue details and the issues, edits, state
 changes and comments that `propose_issue_change` and status comments write go through upstream's

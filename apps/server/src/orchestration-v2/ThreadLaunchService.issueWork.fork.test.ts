@@ -509,9 +509,7 @@ describe("managed issue work", () => {
       }>`SELECT effect_id FROM orchestration_v2_effect_outbox WHERE effect_type = 'issue.github.comment' AND json_extract(payload_json, '$.status') = 'waiting_on_you' ORDER BY rowid DESC LIMIT 1`;
       const staleWaiting = Option.getOrThrow(yield* outbox.get(waitingRows[0]!.effect_id));
       yield* worker.drain();
-      assert.isTrue(
-        [...published.values()].some((comment) => comment.body.includes("Waiting on you")),
-      );
+      assert.isTrue([...published.values()].some((comment) => comment.body.includes("Needs you")));
       if (scenario === "deletion") {
         yield* threads.dispatch({
           type: "thread.delete",
@@ -519,7 +517,7 @@ describe("managed issue work", () => {
           threadId: child.thread.id,
         });
         assert.equal((yield* issues.workStatus(input)).status, "unavailable");
-        // The latest published key still names Waiting on you until refresh runs.
+        // The latest published key still names Needs you until refresh runs.
         // Replaying it here proves deletion itself rejects stale writes.
         const before = writeCalls.length;
         yield* executor.execute(staleWaiting);

@@ -340,19 +340,22 @@ fork, show it once, then use the pin button on its row. A pinned repository igno
 repository filters but still follows the issue filters and search. Pins are remembered with your
 filter choices.
 
-Each repository's issues show as a roadmap in dependency order, with **Closed**, **Blocked**,
-**Inbox**, **Ready**, **Queued**, **Paused**, **In progress** and **Done** sections. Blocked shows
-red warnings for open dependencies. Within a section, open blockers and sub-issues come before the
-issues that depend on them, then higher Project priority and older issues; closed blockers no
-longer hold work back. **In progress** means a linked agent is working on the issue or waiting for your
-answer. **Paused** means the issue has work, such as an open or draft PR or an idle linked thread,
-but no agent on it right now. GitHub Project status does not change these sections or the issue
-icon. A thread’s own linked pull request also associates it with the issues that GitHub identifies
+Each repository's issues show as a stage board, in pipeline order: **Done**, **Ready for review**,
+**In progress**, **Queued**, the **Inbox**, then **Backlog**, which starts collapsed. Each open issue
+sits in one stage. **In progress** means a linked agent is working on the issue or waiting for your
+answer. **Queued** means it waits in the repository queue or its worker waits to start. **Ready for
+review** means it has an open or draft PR, no agent on it and no place in the queue. Everything else open is **Backlog**.
+**Blocked**, **Suspended**, **Needs you** and **Failed** are badges on the row, not stages; hover a row
+for its blockers, labels, author and comments. Within a stage, open blockers and sub-issues come before
+the issues that depend on them, then higher Project priority and older issues; closed blockers no
+longer hold work back. GitHub Project status does not change the stage.
+A thread’s own linked pull request also associates it with the issues that GitHub identifies
 that pull request as closing.
 
-Include **Closed** in Filter to see completed and closed issues. **Done** shows those closed in the
-last 24 hours, with their closure reason and time and attached PR numbers, titles, states and links.
-At 24 hours they move to **Closed**, which starts collapsed. Archived worker links remain available
+Include **Closed** in Filter to see completed and closed issues. **Done** shows issues closed as
+completed in the last 24 hours, with their closure time and attached PR numbers, titles, states and
+links. At 24 hours they move to **Closed**, which starts collapsed and also holds issues closed as not
+planned. Archived worker links remain available
 on closed issues. Open a worker from its row, or confirm **Remove worktree** to remove its local
 checkout while keeping its branch. Removal checks for active workers, shared worktrees, open terminals
 and provider sessions, and local changes; a refusal appears on the row. This explicit action does not
@@ -405,7 +408,7 @@ worker exists; use the **Orchestrator** link in **Settings → Projects → Repo
 **Linked issue** in thread details opens the issue beside that thread. A worker labeled **Done**
 has a closed issue or a merged pull request. A merged pull request can leave the GitHub issue open.
 
-Use **Add to queue** on an open issue’s row or detail panel to put it in the repository’s
+Use **Add to queue** on an open issue’s detail panel to put it in the repository’s
 ordered **Queued** section. When the registered orchestrator is idle and a worker slot is free,
 it receives a notification to review the next issue against the current code and the repository’s
 other issues. The orchestrator may start a worker as written, update the issue first, close it as
@@ -481,8 +484,8 @@ T3 checks repositories with an orchestrator every five minutes and other project
 
 The orchestrator reviews each item, revises it if needed with `propose_issue_change`, then
 acknowledges it with `t3_issue_inbox` `mark_read`. You can also acknowledge it with **Mark read**.
-An open issue stays only in Inbox until its opening is acknowledged, then appears in Ready or
-the normal section for its current state. A comment leaves its issue in its current section.
+An open issue stays only in Inbox until its opening is acknowledged, then appears in its stage,
+usually Backlog. A comment leaves its issue in its current section.
 Cross-project writes keep their `external`, `priority: high`, and `from:<project>` labels.
 
 ## Troubleshooting

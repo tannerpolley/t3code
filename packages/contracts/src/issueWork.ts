@@ -398,19 +398,6 @@ export const IssueWorkStatus = Schema.Literals([
 ]);
 export type IssueWorkStatus = typeof IssueWorkStatus.Type;
 
-export const ISSUE_WORK_STATUS_LABELS = {
-  queued_preparing: "Queued / preparing",
-  working: "Working",
-  waiting_on_you: "Waiting on you",
-  waiting_on_sub_issues: "Waiting on sub-issues",
-  done: "Done",
-  failed: "Failed",
-  interrupted: "Interrupted",
-  cancelled: "Cancelled",
-  paused: "Paused",
-  unavailable: "Unavailable",
-} satisfies Record<IssueWorkStatus, string>;
-
 export const IssueWorkStartResult = Schema.Struct({
   rootThreadId: ThreadId,
   issueThreadId: Schema.NullOr(ThreadId),

@@ -1,4 +1,3 @@
-import { useGT } from "gt-react";
 import { Fragment, useSyncExternalStore, type ReactNode } from "react";
 import { IssueInboxSection, useIssueInbox } from "./IssueInbox";
 import { IssueDoneDetails } from "./IssueDoneDetails";
@@ -7,8 +6,8 @@ import type { EnvironmentId, IssueRepositoryRef, RepositoryIssueSummary } from "
 import { CollapsibleSectionHeader } from "~/components/ui/collapsible-section-header";
 import { IssueSection } from "./IssueSection";
 import { IssueRow } from "./IssueRow";
-import { Badge } from "~/components/ui/badge";
-import { issueRoadmap, openIssueBlockers, createIssueRoadmapClock } from "./issueRoadmap.logic";
+import { issueRoadmap, createIssueRoadmapClock } from "./issueRoadmap.logic";
+import { useIssueStageLabels } from "./IssueStateIcon";
 
 /** The same roadmap is used in the Issues pane, browser and thread details. */
 export function IssueRoadmap({
@@ -28,10 +27,10 @@ export function IssueRoadmap({
   onSelect: (issue: RepositoryIssueSummary) => void;
   selectedIssueNumber?: number;
   limit?: number;
-  /** Rendered between Blocked and Ready, where the owner triages new activity. */
+  /** Rendered above Backlog, where the owner triages new activity. */
   inbox?: ReactNode;
 }) {
-  const gt = useGT();
+  const stageLabels = useIssueStageLabels();
   const clock = createIssueRoadmapClock(issues);
   const now = useSyncExternalStore(clock.subscribe, clock.snapshot, clock.snapshot);
   const queue = useIssueQueue(environmentId, scope);
@@ -66,10 +65,19 @@ export function IssueRoadmap({
       {sections
         .filter((section) => section.id !== "queued" || queue.supported)
         .map((section) => {
-          const title = section.id === "ready-for-review" ? gt("Ready for review") : section.title;
+          const title = stageLabels[section.stage];
           const rows = section.rows.filter((row) => shown.has(row.issue.number));
           return (
             <Fragment key={section.id}>
+              {section.id === "backlog"
+                ? (inbox ?? (
+                    <IssueInboxSection
+                      environmentId={environmentId}
+                      reference={scope}
+                      issues={issues}
+                    />
+                  ))
+                : null}
               <IssueSection scope={{ ...scope, environmentId }} section={`roadmap:${section.id}`}>
                 {(collapsed, toggleCollapsed) => (
                   <section aria-label={title}>
@@ -90,6 +98,7 @@ export function IssueRoadmap({
                               selected={selectedIssueNumber === issue.number}
                               onSelect={() => onSelect(issue)}
                               className="flex-1 px-1"
+                              cycle={cycle}
                             />
                             {issue.state === "closed" ? (
                               <IssueDoneDetails
@@ -98,44 +107,6 @@ export function IssueRoadmap({
                                 environmentId={environmentId}
                               />
                             ) : null}
-                            {issue.state === "open" ? (
-                              <div className="flex flex-wrap items-center gap-1 ps-6 text-xs text-muted-foreground">
-                                {cycle ? (
-                                  <Badge variant="secondary" size="sm">
-                                    dependency cycle
-                                  </Badge>
-                                ) : null}
-                                {issue.relationshipsComplete === false ? (
-                                  <span>Dependencies unknown</span>
-                                ) : null}
-                                {openIssueBlockers(issue).length > 0 ? (
-                                  <span>
-                                    blocked by{" "}
-                                    {openIssueBlockers(issue).map((blocker, index) => (
-                                      <span
-                                        key={`${blocker.host}/${blocker.repository}#${blocker.number}`}
-                                      >
-                                        {index > 0 ? ", " : ""}
-                                        <a
-                                          className="underline"
-                                          href={`https://${blocker.host}/${blocker.repository}/issues/${blocker.number}`}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                        >
-                                          {blocker.host.toLowerCase() ===
-                                            scope.host.toLowerCase() &&
-                                          blocker.repository.toLowerCase() ===
-                                            scope.repository.toLowerCase()
-                                            ? ""
-                                            : `${blocker.repository}`}
-                                          #{blocker.number}
-                                        </a>
-                                      </span>
-                                    ))}
-                                  </span>
-                                ) : null}
-                              </div>
-                            ) : null}
                           </li>
                         ))}
                       </ul>
@@ -143,15 +114,6 @@ export function IssueRoadmap({
                   </section>
                 )}
               </IssueSection>
-              {section.id === "ready"
-                ? (inbox ?? (
-                    <IssueInboxSection
-                      environmentId={environmentId}
-                      reference={scope}
-                      issues={issues}
-                    />
-                  ))
-                : null}
             </Fragment>
           );
         })}
