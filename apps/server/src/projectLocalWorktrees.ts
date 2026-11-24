@@ -10,6 +10,8 @@ import type * as PlatformError from "effect/PlatformError";
 import type * as Semaphore from "effect/Semaphore";
 
 import { resolveWorktreePath } from "./forkWorktreePaths.ts";
+import type { GitVcsDriver } from "./vcs/GitVcsDriver.ts";
+import { resolveWorktreesDirectory } from "./worktreesDirectory.ts";
 
 // ponytail: linear probe; past this many copies of one name, creation fails.
 const UNIQUE_WORKTREE_NAME_ATTEMPTS = 100;
@@ -82,6 +84,37 @@ export const worktreeLocation = Effect.fn("GitVcsDriver.worktreeLocation")(funct
       repositoryRoot,
     );
   return { repositoryRoot, resolve };
+});
+
+export const prepareTaskFolderParent = Effect.fn("TaskFolders.prepareParent")(function* (input: {
+  readonly setting: string;
+  readonly defaultDir: string;
+  readonly home: string;
+  readonly projectRoot: string;
+  readonly anchor: string;
+  readonly executeGit: GitVcsDriver["Service"]["execute"];
+}) {
+  const path = yield* Path.Path;
+  if (input.setting === PROJECT_LOCAL_WORKTREES) {
+    const { projectRoot } = input;
+    const { exitCode, stdout } = yield* input.executeGit({
+      operation: "TaskFolders.prepareParent.gitCommonDir",
+      cwd: projectRoot,
+      args: ["rev-parse", "--git-common-dir"],
+      allowNonZeroExit: true,
+    });
+    if (exitCode === 0)
+      yield* excludeProjectWorktrees(
+        projectRoot,
+        path.resolve(projectRoot, stdout.trim()),
+        projectRoot,
+      );
+    return path.join(projectRoot, PROJECT_WORKTREES_FOLDER);
+  }
+  const directory = resolveWorktreesDirectory(input.setting, input.defaultDir, path, input.home);
+  return directory === null
+    ? null
+    : path.join(directory, path.basename(input.anchor) || "workspace");
 });
 
 /** Places a validated worktree path; with `uniqueRefName`, also claims and adds it. */

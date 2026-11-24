@@ -50,6 +50,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { makeIsManagedWorktreePath } from "./worktreesDirectory.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
@@ -1156,6 +1157,86 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
       expect(yield* fs.readFileString(`${api.path}/tracked.txt`)).toBe("original\n");
     }),
   ),
+);
+
+it.live.each(["home", "custom", "project-local", "project-local wrapper"])(
+  "places task folders in the configured location and cleans their worktrees (%s)",
+  (location) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const {
+          service,
+          fs,
+          repo,
+          config,
+          command,
+          setProjectRoots,
+          setSettings,
+          setTaskFolders,
+          setThreads,
+        } = yield* cleanupFixture();
+        const wrapper = location === "project-local wrapper";
+        const projectRoot = wrapper ? `${repo}/dist` : repo;
+        const customDirectory = `${config.baseDir}/custom-worktrees`;
+        const worktreesDirectory =
+          location === "home" ? "" : location === "custom" ? customDirectory : "project-local";
+        const trackedRepository = Effect.fnUntraced(function* (name: string) {
+          const folder = `${repo}/dist/${name}`;
+          yield* fs.makeDirectory(folder, { recursive: true });
+          yield* command(folder, ["init", "-b", "main"]);
+          yield* command(folder, ["config", "user.email", "cleanup@example.test"]);
+          yield* command(folder, ["config", "user.name", "Cleanup test"]);
+          yield* fs.writeFileString(`${folder}/tracked.txt`, "original\n");
+          yield* command(folder, ["add", "."]);
+          yield* command(folder, ["commit", "-m", "initial"]);
+          return { name, path: folder };
+        });
+        const api = yield* trackedRepository("api");
+        const web = yield* trackedRepository("web");
+        const context = yield* Layer.build(
+          layerTaskFoldersWithGit(
+            { workspaceRoot: projectRoot, trackedFolders: [api, web], thread: null },
+            worktreesDirectory,
+          ).pipe(Layer.provide(NodeCrypto.layer)),
+        );
+        const taskFolders = Context.get(context, TaskFolders.TaskFolders);
+        const plan = yield* taskFolders.plan({ projectId: ProjectId.make("project-1") });
+        const { taskFolder } = yield* taskFolders.create({
+          plan: plan!,
+          branch: "task",
+          projectStart: { refName: "main", baseRefName: "main" },
+          startFromOrigin: false,
+          projectCommands: true,
+        });
+        const root = taskFolder.root;
+        const worktrees = wrapper ? root : `${root}/dist`;
+        if (worktreesDirectory === "project-local") {
+          expect(root.startsWith(`${projectRoot}/.worktrees/task-`)).toBe(true);
+          expect(yield* fs.exists(`${root}/.worktrees`)).toBe(false);
+          expect((yield* command(repo, ["status", "--porcelain"])).stdout).toBe("");
+        } else {
+          const parent = location === "home" ? config.worktreesDir : customDirectory;
+          expect(root.startsWith(`${parent}/${repo.split("/").at(-1)}/task-`)).toBe(true);
+        }
+        const isManagedWorktreePath = yield* makeIsManagedWorktreePath.pipe(
+          Effect.provide(Settings.layerTest({ worktreesDirectory })),
+        );
+        expect(yield* isManagedWorktreePath(root, projectRoot)).toBe(true);
+        setTaskFolders(taskFolders);
+        setProjectRoots([projectRoot]);
+        setSettings({ worktreesDirectory });
+        setThreads([shell({ branch: "task", worktreePath: taskFolder.projectPath })]);
+
+        const report = yield* service.runNow;
+        for (const checkout of [`${worktrees}/api`, `${worktrees}/web`]) {
+          expect(report.entries).toContainEqual(
+            expect.objectContaining({ path: checkout, outcome: "removed" }),
+          );
+        }
+        expect(yield* fs.exists(root)).toBe(false);
+        expect(yield* fs.readFileString(`${api.path}/tracked.txt`)).toBe("original\n");
+      }),
+    ),
 );
 
 it.live("removes clean submodules recursively, including deinitialized repositories", () =>

@@ -31,7 +31,7 @@ export interface TaskFoldersTestState {
  * The real service and record over real Git, for tests that create and remove worktrees. The
  * workflow service only adds settings lookups on top of the driver, so the driver stands in.
  */
-export const layerTaskFoldersWithGit = (state: TaskFoldersTestState) => {
+export const layerTaskFoldersWithGit = (state: TaskFoldersTestState, worktreesDirectory = "") => {
   const layerWorkflow = Layer.unwrap(
     Effect.gen(function* () {
       const git = yield* GitVcsDriver.GitVcsDriver;
@@ -96,7 +96,7 @@ export const layerTaskFoldersWithGit = (state: TaskFoldersTestState) => {
                   } as OrchestrationV2ThreadShell),
             ),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ worktreesDirectory }),
         SqlitePersistence.layerMemory,
         VcsProcess.layer.pipe(Layer.provide(NodeServices.layer)),
       ),
