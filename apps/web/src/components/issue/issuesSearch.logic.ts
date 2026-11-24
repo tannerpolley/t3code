@@ -13,11 +13,12 @@ import type { IssueListTarget } from "@t3tools/client-runtime/state/issues";
 import type { IssuesSearch } from "./IssuesPage";
 import { readIssuesSearch } from "./issueViewPreferences";
 
+const boundedText = (value: unknown, maxLength = 200): string | undefined =>
+  typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : undefined;
+
 // The router reads a bare `key=42` as a number.
-const bounded = (value: unknown, maxLength = 200): string | undefined => {
-  const text = typeof value === "number" ? String(value) : value;
-  return typeof text === "string" && text.trim() ? text.trim().slice(0, maxLength) : undefined;
-};
+const bounded = (value: unknown): string | undefined =>
+  boundedText(typeof value === "number" ? String(value) : value);
 
 const labels = (raw: unknown): ReadonlyArray<string> | undefined => {
   const names = (Array.isArray(raw) ? raw : [raw]).flatMap((name) => bounded(name) ?? []);
@@ -76,16 +77,16 @@ function optionalNumber(value: unknown): number | undefined {
 
 export function roadmapSearchFromUrl(raw: Record<string, unknown>): RoadmapSearch {
   return {
-    environmentId: bounded(raw.environmentId) as EnvironmentId | undefined,
-    repository: bounded(raw.repository),
+    environmentId: boundedText(raw.environmentId) as EnvironmentId | undefined,
+    repository: boundedText(raw.repository),
     number: optionalNumber(raw.number),
-    host: bounded(raw.host, 253),
-    issueQuery: bounded(raw.issueQuery),
-    selectedEnvironmentId: bounded(raw.selectedEnvironmentId) as EnvironmentId | undefined,
-    selectedHost: bounded(raw.selectedHost, 253),
-    selectedRepository: bounded(raw.selectedRepository),
+    host: boundedText(raw.host, 253),
+    issueQuery: boundedText(raw.issueQuery),
+    selectedEnvironmentId: boundedText(raw.selectedEnvironmentId) as EnvironmentId | undefined,
+    selectedHost: boundedText(raw.selectedHost, 253),
+    selectedRepository: boundedText(raw.selectedRepository),
     selectedNumber: optionalNumber(raw.selectedNumber),
-    originThreadId: bounded(raw.originThreadId) as ThreadId | undefined,
+    originThreadId: boundedText(raw.originThreadId) as ThreadId | undefined,
   };
 }
 
