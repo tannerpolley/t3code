@@ -624,7 +624,7 @@ export const layer = Layer.effect(
         SELECT root_thread_id FROM orchestration_v2_projection_repository_orchestration owner
         JOIN orchestration_v2_projection_threads thread ON thread.thread_id = owner.root_thread_id
         WHERE thread.deleted_at IS NULL AND thread.archived_at IS NULL
-          AND (${sql.unsafe(repositoryPhaseSql("thread.payload_json"))} = 'draining'
+          AND (${sql.unsafe(repositoryPhaseSql("thread.payload_json"))} IN ('draining', 'handoff_awaiting_approval')
             OR (owner.paused = 0 AND EXISTS (
               SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.suspendedIssues') suspension
               WHERE coalesce(json_extract(suspension.value, '$.kind'), CASE WHEN json_extract(suspension.value, '$.reason') IN ${sql.in(LEGACY_AUTOMATIC_SUSPENSIONS.blocked)} THEN 'blocked' WHEN json_extract(suspension.value, '$.reason') IN ${sql.in(LEGACY_AUTOMATIC_SUSPENSIONS.unreadable)} THEN 'unreadable' END) IN ('blocked', 'unreadable')))

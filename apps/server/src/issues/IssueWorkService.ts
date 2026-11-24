@@ -1334,6 +1334,18 @@ export const layer = Layer.effect(
     ) {
       yield* considerAutomaticHandoff(rootThreadId);
       let config = yield* store.configuration(rootThreadId);
+      if (config?.handoff?.status === "awaiting_approval") {
+        yield* update(
+          rootThreadId,
+          {
+            ...config,
+            paused: true,
+            handoff: { ...config.handoff, status: "draining", wasPaused: config.paused },
+          },
+          CommandId.make(`handoff-resume:${rootThreadId}:${config.revision}`),
+        );
+        config = yield* store.configuration(rootThreadId);
+      }
       if (config === null || !repositoryAdmitsWork(config)) return;
       const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry]));
       for (const threadId of yield* store.workerThreads(rootThreadId)) {
@@ -1783,7 +1795,6 @@ export const layer = Layer.effect(
     });
     const prepareHandoff = Effect.fn("IssueWorkService.prepareHandoff")(function* (
       input: RepositoryHandoffRequestInput,
-      status: "awaiting_approval" | "draining",
       callerThreadId?: ThreadId,
     ) {
       const owner = yield* store.repositoryOwnerByRef(input);
@@ -1804,21 +1815,23 @@ export const layer = Layer.effect(
           code: "repository-owner-conflict",
           message: "This repository already has an automatic handoff in verification.",
         });
-      if (config.handoff?.requestId === input.clientRequestId && config.handoff.status === status)
+      if (
+        config.handoff?.requestId === input.clientRequestId &&
+        config.handoff.status === "draining"
+      )
         return yield* repositoryStatus(input);
       if (config.revision !== input.expectedRevision)
         return yield* new IssueWorkError({
           code: "repository-owner-conflict",
-          message:
-            "Repository ownership changed. Refresh before requesting or approving a handoff.",
+          message: "Repository ownership changed. Refresh before starting a handoff.",
         });
       if (
         config.handoff !== undefined &&
-        (status !== "draining" || config.handoff.status !== "awaiting_approval")
+        (callerThreadId !== undefined || config.handoff.status !== "awaiting_approval")
       )
         return yield* new IssueWorkError({
           code: "repository-owner-conflict",
-          message: "This repository already has a pending handoff. Approve or cancel it first.",
+          message: "This repository already has a pending handoff. Wait or cancel it first.",
         });
       const root = yield* threads
         .getThreadShell(owner.rootThreadId)
@@ -1877,7 +1890,7 @@ export const layer = Layer.effect(
         owner.rootThreadId,
         {
           ...config,
-          paused: status === "draining" ? true : config.paused,
+          paused: true,
           handoff: {
             requestId,
             nextThreadId:
@@ -1888,7 +1901,7 @@ export const layer = Layer.effect(
               }),
             summary: input.summary,
             modelSelection: selection,
-            status,
+            status: "draining",
             wasPaused: config.paused,
             // A proposal from before requestedAt existed stays undated rather than dated at approval.
             requestedAt:
@@ -1899,12 +1912,12 @@ export const layer = Layer.effect(
         },
         input.clientRequestId,
       );
-      if (status === "draining") yield* reconcile(owner.rootThreadId);
+      yield* reconcile(owner.rootThreadId);
       return yield* repositoryStatus(input);
     });
     const handoff: IssueWorkService["Service"]["handoff"] = (input) =>
       input.action === "approve"
-        ? prepareHandoff(input, "draining")
+        ? prepareHandoff(input)
         : Effect.gen(function* () {
             const owner = yield* store.repositoryOwnerByRef(input);
             const config = owner === null ? null : yield* store.configuration(owner.rootThreadId);
@@ -2241,7 +2254,7 @@ export const layer = Layer.effect(
       setReadOnlyLimit: setLimit,
       assertCurrentCaller,
       requestHandoff: Effect.fn("IssueWorkService.requestHandoff")((threadId, input) =>
-        prepareHandoff(input, "awaiting_approval", threadId),
+        prepareHandoff(input, threadId),
       ),
       handoff,
       reconcile,

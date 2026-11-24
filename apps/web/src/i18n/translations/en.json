@@ -205,5 +205,7 @@
   "e05b2595e2c7c313": "Handoff to {target} awaits approval",
   "c1303d131afc6a17": "Over a day old",
   "00ad8aeed0a6c461": "Cancel",
-  "ac48cc297029db41": "Approve"
+  "ac48cc297029db41": "Approve",
+  "97144d3a3218d931": "T3 pauses new issue starts while existing work finishes, then hands off to a fresh thread.",
+  "9a73e6f99e93612a": "Start handoff"
 }

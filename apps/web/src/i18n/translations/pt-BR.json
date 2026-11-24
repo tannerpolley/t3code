@@ -205,5 +205,7 @@
   "e05b2595e2c7c313": "A transferência para {target} aguarda aprovação",
   "c1303d131afc6a17": "Mais de um dia",
   "00ad8aeed0a6c461": "Cancelar",
-  "ac48cc297029db41": "Aprovar"
+  "ac48cc297029db41": "Aprovar",
+  "97144d3a3218d931": "O T3 pausa o início de novos trabalhos em issues até que o trabalho em andamento termine e depois transfere o controle para uma nova conversa.",
+  "9a73e6f99e93612a": "Iniciar transferência"
 }

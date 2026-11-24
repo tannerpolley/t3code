@@ -40,7 +40,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as OrchestratorMcp from "../mcp/OrchestratorMcpService.ts";
@@ -2771,38 +2770,29 @@ describe("fresh-thread repository handoff", () => {
     }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
-  it.effect(
-    "keeps an agent's existing handoff target when the user approves without resending it",
-    () =>
-      Effect.gen(function* () {
-        const service = yield* IssueWorkService.IssueWorkService;
-        const target = ThreadId.make("agent-selected-successor");
-        yield* createRoot;
-        yield* createLead(target);
-        const proposal = {
-          ...reference,
-          expectedRevision: 1,
-          summary: "Continue in the selected conversation.",
-          clientRequestId: CommandId.make("agent-target:propose"),
-        };
-        const self = yield* service
-          .requestHandoff(rootId, { ...proposal, targetThreadId: rootId })
-          .pipe(Effect.result);
-        assert.equal(self._tag, "Failure");
-        const pending = yield* service.requestHandoff(rootId, {
-          ...proposal,
-          targetThreadId: target,
-        });
-        assert.equal(pending.orchestration!.handoff?.status, "awaiting_approval");
-        const approved = yield* service.handoff({
-          ...proposal,
-          expectedRevision: pending.orchestration!.revision,
-          action: "approve",
-          clientRequestId: CommandId.make("agent-target:approve"),
-        });
-        assert.equal(approved.rootThreadId, target);
-        yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  it.effect("keeps an agent's selected existing handoff target", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const target = ThreadId.make("agent-selected-successor");
+      yield* createRoot;
+      yield* createLead(target);
+      const proposal = {
+        ...reference,
+        expectedRevision: 1,
+        summary: "Continue in the selected conversation.",
+        clientRequestId: CommandId.make("agent-target:propose"),
+      };
+      const self = yield* service
+        .requestHandoff(rootId, { ...proposal, targetThreadId: rootId })
+        .pipe(Effect.result);
+      assert.equal(self._tag, "Failure");
+      const result = yield* service.requestHandoff(rootId, {
+        ...proposal,
+        targetThreadId: target,
+      });
+      assert.equal(result.rootThreadId, target);
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
   const registerInput = (targetThreadId: ThreadId, key: string) => ({
@@ -3566,42 +3556,42 @@ describe("fresh-thread repository handoff", () => {
     }).pipe(Effect.provide(fixture({ continuation: true }))),
   );
 
-  it.effect("approving a proposal keeps the time the handoff was first requested", () =>
+  it.effect("reconciles a saved handoff from before automatic draining", () =>
     Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
-      const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
       const threads = yield* ThreadManagement.ThreadManagementService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const target = ThreadId.make("saved-handoff-target");
       yield* createRoot;
+      yield* createLead(target);
       yield* threads.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make("requested-at:root-start"),
+        type: "repository.work.update",
+        commandId: CommandId.make("saved-handoff:proposal"),
         threadId: rootId,
-        messageId: MessageId.make("requested-at:root-start"),
-        text: "Keep the drain open",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const requestedAt = DateTime.formatIso(yield* DateTime.now);
-      const input = {
-        ...reference,
         expectedRevision: 1,
-        summary: "Decisions to preserve.",
-        clientRequestId: CommandId.make("requested-at:proposal"),
-      };
-      const proposed = yield* mcp.requestRepositoryHandoff(scope(rootId), input);
-      assert.equal(proposed.orchestration!.handoff?.requestedAt, requestedAt);
-      yield* TestClock.adjust("25 hours");
-      const draining = yield* service.handoff({
-        ...input,
-        action: "approve",
-        expectedRevision: proposed.orchestration!.revision,
-        clientRequestId: CommandId.make("requested-at:approve"),
+        orchestration: {
+          ...config,
+          paused: true,
+          milestones: [],
+          handoff: {
+            requestId: CommandId.make("saved-handoff:proposal"),
+            nextThreadId: target,
+            summary: "Carry over the saved decisions.",
+            modelSelection,
+            status: "awaiting_approval",
+            wasPaused: false,
+          },
+        },
       });
-      assert.equal(draining.orchestration!.handoff?.status, "draining");
-      assert.equal(draining.orchestration!.handoff?.requestedAt, requestedAt);
-    }).pipe(Effect.provide(fixture())),
+      assert.include(yield* store.activeRoots(), rootId);
+      yield* service.reconcile(rootId);
+      yield* worker.drain();
+      const result = yield* service.repositoryStatus(reference);
+      assert.equal(result.rootThreadId, target);
+      assert.isTrue(result.orchestration!.paused);
+      assert.isUndefined(result.orchestration!.handoff);
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
   it.effect(
@@ -3666,62 +3656,47 @@ describe("fresh-thread repository handoff", () => {
       }).pipe(Effect.provide(fixture())),
   );
 
-  it.effect(
-    "MCP requests require exact user approval and can be cancelled without moving ownership",
-    () =>
-      Effect.gen(function* () {
-        const service = yield* IssueWorkService.IssueWorkService;
-        const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        yield* createRoot;
-        const input = {
-          ...reference,
-          expectedRevision: 1,
-          summary: "Decisions to preserve.",
-          clientRequestId: CommandId.make("handoff:proposal"),
-        };
-        const proposed = yield* mcp.requestRepositoryHandoff(scope(rootId), input);
-        assert.equal(proposed.orchestration!.handoff?.status, "awaiting_approval");
-        assert.isFalse(proposed.orchestration!.paused);
-        assert.isNull(yield* threads.getThreadShell(proposed.orchestration!.handoff!.nextThreadId));
-        const stale = yield* service
-          .handoff({
-            ...input,
-            action: "approve",
-            expectedRevision: proposed.orchestration!.revision,
-            summary: "A different proposal",
-            clientRequestId: CommandId.make("handoff:wrong-approval"),
-          })
-          .pipe(Effect.result);
-        assert.equal(stale._tag, "Failure");
-        const paused = yield* service.setPaused({
-          ...reference,
-          paused: true,
-          clientRequestId: CommandId.make("handoff:pause-before-approval"),
-        });
-        const approved = yield* service.handoff({
-          ...input,
-          action: "approve",
-          expectedRevision: paused.orchestration!.revision,
-          clientRequestId: CommandId.make("handoff:user-approved"),
-        });
-        assert.notEqual(approved.rootThreadId, rootId);
-        assert.isTrue(approved.orchestration!.paused);
-        const nextProposal = yield* mcp.requestRepositoryHandoff(scope(approved.rootThreadId!), {
-          ...input,
-          expectedRevision: approved.orchestration!.revision,
-          clientRequestId: CommandId.make("handoff:next-proposal"),
-        });
-        const cancelled = yield* service.handoff({
-          ...reference,
-          action: "cancel",
-          expectedRevision: nextProposal.orchestration!.revision,
-          clientRequestId: CommandId.make("handoff:cancel"),
-        });
-        assert.equal(cancelled.rootThreadId, approved.rootThreadId);
-        assert.isUndefined(cancelled.orchestration!.handoff);
-        assert.isTrue(cancelled.orchestration!.paused);
-      }).pipe(Effect.provide(fixture())),
+  it.effect("an MCP request starts draining and transfers ownership after the current turn", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* createRoot;
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("mcp-handoff:root-start"),
+        threadId: rootId,
+        messageId: MessageId.make("mcp-handoff:root-start"),
+        text: "Finish current work",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+      const requestedAt = DateTime.formatIso(yield* DateTime.now);
+      const pending = yield* mcp.requestRepositoryHandoff(scope(rootId), {
+        ...reference,
+        expectedRevision: 1,
+        summary: "Decisions to preserve.",
+        clientRequestId: CommandId.make("mcp-handoff:request"),
+      });
+      assert.equal(pending.rootThreadId, rootId);
+      assert.equal(pending.phase, "draining");
+      assert.isTrue(pending.orchestration!.paused);
+      assert.equal(pending.orchestration!.handoff?.requestedAt, requestedAt);
+      const target = pending.orchestration!.handoff!.nextThreadId;
+      assert.isNull(yield* threads.getThreadShell(target));
+
+      yield* finish(rootId, "mcp-handoff:root-finished");
+      yield* service.reconcile(rootId);
+      yield* worker.drain();
+      const result = yield* service.repositoryStatus(reference);
+      assert.equal(result.rootThreadId, target);
+      assert.isFalse(result.orchestration!.paused);
+      assert.isUndefined(result.orchestration!.handoff);
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
   it.effect(
