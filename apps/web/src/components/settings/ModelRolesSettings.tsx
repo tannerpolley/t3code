@@ -31,10 +31,11 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 export function ModelRolesSection() {
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const gt = useGT();
@@ -91,7 +92,7 @@ export function ModelRolesSection() {
         resetAction={
           hasCustomTier ? (
             <SettingResetButton
-              label={gt("Model tiers")}
+              ariaLabel={gt("Reset model tiers to default")}
               onClick={() => updateSettings({ modelTiers: resetTiers })}
             />
           ) : null

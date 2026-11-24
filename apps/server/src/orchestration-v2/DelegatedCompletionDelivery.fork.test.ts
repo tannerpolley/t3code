@@ -1,4 +1,5 @@
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import { assert, it, vi } from "@effect/vitest";
 import {
@@ -1530,7 +1531,9 @@ it.layer(layerTest)("delegated request routing", (it) => {
 });
 
 it.layer(
-  Layer.mergeAll(layerTest, EffectOutbox.layer).pipe(Layer.provide(SqlitePersistence.layerMemory)),
+  Layer.mergeAll(layerTest, EffectOutbox.layer, ThreadCommandExecutor.layer).pipe(
+    Layer.provide(SqlitePersistence.layerMemory),
+  ),
 )("checkpoint capture failure visibility", (it) => {
   it.effect("exhausted real checkpoint capture settles the parent and holds its queued wake", () =>
     Effect.gen(function* () {

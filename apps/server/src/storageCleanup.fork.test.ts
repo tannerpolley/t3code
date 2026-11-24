@@ -38,6 +38,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -220,6 +221,9 @@ const makeCleanupFixture = (
         getThreadShell: (threadId: ThreadId) =>
           Effect.sync(() => threads.find((thread) => thread.id === threadId) ?? null),
       } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
+      Effect.provideService(TaskFolders.TaskFolders, {
+        find: () => Effect.succeed(null),
+      } as unknown as TaskFolders.TaskFolders["Service"]),
       Effect.provideService(ProviderSessionManager.ProviderSessionManagerV2, {
         isLive: () => Effect.sync(() => sessionLive),
       } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),

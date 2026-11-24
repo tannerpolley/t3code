@@ -1,4 +1,5 @@
 import { assert, it, vi } from "@effect/vitest";
+import * as ThreadViewers from "../orchestration-v2/ThreadViewers.ts";
 import {
   CommandId,
   EventId,
@@ -56,7 +57,9 @@ it.effect(
       ProjectStore.layer,
       TurnItemPositions.layer,
     ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
-    const testLayer = EventSink.layerFromStores.pipe(Layer.provideMerge(dependencies));
+    const testLayer = EventSink.layerFromStores.pipe(
+      Layer.provideMerge(Layer.merge(dependencies, ThreadViewers.layer)),
+    );
     return Effect.gen(function* () {
       const sink = yield* EventSink.EventSinkV2;
       const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -246,7 +249,7 @@ it.effect(
       issuesLayer,
       IdAllocator.layer,
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-    ).pipe(Layer.provideMerge(dependencies));
+    ).pipe(Layer.provideMerge(Layer.merge(dependencies, ThreadViewers.layer)));
     return Effect.gen(function* () {
       const sink = yield* EventSink.EventSinkV2;
       const outbox = yield* EffectOutbox.EffectOutboxV2;

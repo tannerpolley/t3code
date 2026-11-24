@@ -1,4 +1,5 @@
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 import type { OrchestrationMessageContext } from "@t3tools/contracts";
 import { ComposerContextId } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
@@ -459,6 +460,7 @@ function makeLocalCommandHarness(input: {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({})),
     Layer.provide(input.inlineLayer ?? InlineShellStore.layerEmpty),
+    Layer.provide(layerNoTaskFolders),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({

@@ -30,7 +30,7 @@ import {
 /**
  * Keeps an omitted thread and its ancestors mounted until the route leaves it.
  */
-function useOpenThreadPath(threadRef: ScopedThreadRef | null, missing: boolean) {
+export function useOpenThreadPath(threadRef: ScopedThreadRef | null, missing: boolean) {
   const key = threadRef === null ? null : scopedThreadKey(threadRef);
   // Sticks to the route thread, so the row the family brings in does not release it.
   const [mountedKey, setMountedKey] = useState<string | null>(null);

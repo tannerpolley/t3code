@@ -190,31 +190,37 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     }).pipe(Effect.flip);
     assert.equal(missingProject._tag, "ThreadLaunchError");
     assert.equal((yield* claimedFiles).length, 1);
-    const missingThread = yield* ThreadMessageIntake.dispatchCommand({
-      type: "message.dispatch",
-      commandId: CommandId.make("intake-no-thread"),
-      threadId: ThreadId.make("missing-thread"),
-      messageId: MessageId.make("intake-missing"),
-      text: "Missing",
-      attachments: [attachment],
-      dispatchMode: { type: "start_immediately" },
-      createdBy: "user",
-      creationSource: "web",
-    }).pipe(Effect.flip);
+    const missingThread = yield* ThreadMessageIntake.dispatchCommand(
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make("intake-no-thread"),
+        threadId: ThreadId.make("missing-thread"),
+        messageId: MessageId.make("intake-missing"),
+        text: "Missing",
+        attachments: [attachment],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      },
+      { managesProviders: true },
+    ).pipe(Effect.flip);
     assert.equal(missingThread._tag, "OrchestratorProjectionError");
     assert.equal((yield* claimedFiles).length, 1);
 
-    const dispatch = ThreadMessageIntake.dispatchCommand({
-      type: "message.dispatch",
-      commandId: CommandId.make("intake-dispatch"),
-      threadId: input.threadId,
-      messageId: MessageId.make("intake-second"),
-      text: "Second",
-      attachments: [attachment],
-      dispatchMode: { type: "queue_after_active" },
-      createdBy: "user",
-      creationSource: "web",
-    });
+    const dispatch = ThreadMessageIntake.dispatchCommand(
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make("intake-dispatch"),
+        threadId: input.threadId,
+        messageId: MessageId.make("intake-second"),
+        text: "Second",
+        attachments: [attachment],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      },
+      { managesProviders: true },
+    );
     yield* dispatch;
     yield* dispatch;
     const queuedProjection = yield* threads.getThreadProjection(input.threadId);
@@ -240,14 +246,17 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     });
     assert.isNotNull(filePath);
     yield* fs.writeFile(filePath, new Uint8Array([5, 6, 7, 8]));
-    const edit = ThreadMessageIntake.dispatchCommand({
-      type: "queued-run.edit",
-      commandId: CommandId.make("intake-edit"),
-      threadId: input.threadId,
-      runId: queuedRun.id,
-      text: "Edited with a file",
-      attachments: [...queuedMessage.attachments, file],
-    });
+    const edit = ThreadMessageIntake.dispatchCommand(
+      {
+        type: "queued-run.edit",
+        commandId: CommandId.make("intake-edit"),
+        threadId: input.threadId,
+        runId: queuedRun.id,
+        text: "Edited with a file",
+        attachments: [...queuedMessage.attachments, file],
+      },
+      { managesProviders: true },
+    );
     yield* edit;
     yield* edit;
     const editedProjection = yield* threads.getThreadProjection(input.threadId);
@@ -266,14 +275,17 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     assert.deepEqual(yield* fs.readFile(durableFilePath), new Uint8Array([5, 6, 7, 8]));
     assert.deepEqual(yield* fs.readFile(filePath), new Uint8Array([5, 6, 7, 8]));
     const beforeRejectedEdit = (yield* claimedFiles).length;
-    const rejectedEdit = yield* ThreadMessageIntake.dispatchCommand({
-      type: "queued-run.edit",
-      commandId: CommandId.make("intake-edit-rejected"),
-      threadId: input.threadId,
-      runId: queuedRun.id,
-      text: "",
-      attachments: [file],
-    }).pipe(Effect.flip);
+    const rejectedEdit = yield* ThreadMessageIntake.dispatchCommand(
+      {
+        type: "queued-run.edit",
+        commandId: CommandId.make("intake-edit-rejected"),
+        threadId: input.threadId,
+        runId: queuedRun.id,
+        text: "",
+        attachments: [file],
+      },
+      { managesProviders: true },
+    ).pipe(Effect.flip);
     assert.equal(rejectedEdit._tag, "OrchestratorCommandRejectedError");
     assert.equal((yield* claimedFiles).length, beforeRejectedEdit);
     assert.deepEqual(yield* fs.readFile(filePath), new Uint8Array([5, 6, 7, 8]));

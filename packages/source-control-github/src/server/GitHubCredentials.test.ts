@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
@@ -19,6 +20,8 @@ const TOKEN_VARIABLES = [
   "GH_ENTERPRISE_TOKEN",
   "GITHUB_ENTERPRISE_TOKEN",
 ] as const;
+
+const ENTERPRISE_TOKEN_VARIABLES = ["GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"] as const;
 
 const hostSettings = (
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }>,
@@ -43,6 +46,22 @@ function harness(
         return {
           exitCode: ChildProcessSpawner.ExitCode(0),
           stdout: "",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }
+      // gh hands the enterprise variables to every host but github.com.
+      const fromEnterpriseEnv = input.args.includes("github.com")
+        ? undefined
+        : ENTERPRISE_TOKEN_VARIABLES.map(
+            (name) =>
+              (input.env !== undefined && name in input.env ? input.env : process.env)[name],
+          ).find(Boolean);
+      if (fromEnterpriseEnv !== undefined) {
+        return {
+          exitCode: ChildProcessSpawner.ExitCode(0),
+          stdout: `${fromEnterpriseEnv}\n`,
           stderr: "",
           stdoutTruncated: false,
           stderrTruncated: false,
@@ -87,6 +106,7 @@ function harness(
   const layer = GitHubCredentials.layer.pipe(
     Layer.provideMerge(hostLayer),
     Layer.provide(cryptoLayer),
+    Layer.provide(FileSystem.layerNoop({})),
     Layer.provide(
       Layer.succeed(
         HttpClient.HttpClient,
@@ -214,6 +234,22 @@ describe("GitHubCredentials", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect.each(ENTERPRISE_TOKEN_VARIABLES)(
+    "keeps %s away from a host other than GH_HOST",
+    (name) => {
+      vi.stubEnv("GH_HOST", "ghe.corp.example");
+      vi.stubEnv(name, "enterprise-secret");
+      const { layer } = harness();
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const other = yield* credentials.get("git.other.example");
+        expect(Redacted.value(other.token)).toBe("active-token");
+        const own = yield* credentials.get("ghe.corp.example");
+        expect(Redacted.value(own.token)).toBe("enterprise-secret");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("never hands a token to a host that is not a plain hostname", () => {
     vi.stubEnv("GH_TOKEN", "env-token");

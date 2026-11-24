@@ -1,5 +1,6 @@
+import { useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { resolveShortcutCommand } from "~/keybindings";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
@@ -21,11 +22,12 @@ export function useIssueReferenceCopyTarget(threadRef: ScopedThreadRef | null) {
 
 /** The Issues page owns one shortcut listener, even when both responsive panes are mounted. */
 export function useIssuePageCopyShortcut() {
+  const gt = useGT();
   const target = useIssueReferenceCopyTarget(ISSUES_PANEL_REF);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard } = useCopyToClipboard({
-    target: "issue link",
-    onCopy: () => toastManager.add({ type: "success", title: "Issue link copied" }),
+    target: namedClipboardTarget("issue link"),
+    onCopy: () => toastManager.add({ type: "success", title: gt("Issue link copied") }),
     onError: (error) => toastManager.add({ type: "error", title: error.message }),
   });
   const onShortcut = useEffectEvent((event: KeyboardEvent) => {

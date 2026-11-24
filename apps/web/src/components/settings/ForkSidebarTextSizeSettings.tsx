@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import * as Schema from "effect/Schema";
 import {
   MAX_SIDEBAR_TEXT_SIZE,
@@ -8,7 +9,7 @@ import { useClientSettings, updateClientSettings as updateSettings } from "../..
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { ForkSettingsRow } from "./ForkSettingsRow";
 import { SettingResetButton } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const TEXT_SIZE_ROWS = [
   { key: "sidebarSectionTextSize", searchId: "sidebar-section-text-size" },
@@ -24,6 +25,8 @@ const SIZES = Array.from(
 const isSidebarTextSize = Schema.is(SidebarTextSize);
 
 export function ForkSidebarTextSizeSettings() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const settings = useClientSettings();
   return TEXT_SIZE_ROWS.map(({ key, searchId }) => {
     const setting = searchableSetting(searchId);
@@ -32,11 +35,13 @@ export function ForkSidebarTextSizeSettings() {
       <ForkSettingsRow
         key={key}
         {...setting}
-        description="Projects view only. Sizes scale with the interface font; Default uses this row's sidebar style."
+        description={gt(
+          "Projects view only. Sizes scale with the interface font; Default uses this row's sidebar style.",
+        )}
         resetAction={
           size === null ? null : (
             <SettingResetButton
-              label={setting.title}
+              ariaLabel={gt("Reset {setting} to default", { setting: setting.title })}
               onClick={() => updateSettings({ [key]: null })}
             />
           )
@@ -50,11 +55,11 @@ export function ForkSidebarTextSizeSettings() {
             }}
           >
             <SelectTrigger size="sm" className="w-full sm:w-28" aria-label={setting.title}>
-              <SelectValue>{size === null ? "Default" : `${size}px`}</SelectValue>
+              <SelectValue>{size === null ? gt("Default") : `${size}px`}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               <SelectItem hideIndicator value="default">
-                Default
+                <T>Default</T>
               </SelectItem>
               {SIZES.map((size) => (
                 <SelectItem hideIndicator key={size} value={String(size)}>

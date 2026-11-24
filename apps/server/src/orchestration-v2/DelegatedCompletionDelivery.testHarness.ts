@@ -1,4 +1,5 @@
 import * as EventStore from "./EventStore.ts";
+import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
@@ -111,7 +112,7 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
     streamChanges: Stream.empty,
     subscribeChanges: Effect.never,
   },
-);
+).pipe(Layer.merge(ModelManifest.layerTest));
 
 const layerTestBase = Layer.mergeAll(
   RuntimeLayer.layer,

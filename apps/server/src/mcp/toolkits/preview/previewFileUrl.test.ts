@@ -1,4 +1,5 @@
 import * as AssetSigner from "../../../assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "../../../assets/WorkspacePreviewRevisions.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -33,6 +34,7 @@ const layer = PreviewFileUrl.layer.pipe(
       ),
       AssetSigner.layer.pipe(Layer.provide(ServerSecretStore.layer), Layer.provide(configLayer)),
       ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
+      WorkspacePreviewRevisions.layer,
       ServerSettings.layerTest(),
       // Only tool-output image assets read the orchestrator; file paths never do.
       Layer.mock(Orchestrator.OrchestratorV2)({}),

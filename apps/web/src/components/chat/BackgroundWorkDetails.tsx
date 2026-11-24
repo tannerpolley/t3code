@@ -4,6 +4,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { describeSidebarBackgroundWork } from "../sidebar/SidebarBackgroundWork.logic";
@@ -43,12 +44,13 @@ function describeTask(
 }
 
 function TaskDetails({ detail }: { readonly detail: ReturnType<typeof describeTask> }) {
+  const gt = useGT();
   return (
     <section className="space-y-2 text-sm">
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="font-medium">{detail.title}</h3>
         <span className="shrink-0 text-xs text-muted-foreground">
-          {detail.task.awaited ? "Waiting" : "Running"}
+          {detail.task.awaited ? gt("Waiting") : gt("Running")}
         </span>
       </div>
       {detail.command ? (
@@ -84,10 +86,14 @@ export function BackgroundWorkDetails(props: {
   };
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<InlineButton />}>Details</DialogTrigger>
+      <DialogTrigger render={<InlineButton />}>
+        <T>Details</T>
+      </DialogTrigger>
       <DialogPopup>
         <DialogHeader>
-          <DialogTitle>Background work</DialogTitle>
+          <DialogTitle>
+            <T>Background work</T>
+          </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <BackgroundWorkTaskList
@@ -112,7 +118,7 @@ export function BackgroundWorkDetails(props: {
                         props.onOpenThread(childThreadId);
                       }}
                     >
-                      Open subagent
+                      <T>Open subagent</T>
                     </InlineButton>
                   ) : null}
                 </li>

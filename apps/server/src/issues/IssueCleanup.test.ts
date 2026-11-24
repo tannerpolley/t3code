@@ -150,6 +150,7 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (legacyPr = true
               deletedAt: null,
               pinnedAt: null,
               archivedAt: null,
+              trackedFolders: [],
             }),
         }),
       ),

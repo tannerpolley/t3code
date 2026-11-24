@@ -145,6 +145,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
   const shellReads: ThreadId[] = [];
   const catchUp = { shellSnapshotReads: 0 };
   const threads = ThreadManagementService.ThreadManagementService.of({
+    submitRunOutput: () => Effect.die("unused"),
     getAgentAwarenessSnapshot: (threadId) =>
       (options.readShell?.(threadId!) ?? Ref.get(currentShell)).pipe(
         Effect.map((thread) => ({ snapshotSequence: 1, threads: thread === null ? [] : [thread] })),

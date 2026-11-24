@@ -38,6 +38,7 @@ const row = (id: string, workspaceRoot = "/work/Apps/" + id): Projects.ProjectRo
   deletedAt: null,
   pinnedAt: null,
   archivedAt: null,
+  trackedFolders: [],
 });
 const layer = Layer.effect(Sidebar.SidebarLayoutService, Sidebar.make).pipe(
   Layer.provide(

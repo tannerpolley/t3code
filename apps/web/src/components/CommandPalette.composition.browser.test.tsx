@@ -77,11 +77,12 @@ vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
+  // Doubles as the add-project folder scan, which finds nothing to track.
   useAtomQueryRunner:
     () =>
-    async ({ input }: { input: { partialPath?: string } }) => ({
+    async ({ input }: { input?: { partialPath?: string } }) => ({
       _tag: "Success",
-      value: input.partialPath === undefined ? undefined : { parentPath: input.partialPath },
+      value: input?.partialPath === undefined ? { folders: [] } : { parentPath: input.partialPath },
     }),
 }));
 vi.mock("../projectSectionPlacement", async (original) => {

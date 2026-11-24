@@ -775,6 +775,7 @@ describe("orchestrator MCP toolkit", () => {
                     link: () =>
                       worker.drain().pipe(Effect.orDie, Effect.as({ alreadyLinked: false })),
                     unlink: () => Effect.die("unused in this test"),
+                    linkedThreads: () => Effect.die("unused in this test"),
                   });
                 }),
               ).pipe(Layer.provide(layerOrchestration)),

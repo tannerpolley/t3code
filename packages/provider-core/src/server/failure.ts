@@ -9,6 +9,7 @@ import type {
   ProviderTurnId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
@@ -69,6 +70,19 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
   },
 };
 
+// macOS privacy protection (TCC) refuses a CLI the project folder with EPERM.
+const PERMISSION_DENIED_OUTPUT = /\bEPERM\b|Operation not permitted/u;
+
+/**
+ * What to do after a provider CLI exits on its own. Only recognises the
+ * output; the output itself stays out of the message.
+ */
+export function providerProcessExitGuidance(output: unknown): string {
+  return typeof output === "string" && PERMISSION_DENIED_OUTPUT.test(output)
+    ? "It was denied access to a file or folder (EPERM). On macOS, allow T3 Code under System Settings > Privacy & Security > Files and Folders, or move the project out of Desktop, Documents, or Downloads, then retry the turn."
+    : "Check the server logs for the provider's output, then retry the turn.";
+}
+
 // codex_protocol::protocol::validate_thread_goal_objective
 const CODEX_GOAL_VALIDATION_MESSAGE =
   /^goal objective must (?:not be empty|be at most \d{1,6} characters)$/u;
@@ -128,9 +142,12 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeSettingsLaunchArgError":
         case "ClaudeMcpRegistrationTimeoutError":
         case "ClaudeCodeRootRefusalError":
+        case "ClaudeCodeStartupExitError":
         case "ClaudeConversationNotFoundError":
         case "CursorModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
+        case "CodexAppServerUnresponsiveError":
+        case "CodexAppServerRetiredError":
         case "ProviderSetupError":
         case "ProviderAdapterThreadInUseError":
         case "ProviderCompactionUnsupportedError":
@@ -183,11 +200,13 @@ function curatedCauseMessages(cause: unknown): {
           }
           break;
         }
-        case "AcpProcessExitedError": {
+        case "AcpProcessExitedError":
+        case "CodexAppServerProcessExitedError": {
           const exit = `provider process exited${processExitStatus(cause)}`;
           const stage = category === undefined ? `The ${exit}` : `${category.summary}: the ${exit}`;
+          const guidance = providerProcessExitGuidance((cause as Record<string, unknown>).stderr);
           return {
-            known: `${stage}. Check the server logs for the provider's output, then retry the turn.`,
+            known: `${stage}. ${guidance}`,
             category: categoryMessage(),
           };
         }
@@ -352,6 +371,8 @@ export function makeProviderFailure(input: {
 }
 
 export function makeProviderFailureTurnItem(input: {
+  // Defaults to the turn's single failure row.
+  readonly id?: TurnItemId;
   readonly driver: ProviderDriverKind;
   readonly threadId: ThreadId;
   readonly runId: RunId | null;
@@ -365,10 +386,12 @@ export function makeProviderFailureTurnItem(input: {
   readonly occurredAt: DateTime.Utc;
 }): Extract<OrchestrationV2TurnItem, { readonly type: "error" }> {
   return {
-    id: IdAllocator.derive.turnItemFromProviderItem({
-      driver: input.driver,
-      nativeItemId: `terminal-failure:${input.providerTurnId}`,
-    }),
+    id:
+      input.id ??
+      IdAllocator.derive.turnItemFromProviderItem({
+        driver: input.driver,
+        nativeItemId: `terminal-failure:${input.providerTurnId}`,
+      }),
     threadId: input.threadId,
     runId: input.runId,
     nodeId: input.nodeId,
@@ -396,6 +419,7 @@ export function makeProviderFailureTurnItem(input: {
 export const PROVIDER_RETRY_BUDGET_MS = 10 * 60 * 1000;
 
 export function makeProviderRetryTurnItem(input: {
+  readonly id?: TurnItemId;
   readonly driver: ProviderDriverKind;
   readonly threadId: ThreadId;
   readonly runId: RunId | null;
@@ -422,10 +446,12 @@ export function makeProviderRetryTurnItem(input: {
     title = "Provider retry stopped";
   }
   return {
-    id: IdAllocator.derive.turnItemFromProviderItem({
-      driver: input.driver,
-      nativeItemId: `terminal-failure:${input.providerTurnId}`,
-    }),
+    id:
+      input.id ??
+      IdAllocator.derive.turnItemFromProviderItem({
+        driver: input.driver,
+        nativeItemId: `terminal-failure:${input.providerTurnId}`,
+      }),
     threadId: input.threadId,
     runId: input.runId,
     nodeId: input.nodeId,

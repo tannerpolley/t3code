@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
@@ -15,12 +16,14 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const MODE_LABELS = { off: "Off", wait: "Wait for reset", switch: "Switch provider" };
 
 export function UsageLimitRecoverySettings() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
   const { environment } = useSettingsScope();
@@ -49,7 +52,9 @@ export function UsageLimitRecoverySettings() {
         serverScoped
         {...searchableSetting("usage-limit-recovery")}
         settingKeys={["usageLimitRecovery"]}
-        description="Choose what happens after a usage limit. Switching moves only the limited thread and continues without asking, including when Ask mode is off. If no alternative is available, it waits for reset."
+        description={gt(
+          "Choose what happens after a usage limit. Switching moves only the limited thread and continues without asking, including when Ask mode is off. If no alternative is available, it waits for reset.",
+        )}
         control={
           <Select
             value={settings.usageLimitRecovery}
@@ -58,7 +63,7 @@ export function UsageLimitRecoverySettings() {
                 update({ usageLimitRecovery: value });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Usage limit recovery">
+            <SelectTrigger size="sm" aria-label={gt("Usage limit recovery")}>
               <SelectValue>{MODE_LABELS[settings.usageLimitRecovery]}</SelectValue>
             </SelectTrigger>
             <SelectPopup>
@@ -82,7 +87,9 @@ export function UsageLimitRecoverySettings() {
                 serverScoped
                 settingKeys={["usageLimitFallbackModels"]}
                 title={`${entry.displayName} fallback`}
-                description="Model and effort used when the thread’s role has no available choice on another provider, or no role matches. Choose effort separately for each provider."
+                description={gt(
+                  "Model and effort used when the thread’s role has no available choice on another provider, or no role matches. Choose effort separately for each provider.",
+                )}
                 control={
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <ProviderModelPicker
@@ -123,11 +130,13 @@ export function UsageLimitRecoverySettings() {
                             })
                           }
                         >
-                          Clear
+                          <T>Clear</T>
                         </Button>
                       </>
                     ) : (
-                      <span className="text-xs text-muted-foreground">Not configured</span>
+                      <span className="text-xs text-muted-foreground">
+                        <T>Not configured</T>
+                      </span>
                     )}
                   </div>
                 }
@@ -142,8 +151,10 @@ export function UsageLimitRecoverySettings() {
             key={selection.instanceId}
             serverScoped
             settingKeys={["usageLimitFallbackModels"]}
-            title={`${selection.instanceId} fallback`}
-            description={`${selection.model} · Provider is disabled or no longer configured.`}
+            title={gt("{provider} fallback", { provider: selection.instanceId })}
+            description={gt("{model} · Provider is disabled or no longer configured.", {
+              model: selection.model,
+            })}
             control={
               <Button
                 size="sm"
@@ -156,7 +167,7 @@ export function UsageLimitRecoverySettings() {
                   })
                 }
               >
-                Clear
+                <T>Clear</T>
               </Button>
             }
           />

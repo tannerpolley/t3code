@@ -1,15 +1,22 @@
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { msg, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
+import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { toastManager, stackedThreadToast } from "../ui/toast";
 
 export function toastCopyFailure(error: Error): void {
   toastManager.add(
-    stackedThreadToast({ type: "error", title: "Couldn't copy", description: error.message }),
+    stackedThreadToast({
+      type: "error",
+      title: m(msg("Couldn't copy")),
+      description: error.message,
+    }),
   );
 }
 
 export function MarkdownInlineCode(props: React.ComponentProps<"code">) {
+  const gt = useGT();
   const { copyToClipboard, isCopied } = useCopyToClipboard({
-    target: "code",
+    target: namedClipboardTarget("code"),
     timeout: 1200,
     onError: toastCopyFailure,
   });
@@ -17,7 +24,7 @@ export function MarkdownInlineCode(props: React.ComponentProps<"code">) {
     <code
       {...props}
       tabIndex={0}
-      aria-description="Copy"
+      aria-description={gt("Copy")}
       data-copyable=""
       data-copied={isCopied ? "" : undefined}
       onClick={(event) => {

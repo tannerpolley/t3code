@@ -188,6 +188,7 @@ const layerElectronMenu = Layer.succeed(ElectronMenu.ElectronMenu, {
   setApplicationMenu: () => Effect.void,
   popupTemplate: () => Effect.void,
   showContextMenu: () => Effect.succeedNone,
+  pasteAndMatchStyle: Effect.void,
 } satisfies ElectronMenu.ElectronMenu["Service"]);
 
 const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
@@ -311,6 +312,7 @@ function layerTest(input: {
           setApplicationMenu: () => Effect.void,
           showContextMenu: () => Effect.succeedNone,
           popupTemplate: input.onPopupTemplate ?? (() => Effect.void),
+          pasteAndMatchStyle: Effect.void,
         }),
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>

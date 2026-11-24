@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import {
@@ -14,10 +15,12 @@ import { useUiStateStore } from "../../uiStateStore";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { toastManager } from "../ui/toast";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 /** The primary environment's folder root, shared by manual organization and new section projects. */
 export function SidebarProjectSettings() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const projects = useProjects();
   const canWrite = useSidebarLayoutPermission();
   const groupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -33,9 +36,10 @@ export function SidebarProjectSettings() {
     if (!folderRoot.startsWith("/")) {
       toastManager.add({
         type: "error",
-        title: "Use a full folder path",
-        description:
+        title: gt("Use a full folder path"),
+        description: gt(
           "Organize by folder needs a path starting with /, such as /home/you/Workspaces.",
+        ),
       });
       return;
     }
@@ -50,8 +54,8 @@ export function SidebarProjectSettings() {
     if (!success) return;
     toastManager.add({
       type: "success",
-      title: "Sections organized",
-      description: `Projects under ${folderRoot} now follow its folders.`,
+      title: gt("Sections organized"),
+      description: gt("Projects under {folderRoot} now follow its folders.", { folderRoot }),
     });
   };
 
@@ -60,13 +64,13 @@ export function SidebarProjectSettings() {
       serverScoped
       settingKeys={["projectFolderRoot"]}
       {...searchableSetting("organize-by-folder")}
-      description={
-        'Mirror a folder\'s layout as sections: root/A/B/project goes to section A, subsection B. Projects inside another project stay with it; projects elsewhere keep their place. Safe to run again. Leave empty to use "Add project starts in" when that is a full path.'
-      }
+      description={gt(
+        'Mirror a folder\'s layout as sections: root/A/B/project goes to section A, subsection B. Projects inside another project stay with it; projects elsewhere keep their place. Safe to run again. Leave empty to use "Add project starts in" when that is a full path.',
+      )}
       control={
         <div className="flex w-full items-center gap-2 sm:w-96">
           <DraftInput
-            aria-label="Folder to organize by"
+            aria-label={gt("Folder to organize by")}
             className="min-w-0 flex-1"
             onCommit={(next) => updatePrimarySettings({ projectFolderRoot: next })}
             placeholder={
@@ -84,7 +88,7 @@ export function SidebarProjectSettings() {
             size="sm"
             variant="outline"
           >
-            Organize
+            <T>Organize</T>
           </Button>
         </div>
       }

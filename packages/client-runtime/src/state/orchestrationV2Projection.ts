@@ -341,15 +341,20 @@ export function applyOrchestrationV2ProjectionEvent(
       };
     case "run.created":
     case "run.updated": {
+      // Lifecycle updates carry the run as it was when the turn started. What the run returned
+      // is written by its own event, and an update without it must not take it away.
+      const known = base.runs.find((run) => run.id === event.payload.id);
+      const run =
+        event.payload.output === undefined && known?.output !== undefined
+          ? { ...event.payload, output: known.output }
+          : event.payload;
       const next = {
         ...base,
         thread: clearSilentWakeAttention(base.thread, event.payload, event.occurredAt),
-        runs: upsertEntity(base.runs, event.payload),
+        runs: upsertEntity(base.runs, run),
       };
       const visible = { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
-      const wasQueued = base.runs.some(
-        (run) => run.id === event.payload.id && run.status === "queued",
-      );
+      const wasQueued = known?.status === "queued";
       return wasQueued && event.payload.status !== "queued"
         ? { ...visible, visibleTurnItems: restoreQueuedUserItems(visible, event.payload.id) }
         : visible;
@@ -364,6 +369,13 @@ export function applyOrchestrationV2ProjectionEvent(
                 restartCancelledBackgroundWork: event.payload.restartCancelledBackgroundWork,
               }
             : run,
+        ),
+      };
+    case "run.output-submitted":
+      return {
+        ...base,
+        runs: base.runs.map((run) =>
+          run.id === event.payload.runId ? { ...run, output: event.payload.output } : run,
         ),
       };
     case "run-attempt.created":

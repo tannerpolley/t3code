@@ -87,6 +87,7 @@ function makeHarness(
               deletedAt: null,
               pinnedAt: null,
               archivedAt: null,
+              trackedFolders: [],
             })
           : Option.none(),
       ),

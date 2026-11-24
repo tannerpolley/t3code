@@ -1,4 +1,4 @@
-import { useGT } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSidebarTextSizeSettings } from "./ForkSidebarTextSizeSettings";
@@ -38,7 +38,7 @@ import { SettingResetButton, SettingsSection } from "./settingsLayout";
 import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import { SidebarProjectSettings } from "./SidebarProjectSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
+import { useSearchableSetting, type SettingsSearchItemId } from "./settingsSearch";
 import {
   useScopedSettingsMixed,
   useScopedSettings,
@@ -76,124 +76,142 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     key: "projectsView",
     searchId: "projects-view",
     section: "sidebar",
-    description:
+    description: msg(
       "Offer a Projects view of sections and projects, turned on and off with the folder button beside search (blue while on). Off shows only the standard Activity list.",
+    ),
   },
   {
     key: "codexStyleSidebar",
     searchId: "codex-style-sidebar",
     section: "sidebar",
-    description:
+    description: msg(
       "Projects view like the Codex app: hover chevrons, rows that toggle and drag, a blue spinner on running threads, smaller thread titles, running subagents and their own subagents and shells in a tree under their thread with model and title, each level collapsible, how long each working or waiting thread, subagent and background process has been running, and New thread in the project menu instead of a hover button. Off restores chevrons, grip handles, status dots and the All projects row.",
+    ),
   },
   {
     key: "sectionFolderColors",
     searchId: "section-folder-colors",
     section: "appearance",
-    description:
+    description: msg(
       "Tint the folder icons of a section's projects with the color chosen in the section's menu. Off keeps the colors saved but unused.",
+    ),
   },
   {
     key: "revealOpenThreadInSidebar",
     searchId: "reveal-open-thread-in-sidebar",
     section: "sidebar",
-    description:
+    description: msg(
       "When you open a thread by any route (a link, Lineage, search, a notification, a shortcut, Back or Forward), open the sections and project that hold it and scroll its row into view. A subagent reveals its parent's row. It runs when you open a thread, so a project you collapse afterwards stays collapsed.",
+    ),
   },
   {
     key: "onboardingCodexSettings",
     searchId: "onboarding-codex-settings",
     section: "sidebar",
-    description:
+    description: msg(
       "When onboarding imports projects you used with Codex, preview their Codex trust level and offer to apply it as the project's runtime mode.",
+    ),
   },
   {
     key: "threadDetailsRedesign",
     searchId: "thread-details-redesign",
     section: "lineage",
-    description:
+    description: msg(
       "Lineage rows lead with model and effort, end in a status mark (spinner, green done dot, failure icon) and open into details; Clear hides finished agents under Previous agents. Off restores the original Lineage rows.",
+    ),
   },
   {
     key: "lineageDetailsExpanded",
     searchId: "lineage-details-expanded",
     section: "lineage",
-    description:
+    description: msg(
       "Open every Lineage row's details (model, effort, status, branch, latest progress) by default. Rows you close by hand stay closed. Needs the redesigned Lineage.",
+    ),
   },
   {
     key: "backgroundProcessOutput",
     searchId: "background-process-output",
     section: "lineage",
-    description:
+    description: msg(
       "Click a Codex or Claude background command or monitor in Projects to see its live output, command and status in a popup beside it; in Lineage and the background-work list above the composer, Show output opens it in place. Commands also show their kind, age, available CPU and memory use, and a Stop control.",
+    ),
   },
   {
     key: "runningCommandsAndProcesses",
     searchId: "running-commands-and-processes",
     section: "lineage",
-    description:
+    description: msg(
       "Experimental. Under a working thread in Projects, also list the commands its agent is running now, and the processes those commands and background tasks started, with same-shaped processes on one row (python worker.py ×10) and their combined CPU and memory. Up to five process rows per thread.",
+    ),
   },
   {
     key: "shortModelNames",
     searchId: "short-model-names",
     section: "appearance",
-    description:
+    description: msg(
       "Model labels drop the company name the provider icon already shows and use each provider's short model name: Opus 5.5, Sonnet 5, 6 Sol. Applies to the sidebar, Lineage, agent details and the composer's model button, always right after the icon; the model list keeps full names. Off restores the full names.",
+    ),
   },
   {
     key: "openQuestionsAutomatically",
     searchId: "open-questions-automatically",
     section: "composer",
-    description:
+    description: msg(
       "When an agent in any thread, including another project's or a subagent's, asks you a question, show it in a floating panel over whatever you are viewing, so you can answer on the spot. Later hides a question until it is asked again; the thread still shows it. Off shows questions only in their thread.",
+    ),
   },
   {
     key: "pluginSkills",
     searchId: "plugin-skills",
     section: "plugins",
-    description:
+    description: msg(
       "Offer the skills of your enabled Claude Code plugins (plugin:skill) in the composer's $ and / menus, and label plugin skills Plugin. Off hides Claude plugin skills and labels Codex plugin skills App.",
+    ),
   },
   {
     key: "versionControlIssues",
     searchId: "version-control-issues",
     section: "versionControl",
-    description:
+    description: msg(
       "List the repository's open issues in their own Issues section of thread details, grouped by collapsible milestones, and open them beside the thread.",
+    ),
   },
   {
     key: "branchPickerGroups",
     searchId: "branch-picker-groups",
     section: "versionControl",
-    description:
+    description: msg(
       "Group the branch picker into collapsible Current, Local and Remote sections. Off shows one flat list.",
+    ),
   },
   {
     key: "agentBrowserInPanel",
     searchId: "agent-browser-in-panel",
     section: "browser",
-    description:
+    description: msg(
       "When an agent uses the in-app browser, show it in the right side panel instead of the small floating player.",
+    ),
   },
   {
     key: "fastShimmer",
     searchId: "fast-shimmer",
     section: "motion",
-    description:
+    description: msg(
       "Run the shimmer over running activity faster and smoother: 1.4 seconds per pass instead of 2.2.",
+    ),
   },
 ];
 
 function CustomizationSwitchRows({ section }: { readonly section: CustomizationSection }) {
+  const m = useMessages();
+  const searchableSetting = useSearchableSetting();
   const settings = useClientSettings();
   return CUSTOMIZATION_SWITCHES.filter((entry) => entry.section === section).map(
     ({ key, searchId, description }) => (
       <SettingsRow
         key={key}
         {...searchableSetting(searchId)}
-        description={description}
+        description={m(description)}
         control={
           <Switch
             aria-label={searchableSetting(searchId).title}
@@ -240,6 +258,7 @@ function ServerSwitchRow({
   readonly searchId: SettingsSearchItemId;
   readonly description: string;
 }) {
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
@@ -295,7 +314,9 @@ function UnavailablePlugins({
             open && "rotate-90",
           )}
         />
-        Unavailable / no skills · {plugins.length}
+        <T>
+          Unavailable / no skills · <Var>{plugins.length}</Var>
+        </T>
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
@@ -308,6 +329,7 @@ function UnavailablePlugins({
 
 /** Read-only: each enabled provider's plugins, as its latest snapshot reports them. */
 function ProviderPluginsSection() {
+  const gt = useGT();
   const { environment } = useSettingsScope();
   const groups = groupProviderPlugins(
     useEnvironmentProviders().get(environment?.environmentId as EnvironmentId) ?? [],
@@ -315,16 +337,18 @@ function ProviderPluginsSection() {
   if (groups === null) return null;
   if (groups.length === 0) {
     return (
-      <SettingsSection title="Plugins">
+      <SettingsSection title={gt("Plugins")}>
         <SettingsRow
-          title="No enabled plugins"
-          description="Plugins you enable in Claude Code or Codex are listed here, with their skills offered under $."
+          title={gt("No enabled plugins")}
+          description={gt(
+            "Plugins you enable in Claude Code or Codex are listed here, with their skills offered under $.",
+          )}
         />
       </SettingsSection>
     );
   }
   return (
-    <SettingsSection title="Plugins" variant="plain">
+    <SettingsSection title={gt("Plugins")} variant="plain">
       {groups.map((group) => (
         <FoldedSettingsSection
           key={group.key}
@@ -353,6 +377,8 @@ const lineageAutoClearLabel = (minutes: number) =>
   minutes === 0 ? "Off" : minutes === 60 ? "1 hour" : `${minutes} minutes`;
 
 function LocalServerHideRulesRow() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const rules = useScopedSettings((settings) => settings.localServerHideRules);
   const updateSettings = useUpdateScopedSettings();
   const [draft, setDraft] = useState("");
@@ -367,7 +393,9 @@ function LocalServerHideRulesRow() {
       serverScoped
       settingKeys={["localServerHideRules"]}
       {...searchableSetting("local-server-hide-rules")}
-      description="Servers the browser's Local servers list leaves out. Hide one from its menu in the list, or add a process name (serena) or a port range (24282-24304) here. Remove a rule to bring its servers back."
+      description={gt(
+        "Servers the browser's Local servers list leaves out. Hide one from its menu in the list, or add a process name (serena) or a port range (24282-24304) here. Remove a rule to bring its servers back.",
+      )}
     >
       <div className="flex max-w-2xl flex-col gap-2 pb-3.5">
         {rules.map((rule) => {
@@ -378,7 +406,7 @@ function LocalServerHideRulesRow() {
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label={`Show ${label} again`}
+                aria-label={gt("Show {label} again", { label })}
                 onClick={() =>
                   updateSettings({
                     localServerHideRules: rules.filter((existing) => existing !== rule),
@@ -398,15 +426,15 @@ function LocalServerHideRulesRow() {
           }}
         >
           <Input
-            aria-label="Process name or port range to hide"
+            aria-label={gt("Process name or port range to hide")}
             autoCapitalize="none"
             spellCheck={false}
-            placeholder="serena or 24282-24304"
+            placeholder={gt("serena or 24282-24304")}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
           />
           <Button type="submit" variant="outline" size="sm" disabled={!parsed}>
-            Hide
+            <T>Hide</T>
           </Button>
         </form>
       </div>
@@ -421,17 +449,21 @@ const SIDEBAR_THREAD_SORT_ORDER_LABELS = {
 };
 
 function ForkGeneralSettings() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const settings = useClientSettings();
   return (
     <>
-      <CustomizationsGroup title="Sidebar & projects" section="sidebar">
+      <CustomizationsGroup title={gt("Sidebar & projects")} section="sidebar">
         <SettingsRow
           {...searchableSetting("thread-order")}
-          description="Order of threads under each project in the sidebar's Projects view. Activity keeps its own order."
+          description={gt(
+            "Order of threads under each project in the sidebar's Projects view. Activity keeps its own order.",
+          )}
           resetAction={
             settings.sidebarThreadSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder ? (
               <SettingResetButton
-                label="thread order"
+                ariaLabel={gt("Reset thread order to default")}
                 onClick={() =>
                   updateSettings({
                     sidebarThreadSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder,
@@ -449,7 +481,7 @@ function ForkGeneralSettings() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Thread order">
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label={gt("Thread order")}>
                 <SelectValue>
                   {SIDEBAR_THREAD_SORT_ORDER_LABELS[settings.sidebarThreadSortOrder]}
                 </SelectValue>
@@ -469,18 +501,24 @@ function ForkGeneralSettings() {
         <ServerSwitchRow
           settingKey="autoOrganizeByFolder"
           searchId="auto-organize-by-folder"
-          description="New projects under the folder root join their folder's section automatically. Existing projects keep the sections you chose."
+          description={gt(
+            "New projects under the folder root join their folder's section automatically. Existing projects keep the sections you chose.",
+          )}
         />
         <ServerSwitchRow
           settingKey="keepThreadTitlesCurrent"
           searchId="keep-thread-titles-current"
-          description="Every ~10 minutes, GPT-6 Luna retitles top-level threads with new activity to what they're working on now. Titles you typed are kept. Regenerate title uses the same model and says when the title still fits."
+          description={gt(
+            "Every ~10 minutes, GPT-6 Luna retitles top-level threads with new activity to what they're working on now. Titles you typed are kept. Regenerate title uses the same model and says when the title still fits.",
+          )}
         />
       </CustomizationsGroup>
-      <CustomizationsGroup title="Lineage & background work" section="lineage">
+      <CustomizationsGroup title={gt("Lineage & background work")} section="lineage">
         <SettingsRow
           {...searchableSetting("lineage-auto-clear")}
-          description="Hide finished agents from Lineage's Previous agents after they sit unused this long, as if you pressed Clear. A resumed agent shows again; Show brings cleared ones back. Needs the Lineage redesign."
+          description={gt(
+            "Hide finished agents from Lineage's Previous agents after they sit unused this long, as if you pressed Clear. A resumed agent shows again; Show brings cleared ones back. Needs the Lineage redesign.",
+          )}
           control={
             <Select
               value={String(settings.lineageAutoClearMinutes)}
@@ -489,7 +527,7 @@ function ForkGeneralSettings() {
               <SelectTrigger
                 size="sm"
                 className="w-full sm:w-40"
-                aria-label="Clear finished agents after"
+                aria-label={gt("Clear finished agents after")}
               >
                 <SelectValue>{lineageAutoClearLabel(settings.lineageAutoClearMinutes)}</SelectValue>
               </SelectTrigger>
@@ -504,24 +542,28 @@ function ForkGeneralSettings() {
           }
         />
       </CustomizationsGroup>
-      <CustomizationsGroup title="Composer & chat" section="composer" />
-      <CustomizationsGroup title="Usage" section="usage">
+      <CustomizationsGroup title={gt("Composer & chat")} section="composer" />
+      <CustomizationsGroup title={gt("Usage")} section="usage">
         <UsageLimitRecoverySettings />
         <SettingsRow
           {...searchableSetting("reset-credit-reminders")}
-          description="Native reminders with sound at 24, 12, 6, 3 and 1 hour, then 30, 10, 5 and 1 minute before a banked reset expires. Allow desktop notifications in notification settings."
+          description={gt(
+            "Native reminders with sound at 24, 12, 6, 3 and 1 hour, then 30, 10, 5 and 1 minute before a banked reset expires. Allow desktop notifications in notification settings.",
+          )}
           control={
             <Switch
               checked={settings.resetCreditReminders}
               onCheckedChange={(checked) => updateSettings({ resetCreditReminders: checked })}
-              aria-label="Banked reset reminders"
+              aria-label={gt("Banked reset reminders")}
             />
           }
         />
         <ServerSwitchRow
           settingKey="autoUseExpiringResetCredits"
           searchId="auto-use-expiring-reset-credits"
-          description="Use a banked reset 10 minutes before it expires, even with no window open. Retry until 1 minute before expiry. The server must be running."
+          description={gt(
+            "Use a banked reset 10 minutes before it expires, even with no window open. Retry until 1 minute before expiry. The server must be running.",
+          )}
         />
       </CustomizationsGroup>
       <ForkGeneralBehaviorRows />
@@ -530,6 +572,7 @@ function ForkGeneralSettings() {
 }
 
 function ForkGeneralBehaviorRows() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -538,30 +581,34 @@ function ForkGeneralBehaviorRows() {
   const mixedQuietTimeout = useScopedSettingsMixed(["quietThreadMinutes"]);
   const mixedIdleTimeout = useScopedSettingsMixed(["idleAgentSessionMinutes"]);
   return (
-    <SettingsSection title="Agent sessions & background behavior">
+    <SettingsSection title={gt("Agent sessions & background behavior")}>
       <SettingsRow
         serverScoped
         settingKeys={["dontAskMode"]}
         {...searchableSetting("dont-ask-mode")}
-        description="Let agents ask you questions and wait for your answers and approvals. Turn off when you step away to answer questions with their recommended option and grant approvals automatically."
+        description={gt(
+          "Let agents ask you questions and wait for your answers and approvals. Turn off when you step away to answer questions with their recommended option and grant approvals automatically.",
+        )}
         control={
           <ScopedSwitch
             settingKeys={["dontAskMode"]}
             checked={!settings.dontAskMode}
             onCheckedChange={(checked) => updateSettings({ dontAskMode: !checked })}
-            aria-label="Ask mode"
+            aria-label={gt("Ask mode")}
           />
         }
       />
       {isElectron && !isMacPlatform(navigator.platform) ? (
         <SettingsRow
           {...searchableSetting("keep-running-in-background")}
-          description="Closing the window leaves T3 Code in the system tray, so agents and remote connections keep working. Quit from the tray icon. Without a system tray, closing the window quits."
+          description={gt(
+            "Closing the window leaves T3 Code in the system tray, so agents and remote connections keep working. Quit from the tray icon. Without a system tray, closing the window quits.",
+          )}
           resetAction={
             settings.keepRunningInBackground !==
             DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground ? (
               <SettingResetButton
-                label="keep running in background"
+                ariaLabel={gt("Reset keep running in background to default")}
                 onClick={() =>
                   updateSettings({
                     keepRunningInBackground: DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground,
@@ -576,7 +623,7 @@ function ForkGeneralBehaviorRows() {
               onCheckedChange={(checked) =>
                 updateSettings({ keepRunningInBackground: Boolean(checked) })
               }
-              aria-label="Keep running in background"
+              aria-label={gt("Keep running in background")}
             />
           }
         />
@@ -623,11 +670,13 @@ function ForkGeneralBehaviorRows() {
         serverScoped
         settingKeys={["idleAgentSessionMinutes"]}
         {...searchableSetting("idle-agent-session")}
-        description="Disconnect idle agents and unload their tools after this interval. The next message resumes the session. Working agents and questions stay connected."
+        description={gt(
+          "Disconnect idle agents and unload their tools after this interval. The next message resumes the session. Working agents and questions stay connected.",
+        )}
         resetAction={
           settings.idleAgentSessionMinutes !== 0 ? (
             <SettingResetButton
-              label="idle agent timeout"
+              ariaLabel={gt("Reset idle agent timeout to default")}
               onClick={() => updateSettings({ idleAgentSessionMinutes: 0 })}
             />
           ) : undefined
@@ -643,16 +692,16 @@ function ForkGeneralBehaviorRows() {
             <SelectTrigger size="sm">
               <SelectValue>
                 {mixedIdleTimeout
-                  ? "Mixed"
+                  ? gt("Mixed")
                   : settings.idleAgentSessionMinutes === 0
-                    ? "Off"
+                    ? gt("Off")
                     : `${settings.idleAgentSessionMinutes} minutes`}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {[0, 15, 30, 45, 60, 90, 120].map((minutes) => (
                 <SelectItem key={minutes} hideIndicator value={String(minutes)}>
-                  {minutes === 0 ? "Off" : `${minutes} minutes`}
+                  {minutes === 0 ? gt("Off") : `${minutes} minutes`}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -664,14 +713,18 @@ function ForkGeneralBehaviorRows() {
 }
 
 function ForkAppearanceSettings() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const settings = useClientSettings();
   return (
     <>
-      <CustomizationsGroup title="Interface & project icons" section="appearance">
+      <CustomizationsGroup title={gt("Interface & project icons")} section="appearance">
         <InterfaceZoomSettingsRow />
         <SettingsRow
           {...searchableSetting("sidebar-toggle-position")}
-          description="Which top corner of the open sidebar holds its toggle. A collapsed sidebar keeps it at the left. Left is the original."
+          description={gt(
+            "Which top corner of the open sidebar holds its toggle. A collapsed sidebar keeps it at the left. Left is the original.",
+          )}
           control={
             <Select
               value={settings.sidebarTogglePosition}
@@ -684,7 +737,7 @@ function ForkAppearanceSettings() {
               <SelectTrigger
                 size="sm"
                 className="w-full sm:w-40"
-                aria-label="Toggle button position"
+                aria-label={gt("Toggle button position")}
               >
                 <SelectValue>
                   {SIDEBAR_TOGGLE_POSITION_LABELS[settings.sidebarTogglePosition]}
@@ -703,7 +756,9 @@ function ForkAppearanceSettings() {
         />
         <SettingsRow
           {...searchableSetting("project-icon-fallback")}
-          description="Shown for projects without a favicon or custom icon. Initials is the original."
+          description={gt(
+            "Shown for projects without a favicon or custom icon. Initials is the original.",
+          )}
           control={
             <Select
               value={settings.projectIconFallback}
@@ -713,7 +768,11 @@ function ForkAppearanceSettings() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Default project icon">
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label={gt("Default project icon")}
+              >
                 <SelectValue>
                   {PROJECT_ICON_FALLBACK_LABELS[settings.projectIconFallback]}
                 </SelectValue>
@@ -730,13 +789,14 @@ function ForkAppearanceSettings() {
           }
         />
       </CustomizationsGroup>
-      <CustomizationsGroup title="Appearance & motion" section="motion" />
+      <CustomizationsGroup title={gt("Appearance & motion")} section="motion" />
     </>
   );
 }
 
 /** Each upstream settings page has one slot for this fork's rows. */
 export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) {
+  const gt = useGT();
   switch (page) {
     case "/settings/general":
       return <ForkGeneralSettings />;
@@ -745,7 +805,7 @@ export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) 
         <>
           <ForkAppearanceSettings />
           <ForkSidebarDisplaySettings />
-          <SettingsSection title="Sidebar text sizes">
+          <SettingsSection title={gt("Sidebar text sizes")}>
             <ForkSidebarTextSizeSettings />
           </SettingsSection>
           {DebugSettings ? (
@@ -760,15 +820,17 @@ export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) 
     case "/settings/browser":
       return (
         <>
-          <CustomizationsGroup title="Browser & preview" section="browser">
+          <CustomizationsGroup title={gt("Browser & preview")} section="browser">
             <ServerSwitchRow
               settingKey="agentBrowserTabLimits"
               searchId="agent-browser-tab-limits"
-              description="A tab stuck loading gets one hard reload and a retry. Off returns the timeout. Server browser tab limits always apply."
+              description={gt(
+                "A tab stuck loading gets one hard reload and a retry. Off returns the timeout. Server browser tab limits always apply.",
+              )}
             />
             <LocalServerHideRulesRow />
           </CustomizationsGroup>
-          <CustomizationsGroup title="Plugin skills" section="plugins" />
+          <CustomizationsGroup title={gt("Plugin skills")} section="plugins" />
           <ProviderPluginsSection />
         </>
       );
@@ -776,11 +838,13 @@ export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) 
       return <WorktreesDirectoryRow />;
     case "/settings/source-control":
       return (
-        <CustomizationsGroup title="Issue work & branch picker" section="versionControl">
+        <CustomizationsGroup title={gt("Issue work & branch picker")} section="versionControl">
           <ServerSwitchRow
             settingKey="issueUpkeepRequiresApproval"
             searchId="issue-upkeep-requires-approval"
-            description="Ask before agents create, split or move issues. Applies to new proposals on this server."
+            description={gt(
+              "Ask before agents create, split or move issues. Applies to new proposals on this server.",
+            )}
           />
         </CustomizationsGroup>
       );

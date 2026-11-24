@@ -1,4 +1,5 @@
-import { resetCreditChoices } from "@t3tools/shared/usageLimits";
+import { T, useGT } from "gt-react";
+import { resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { ResetCreditAccount } from "../ResetCreditAccounts";
 import { Button } from "../ui/button";
@@ -11,6 +12,7 @@ export function ResetCreditAutoUseNotice({
   readonly environmentId: EnvironmentId;
   readonly account: ResetCreditAccount;
 }) {
+  const gt = useGT();
   const redeem = useResetCredit(environmentId);
   const result = account.limits.resetCreditAutoUse;
   if (!result) return null;
@@ -20,8 +22,8 @@ export function ResetCreditAutoUseNotice({
     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" role="status">
       <span>
         {result.status === "used"
-          ? `Used your banked ${label} reset before it expired.`
-          : `Could not automatically use your banked ${label} reset before expiry.`}
+          ? gt("Used your banked {label} reset before it expired.", { label })
+          : gt("Could not automatically use your banked {label} reset before expiry.", { label })}
       </span>
       {result.status === "failed" && available ? (
         <Button
@@ -36,7 +38,7 @@ export function ResetCreditAutoUseNotice({
             if (choice) redeem.confirm(choice);
           }}
         >
-          Use now
+          <T>Use now</T>
         </Button>
       ) : null}
       {redeem.status ? <span>{redeem.status}</span> : null}
