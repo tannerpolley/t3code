@@ -182,11 +182,7 @@ import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import {
-  IssueReadSnapshots,
-  IssueQueueRefreshRequired,
-  makeIssueWorkDispatch,
-} from "./IssueWorkDispatch.ts";
+import { IssueReadSnapshots, makeIssueWorkDispatch } from "./IssueWorkDispatch.ts";
 import { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
 import {
   claimFields,
@@ -260,8 +256,6 @@ import {
   currentDelegatedCompletionDelivery,
 } from "./ForkDelegatedCompletion.ts";
 import { makeIssueCloseout } from "../issues/IssueCommentEffects.ts";
-
-const isIssueQueueRefreshRequired = Schema.is(IssueQueueRefreshRequired);
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -760,7 +754,6 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "provider.switch":
       return command.threadId;
     case "issue.queue.change":
-    case "issue.queue.deliver":
     case "issue.work.close-out":
     case "issue.work.cancel":
     case "repository.work.restore":
@@ -16034,7 +16027,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       recordSubagentFollowup(command, events).pipe(mapDispatchError(command)),
   });
 
-  const issueQueue = makeIssueQueueCommands({ ...forkCommandHooks, dispatchMessage });
+  const issueQueue = makeIssueQueueCommands(forkCommandHooks);
 
   const repositoryWork = makeRepositoryWorkCommands({
     recordSubagentFollowup: (command, events) =>
@@ -16537,9 +16530,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "issue.queue.change":
         yield* issueQueue.change(command, events);
         break;
-      case "issue.queue.deliver":
-        yield* issueQueue.deliver(command, events, effects);
-        break;
       case "issue.work.close-out":
         yield* issueWork.closeOut(command, events);
         break;
@@ -16724,7 +16714,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.type === "run.silence.check" ||
             command.type === "delegated_task.completion-delivery.flag" ||
             command.type === "issue.queue.change" ||
-            command.type === "issue.queue.deliver" ||
             command.type === "repository.work.continue" ||
             isUnobservedAcknowledgement(command) ||
             command.type === "thread.background-work.settle" ||
@@ -16754,9 +16743,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             // Refusals depend on modes the user can change; a recorded rejection would block the retry.
             if (
               cause._tag === "OrchestratorThreadAboveModeLimitError" ||
-              cause._tag === "OrchestratorRuntimeModeAboveCeilingError" ||
-              (cause._tag === "OrchestratorDispatchError" &&
-                isIssueQueueRefreshRequired(cause.cause))
+              cause._tag === "OrchestratorRuntimeModeAboveCeilingError"
             ) {
               return yield* cause;
             }
@@ -16968,10 +16955,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // dispatchWithReceiptEffect owns the span; issue policy supplies reads before locking.
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
-    return yield* withAdmissionReads(command, dispatchWithLocks, dispatchWithReceiptEffect, {
+    return yield* withAdmissionReads(command, dispatchWithLocks, {
       commandThreadId,
       mapDispatchError,
-      OrchestratorDispatchError,
     });
   });
   // The admission wrapper supplies snapshots before any planning locks are taken.

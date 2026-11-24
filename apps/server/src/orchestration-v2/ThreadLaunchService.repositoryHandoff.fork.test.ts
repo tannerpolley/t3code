@@ -862,7 +862,6 @@ describe("fresh-thread repository handoff", () => {
       if (start._tag === "Failure") assert.include(start.failure.message, "verifying a handoff");
       const queue = yield* store.queue(config);
       assert.equal(queue[0]?.issue.number, 9);
-      assert.isUndefined(queue[0]?.noticeRunId);
       assert.isNull((yield* threads.getThreadShell(rootId))?.activeRunId);
       yield* finish(nextId, "auto:verified", true);
       yield* service.reconcile(rootId);

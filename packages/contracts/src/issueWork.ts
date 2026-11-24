@@ -323,9 +323,7 @@ export type IssueQueueInput = typeof IssueQueueInput.Type;
 export const IssueQueueEntry = Schema.Struct({
   requestId: CommandId,
   issue: ThreadLinkedIssue,
-  state: Schema.Literals(["queued", "needs_attention", "removed"]),
-  noticeRunId: Schema.optional(RunId),
-  notifiedAt: Schema.optional(Schema.String),
+  state: Schema.Literals(["queued", "removed"]),
 });
 export type IssueQueueEntry = typeof IssueQueueEntry.Type;
 

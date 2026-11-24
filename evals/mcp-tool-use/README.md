@@ -310,10 +310,9 @@ After the change, the first reference to a file is an absolute link. The remaini
 
 `cases/issue-host.ndjson` guards #203's Forgejo guidance. `forgejo-issue-post` exercises the
 `t3_issue_post` description; `forgejo-owner-decision` exercises the owner-decision description;
-`forgejo-queued-issue-not-planned` loads the real queued-issue prompt and checks close plus comment;
-`forgejo-open-blocker` loads the real suspension reason. `git-bug-issue-post` (#306) checks that
-an agent files a git-bug issue through `t3_issue_post` rather than the `git-bug` CLI. The latter two use `setup.issueGuidance`
-instead of copying product text into fixtures. These are routing guards, not proof that the old
+`forgejo-open-blocker` loads the real suspension reason through `setup.issueGuidance` instead of
+copying product text into fixtures. `git-bug-issue-post` (#306) checks that an agent files a
+git-bug issue through `t3_issue_post` rather than the `git-bug` CLI. These are routing guards, not proof that the old
 wording caused a model failure. Live host behavior is covered by the server tests.
 
 Run the same cases and model against the eval-harness commit (original product wording) and the

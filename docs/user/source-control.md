@@ -409,16 +409,15 @@ worker exists; use the **Orchestrator** link in **Settings → Projects → Repo
 has a closed issue or a merged pull request. A merged pull request can leave the GitHub issue open.
 
 Use **Add to queue** on an open issue’s detail panel to put it in the repository’s
-ordered **Queued** section. When the registered orchestrator is idle and a worker slot is free,
-it receives a notification to review the next issue against the current code and the repository’s
-other issues. The orchestrator may start a worker as written, update the issue first, close it as
-already done or not planned with an explanatory comment, or leave it open and withdraw it from the
-queue. Each notice waits for the previous orchestrator turn to finish. A worker claim or withdrawal
-removes the issue from the queue; closed issues are removed on the next queue refresh. If the
-orchestrator finishes without any of these outcomes, the row shows **Orchestrator didn’t start it**; use
-**Retry** to remind it again, or **Remove from queue** to withdraw it. Failed or interrupted
-notices are retried when the orchestrator is next available. Repository pause and the **Workers** limit apply. Without a
-registered orchestrator, the queue waits. Claimed work is managed through its orchestrator or worker.
+ordered **Queued** section. A queued issue starts its own managed worker, the same way a milestone
+issue does, even while the orchestrator is busy. Queued issues go first, in queue order, ahead of
+milestone issues, and each worker runs as soon as a **Workers** slot is free. The worker uses the
+model role of the repository's running milestone, or the complex Implementor role when no milestone
+is running. A worker that has to wait for a slot usually keeps its queue position, but an issue
+that was blocked can start after a later queued issue that was not. A blocked issue stays queued until its blockers close, and a closed issue leaves the
+queue. Repository pause and paused issues apply. Without a registered orchestrator, the queue
+waits. Once its worker starts, the issue leaves the queue and is managed through its orchestrator
+or worker; use **Remove from queue** to withdraw it before then.
 
 Repository orchestration is managed in **Settings → Projects**, under the project that holds the
 repository's checkout; the section is named **Repository orchestration**. It shows the

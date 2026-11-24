@@ -40,10 +40,8 @@ import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { t3OrchestrationBaseInstructions } from "../../packages/provider-core/src/server/orchestrationInstructions.ts";
-import { issueQueueMessage } from "../../apps/server/src/issues/IssueQueueMessage.ts";
 import { issueWorkerBrief } from "../../apps/server/src/issues/IssueWorkerBrief.ts";
 import { openBlockerSuspensionReason } from "../../apps/server/src/issues/IssueEligibility.ts";
-import { CommandId } from "@t3tools/contracts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { DIRECT_TOOLS, searchCatalog } from "../../apps/server/src/mcp/McpToolExposure.ts";
@@ -328,7 +326,7 @@ export const McpToolUseCase = Schema.Struct({
     /** Build the managed implementor's first message from the issue title in `prompt`. */
     issueDraftPublication: Schema.optional(Schema.Boolean),
     issueGuidance: Schema.optional(
-      Schema.Literals(["queued-issue", "open-blocker", "managed-worker", "managed-root"]),
+      Schema.Literals(["open-blocker", "managed-worker", "managed-root"]),
     ),
     priorTurns: Schema.optional(
       Schema.Array(
@@ -1092,24 +1090,7 @@ export const buildMessages = (sample: Sample) => {
         : testCase.setup.issueGuidance === "managed-root"
           ? t3OrchestrationBaseInstructions("root")
           : undefined,
-    testCase.setup.issueGuidance === "open-blocker"
-      ? openBlockerSuspensionReason
-      : testCase.setup.issueGuidance === "queued-issue"
-        ? issueQueueMessage({
-            requestId: CommandId.make("eval-queue"),
-            state: "queued",
-            issue: {
-              host: "forge.example:3000",
-              repository: "acme/app",
-              repositoryId: "12",
-              id: "107",
-              nodeId: "12/7",
-              number: 7,
-              title: "Remove retired integration",
-              url: "https://forge.example:3000/acme/app/issues/7",
-            },
-          })
-        : undefined,
+    testCase.setup.issueGuidance === "open-blocker" ? openBlockerSuspensionReason : undefined,
   ];
   const reminders = base.reminders.toSpliced(base.gitStatusAt, 0, reminder(gitStatus(testCase)));
   push("user", ...reminders, ...notes.flatMap((note) => (note ? [reminder(note)] : [])));

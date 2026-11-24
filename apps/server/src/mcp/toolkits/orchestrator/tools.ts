@@ -424,7 +424,7 @@ export const OrchestratorToolkit = Toolkit.make(
   }).annotate(Tool.Destructive, true),
   Tool.make("queue_issue", {
     description:
-      "Add an open issue to the repository's ordered queue. When its registered orchestrator is idle and a worker slot is free, T3 sends it one issue notice to start a managed implementor. Without an orchestrator the queue waits. Calling this for a needs_attention entry retries its notice. clientRequestId makes retries idempotent.",
+      "Add an open issue to the repository's ordered queue. While the repository is active, T3 starts a managed implementor for each unblocked queued issue, in queue order and ahead of milestone issues; it runs when a worker slot is free. Blocked issues wait until their blockers close. Without an orchestrator the queue waits. clientRequestId makes retries idempotent.",
     parameters: IssueQueueInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
@@ -433,7 +433,7 @@ export const OrchestratorToolkit = Toolkit.make(
   }).annotate(Tool.Destructive, true),
   Tool.make("unqueue_issue", {
     description:
-      "Remove an issue from the repository queue. This does not interrupt its notice or a claimed worker. clientRequestId makes retries idempotent.",
+      "Remove an issue from the repository queue before T3 starts its worker. This does not cancel a started worker. clientRequestId makes retries idempotent.",
     parameters: IssueQueueInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
@@ -452,7 +452,7 @@ export const OrchestratorToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("get_repository_orchestration", {
     description:
-      "Check repository work admission: owner, revision, worker and read-only capacity, milestones, and ordered issue queue. Use phase to tell which work can start: draining admits already queued work, and handoff_awaiting_approval preserves the pause state. Queue entries include noticeRunId, notifiedAt, and needs_attention when a notice ended without a worker claim.",
+      "Check repository work admission: owner, revision, worker and read-only capacity, milestones, and ordered issue queue. Use phase to tell which work can start: draining admits already queued work, and handoff_awaiting_approval preserves the pause state.",
     parameters: IssueRepositoryRef,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,

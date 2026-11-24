@@ -2447,68 +2447,63 @@ it.effect("serializes per-issue Resume with reconcile without rejecting accepted
   }).pipe(Effect.provide(layer));
 });
 
-it.effect(
-  "retains per-issue Resume while its suspension interrupt is pending and the root is idle",
-  () => {
-    let unreadable = false;
-    const harness = reviewHarness((input) =>
-      unreadable
-        ? Effect.fail(
-            new IssueReadError({
-              code: "inaccessible",
-              operation: "detail",
-              message: "Access denied",
-            }),
-          )
-        : Effect.succeed(reviewRead(reviewIssue(input.number))),
-    );
-    return Effect.gen(function* () {
-      const service = yield* IssueWorkService.IssueWorkService;
-      const store = yield* IssueWorkStore.IssueWorkStore;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const sink = yield* EventSink.EventSinkV2;
-      const root = yield* createReviewRoot();
-      yield* delegateReviewIssue(root, reviewIssue(1), "pending-interrupt-worker");
-      const child = (yield* store.issueOwner(reviewIssue(1)))!;
-      const rootRun = (yield* threads.getThreadRecords(root, ["runs"])).runs.at(-1)!;
-      const now = yield* DateTime.now;
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make("resume-idle-root"),
-            type: "run.updated",
-            threadId: root,
-            runId: rootRun.id,
-            occurredAt: now,
-            payload: { ...rootRun, status: "completed", completedAt: now },
-          },
-        ],
-      });
-      assert.isTrue(yield* store.queueRootIdle(root));
-      unreadable = true;
-      yield* service.reconcile(root);
-      unreadable = false;
-      yield* service.queueIssue({
-        host: "github.com",
-        repository: "tannerpolley/t3code",
-        number: 1,
-        clientRequestId: CommandId.make("pending-interrupt-resume"),
-      });
-      const pendingQueue = yield* store.queue(reviewIssue(1));
-      assert.lengthOf(pendingQueue, 1);
-      assert.isUndefined(pendingQueue[0]!.noticeRunId);
-      assert.equal(pendingQueue[0]!.issue.id, reviewIssue(1).id);
-      assert.equal(pendingQueue[0]!.state, "queued");
-      yield* worker.drain();
-      const runs = (yield* threads.getThreadRecords(child, ["runs"])).runs;
-      assert.equal(runs[0]!.status, "interrupted");
-      const rootState = yield* threads.getThreadRecords(root, ["runs", "messages"]);
-      assert.lengthOf(rootState.runs, 1);
-      assert.lengthOf(rootState.messages, 1);
-    }).pipe(Effect.provide(harness.layer));
-  },
-);
+it.effect("retains per-issue Resume while its suspension interrupt is pending", () => {
+  let unreadable = false;
+  const harness = reviewHarness((input) =>
+    unreadable
+      ? Effect.fail(
+          new IssueReadError({
+            code: "inaccessible",
+            operation: "detail",
+            message: "Access denied",
+          }),
+        )
+      : Effect.succeed(reviewRead(reviewIssue(input.number))),
+  );
+  return Effect.gen(function* () {
+    const service = yield* IssueWorkService.IssueWorkService;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const root = yield* createReviewRoot();
+    yield* delegateReviewIssue(root, reviewIssue(1), "pending-interrupt-worker");
+    const child = (yield* store.issueOwner(reviewIssue(1)))!;
+    const rootRun = (yield* threads.getThreadRecords(root, ["runs"])).runs.at(-1)!;
+    const now = yield* DateTime.now;
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("resume-idle-root"),
+          type: "run.updated",
+          threadId: root,
+          runId: rootRun.id,
+          occurredAt: now,
+          payload: { ...rootRun, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    unreadable = true;
+    yield* service.reconcile(root);
+    unreadable = false;
+    yield* service.queueIssue({
+      host: "github.com",
+      repository: "tannerpolley/t3code",
+      number: 1,
+      clientRequestId: CommandId.make("pending-interrupt-resume"),
+    });
+    const pendingQueue = yield* store.queue(reviewIssue(1));
+    assert.lengthOf(pendingQueue, 1);
+    assert.equal(pendingQueue[0]!.issue.id, reviewIssue(1).id);
+    assert.equal(pendingQueue[0]!.state, "queued");
+    yield* worker.drain();
+    const runs = (yield* threads.getThreadRecords(child, ["runs"])).runs;
+    assert.equal(runs[0]!.status, "interrupted");
+    const rootState = yield* threads.getThreadRecords(root, ["runs", "messages"]);
+    assert.lengthOf(rootState.runs, 1);
+    assert.lengthOf(rootState.messages, 1);
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect.each(["closed", "re-parented"] as const)(
   "per-issue Resume clears only its own %s suspension and reconciles",

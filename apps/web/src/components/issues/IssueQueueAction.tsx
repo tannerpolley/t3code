@@ -74,7 +74,6 @@ export function IssueQueueAction({
   const request = useRef<IssueQueueRequest | null>(null);
   const entry = status.data?.queue?.find((entry) => entry.issue.number === reference.number);
   const queued = entry !== undefined;
-  const needsAttention = entry?.state === "needs_attention";
   const suspended = issue.suspensionReason !== undefined;
   const stage = issueStage(issue);
   if (
@@ -109,18 +108,8 @@ export function IssueQueueAction({
     <>
       {queued ? (
         <Badge variant="secondary" size="sm">
-          {needsAttention ? "Orchestrator didn't start it" : "Queued"}
+          Queued
         </Badge>
-      ) : null}
-      {needsAttention ? (
-        <Button
-          variant="ghost"
-          size="xs"
-          disabled={busy || !canQueue}
-          onClick={() => void change(false)}
-        >
-          Retry
-        </Button>
       ) : null}
       {queued && suspended ? (
         <Button

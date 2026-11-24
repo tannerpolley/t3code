@@ -4060,11 +4060,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
     queued: Schema.Boolean,
   }),
   Schema.Struct({
-    type: Schema.Literal("issue.queue.deliver"),
-    commandId: CommandId,
-    threadId: ThreadId,
-  }),
-  Schema.Struct({
     type: Schema.Literal("issue.work.close-out"),
     commandId: CommandId,
     threadId: ThreadId,

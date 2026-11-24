@@ -1,5 +1,5 @@
 import { pendingSubagentRequestsByThread } from "@t3tools/shared/pendingSubagentRequests";
-import { issueQueueMailbox } from "./IssueQueueStore.ts";
+import { issueQueueMailbox, QUEUED_ISSUE_START_PREFIX } from "./IssueQueueStore.ts";
 import {
   CommandId,
   type EnvironmentId,
@@ -823,14 +823,101 @@ export const layer = Layer.effect(
       }
       return groups;
     }, Effect.mapError(mapError));
-    const deliverQueuedIssue = (rootThreadId: ThreadId, key: string) =>
-      threads
-        .dispatch({
-          type: "issue.queue.deliver",
-          commandId: CommandId.make(`issue-queue-delivery:${rootThreadId}:${key}`),
-          threadId: rootThreadId,
-        })
-        .pipe(Effect.mapError(mapError), Effect.asVoid);
+    // Rejected commands are immutable; only a rejected attempt gets a new identity. Retries
+    // wait 1 minute after a rejection, doubling up to a day, so a lasting rejection (a
+    // deleted model role, an unavailable provider) adds a few receipts, not one per pass.
+    const admissionCommandId = Effect.fn("IssueWorkService.admissionCommandId")(function* (
+      first: string,
+    ) {
+      const now = yield* Clock.currentTimeMillis;
+      let commandId = CommandId.make(first);
+      for (let retry = 1; ; retry++) {
+        const receipt = yield* commandReceipts
+          .getByCommandId(commandId)
+          .pipe(Effect.mapError(mapError));
+        if (Option.isNone(receipt) || receipt.value.status !== "rejected") return commandId;
+        const waitMs = Math.min(2 ** (retry - 1), 1440) * 60_000;
+        if (now < receipt.value.acceptedAt.epochMilliseconds + waitMs) return commandId;
+        commandId = CommandId.make(`${first}:retry:${retry}`);
+      }
+    });
+    // Queued issues start like milestone issues; their workers wait for a slot ahead of milestone workers.
+    const startQueuedIssues = Effect.fn("IssueWorkService.startQueuedIssues")(function* (
+      rootThreadId: ThreadId,
+    ) {
+      const config = yield* store.configuration(rootThreadId);
+      // The same phases that admit milestone issues; a draining root takes no new work.
+      if (
+        config === null ||
+        !repositoryAdmitsWork(config) ||
+        repositoryPhase(config) === "draining"
+      )
+        return;
+      const suspended = new Set(config.suspendedIssues.map((entry) => entry.id));
+      const modelRoleId =
+        config.milestones.find((plan) => plan.status === "running")?.modelRoleId ??
+        "implementor-complex";
+      // shortcut: the entry is re-read after the slow issue-host read, not checked inside the
+      // start command, so a withdrawal in the last moment can still start; cancel that worker.
+      const stillQueued = (requestId: CommandId) =>
+        Effect.map(store.queue(config), (queue) =>
+          queue.some((current) => current.requestId === requestId),
+        );
+      for (const entry of yield* store.queue(config)) {
+        if (suspended.has(entry.issue.id)) continue;
+        const workState = yield* store.queueWorkState(entry.issue);
+        if (workState === "suspending") continue;
+        const read =
+          workState === "working"
+            ? Option.none()
+            : yield* issues.workRead(entry.issue).pipe(Effect.option);
+        const eligibility =
+          Option.isSome(read) &&
+          sameIssueRepository(read.value.issue, entry.issue) &&
+          read.value.issue.id === entry.issue.id
+            ? issueEligibility(read.value)
+            : "unknown";
+        if (workState === "working" || eligibility === "closed") {
+          if (!(yield* stillQueued(entry.requestId))) continue;
+          yield* threads
+            .dispatch({
+              type: "issue.queue.change",
+              // Keyed by root, so a removal rejected under a former root is not replayed here.
+              commandId: CommandId.make(`issue-queue-settled:${rootThreadId}:${entry.requestId}`),
+              threadId: rootThreadId,
+              issue: entry.issue,
+              queued: false,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not remove a settled queued issue", {
+                  issue: entry.issue.number,
+                  cause,
+                }),
+              ),
+            );
+          continue;
+        }
+        if (eligibility !== "eligible" || !(yield* stillQueued(entry.requestId))) continue;
+        yield* start({
+          host: entry.issue.host,
+          repository: entry.issue.repository,
+          number: entry.issue.number,
+          projectId: config.projectId,
+          modelRoleId,
+          clientRequestId: yield* admissionCommandId(
+            `${QUEUED_ISSUE_START_PREFIX}${entry.requestId}`,
+          ),
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not start a queued issue", {
+              issue: entry.issue.number,
+              cause,
+            }),
+          ),
+        );
+      }
+    });
     const changeQueue = Effect.fn("IssueWorkService.changeQueue")(function* (
       input: IssueQueueInput,
       queued: boolean,
@@ -870,10 +957,10 @@ export const layer = Layer.effect(
             issue.id,
           );
       }
-      if (owner !== null)
-        yield* deliverQueuedIssue(owner.rootThreadId, input.clientRequestId).pipe(
+      if (owner !== null && queued)
+        yield* startQueuedIssues(owner.rootThreadId).pipe(
           Effect.catchCause((cause) =>
-            Effect.logWarning("Issue queue delivery deferred", {
+            Effect.logWarning("Queued issue start deferred", {
               root: owner.rootThreadId,
               cause,
             }),
@@ -1053,10 +1140,11 @@ export const layer = Layer.effect(
           repositoryPhase(config) === "retired"
         )
           return;
-        const current = yield* settings.getSettings;
-        const override =
-          current.projectSettingsOverrides[config.projectId]?.orchestratorHandoffTokens;
-        const threshold = override === undefined ? current.orchestratorHandoffTokens : override;
+        const readThreshold = Effect.map(settings.getSettings, (current) => {
+          const override =
+            current.projectSettingsOverrides[config.projectId]?.orchestratorHandoffTokens;
+          return override === undefined ? current.orchestratorHandoffTokens : override;
+        });
         const attempt = config.automaticHandoff;
         const targetId = automaticHandoffThreadId(rootThreadId);
         let automatic: NonNullable<
@@ -1064,6 +1152,7 @@ export const layer = Layer.effect(
         >;
         let brief = "";
         if (attempt?.status === "verifying") {
+          const threshold = yield* readThreshold;
           const successor = yield* threads.getThreadShell(targetId).pipe(Effect.mapError(mapError));
           const expired =
             (yield* Clock.currentTimeMillis) - Date.parse(attempt.startedAt) >=
@@ -1077,7 +1166,7 @@ export const layer = Layer.effect(
             return;
           automatic = { type: "verify", enabled: threshold !== null };
         } else {
-          if (threshold == null) return;
+          if ((yield* readThreshold) == null) return;
           const root = yield* threads.getThreadShell(rootThreadId).pipe(Effect.mapError(mapError));
           if (
             root === null ||
@@ -1096,7 +1185,10 @@ export const layer = Layer.effect(
               providerThreadIds: [root.activeProviderThreadId],
             })
             .pipe(Effect.mapError(mapError));
+          // Read after the usage, so a threshold changed meanwhile is the one that applies.
+          const threshold = yield* readThreshold;
           if (
+            threshold == null ||
             (providerThreads[0]?.contextUsage?.usedTokens ?? 0) < threshold ||
             !(yield* store.subtreeDrained(rootThreadId)) ||
             !(yield* store.handoffSafe(rootThreadId)) ||
@@ -1180,13 +1272,6 @@ export const layer = Layer.effect(
             ),
           );
       if (draining) return yield* drainHandoff(rootThreadId);
-      if ((yield* store.queue(config)).length > 0)
-        yield* deliverQueuedIssue(
-          rootThreadId,
-          eventSequence === undefined
-            ? `reconcile:${yield* ids.allocate.command({ fixtureName: "issue-queue", commandName: "reconcile" }).pipe(Effect.mapError(mapError))}`
-            : String(eventSequence),
-        );
       // Once an ancestor has a durable thread, deliver its selected sub-issues there.
       for (const request of yield* store.pendingRequests(rootThreadId)) {
         const read = refreshRequests
@@ -1334,6 +1419,12 @@ export const layer = Layer.effect(
         );
         config = (yield* store.configuration(rootThreadId))!;
       }
+      // Queued issues start before continueLocal promotes waiting milestone workers into free slots.
+      yield* startQueuedIssues(rootThreadId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Queued issue starts failed", { rootThreadId, cause }),
+        ),
+      );
       yield* continueLocal(rootThreadId, true);
       config = (yield* store.configuration(rootThreadId))!;
       if (
@@ -1416,21 +1507,9 @@ export const layer = Layer.effect(
             else running = true;
             continue;
           }
-          const firstCommandId = `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`;
-          let clientRequestId = CommandId.make(firstCommandId);
-          // Rejected commands are immutable; only a rejected attempt gets a new identity. Retries
-          // wait 1 minute after a rejection, doubling up to a day, so a lasting rejection (a
-          // deleted model role, an unavailable provider) adds a few receipts, not one per pass.
-          const now = yield* Clock.currentTimeMillis;
-          for (let retry = 1; ; retry++) {
-            const receipt = yield* commandReceipts
-              .getByCommandId(clientRequestId)
-              .pipe(Effect.mapError(mapError));
-            if (Option.isNone(receipt) || receipt.value.status !== "rejected") break;
-            const waitMs = Math.min(2 ** (retry - 1), 1440) * 60_000;
-            if (now < receipt.value.acceptedAt.epochMilliseconds + waitMs) break;
-            clientRequestId = CommandId.make(`${firstCommandId}:retry:${retry}`);
-          }
+          const clientRequestId = yield* admissionCommandId(
+            `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`,
+          );
           const started = yield* start({
             host: config.host,
             repository: config.repository,
@@ -2256,8 +2335,7 @@ export const layer = Layer.effect(
               stored.event.type === "thread.settled" ||
               stored.event.type === "repository.work.restored" ||
               (stored.event.type === "issue.queue.updated" &&
-                stored.event.payload.state === "queued" &&
-                stored.event.payload.noticeRunId === undefined) ||
+                stored.event.payload.state === "queued") ||
               (stored.event.type === "subagent.updated" &&
                 ["completed", "failed", "interrupted", "cancelled"].includes(
                   stored.event.payload.status,
@@ -2290,54 +2368,6 @@ export const layer = Layer.effect(
               )
                 return;
             }
-            if (
-              stored.event.type === "run.updated" &&
-              stored.event.payload.status === "completed"
-            ) {
-              const entry = yield* store.queueNotice(
-                stored.event.threadId,
-                stored.event.payload.id,
-              );
-              const commandId = CommandId.make(`issue-queue-completed:${stored.event.payload.id}`);
-              if (
-                entry !== null &&
-                Option.isNone(yield* commandReceipts.getByCommandId(commandId))
-              ) {
-                const read = yield* issues.workRead(entry.issue).pipe(Effect.option);
-                const closed =
-                  Option.isSome(read) &&
-                  read.value.state === "closed" &&
-                  sameIssueRepository(read.value.issue, entry.issue) &&
-                  read.value.issue.id === entry.issue.id;
-                const owner = yield* store.repositoryOwner(entry.issue);
-                const threadId = owner?.rootThreadId ?? stored.event.threadId;
-                // Even an open or failed read gets a receipt: later run updates must not re-read it.
-                yield* threads.dispatch(
-                  closed
-                    ? {
-                        type: "issue.queue.change",
-                        commandId,
-                        threadId,
-                        issue: entry.issue,
-                        queued: false,
-                      }
-                    : { type: "issue.queue.deliver", commandId, threadId },
-                );
-              }
-            }
-            // A notice's failure batch must not immediately remind itself again.
-            const noticeRunId =
-              (stored.event.type === "run.updated" || stored.event.type === "run.created") &&
-              stored.event.payload.status !== "completed"
-                ? stored.event.payload.id
-                : stored.event.type === "provider-thread.updated"
-                  ? stored.event.runId
-                  : undefined;
-            if (
-              noticeRunId !== undefined &&
-              (yield* store.isQueueNoticeRun(stored.event.threadId, noticeRunId))
-            )
-              return;
             const shell = yield* threads
               .getThreadShell(stored.event.threadId)
               .pipe(Effect.mapError(mapError));
@@ -2360,14 +2390,26 @@ export const layer = Layer.effect(
             if (repository == null) return;
             if (
               stored.event.type === "issue.queue.updated" &&
-              (yield* store.queue(repository)).length > 0
-            )
-              yield* ensureOrchestrator(repository);
+              (yield* store.queue(repository)).length > 0 &&
+              (yield* store.repositoryOwner(repository)) === null
+            ) {
+              const adopted = (yield* ensureOrchestrator(repository)).rootThreadId;
+              // Forked: a slow issue-host read must not hold up other repositories' events.
+              if (adopted !== null)
+                yield* reconcile(adopted).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("Queued issue starts after adoption failed", {
+                      root: adopted,
+                      cause,
+                    }),
+                  ),
+                  Effect.forkDetach,
+                );
+            }
             const owner = yield* store.repositoryOwner(repository);
             if (owner !== null && stored.event.type !== "thread.metadata-updated") {
               yield* queueHandoffCheck(owner.rootThreadId);
             }
-            // Root availability also releases one queued notice.
             if (
               owner !== null &&
               !isUnmanagedIssueRole(shell?.role) &&
@@ -2377,8 +2419,7 @@ export const layer = Layer.effect(
                 stored.event.type === "provider-thread.updated") &&
               ((config) => config === null || repositoryPhase(config) !== "draining")(
                 yield* store.configuration(owner.rootThreadId),
-              ) &&
-              (yield* store.queue(repository)).length === 0
+              )
             )
               return;
             if (owner !== null) {
@@ -2393,18 +2434,6 @@ export const layer = Layer.effect(
         ),
         Effect.forkScoped,
       );
-    }
-    // Recover persisted notices once; further attempts are driven by availability events.
-    if (Option.isSome(sink)) {
-      for (const root of yield* store.queuedRoots())
-        yield* deliverQueuedIssue(
-          root,
-          `startup:${yield* sink.value.latestSequence().pipe(Effect.orDie)}`,
-        ).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Issue queue recovery failed", { root, cause }),
-          ),
-        );
     }
     return service;
   }),
