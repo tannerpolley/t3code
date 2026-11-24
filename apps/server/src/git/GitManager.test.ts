@@ -1985,7 +1985,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["fetch", "--prune", "origin"]);
 
       const { manager } = yield* makeManager({
-        providerScenario: { prListSequence: [[squashMergedPr(branch, headSha)]] },
+        providerScenario: { prListOtherwise: [squashMergedPr(branch, headSha)] },
       });
 
       const status = yield* manager.status({ cwd: repoDir });
@@ -1996,6 +1996,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         aheadCount: status.aheadCount,
         aheadOfDefaultCount: status.aheadOfDefaultCount,
       }).toEqual({ aheadCount: 0, aheadOfDefaultCount: 0 });
+
+      yield* runGit(repoDir, ["branch", "--unset-upstream", branch]);
+      const lookup = { cwd: repoDir, branch };
+      expect(yield* manager.branchPullRequest(lookup, { refresh: true })).toBeNull();
+      expect(
+        yield* manager.branchPullRequest(lookup, { refresh: true, includeUnpublished: true }),
+      ).toMatchObject({ state: "merged", headRef: branch, baseRef: "main", headSha });
+      expect(yield* manager.branchPullRequest(lookup)).toBeNull();
     }),
   );
 

@@ -3494,6 +3494,8 @@ describe("storage cleanup reports and local file policies", () => {
   );
   it.live("returns a detached merged worker's slot after an archived binding was rejected", () => {
     const database = Sqlite.layerMemory;
+    const reviewer = ThreadId.make("reviewer");
+    let failReviewerRead = false;
     return runCleanupTest(
       Effect.gen(function* () {
         const engine = yield* Orchestrator.OrchestratorV2;
@@ -3503,7 +3505,18 @@ describe("storage cleanup reports and local file policies", () => {
         const { service, issueSlots, fs, repo, worktree, command, setBranchPullRequest } =
           yield* cleanupFixture(DEFAULT_SERVER_SETTINGS.storageCleanup, undefined, {
             engine,
-            projections,
+            projections: {
+              ...projections,
+              getShellSnapshot: (input) =>
+                projections.getShellSnapshot(input).pipe(
+                  Effect.map((snapshot) => ({
+                    ...snapshot,
+                    archivedThreads: snapshot.archivedThreads.toSorted((a, b) =>
+                      a.id.localeCompare(b.id),
+                    ),
+                  })),
+                ),
+            },
           });
         const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-slot-remote-" });
         yield* command(remote, ["init", "--bare", "-b", "main"]);
@@ -3543,7 +3556,7 @@ describe("storage cleanup reports and local file policies", () => {
         });
         const root = ThreadId.make("root");
         const worker = ThreadId.make("worker");
-        const reviewer = ThreadId.make("reviewer");
+        const sideChat = ThreadId.make("side-chat");
         const projectId = ProjectId.make("project-1");
         const create = {
           type: "thread.create",
@@ -3577,7 +3590,7 @@ describe("storage cleanup reports and local file policies", () => {
             suspendedIssues: [],
           },
         });
-        for (const threadId of [worker, reviewer]) {
+        for (const threadId of [worker, reviewer, sideChat]) {
           yield* engine.dispatch({
             ...create,
             commandId: CommandId.make(`create-${threadId}`),
@@ -3598,8 +3611,10 @@ describe("storage cleanup reports and local file policies", () => {
                   ...thread,
                   lineage: {
                     rootThreadId: root,
-                    parentThreadId: threadId === worker ? root : worker,
-                    relationshipToParent: "subagent",
+                    parentThreadId:
+                      threadId === worker ? root : threadId === reviewer ? worker : reviewer,
+                    relationshipToParent: threadId === sideChat ? "fork" : "subagent",
+                    ...(threadId === sideChat ? { sideChat: true } : {}),
                   },
                 },
               },
@@ -3628,9 +3643,17 @@ describe("storage cleanup reports and local file policies", () => {
         expect(oldRelease.message).toContain("archived and cannot change workspace");
         expect(yield* store.slotsInUse(root)).toBe(1);
 
+        failReviewerRead = true;
+        const interrupted = yield* service.runNow;
+        expect(interrupted.entries[0]).toMatchObject({ outcome: "failed" });
+        expect((yield* projections.getThread(sideChat)).worktreePath).toBeNull();
+        expect((yield* projections.getThread(reviewer)).worktreePath).toBe(slot);
+        expect(yield* store.slotsInUse(root)).toBe(1);
+
+        failReviewerRead = false;
         const report = yield* service.runNow;
         expect(report.entries[0]?.reason).toBe("Returned to the issue worktree pool");
-        for (const threadId of [worker, reviewer]) {
+        for (const threadId of [worker, reviewer, sideChat]) {
           const thread = yield* projections.getThread(threadId);
           expect(thread.archivedAt).not.toBeNull();
           expect(thread.worktreePath).toBeNull();
@@ -3681,7 +3704,17 @@ describe("storage cleanup reports and local file policies", () => {
             ProviderReplayHarness.layerWithRegistry(
               { name: "archived-slot-release" },
               ProviderAdapterRegistry.layerFromAdapters([adapter]),
-              { databaseLayer: database, runEffectWorker: false },
+              {
+                databaseLayer: database,
+                runEffectWorker: false,
+                wrapProjectionStore: (store) => ({
+                  ...store,
+                  getThreadProviderContext: (threadId, targetInstanceId) =>
+                    failReviewerRead && threadId === reviewer
+                      ? Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId }))
+                      : store.getThreadProviderContext(threadId, targetInstanceId),
+                }),
+              },
             ),
           ),
         ),
