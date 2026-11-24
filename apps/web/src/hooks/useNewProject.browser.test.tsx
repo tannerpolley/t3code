@@ -1,7 +1,7 @@
 import { EMPTY_SIDEBAR_LAYOUT, EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { act, useEffect } from "react";
-import { create } from "react-test-renderer";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { useEffect } from "react";
+import { act, render } from "../../test/render";
+import { expect, it, vi } from "vite-plus/test";
 
 const createNew = vi.hoisted(() => vi.fn());
 vi.mock("../rpc/atomRegistry", () => ({
@@ -35,13 +35,8 @@ import {
   useProjectSectionPlacementReady,
 } from "../projectSectionPlacement";
 
-afterEach(() => {
-  configureProjectSectionPlacement(() => {});
-  setAddProjectSection(null);
-  vi.unstubAllGlobals();
-});
 it("sends no create RPC for a cached section, then allows placement after receive", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  createNew.mockReset();
   const environmentId = EnvironmentId.make("server");
   const layout = {
     ...EMPTY_SIDEBAR_LAYOUT,
@@ -65,7 +60,14 @@ it("sends no create RPC for a cached section, then allows placement after receiv
     }, [createProjectCallback, ready]);
     return null;
   }
-  const renderer = await act(() => create(<Test />));
+  using _cleanup = {
+    [Symbol.dispose]() {
+      configureProjectSectionPlacement(() => {});
+      setAddProjectSection(null);
+      controller.dispose();
+    },
+  };
+  await using _screen = await render(<Test />);
   const input = { environmentId, name: "new-project", publishTo: null };
   expect(placementReady).toBe(false);
   expect(await createProject(input)).toBe(false);
@@ -88,6 +90,4 @@ it("sends no create RPC for a cached section, then allows placement after receiv
     environmentId,
     input: { name: "new-project", sectionId: "work", sidebarExpanded: true },
   });
-  await act(() => renderer.unmount());
-  controller.dispose();
 });

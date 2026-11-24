@@ -1,24 +1,8 @@
-// @vitest-environment jsdom
-
-import { act } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../../test/render";
+import { expect, it } from "vite-plus/test";
 import { useUiStateStore } from "../../uiStateStore";
 import { useSidebarWorkExpansion } from "./useSidebarWorkExpansion";
 
-let container: HTMLDivElement;
-let root: ReturnType<typeof createRoot>;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  useUiStateStore.setState({ sidebarWorkExpandedById: {} });
-  container = document.createElement("div");
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  useUiStateStore.setState({ sidebarWorkExpandedById: {} });
-  vi.unstubAllGlobals();
-});
 function Row(props: { threadKey: string; running: boolean }) {
   const { open, onToggle } = useSidebarWorkExpansion(props.threadKey, props.running);
   return (
@@ -29,28 +13,26 @@ function Row(props: { threadKey: string; running: boolean }) {
 }
 
 it("retains scoped expansion choices when an agent leaves the roster and returns", async () => {
-  const render = (showB: boolean, running = true, environment = "local") =>
-    act(() =>
-      root.render(
-        <>
-          {showB ? <Row key="b" threadKey={`${environment}:b`} running={running} /> : null}
-          <Row key="c" threadKey="local:c" running />
-        </>,
-      ),
-    );
-  const b = () => container.querySelector("button")!;
-  await render(true);
+  useUiStateStore.setState({ sidebarWorkExpandedById: {} });
+  const rows = (showB: boolean, running = true, environment = "local") => (
+    <>
+      {showB ? <Row key="b" threadKey={`${environment}:b`} running={running} /> : null}
+      <Row key="c" threadKey="local:c" running />
+    </>
+  );
+  await using screen = await render(rows(true));
+  const b = () => screen.container.querySelector("button")!;
   expect(b().getAttribute("aria-expanded")).toBe("true");
   await act(() => b().click());
-  await render(false);
-  await render(true);
+  await screen.rerender(rows(false));
+  await screen.rerender(rows(true));
   expect(b().getAttribute("aria-expanded")).toBe("false");
-  await render(true, true, "remote");
+  await screen.rerender(rows(true, true, "remote"));
   expect(b().getAttribute("aria-expanded")).toBe("true");
-  await render(true, false);
+  await screen.rerender(rows(true, false));
   await act(() => b().click());
-  await render(false);
-  await render(true, false);
+  await screen.rerender(rows(false));
+  await screen.rerender(rows(true, false));
   expect(b().getAttribute("aria-expanded")).toBe("true");
 });
 

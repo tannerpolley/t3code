@@ -1,5 +1,4 @@
 import { shellProgramName } from "@t3tools/shared/shellCommand";
-import { useMemo } from "react";
 import { ProcessProgramIcon } from "../ProcessProgramIcon";
 import { ClockIcon, ServerIcon, TerminalIcon } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
@@ -71,10 +70,8 @@ export function BackgroundProcessKindIcon(props: {
   readonly className: string;
 }) {
   const { resolvedTheme } = useTheme();
-  const program = useMemo(
-    () => (props.command ? shellProgramName(props.command) : null) ?? props.commandKind ?? "",
-    [props.command, props.commandKind],
-  );
+  const program =
+    (props.command ? shellProgramName(props.command) : null) ?? props.commandKind ?? "";
   const label = backgroundProcessKindLabel(props.kind, props.commandKind);
   const iconClassName = cn("size-4", props.className);
   const fileName = props.commandKind

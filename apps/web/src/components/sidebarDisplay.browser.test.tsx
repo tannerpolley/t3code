@@ -5,9 +5,8 @@ import {
   type SidebarLayoutRecord,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { act, fakeTimers, render, stubGlobal, type Screen } from "../../test/render";
+import { expect, it, vi } from "vite-plus/test";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { Project } from "../types";
 
@@ -90,7 +89,6 @@ vi.mock("./ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 let SidebarLayoutSync: typeof import("./SidebarLayoutSync").SidebarLayoutSync;
 let store: typeof import("../uiStateStore");
 let placement: typeof import("../projectSectionPlacement");
-let renderer: ReactTestRenderer | undefined;
 const displayKey = "t3code:sidebar-display:v1";
 const other = EnvironmentId.make("client-d");
 const savedLayout = {
@@ -117,10 +115,9 @@ const liveRecord: SidebarLayoutRecord = {
     ],
   },
 };
-beforeEach(async () => {
-  vi.resetModules();
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function setup(cleanup: DisposableStack) {
+  cleanup.use(fakeTimers());
+  vi.setSystemTime(0);
   const values = new Map([
     [displayKey, JSON.stringify({ environmentIds: [environmentId, other], layout: savedLayout })],
   ]);
@@ -129,8 +126,7 @@ beforeEach(async () => {
     setItem: (key: string, value: string) => values.set(key, value),
     removeItem: (key: string) => values.delete(key),
   };
-  vi.stubGlobal("localStorage", storage);
-  vi.stubGlobal("window", { localStorage: storage });
+  cleanup.use(stubGlobal("localStorage", storage));
   fixture.catalogReady = false;
   fixture.canWrite = true;
   fixture.record = null;
@@ -140,25 +136,38 @@ beforeEach(async () => {
   fixture.send.mockReset();
   environmentIds = [environmentId, other];
   configs = new Map();
-  store = await import("../uiStateStore");
+  if (store === undefined) {
+    store = await import("../uiStateStore");
+  } else {
+    // Clear the previous case's persisted projection before simulating a fresh startup.
+    const snapshot = {
+      environmentIds: [environmentId, other],
+      expiresAt: store.SIDEBAR_DISPLAY_LIFETIME,
+    };
+    store.useUiStateStore.setState({ sidebarDisplaySnapshot: snapshot });
+    store.applySidebarLayoutProjection(savedLayout, [], false);
+    storage.setItem(
+      displayKey,
+      JSON.stringify({ environmentIds: [environmentId, other], layout: savedLayout }),
+    );
+    store.useUiStateStore.setState({
+      ...store.useUiStateStore.getInitialState(),
+      sidebarDisplaySnapshot: snapshot,
+    });
+  }
   placement = await import("../projectSectionPlacement");
   ({ SidebarLayoutSync } = await import("./SidebarLayoutSync"));
-});
-afterEach(async () => {
-  await act(() => renderer?.unmount());
-  renderer = undefined;
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-});
-async function render() {
+}
+async function refresh(screen: Screen) {
   await act(() => {
     fixture.version++;
     for (const listener of fixture.listeners) listener();
-    if (renderer) renderer.update(<SidebarLayoutSync />);
-    else renderer = create(<SidebarLayoutSync />);
   });
+  await screen.rerender(<SidebarLayoutSync />);
 }
 it("first render shows sections, colors and forced icons synchronously before configs or effects", async () => {
+  using cleanup = new DisposableStack();
+  await setup(cleanup);
   const firstPaint: unknown[] = [];
   function Sidebar() {
     const sections = store.useUiStateStore((state) => state.sidebarProjectSections);
@@ -174,23 +183,23 @@ it("first render shows sections, colors and forced icons synchronously before co
   expect(store.useUiStateStore.getState().sidebarProjectSections).toEqual(
     savedLayout.sidebarProjectSections,
   );
-  await act(() => {
-    renderer = create(
-      <>
-        <Sidebar />
-        <SidebarLayoutSync />
-      </>,
-    );
-  });
+  await using _screen = await render(
+    <>
+      <Sidebar />
+      <SidebarLayoutSync />
+    </>,
+  );
   expect(firstPaint[0]).toEqual(savedLayout.sidebarProjectSections);
   expect(store.useUiStateStore.getState().sidebarProjectSections).toEqual(
     savedLayout.sidebarProjectSections,
   );
 });
 it("blocks expansion, movement, reorder and section placement until all environments are live", async () => {
+  using cleanup = new DisposableStack();
+  await setup(cleanup);
   fixture.catalogReady = true;
   configs = new Map(environmentIds.map((id) => [id, { sidebarLayoutSync: true }]));
-  await render();
+  await using screen = await render(<SidebarLayoutSync />);
   const state = store.useUiStateStore.getState();
   const sectionId = savedLayout.sidebarProjectSections[0]!.id;
   await act(() => {
@@ -224,7 +233,7 @@ it("blocks expansion, movement, reorder and section placement until all environm
     savedLayout.sidebarProjectSections,
   );
   fixture.record = liveRecord;
-  await render();
+  await refresh(screen);
   await act(() => vi.advanceTimersByTimeAsync(300));
   expect(fixture.send).not.toHaveBeenCalled();
   expect(store.useUiStateStore.getState().sidebarProjectSections).toEqual(
@@ -232,7 +241,7 @@ it("blocks expansion, movement, reorder and section placement until all environm
   );
   expect(JSON.parse(localStorage.getItem(displayKey)!).layout).toEqual(savedLayout);
   fixture.otherRecords.set(other, { ...liveRecord, layout: EMPTY_SIDEBAR_LAYOUT });
-  await render();
+  await refresh(screen);
   expect(store.useUiStateStore.getState().sidebarDisplaySnapshot).toBeNull();
   expect(store.useUiStateStore.getState().sidebarProjectSections.map((s) => s.name)).toEqual([
     "Live section",
@@ -252,6 +261,8 @@ it("blocks expansion, movement, reorder and section placement until all environm
 it.each(["empty", "cached", "synchronizing"] as const)(
   "keeps the display snapshot and its storage when layouts are live but remote projects are %s",
   async (status) => {
+    using cleanup = new DisposableStack();
+    await setup(cleanup);
     fixture.catalogReady = true;
     configs = new Map(environmentIds.map((id) => [id, { sidebarLayoutSync: true }]));
     fixture.record = liveRecord;
@@ -268,7 +279,7 @@ it.each(["empty", "cached", "synchronizing"] as const)(
     });
     fixture.shellStatuses.set(other, status);
     const saved = localStorage.getItem(displayKey);
-    await render();
+    await using screen = await render(<SidebarLayoutSync />);
     await act(() => vi.advanceTimersByTimeAsync(1_000));
     expect(store.useUiStateStore.getState().sidebarDisplaySnapshot).not.toBeNull();
     expect(store.useUiStateStore.getState().sidebarProjectSections).toEqual(
@@ -291,7 +302,7 @@ it.each(["empty", "cached", "synchronizing"] as const)(
       },
     ];
     fixture.shellStatuses.set(other, "live");
-    await render();
+    await refresh(screen);
     const state = store.useUiStateStore.getState();
     const key = other + ":/work/project";
     expect(state.sidebarDisplaySnapshot).toBeNull();
@@ -312,24 +323,28 @@ it.each(["empty", "cached", "synchronizing"] as const)(
   },
 );
 it("drops a mismatched environment set as soon as the catalog is known, before configs", async () => {
+  using cleanup = new DisposableStack();
+  await setup(cleanup);
   environmentIds = [environmentId];
-  await render();
+  await using screen = await render(<SidebarLayoutSync />);
   expect(store.useUiStateStore.getState().sidebarProjectSections).toEqual(
     savedLayout.sidebarProjectSections,
   );
   fixture.catalogReady = true;
-  await render();
+  await refresh(screen);
   expect(store.useUiStateStore.getState().sidebarProjectSections).toEqual([]);
   expect(store.useUiStateStore.getState().sidebarDisplaySnapshot).toBeNull();
   expect(localStorage.getItem(displayKey)).toBeNull();
 });
 it("expires after 15 seconds and shows only the live part without extending the deadline", async () => {
-  await render();
+  using cleanup = new DisposableStack();
+  await setup(cleanup);
+  await using screen = await render(<SidebarLayoutSync />);
   await act(() => vi.advanceTimersByTimeAsync(10_000));
   fixture.catalogReady = true;
   configs = new Map(environmentIds.map((id) => [id, { sidebarLayoutSync: true }]));
   fixture.record = liveRecord;
-  await render();
+  await refresh(screen);
   await act(() => vi.advanceTimersByTimeAsync(4_999));
   expect(store.useUiStateStore.getState().sidebarProjectSections).toEqual(
     savedLayout.sidebarProjectSections,
@@ -342,6 +357,8 @@ it("expires after 15 seconds and shows only the live part without extending the 
   expect(localStorage.getItem(displayKey)).toBeNull();
 });
 it("local-mode environments complete the live projection without a server record", async () => {
+  using cleanup = new DisposableStack();
+  await setup(cleanup);
   fixture.catalogReady = true;
   configs = new Map([
     [environmentId, { sidebarLayoutSync: true }],
@@ -359,7 +376,7 @@ it("local-mode environments complete the live projection without a server record
     }),
   );
   const before = localStorage.getItem(localKey);
-  await render();
+  await using _screen = await render(<SidebarLayoutSync />);
   expect(store.useUiStateStore.getState().sidebarDisplaySnapshot).toBeNull();
   expect(store.useUiStateStore.getState().sidebarProjectSections.map((s) => s.name)).toEqual([
     "Live section",
@@ -369,14 +386,16 @@ it("local-mode environments complete the live projection without a server record
   expect(fixture.send).not.toHaveBeenCalled();
 });
 it("sync and legacy import do not read the display key or import its memberships", async () => {
+  using cleanup = new DisposableStack();
+  await setup(cleanup);
   const getItem = vi.mocked(localStorage.getItem);
   getItem.mockClear();
-  await render();
+  await using screen = await render(<SidebarLayoutSync />);
   expect(getItem.mock.calls.map(([key]) => key)).not.toContain(displayKey);
   fixture.catalogReady = true;
   configs = new Map(environmentIds.map((id) => [id, { sidebarLayoutSync: true }]));
   fixture.record = { ...liveRecord, legacyImportedAt: null, layout: EMPTY_SIDEBAR_LAYOUT };
-  await render();
+  await refresh(screen);
   expect(getItem.mock.calls.map(([key]) => key)).not.toContain(displayKey);
   expect(fixture.send).not.toHaveBeenCalled();
   const { readPendingSidebarImport } = await import("../sidebarLayoutMigration");

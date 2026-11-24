@@ -9,6 +9,7 @@ import type { PendingQuestion } from "./QuestionPopup.logic";
 export function useSettledQuestions(questions: ReadonlyArray<PendingQuestion>) {
   const visibleSince = useRef(new Map<string, number>());
   const [settledKeys, setSettledKeys] = useState<ReadonlySet<string>>(() => new Set());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A timer wakes the popup after the question stays continuously visible.
   useEffect(() => {
     const now = Date.now();
     const next = new Map(

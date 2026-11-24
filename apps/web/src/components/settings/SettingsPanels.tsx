@@ -1,4 +1,4 @@
-import { useForkSettingsRestore } from "./ForkSettingsRestore";
+import { forkSettingsRestore } from "./ForkSettingsRestore";
 import { ForkSettingsSlot } from "./ForkSettings";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
@@ -501,7 +501,7 @@ export function useSettingsRestore(onRestored?: () => void) {
   );
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
 
-  const forkRestore = useForkSettingsRestore(settings);
+  const forkRestore = forkSettingsRestore(settings);
 
   const changedSettingLabels = [
     ...(theme !== "system" ? [gt("Theme")] : []),

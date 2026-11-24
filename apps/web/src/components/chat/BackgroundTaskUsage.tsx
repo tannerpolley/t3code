@@ -3,7 +3,7 @@ import type {
   OrchestrationV2BackgroundTaskResourceUsage,
   ThreadId,
 } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
@@ -18,6 +18,7 @@ export function useBackgroundTaskListVisibility(enabled: boolean) {
   const [element, setElement] = useState<Element | null>(null);
   const [visible, setVisible] = useState(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Track DOM visibility so offscreen task lists do not query usage.
   useEffect(() => {
     if (element === null || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(([entry]) => {
@@ -43,15 +44,11 @@ export function useBackgroundTaskResourceUsage(input: {
         })
       : null,
   );
-  return useMemo(
-    () =>
-      new Map(
-        (query.data ?? []).map((usage) => [
-          backgroundTaskResourceUsageKey(usage.threadId, usage.taskId),
-          usage,
-        ]),
-      ),
-    [query.data],
+  return new Map(
+    (query.data ?? []).map((usage) => [
+      backgroundTaskResourceUsageKey(usage.threadId, usage.taskId),
+      usage,
+    ]),
   );
 }
 

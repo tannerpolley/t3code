@@ -13,15 +13,7 @@ import {
 } from "@t3tools/shared/inlineShell";
 import * as Schema from "effect/Schema";
 import { PlayIcon } from "lucide-react";
-import {
-  createContext,
-  use,
-  useMemo,
-  useRef,
-  useLayoutEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, use, useRef, useLayoutEffect, useState, type ReactNode } from "react";
 import { latestInlineShellRecord } from "@t3tools/shared/inlineShell";
 import { resolveInlineShellRun } from "@t3tools/client-runtime/state/inlineShell";
 import { randomUUID } from "../../lib/utils";
@@ -47,7 +39,7 @@ export function InlineShellRunProvider({
   threadId: ThreadId;
   children: ReactNode;
 }) {
-  const value = useMemo(() => ({ environmentId, threadId }), [environmentId, threadId]);
+  const value = { environmentId, threadId };
   return <InlineShellContext value={value}>{children}</InlineShellContext>;
 }
 
@@ -123,8 +115,9 @@ function InlineShellControls({
   const scrollRef = useRef<HTMLPreElement>(null);
   const pinned = useRef(true);
   const text = running ? (output.data?.output ?? record.output) : (record?.output ?? "");
-  const displayText = useMemo(() => inlineShellDisplayOutput(text), [text]);
+  const displayText = inlineShellDisplayOutput(text);
   const hideInput = secret ?? inlineShellIsPasswordPrompt(displayText);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll the terminal DOM to new output while pinned.
   useLayoutEffect(() => {
     if (scrollRef.current && pinned.current && text.length > 0)
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
