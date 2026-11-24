@@ -24,6 +24,7 @@ import {
   type IssueListResult,
   type IssueReactionInput,
   type IssueRef,
+  type IssueStateCategory,
   type IssueScopeRef,
   type IssueSetStateInput,
   type IssueTemplateList,
@@ -179,6 +180,9 @@ export class IssueService extends Context.Service<
     readonly comment: (input: IssueCommentInput) => Effect.Effect<string | void, IssueError>;
     readonly update: (input: IssueUpdateInput) => Effect.Effect<void, IssueError>;
     readonly setState: (input: IssueSetStateInput) => Effect.Effect<void, IssueError>;
+    readonly prepareStateChange: (
+      input: IssueRef & { readonly category: IssueStateCategory },
+    ) => Effect.Effect<Effect.Effect<void, IssueError>, IssueError>;
     readonly react: (input: IssueReactionInput) => Effect.Effect<void, IssueError>;
     /**
      * The tracker and container a project's own issues live in: the bound `scope` when named, else
@@ -715,6 +719,28 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const prepareStateChange: IssueService["Service"]["prepareStateChange"] = Effect.fn(
+    "IssueService.prepareStateChange",
+  )(function* (input) {
+    const project = yield* requireWritable(input, "setState");
+    if (project.api.prepareStateChange === undefined)
+      return yield* unsupported("setState", "changing an issue's state by category");
+    const translateError = Effect.mapError(toIssueError("setState"));
+    const write = yield* project.api
+      .prepareStateChange({
+        cwd: project.project.workspaceRoot,
+        host: project.host,
+        scope: project.scope,
+        key: input.key,
+        state: { category: input.category },
+      })
+      .pipe(translateError);
+    return write.pipe(
+      translateError,
+      Effect.provideService(SourceControlRateLimit.Interactive, true),
+    );
+  });
+
   const react: IssueService["Service"]["react"] = (input) =>
     requireWritable(input, "react").pipe(
       Effect.flatMap((project) =>
@@ -896,6 +922,7 @@ const make = Effect.gen(function* () {
     comment: interactive(traced("comment", comment)),
     update: interactive(traced("update", update)),
     setState: interactive(traced("setState", setState)),
+    prepareStateChange: interactive(prepareStateChange),
     react: interactive(traced("react", react)),
     projectScope,
     resolveUrl,

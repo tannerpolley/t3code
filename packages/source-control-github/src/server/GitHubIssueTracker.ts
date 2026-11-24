@@ -9,11 +9,14 @@ import {
   type IssueInvolvement,
   type IssueLabel,
   type IssueListSort,
+  type IssueState,
+  type IssueStateCategory,
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
   type IssueInvolvementFilter,
   type IssueTrackerApi,
+  type IssueTarget,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
 import * as GitHubRest from "./GitHubRest.ts";
@@ -252,6 +255,65 @@ export const make = Effect.gen(function* () {
       names.size === new Set(applied).size && [...names].every((name) => applied.includes(name))
     );
   };
+
+  const prepareStateChange = Effect.fn("GitHubIssueTracker.prepareStateChange")(function* (
+    input: IssueTarget & { readonly state: string | { readonly category: IssueStateCategory } },
+  ) {
+    const { path, id, state, stateReason, owner, name, number } = yield* verifiedIssue(
+      input,
+      "setState",
+    );
+    const statuses = planningStatusesOf(
+      (yield* issueStatuses(input, owner, name, number, "setState"))?.planningStatuses,
+    );
+    const requested = input.state;
+    const matches = (candidate: IssueState) =>
+      typeof requested === "string"
+        ? candidate.name === requested
+        : candidate.category === requested.category &&
+          (candidate.category === "open" || candidate.closeReason === "completed");
+    const status = statuses.find((candidate) => matches(toPlanningState(candidate)));
+    // Closing as a duplicate through a status needs the original issue, which nothing here
+    // names; closing it over REST leaves GitHub to pick the duplicate status.
+    if (status !== undefined && status.category.key !== "duplicate") {
+      return client
+        .SetIssueStatus({ issueId: id, statusId: status.id })
+        .pipe(graphql(input.host, "setState"), Effect.asVoid);
+    }
+    if (status === undefined && statuses.length > 0) {
+      const detail =
+        typeof requested === "string"
+          ? `This repository has no "${requested}" issue status.`
+          : requested.category === "open"
+            ? "This repository has no open issue status."
+            : "This repository has no issue status that closes an issue as completed.";
+      return yield* invalid("setState", detail);
+    }
+    const wanted = status === undefined ? ISSUE_STATES.find(matches) : toPlanningState(status);
+    if (wanted === undefined) {
+      return yield* invalid("setState", `A GitHub issue has no "${input.state}" state.`);
+    }
+    const reason = wanted.closeReason?.replace("-", "_");
+    // GitHub ignores `state_reason` unless the state changes, and would answer with success.
+    if (reason !== undefined && state === "CLOSED" && stateReason?.toLowerCase() !== reason) {
+      return yield* invalid(
+        "setState",
+        "GitHub cannot change why a closed issue was closed. Reopen it, then close it again.",
+      );
+    }
+    return api
+      .rest({
+        host: input.host,
+        operation: "setState",
+        method: "PATCH",
+        path,
+        body: {
+          state: wanted.category,
+          ...(reason === undefined ? {} : { state_reason: reason }),
+        },
+      })
+      .pipe(Effect.mapError(fail("setState")), Effect.asVoid);
+  });
 
   return {
     kind: KIND,
@@ -527,53 +589,9 @@ export const make = Effect.gen(function* () {
       }
     }),
 
-    setState: Effect.fn("GitHubIssueTracker.setState")(function* (input) {
-      const { path, id, state, stateReason, owner, name, number } = yield* verifiedIssue(
-        input,
-        "setState",
-      );
-      const statuses = planningStatusesOf(
-        (yield* issueStatuses(input, owner, name, number, "setState"))?.planningStatuses,
-      );
-      const status = statuses.find((candidate) => candidate.name === input.state);
-      // Closing as a duplicate through a status needs the original issue, which nothing here
-      // names; closing it over REST leaves GitHub to pick the duplicate status.
-      if (status !== undefined && status.category.key !== "duplicate") {
-        return yield* client
-          .SetIssueStatus({ issueId: id, statusId: status.id })
-          .pipe(graphql(input.host, "setState"), Effect.asVoid);
-      }
-      if (status === undefined && statuses.length > 0) {
-        return yield* invalid("setState", `This repository has no "${input.state}" issue status.`);
-      }
-      const wanted =
-        status === undefined
-          ? ISSUE_STATES.find((candidate) => candidate.name === input.state)
-          : toPlanningState(status);
-      if (wanted === undefined) {
-        return yield* invalid("setState", `A GitHub issue has no "${input.state}" state.`);
-      }
-      const reason = wanted.closeReason?.replace("-", "_");
-      // GitHub ignores `state_reason` unless the state changes, and would answer with success.
-      if (reason !== undefined && state === "CLOSED" && stateReason?.toLowerCase() !== reason) {
-        return yield* invalid(
-          "setState",
-          "GitHub cannot change why a closed issue was closed. Reopen it, then close it again.",
-        );
-      }
-      yield* api
-        .rest({
-          host: input.host,
-          operation: "setState",
-          method: "PATCH",
-          path,
-          body: {
-            state: wanted.category,
-            ...(reason === undefined ? {} : { state_reason: reason }),
-          },
-        })
-        .pipe(Effect.mapError(fail("setState")));
-    }),
+    setState: (input: IssueTarget & { readonly state: string }) =>
+      Effect.flatten(prepareStateChange(input)),
+    prepareStateChange,
 
     setReaction: Effect.fn("GitHubIssueTracker.setReaction")(function* (input) {
       let subjectId: string;
