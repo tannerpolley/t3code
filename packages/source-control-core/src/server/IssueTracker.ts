@@ -6,7 +6,6 @@ import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type {
   IssueState,
-  IssueStateCategory,
   IssueCandidates,
   IssueCapabilities,
   IssueComment,
@@ -187,11 +186,6 @@ export interface IssueTrackerApi {
   readonly setState?: (
     input: IssueTarget & { readonly state: string },
   ) => Effect.Effect<void, IssueTrackerError>;
-
-  /** Resolves a category to a write without sending it. A close uses the completed reason. */
-  readonly prepareStateChange?: (
-    input: IssueTarget & { readonly state: { readonly category: IssueStateCategory } },
-  ) => Effect.Effect<Effect.Effect<void, IssueTrackerError>, IssueTrackerError>;
 
   /**
    * Adds a reaction or takes it back. `subjectId` is a comment id as the detail carried it;

@@ -44,7 +44,6 @@ export function asIssueTrackerAccount(
     comment,
     update,
     setState,
-    prepareStateChange,
     setReaction,
     listTemplates,
     listCandidates,
@@ -63,8 +62,6 @@ export function asIssueTrackerAccount(
     comment: comment && ((input) => as(comment(input))),
     update: update && ((input) => as(update(input))),
     setState: setState && ((input) => as(setState(input))),
-    prepareStateChange:
-      prepareStateChange && ((input) => as(prepareStateChange(input)).pipe(Effect.map(as))),
     setReaction: setReaction && ((input) => as(setReaction(input))),
     listTemplates: listTemplates && ((input) => as(listTemplates(input))),
     listCandidates: listCandidates && ((input) => as(listCandidates(input))),
