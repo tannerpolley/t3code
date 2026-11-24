@@ -143,7 +143,7 @@ export interface ThreadLaunchInput {
 
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "linkOrigin"
 > & {
   readonly reusedWorktree?: { readonly baseRef: string };
   readonly managedIssue?: ThreadLinkedIssue;
@@ -978,6 +978,7 @@ const make = Effect.gen(function* () {
                   projectStart: { refName: startRef, baseRefName },
                   baseBranch: input.workspaceStrategy.baseRef,
                   startFromOrigin: input.workspaceStrategy.startFromOrigin === true,
+                  projectCommands: TaskFolders.linkRunsProjectCommands(input.linkOrigin),
                   projectProgress: progress,
                   onClaimed: (taskFolder, claimedBranch) =>
                     Effect.sync(() => {
@@ -1319,6 +1320,7 @@ const make = Effect.gen(function* () {
                       root: removedTaskFolder,
                       force: true,
                       forget: true,
+                      projectCommands: TaskFolders.linkRunsProjectCommands(input.linkOrigin),
                       deleteBranch: removedBranch ?? undefined,
                     })
                     .pipe(
@@ -1931,6 +1933,7 @@ const make = Effect.gen(function* () {
         projectId: thread.projectId,
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
         ...(thread.linkedIssue === undefined ? {} : { managedIssue: thread.linkedIssue }),
+        ...(thread.linkOrigin === undefined ? {} : { linkOrigin: thread.linkOrigin }),
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
         ...(message === undefined
           ? {}
