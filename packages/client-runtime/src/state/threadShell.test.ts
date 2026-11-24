@@ -61,6 +61,58 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
 }
 
 describe("v2 thread shell lists", () => {
+  it("updates the worker that owns a parent's background command as its roster changes", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const parent = { ...v2ThreadShell, status: "completed" as const, activityRunStatus: null };
+    const child: OrchestrationV2ThreadShell = {
+      ...parent,
+      id: ThreadId.make("command-owner"),
+      lineage: {
+        parentThreadId: parent.id,
+        rootThreadId: parent.id,
+        relationshipToParent: "subagent",
+      },
+      linkedIssue: {
+        host: "github.com",
+        repository: "owner/repo",
+        repositoryId: "1",
+        id: "610",
+        nodeId: "I_610",
+        number: 610,
+        title: "Worker",
+        url: "https://github.com/owner/repo/issues/610",
+      },
+    };
+    const list = threads.quietThreadShellsAtom;
+    const dispose = registry.mount(list);
+    try {
+      const states = (
+        pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"],
+      ) => {
+        registry.set(snapshotAtom(environmentId), {
+          ...v2ShellSnapshot,
+          threads: [{ ...parent, pendingBackgroundTasks }, child],
+        });
+        return registry.get(list).map(({ id, issueWorkerWorking }) => [id, issueWorkerWorking]);
+      };
+      expect(states([])).toEqual([
+        [parent.id, false],
+        [child.id, false],
+      ]);
+      expect(states([{ kind: "command", taskId: "fit", ownerThreadId: child.id }])).toEqual([
+        [parent.id, false],
+        [child.id, true],
+      ]);
+      expect(states([])).toEqual([
+        [parent.id, false],
+        [child.id, false],
+      ]);
+    } finally {
+      dispose();
+      registry.dispose();
+    }
+  });
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {

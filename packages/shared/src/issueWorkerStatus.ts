@@ -25,6 +25,7 @@ export function isIssueWorkerChild(
 export function issueWorkerIsWorking(
   thread: Pick<
     OrchestrationV2ThreadShell,
+    | "id"
     | "status"
     | "activityRunStatus"
     | "explicitStopRequested"
@@ -34,22 +35,26 @@ export function issueWorkerIsWorking(
     | "linkedIssue"
     | "pendingBackgroundTasks"
   >,
+  parentTasks: NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]> = [],
 ): boolean {
   const status = thread.activityRunStatus ?? thread.status;
-  if (thread.archivedAt !== null || status === "queued") return false;
+  if (thread.archivedAt !== null || status === "queued" || status === "failed") return false;
+  if (status === "preparing" || status === "starting" || status === "running") return true;
+  if (managedImplementorAwaitingSubagent(thread)) return true;
+
   const tasks = thread.pendingBackgroundTasks ?? [];
+  const ownerOf = (task: (typeof tasks)[number]) => task.ownerThreadId ?? task.childThreadId;
+  if (
+    isIssueWorkerChild(thread) &&
+    !isExplicitlyPausedThread(thread) &&
+    (tasks.some((task) => task.kind === "command" && (ownerOf(task) ?? thread.id) === thread.id) ||
+      parentTasks.some((task) => task.kind === "command" && ownerOf(task) === thread.id))
+  )
+    return true;
   return (
-    status === "preparing" ||
-    status === "starting" ||
-    status === "running" ||
-    managedImplementorAwaitingSubagent(thread) ||
-    (status !== "failed" &&
-      !isExplicitlyPausedThread(thread) &&
-      isIssueWorkerChild(thread) &&
-      tasks.some((task) => task.kind === "command")) ||
-    (status === "waiting" &&
-      !tasks.some((task) => task.kind === "monitor") &&
-      !backgroundWorkHoldsCompletion(tasks))
+    status === "waiting" &&
+    !tasks.some((task) => task.kind === "monitor") &&
+    !backgroundWorkHoldsCompletion(tasks)
   );
 }
 
@@ -61,6 +66,7 @@ export function classifyIssueWorker(
     > | null;
   },
   parent?: RoutedRequestParent,
+  parentTasks?: OrchestrationV2ThreadShell["pendingBackgroundTasks"],
 ): WorkerState {
   if (thread.archivedAt !== null) return { status: "idle" };
   const request = thread.pendingRuntimeRequest?.kind;
@@ -74,7 +80,7 @@ export function classifyIssueWorker(
   }
   const status = thread.activityRunStatus ?? thread.status;
   if (status === "queued") return { status: "queued" };
-  if (issueWorkerIsWorking(thread)) return { status: "working" };
+  if (issueWorkerIsWorking(thread, parentTasks)) return { status: "working" };
   if (status === "failed") return { status: "failed" };
   return isExplicitlyPausedThread(thread) ? { status: "idle", paused: true } : { status: "idle" };
 }

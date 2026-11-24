@@ -86,13 +86,17 @@ export function resolveThreadActivity(thread: ThreadActivityInput): ThreadActivi
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return "request";
   const status = thread.runtime?.status;
   if (status === "preparing" || status === "starting") return "connecting";
-  if (thread.issueWorkerWorking) return "working";
-  if (status === "queued" || (status === "running" && thread.blockedOnThreadWait)) return "waiting";
+  if (
+    status === "queued" ||
+    (status === "running" && thread.blockedOnThreadWait && !thread.issueWorkerWorking)
+  )
+    return "waiting";
   if (status === "running" || status === "waiting") return "working";
   if (thread.runtime?.silentWakeAttention !== undefined) return "failed";
   if (status === "failed" || thread.latestRun?.status === "failed") {
     return thread.runtime?.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
+  if (thread.issueWorkerWorking) return "working";
   if (status === "idle" || backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []))
     return "waiting";
   return "ready";
