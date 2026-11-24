@@ -1,4 +1,8 @@
-import { type ThreadId, workerListParentIds } from "@t3tools/contracts";
+import {
+  isProviderNativeSubagentThread,
+  type ThreadId,
+  workerListParentIds,
+} from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { isIssueWorkerChild } from "@t3tools/shared/issueWorkerStatus";
 
@@ -90,6 +94,9 @@ export function sidebarWorkerRecedes(
   thread: SidebarThreadSummary,
   issueWorkerStatus: string | null | undefined,
 ) {
-  if (thread.pinnedAt != null || thread.source.role === "writer") return false;
+  if (thread.pinnedAt != null) return false;
+  // A provider-native "writer" cannot take follow-ups, so only a T3 Writer stays bright.
+  if (thread.source.role === "writer" && !isProviderNativeSubagentThread(thread.source))
+    return false;
   return !isIssueWorkerChild(thread.source) || issueWorkerStatus === "done";
 }
