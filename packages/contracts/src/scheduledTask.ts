@@ -239,7 +239,7 @@ export function scheduledTaskThreadMode(
   return task.threadMode ?? (task.threadId === null ? "new_thread" : "continue");
 }
 
-const ScheduledTaskAction = Schema.Literals(["prompt", "usage_budget"]);
+export const ScheduledTaskAction = Schema.Literals(["prompt", "usage_budget"]);
 
 export const ScheduledTask = Schema.Struct({
   action: Schema.optionalKey(ScheduledTaskAction),

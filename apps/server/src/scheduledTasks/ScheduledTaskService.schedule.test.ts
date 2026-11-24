@@ -629,6 +629,12 @@ it.effect(
           schedule: before.schedule,
           prompt: "Usage budget report",
         });
+        const edited = (yield* service.upsert({ ...input, title: "Weekly usage budget" })).task;
+        expect(edited.action).toBe("usage_budget");
+        const webhook = yield* service
+          .upsert({ ...input, enabled: false, schedule: { type: "webhook" } })
+          .pipe(Effect.flip);
+        expect(webhook.message).toBe("Usage budget reports require a time-based schedule.");
         yield* TestClock.adjust("1 second");
         yield* Effect.flatten(Ref.get(tick));
         yield* Effect.flatten(Ref.get(tick));
