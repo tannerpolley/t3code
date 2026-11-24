@@ -59,6 +59,18 @@ it("keeps settled workers under their parent, bounds the initial page, and revea
   expect(
     remainingSidebarWorkers([newest], [{ ...writer, createdAt: newest.createdAt }], 10, firstPage),
   ).toBe(1);
+  expect(
+    remainingSidebarWorkers(
+      [],
+      [{ ...writer, id: ThreadId.make("worker-﨑"), createdAt: newest.createdAt }],
+      10,
+      {
+        ...firstPage,
+        nextWorkerPage: { ...firstPage.nextWorkerPage, threadId: ThreadId.make("worker-𠀀") },
+        remainingWorkers: 1,
+      },
+    ),
+  ).toBe(0);
 });
 
 it("nests a worker's own children under that worker, and lists them under the root once it is archived", () => {

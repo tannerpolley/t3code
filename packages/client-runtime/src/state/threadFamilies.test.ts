@@ -35,7 +35,11 @@ import {
 } from "./threadFamilies.ts";
 
 const row = (id: string, title = id) =>
-  ({ id: ThreadId.make(id), title }) as unknown as OrchestrationV2ThreadShell;
+  ({
+    id: ThreadId.make(id),
+    title,
+    lineage: { rootThreadId: ThreadId.make(id), parentThreadId: null, relationshipToParent: null },
+  }) as unknown as OrchestrationV2ThreadShell;
 
 describe("threadFamilyRowsMissingFromShell", () => {
   it("adds only the rows the shell left out, once, with shell rows winning", () => {
@@ -238,7 +242,7 @@ describe("createThreadFamilyAtoms", () => {
       releaseFamily();
 
       const key = JSON.stringify([TARGET.environmentId, parent.id]);
-      const { count, state, rows } = families.workerPages(key);
+      const { count, nestedPageCount, state, rows } = families.workerPages(key);
       families.mountRows(registry, TARGET.environmentId, key, rows);
       const whenSettled = AtomRegistry.toStream(registry, state).pipe(
         Stream.filter((result) => !result.waiting),
@@ -257,7 +261,7 @@ describe("createThreadFamilyAtoms", () => {
         }),
       );
       expect((yield* whenSettled).pages).toHaveLength(1);
-      registry.set(count, 2);
+      registry.set(nestedPageCount, 2);
       expect((yield* Queue.take(workerRequests)).workers).toEqual({ before: cursor });
       expect(mergedIds()).toEqual(["parent", "idle-child"]);
       yield* Queue.offer(
@@ -277,6 +281,9 @@ describe("createThreadFamilyAtoms", () => {
       );
       expect((yield* whenSettled).pages).toHaveLength(2);
       expect(mergedIds()).toEqual(["parent", "idle-child", "unseen"]);
+      expect(registry.get(count)).toBe(1);
+      registry.set(count, 2);
+      expect(registry.get(state).pages).toHaveLength(2);
 
       registry.set(
         shellState,
@@ -294,6 +301,34 @@ describe("createThreadFamilyAtoms", () => {
       expect(refreshed.pages).toHaveLength(1);
       expect(refreshed.pages[0]?.remainingWorkers).toBe(0);
       expect(mergedIds()).toEqual(["parent", "idle-child"]);
+
+      const restored = {
+        ...row("restored"),
+        lineage: {
+          rootThreadId: parent.id,
+          parentThreadId: parent.id,
+          relationshipToParent: "subagent" as const,
+        },
+      };
+      registry.set(
+        shellState,
+        AsyncResult.success({
+          ...shellAt(2),
+          snapshot: Option.some({
+            ...shellSnapshot,
+            snapshotSequence: 7,
+            threads: [parent, restored],
+          }),
+          removedAt: new Map([[unseen.id, 6]]),
+        }),
+      );
+      expect(registry.get(state).waiting).toBe(true);
+      expect((yield* Queue.take(workerRequests)).workers).toEqual({});
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({ snapshotSequence: 7, threads: [child], remainingWorkers: 0 }),
+      );
+      expect((yield* whenSettled).pages[0]?.snapshotSequence).toBe(7);
     }),
   );
 });
