@@ -1,6 +1,13 @@
+import { getTranslationsSnapshot, initializeGT } from "gt-react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { formatElapsedSeconds, formatExpiresInLabel } from "./timestampFormat";
+import { getActiveLocale, setActiveLocale } from "./i18n/messages";
+import ja from "./i18n/translations/ja.json";
+import {
+  formatCompactElapsedSeconds,
+  formatElapsedSeconds,
+  formatExpiresInLabel,
+} from "./timestampFormat";
 
 describe("formatExpiresInLabel", () => {
   beforeEach(() => {
@@ -29,5 +36,22 @@ describe("formatElapsedSeconds", () => {
     [123 * 3600 + 59 * 60, "05d 03h"],
   ])("formats %d seconds as %s", (seconds, expected) => {
     expect(formatElapsedSeconds(seconds)).toBe(expected);
+  });
+
+  it("uses Japanese duration units while preserving padding and compact thresholds", async () => {
+    initializeGT({
+      defaultLocale: "en",
+      locales: ["en", "ja"],
+      loadTranslations: async (locale) => (locale === "ja" ? ja : {}),
+    });
+    await getTranslationsSnapshot("ja");
+    const previous = getActiveLocale();
+    using _locale = { [Symbol.dispose]: () => setActiveLocale(previous) };
+    setActiveLocale("ja");
+
+    expect(formatElapsedSeconds(65)).toBe("01分05秒");
+    expect(formatElapsedSeconds(24 * 3600)).toBe("01日00時間");
+    expect(formatCompactElapsedSeconds(90)).toBe("1分");
+    expect(formatCompactElapsedSeconds(1000 * 24 * 60 * 60)).toBe("2.7年");
   });
 });

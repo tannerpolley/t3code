@@ -13237,5 +13237,12 @@
   "519dd506361059c9": "Comando",
   "b851b1f4c772dea4": "Esperando",
   "83915f0968cde2cc": "En ejecución",
-  "e7b4d35b3eeeb470": "Salida HTML de la celda {number}"
+  "e7b4d35b3eeeb470": "Salida HTML de la celda {number}",
+  "49cc06e79f21f85a": "{seconds} s",
+  "8603d41c52392f1d": "{minutes} min {seconds} s",
+  "f2a955905704b91d": "{hours} h {minutes} min",
+  "3609f564a63c8eca": "{minutes} min",
+  "9251bb742f60720d": "{hours} h",
+  "c875f7fa9a48560a": "worktree ubicación carpeta directorio ruta unidad disco externo",
+  "6657d32cd7e24f26": "{years}a"
 }

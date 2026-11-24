@@ -13242,5 +13242,12 @@
   "519dd506361059c9": "Befehl",
   "b851b1f4c772dea4": "Wartet",
   "83915f0968cde2cc": "Läuft",
-  "e7b4d35b3eeeb470": "HTML-Ausgabe von Zelle {number}"
+  "e7b4d35b3eeeb470": "HTML-Ausgabe von Zelle {number}",
+  "49cc06e79f21f85a": "{seconds} s",
+  "8603d41c52392f1d": "{minutes} Min. {seconds} s",
+  "f2a955905704b91d": "{hours} Std. {minutes} Min.",
+  "3609f564a63c8eca": "{minutes} Min.",
+  "9251bb742f60720d": "{hours} Std.",
+  "c875f7fa9a48560a": "worktree speicherort ordner verzeichnis pfad laufwerk externe festplatte",
+  "6657d32cd7e24f26": "{years} J."
 }

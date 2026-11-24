@@ -13251,5 +13251,12 @@
   "519dd506361059c9": "Command",
   "b851b1f4c772dea4": "Waiting",
   "83915f0968cde2cc": "Running",
-  "e7b4d35b3eeeb470": "Cell {number} HTML output"
+  "e7b4d35b3eeeb470": "Cell {number} HTML output",
+  "49cc06e79f21f85a": "{seconds}s",
+  "8603d41c52392f1d": "{minutes}m {seconds}s",
+  "f2a955905704b91d": "{hours}h {minutes}m",
+  "3609f564a63c8eca": "{minutes}m",
+  "9251bb742f60720d": "{hours}h",
+  "c875f7fa9a48560a": "worktree location folder directory path drive external disk",
+  "6657d32cd7e24f26": "{years}y"
 }

@@ -13179,5 +13179,12 @@
   "519dd506361059c9": "명령",
   "b851b1f4c772dea4": "대기 중",
   "83915f0968cde2cc": "실행 중",
-  "e7b4d35b3eeeb470": "셀 {number} HTML 출력"
+  "e7b4d35b3eeeb470": "셀 {number} HTML 출력",
+  "49cc06e79f21f85a": "{seconds}초",
+  "8603d41c52392f1d": "{minutes}분 {seconds}초",
+  "f2a955905704b91d": "{hours}시간 {minutes}분",
+  "3609f564a63c8eca": "{minutes}분",
+  "9251bb742f60720d": "{hours}시간",
+  "c875f7fa9a48560a": "워크트리 위치 폴더 디렉터리 경로 드라이브 외장 디스크",
+  "6657d32cd7e24f26": "{years}년"
 }

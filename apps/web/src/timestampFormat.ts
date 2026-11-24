@@ -478,28 +478,54 @@ export function formatExpiresInLabel(
 }
 
 /** The two largest units, zero-padded: "05m 09s", "01h 05m", then "03d 04h". */
-export function formatElapsedSeconds(totalSeconds: number): string {
+export function formatElapsedSeconds(totalSeconds: number, resolve: MessageResolver = m): string {
   const seconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
   const pad = (value: number) => String(value).padStart(2, "0");
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
-  if (hours >= 24) return `${pad(Math.floor(hours / 24))}d ${pad(hours % 24)}h`;
-  if (hours > 0) return `${pad(hours)}h ${pad(minutes % 60)}m`;
-  return `${pad(minutes)}m ${pad(seconds % 60)}s`;
+  if (hours >= 24) {
+    return resolve(
+      msg("{days}d {hours}h", { days: pad(Math.floor(hours / 24)), hours: pad(hours % 24) }),
+    );
+  }
+  if (hours > 0) {
+    return resolve(
+      msg("{hours}h {minutes}m", {
+        hours: pad(hours),
+        minutes: pad(minutes % 60),
+        $context: "elapsed time, hours and minutes",
+      }),
+    );
+  }
+  return resolve(
+    msg("{minutes}m {seconds}s", {
+      minutes: pad(minutes),
+      seconds: pad(seconds % 60),
+      $context: "elapsed time, minutes and seconds",
+    }),
+  );
 }
 
-/** Short form for tight rows; at most four characters, rounded down. */
-export function formatCompactElapsedSeconds(totalSeconds: number): string {
+/** Short form for tight rows, rounded down. */
+export function formatCompactElapsedSeconds(
+  totalSeconds: number,
+  resolve: MessageResolver = m,
+): string {
   const seconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60)
+    return resolve(msg("{seconds}s", { seconds, $context: "elapsed time, seconds" }));
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60)
+    return resolve(msg("{minutes}m", { minutes, $context: "elapsed time, minutes" }));
   const hours = Math.floor(minutes / 60);
-  if (hours < 10) return `${Math.floor(minutes / 6) / 10}h`;
-  if (hours < 1000) return `${hours}h`;
+  if (hours < 1000) {
+    const rounded = hours < 10 ? Math.floor(minutes / 6) / 10 : hours;
+    return resolve(msg("{hours}h", { hours: rounded, $context: "elapsed time, hours" }));
+  }
   const days = Math.floor(hours / 24);
-  if (days < 1000) return `${days}d`;
+  if (days < 1000) return daysLabel(days, resolve);
   const years = days / 365;
-  if (years < 10) return `${Math.floor(years * 10) / 10}y`;
-  return years < 1000 ? `${Math.floor(years)}y` : ">99y";
+  const rounded = years < 10 ? Math.floor(years * 10) / 10 : years < 1000 ? Math.floor(years) : 99;
+  const label = resolve(msg("{years}y", { years: rounded, $context: "elapsed time, years" }));
+  return years < 1000 ? label : `>${label}`;
 }

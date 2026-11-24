@@ -13261,5 +13261,12 @@
   "519dd506361059c9": "命令",
   "b851b1f4c772dea4": "等待中",
   "83915f0968cde2cc": "运行中",
-  "e7b4d35b3eeeb470": "单元格 {number} 的 HTML 输出"
+  "e7b4d35b3eeeb470": "单元格 {number} 的 HTML 输出",
+  "49cc06e79f21f85a": "{seconds} 秒",
+  "8603d41c52392f1d": "{minutes} 分 {seconds} 秒",
+  "f2a955905704b91d": "{hours} 小时 {minutes} 分钟",
+  "3609f564a63c8eca": "{minutes} 分钟",
+  "9251bb742f60720d": "{hours} 小时",
+  "c875f7fa9a48560a": "工作树 位置 文件夹 目录 路径 驱动器 外部 磁盘",
+  "6657d32cd7e24f26": "{years}年"
 }

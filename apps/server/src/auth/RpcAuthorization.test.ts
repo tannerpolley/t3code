@@ -1129,24 +1129,40 @@ it.effect.each([false, true])(
     }).pipe(Effect.scoped),
 );
 
-it.effect("requires provider management to send /logout through chat", () =>
+it.effect("requires provider management for sign-outs, including workspace continuations", () =>
   Effect.gen(function* () {
+    const dispatchMethod = ORCHESTRATION_V2_WS_METHODS.dispatchCommand;
+    const returnMethod = WS_METHODS.worktreeReturnToRoot;
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
         (
           tag,
         ): tag is Exclude<
           keyof typeof RPC_REQUIRED_SCOPES,
-          typeof ORCHESTRATION_V2_WS_METHODS.dispatchCommand
-        > => tag !== ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+          typeof dispatchMethod | typeof returnMethod
+        > => tag !== dispatchMethod && tag !== returnMethod,
       ),
     );
     const handled: string[] = [];
-    const handler = group.toLayerHandler(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, (command) =>
-      Effect.sync(() => {
-        handled.push(command.commandId);
-        return { sequence: 1 };
-      }),
+    const handler = Layer.merge(
+      group.toLayerHandler(dispatchMethod, (command) =>
+        Effect.sync(() => {
+          handled.push(command.commandId);
+          return { sequence: 1 };
+        }),
+      ),
+      group.toLayerHandler(returnMethod, (input) =>
+        Effect.sync(() => {
+          handled.push(input.threadId);
+          return {
+            projectWorkspaceRoot: "/repo",
+            worktreePath: null,
+            branch: null,
+            continuation: { status: "skipped" as const },
+            note: "Returned to root",
+          };
+        }),
+      ),
     );
     const message = (commandId: string, text: string) => ({
       type: "message.dispatch" as const,
@@ -1166,6 +1182,13 @@ it.effect("requires provider management to send /logout through chat", () =>
       runId: RunId.make("run"),
       text: "/logout",
     });
+    const workspaceUpdate = (commandId: string, text: string) => ({
+      type: "thread.metadata.update" as const,
+      commandId: CommandId.make(commandId),
+      threadId: ThreadId.make("thread"),
+      worktreePath: "/repo/.worktrees/topic",
+      continuation: { messageId: MessageId.make(commandId), text },
+    });
     // With an attachment, `/logout` reaches the provider as a prompt, not a sign-out.
     const attachments = [
       { type: "image" as const, id: "shot", name: "shot.png", mimeType: "image/png", sizeBytes: 1 },
@@ -1173,15 +1196,26 @@ it.effect("requires provider management to send /logout through chat", () =>
     const operator = yield* RpcTest.makeClient(group).pipe(
       Effect.provide(Layer.merge(handler, RpcAuthorization.layer([AuthOrchestrationOperateScope]))),
     );
-    const dispatch = operator[ORCHESTRATION_V2_WS_METHODS.dispatchCommand];
+    const dispatch = operator[dispatchMethod];
     yield* dispatch(message("hello", "hello"));
     yield* dispatch({ ...message("attached", "/logout"), attachments });
     yield* dispatch({ ...edit("attached-edit"), attachments });
     // This edit keeps the queued attachments; message intake decides it.
     yield* dispatch(edit("kept-attachments-edit"));
-    for (const command of [message("logout", " /LOGOUT "), { ...edit("edit"), attachments: [] }]) {
-      expect(yield* dispatch(command).pipe(Effect.flip)).toMatchObject({
-        requiredPermission: AuthProvidersManageScope,
+    yield* dispatch(workspaceUpdate("workspace-update", "Continue the review"));
+    yield* operator[returnMethod]({ threadId: ThreadId.make("return-to-root") });
+    const denials = yield* Effect.all([
+      dispatch(message("logout", " /LOGOUT ")).pipe(Effect.result),
+      dispatch({ ...edit("edit"), attachments: [] }).pipe(Effect.result),
+      dispatch(workspaceUpdate("workspace-logout", " /LOGOUT ")).pipe(Effect.result),
+      operator[returnMethod]({
+        threadId: ThreadId.make("return-logout"),
+        continuationPrompt: "/logout",
+      }).pipe(Effect.result),
+    ]);
+    for (const denial of denials) {
+      expect(denial).toMatchObject({
+        failure: { requiredPermission: AuthProvidersManageScope },
       });
     }
     const manager = yield* RpcTest.makeClient(group).pipe(
@@ -1192,13 +1226,22 @@ it.effect("requires provider management to send /logout through chat", () =>
         ),
       ),
     );
-    yield* manager[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message("manager", "/logout"));
+    yield* manager[dispatchMethod](message("manager", "/logout"));
+    yield* manager[dispatchMethod](workspaceUpdate("manager-workspace", "/logout"));
+    yield* manager[returnMethod]({
+      threadId: ThreadId.make("manager-return"),
+      continuationPrompt: "/logout",
+    });
     expect(handled).toEqual([
       "hello",
       "attached",
       "attached-edit",
       "kept-attachments-edit",
+      "workspace-update",
+      "return-to-root",
       "manager",
+      "manager-workspace",
+      "manager-return",
     ]);
   }).pipe(Effect.scoped),
 );

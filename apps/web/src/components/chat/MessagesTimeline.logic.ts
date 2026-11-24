@@ -1346,7 +1346,7 @@ function deriveTurnFolds(input: {
               lastEntryEnd,
           );
     const { resolve } = input;
-    const duration = elapsedMs !== null ? formatElapsedSeconds(elapsedMs / 1000) : null;
+    const duration = elapsedMs !== null ? formatElapsedSeconds(elapsedMs / 1000, resolve) : null;
     const label = isLatestInterruptedTurn
       ? duration
         ? resolve(msg("You stopped after {duration}", { duration }))

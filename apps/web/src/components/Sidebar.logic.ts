@@ -1459,11 +1459,12 @@ export function resolveWorkingStartedAt(
 
 export function formatStoppedThreadDuration(
   thread: Pick<SidebarThreadSummary, "latestRun" | "source">,
+  resolve: MessageResolver = m,
 ): string | null {
   // Older shells synthesize completedAt from updatedAt; that is age, not a known finish.
   if (!thread.latestRun || thread.source.latestRunCompletedAt == null) return null;
   const elapsedMs = deriveSubagentElapsedMs({ ...thread.latestRun, status: "completed" }, 0);
-  return elapsedMs === null ? null : formatElapsedSeconds(elapsedMs / 1000);
+  return elapsedMs === null ? null : formatElapsedSeconds(elapsedMs / 1000, resolve);
 }
 
 export function resolveThreadStatusPill(input: {

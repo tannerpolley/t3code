@@ -13242,5 +13242,12 @@
   "519dd506361059c9": "Commande",
   "b851b1f4c772dea4": "En attente",
   "83915f0968cde2cc": "En cours",
-  "e7b4d35b3eeeb470": "Sortie HTML de la cellule {number}"
+  "e7b4d35b3eeeb470": "Sortie HTML de la cellule {number}",
+  "49cc06e79f21f85a": "{seconds} s",
+  "8603d41c52392f1d": "{minutes} min {seconds} s",
+  "f2a955905704b91d": "{hours} h {minutes} min",
+  "3609f564a63c8eca": "{minutes} min",
+  "9251bb742f60720d": "{hours} h",
+  "c875f7fa9a48560a": "emplacement worktree dossier répertoire chemin lecteur disque externe",
+  "6657d32cd7e24f26": "{years}a"
 }

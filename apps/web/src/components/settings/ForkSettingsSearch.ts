@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import type { SettingsSearchItem } from "./settingsSearch";
 
 export const FORK_SETTINGS_SEARCH_ITEMS = [
@@ -25,11 +26,12 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "storage-worktrees-location",
-    title: "Worktree location",
+    title: msg("Worktree location"),
     to: "/settings/worktrees",
     scope: "environment-defaults",
     searchTerms: [
-      "worktree location folder directory path drive external disk inside project local .worktrees customizations",
+      msg("worktree location folder directory path drive external disk"),
+      "inside project local .worktrees customizations",
     ],
   },
   {

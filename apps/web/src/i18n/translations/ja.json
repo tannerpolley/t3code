@@ -13183,5 +13183,12 @@
   "519dd506361059c9": "コマンド",
   "b851b1f4c772dea4": "待機中",
   "83915f0968cde2cc": "実行中",
-  "e7b4d35b3eeeb470": "セル {number} の HTML 出力"
+  "e7b4d35b3eeeb470": "セル {number} の HTML 出力",
+  "49cc06e79f21f85a": "{seconds}秒",
+  "8603d41c52392f1d": "{minutes}分{seconds}秒",
+  "f2a955905704b91d": "{hours}時間{minutes}分",
+  "3609f564a63c8eca": "{minutes}分",
+  "9251bb742f60720d": "{hours}時間",
+  "c875f7fa9a48560a": "ワークツリー 場所 フォルダー ディレクトリ パス ドライブ 外付け ディスク worktree location",
+  "6657d32cd7e24f26": "{years}年"
 }

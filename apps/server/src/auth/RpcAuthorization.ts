@@ -27,6 +27,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationV2Command,
   type OrchestrationV2ThreadLaunchInput,
+  type WorktreeReturnToRootInput,
   AuthTerminalReadScope,
   type AuthEnvironmentScope,
   EnvironmentAuthorizationError,
@@ -293,6 +294,9 @@ const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 const decodeSecretRequestAnswer = Schema.decodeUnknownSync(SecretRequestAnswerInput);
 
+const isBareProviderSignOutPrompt = (text: string | undefined): boolean =>
+  text !== undefined && isProviderSignOutPrompt({ text, attachments: [] });
+
 /**
  * A queued edit that omits `attachments` keeps the queued ones, which a payload cannot show;
  * ThreadMessageIntake.dispatchCommand decides that case.
@@ -302,18 +306,23 @@ const sendsProviderSignOutPrompt = (method: string, payload: unknown): boolean =
     const message = (payload as OrchestrationV2ThreadLaunchInput).initialMessage;
     return message !== undefined && isProviderSignOutPrompt(message);
   }
+  if (method === WS_METHODS.worktreeReturnToRoot) {
+    return isBareProviderSignOutPrompt((payload as WorktreeReturnToRootInput).continuationPrompt);
+  }
   if (method !== ORCHESTRATION_V2_WS_METHODS.dispatchCommand) return false;
   const command = payload as OrchestrationV2Command;
   switch (command.type) {
     case "message.dispatch":
       return isProviderSignOutPrompt(command);
+    case "thread.metadata.update":
+      return isBareProviderSignOutPrompt(command.continuation?.text);
     case "queued-run.edit":
       return (
         command.attachments !== undefined &&
         isProviderSignOutPrompt({ text: command.text, attachments: command.attachments })
       );
     case "delegated_task.request":
-      return isProviderSignOutPrompt({ text: command.task, attachments: [] });
+      return isBareProviderSignOutPrompt(command.task);
     default:
       return false;
   }
