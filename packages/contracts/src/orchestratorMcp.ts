@@ -29,7 +29,12 @@ import {
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
-import { ProviderInteractionMode, ProviderRequestKind, RuntimeMode } from "./providerPolicy.ts";
+import {
+  DelegatedToolAdditions,
+  ProviderInteractionMode,
+  ProviderRequestKind,
+  RuntimeMode,
+} from "./providerPolicy.ts";
 import { PullRequestState } from "./pullRequest.ts";
 import {
   ThreadLinkedPullRequest,
@@ -213,6 +218,10 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     description: "Mode 'wait' only. At most 45 s. A timeout does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  enableTools: Schema.optional(DelegatedToolAdditions).annotate({
+    description:
+      "Restore configured tools for a Codex child. Apps includes remote plugins, browser includes computer and image tools, and documents includes PDF, spreadsheets and presentations. For auxiliary MCP, pass {mcpServer: NAME}.",
+  }),
   runtimeMode: Schema.optional(
     OrchestratorMcpRuntimeMode.annotate({
       description:

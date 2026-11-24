@@ -1,3 +1,4 @@
+import { automaticHandoffCompletion } from "./AutomaticRepositoryHandoff.ts";
 import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
 import { isDelegatedAppThread } from "@t3tools/contracts";
 import { silentWakeAction, SILENT_WAKE_FOLLOWUP, SILENT_WAKE_ATTENTION } from "./SilentWake.ts";
@@ -16,6 +17,7 @@ import {
 } from "./DelegatedRequestWake.ts";
 import { makeIssueQueueCommands } from "../issues/IssueQueueCommands.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import { IssueDraftPrRepositories } from "../issues/IssueWorkerBrief.ts";
 import { makeAppOwnedUserInputCommands } from "./AppOwnedUserInputCommands.ts";
 import { effectiveThreadRole, issueThreadTitle, worktreeRole } from "@t3tools/contracts";
 import {
@@ -116,7 +118,6 @@ import { threadQuietMinutes } from "@t3tools/shared/threadActivity";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1653,6 +1654,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const projectionStore = yield* ProjectionStoreV2;
   const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
+  const draftPrRepositories = yield* IssueDraftPrRepositories.pipe(Effect.orDie);
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
       Partial<Pick<OrchestrationV2ThreadProjection, "turnItems">>,
@@ -3911,6 +3913,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               parentRunId: task.runId,
               generation: delivery.generation,
               taskIds: remainingTaskIds,
+              ...(message.delegatedCompletion?.batched === undefined
+                ? {}
+                : { batched: message.delegatedCompletion.batched }),
+              containsFailure: remainingTasks.some((task) => task.status === "failed"),
             },
             updatedAt: now,
           },
@@ -4472,16 +4478,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    retiredRoot?: OrchestrationV2AppThread,
   ) {
-    let thread = yield* projectionStore.getThread(command.threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestratorProjectionError({
-            threadId: command.threadId,
-            cause,
-          }),
-      ),
-    );
+    let thread =
+      retiredRoot ??
+      (yield* projectionStore.getThread(command.threadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProjectionError({
+              threadId: command.threadId,
+              cause,
+            }),
+        ),
+      ));
     if (command.type === "thread.settle" && keepIssueWorktree(thread)) return;
     if (command.type === "thread.archive" && isRegisteredRepositoryRoot(thread)) {
       yield* repositoryWork.end(
@@ -5672,7 +5681,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (link) =>
           (command.type !== "thread.pull-request-link.sync" ||
             threadPullRequestKeysEqual(link, command)) &&
-          needsManagedPullRequestWatch(updatedThread, link),
+          needsManagedPullRequestWatch(updatedThread, link, draftPrRepositories),
       );
       if (candidates.length > 0) {
         const { runs } = yield* projectionStore
@@ -7817,6 +7826,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         parentRunId: requestedCompletion.parentRunId,
         generation: delivery.generation,
         taskIds: delivery.taskIds,
+        batched: delivery.dispatchAfterMs !== undefined,
+        containsFailure: projection.subagents.some(
+          (task) => delivery.taskIds.includes(task.id) && task.status === "failed",
+        ),
       };
     }
     // A steer that switches provider needs a new turn. A provider that cannot restart its
@@ -10179,6 +10192,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           creationSource: request.creationSource,
         }),
         ...issueWork.childIssueFields(request, parentProjection.thread.projectId, now),
+        ...(request.enableTools === undefined ? {} : { enableTools: request.enableTools }),
         ...(request.roleSkillSelection === undefined
           ? {}
           : { roleSkillSelection: request.roleSkillSelection }),
@@ -10732,6 +10746,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { readonly type: "delegated_task.remote.complete" }
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     // Delivery planning reads only this task and the undelivered tasks of the queued delivery;
     // the task's own node and turn item are all it updates besides.
@@ -10827,6 +10842,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       updatedTask,
       now,
     }).pipe(mapDispatchError(command));
+    if (
+      parentProjection.thread.handoffToThreadId !== undefined &&
+      plan.task.completionDelivery?.state === "disposed"
+    ) {
+      yield* Ref.update(effects, (pending) => [
+        ...pending,
+        automaticHandoffCompletion(command.parentThreadId, updatedTask, command.commandId),
+      ]);
+    }
     const emitEvent = emit(events, command);
     yield* emitEvent({
       type: "subagent.updated",
@@ -14991,6 +15015,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     parentRunId: input.task.runId,
                     generation: delivery.generation,
                     taskIds,
+                    batched:
+                      dispatchAfterMs !== undefined && delivery.dispatchAfterMs !== undefined,
+                    containsFailure:
+                      message.delegatedCompletion?.containsFailure === true ||
+                      input.updatedTask.status === "failed",
                   },
                   updatedAt: input.now,
                 },
@@ -15410,7 +15439,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: resultTransfer,
         },
       ];
-      yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
+      const wake =
+        parentProjection.thread.handoffToThreadId !== undefined &&
+        completionPlan.task.completionDelivery?.state === "disposed" &&
+        !cancelled
+          ? [automaticHandoffCompletion(parentThreadId, updatedTask, childRun.id)]
+          : [];
+      yield* writeSystemEvents(completionEvents, wake, { updateDelegatedCompletionOnly: true });
       yield* releaseFinishedDelegateSessions(childThreadId, childRun.id);
 
       if (completionPlan.offer) {
@@ -15976,19 +16011,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     dispatchWithReceiptEffect: (command) => dispatchWithReceiptEffect(command),
   });
 
-  const draftPrRepositories = yield* Config.String("T3CODE_ISSUE_DRAFT_PR_REPOSITORIES").pipe(
-    Config.withDefault(""),
-    Config.map(
-      (value) =>
-        new Set(
-          value
-            .toLowerCase()
-            .split(",")
-            .map((key) => key.trim()),
-        ),
-    ),
-    Effect.orDie,
-  );
   const issueWork = makeIssueWorkCommands({
     ...forkCommandHooks,
     draftPrRepositories,
@@ -16010,6 +16032,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     dispatchThreadCreate,
     dispatchMessage,
     getProjectionWithPendingEvents,
+    archiveRetiredRoot: (commandId, thread, events, effects) =>
+      dispatchThreadMutation(
+        { type: "thread.archive", commandId, threadId: thread.id },
+        events,
+        effects,
+        thread,
+      ),
   });
 
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
@@ -16526,7 +16555,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchRemoteDelegatedTaskRequest(command, events);
         break;
       case "delegated_task.remote.complete":
-        yield* dispatchRemoteDelegatedTaskComplete(command, events);
+        yield* dispatchRemoteDelegatedTaskComplete(command, events, effects);
         break;
       case "delegated_task.remote.stop":
         yield* dispatchRemoteDelegatedTaskStop(command, events);

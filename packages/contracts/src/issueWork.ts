@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Effect from "effect/Effect";
 
-import { CommandId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { CommandId, ProjectId, RunId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelRoleId } from "./threadRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
@@ -84,6 +84,7 @@ export const RepositoryPhase = Schema.Literals([
   "active",
   "paused",
   "handoff_awaiting_approval",
+  "handoff_verifying",
   "draining",
   "retired",
 ]);
@@ -91,17 +92,23 @@ export type RepositoryPhase = typeof RepositoryPhase.Type;
 type RepositoryPhaseFields = {
   readonly paused: boolean;
   readonly handoff?: { readonly status: "awaiting_approval" | "draining" } | undefined;
+  readonly automaticHandoff?: { readonly status: "verifying" | "failed" } | undefined;
   readonly retiredToThreadId?: string | null | undefined;
 };
 
 export const repositoryPhase = (config: RepositoryPhaseFields): RepositoryPhase => {
   if (config.retiredToThreadId !== undefined) return "retired";
+  if (config.automaticHandoff?.status === "verifying") return "handoff_verifying";
   if (config.handoff?.status === "draining") return "draining";
   if (config.handoff !== undefined) return "handoff_awaiting_approval";
   return config.paused ? "paused" : "active";
 };
 export const isValidRepositoryPhase = (config: RepositoryPhaseFields) =>
   !(config.retiredToThreadId !== undefined && config.handoff !== undefined) &&
+  !(
+    config.automaticHandoff?.status === "verifying" &&
+    (config.handoff !== undefined || config.retiredToThreadId !== undefined)
+  ) &&
   !(config.handoff?.status === "draining" && !config.paused);
 
 // Awaiting approval preserves the existing pause state; draining admits already queued work.
@@ -142,6 +149,15 @@ export const RepositoryOrchestration = Schema.Struct({
       modelSelection: ModelSelection,
       status: Schema.Literals(["awaiting_approval", "draining"]),
       wasPaused: Schema.Boolean,
+    }),
+  ),
+  automaticHandoff: Schema.optional(
+    Schema.Struct({
+      sourceRunId: RunId,
+      requestId: CommandId,
+      contextTokens: Schema.Int,
+      startedAt: Schema.String,
+      status: Schema.Literals(["verifying", "failed"]),
     }),
   ),
   handoffHistory: Schema.optional(

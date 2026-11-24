@@ -1,3 +1,6 @@
+import * as IssueWorkStore from "./issues/IssueWorkStore.ts";
+import * as IssueWorktreeSlots from "./issues/IssueWorktreeSlots.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { keepIssueWorktree } from "./issues/issueThreadRetention.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
@@ -7,6 +10,7 @@ import {
   GitCommandError,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
+  repositoryPhase,
 } from "@t3tools/contracts";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
@@ -62,6 +66,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
+import { makeHiddenTrackedChangeCheck } from "./vcs/hiddenTrackedChange.ts";
 import { isLinkedWorktree, removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { canonicalWorkspacePath, physicalWorkspacePath } from "./workspace/workspacePath.ts";
@@ -110,8 +115,6 @@ const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const REPORT_ENTRY_LIMIT = 200;
 const isGitCommandError = Schema.is(GitCommandError);
-const errorCode = (error: PlatformError) =>
-  error.cause instanceof Error && "code" in error.cause ? error.cause.code : undefined;
 
 function cleanupFailureReason(error: { readonly message: string }) {
   return isGitCommandError(error)
@@ -334,12 +337,23 @@ const make = Effect.gen(function* () {
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const sql = yield* SqlClient.SqlClient;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const issueWork = Option.getOrUndefined(
+    yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore),
+  );
+  const issueSlots = Option.getOrUndefined(
+    yield* Effect.serviceOption(IssueWorktreeSlots.IssueWorktreeSlots),
+  );
+  const setupScripts = Option.getOrUndefined(
+    yield* Effect.serviceOption(ProjectSetupScriptRunner.ProjectSetupScriptRunner),
+  );
   const gitManager = yield* GitManager.GitManager;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const reconcileBranch = yield* WorktreeBranchSync.makeReconcile;
+  const hiddenTrackedChange = yield* makeHiddenTrackedChangeCheck;
   const terminals = yield* TerminalManager.TerminalManager;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const lastPoolUpkeep = new Map<ThreadId, { readonly workerLimit: number; readonly at: number }>();
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
   const orphanSizes = new Map<string, number | null>();
   const noteTerminal = (terminal: TerminalSummary) => {
@@ -633,6 +647,7 @@ const make = Effect.gen(function* () {
       function* (worktreePath: string, scratch = false) {
         const key = pathKey(worktreePath);
         if (
+          IssueWorktreeSlots.isIssueWorktreeSlot(path, worktreePath) ||
           reported.has(key) ||
           referenced.has(key) ||
           referencedAncestors.has(key) ||
@@ -719,6 +734,7 @@ const make = Effect.gen(function* () {
   const branchChanged = Effect.fn("StorageCleanup.branchChanged")(function* (
     cwd: string,
     branch: string | null,
+    allowDetached = false,
   ) {
     const failure = (detail: string) =>
       new GitCommandError({
@@ -762,7 +778,7 @@ const make = Effect.gen(function* () {
     if (head === null) return true;
     const ref = head.exitCode === 0 ? head.stdout.trim() : "";
     const name = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length).trim() : null;
-    return name !== branch;
+    return !(allowDetached && head.exitCode === 1) && name !== branch;
   });
 
   // Nothing watches an idle worktree, so its threads still record the branch it left.
@@ -779,99 +795,6 @@ const make = Effect.gen(function* () {
         ),
       ),
   );
-
-  // Git status and non-forced worktree removal both skip assume-unchanged and skip-worktree files.
-  const hiddenTrackedChange = Effect.fn("StorageCleanup.hiddenTrackedChange")(function* (
-    cwd: string,
-  ) {
-    const inspect = (args: string[], stdin?: string) =>
-      git.execute({
-        operation: "StorageCleanup.hiddenTrackedChanges",
-        cwd,
-        args,
-        ...(stdin === undefined ? {} : { stdin }),
-        maxOutputBytes: 1024 * 1024,
-      });
-    const sparse = yield* inspect([
-      "config",
-      "--type=bool",
-      "--default=false",
-      "core.sparseCheckout",
-    ]);
-    // Sparse checkouts flag every file outside the cone; Git 2.37+ unflags those it finds on disk.
-    const hiddenTag = sparse.stdout.trim() === "true" ? /^[a-z]$/ : /^(?:S|[a-z])$/;
-    const flagged: Array<{ readonly mode: string; readonly id: string; readonly file: string }> =
-      [];
-    let overflow = false;
-    yield* git.execute({
-      operation: "StorageCleanup.hiddenTrackedChanges",
-      cwd,
-      args: ["-c", "core.quotePath=false", "ls-files", "-s", "-v"],
-      maxOutputBytes: 64 * 1024,
-      appendTruncationMarker: true,
-      keepLineCallbacksAfterTruncation: true,
-      progress: {
-        onStdoutLine: (line) =>
-          Effect.sync(() => {
-            const match = /^(\S) (\d+) ([0-9a-f]+) \d\t(.*)$/s.exec(line);
-            if (match === null || !hiddenTag.test(match[1]!) || match[2] === "160000") return;
-            if (flagged.length < 10_000)
-              flagged.push({ mode: match[2]!, id: match[3]!, file: match[4]! });
-            else overflow = true;
-          }),
-      },
-    });
-    if (overflow) return "hidden tracked files exceed the inspection limit";
-    const reason = (file: string) => `has uncommitted changes hidden from git status (${file})`;
-    // Quoted names (control characters, quotes, backslashes) and names that are not valid UTF-8
-    // decode to text that is not the path on disk.
-    const unreadable = flagged.find(({ file }) => file.startsWith('"') || file.includes("\uFFFD"));
-    if (unreadable !== undefined) return reason(unreadable.file);
-    const onDisk = yield* Effect.forEach(
-      flagged,
-      (entry) => {
-        const file = path.join(cwd, entry.file);
-        return fs.readLink(file).pipe(
-          Effect.map((target) => ({ ...entry, type: "SymbolicLink", target })),
-          Effect.catchIf(
-            (error) => errorCode(error) === "EINVAL",
-            () => fs.stat(file).pipe(Effect.map((info) => ({ ...entry, type: info.type }))),
-          ),
-          Effect.catchIf(
-            (error) => errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR",
-            () => Effect.succeed(null),
-          ),
-        );
-      },
-      { concurrency: 16 },
-    );
-    const files: Array<{ readonly id: string; readonly file: string }> = [];
-    // Without core.symlinks a tracked link is a regular file holding its target, compared unfiltered.
-    const linkFiles: typeof files = [];
-    for (const entry of onDisk) {
-      if (entry === null) continue;
-      if (entry.type === "File") (entry.mode === "120000" ? linkFiles : files).push(entry);
-      else if (!("target" in entry) || entry.mode !== "120000") return reason(entry.file);
-      // Hashing a link's path would hash the file it points to.
-      else if (
-        (yield* inspect(["hash-object", "--stdin"], entry.target)).stdout.trim() !== entry.id
-      )
-        return reason(entry.file);
-    }
-    const hashPaths = (entries: ReadonlyArray<{ readonly file: string }>, flags: string[]) =>
-      entries.length === 0
-        ? Effect.succeed([])
-        : inspect(
-            ["hash-object", ...flags, "--stdin-paths"],
-            entries.map(({ file }) => `${file}\n`).join(""),
-          ).pipe(Effect.map((result) => result.stdout.split("\n")));
-    const worktreeIds = yield* hashPaths(files, []);
-    const linkIds = yield* hashPaths(linkFiles, ["--no-filters"]);
-    const changed =
-      files.find(({ id }, i) => worktreeIds[i] !== id) ??
-      linkFiles.find(({ id }, i) => linkIds[i] !== id);
-    return changed === undefined ? null : reason(changed.file);
-  });
 
   // A worktree can outlive its project moving to another clone. Git removes a
   // worktree through the repository that registered it, not through the
@@ -1126,12 +1049,15 @@ const make = Effect.gen(function* () {
     defaultBranches: Map<string, string | null>,
     explicit = false,
     waitForStop = (reason: string) => reason,
+    maintainIssueSlots = true,
   ) {
     const configured = resolveWorktreeCleanup(serverSettings, thread.projectId);
     const settings = explicit
       ? { ...configured, worktreeKeepWhen: "any-local-files" as const }
       : configured;
-    if (!explicit && !worktreeCleanupEnabled(settings) && !keepIssueWorktree(thread)) return [];
+    const slot = IssueWorktreeSlots.isIssueWorktreeSlot(path, thread.worktreePath!);
+    if (!slot && !explicit && !worktreeCleanupEnabled(settings) && !keepIssueWorktree(thread))
+      return [];
     // Physical, so later path joins can't re-collapse `..` after a symlink lexically.
     const worktreePath = yield* Effect.try({
       try: () => physicalWorkspacePath(thread.worktreePath!),
@@ -1178,10 +1104,14 @@ const make = Effect.gen(function* () {
       !explicit &&
       !deleted &&
       members.some((member) => member.archivedAt === null && keepIssueWorktree(member));
+    const releaseSlot =
+      slot && maintainIssueSlots && thread.linkedIssue !== undefined && issueSlots !== undefined;
+    let releaseSlotBase: string | null = null;
     let issueMerged = false;
     const entries: StorageCleanupReportEntry[] = [];
     const keep = (reason: string) => entries.push({ ...entry, reason: sentence(reason) });
     yield* Effect.gen(function* () {
+      if (slot && !releaseSlot) return keep("reserved for repository issue work");
       if (
         !(yield* fs.exists(worktreePath).pipe(
           Effect.catchIf(
@@ -1194,7 +1124,7 @@ const make = Effect.gen(function* () {
         ))
       )
         return;
-      if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
+      if (deleted && !releaseSlot && !settings.worktreeOnDelete) return keep("no rules apply");
       if (members.length > 1 && worktreeOwner(members) === undefined)
         return keep(`shared by ${group.length} threads`);
       if (project === undefined) return keep("project is unavailable");
@@ -1209,15 +1139,22 @@ const make = Effect.gen(function* () {
         return keep("a subagent thread's branch differs from this worktree's branch");
       if (yield* hasTerminal(worktreeIdentity, canonicalPath))
         return keep(waitForStop("open terminal"));
-      if (
-        [...group, ...settlementChain.slice(1)].some(
-          (member) =>
-            member.settledAt !== null &&
-            now - Math.max(DateTime.toEpochMillis(member.updatedAt), activityAt) <
-              SETTLE_SCRIPT_GRACE_MS,
-        )
-      )
+      const settleGrace = Math.max(
+        0,
+        ...[...group, ...settlementChain.slice(1)]
+          .filter((member) => member.settledAt !== null)
+          .map(
+            (member) =>
+              Math.max(DateTime.toEpochMillis(member.updatedAt), activityAt) +
+              SETTLE_SCRIPT_GRACE_MS -
+              now,
+          ),
+      );
+      if (settleGrace > 0) {
+        if (releaseSlot && !explicit && config.devUrl === undefined)
+          yield* requestSlotSweepAfterGrace(settleGrace);
         return keep(waitForStop("settled moments ago"));
+      }
       const old =
         !deleted &&
         settings.worktreeAfterDays !== null &&
@@ -1233,7 +1170,7 @@ const make = Effect.gen(function* () {
         settledFor >= settings.worktreeSettledAfterDays * DAY_MS;
       const unchangedApplies =
         settings.worktreeUnchanged && (settledThread !== undefined || thread.archivedAt !== null);
-      let eligible = !retainedIssue && (explicit || deleted || old || settled);
+      let eligible = !slot && !retainedIssue && (explicit || deleted || old || settled);
       let removalReason = explicit
         ? "requested by owner"
         : deleted
@@ -1255,7 +1192,13 @@ const make = Effect.gen(function* () {
                 : settings.worktreeUnchanged
                   ? "not settled"
                   : "no rules apply";
-      if (!retainedIssue && !eligible && !settings.worktreeUnchanged && !settings.worktreeOnMerge)
+      if (
+        !releaseSlot &&
+        !retainedIssue &&
+        !eligible &&
+        !settings.worktreeUnchanged &&
+        !settings.worktreeOnMerge
+      )
         return keep(notDueReason);
       const blockedSinceCheck = Effect.fnUntraced(function* () {
         const latestProjects = yield* projectStore.listShells();
@@ -1272,6 +1215,7 @@ const make = Effect.gen(function* () {
           return waitForStop("open terminal");
         if (deleted) {
           if (
+            !releaseSlot &&
             !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
               .worktreeOnDelete
           )
@@ -1313,6 +1257,18 @@ const make = Effect.gen(function* () {
             })
           )
             return waitForStop("thread activity or shared worktree changed since check");
+          const liveOwner =
+            releaseSlot && !explicit && !deleted
+              ? latestGroup.find((shell) => shell.id === thread.id)
+              : undefined;
+          if (
+            liveOwner?.archivedAt === null &&
+            liveOwner.settledAt === null &&
+            (liveOwner.status === "interrupted" ||
+              liveOwner.status === "cancelled" ||
+              liveOwner.status === "failed")
+          )
+            return "issue worker can still be resumed";
           if (settlementChain.length > 1) {
             const ancestors = yield* Effect.forEach(settlementChain.slice(1), (ancestor) =>
               projections.getThreadShell(ancestor.id),
@@ -1361,7 +1317,7 @@ const make = Effect.gen(function* () {
       const realParent = yield* canonicalPath(path.dirname(thread.worktreePath!));
       if (worktreeIdentity !== pathKey(path.join(realParent, path.basename(thread.worktreePath!))))
         return keep("worktree is a symbolic link");
-      if (!scratch && !roots.some((root) => inside(root, worktreeIdentity)))
+      if (!scratch && !releaseSlot && !roots.some((root) => inside(root, worktreeIdentity)))
         return keep("outside the managed worktree folder");
       if (
         yield* containsProjectRoot(worktreeIdentity, [project, ...snapshot.projects], canonicalPath)
@@ -1425,14 +1381,29 @@ const make = Effect.gen(function* () {
         ))
       )
         return keep("not a linked worktree");
-      if (yield* branchChanged(worktreePath, thread.branch)) {
-        if (!deleted) yield* followBranch(worktreePath);
+      if (yield* branchChanged(worktreePath, thread.branch, releaseSlot)) {
+        if (!slot && !deleted) yield* followBranch(worktreePath);
         return keep("repository or branch changed");
       }
-      const changes = yield* localChangesReason(worktreePath, settings);
-      if (changes !== null) return keep(changes);
-      const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
-      if (!eligible && (retainedIssue || settings.worktreeUnchanged || settings.worktreeOnMerge)) {
+      if (!slot) {
+        const changes = yield* localChangesReason(worktreePath, settings);
+        if (changes !== null) return keep(changes);
+      }
+      const revision = releaseSlot ? `refs/heads/${thread.branch}` : "HEAD";
+      if (releaseSlot && deleted) {
+        const branchStillExists = yield* git.execute({
+          cwd: worktreePath,
+          operation: "StorageCleanup.findDeletedWorkerBranch",
+          args: ["show-ref", "--verify", "--quiet", revision],
+          allowNonZeroExit: true,
+        });
+        if (branchStillExists.exitCode !== 0) return;
+      }
+      const head = yield* git.resolveCommit({ cwd: worktreePath, revision });
+      if (
+        !eligible &&
+        (slot || retainedIssue || settings.worktreeUnchanged || settings.worktreeOnMerge)
+      ) {
         const repositoryCwd = path.resolve(project.workspaceRoot);
         const remotes = yield* git.execute({
           operation: "StorageCleanup.listRemotes",
@@ -1444,7 +1415,7 @@ const make = Effect.gen(function* () {
         let branch: string | null | undefined;
         let defaultRef: string;
         if (remote === null) {
-          if (retainedIssue) return keep("issue work is awaiting a merged pull request");
+          if (slot || retainedIssue) return keep("issue work is awaiting a merged pull request");
           if (!unchangedApplies) return keep("no remote is configured for merged-worktree cleanup");
           const projectHead = yield* git.execute({
             operation: "StorageCleanup.resolveProjectBranch",
@@ -1493,19 +1464,28 @@ const make = Effect.gen(function* () {
             refreshedDefaultRefs.set(repositoryCwd, refreshed);
           }
         }
+        if (releaseSlot && !explicit) {
+          const changes = yield* issueSlots.localChanges(repositoryCwd, worktreePath, defaultRef);
+          if (changes !== null) return keep(changes);
+        }
         const base = yield* git.resolveCommit({
           cwd: worktreePath,
           revision: defaultRef,
         });
-        const ancestor = yield* git.execute({
-          operation: "StorageCleanup.integratedBranch",
-          cwd: worktreePath,
-          args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
-          allowNonZeroExit: true,
-        });
-        const integrated = ancestor.exitCode === 0;
-        eligible = !retainedIssue && integrated && unchangedApplies;
-        if (eligible)
+        const integrated =
+          !explicit &&
+          (yield* git.execute({
+            operation: "StorageCleanup.integratedBranch",
+            cwd: worktreePath,
+            args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
+            allowNonZeroExit: true,
+          })).exitCode === 0;
+        const issueWorkFinished =
+          deleted || thread.archivedAt !== null || thread.settledAt !== null;
+        eligible =
+          (releaseSlot && explicit) ||
+          (integrated && (slot ? issueWorkFinished : !retainedIssue && unchangedApplies));
+        if (eligible && !explicit)
           removalReason =
             remote === null
               ? "no commits beyond the project branch"
@@ -1513,7 +1493,7 @@ const make = Effect.gen(function* () {
         if (
           !eligible &&
           remote !== null &&
-          (retainedIssue || settings.worktreeOnMerge) &&
+          (slot || retainedIssue || settings.worktreeOnMerge) &&
           thread.branch !== null
         ) {
           const pullRequest = yield* gitManager.branchPullRequest(
@@ -1524,15 +1504,19 @@ const make = Effect.gen(function* () {
             branch: thread.branch,
             defaultBranch: branch,
             headSha: head.commitSha,
-            integrated: retainedIssue ? false : integrated,
+            integrated: slot || retainedIssue ? false : integrated,
           });
           issueMerged = retainedIssue && eligible;
           if (eligible) removalReason = "pull request was merged";
         }
+        if (slot && eligible) releaseSlotBase = base.commitSha;
         if (!eligible && remote === null)
           return keep(integrated ? notDueReason : "has commits beyond the project branch");
       }
-      if (retainedIssue && members.some((member) => keepIssueWorktree(member, issueMerged)))
+      if (
+        (slot && releaseSlotBase === null) ||
+        (!slot && retainedIssue && members.some((member) => keepIssueWorktree(member, issueMerged)))
+      )
         return keep("issue work is awaiting a merged pull request");
       if (!eligible)
         return keep(
@@ -1552,6 +1536,60 @@ const make = Effect.gen(function* () {
       // worktree takes seconds on large databases.
       const blocked = yield* blockedSinceCheck();
       if (blocked !== null) return keep(blocked);
+      if (releaseSlot && releaseSlotBase !== null) {
+        const defaultRef = releaseSlotBase;
+        return yield* withWorkspaceLease(
+          worktreePath,
+          Effect.gen(function* () {
+            const reason = yield* blockedSinceCheck();
+            if (reason !== null) return keep(reason);
+            if (yield* branchChanged(worktreePath, thread.branch!, true))
+              return keep("branch changed since check");
+            const released = yield* issueSlots.release({
+              cwd: project.workspaceRoot,
+              path: worktreePath,
+              branch: thread.branch!,
+              head: head.commitSha,
+              defaultRef,
+              preserveBranch: explicit,
+              unbind: Effect.gen(function* () {
+                // Keep the owner's binding until all sharing threads have been unbound.
+                const ordered = group.toSorted(
+                  (a, b) => Number(a.id === thread.id) - Number(b.id === thread.id),
+                );
+                for (const member of ordered) {
+                  if (!explicit && member.archivedAt === null && member.role !== "writer")
+                    yield* engine.dispatch({
+                      type: "thread.archive",
+                      commandId: CommandId.make(
+                        `storage-cleanup:merged-slot:${member.id}:${member.branch}:${DateTime.toEpochMillis(member.updatedAt)}`,
+                      ),
+                      threadId: member.id,
+                    });
+                  yield* engine.dispatch({
+                    type: "thread.metadata.update",
+                    commandId: CommandId.make(
+                      `storage-cleanup:release-slot:${member.id}:${member.branch}:${DateTime.toEpochMillis(member.updatedAt)}`,
+                    ),
+                    threadId: member.id,
+                    expectedWorktreePath: member.worktreePath,
+                    expectedBranch: member.branch,
+                    worktreePath: null,
+                    branch: explicit ? member.branch : null,
+                  });
+                }
+              }),
+            });
+            if (released !== null) return keep(released);
+            yield* gitManager.invalidateStatus(project.workspaceRoot);
+            entries.push({
+              ...entry,
+              outcome: explicit ? "removed" : "kept",
+              reason: "Returned to the issue worktree pool",
+            });
+          }).pipe(Effect.uninterruptible),
+        );
+      }
       // Inspect before the lease; provider startup must not wait for directory traversal.
       const inspection = yield* measureWorktree(worktreePath, true);
       if (inspection.reason !== null) return keep(inspection.reason);
@@ -1690,11 +1728,21 @@ const make = Effect.gen(function* () {
     serverSettings: ServerSettings,
     now: number,
     entries: StorageCleanupReportEntry[],
+    maintainIssueSlots: boolean,
+    manual: boolean,
   ) {
     const snapshot = yield* readThreads();
+    const repositoryRoots =
+      issueWork === undefined || !maintainIssueSlots ? [] : yield* issueWork.worktreePools();
     if (
+      repositoryRoots.length === 0 &&
       !anyWorktreePolicy(serverSettings, worktreeCleanupEnabled) &&
-      !snapshot.threads.some((thread) => thread.archivedAt === null && keepIssueWorktree(thread))
+      !snapshot.threads.some(
+        (thread) =>
+          thread.worktreePath !== null &&
+          (IssueWorktreeSlots.isIssueWorktreeSlot(path, thread.worktreePath) ||
+            (thread.archivedAt === null && keepIssueWorktree(thread))),
+      )
     )
       return { waiting: false, kept: [] };
     let waiting = false;
@@ -1742,8 +1790,10 @@ const make = Effect.gen(function* () {
             .get(key)
             ?.find(
               (deleted) =>
-                resolveWorktreeCleanup(serverSettings, deleted.projectId).worktreeOnDelete &&
-                worktreeOwner([deleted, ...group]) === deleted,
+                worktreeOwner([deleted, ...group]) === deleted &&
+                (IssueWorktreeSlots.isIssueWorktreeSlot(path, deleted.worktreePath!)
+                  ? group.every((member) => member.branch === deleted.branch)
+                  : resolveWorktreeCleanup(serverSettings, deleted.projectId).worktreeOnDelete),
             ) ??
           worktreeOwner(group) ??
           group[0]!,
@@ -1772,6 +1822,7 @@ const make = Effect.gen(function* () {
             waiting = true;
           return reason;
         },
+        maintainIssueSlots,
       );
       if (
         "workspaceRoot" in thread &&
@@ -1780,6 +1831,90 @@ const make = Effect.gen(function* () {
       )
         kept.push(thread.worktreePath!);
       entries.push(...results);
+    }
+
+    if (issueSlots !== undefined && setupScripts !== undefined) {
+      for (const root of repositoryRoots) {
+        const last = lastPoolUpkeep.get(root.rootThreadId);
+        if (!manual && last?.workerLimit === root.workerLimit && now - last.at < 60 * 60 * 1000)
+          continue;
+        lastPoolUpkeep.set(root.rootThreadId, { workerLimit: root.workerLimit, at: now });
+        const project = snapshot.projects.find((entry) => entry.id === root.projectId);
+        if (project === undefined) continue;
+        const report = ({
+          path: target,
+          reason,
+        }: {
+          readonly path: string;
+          readonly reason: string;
+        }) => {
+          entries.push({
+            kind: "worktree",
+            outcome: "kept",
+            reason: sentence(`Issue worktree slot ${reason}`),
+            path: target,
+            projectPath: project.workspaceRoot,
+            threadId: null,
+            threadTitle: null,
+            bytes: null,
+            files: null,
+          });
+        };
+        yield* issueSlots
+          .maintain({
+            cwd: project.workspaceRoot,
+            limit: root.workerLimit,
+            occupied: Effect.fn("StorageCleanup.issueSlotOccupied")(function* (target) {
+              const key = yield* canonicalPath(target);
+              const live = yield* projections.getShellSnapshot({ worktreePath: target });
+              return (
+                live.threads.length + live.archivedThreads.length > 0 ||
+                (yield* containsProjectRoot(key, snapshot.projects, canonicalPath)) ||
+                (yield* hasTerminal(key, canonicalPath))
+              );
+            }),
+            setup: Effect.fn("StorageCleanup.prepareIssueSlot")(function* (target) {
+              const setup = yield* setupScripts.runForThread({
+                threadId: root.rootThreadId,
+                projectId: root.projectId,
+                projectCwd: project.workspaceRoot,
+                worktreePath: target,
+                trigger: "slot-upkeep",
+                observeCompletion: {},
+              });
+              if (setup.status !== "started") return;
+              const completion: Effect.Effect<number | null> = setup.completion
+                ? Effect.map(setup.completion, (result) => result.exitCode)
+                : Effect.succeed(null);
+              const exitCode = yield* completion.pipe(
+                Effect.timeoutOrElse({
+                  duration: "10 minutes",
+                  orElse: () => Effect.succeed(null),
+                }),
+                Effect.ensuring(
+                  terminals
+                    .close({
+                      threadId: root.rootThreadId,
+                      terminalId: setup.terminalId,
+                      deleteHistory: true,
+                    })
+                    .pipe(Effect.ignore),
+                ),
+              );
+              if (exitCode !== 0)
+                report({ path: target, reason: "setup did not complete successfully" });
+            }),
+            report,
+          })
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Issue worktree pool upkeep failed", {
+                projectId: root.projectId,
+                cause,
+              }),
+            ),
+          );
+      }
     }
 
     yield* reportOrphanWorktrees(
@@ -1959,7 +2094,15 @@ const make = Effect.gen(function* () {
     yield* cleanCheckpointRefs().pipe(
       Effect.catch((cause) => Effect.logWarning("checkpoint ref cleanup failed", { cause })),
     );
-    const deletedWorktrees = yield* cleanWorktrees(serverSettings, now, entries).pipe(
+    // Seeded dev databases retain real project paths.
+    const maintainIssueSlots = trigger === "manual" || config.devUrl === undefined;
+    const deletedWorktrees = yield* cleanWorktrees(
+      serverSettings,
+      now,
+      entries,
+      maintainIssueSlots,
+      trigger === "manual",
+    ).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
           entries.push({
@@ -2076,6 +2219,21 @@ const make = Effect.gen(function* () {
   const requestSweep = Ref.getAndSet(automaticSweepQueued, true).pipe(
     Effect.flatMap((queued) => (queued ? Effect.void : worker.enqueue(undefined))),
   );
+  const slotGraceSweepQueued = yield* Ref.make(false);
+  const cleanupScope = yield* Effect.scope;
+  const requestSlotSweepAfterGrace = (remainingMs: number): Effect.Effect<void> =>
+    Ref.getAndSet(slotGraceSweepQueued, true).pipe(
+      Effect.flatMap((queued) =>
+        queued
+          ? Effect.void
+          : Effect.sleep(remainingMs).pipe(
+              Effect.andThen(Ref.set(slotGraceSweepQueued, false)),
+              Effect.andThen(requestSweep),
+              Effect.forkIn(cleanupScope),
+              Effect.asVoid,
+            ),
+      ),
+    );
   const runNow = Effect.gen(function* () {
     const completion = yield* Deferred.make<StorageCleanupReport, ServerSettingsError>();
     yield* worker.enqueue(completion);
@@ -2083,18 +2241,39 @@ const make = Effect.gen(function* () {
   });
 
   const start = Effect.fn("StorageCleanup.start")(function* () {
+    const watchIssueSlots = issueSlots !== undefined && config.devUrl === undefined;
+    const inSlot = (cwd: string) => {
+      for (let current = cwd; ; current = path.dirname(current)) {
+        if (IssueWorktreeSlots.isIssueWorktreeSlot(path, current)) return true;
+        if (path.dirname(current) === current) return false;
+      }
+    };
     const unsubscribe = yield* terminals.subscribeMetadata((event) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         if (event.type === "snapshot") {
           liveTerminals.clear();
           for (const terminal of event.terminals) noteTerminal(terminal);
-        } else if (event.type === "upsert") {
+          return;
+        }
+        const { threadId, terminalId } = event.type === "upsert" ? event.terminal : event;
+        const threadTerminals = liveTerminals.get(threadId);
+        const previous = threadTerminals?.get(terminalId);
+        if (event.type === "upsert") {
           noteTerminal(event.terminal);
         } else {
-          const threadTerminals = liveTerminals.get(event.threadId);
-          threadTerminals?.delete(event.terminalId);
-          if (threadTerminals?.size === 0) liveTerminals.delete(event.threadId);
+          threadTerminals?.delete(terminalId);
+          if (threadTerminals?.size === 0) liveTerminals.delete(threadId);
         }
+        if (
+          watchIssueSlots &&
+          previous !== undefined &&
+          (previous.status === "running" || previous.status === "starting") &&
+          (event.type === "remove" ||
+            (event.terminal.status !== "running" && event.terminal.status !== "starting")) &&
+          (inSlot(previous.cwd) ||
+            (previous.worktreePath !== null && inSlot(previous.worktreePath)))
+        )
+          yield* requestSweep;
       }),
     );
     yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
@@ -2122,6 +2301,46 @@ const make = Effect.gen(function* () {
     );
     yield* forkParked(
       Stream.runForEach(events, (event) => {
+        if (
+          watchIssueSlots &&
+          (event.type === "thread.created" || event.type === "thread.metadata-updated") &&
+          event.payload.repositoryOrchestration !== undefined &&
+          lastPoolUpkeep.get(event.threadId)?.workerLimit !==
+            event.payload.repositoryOrchestration.workerLimit &&
+          repositoryPhase(event.payload.repositoryOrchestration) !== "retired"
+        )
+          return requestSweep;
+        if (watchIssueSlots) {
+          if (
+            (event.type === "thread.settled" ||
+              event.type === "thread.archived" ||
+              (event.type === "thread.pull-request-synced" &&
+                event.payload.pullRequests?.some((link) => link.snapshot?.state === "merged"))) &&
+            event.payload.worktreePath !== null &&
+            inSlot(event.payload.worktreePath)
+          )
+            return requestSweep;
+          if (
+            event.type === "thread.pull-request-link-updated" &&
+            event.payload.snapshot?.state === "merged"
+          )
+            return projections.getThreadShell(event.threadId).pipe(
+              Effect.orElseSucceed(() => null),
+              Effect.flatMap((thread) =>
+                thread?.worktreePath && inSlot(thread.worktreePath) ? requestSweep : Effect.void,
+              ),
+            );
+          if (
+            event.type === "provider-session.updated" &&
+            (event.payload.status === "stopped" || event.payload.status === "error") &&
+            inSlot(event.payload.cwd)
+          )
+            return event.payload.status === "stopped"
+              ? requestSweep
+              : providerSessions
+                  .isLive(event.payload.id)
+                  .pipe(Effect.flatMap((live) => (live ? Effect.void : requestSweep)));
+        }
         if (event.type === "thread.deleted") deletions++;
         else if (
           event.type !== "provider-session.updated" ||

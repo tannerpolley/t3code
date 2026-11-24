@@ -79,6 +79,7 @@ import {
 import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { SidebarBackgroundWorkRows, type NestedWork } from "./SidebarBackgroundWorkRows";
+import { SidebarWorkerRows } from "./SidebarWorkers";
 import {
   SidebarProcessGroupRows,
   useSidebarThreadProcesses,
@@ -1803,15 +1804,29 @@ function SidebarSubagentRow(
     scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     workRows.some((row) => row.kind === "subagent"),
   );
-  return render({
-    status,
-    ref: lease.rowRef,
-    toggle: workCount > 0 ? { count: workCount, open, onToggle } : null,
-    children:
-      workCount > 0 ? (
-        <SidebarSubagentTree {...tree} rows={workRows} processRows={processRows} />
-      ) : null,
-  });
+  return (
+    <>
+      {render({
+        status,
+        ref: lease.rowRef,
+        toggle: workCount > 0 ? { count: workCount, open, onToggle } : null,
+        children:
+          workCount > 0 ? (
+            <SidebarSubagentTree {...tree} rows={workRows} processRows={processRows} />
+          ) : null,
+      })}
+      {/* Its finished children stay listed while the toggle hides only its running work. */}
+      <li className="list-none">
+        <SidebarWorkerRows
+          thread={thread}
+          columns
+          providerEntries={tree.providerEntries}
+          onClick={tree.onChildClick}
+          onContextMenu={tree.onChildContextMenu}
+        />
+      </li>
+    </>
+  );
 }
 
 /** What the section name dialog is doing: creating a section or renaming one. */

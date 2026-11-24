@@ -436,10 +436,12 @@ export function UsageLimitsSection({
   selectedEnvironmentIds,
   hiddenProviders,
   now,
+  showFreshness = false,
 }: {
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly now: number;
+  readonly showFreshness?: boolean;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const hiddenDrivers = new Set<ServerProvider["driver"]>(
@@ -488,7 +490,7 @@ export function UsageLimitsSection({
             />
           )),
       )}
-      <UsageLimitsPooled presentations={selected} now={now} />
+      <UsageLimitsPooled presentations={selected} now={now} showFreshness={showFreshness} />
     </>
   );
 }

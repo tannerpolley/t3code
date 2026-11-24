@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
@@ -685,7 +686,16 @@ function RedeemableResetCreditCard({
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+function PoolSection({
+  pool,
+  now,
+  showFreshness,
+}: {
+  readonly pool: LimitPool;
+  readonly now: number;
+  readonly showFreshness: boolean;
+}) {
+  const gt = useGT();
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
@@ -701,6 +711,22 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
         />
         {label}
       </h2>
+      {showFreshness ? (
+        <ul className="space-y-1 text-xs text-muted-foreground">
+          {pool.accounts.map((account) => (
+            <li key={account.key}>
+              {account.displayName ?? label} ·{" "}
+              {gt("Checked {time}", { time: new Date(account.limits.checkedAt).toLocaleString() })}
+              {account.limits.unavailable ||
+              account.limits.windows.some(
+                (window) => window.resetsAt !== undefined && Date.parse(window.resetsAt) <= now,
+              )
+                ? ` · ${gt("Stale or incomplete")}`
+                : ""}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {windows.map((window) => {
         const details =
           pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
@@ -748,13 +774,18 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
 export function UsageLimitsPooled({
   presentations,
   now,
+  showFreshness = false,
 }: {
   readonly presentations: Parameters<typeof collectLimitAccounts>[0];
   readonly now: number;
+  readonly showFreshness?: boolean;
 }) {
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
-  const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const pools = collectLimitPools(
+    collectLimitAccounts(presentations, { includeCreditOnly: true }),
+    now,
+  );
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
   return (
@@ -767,7 +798,7 @@ export function UsageLimitsPooled({
       <SegmentPopoverContext value={segmentPopover}>
         {pools.map((pool) => (
           <Fragment key={pool.driver}>
-            <PoolSection pool={pool} now={now} />
+            <PoolSection pool={pool} now={now} showFreshness={showFreshness} />
           </Fragment>
         ))}
       </SegmentPopoverContext>

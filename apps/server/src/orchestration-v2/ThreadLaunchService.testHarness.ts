@@ -379,7 +379,8 @@ function suspensionWorkerLayer(
                     cause: "Injected interrupt failure",
                   }),
                 )
-              : effect.request.type.startsWith("issue.suspension.")
+              : effect.request.type.startsWith("issue.suspension.") ||
+                  effect.request.type === "repository.handoff-completion"
                 ? real.execute(effect, options)
                 : Effect.void,
         ),
@@ -492,6 +493,7 @@ function reviewHarness(
     resolveLinkedIssue: (input) => Effect.succeed(reviewIssue(input.number, input.repository)),
     capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
     milestoneIssues: () => Effect.succeed({ issues: [], complete: true }),
+    workReads: () => Effect.succeed(new Map()),
   });
   const harness = makeHarness({
     runContinuationWorker,

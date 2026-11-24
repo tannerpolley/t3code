@@ -126,6 +126,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetThreadProcesses]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverRetryResourceTelemetry]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverGetUsageBudget]: AuthDiagnosticsReadScope,
+  [WS_METHODS.scheduledTasksGetUsageBudgetReport]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetUsageSummary]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverRefreshUsageRates]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,

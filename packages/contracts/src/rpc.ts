@@ -399,6 +399,11 @@ import {
   ProviderConsumeResetCreditInput,
   ProviderConsumeResetCreditResult,
 } from "./providerUsageLimits.ts";
+import {
+  ScheduledUsageBudgetReport,
+  ScheduledUsageBudgetReportInput,
+  UsageBudgetSummary,
+} from "./usageBudget.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import {
   StorageCleanupReport,
@@ -598,6 +603,8 @@ export const WS_METHODS = {
   serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
+  serverGetUsageBudget: "server.getUsageBudget",
+  scheduledTasksGetUsageBudgetReport: "scheduledTasks.getUsageBudgetReport",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
@@ -2350,7 +2357,24 @@ const WsTerminalWatchInlineRunRpc = Rpc.make(WS_METHODS.terminalWatchInlineRun, 
   stream: true,
 });
 
+const WsServerGetUsageBudgetRpc = Rpc.make(WS_METHODS.serverGetUsageBudget, {
+  payload: Schema.Struct({}),
+  success: UsageBudgetSummary,
+  error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
+const WsScheduledTasksGetUsageBudgetReportRpc = Rpc.make(
+  WS_METHODS.scheduledTasksGetUsageBudgetReport,
+  {
+    payload: ScheduledUsageBudgetReportInput,
+    success: Schema.NullOr(ScheduledUsageBudgetReport),
+    error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+  },
+);
+
 const forkWsRpcs = [
+  WsServerGetUsageBudgetRpc,
+  WsScheduledTasksGetUsageBudgetReportRpc,
   ...notebookRpcs,
   ...projectArtifactRpcs,
   WsSidebarLayoutUpdateRpc,
@@ -2605,6 +2629,8 @@ export const WsRpcGroup = RpcGroup.make(
 ).middleware(RpcScopeAuthorization);
 export const ForkWsRpcGroup = RpcGroup.make(...forkWsRpcs).middleware(RpcScopeAuthorization);
 export const UpstreamWsRpcGroup = WsRpcGroup.omit(
+  WS_METHODS.serverGetUsageBudget,
+  WS_METHODS.scheduledTasksGetUsageBudgetReport,
   ...Object.values(NOTEBOOK_METHODS),
   ...Object.values(PROJECT_ARTIFACT_METHODS),
   WS_METHODS.sidebarLayoutUpdate,

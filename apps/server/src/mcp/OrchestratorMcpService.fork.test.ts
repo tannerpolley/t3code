@@ -1337,6 +1337,14 @@ describe("OrchestratorMcpService provider resolution", () => {
             candidateDriver: claudeDriver,
           },
           {
+            name: "tool-additions-require-codex-target",
+            inheritedEnabled: true,
+            peerEnabled: true,
+            explicit: false,
+            selectedInstanceId: codexAltInstanceId,
+            candidateDriver: claudeDriver,
+          },
+          {
             name: "explicit-unavailable",
             inheritedEnabled: false,
             peerEnabled: true,
@@ -1432,6 +1440,19 @@ describe("OrchestratorMcpService provider resolution", () => {
 
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            if (testCase.name === "tool-additions-require-codex-target") {
+              const error = yield* Effect.flip(
+                service.delegateTask(scope, {
+                  task: "Summarize the diff.",
+                  target: { driverKind: claudeDriver, model: "codex-alt-model" },
+                  enableTools: ["apps"],
+                }),
+              );
+              assert.equal(error.code, "invalid_request");
+              assert.include(error.message, "requires a Codex target");
+              assert.deepEqual(yield* Ref.get(dispatched), []);
+              return;
+            }
             const target =
               testCase.name === "inherited-unavailable"
                 ? undefined

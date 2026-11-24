@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import * as RuntimePolicy from "../orchestration-v2/RuntimePolicy.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpAppModelContext from "./McpAppModelContext.ts";
 import * as McpAppRequests from "./McpAppRequests.ts";
@@ -73,6 +74,7 @@ function makeLayer(input: {
   return McpAppRequests.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        RuntimePolicy.layer,
         Layer.mock(McpAppModelContext.McpAppModelContext)({
           set: (entry) =>
             Effect.sync(() => {

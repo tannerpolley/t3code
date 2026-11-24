@@ -7,7 +7,7 @@ import { runMigrations } from "../Migrations.ts";
 it.effect("requeues entries that a queue notice left needing attention", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toForkMigrationInclusive: 33 });
+    yield* runMigrations({ toForkMigrationInclusive: 34 });
     const insert = (id: string, state: string, payload: object) =>
       sql`INSERT INTO orchestration_v2_projection_issue_work_requests
         (request_id, host, repository_id, repository, issue_id, issue_number, attempt_key, root_thread_id, payload_json, created_at, queue_state, notice_run_id)
@@ -15,7 +15,7 @@ it.effect("requeues entries that a queue notice left needing attention", () =>
     yield* insert("attention", "needs_attention", { notifiedAt: "2026-11-23" });
     yield* insert("noticed", "queued", { noticeRunId: "run", notifiedAt: "2026-11-23" });
     yield* insert("removed", "removed", {});
-    yield* runMigrations({ toForkMigrationInclusive: 34 });
+    yield* runMigrations({ toForkMigrationInclusive: 35 });
     assert.deepEqual(
       yield* sql`SELECT request_id, queue_state, notice_run_id, payload_json FROM orchestration_v2_projection_issue_work_requests ORDER BY request_id`,
       [
