@@ -448,7 +448,11 @@ export interface OrchestratorV2DispatchResult {
 
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
-  readonly withThreadLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"];
+  readonly withCurrentDelegatedChild: <E, R>(
+    parentThreadId: ThreadId,
+    childThreadId: ThreadId,
+    effect: Effect.Effect<void, E, R>,
+  ) => Effect.Effect<void, E | OrchestratorProjectionError, R>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   readonly recoverDelegatedTask: (
     threadId: ThreadId,
@@ -17492,6 +17496,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
   );
 
+  const isCurrentDelegatingParent = Effect.fn("Orchestrator.isCurrentDelegatingParent")(function* (
+    parentThreadId: ThreadId,
+    child: OrchestrationV2AppThread,
+  ) {
+    if (child.lineage.parentThreadId !== parentThreadId) return false;
+    const successor = yield* successorFor(child);
+    if (successor === null) return true;
+    // A retained child may already use its successor's lock while its old task is visible.
+    const parent = yield* projectionStore.getThread(parentThreadId);
+    return parent.lineage.rootThreadId === successor;
+  });
+
+  const withCurrentDelegatedChild: OrchestratorV2Shape["withCurrentDelegatedChild"] = Effect.fn(
+    "Orchestrator.withCurrentDelegatedChild",
+  )(function* (parentThreadId, childThreadId, effect) {
+    const isCurrent = projectionStore.getThread(childThreadId).pipe(
+      Effect.flatMap((child) => isCurrentDelegatingParent(parentThreadId, child)),
+      Effect.mapError(
+        (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),
+      ),
+    );
+    if (!(yield* isCurrent)) return;
+    yield* threadDispatch.withLock(
+      childThreadId,
+      Effect.gen(function* () {
+        if (yield* isCurrent) yield* effect;
+      }),
+    );
+  });
+
   const cancelDelegatedTask: OrchestratorV2Shape["cancelDelegatedTask"] = Effect.fn(
     "Orchestrator.cancelDelegatedTask",
   )(function* (input) {
@@ -17516,6 +17550,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             { messageRoles: ["user"] },
           )
           .pipe(mapDispatchError(command));
+        const formerParentRefusal = new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The delegated child now belongs to another parent.",
+        });
+        if (
+          !(yield* isCurrentDelegatingParent(input.parentThreadId, child.thread).pipe(
+            mapDispatchError(command),
+          ))
+        )
+          return yield* formerParentRefusal;
         const followUpRun = child.runs
           .filter((run) => run.delegatedTaskId === input.taskId)
           .toSorted((a, b) => b.ordinal - a.ordinal)[0];
@@ -17532,12 +17577,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             const thread = yield* projectionStore
               .getThread(command.threadId)
               .pipe(mapDispatchError(command));
-            if (thread.lineage.parentThreadId !== input.parentThreadId)
-              return yield* new OrchestratorDispatchError({
-                commandId: command.commandId,
-                commandType: command.type,
-                cause: "The delegated child now belongs to another parent.",
-              });
+            if (
+              !(yield* isCurrentDelegatingParent(input.parentThreadId, thread).pipe(
+                mapDispatchError(command),
+              ))
+            )
+              return yield* formerParentRefusal;
             // Hold intake closed until descendants stop and this thread's Stop commits.
             yield* input.stopDescendants((command) =>
               commandThreadId(command) === input.command.threadId
@@ -17584,7 +17629,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   return OrchestratorV2.of({
     resumeQueuedRuns,
-    withThreadLock: threadDispatch.withLock,
+    withCurrentDelegatedChild,
     recoverDelegatedTasks,
     recoverDelegatedTask,
     cancelDelegatedTask,

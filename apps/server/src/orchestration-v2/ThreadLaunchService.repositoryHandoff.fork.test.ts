@@ -1406,6 +1406,16 @@ describe("fresh-thread repository handoff", () => {
         });
         const successor = moved.rootThreadId!;
         assert.notEqual(successor, rootId);
+        const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const cancelFormerTask = (clientRequestId: string) =>
+          mcp
+            .cancelTask(scope(rootId), { taskId: original[0]!.id, clientRequestId })
+            .pipe(Effect.flip);
+        const beforeAdoption = yield* locks.withLock(
+          successor,
+          cancelFormerTask("retained-worker:cancel-before-adoption"),
+        );
+        assert.equal(beforeAdoption.code, "task_not_cancellable");
         const resume = "Continue in the existing issue workspace.";
         issueReadUnavailable = operation === "t3_thread_send";
         const taskId =
@@ -1433,16 +1443,15 @@ describe("fresh-thread repository handoff", () => {
           });
         }
 
-        yield* threads.stopDelegatedTasks({
-          threadId: rootId,
-          commandId: CommandId.make("retained-worker:stop-former-root"),
-        });
-        const staleCancel = yield* mcp
-          .cancelTask(scope(rootId), {
-            taskId: original[0]!.id,
-            clientRequestId: "retained-worker:cancel-former-task",
-          })
-          .pipe(Effect.flip);
+        const staleCancel = yield* locks.withLock(
+          successor,
+          threads
+            .stopDelegatedTasks({
+              threadId: rootId,
+              commandId: CommandId.make("retained-worker:stop-former-root"),
+            })
+            .pipe(Effect.andThen(cancelFormerTask("retained-worker:cancel-former-task"))),
+        );
         assert.equal(staleCancel.code, "task_not_cancellable");
         const child = yield* threads.getThreadRecords(worker, ["runs", "messages"]);
         assert.equal(child.thread.worktreePath, worktree);

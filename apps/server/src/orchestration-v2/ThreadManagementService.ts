@@ -1804,11 +1804,10 @@ const make = Effect.gen(function* () {
       if (stoppedChildThreadIds.has(threadId)) continue;
       stoppedChildThreadIds.add(threadId);
       yield* orchestrator
-        .withThreadLock(
+        .withCurrentDelegatedChild(
+          input.threadId,
           threadId,
           Effect.gen(function* () {
-            const child = yield* orchestrator.getThreadShell(threadId);
-            if (child !== null && child.lineage.parentThreadId !== input.threadId) return;
             yield* dispatch({
               type: "thread.stop",
               commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
