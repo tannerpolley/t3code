@@ -75,6 +75,8 @@ const decodeItems = Schema.decodeEffect(
         ]),
         title: Schema.NullOr(Schema.String),
         input: Schema.Unknown,
+        monitor: Schema.BooleanFromBit,
+        nativeItemRef: Schema.Struct({ nativeId: Schema.NullOr(Schema.String) }),
       }),
     ),
   ),
@@ -100,6 +102,7 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
   threadIds: readonly ThreadId[],
   presentedRunId: Statement.Fragment,
   latestRunInterruptReason: Statement.Fragment,
+  silentRun: Statement.Fragment,
 ) {
   if (threadIds.length === 0) return [];
   const rows = yield* sql<{
@@ -154,9 +157,10 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
     ) END AS session_error,
     (SELECT r.status FROM orchestration_v2_projection_runs r
       WHERE r.thread_id = t.thread_id AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+        AND NOT ${silentRun}
       ORDER BY r.ordinal DESC, r.run_id DESC LIMIT 1) AS activity_status,
     EXISTS(SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id = t.thread_id
-      AND r.status IN ('preparing', 'starting', 'running')) AS active,
+      AND r.status IN ('preparing', 'starting', 'running') AND NOT ${silentRun}) AS active,
     json_extract(pending.payload_json, '$.kind') AS request_kind,
     json_extract(pending.payload_json, '$.routedTo') AS request_routed_to,
     json_extract(pending.payload_json, '$.responseCapability.type') IS NOT 'message' AS request_blocking,
@@ -174,7 +178,9 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
       'pendingBackgroundTasks', json(coalesce(json_extract(p.payload_json, '$.pendingBackgroundTasks'), '[]'))))
       FROM orchestration_v2_projection_provider_threads p WHERE p.thread_id = t.thread_id) AS provider_work,
     (SELECT json_group_array(json_object('id', i.turn_item_id, 'type', i.type, 'status', i.status,
-      'title', json_extract(i.payload_json, '$.title'), 'input', json_extract(i.payload_json, '$.input')))
+      'title', json_extract(i.payload_json, '$.title'), 'input', json_extract(i.payload_json, '$.input'),
+      'monitor', coalesce(json_extract(i.payload_json, '$.monitor'), 0),
+      'nativeItemRef', json_object('nativeId', json_extract(i.payload_json, '$.nativeItemRef.nativeId'))))
       FROM orchestration_v2_projection_turn_items i
       LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = i.run_id
       WHERE i.thread_id = t.thread_id AND i.type IN ('command_execution', 'dynamic_tool', 'subagent')
@@ -238,6 +244,7 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
                   : { routedTo: ThreadId.make(row.request_routed_to) }),
               },
         pendingBackgroundTasks: derivePendingBackgroundWork({
+          threadId: thread.id,
           latestRun: run,
           providerThreads: providers,
           turnItems: items,

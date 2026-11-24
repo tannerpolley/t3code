@@ -8,7 +8,7 @@ import type {
   IssuePullRequestStatus,
   ThreadId,
 } from "@t3tools/contracts";
-import { classifyIssueWorker } from "@t3tools/shared/issueWorkerStatus";
+import { classifyIssueWorker, isIssueWorkerChild } from "@t3tools/shared/issueWorkerStatus";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
 
 const scopeKey = (environmentId: EnvironmentId, scope: IssueRepositoryRef) =>
@@ -75,6 +75,7 @@ export function createLiveIssueWorkOverlay() {
       {
         threads: readonly (EnvironmentThreadShell | undefined | null)[];
         parents: readonly (EnvironmentThreadShell | undefined)[];
+        lineageParents: readonly (EnvironmentThreadShell | undefined)[];
         result: WorkSummary;
       }
     >
@@ -121,13 +122,19 @@ export function createLiveIssueWorkOverlay() {
         ? undefined
         : index.threads.get(threadKey(environmentId, routedTo));
     });
+    const lineageParents = threads.map((thread) => {
+      const parentId =
+        thread != null && isIssueWorkerChild(thread.source) ? thread.lineage.parentThreadId : null;
+      return parentId === null ? undefined : index.threads.get(threadKey(environmentId, parentId));
+    });
     let cached = summaries.get(issue);
     if (cached === undefined) summaries.set(issue, (cached = new Map()));
     const previous = cached.get(key);
     if (
       previous !== undefined &&
       sameItems(previous.threads, threads) &&
-      sameItems(previous.parents, parents)
+      sameItems(previous.parents, parents) &&
+      sameItems(previous.lineageParents, lineageParents)
     )
       return previous.result as T;
     // Older servers lack the provenance needed to replace their work and PR counts.
@@ -142,7 +149,7 @@ export function createLiveIssueWorkOverlay() {
           : previous?.result.liveWork !== undefined && sameItems(previous.result.liveWork, liveWork)
             ? previous.result
             : { ...issue, liveWork };
-      cached.set(key, { threads, parents, result });
+      cached.set(key, { threads, parents, lineageParents, result });
       return result as T;
     }
     const active = threads
@@ -155,13 +162,15 @@ export function createLiveIssueWorkOverlay() {
       return threads[position] === undefined && work !== undefined ? [work] : [];
     });
     const parentsByThread = new Map(
-      threads.flatMap((thread, index) => {
-        const parent = parents[index];
-        return thread == null || parent === undefined ? [] : [[thread.id, parent.source] as const];
-      }),
+      threads.flatMap((thread, index) =>
+        thread == null
+          ? []
+          : [[thread.id, { routed: parents[index], lineage: lineageParents[index] }] as const],
+      ),
     );
     const liveWork = active.map((thread) => {
       const stored = storedWork.get(thread.id);
+      const parents = parentsByThread.get(thread.id);
       return {
         threadId: thread.id,
         title: thread.title,
@@ -174,7 +183,11 @@ export function createLiveIssueWorkOverlay() {
           .filter((pr) => pr.source !== "stack-dismissed")
           .map((pr) => pr.url),
         inherited: !directIds.has(thread.id) && (stored?.inherited ?? stored === undefined),
-        ...classifyIssueWorker(thread.source, parentsByThread.get(thread.id)),
+        ...classifyIssueWorker(
+          thread.source,
+          parents?.routed?.source,
+          parents?.lineage?.pendingBackgroundTasks,
+        ),
       };
     });
     const omittedPrUrls = new Set(
@@ -204,7 +217,7 @@ export function createLiveIssueWorkOverlay() {
       JSON.stringify(result) === JSON.stringify(previous?.result ?? issue)
         ? (previous?.result ?? issue)
         : result;
-    cached.set(key, { threads, parents, result: stable });
+    cached.set(key, { threads, parents, lineageParents, result: stable });
     return stable as T;
   };
 

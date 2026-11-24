@@ -22,9 +22,10 @@ export function isIssueWorkerChild(
   return thread.lineage.parentThreadId !== null && thread.linkedIssue !== undefined;
 }
 
-export function classifyIssueWorker(
+export function issueWorkerIsWorking(
   thread: Pick<
     OrchestrationV2ThreadShell,
+    | "id"
     | "status"
     | "activityRunStatus"
     | "explicitStopRequested"
@@ -33,13 +34,39 @@ export function classifyIssueWorker(
     | "lineage"
     | "linkedIssue"
     | "pendingBackgroundTasks"
-  > & {
+  >,
+  parentTasks: NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]> = [],
+): boolean {
+  const status = thread.activityRunStatus ?? thread.status;
+  if (thread.archivedAt !== null || status === "queued" || status === "failed") return false;
+  if (status === "preparing" || status === "starting" || status === "running") return true;
+  if (managedImplementorAwaitingSubagent(thread)) return true;
+
+  const tasks = thread.pendingBackgroundTasks ?? [];
+  const ownerOf = (task: (typeof tasks)[number]) => task.ownerThreadId ?? task.childThreadId;
+  if (
+    isIssueWorkerChild(thread) &&
+    !isExplicitlyPausedThread(thread) &&
+    (tasks.some((task) => task.kind === "command" && (ownerOf(task) ?? thread.id) === thread.id) ||
+      parentTasks.some((task) => task.kind === "command" && ownerOf(task) === thread.id))
+  )
+    return true;
+  return (
+    status === "waiting" &&
+    !tasks.some((task) => task.kind === "monitor") &&
+    !backgroundWorkHoldsCompletion(tasks)
+  );
+}
+
+export function classifyIssueWorker(
+  thread: Parameters<typeof issueWorkerIsWorking>[0] & {
     readonly pendingRuntimeRequest: Pick<
       NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>,
       "kind" | "routedTo"
     > | null;
   },
   parent?: RoutedRequestParent,
+  parentTasks?: OrchestrationV2ThreadShell["pendingBackgroundTasks"],
 ): WorkerState {
   if (thread.archivedAt !== null) return { status: "idle" };
   const request = thread.pendingRuntimeRequest?.kind;
@@ -53,16 +80,7 @@ export function classifyIssueWorker(
   }
   const status = thread.activityRunStatus ?? thread.status;
   if (status === "queued") return { status: "queued" };
-  if (
-    status === "preparing" ||
-    status === "starting" ||
-    status === "running" ||
-    managedImplementorAwaitingSubagent(thread) ||
-    (status === "waiting" &&
-      !thread.pendingBackgroundTasks?.some((task) => task.kind === "monitor") &&
-      !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []))
-  )
-    return { status: "working" };
+  if (issueWorkerIsWorking(thread, parentTasks)) return { status: "working" };
   if (status === "failed") return { status: "failed" };
   return isExplicitlyPausedThread(thread) ? { status: "idle", paused: true } : { status: "idle" };
 }

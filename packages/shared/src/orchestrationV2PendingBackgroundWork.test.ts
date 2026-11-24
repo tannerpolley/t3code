@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, ProviderThreadId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
@@ -69,13 +69,21 @@ describe("derivePendingBackgroundWork", () => {
     ]);
   });
 
-  it("returns empty while the latest run is not settled", () => {
-    const tasks = derivePendingBackgroundWork({
+  it("preserves child-owned commands on the roster during the parent's active run", () => {
+    const parent = ThreadId.make("parent");
+    const child = ThreadId.make("child");
+    const childCommand = { taskId: "fit", kind: "command", ownerThreadId: child } as const;
+    const input = {
       latestRun: { id: "run-1" as never, ordinal: 1, status: "running" },
+      hasActiveRun: true,
       providerThreads: [
         {
           id: "pt-1" as never,
-          pendingBackgroundTasks: [{ taskId: "bg-1", description: "sleep 20", kind: "command" }],
+          pendingBackgroundTasks: [
+            { taskId: "bg-1", description: "sleep 20", kind: "command" },
+            { taskId: "parent-fit", kind: "command", ownerThreadId: parent },
+            childCommand,
+          ],
         },
       ],
       turnItems: [
@@ -88,8 +96,10 @@ describe("derivePendingBackgroundWork", () => {
           input: "npm test",
         },
       ],
-    });
-    expect(tasks).toEqual([]);
+    } as const;
+    expect(derivePendingBackgroundWork(input)).toEqual([]);
+    const shell = { ...input, threadId: parent };
+    expect(derivePendingBackgroundWork(shell)).toEqual([childCommand]);
   });
 
   it("does not keep a settled parent waiting for an idle child", () => {
@@ -202,31 +212,32 @@ describe("derivePendingBackgroundWork", () => {
     ]);
   });
 
-  it("dedupes roster entries against turn items by native task id", () => {
+  it.each([
+    ["task ID", "toolu_1", {}],
+    ["native item ID", "bash-task-1", { nativeItemId: "toolu_1" }],
+    ["projected item ID", "bash-task-1", { itemId: TurnItemId.make("item-1") }],
+  ] as const)("dedupes a child-owned command against its turn item by %s", (_, taskId, ids) => {
+    const command = {
+      taskId,
+      kind: "command",
+      ownerThreadId: ThreadId.make("child"),
+      ...ids,
+    } as const;
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-      providerThreads: [
-        {
-          id: "pt-1" as never,
-          pendingBackgroundTasks: [
-            { taskId: "task-9", description: "Agent review", kind: "background_task" },
-          ],
-        },
-      ],
+      providerThreads: [{ id: "pt-1" as never, pendingBackgroundTasks: [command] }],
       turnItems: [
         {
-          id: "item-sub" as never,
-          type: "subagent",
+          id: "item-1",
+          type: "command_execution",
           status: "running",
-          title: "Agent review",
-          nativeItemRef: { nativeId: "task-9" },
-          prompt: "review the plan",
+          title: null,
+          input: "npm test",
+          nativeItemRef: { nativeId: "toolu_1" },
         },
       ],
     });
-    expect(tasks).toEqual([
-      { taskId: "task-9", description: "Agent review", kind: "background_task" },
-    ]);
+    expect(tasks).toEqual([command]);
   });
 
   it("excludes Grok persistent monitors", () => {

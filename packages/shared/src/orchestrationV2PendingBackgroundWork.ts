@@ -282,6 +282,7 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
 }
 
 export function derivePendingBackgroundWork(input: {
+  readonly threadId?: ThreadId;
   readonly latestRun: PendingBackgroundWorkRun | null | undefined;
   readonly providerThreads: ReadonlyArray<PendingBackgroundWorkProviderThread>;
   readonly turnItems: ReadonlyArray<PendingBackgroundWorkTurnItem>;
@@ -297,25 +298,27 @@ export function derivePendingBackgroundWork(input: {
       (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
     ) ??
     false;
-  if (hasActiveRun) {
-    return [];
-  }
-  if (input.latestRun == null) {
-    return pullRequestWatchTasks(input.pullRequests);
-  }
-  if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
-    return [];
-  }
-
-  const byTaskId = new Map<string, PendingBackgroundWorkTask>();
+  if (hasActiveRun && input.threadId === undefined) return [];
+  if (!hasActiveRun && input.latestRun == null) return pullRequestWatchTasks(input.pullRequests);
+  if (!hasActiveRun && !isLatestRunSettledForBackgroundWait(input.latestRun)) return [];
 
   const providerThreads =
     input.activeProviderThreadId === undefined || input.activeProviderThreadId === null
       ? input.providerThreads
       : input.providerThreads.filter((thread) => thread.id === input.activeProviderThreadId);
+  const byTaskId = new Map<string, PendingBackgroundWorkTask>();
+  const rosterItemIds = new Set<string>();
+  const rosterNativeItemIds = new Set<string>();
 
   for (const providerThread of providerThreads) {
     for (const task of providerThread.pendingBackgroundTasks ?? []) {
+      const owner = task.ownerThreadId ?? task.childThreadId;
+      // A shared-session child still needs its commands when its parent starts a new turn.
+      if (
+        hasActiveRun &&
+        (task.kind !== "command" || owner === undefined || owner === input.threadId)
+      )
+        continue;
       if (task.taskId.length === 0 || byTaskId.has(task.taskId)) {
         continue;
       }
@@ -331,12 +334,21 @@ export function derivePendingBackgroundWork(input: {
           : {}),
         ...(description === undefined || description.length === 0 ? {} : { description }),
       });
+      if (task.itemId !== undefined) rosterItemIds.add(task.itemId);
+      if (task.nativeItemId !== undefined) rosterNativeItemIds.add(task.nativeItemId);
     }
   }
 
+  if (hasActiveRun) return Array.from(byTaskId.values());
+
   for (const item of pendingBackgroundTurnItems(input)) {
     const taskId = nativeTaskIdFromTurnItem(item);
-    if (byTaskId.has(taskId)) {
+    const nativeItemId = item.nativeItemRef?.nativeId;
+    if (
+      byTaskId.has(taskId) ||
+      rosterItemIds.has(item.id) ||
+      (nativeItemId != null && rosterNativeItemIds.has(nativeItemId))
+    ) {
       continue;
     }
 

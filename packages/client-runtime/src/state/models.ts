@@ -2,6 +2,7 @@ import {
   runtimeRequestIsOwnerVisible,
   type RoutedRequestParent,
 } from "@t3tools/shared/delegatedRequestVisibility";
+import { isIssueWorkerChild, issueWorkerIsWorking } from "@t3tools/shared/issueWorkerStatus";
 import {
   threadActivityFromShell,
   threadActivityWorkingStartedAt,
@@ -135,6 +136,7 @@ export interface EnvironmentThreadShell {
   readonly blockedOnThreadWait?: boolean;
   readonly lastProviderActivityAt?: number | undefined;
   readonly hasActiveProviderWork?: boolean | undefined;
+  readonly issueWorkerWorking?: boolean;
   readonly latestUserMessageAt: string | null;
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
@@ -208,6 +210,7 @@ export function presentThreadShell(
   thread: OrchestrationV2ThreadShell,
   pendingSubagentRequest: PendingSubagentRequest | null = null,
   parent?: RoutedRequestParent | null,
+  issueWorkerWorking = isIssueWorkerChild(thread) ? issueWorkerIsWorking(thread) : undefined,
 ): EnvironmentThreadShell {
   const ownerVisible = runtimeRequestIsOwnerVisible(thread.pendingRuntimeRequest, parent);
   const updatedAt = iso(thread.updatedAt);
@@ -236,6 +239,7 @@ export function presentThreadShell(
     workflowRun: thread.workflowRun ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     ...threadActivityFromShell(thread, ownerVisible),
+    ...(issueWorkerWorking === undefined ? {} : { issueWorkerWorking }),
     latestUserMessageAt: nullableIso(thread.latestUserMessageAt),
     ...(thread.latestUserAuthoredMessageAt === undefined
       ? {}

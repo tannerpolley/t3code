@@ -78,6 +78,7 @@ export interface ThreadActivityInput {
   readonly pendingGuestMessageCount?: number | undefined;
   readonly lastProviderActivityAt?: number | undefined;
   readonly hasActiveProviderWork?: boolean | undefined;
+  readonly issueWorkerWorking?: boolean;
   readonly blockedOnThreadWait?: boolean | undefined;
   readonly pendingBackgroundTasks?: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly runtime?: Pick<
@@ -94,13 +95,19 @@ export function resolveThreadActivity(thread: ThreadActivityInput): ThreadActivi
   if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") return "input";
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return "request";
   const status = thread.runtime?.status;
-  if (status === "queued" || (status === "running" && thread.blockedOnThreadWait)) return "waiting";
   if (status === "preparing" || status === "starting") return "connecting";
-  if (status === "running" || status === "waiting") return "working";
+  if (
+    status === "queued" ||
+    (status === "running" && thread.blockedOnThreadWait && !thread.issueWorkerWorking)
+  )
+    return "waiting";
+  if (status === "running") return "working";
+  if (status === "waiting") return thread.issueWorkerWorking === false ? "waiting" : "working";
   if (thread.runtime?.silentWakeAttention !== undefined) return "failed";
   if (status === "failed" || thread.latestRun?.status === "failed") {
     return thread.runtime?.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
+  if (thread.issueWorkerWorking) return "working";
   if (status === "idle" || backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []))
     return "waiting";
   return "ready";
@@ -119,12 +126,15 @@ export function threadActivityIsSettledRun(
 
 // Only work the agent waits on holds it: commands and monitors it left running
 // unmarked, such as a dev server, present the run's own status. The
-// server suppresses the roster while an interruptible activity run exists, so a
-// remaining roster is stronger than checkpoint-oriented waiting.
+// roster can include another thread's commands even during this thread's active run.
 function threadActivityShellRuntime(
   thread: OrchestrationV2ThreadShell,
 ): ThreadRuntimeSummary | null {
+  const activityStatus = thread.activityRunStatus ?? thread.status;
   const parkAtIdle =
+    activityStatus !== "preparing" &&
+    activityStatus !== "starting" &&
+    activityStatus !== "running" &&
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
     resolveThreadActivity({ runtime: { status: thread.status } }) !== "failed";
   // A pull request watch can hold a thread that never ran, and a provider-native
@@ -137,7 +147,7 @@ function threadActivityShellRuntime(
   ) {
     return null;
   }
-  const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
+  const status = parkAtIdle ? "idle" : activityStatus;
   return {
     silentWakeAttention: thread.silentWakeAttention,
     status,

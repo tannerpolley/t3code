@@ -443,7 +443,13 @@ describe("web thread lineage ordering", () => {
 it("keeps a finished child waiting only for awaited shared-session work", () => {
   const parent = ThreadId.make("parent"),
     child = ThreadId.make("child");
-  const statusWith = (kind: "monitor" | "command", awaited?: true) => {
+  const statusWith = (
+    kind: "monitor" | "command",
+    awaited?: true,
+    issueWorker = false,
+    relationshipToParent: "subagent" | "fork" = "subagent",
+    pendingRuntimeRequest?: { readonly kind: "user_input" },
+  ) => {
     const graph = deriveThreadRelationshipGraph({
       threads: [
         {
@@ -454,8 +460,11 @@ it("keeps a finished child waiting only for awaited shared-session work", () => 
         },
         {
           id: child,
+          archivedAt: null,
           status: "completed",
-          lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
+          lineage: { parentThreadId: parent, relationshipToParent },
+          pendingRuntimeRequest,
+          ...(issueWorker ? { role: "implementor", linkedIssue: { number: 610 } } : {}),
           pendingBackgroundTasks: [],
         },
       ] as never,
@@ -467,4 +476,8 @@ it("keeps a finished child waiting only for awaited shared-session work", () => 
   expect(statusWith("command", true)).toBe("waiting");
   expect(statusWith("monitor")).toBe("completed");
   expect(statusWith("command")).toBe("completed");
+  expect(statusWith("command", undefined, true)).toBe("running");
+  expect(statusWith("monitor", undefined, true)).toBe("completed");
+  expect(statusWith("command", undefined, true, "fork")).toBe("running");
+  expect(statusWith("command", undefined, true, "subagent", { kind: "user_input" })).toBe("input");
 });

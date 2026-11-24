@@ -5,6 +5,11 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import {
+  classifyIssueWorker,
+  isIssueWorkerChild,
+  issueWorkerIsWorking,
+} from "@t3tools/shared/issueWorkerStatus";
+import {
   backgroundWorkHoldsCompletion,
   pendingBackgroundWorkOfThread,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -51,6 +56,26 @@ function edgeKey(edge: ThreadRelationshipEdge): string {
   return `${edge.sourceThreadId}\u001f${edge.targetThreadId}\u001f${edge.kind}`;
 }
 
+function issueWorkerRelationshipStatus(
+  thread: OrchestrationV2ThreadShell | null | undefined,
+  lookup: (id: ThreadId) => OrchestrationV2ThreadShell | null | undefined,
+) {
+  if (thread == null || !isIssueWorkerChild(thread)) return undefined;
+  const owner = thread.pendingRuntimeRequest?.routedTo;
+  const parentId = thread.lineage.parentThreadId;
+  const tasks = parentId === null ? undefined : lookup(parentId)?.pendingBackgroundTasks;
+  const worker = classifyIssueWorker(
+    thread,
+    owner === undefined ? undefined : (lookup(owner) ?? undefined),
+    tasks,
+  );
+  if (worker.status === "question" || worker.status === "approval") {
+    if (!worker.requestHandledByParent) return worker.status === "question" ? "input" : "approval";
+    return issueWorkerIsWorking(thread, tasks) ? "running" : undefined;
+  }
+  return worker.status === "working" ? "running" : undefined;
+}
+
 export function deriveThreadRelationshipGraph(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly projection: ThreadStructure | null;
@@ -64,21 +89,19 @@ export function deriveThreadRelationshipGraph(input: {
       threadsById.set(thread.id, thread);
     }
   }
-  const statusOf = (
-    thread:
-      | (Pick<
-          OrchestrationV2ThreadShell,
-          "id" | "lineage" | "activityRunStatus" | "pendingBackgroundTasks"
-        > & { readonly status: OrchestrationV2ThreadShell["status"] | null })
-      | undefined,
-  ) => {
+  const parentTasksOf = (thread: OrchestrationV2ThreadShell) =>
+    thread.lineage.parentThreadId === null
+      ? undefined
+      : threadsById.get(thread.lineage.parentThreadId)?.pendingBackgroundTasks;
+  const workerStatusOf = (thread: OrchestrationV2ThreadShell | undefined) =>
+    issueWorkerRelationshipStatus(thread, (id) => threadsById.get(id));
+  const statusOf = (thread: OrchestrationV2ThreadShell | undefined) => {
     if (thread === undefined) return null;
     const status = thread.activityRunStatus ?? thread.status;
-    const parentId = thread.lineage.parentThreadId;
     const tasks = pendingBackgroundWorkOfThread(
       thread.id,
       thread.pendingBackgroundTasks,
-      parentId === null ? [] : threadsById.get(parentId)?.pendingBackgroundTasks,
+      parentTasksOf(thread),
     );
     return ["completed", "idle", "interrupted", "cancelled"].includes(status ?? "") &&
       backgroundWorkHoldsCompletion(tasks)
@@ -122,9 +145,10 @@ export function deriveThreadRelationshipGraph(input: {
       targetThreadId: thread.id,
       kind: thread.lineage.relationshipToParent === "subagent" ? "subagent" : "fork",
       status:
-        thread.lineage.relationshipToParent === "subagent"
-          ? statusOf(thread)
-          : (thread.activityRunStatus ?? thread.status),
+        workerStatusOf(threadsById.get(thread.id)) ??
+        (thread.lineage.relationshipToParent === "subagent"
+          ? statusOf(threadsById.get(thread.id))
+          : (thread.activityRunStatus ?? thread.status)),
     });
   }
 
@@ -138,6 +162,7 @@ export function deriveThreadRelationshipGraph(input: {
         targetThreadId: subagent.childThreadId,
         kind: "subagent",
         status:
+          workerStatusOf(child) ??
           child?.activityRunStatus ??
           (child?.latestRunId != null && !isOrchestrationV2WorkActive(subagent.status)
             ? statusOf(child)
@@ -195,7 +220,12 @@ export function threadRelationshipRowStatus(
     return row.edge.status;
   }
   const thread = graph.nodes.get(row.threadId)?.thread;
-  return thread?.activityRunStatus ?? thread?.status ?? null;
+  return (
+    issueWorkerRelationshipStatus(thread, (id) => graph.nodes.get(id)?.thread) ??
+    thread?.activityRunStatus ??
+    thread?.status ??
+    null
+  );
 }
 
 function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number | null {

@@ -24,7 +24,7 @@ import {
   visibleThreadPullRequests,
 } from "../sourceControl/threadPullRequests.ts";
 import { issuePullRequests } from "@t3tools/source-control-definitions/issuePullRequests";
-import { classifyIssueWorker } from "@t3tools/shared/issueWorkerStatus";
+import { classifyIssueWorker, isIssueWorkerChild } from "@t3tools/shared/issueWorkerStatus";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const key = (issue: RepositoryIssueRef) =>
@@ -75,7 +75,7 @@ const make = Effect.gen(function* () {
           {
             readonly threads: ReadonlyArray<IssueWorkThread>;
             readonly parentById: ReadonlyMap<string, string | null>;
-            readonly routingParents: ReadonlyArray<IssueWorkThread>;
+            readonly statusParents: ReadonlyArray<IssueWorkThread>;
           },
           IssueLinkError
         >
@@ -143,19 +143,21 @@ const make = Effect.gen(function* () {
           );
           const ids = new Set(threads.map((thread) => thread.id));
           const parentIds = new Set(
-            threads.flatMap((thread) => {
-              const parentId = thread.pendingRuntimeRequest?.routedTo;
-              return parentId === undefined || ids.has(parentId) ? [] : [parentId];
-            }),
+            threads.flatMap((thread) =>
+              [
+                thread.pendingRuntimeRequest?.routedTo,
+                isIssueWorkerChild(thread) ? thread.lineage.parentThreadId : null,
+              ].flatMap((parentId) => (parentId == null || ids.has(parentId) ? [] : [parentId])),
+            ),
           );
-          const routingParents =
+          const statusParents =
             parentIds.size === 0 ? [] : yield* projections.getIssueWorkThreads([...parentIds]);
           return {
             threads,
             parentById: new Map(
               candidates.map(({ thread_id, parent_thread_id }) => [thread_id, parent_thread_id]),
             ),
-            routingParents,
+            statusParents,
           };
         }).pipe(
           Effect.mapError(storageError),
@@ -166,7 +168,7 @@ const make = Effect.gen(function* () {
       if (memo.queries.size >= 32) memo.queries.delete(memo.queries.keys().next().value!);
       memo.queries.set(queryKey, read);
     }
-    const { threads, parentById, routingParents } = yield* read;
+    const { threads, parentById, statusParents } = yield* read;
     const issues = new Map(
       list.issues.map((issue) => [key({ ...list.repository, number: issue.number }), issue.number]),
     );
@@ -266,13 +268,16 @@ const make = Effect.gen(function* () {
           : [[thread.linkedIssue.number, reason] as const];
       }),
     );
-    const parentsById = new Map(routingParents.map((thread) => [thread.id, thread]));
+    const parentsById = new Map(statusParents.map((thread) => [thread.id, thread]));
+    const parentOf = (id: ThreadId | null | undefined) =>
+      id == null ? undefined : (byId.get(id) ?? parentsById.get(id));
     const work = new Map<number, NonNullable<RepositoryIssueSummary["liveWork"]>[number][]>();
     for (const { thread, refs } of linked) {
       const parentId = thread.pendingRuntimeRequest?.routedTo;
       const state = classifyIssueWorker(
         thread,
-        parentId === undefined ? undefined : (byId.get(parentId) ?? parentsById.get(parentId)),
+        parentOf(parentId),
+        parentOf(thread.lineage.parentThreadId)?.pendingBackgroundTasks,
       );
       const item = {
         threadId: thread.id,
