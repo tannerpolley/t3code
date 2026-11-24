@@ -333,6 +333,11 @@ it.effect("brings a settled thread back when its guest sends a request", () =>
       guestName: "Sam",
     });
     yield* orchestrator.dispatch({
+      type: "thread.pin",
+      commandId: CommandId.make("pin"),
+      threadId,
+    });
+    yield* orchestrator.dispatch({
       type: "thread.settle",
       commandId: CommandId.make("settle"),
       threadId,

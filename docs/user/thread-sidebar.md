@@ -158,7 +158,8 @@ files directly; see [Attach files](./composer.md#attach-files).
 On web and desktop, pinning or unpinning a thread keeps the sidebar at your current
 scroll position instead of following the thread to its new place in the list.
 
-Pinning does not prevent automatic settlement. Settling a thread removes its pin.
+Pinned threads are skipped by automatic settlement. Manually settling a pinned thread removes
+its pin and moves it to **Settled**.
 
 On web and desktop, drag a thread between sections to change its state. Drag a thread up into
 the pinned section to pin it at the spot you drop it; drag a pinned thread down into the active
@@ -249,8 +250,9 @@ section is off. Each device keeps its own choice.
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list
-without deleting the conversation. **Un-settle thread** restores it to active work
-and prevents automatic settlement until new activity resumes the usual rules.
+without deleting the conversation. Unarchive it first if it moved to **Archive**.
+**Un-settle thread** restores it to active work and prevents automatic settlement
+until new activity resumes the usual rules.
 Manually settling an idle thread dismisses unanswered async questions without
 sending an answer or restarting the agent. Settling also closes the thread's
 terminals that wait at an idle prompt, and keeps their output. A terminal that
@@ -276,7 +278,9 @@ By default, environments settle inactive threads after seven days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. An empty thread's inactivity counts from when it was created.
 Work in progress, pending questions or approvals, and background work the agent
-is waiting on prevent automatic settlement. An open pull request does not prevent inactivity
+is waiting on prevent automatic settlement. Before archiving a thread on settlement, T3 Code
+also waits for its running delegated tasks and pending guest messages to be resolved.
+An open pull request does not prevent inactivity
 settlement unless you turn on **Keep threads with a PR** in **Settings → Threads**,
 but an old closed or merged pull request does not settle work you
 resumed after it closed. Your own messages count as resuming, and so does a
@@ -299,16 +303,18 @@ already settled threads.
 
 ### Settle or archive
 
-Settle is for work that is done for now. A settled thread stays in the sidebar's Settled
-section and in search, and a message to it, from you, an agent, or a scheduled task, makes it
-active again. Archive is for work you want out of the way. An archived thread leaves the
-sidebar and search and shows only in **Settings → Archive**, where you can unarchive or
-delete it. It refuses new messages, including ones from agents and scheduled tasks, until you
-unarchive it. Removing a project deletes its threads either way.
+Unpinned threads you create go to **Settings → Archive** when you choose **Settle thread** or
+when they settle automatically. Orchestrators and Writers are exempt from automatic archiving
+on settlement. Threads that settle without archiving stay in **Settled** and in search.
+Sending a message to a visible settled thread makes it active again.
 
-A scheduled task that posts into one thread keeps running after you archive that thread, and
-each run fails. Settle the thread instead, or move or pause the task in **Settings → Scheduled
-tasks**.
+Archived threads leave the sidebar and search and refuse new messages, including from agents
+and scheduled tasks. Unarchive a settled thread to bring it back to **Settled**. It stays
+visible until it becomes active and settles again. Removing a project deletes its threads
+either way.
+
+A scheduled task that posts into an archived thread keeps running and each run fails.
+Keep its target thread active, or move or pause the task in **Settings → Scheduled tasks**.
 
 ## Link a pull request
 
@@ -619,8 +625,7 @@ The orchestrator archives its delegated workers in the same environment when it
 receives their final results, including interrupted, failed, and cancelled work.
 A worker can be archived even if it has no pull request or issue. Workers with
 running or queued work, a pending question or approval, or unfinished child work
-stay visible. Pinned workers, Writers, side chats, and threads you create stay
-visible.
+stay visible. Pinned workers, Writers, and side chats are exempt from worker archiving.
 
 If an eligible worker is still visible five minutes after its result arrives,
 T3 Code posts a reminder with the count and names of the workers to archive.
