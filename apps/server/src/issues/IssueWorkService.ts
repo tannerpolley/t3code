@@ -1140,10 +1140,11 @@ export const layer = Layer.effect(
           repositoryPhase(config) === "retired"
         )
           return;
-        const current = yield* settings.getSettings;
-        const override =
-          current.projectSettingsOverrides[config.projectId]?.orchestratorHandoffTokens;
-        const threshold = override === undefined ? current.orchestratorHandoffTokens : override;
+        const readThreshold = Effect.map(settings.getSettings, (current) => {
+          const override =
+            current.projectSettingsOverrides[config.projectId]?.orchestratorHandoffTokens;
+          return override === undefined ? current.orchestratorHandoffTokens : override;
+        });
         const attempt = config.automaticHandoff;
         const targetId = automaticHandoffThreadId(rootThreadId);
         let automatic: NonNullable<
@@ -1151,6 +1152,7 @@ export const layer = Layer.effect(
         >;
         let brief = "";
         if (attempt?.status === "verifying") {
+          const threshold = yield* readThreshold;
           const successor = yield* threads.getThreadShell(targetId).pipe(Effect.mapError(mapError));
           const expired =
             (yield* Clock.currentTimeMillis) - Date.parse(attempt.startedAt) >=
@@ -1164,7 +1166,7 @@ export const layer = Layer.effect(
             return;
           automatic = { type: "verify", enabled: threshold !== null };
         } else {
-          if (threshold == null) return;
+          if ((yield* readThreshold) == null) return;
           const root = yield* threads.getThreadShell(rootThreadId).pipe(Effect.mapError(mapError));
           if (
             root === null ||
@@ -1183,7 +1185,10 @@ export const layer = Layer.effect(
               providerThreadIds: [root.activeProviderThreadId],
             })
             .pipe(Effect.mapError(mapError));
+          // Read after the usage, so a threshold changed meanwhile is the one that applies.
+          const threshold = yield* readThreshold;
           if (
+            threshold == null ||
             (providerThreads[0]?.contextUsage?.usedTokens ?? 0) < threshold ||
             !(yield* store.subtreeDrained(rootThreadId)) ||
             !(yield* store.handoffSafe(rootThreadId)) ||
