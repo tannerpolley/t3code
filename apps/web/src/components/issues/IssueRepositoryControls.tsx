@@ -194,6 +194,7 @@ function RepositoryControls({
         (repositoryPhase(config) === "handoff_awaiting_approval" && config.paused) ||
         repositoryPhase(config) === "draining")) ||
     (config?.suspendedIssues.length ?? 0) > 0;
+  const gt = useGT();
   const [busy, setBusy] = useState(false);
   const [handoffExpanded, setHandoffExpanded] = useState(false);
   const [summary, setSummary] = useState("");
@@ -481,8 +482,9 @@ function RepositoryControls({
         ) : handoffExpanded ? (
           <div className="flex w-full max-w-md flex-col gap-2 pt-1">
             <span className="text-xs text-muted-foreground">
-              Approve a fresh thread after existing work finishes. Routine model changes can keep
-              the current thread.
+              {gt(
+                "T3 pauses new issue starts while existing work finishes, then hands off to a fresh thread.",
+              )}
             </span>
             <Textarea
               aria-label="Handoff summary"
@@ -504,7 +506,7 @@ function RepositoryControls({
                 disabled={busy || summary.trim().length === 0}
                 onClick={() => void transfer("approve")}
               >
-                Approve fresh-thread handoff
+                {gt("Start handoff")}
               </Button>
             </div>
           </div>

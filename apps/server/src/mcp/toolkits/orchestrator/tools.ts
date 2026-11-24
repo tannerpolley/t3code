@@ -404,7 +404,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ProposeIssueChangeTool,
   Tool.make("request_repository_handoff", {
     description:
-      "Request a handoff of this repository's registered root. Omit targetThreadId for a fresh thread, or name an existing top-level thread in the same project. Read get_repository_orchestration for its ownership revision, and supply a recovery summary. Only the current root may request it. The user must approve in the repository controls; this tool does not approve or transfer ownership. After approval T3 pauses new admissions, drains existing workers and final deliveries, gives the target thread a server recovery inventory, then atomically replaces the owner. Routine model changes should keep the current thread.",
+      "Request a handoff of this repository's registered root. Omit targetThreadId for a fresh thread, or name an existing top-level thread in the same project. Read get_repository_orchestration for its ownership revision, and supply a recovery summary. Only the current root may request it. T3 immediately pauses new admissions, drains existing workers and final deliveries, gives the target thread a server recovery inventory, then atomically replaces the owner. Routine model changes should keep the current thread.",
     parameters: RepositoryHandoffRequestInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
@@ -452,7 +452,7 @@ export const OrchestratorToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("get_repository_orchestration", {
     description:
-      "Check repository work admission: owner, revision, worker and read-only capacity, milestones, and ordered issue queue. Use phase to tell which work can start: draining admits already queued work, and handoff_awaiting_approval preserves the pause state.",
+      "Check repository work admission: owner, revision, worker and read-only capacity, milestones, and ordered issue queue. Use phase to tell which work can start: draining admits already queued work, and handoff_awaiting_approval is a saved handoff that will start draining on reconcile.",
     parameters: IssueRepositoryRef,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,

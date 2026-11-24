@@ -205,5 +205,7 @@
   "e05b2595e2c7c313": "Übergabe an {target} wartet auf Freigabe",
   "c1303d131afc6a17": "Älter als ein Tag",
   "00ad8aeed0a6c461": "Abbrechen",
-  "ac48cc297029db41": "Freigeben"
+  "ac48cc297029db41": "Freigeben",
+  "97144d3a3218d931": "T3 startet keine neuen Issues, bis die laufende Arbeit abgeschlossen ist, und übergibt dann an einen neuen Thread.",
+  "9a73e6f99e93612a": "Übergabe starten"
 }

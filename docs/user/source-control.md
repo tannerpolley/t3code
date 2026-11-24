@@ -462,10 +462,12 @@ continue. Both threads link to each other in the sidebar. To turn this off or ch
 threshold, open **Settings → Threads → Orchestration**. A project can use its own setting.
 
 To replace the orchestrator's conversation manually, open **Repository orchestration** in the project's
-settings, choose **Hand off to a fresh thread** from the menu beside its orchestrator, and provide a summary. Your approval pauses new issue admissions until existing
-workers and their final results finish; the fresh thread receives your summary and a recovery
-inventory. You can cancel a pending handoff there too, and the same menu opens previous
-orchestrators. For a routine provider or model change, keep the same thread.
+settings, choose **Hand off to a fresh thread** from the menu beside its orchestrator, and provide a
+summary. Starting the handoff pauses new issue admissions while existing workers and their final
+results finish. The fresh thread receives your summary and a recovery inventory. The orchestrator
+can also request a handoff after its context compacts. Either request starts draining right away.
+You can cancel a pending handoff in Settings, and the same menu opens previous orchestrators.
+For a routine provider or model change, keep the same thread.
 
 To restore orchestration to another existing thread, first pause repository work from **Status**. The
 current orchestrator must be stopped, with no active issue workers or unclaimed start requests.

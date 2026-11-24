@@ -205,5 +205,7 @@
   "e05b2595e2c7c313": "El traspaso a {target} espera aprobación",
   "c1303d131afc6a17": "Más de un día",
   "00ad8aeed0a6c461": "Cancelar",
-  "ac48cc297029db41": "Aprobar"
+  "ac48cc297029db41": "Aprobar",
+  "97144d3a3218d931": "T3 pausa el inicio de nuevas incidencias mientras termina el trabajo en curso y luego transfiere el control a un hilo nuevo.",
+  "9a73e6f99e93612a": "Iniciar transferencia"
 }
