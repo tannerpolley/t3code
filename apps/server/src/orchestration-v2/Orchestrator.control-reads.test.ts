@@ -2748,6 +2748,138 @@ it.effect("replays a thread.create receipt without changing the thread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each(["manual", "automatic"] as const)(
+  "%s settlement archives owner threads and unarchive waits for a new settlement",
+  (mode) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:owner-settlement");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-owner-settlement"),
+        threadId,
+        projectId: ProjectId.make("project:owner-settlement"),
+        title: "Owner thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const snapshotAt = yield* DateTime.now;
+      yield* TestClock.adjust("8 days");
+      const archiveTime = yield* DateTime.now;
+      yield* orchestrator.dispatch(
+        mode === "manual"
+          ? { type: "thread.settle", commandId: CommandId.make("settle-owner"), threadId }
+          : {
+              type: "thread.auto-settle",
+              commandId: CommandId.make("auto-settle-owner"),
+              threadId,
+              snapshotAt,
+              settledAt: DateTime.subtract(archiveTime, { days: 1 }),
+            },
+      );
+      assert.deepInclude(yield* projections.getThreadShell(threadId), {
+        archivedAt: archiveTime,
+        settledOverride: "settled",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("unarchive-owner"),
+        threadId,
+      });
+      const restored = (yield* projections.getThreadShell(threadId))!;
+      assert.isNull(restored.archivedAt);
+      assert.equal(restored.settledOverride, "settled");
+      const replay = yield* orchestrator
+        .dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("auto-settle-restored-owner"),
+          threadId,
+          snapshotAt: restored.updatedAt,
+        })
+        .pipe(Effect.flip);
+      assert.equal(replay._tag, "OrchestratorDispatchError");
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("unsettle-restored-owner"),
+        threadId,
+        reason: "user",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("resettle-owner"),
+        threadId,
+      });
+      assert.isNotNull((yield* projections.getThreadShell(threadId))!.archivedAt);
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("undo-settle-owner"),
+        threadId,
+        reason: "user",
+      });
+      assert.deepInclude(yield* projections.getThreadShell(threadId), {
+        archivedAt: null,
+        settledOverride: "active",
+      });
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each(["pinned", "orchestrator", "writer"] as const)(
+  "manual settlement keeps an owner-created %s thread visible",
+  (exemption) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:settle-exempt-owner");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-settle-exempt-owner"),
+        threadId,
+        projectId: ProjectId.make("project:settle-exempt-owner"),
+        title: "Exempt owner thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+        ...(exemption === "pinned" ? {} : { role: exemption }),
+      });
+      if (exemption === "pinned") {
+        yield* orchestrator.dispatch({
+          type: "thread.pin",
+          commandId: CommandId.make("pin-settle-exempt-owner"),
+          threadId,
+        });
+        const error = yield* orchestrator
+          .dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make("auto-settle-pinned-owner"),
+            threadId,
+            snapshotAt: yield* DateTime.now,
+          })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "OrchestratorDispatchError");
+        assert.isNotNull((yield* projections.getThreadShell(threadId))!.pinnedAt);
+      }
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("settle-exempt-owner"),
+        threadId,
+      });
+      assert.deepInclude(yield* projections.getThreadShell(threadId), {
+        archivedAt: null,
+        settledOverride: "settled",
+      });
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("explicit settle clears snooze atomically and stays idempotent after re-snoozing", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2760,6 +2892,7 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
       threadId,
       projectId: ProjectId.make("project:settle-snoozed"),
       title: "Snoozed thread",
+      role: "writer",
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",

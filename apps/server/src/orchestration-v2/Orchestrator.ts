@@ -1,6 +1,10 @@
 import { automaticHandoffCompletion } from "./AutomaticRepositoryHandoff.ts";
 import { keepIssueWorktree } from "../issues/issueThreadRetention.ts";
-import { isDelegatedAppThread } from "@t3tools/contracts";
+import {
+  isDelegatedAppThread,
+  isListedThreadLineage,
+  pendingGuestMessageCount,
+} from "@t3tools/contracts";
 import { silentWakeAction, SILENT_WAKE_FOLLOWUP, SILENT_WAKE_ATTENTION } from "./SilentWake.ts";
 import { repositoryPhase } from "@t3tools/contracts";
 import type {
@@ -5025,6 +5029,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is already archived.`,
       });
     }
+    // A role-less local thread displays as an Orchestrator without being assigned that role.
+    const archiveOnSettle =
+      command.type === "thread.settle" &&
+      thread.settledOverride !== "settled" &&
+      thread.archivedAt === null &&
+      thread.pinnedAt == null &&
+      thread.createdBy === "user" &&
+      isListedThreadLineage(thread.lineage) &&
+      !isDelegatedAppThread(thread) &&
+      thread.role !== "orchestrator" &&
+      thread.role !== "writer" &&
+      thread.repositoryOrchestration === undefined;
     if (command.type === "thread.archive") {
       const records = yield* projectionStore
         .getThreadRecords(command.threadId, ["subagents"])
@@ -5044,6 +5060,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is not archived.`,
       });
     }
+    const undoSettlementArchive =
+      command.type === "thread.unsettle" && thread.archivedBySettlement === true;
     if (
       (command.type === "thread.settle" ||
         command.type === "thread.unsettle" ||
@@ -5055,7 +5073,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.pin.reorder" ||
         command.type === "thread.active.reorder" ||
         command.type === "thread.pull-request.sync") &&
-      thread.archivedAt !== null
+      thread.archivedAt !== null &&
+      !undoSettlementArchive
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -5118,9 +5137,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     if (command.type === "thread.settle") {
+      if (archiveOnSettle && pendingGuestMessageCount(thread.guestShare) > 0) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has a pending guest message. Handle it before settling.`,
+        });
+      }
       const projection = yield* loadProjectionForCommand(
         command,
-        ["runs", "runtimeRequests", "providerThreads", "turnItems"],
+        [
+          "runs",
+          "runtimeRequests",
+          "providerThreads",
+          "turnItems",
+          ...(archiveOnSettle ? ["subagents" as const] : []),
+        ],
         {
           turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
           turnItemStatuses: ["pending", "running", "waiting"],
@@ -5202,7 +5234,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? "has a queued message. Send it or remove it from the queue before settling."
             : awaitedSessionWorkExists
               ? "is still running background agents or commands, and settling would end them. Wait for them to finish, or press Stop, then settle."
-              : null;
+              : archiveOnSettle && hasRunningDelegatedTasks(projection.subagents)
+                ? "has running delegated tasks. Wait for them or cancel them before settling."
+                : null;
       if (blocker !== null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -5535,6 +5569,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             archivedAt: null,
+            archivedBySettlement: undefined,
             ...(thread.lineage.relationshipToParent === "subagent"
               ? { workerUnarchivedAt: DateTime.formatIso(now) }
               : {}),
@@ -5546,6 +5581,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
           return {
             ...thread,
+            ...(archiveOnSettle
+              ? {
+                  archivedAt: now,
+                  archivedBySettlement: true as const,
+                  titleRegeneration: null,
+                  guestShare: null,
+                }
+              : {}),
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
             // Settled threads refuse recovery, so an armed resume would stay hidden until un-settled.
@@ -5569,6 +5612,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const alreadyPinnedActive = thread.settledOverride === "active";
           return {
             ...thread,
+            ...(undoSettlementArchive ? { archivedAt: null, archivedBySettlement: undefined } : {}),
             settledOverride: "active",
             settledAt: null,
             unsettledAt: alreadyPinnedActive
@@ -6221,16 +6265,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.provider-switched" as const;
       }
     })();
-    yield* emit(
-      events,
-      command,
-    )({
-      type: eventType,
+    const threadEvent = {
       threadId: command.threadId,
       providerInstanceId: updatedThread.providerInstanceId,
       occurredAt: now,
       payload: updatedThread,
-    });
+    };
+    const emitThreadEvent = emit(events, command);
+    yield* emitThreadEvent({ ...threadEvent, type: eventType });
+    if (archiveOnSettle) yield* emitThreadEvent({ ...threadEvent, type: "thread.archived" });
+    if (undoSettlementArchive)
+      yield* emitThreadEvent({ ...threadEvent, type: "thread.unarchived" });
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
@@ -6448,7 +6493,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                           ? "Runtime mode changed."
                           : "Provider or model selection changed.",
                 // Terminal detaches revoke MCP credentials; reattachments need other detach reasons to preserve them.
-                ...(command.type === "thread.archive" ? { revokeMcpCredential: true } : {}),
+                ...(command.type === "thread.archive" || archiveOnSettle
+                  ? { revokeMcpCredential: true }
+                  : {}),
               },
             } satisfies PendingOrchestrationEffectV2;
             yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
@@ -17163,6 +17210,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           );
         if (
           thread.settledOverride !== null ||
+          thread.pinnedAt != null ||
+          thread.autoSettleDisabledAt != null ||
           DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(command.snapshotAt)
         ) {
           return yield* new OrchestratorDispatchError({

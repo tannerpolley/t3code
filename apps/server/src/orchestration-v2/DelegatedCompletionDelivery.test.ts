@@ -2070,6 +2070,20 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
 
         if (settlement === "automatic") {
           yield* TestClock.adjust(Orchestrator.QUEUED_TURN_START_GRACE_MS);
+        } else {
+          const blocked = yield* orchestrator
+            .dispatch({
+              type: "thread.settle",
+              commandId: CommandId.make("sibling-archive-blocked"),
+              threadId,
+            })
+            .pipe(Effect.flip);
+          assert.include(blocked.message, "has running delegated tasks");
+          yield* orchestrator.dispatch({
+            type: "thread.pin",
+            commandId: CommandId.make("sibling-pin-before-settle"),
+            threadId,
+          });
         }
         const beforeSettle = yield* orchestrator.getThreadProjection(threadId);
         yield* orchestrator.dispatch({

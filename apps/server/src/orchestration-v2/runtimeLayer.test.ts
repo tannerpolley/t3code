@@ -3925,6 +3925,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
       });
       yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-layer-lifecycle-unarchive-settled"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
         type: "thread.pin",
         commandId: CommandId.make("runtime-layer-lifecycle-pin-settled"),
         threadId,
@@ -8080,6 +8085,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* orchestrator.dispatch({
         type: "thread.settle",
         commandId: CommandId.make("runtime-layer-active-settle-initial"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-layer-active-settle-unarchive"),
         threadId,
       });
       yield* orchestrator.dispatch({
@@ -13329,6 +13339,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       yield* orchestrator.dispatch({
         type: "thread.settle",
         commandId: CommandId.make("runtime-layer-snoozed-thread-settle"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-unarchive"),
         threadId,
       });
       yield* orchestrator.dispatch({
