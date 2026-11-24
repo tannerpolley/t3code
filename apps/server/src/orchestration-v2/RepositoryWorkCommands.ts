@@ -650,21 +650,23 @@ export function makeRepositoryWorkCommands({
         !(yield* store.subtreeDrained(nextThreadId).pipe(mapDispatchError(command)))
       )
         return yield* refuse("The verification thread is in use.");
+      const sourceShell = yield* projectionStore
+        .getThreadShell(shell.id)
+        .pipe(mapDispatchError(command));
       const source = yield* projectionStore
-        .getThreadRecords(shell.id, ["runs", "providerThreads", "messages"], {
-          latestRunLimit: 1,
-          providerThreadIds:
-            shell.activeProviderThreadId === null ? [] : [shell.activeProviderThreadId],
+        .getThreadRecords(shell.id, ["runs", "messages"], {
+          runIds: [automatic.sourceRunId],
           messageRunIds: [automatic.sourceRunId],
           messageRoles: ["user", "assistant"],
         })
         .pipe(mapDispatchError(command));
-      const contextTokens = source.providerThreads[0]?.contextUsage?.usedTokens;
+      const contextCompactions = yield* store
+        .contextFullCompactionCount(shell.id)
+        .pipe(mapDispatchError(command));
       if (
-        source.runs[0]?.id !== automatic.sourceRunId ||
+        sourceShell?.latestRunId !== automatic.sourceRunId ||
         source.runs[0]?.status !== "completed" ||
-        contextTokens === undefined ||
-        contextTokens < automatic.threshold
+        contextCompactions < automatic.threshold
       )
         return yield* refuse("Source context or its latest turn changed before verification.");
       yield* emitEvent({
@@ -679,7 +681,7 @@ export function makeRepositoryWorkCommands({
             automaticHandoff: {
               sourceRunId: automatic.sourceRunId,
               requestId: command.commandId,
-              contextTokens,
+              contextCompactions,
               startedAt: DateTime.formatIso(now),
               status: "verifying",
             },
@@ -809,11 +811,9 @@ Your first authorized action is read-only. Use t3_thread_read on the source to r
       yield* notice(
         next,
         "Automatic handoff complete",
-        `Handed off to ${next.title} at ${new Intl.NumberFormat("en", {
-          notation: "compact",
-        })
-          .format(attempt!.contextTokens)
-          .toLowerCase()} context.`,
+        attempt!.contextCompactions === undefined
+          ? `Handed off to ${next.title}.`
+          : `Handed off to ${next.title} after ${attempt!.contextCompactions} context compactions.`,
       );
     }
 

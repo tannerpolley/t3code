@@ -19,7 +19,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import {
-  DEFAULT_ORCHESTRATOR_HANDOFF_TOKENS,
+  DEFAULT_ORCHESTRATOR_HANDOFF_COMPACTIONS,
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -2071,51 +2071,53 @@ export function ThreadsSettingsPanel() {
       <SettingsSection id="orchestrator-handoff" title={gt("Orchestration")}>
         <SettingsRow
           serverScoped
-          settingKeys={["orchestratorHandoffTokens"]}
+          settingKeys={["orchestratorHandoffCompactions"]}
           title={gt("Automatic orchestrator handoff")}
           description={gt(
-            "Start a fresh repository orchestrator when its context reaches the token threshold and its work is idle.",
+            "Start a fresh repository orchestrator once its provider has compacted a full context the specified number of times and its work is idle.",
           )}
           control={
             <ScopedSwitch
-              settingKeys={["orchestratorHandoffTokens"]}
-              checked={settings.orchestratorHandoffTokens !== null}
+              settingKeys={["orchestratorHandoffCompactions"]}
+              checked={settings.orchestratorHandoffCompactions !== null}
               onCheckedChange={(enabled) =>
                 updateSettings({
-                  orchestratorHandoffTokens: enabled ? DEFAULT_ORCHESTRATOR_HANDOFF_TOKENS : null,
+                  orchestratorHandoffCompactions: enabled
+                    ? DEFAULT_ORCHESTRATOR_HANDOFF_COMPACTIONS
+                    : null,
                 })
               }
               aria-label={gt("Automatic orchestrator handoff")}
             />
           }
         />
-        {settings.orchestratorHandoffTokens !== null ? (
+        {settings.orchestratorHandoffCompactions !== null ? (
           <SettingsRow
             serverScoped
-            settingKeys={["orchestratorHandoffTokens"]}
-            title={gt("Handoff threshold (tokens)")}
+            settingKeys={["orchestratorHandoffCompactions"]}
+            title={gt("Context compactions before handoff")}
             control={
               <Input
-                key={settings.orchestratorHandoffTokens}
+                key={settings.orchestratorHandoffCompactions}
                 type="number"
                 size="sm"
                 min={1}
                 step={1}
                 className="w-full sm:w-32"
-                aria-label={gt("Handoff threshold (tokens)")}
-                defaultValue={settings.orchestratorHandoffTokens}
+                aria-label={gt("Context compactions before handoff")}
+                defaultValue={settings.orchestratorHandoffCompactions}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") event.currentTarget.blur();
                 }}
                 onBlur={(event) => {
                   const input = event.currentTarget;
                   const value = input.valueAsNumber;
-                  const previous = settings.orchestratorHandoffTokens;
+                  const previous = settings.orchestratorHandoffCompactions;
                   if (previous === null) return;
                   if (!Number.isSafeInteger(value) || value < 1) input.value = String(previous);
                   else if (value !== previous)
                     updateSettings(
-                      { orchestratorHandoffTokens: value },
+                      { orchestratorHandoffCompactions: value },
                       {
                         onFailed: () => {
                           input.value = String(previous);

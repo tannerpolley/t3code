@@ -452,7 +452,7 @@ export const OrchestratorToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("get_repository_orchestration", {
     description:
-      "Check the repository owner, revision, capacity, milestones, and ordered issue queue. The effective orchestratorHandoffTokens threshold is null when automatic handoffs are disabled. The draining phase admits already queued work, and handoff_awaiting_approval is a saved handoff. Reconcile starts draining it if the root is in full-access, default mode.",
+      "Check the repository owner, revision, capacity, milestones, and ordered issue queue. The effective orchestratorHandoffCompactions setting gives the number of full-context compactions before automatic handoff, or null when disabled. The draining phase admits already queued work, and handoff_awaiting_approval is a saved handoff. Reconcile starts draining it if the root is in full-access, default mode.",
     parameters: IssueRepositoryRef,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,

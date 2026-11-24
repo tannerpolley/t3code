@@ -12017,6 +12017,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(compaction.turnItem.beforeTokenCount, 1500);
           assert.equal(compaction.turnItem.afterTokenCount, 400);
           assert.equal(compaction.turnItem.status, "completed");
+          assert.isUndefined(compaction.turnItem.contextFull);
         }
         const watermark = harness.events.find(
           (event) =>
@@ -12146,6 +12147,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(completed.ordinal, running.ordinal);
       assert.deepEqual(completed.startedAt, running.startedAt);
       assert.equal(completed.beforeTokenCount, 1500);
+      assert.isTrue(completed.contextFull);
       assert.equal(completed.afterTokenCount, 400);
       assert.deepEqual(completed.completedAt, reported[1]?.completedAt);
 
@@ -12175,6 +12177,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.notEqual(boundaryOnly.id, completed.id);
       assert.isAbove(boundaryOnly.ordinal, completed.ordinal);
       assert.equal(boundaryOnly.beforeTokenCount, 2000);
+      assert.isUndefined(boundaryOnly.contextFull);
       assert.equal(boundaryOnly.afterTokenCount, 500);
       assert.equal(nextRunning.status, "running");
       assert.notEqual(nextRunning.id, boundaryOnly.id);

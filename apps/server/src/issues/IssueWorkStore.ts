@@ -111,6 +111,9 @@ export class IssueWorkStore extends Context.Service<
       rootThreadId: ThreadId,
     ) => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly usageSprintRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
+    readonly contextFullCompactionCount: (
+      rootThreadId: ThreadId,
+    ) => Effect.Effect<number, IssueWorkError>;
     readonly handoffSafe: (rootThreadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
     readonly subtreeDrained: (rootThreadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
     /** Queued issue-worker runs this root can never admit: their issue's attempt is not theirs under this root. */
@@ -364,6 +367,18 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows[0]?.active ?? 0),
           Effect.mapError(mapError),
         ),
+      ),
+      contextFullCompactionCount: Effect.fn("IssueWorkStore.contextFullCompactionCount")(
+        (rootThreadId) =>
+          // Providers without a context-full signal never contribute to automatic handoff.
+          sql<{ count: number }>`
+          SELECT count(*) AS count FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${rootThreadId} AND type = 'compaction' AND status = 'completed'
+            AND json_extract(payload_json, '$.contextFull') = 1
+        `.pipe(
+            Effect.map((rows) => rows[0]?.count ?? 0),
+            Effect.mapError(mapError),
+          ),
       ),
       handoffSafe: Effect.fn("IssueWorkStore.handoffSafe")((rootThreadId) =>
         sql`SELECT 1 FROM orchestration_v2_projection_threads thread

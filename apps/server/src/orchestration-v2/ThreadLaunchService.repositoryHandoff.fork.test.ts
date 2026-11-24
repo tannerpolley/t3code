@@ -30,6 +30,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RuntimeRequestId,
+  RunId,
   TurnItemId,
   ScheduledTaskId,
   ThreadId,
@@ -641,7 +642,7 @@ describe("fresh-thread repository handoff", () => {
         ],
       });
     });
-  it.effect("rolls over only after context, a safe boundary and verified continuation", () => {
+  it.effect("hands off after eight context-full compactions at a safe boundary", () => {
     let verificationStarts = 0;
     return Effect.gen(function* () {
       yield* createRoot;
@@ -711,6 +712,41 @@ describe("fresh-thread repository handoff", () => {
             },
           ],
         });
+      const compact = (
+        run: { readonly id: RunId; readonly rootNodeId: NodeId | null },
+        key: string,
+        contextFull: boolean,
+      ) =>
+        sink.write({
+          events: [
+            {
+              id: EventId.make(`auto:compaction:${key}`),
+              type: "turn-item.updated",
+              threadId: rootId,
+              runId: run.id,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`auto:compaction:${key}`),
+                threadId: rootId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: provider.id,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                type: "compaction",
+                driver: provider.driver,
+                ...(contextFull ? { contextFull: true as const } : {}),
+                status: "completed",
+                title: "Context compacted",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
       yield* usage(199_999);
       yield* service.reconcile(rootId);
       assert.isNull(yield* threads.getThreadShell(nextId));
@@ -729,7 +765,7 @@ describe("fresh-thread repository handoff", () => {
         createdAt: now,
         resolvedAt: null,
       };
-      yield* usage(200_000);
+      for (let i = 1; i <= 7; i++) yield* compact(run, String(i), true);
       yield* service.reconcile(rootId);
       assert.isNull(yield* threads.getThreadShell(nextId));
       const approval = (resolved: boolean) =>
@@ -749,20 +785,42 @@ describe("fresh-thread repository handoff", () => {
       yield* finish(rootId, "auto:source");
       yield* service.reconcile(rootId);
       assert.isNull(yield* threads.getThreadShell(nextId));
-      yield* usage(199_999, "idle-below");
       yield* approval(true);
       yield* service.reconcile(rootId);
       assert.isNull(yield* threads.getThreadShell(nextId));
+      for (const idleCompaction of [undefined, "beforeCacheExpires", "onReturn"] as const) {
+        const key = `auto:${idleCompaction ?? "manual"}`;
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(key),
+          messageId: MessageId.make(key),
+          threadId: rootId,
+          text: "/compact",
+          dispatchMode: { type: "start_immediately" },
+          attachments: [],
+          ...(idleCompaction === undefined ? {} : { idleCompaction }),
+          createdBy: idleCompaction === undefined ? "user" : "agent",
+          creationSource: idleCompaction === undefined ? "web" : "server",
+        });
+        const commandRun = (yield* threads.getThreadRecords(rootId, ["runs"])).runs.at(-1)!;
+        yield* compact(commandRun, key, false);
+        yield* finish(rootId, key);
+        yield* service.reconcile(rootId);
+        assert.isNull(yield* threads.getThreadShell(nextId));
+      }
       yield* settings.updateSettings({
-        projectSettingsOverrides: { [projectId]: { orchestratorHandoffTokens: null } },
+        projectSettingsOverrides: { [projectId]: { orchestratorHandoffCompactions: null } },
       });
       assert.isNull(
         (yield* (yield* OrchestratorMcp.OrchestratorMcpService).repositoryStatus(
           scope(rootId),
           reference,
-        )).orchestratorHandoffTokens,
+        )).orchestratorHandoffCompactions,
       );
-      yield* usage(200_000, "idle-threshold");
+      yield* send("auto:eighth");
+      const eighthRun = (yield* threads.getThreadRecords(rootId, ["runs"])).runs.at(-1)!;
+      yield* compact(eighthRun, "8", true);
+      yield* finish(rootId, "auto:eighth");
       yield* service.reconcile(rootId);
       assert.isNull(yield* threads.getThreadShell(nextId));
       const taskId = NodeId.make("auto:late-remote");
@@ -823,9 +881,10 @@ describe("fresh-thread repository handoff", () => {
       assert.isNull(yield* threads.getThreadShell(nextId));
       yield* sql`UPDATE owner_decisions SET pending_delivery = 0 WHERE id = 'auto:decision'`;
       const afterSequence = yield* sink.latestSequence();
-      yield* usage(200_000, "idle-inherited-threshold");
-      yield* awaitFollowup(nextId, afterSequence);
+      yield* service.reconcile(rootId);
       assert.equal((yield* store.configuration(rootId))?.automaticHandoff?.status, "verifying");
+      yield* awaitFollowup(nextId, afterSequence);
+      assert.equal(yield* store.contextFullCompactionCount(nextId), 0);
       assert.equal((yield* store.repositoryOwnerByRef(reference))?.rootThreadId, rootId);
       assert.isNull((yield* threads.getThreadShell(rootId))?.archivedAt);
 
@@ -899,7 +958,8 @@ describe("fresh-thread repository handoff", () => {
       );
       assert.isTrue(
         successor.turnItems.some(
-          (item) => item.type === "system_notice" && item.message?.includes("at 200k context"),
+          (item) =>
+            item.type === "system_notice" && item.message?.includes("after 8 context compactions"),
         ),
       );
       assert.isUndefined(old?.pullRequests?.[0]?.watch);
