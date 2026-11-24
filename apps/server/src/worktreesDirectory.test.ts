@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { resolveWorktreePath } from "./forkWorktreePaths.ts";
+import { prepareTaskFolderParent } from "./projectLocalWorktrees.ts";
 import { managedWorktreesDirectories } from "./worktreesDirectory.ts";
 
 it.layer(NodeServices.layer)("worktree locations", (it) => {
@@ -66,5 +67,24 @@ it.layer(NodeServices.layer)("worktree locations", (it) => {
         ),
       ).toEqual([defaultDir, oldCustom, path.join(repository, ".worktrees")]);
     }),
+  );
+  it.effect(
+    "refuses a project-local task folder symlink to a filesystem root before Git setup",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const projectRoot = yield* fs.makeTempDirectoryScoped();
+        yield* fs.symlink(path.parse(projectRoot).root, path.join(projectRoot, ".worktrees"));
+        const parent = yield* prepareTaskFolderParent({
+          setting: PROJECT_LOCAL_WORKTREES,
+          defaultDir: path.join(projectRoot, "default"),
+          home: projectRoot,
+          projectRoot,
+          anchor: projectRoot,
+          executeGit: () => Effect.die("Git setup ran before the location was validated"),
+        });
+        expect(parent).toBeNull();
+      }),
   );
 });

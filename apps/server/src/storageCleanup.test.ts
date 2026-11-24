@@ -1159,7 +1159,7 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
   ),
 );
 
-it.live.each(["home", "custom", "project-local", "project-local wrapper"])(
+it.live.each(["home", "custom", "project-local", "project-local wrapper", "project-local sibling"])(
   "places task folders in the configured location and cleans their worktrees (%s)",
   (location) =>
     runCleanupTest(
@@ -1175,13 +1175,14 @@ it.live.each(["home", "custom", "project-local", "project-local wrapper"])(
           setTaskFolders,
           setThreads,
         } = yield* cleanupFixture();
-        const wrapper = location === "project-local wrapper";
+        const sibling = location === "project-local sibling";
+        const wrapper = sibling || location === "project-local wrapper";
         const projectRoot = wrapper ? `${repo}/dist` : repo;
         const customDirectory = `${config.baseDir}/custom-worktrees`;
         const worktreesDirectory =
           location === "home" ? "" : location === "custom" ? customDirectory : "project-local";
-        const trackedRepository = Effect.fnUntraced(function* (name: string) {
-          const folder = `${repo}/dist/${name}`;
+        const trackedRepository = Effect.fnUntraced(function* (relative: string) {
+          const folder = `${repo}/${relative}`;
           yield* fs.makeDirectory(folder, { recursive: true });
           yield* command(folder, ["init", "-b", "main"]);
           yield* command(folder, ["config", "user.email", "cleanup@example.test"]);
@@ -1189,10 +1190,10 @@ it.live.each(["home", "custom", "project-local", "project-local wrapper"])(
           yield* fs.writeFileString(`${folder}/tracked.txt`, "original\n");
           yield* command(folder, ["add", "."]);
           yield* command(folder, ["commit", "-m", "initial"]);
-          return { name, path: folder };
+          return { name: relative.split("/").at(-1)!, path: folder };
         });
-        const api = yield* trackedRepository("api");
-        const web = yield* trackedRepository("web");
+        const api = yield* trackedRepository("dist/api");
+        const web = yield* trackedRepository(sibling ? "node_modules" : "dist/web");
         const context = yield* Layer.build(
           layerTaskFoldersWithGit(
             { workspaceRoot: projectRoot, trackedFolders: [api, web], thread: null },
@@ -1209,7 +1210,6 @@ it.live.each(["home", "custom", "project-local", "project-local wrapper"])(
           projectCommands: true,
         });
         const root = taskFolder.root;
-        const worktrees = wrapper ? root : `${root}/dist`;
         if (worktreesDirectory === "project-local") {
           expect(root.startsWith(`${projectRoot}/.worktrees/task-`)).toBe(true);
           expect(yield* fs.exists(`${root}/.worktrees`)).toBe(false);
@@ -1225,12 +1225,20 @@ it.live.each(["home", "custom", "project-local", "project-local wrapper"])(
         setTaskFolders(taskFolders);
         setProjectRoots([projectRoot]);
         setSettings({ worktreesDirectory });
-        setThreads([shell({ branch: "task", worktreePath: taskFolder.projectPath })]);
+        const thread = shell({ branch: "task", worktreePath: taskFolder.projectPath });
+        if (sibling) {
+          const checkout = `${root}/node_modules`;
+          yield* fs.utimes(checkout, 1, 1);
+          setThreads([{ ...thread, status: "running" }]);
+          const report = yield* service.runNow;
+          expect(report.entries.map((entry) => entry.path)).not.toContain(checkout);
+        }
+        setThreads([thread]);
 
         const report = yield* service.runNow;
-        for (const checkout of [`${worktrees}/api`, `${worktrees}/web`]) {
+        for (const { worktreePath } of taskFolder.repositories) {
           expect(report.entries).toContainEqual(
-            expect.objectContaining({ path: checkout, outcome: "removed" }),
+            expect.objectContaining({ path: worktreePath, outcome: "removed" }),
           );
         }
         expect(yield* fs.exists(root)).toBe(false);
