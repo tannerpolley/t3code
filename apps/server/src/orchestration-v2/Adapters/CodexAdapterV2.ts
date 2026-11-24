@@ -5922,6 +5922,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           nativeItemId: string,
           status: "running" | "completed" | "failed" | "interrupted" | "cancelled",
           updatedAt: DateTime.Utc,
+          nativeCompletion = false,
         ) {
           const { ordinal, startedAt } = yield* resolveItemPosition(
             context,
@@ -5930,14 +5931,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
           if (status === "running") context.runningCompactionItemIds.add(nativeItemId);
           else context.runningCompactionItemIds.delete(nativeItemId);
+          const id = idAllocator.derive.turnItemFromProviderItem({
+            driver: CODEX_PROVIDER,
+            nativeItemId,
+          });
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver: CODEX_PROVIDER,
             turnItem: {
-              id: idAllocator.derive.turnItemFromProviderItem({
-                driver: CODEX_PROVIDER,
-                nativeItemId,
-              }),
+              id,
               threadId: context.projectionThreadId,
               runId: context.projectionRunId,
               nodeId: context.providerNodeId,
@@ -5948,10 +5950,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ordinal,
               type: "compaction",
               driver: CODEX_PROVIDER,
-              ...(status === "completed" &&
+              ...(nativeCompletion &&
               context.subagent === null &&
               !isCompactionCommandMessage({ role: "user", ...context.input.message })
-                ? { contextFull: true as const }
+                ? { contextFullCompactionId: id }
                 : {}),
               status,
               title:
@@ -6278,6 +6280,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload.item.id,
                 "completed",
                 DateTime.makeUnsafe(payload.completedAtMs),
+                true,
               );
               return;
             }

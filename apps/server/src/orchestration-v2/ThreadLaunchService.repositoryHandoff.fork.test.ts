@@ -716,6 +716,7 @@ describe("fresh-thread repository handoff", () => {
         run: { readonly id: RunId; readonly rootNodeId: NodeId | null },
         key: string,
         contextFull: boolean,
+        boundaryId = key,
       ) =>
         sink.write({
           events: [
@@ -737,7 +738,9 @@ describe("fresh-thread repository handoff", () => {
                 ordinal: 1,
                 type: "compaction",
                 driver: provider.driver,
-                ...(contextFull ? { contextFull: true as const } : {}),
+                ...(contextFull
+                  ? { contextFullCompactionId: TurnItemId.make(`auto:boundary:${boundaryId}`) }
+                  : {}),
                 status: "completed",
                 title: "Context compacted",
                 startedAt: now,
@@ -786,7 +789,9 @@ describe("fresh-thread repository handoff", () => {
       yield* service.reconcile(rootId);
       assert.isNull(yield* threads.getThreadShell(nextId));
       yield* approval(true);
+      yield* compact(run, "replayed-7", true, "7");
       yield* service.reconcile(rootId);
+      assert.equal(yield* store.contextFullCompactionCount(rootId), 7);
       assert.isNull(yield* threads.getThreadShell(nextId));
       for (const idleCompaction of [undefined, "beforeCacheExpires", "onReturn"] as const) {
         const key = `auto:${idleCompaction ?? "manual"}`;

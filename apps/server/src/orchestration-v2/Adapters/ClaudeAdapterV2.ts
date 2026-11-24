@@ -11858,7 +11858,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updatedAt: now,
                 ...(message.compact_metadata.trigger === "auto" &&
                 !isCompactionCommandMessage({ role: "user", ...context.input.message })
-                  ? { contextFull: true as const }
+                  ? {
+                      contextFullCompactionId: idAllocator.derive.turnItemFromProviderItem({
+                        driver: CLAUDE_PROVIDER,
+                        nativeItemId,
+                      }),
+                    }
                   : {}),
                 ...(message.compact_metadata.pre_tokens === undefined
                   ? {}
