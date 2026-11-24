@@ -26,9 +26,10 @@ export const finishedWorkers = Effect.fn("WorkerArchiveCandidates.finishedWorker
   const finished = new Map<ThreadId, ProjectionStore.ProjectionSettlementCandidate>();
   let afterThreadId: ThreadId | undefined;
   do {
-    const workers = yield* projections.getSettlementCandidates(undefined, {
-      ...(afterThreadId === undefined ? {} : { afterThreadId }),
-    });
+    const workers = yield* projections.getSettlementCandidates(
+      undefined,
+      afterThreadId === undefined ? {} : { afterThreadId },
+    );
     for (const worker of workers) {
       if (finishedWorkerAt(worker, now) !== null) finished.set(worker.id, worker);
     }
