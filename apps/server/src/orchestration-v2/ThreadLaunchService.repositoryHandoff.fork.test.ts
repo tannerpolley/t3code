@@ -1,5 +1,5 @@
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { ISSUE_HOSTS, SourceControlProviderKind } from "@t3tools/contracts";
+import { ISSUE_HOSTS, IssueReadError, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Queue from "effect/Queue";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -23,6 +23,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   CommandId,
   EnvironmentId,
+  IssueWorkError,
   MessageId,
   NodeId,
   ProviderDriverKind,
@@ -40,7 +41,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as OrchestratorMcp from "../mcp/OrchestratorMcpService.ts";
@@ -147,6 +147,7 @@ describe("fresh-thread repository handoff", () => {
       providerAvailable?: () => boolean;
       continuation?: boolean;
       handoffWake?: boolean;
+      scheduler?: Layer.Layer<Scheduler.Scheduler>;
       continuationRequests?: Context.Service.Shape<
         typeof ProviderContinuationRequests.ProviderContinuationRequests
       >;
@@ -155,6 +156,7 @@ describe("fresh-thread repository handoff", () => {
       ) => ThreadManagement.ThreadManagementService["Service"];
       inventoryIssues?: () => number[];
       issueReads?: string[];
+      issueReadUnavailable?: () => boolean;
       repositoryId?: () => string;
       issueState?: (number: number) => "open" | "closed";
       /** Runs first in the provider check, which the handoff command makes under the root's lock. */
@@ -169,8 +171,14 @@ describe("fresh-thread repository handoff", () => {
     } = {},
   ) => {
     const workRead: IssueService.IssueService["Service"]["workRead"] = (input) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         options.issueReads?.push(`relationships:${input.number}`);
+        if (options.issueReadUnavailable?.())
+          return yield* new IssueReadError({
+            code: "upstream",
+            operation: "detail",
+            message: "Issue host temporarily unavailable.",
+          });
         return {
           issue: {
             ...linked(input.number),
@@ -277,6 +285,7 @@ describe("fresh-thread repository handoff", () => {
       Layer.mock(SecretRequests.SecretRequests)({}),
       // Managed issue workers never read the caller's checkout commit.
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      options.scheduler ?? Layer.empty,
     );
     const { wrapStore } = options;
     const service = IssueWorkService.layer.pipe(
@@ -747,6 +756,12 @@ describe("fresh-thread repository handoff", () => {
       yield* settings.updateSettings({
         projectSettingsOverrides: { [projectId]: { orchestratorHandoffTokens: null } },
       });
+      assert.isNull(
+        (yield* (yield* OrchestratorMcp.OrchestratorMcpService).repositoryStatus(
+          scope(rootId),
+          reference,
+        )).orchestratorHandoffTokens,
+      );
       yield* usage(200_000, "idle-threshold");
       yield* service.reconcile(rootId);
       assert.isNull(yield* threads.getThreadShell(nextId));
@@ -1345,6 +1360,160 @@ describe("fresh-thread repository handoff", () => {
                     ),
                   )
                 : Effect.void,
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect.each(["delegate_task", "t3_thread_send"] as const)(
+    "resumes a finished retained worker through %s after repository handoff",
+    (operation) => {
+      let issueReadUnavailable = false;
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const sink = yield* EventSink.EventSinkV2;
+        const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
+        yield* createRoot;
+        const worker = (yield* service.start({
+          ...reference,
+          number: 9,
+          projectId,
+          modelRoleId: "implementor-complex",
+          clientRequestId: CommandId.make("retained-worker:start"),
+        })).issueThreadId!;
+        yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(worker).pipe(
+          Stream.filter((snapshot) => snapshot?.phase === "done"),
+          Stream.runHead,
+        );
+        const worktree = (yield* threads.getThreadShell(worker))!.worktreePath;
+        assert.isNotNull(worktree);
+        const beforeWorker = yield* sink.latestSequence();
+        yield* finish(worker, "retained-worker:first");
+        yield* awaitFollowup(rootId, beforeWorker);
+        const beforeRoot = yield* sink.latestSequence();
+        yield* finish(rootId, "retained-worker:delivery");
+        yield* sink.stream({ afterSequence: beforeRoot }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "subagent.updated" &&
+              event.threadId === rootId &&
+              event.payload.completionDelivery?.state === "delivered",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const original = (yield* threads.getThreadRecords(rootId, ["subagents"])).subagents;
+        const moved = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: 1,
+          summary: "Continue work in the retained issue worktree.",
+          clientRequestId: CommandId.make("retained-worker:handoff"),
+        });
+        const successor = moved.rootThreadId!;
+        assert.notEqual(successor, rootId);
+        const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const cancelFormerTask = (clientRequestId: string) =>
+          mcp
+            .cancelTask(scope(rootId), { taskId: original[0]!.id, clientRequestId })
+            .pipe(Effect.flip);
+        const beforeAdoption = yield* locks.withLock(
+          successor,
+          cancelFormerTask("retained-worker:cancel-before-adoption"),
+        );
+        assert.equal(beforeAdoption.code, "task_not_cancellable");
+        const resume = "Continue in the existing issue workspace.";
+        issueReadUnavailable = operation === "t3_thread_send";
+        const taskId =
+          operation === "delegate_task"
+            ? (yield* mcp.delegateTask(scope(successor), {
+                issue: { ...reference, number: 9 },
+                task: resume,
+                mode: "async",
+                clientRequestId: "retained-worker:delegate",
+              })).taskId
+            : (yield* mcp.sendToThread(scope(successor), {
+                threadId: worker,
+                message: resume,
+                clientRequestId: "retained-worker:send",
+              })).taskId;
+        if (issueReadUnavailable) {
+          const queued = (yield* threads.getThreadRecords(worker, ["runs"])).runs.at(-1);
+          assert.equal(queued?.status, "queued");
+          assert.equal(queued?.admissionWait, "issue_suspended");
+          issueReadUnavailable = false;
+          yield* threads.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make("retained-worker:resume-queue"),
+            threadId: worker,
+          });
+        }
+
+        const staleCancel = yield* locks.withLock(
+          successor,
+          threads
+            .stopDelegatedTasks({
+              threadId: rootId,
+              commandId: CommandId.make("retained-worker:stop-former-root"),
+            })
+            .pipe(Effect.andThen(cancelFormerTask("retained-worker:cancel-former-task"))),
+        );
+        assert.equal(staleCancel.code, "task_not_cancellable");
+        const child = yield* threads.getThreadRecords(worker, ["runs", "messages"]);
+        assert.equal(child.thread.worktreePath, worktree);
+        const message = child.messages.find((entry) => entry.text.includes(resume));
+        assert.isDefined(message);
+        const run = child.runs.find((entry) => entry.id === message?.runId);
+        assert.equal(run?.status, "starting");
+        assert.isFalse(
+          yield* threads.hasReceipt(
+            CommandId.make(`retained-worker:stop-former-root:stop:${worker}`),
+          ),
+        );
+        assert.isDefined(taskId);
+        assert.equal(run?.delegatedTaskId, taskId);
+        const beforeResume = yield* sink.latestSequence();
+        yield* finish(worker, "retained-worker:resumed");
+        yield* sink.stream({ afterSequence: beforeResume }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "subagent.updated" &&
+              event.threadId === successor &&
+              event.payload.id === taskId &&
+              event.payload.result !== null,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const beforeSuccessor = yield* sink.latestSequence();
+        yield* finish(successor, "retained-worker:successor");
+        yield* awaitFollowup(successor, beforeSuccessor);
+        const beforeDelivery = yield* sink.latestSequence();
+        yield* finish(successor, "retained-worker:resumed-delivery");
+        yield* sink.stream({ afterSequence: beforeDelivery }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "subagent.updated" &&
+              event.threadId === successor &&
+              event.payload.id === taskId &&
+              event.payload.completionDelivery?.state === "delivered",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        assert.deepEqual(
+          (yield* threads.getThreadRecords(rootId, ["subagents"])).subagents,
+          original,
+        );
+      }).pipe(
+        Effect.provide(
+          fixture({
+            recovery: true,
+            continuation: true,
+            inventoryIssues: () => [],
+            issueReadUnavailable: () => issueReadUnavailable,
           }),
         ),
       );
@@ -2610,38 +2779,29 @@ describe("fresh-thread repository handoff", () => {
     }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
-  it.effect(
-    "keeps an agent's existing handoff target when the user approves without resending it",
-    () =>
-      Effect.gen(function* () {
-        const service = yield* IssueWorkService.IssueWorkService;
-        const target = ThreadId.make("agent-selected-successor");
-        yield* createRoot;
-        yield* createLead(target);
-        const proposal = {
-          ...reference,
-          expectedRevision: 1,
-          summary: "Continue in the selected conversation.",
-          clientRequestId: CommandId.make("agent-target:propose"),
-        };
-        const self = yield* service
-          .requestHandoff(rootId, { ...proposal, targetThreadId: rootId })
-          .pipe(Effect.result);
-        assert.equal(self._tag, "Failure");
-        const pending = yield* service.requestHandoff(rootId, {
-          ...proposal,
-          targetThreadId: target,
-        });
-        assert.equal(pending.orchestration!.handoff?.status, "awaiting_approval");
-        const approved = yield* service.handoff({
-          ...proposal,
-          expectedRevision: pending.orchestration!.revision,
-          action: "approve",
-          clientRequestId: CommandId.make("agent-target:approve"),
-        });
-        assert.equal(approved.rootThreadId, target);
-        yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  it.effect("keeps an agent's selected existing handoff target", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const target = ThreadId.make("agent-selected-successor");
+      yield* createRoot;
+      yield* createLead(target);
+      const proposal = {
+        ...reference,
+        expectedRevision: 1,
+        summary: "Continue in the selected conversation.",
+        clientRequestId: CommandId.make("agent-target:propose"),
+      };
+      const self = yield* service
+        .requestHandoff(rootId, { ...proposal, targetThreadId: rootId })
+        .pipe(Effect.result);
+      assert.equal(self._tag, "Failure");
+      const result = yield* service.requestHandoff(rootId, {
+        ...proposal,
+        targetThreadId: target,
+      });
+      assert.equal(result.rootThreadId, target);
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
   const registerInput = (targetThreadId: ThreadId, key: string) => ({
@@ -3405,42 +3565,111 @@ describe("fresh-thread repository handoff", () => {
     }).pipe(Effect.provide(fixture({ continuation: true }))),
   );
 
-  it.effect("approving a proposal keeps the time the handoff was first requested", () =>
-    Effect.gen(function* () {
-      const service = yield* IssueWorkService.IssueWorkService;
-      const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      yield* createRoot;
-      yield* threads.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make("requested-at:root-start"),
-        threadId: rootId,
-        messageId: MessageId.make("requested-at:root-start"),
-        text: "Keep the drain open",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        createdBy: "user",
-        creationSource: "web",
+  it.effect.each(["full-access", "approval-required", "plan", "plan at commit"] as const)(
+    "reconciles a saved handoff with the source in %s",
+    (mode) => {
+      let runDueWork: Effect.Effect<void> | undefined;
+      const failingRoot = ThreadId.make("stale-handoff-root");
+      const scheduler = Layer.mock(Scheduler.Scheduler)({
+        register: <E, R>(_name: string, work: Effect.Effect<void, E, R>) =>
+          Effect.gen(function* () {
+            runDueWork = work.pipe(Effect.provideContext(yield* Effect.context<R>()), Effect.orDie);
+          }),
       });
-      const requestedAt = DateTime.formatIso(yield* DateTime.now);
-      const input = {
-        ...reference,
-        expectedRevision: 1,
-        summary: "Decisions to preserve.",
-        clientRequestId: CommandId.make("requested-at:proposal"),
-      };
-      const proposed = yield* mcp.requestRepositoryHandoff(scope(rootId), input);
-      assert.equal(proposed.orchestration!.handoff?.requestedAt, requestedAt);
-      yield* TestClock.adjust("25 hours");
-      const draining = yield* service.handoff({
-        ...input,
-        action: "approve",
-        expectedRevision: proposed.orchestration!.revision,
-        clientRequestId: CommandId.make("requested-at:approve"),
-      });
-      assert.equal(draining.orchestration!.handoff?.status, "draining");
-      assert.equal(draining.orchestration!.handoff?.requestedAt, requestedAt);
-    }).pipe(Effect.provide(fixture())),
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const target = ThreadId.make("saved-handoff-target");
+        yield* createRoot;
+        yield* createLead(target);
+        if (mode === "plan" || mode === "approval-required") {
+          const command = { threadId: rootId, commandId: CommandId.make("saved-handoff:mode") };
+          yield* threads.dispatch(
+            mode === "plan"
+              ? { ...command, type: "thread.interaction-mode.set", interactionMode: mode }
+              : { ...command, type: "thread.runtime-mode.set", runtimeMode: mode },
+          );
+        }
+        yield* threads.dispatch({
+          type: "repository.work.update",
+          commandId: CommandId.make("saved-handoff:proposal"),
+          threadId: rootId,
+          expectedRevision: 1,
+          orchestration: {
+            ...config,
+            paused: true,
+            milestones: [],
+            handoff: {
+              requestId: CommandId.make("saved-handoff:proposal"),
+              nextThreadId: target,
+              summary: "Carry over the saved decisions.",
+              modelSelection,
+              status: "awaiting_approval",
+              wasPaused: false,
+            },
+          },
+        });
+        assert.include(yield* store.activeRoots(), rootId);
+        assert.isDefined(runDueWork);
+        yield* runDueWork!;
+        yield* worker.drain();
+        const result = yield* service.repositoryStatus(reference);
+        if (mode !== "full-access") {
+          assert.equal(result.rootThreadId, rootId);
+          assert.equal(result.orchestration!.handoff?.status, "awaiting_approval");
+          const cancelled = yield* service.handoff({
+            ...reference,
+            action: "cancel",
+            expectedRevision: result.orchestration!.revision,
+            clientRequestId: CommandId.make("saved-handoff:cancel"),
+          });
+          assert.isUndefined(cancelled.orchestration!.handoff);
+          assert.isTrue(cancelled.orchestration!.paused);
+          return;
+        }
+        assert.equal(result.rootThreadId, target);
+        assert.isTrue(result.orchestration!.paused);
+        assert.isUndefined(result.orchestration!.handoff);
+      }).pipe(
+        Effect.provide(
+          fixture({
+            recovery: true,
+            scheduler,
+            ...(mode === "plan at commit"
+              ? {
+                  wrapThreads: (threads) => ({
+                    ...threads,
+                    dispatch: (command) =>
+                      command.type === "repository.work.update" && command.requireControllerModes
+                        ? threads
+                            .dispatch({
+                              type: "thread.interaction-mode.set",
+                              threadId: rootId,
+                              commandId: CommandId.make("saved-handoff:late-plan"),
+                              interactionMode: "plan",
+                            })
+                            .pipe(Effect.andThen(threads.dispatch(command)))
+                        : threads.dispatch(command),
+                  }),
+                }
+              : {}),
+            wrapStore: (store) => ({
+              ...store,
+              activeRoots: () =>
+                store.activeRoots().pipe(Effect.map((roots) => [failingRoot, ...roots])),
+              configuration: (id) =>
+                id === failingRoot
+                  ? Effect.fail(
+                      new IssueWorkError({ code: "invalid-request", message: "Stale root" }),
+                    )
+                  : store.configuration(id),
+            }),
+          }),
+        ),
+      );
+    },
   );
 
   it.effect(
@@ -3505,62 +3734,63 @@ describe("fresh-thread repository handoff", () => {
       }).pipe(Effect.provide(fixture())),
   );
 
-  it.effect(
-    "MCP requests require exact user approval and can be cancelled without moving ownership",
-    () =>
-      Effect.gen(function* () {
-        const service = yield* IssueWorkService.IssueWorkService;
-        const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        yield* createRoot;
-        const input = {
-          ...reference,
-          expectedRevision: 1,
-          summary: "Decisions to preserve.",
-          clientRequestId: CommandId.make("handoff:proposal"),
-        };
-        const proposed = yield* mcp.requestRepositoryHandoff(scope(rootId), input);
-        assert.equal(proposed.orchestration!.handoff?.status, "awaiting_approval");
-        assert.isFalse(proposed.orchestration!.paused);
-        assert.isNull(yield* threads.getThreadShell(proposed.orchestration!.handoff!.nextThreadId));
-        const stale = yield* service
-          .handoff({
-            ...input,
-            action: "approve",
-            expectedRevision: proposed.orchestration!.revision,
-            summary: "A different proposal",
-            clientRequestId: CommandId.make("handoff:wrong-approval"),
-          })
-          .pipe(Effect.result);
-        assert.equal(stale._tag, "Failure");
-        const paused = yield* service.setPaused({
-          ...reference,
-          paused: true,
-          clientRequestId: CommandId.make("handoff:pause-before-approval"),
-        });
-        const approved = yield* service.handoff({
-          ...input,
-          action: "approve",
-          expectedRevision: paused.orchestration!.revision,
-          clientRequestId: CommandId.make("handoff:user-approved"),
-        });
-        assert.notEqual(approved.rootThreadId, rootId);
-        assert.isTrue(approved.orchestration!.paused);
-        const nextProposal = yield* mcp.requestRepositoryHandoff(scope(approved.rootThreadId!), {
-          ...input,
-          expectedRevision: approved.orchestration!.revision,
-          clientRequestId: CommandId.make("handoff:next-proposal"),
-        });
-        const cancelled = yield* service.handoff({
-          ...reference,
-          action: "cancel",
-          expectedRevision: nextProposal.orchestration!.revision,
-          clientRequestId: CommandId.make("handoff:cancel"),
-        });
-        assert.equal(cancelled.rootThreadId, approved.rootThreadId);
-        assert.isUndefined(cancelled.orchestration!.handoff);
-        assert.isTrue(cancelled.orchestration!.paused);
-      }).pipe(Effect.provide(fixture())),
+  it.effect("an MCP request starts draining and transfers ownership after the current turn", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* createRoot;
+      const input = {
+        ...reference,
+        expectedRevision: 1,
+        summary: "Decisions to preserve.",
+        clientRequestId: CommandId.make("mcp-handoff:request"),
+      };
+      yield* threads.dispatch({
+        type: "thread.interaction-mode.set",
+        threadId: rootId,
+        commandId: CommandId.make("mcp-handoff:plan"),
+        interactionMode: "plan",
+      });
+      const refused = yield* mcp.requestRepositoryHandoff(scope(rootId), input).pipe(Effect.flip);
+      assert.equal(refused.code, "interaction_mode_escalation_denied");
+      assert.equal((yield* service.repositoryStatus(reference)).phase, "active");
+      yield* threads.dispatch({
+        type: "thread.interaction-mode.set",
+        threadId: rootId,
+        commandId: CommandId.make("mcp-handoff:default"),
+        interactionMode: "default",
+      });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("mcp-handoff:root-start"),
+        threadId: rootId,
+        messageId: MessageId.make("mcp-handoff:root-start"),
+        text: "Finish current work",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+      const requestedAt = DateTime.formatIso(yield* DateTime.now);
+      const pending = yield* mcp.requestRepositoryHandoff(scope(rootId), input);
+      assert.equal(pending.rootThreadId, rootId);
+      assert.equal(pending.phase, "draining");
+      assert.isTrue(pending.orchestration!.paused);
+      assert.equal(pending.orchestration!.handoff?.requestedAt, requestedAt);
+      const target = pending.orchestration!.handoff!.nextThreadId;
+      assert.isNull(yield* threads.getThreadShell(target));
+
+      yield* finish(rootId, "mcp-handoff:root-finished");
+      yield* service.reconcile(rootId);
+      yield* worker.drain();
+      const result = yield* service.repositoryStatus(reference);
+      assert.equal(result.rootThreadId, target);
+      assert.isFalse(result.orchestration!.paused);
+      assert.isUndefined(result.orchestration!.handoff);
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
   it.effect(

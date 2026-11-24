@@ -11,6 +11,7 @@ import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2ServerCommand,
   OrchestrationV2StoredEvent,
+  OrchestrationV2Subagent,
   RunId,
   ThreadId,
   ThreadIssueLink,
@@ -36,7 +37,8 @@ import {
 } from "../issues/IssueEligibility.ts";
 import type { IssueWorkStore } from "../issues/IssueWorkStore.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
-import { IssueReadSnapshots } from "./IssueWorkDispatch.ts";
+import { exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
+import { IssueReadSnapshots, retainedWorkerSuccessor } from "./IssueWorkDispatch.ts";
 import type { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
 import type { OrchestratorDispatchError, OrchestratorV2Error } from "./Orchestrator.ts";
 import type { ProjectionStoreV2, ProjectionRecords } from "./ProjectionStore.ts";
@@ -45,6 +47,15 @@ import type { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 function toolAdditionKeys(additions: DelegatedToolAdditions) {
   return new Set(
     additions.map((entry) => (typeof entry === "string" ? entry : `mcp:${entry.mcpServer}`)),
+  );
+}
+
+export function isSettledIssueWorkerTask(task: OrchestrationV2Subagent) {
+  return (
+    task.origin === "app_owned" &&
+    task.result !== null &&
+    task.completionDelivery?.state !== "pending" &&
+    task.completionDelivery?.state !== "claimed"
   );
 }
 
@@ -138,6 +149,31 @@ export function makeIssueWorkCommands({
     Effect.map(IssueReadSnapshots, (reads) =>
       reads.find((read) => sameIssueRepository(read.issue, issue) && read.issue.id === issue.id),
     );
+  const adoptionLineage = Effect.fn("IssueWorkCommands.adoptionLineage")(function* (
+    thread: OrchestrationV2AppThread,
+    successorRoot?: ThreadId,
+  ) {
+    const issue = thread.linkedIssue;
+    if (issue === undefined || Option.isNone(issueWorkStore)) return null;
+    const store = issueWorkStore.value;
+    const successor = successorRoot ?? (yield* retainedWorkerSuccessor(store, thread));
+    if (successor === null || (yield* store.issueOwner(issue)) !== thread.id) return null;
+    const parent = thread.lineage.parentThreadId;
+    // A handoff transfers management even when the issue host cannot admit a run yet.
+    if (parent === thread.lineage.rootThreadId)
+      return { ...thread.lineage, rootThreadId: successor, parentThreadId: successor };
+    if (parent === null) return null;
+    const currentParent = yield* projectionStore.findThread(parent);
+    const parentIssue = currentParent?.linkedIssue;
+    if (
+      currentParent?.lineage.rootThreadId !== successor ||
+      parentIssue === undefined ||
+      !sameIssueRepository(parentIssue, issue) ||
+      (yield* store.issueOwner(parentIssue)) !== parent
+    )
+      return null;
+    return { ...thread.lineage, rootThreadId: successor };
+  });
   /** Why this thread's next run must wait for admission, or null when it may start now. */
   const issueRunAdmissionWait = Effect.fn("issueRunAdmissionWait")(
     function* (thread: OrchestrationV2AppThread) {
@@ -454,16 +490,24 @@ export function makeIssueWorkCommands({
         const shell = yield* projectionStore
           .getThreadShell(currentOwner)
           .pipe(mapDispatchError(command));
+        const retained = keepIssueWorktree(current.thread);
+        const historical = current.thread.lineage.rootThreadId !== repositoryOwner.rootThreadId;
+        // Messages stranded by the old lineage can start once the worker is adopted.
         const finished =
           delegatedTaskProgress({
             ...current,
+            runs:
+              retained && historical
+                ? current.runs.filter(
+                    (run) => run.status !== "queued" || run.admissionWait !== "not_current_worker",
+                  )
+                : current.runs,
             pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
           }).state === "result_available";
-        if (!finished || keepIssueWorktree(current.thread)) {
-          const ownerThread = shell;
-          const parent = ownerThread?.lineage.parentThreadId;
+        if (!finished || retained) {
+          const parent = current.thread.lineage.parentThreadId;
           const existing =
-            parent === null || parent === undefined
+            parent === null
               ? undefined
               : (yield* projectionStore
                   .getThreadRecords(parent, ["subagents"], {
@@ -472,12 +516,29 @@ export function makeIssueWorkCommands({
                   .pipe(mapDispatchError(command))).subagents.findLast(
                   (task) => task.childThreadId === currentOwner,
                 );
-          if (existing === undefined || existing.threadId !== request.parentThreadId)
+          const sameParent = !historical && existing?.threadId === request.parentThreadId;
+          const adopting =
+            !sameParent &&
+            finished &&
+            existing !== undefined &&
+            isSettledIssueWorkerTask(existing) &&
+            (yield* adoptionLineage(current.thread).pipe(mapDispatchError(command)))
+              ?.parentThreadId === request.parentThreadId;
+          if (existing === undefined || (!sameParent && !adopting))
             return yield* new OrchestratorDispatchError({
               commandId: request.commandId,
               commandType: request.type,
               cause:
                 "This issue already has a current worker under another parent. Read its issue status and use that parent thread to manage it.",
+            });
+          if (
+            adopting &&
+            exceededDispatchModeLimit(parentProjection.thread, current.thread) !== undefined
+          )
+            return yield* new OrchestratorDispatchError({
+              commandId: request.commandId,
+              commandType: request.type,
+              detail: "The existing issue worker's modes exceed the new parent's modes.",
             });
           if (
             request.enableTools !== undefined &&
@@ -625,6 +686,7 @@ export function makeIssueWorkCommands({
   return {
     guardThreadCreate,
     admissionWait: issueRunAdmissionWait,
+    adoptionLineage,
     guardFormerWorkerMessage,
     start,
     reuseManagedChild,

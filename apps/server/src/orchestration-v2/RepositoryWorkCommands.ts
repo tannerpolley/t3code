@@ -4,6 +4,7 @@ import {
   isValidRepositoryPhase,
   type IssueSuspension,
   CommandId,
+  hasRepositoryControllerModes,
   isRepositoryOrchestratorEligible,
   MessageId,
   TurnItemId,
@@ -278,6 +279,12 @@ export function makeRepositoryWorkCommands({
         commandId: command.commandId,
         commandType: command.type,
         cause: "Repository ownership changed. Refresh before updating work.",
+      });
+    if (command.requireControllerModes && !hasRepositoryControllerModes(shell))
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Starting a repository handoff requires full-access, default mode.",
       });
     const now = yield* DateTime.now;
     const resumedIssueId = command.resumeBlockedIssueId;

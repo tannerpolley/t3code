@@ -6149,7 +6149,6 @@
   "f1575429c821c2b9": "{thread}(으)로 전달됨",
   "d03af712af265c98": "Repository recreated: registered ID {registered}, now {live}. Move it with restore_repository_root.",
   "5974d80da360301d": "Handing off",
-  "5215530db681d14a": "Handoff awaiting approval",
   "8cb9452487f29d88": "{count, plural, one {Active, # issue on hold} other {Active, # issues on hold}}",
   "370aa80e162adbf6": "Active",
   "77f6cb84ddb76372": "Issue link copied",
@@ -13168,5 +13167,7 @@
   "012c67c7f1a99e33": "스택 자동 병합",
   "c1303d131afc6a17": "하루 이상 지남",
   "9be5b8420ee64ec7": "{target}(으)로 인계를 마무리하는 중",
-  "e05b2595e2c7c313": "{target}(으)로 인계가 승인 대기 중"
+  "e05b2595e2c7c313": "{target}(으)로 인계가 승인 대기 중",
+  "97144d3a3218d931": "T3는 진행 중인 작업이 끝날 때까지 새 이슈 작업의 시작을 일시 중지한 후 새 스레드로 인계합니다.",
+  "9a73e6f99e93612a": "인계 시작"
 }

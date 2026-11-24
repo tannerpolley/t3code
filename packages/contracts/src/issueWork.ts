@@ -8,6 +8,7 @@ import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import { RepositoryIssueRef, IssueRepositoryRef } from "./repositoryIssue.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { OrchestratorHandoffTokens } from "./settings.ts";
 
 export const CLOSED_ISSUE_SUSPENSION_REASON =
   "Issue closed during work. Decide whether to resume or close out the retained result.";
@@ -337,6 +338,8 @@ export const RepositoryWorkResult = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed(0)),
   ),
   queue: Schema.optional(Schema.Array(IssueQueueEntry)),
+  /** The registration's effective context threshold. Null disables automatic handoffs. */
+  orchestratorHandoffTokens: Schema.optional(OrchestratorHandoffTokens),
   /** Set when the host now reports another ID for this name, so the registration cannot admit work. */
   idMismatch: Schema.optional(
     Schema.Struct({

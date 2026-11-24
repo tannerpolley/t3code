@@ -1267,7 +1267,7 @@ export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOver
 
 /** Absent keys inherit; null is a value for nullable settings.
  * providerInstances overrides fields per instance; other keys replace the whole setting. */
-const OrchestratorHandoffTokens = Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0)));
+export const OrchestratorHandoffTokens = Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0)));
 export const DEFAULT_ORCHESTRATOR_HANDOFF_TOKENS = 200_000;
 
 export const ProjectSettingsOverrides = Schema.Struct({

@@ -30,6 +30,7 @@ import {
   type IssueRepositoryRef,
   isMovableRepositoryRegistration,
   isRepositoryOrchestratorEligible,
+  hasRepositoryControllerModes,
   type RepositoryHandoffRequestInput,
   type RepositoryWorkResult,
   type RepositoryChildrenStatus,
@@ -199,6 +200,11 @@ export const layer = Layer.effect(
     const launch = yield* ThreadLaunchService;
     const threads = yield* ThreadManagementService;
     const settings = yield* ServerSettingsService;
+    const handoffThreshold = (projectId: ProjectId) =>
+      Effect.map(settings.getSettings, (current) => {
+        const override = current.projectSettingsOverrides[projectId]?.orchestratorHandoffTokens;
+        return override === undefined ? current.orchestratorHandoffTokens : override;
+      });
     const providers = yield* ProviderRegistry;
     const adapters = yield* ProviderAdapterRegistryV2;
     const ids = yield* IdAllocatorV2;
@@ -693,8 +699,15 @@ export const layer = Layer.effect(
     const repositoryStatus: IssueWorkService["Service"]["repositoryStatus"] = Effect.fn(
       "IssueWorkService.repositoryStatus",
     )(function* (input, options) {
-      const status = yield* readRepositoryStatus(input);
-      if (status.orchestration === null || options?.verifyIdentity === false) return status;
+      const snapshot = yield* readRepositoryStatus(input);
+      if (snapshot.orchestration === null) return snapshot;
+      const threshold = yield* handoffThreshold(snapshot.orchestration.projectId).pipe(
+        Effect.option,
+      );
+      const status = Option.isSome(threshold)
+        ? { ...snapshot, orchestratorHandoffTokens: threshold.value }
+        : snapshot;
+      if (options?.verifyIdentity === false) return status;
       // A host that cannot answer must not hide the registration, so only a successful read can report a mismatch.
       const live = yield* Effect.exit(
         liveIdentity(
@@ -704,11 +717,11 @@ export const layer = Layer.effect(
         ),
       );
       return live._tag === "Success" &&
-        live.value.repositoryId !== status.orchestration.repositoryId
+        live.value.repositoryId !== snapshot.orchestration.repositoryId
         ? {
             ...status,
             idMismatch: {
-              registeredRepositoryId: status.orchestration.repositoryId,
+              registeredRepositoryId: snapshot.orchestration.repositoryId,
               liveRepositoryId: live.value.repositoryId,
             },
           }
@@ -972,7 +985,10 @@ export const layer = Layer.effect(
       rootThreadId: ThreadId,
       config: RepositoryOrchestration,
       commandId: CommandId,
-      resumeBlockedIssueId?: string,
+      options?: Pick<
+        Extract<OrchestrationV2ServerCommand, { type: "repository.work.update" }>,
+        "resumeBlockedIssueId" | "requireControllerModes"
+      >,
     ) =>
       threads
         .dispatch({
@@ -981,7 +997,7 @@ export const layer = Layer.effect(
           commandId,
           expectedRevision: config.revision,
           orchestration: config,
-          ...(resumeBlockedIssueId === undefined ? {} : { resumeBlockedIssueId }),
+          ...options,
         })
         .pipe(Effect.mapError(mapError), Effect.asVoid);
     const assertCurrentCaller = Effect.fn("IssueWorkService.assertCurrentCaller")(function* (
@@ -1140,11 +1156,7 @@ export const layer = Layer.effect(
           repositoryPhase(config) === "retired"
         )
           return;
-        const readThreshold = Effect.map(settings.getSettings, (current) => {
-          const override =
-            current.projectSettingsOverrides[config.projectId]?.orchestratorHandoffTokens;
-          return override === undefined ? current.orchestratorHandoffTokens : override;
-        });
+        const readThreshold = handoffThreshold(config.projectId);
         const attempt = config.automaticHandoff;
         const targetId = automaticHandoffThreadId(rootThreadId);
         let automatic: NonNullable<
@@ -1334,6 +1346,24 @@ export const layer = Layer.effect(
     ) {
       yield* considerAutomaticHandoff(rootThreadId);
       let config = yield* store.configuration(rootThreadId);
+      if (config?.handoff?.status === "awaiting_approval") {
+        const root = yield* threads.getThreadShell(rootThreadId).pipe(Effect.mapError(mapError));
+        if (root !== null && hasRepositoryControllerModes(root)) {
+          yield* update(
+            rootThreadId,
+            {
+              ...config,
+              paused: true,
+              handoff: { ...config.handoff, status: "draining", wasPaused: config.paused },
+            },
+            yield* ids.allocate
+              .command({ fixtureName: "repository-handoff", commandName: "resume" })
+              .pipe(Effect.mapError(mapError)),
+            { requireControllerModes: true },
+          );
+          config = yield* store.configuration(rootThreadId);
+        }
+      }
       if (config === null || !repositoryAdmitsWork(config)) return;
       const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry]));
       for (const threadId of yield* store.workerThreads(rootThreadId)) {
@@ -1395,7 +1425,7 @@ export const layer = Layer.effect(
               ),
             },
             CommandId.make(`issue-resume:${rootThreadId}:${config.revision}:${resumedIssueId}`),
-            resumedIssueId,
+            { resumeBlockedIssueId: resumedIssueId },
           );
           config = (yield* store.configuration(rootThreadId))!;
           continue;
@@ -1790,7 +1820,6 @@ export const layer = Layer.effect(
     });
     const prepareHandoff = Effect.fn("IssueWorkService.prepareHandoff")(function* (
       input: RepositoryHandoffRequestInput,
-      status: "awaiting_approval" | "draining",
       callerThreadId?: ThreadId,
     ) {
       const owner = yield* store.repositoryOwnerByRef(input);
@@ -1811,21 +1840,23 @@ export const layer = Layer.effect(
           code: "repository-owner-conflict",
           message: "This repository already has an automatic handoff in verification.",
         });
-      if (config.handoff?.requestId === input.clientRequestId && config.handoff.status === status)
+      if (
+        config.handoff?.requestId === input.clientRequestId &&
+        config.handoff.status === "draining"
+      )
         return yield* repositoryStatus(input);
       if (config.revision !== input.expectedRevision)
         return yield* new IssueWorkError({
           code: "repository-owner-conflict",
-          message:
-            "Repository ownership changed. Refresh before requesting or approving a handoff.",
+          message: "Repository ownership changed. Refresh before starting a handoff.",
         });
       if (
         config.handoff !== undefined &&
-        (status !== "draining" || config.handoff.status !== "awaiting_approval")
+        (callerThreadId !== undefined || config.handoff.status !== "awaiting_approval")
       )
         return yield* new IssueWorkError({
           code: "repository-owner-conflict",
-          message: "This repository already has a pending handoff. Approve or cancel it first.",
+          message: "This repository already has a pending handoff. Wait or cancel it first.",
         });
       const root = yield* threads
         .getThreadShell(owner.rootThreadId)
@@ -1884,7 +1915,7 @@ export const layer = Layer.effect(
         owner.rootThreadId,
         {
           ...config,
-          paused: status === "draining" ? true : config.paused,
+          paused: true,
           handoff: {
             requestId,
             nextThreadId:
@@ -1895,7 +1926,7 @@ export const layer = Layer.effect(
               }),
             summary: input.summary,
             modelSelection: selection,
-            status,
+            status: "draining",
             wasPaused: config.paused,
             // A proposal from before requestedAt existed stays undated rather than dated at approval.
             requestedAt:
@@ -1905,13 +1936,14 @@ export const layer = Layer.effect(
           },
         },
         input.clientRequestId,
+        callerThreadId === undefined ? undefined : { requireControllerModes: true },
       );
-      if (status === "draining") yield* reconcile(owner.rootThreadId);
+      yield* reconcile(owner.rootThreadId);
       return yield* repositoryStatus(input);
     });
     const handoff: IssueWorkService["Service"]["handoff"] = (input) =>
       input.action === "approve"
-        ? prepareHandoff(input, "draining")
+        ? prepareHandoff(input)
         : Effect.gen(function* () {
             const owner = yield* store.repositoryOwnerByRef(input);
             const config = owner === null ? null : yield* store.configuration(owner.rootThreadId);
@@ -2248,7 +2280,7 @@ export const layer = Layer.effect(
       setReadOnlyLimit: setLimit,
       assertCurrentCaller,
       requestHandoff: Effect.fn("IssueWorkService.requestHandoff")((threadId, input) =>
-        prepareHandoff(input, "awaiting_approval", threadId),
+        prepareHandoff(input, threadId),
       ),
       handoff,
       reconcile,
@@ -2304,7 +2336,13 @@ export const layer = Layer.effect(
           if (now < nextReadAt) return;
           nextReadAt = now + 60_000;
           for (const root of yield* store.handoffRoots()) yield* considerAutomaticHandoff(root);
-          for (const root of yield* store.activeRoots()) yield* reconcile(root);
+          for (const root of yield* store.activeRoots()) {
+            yield* reconcile(root).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Repository reconcile failed", { root, cause }),
+              ),
+            );
+          }
         }),
       );
     }

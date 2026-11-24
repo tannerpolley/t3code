@@ -2001,44 +2001,54 @@ const make = Effect.gen(function* () {
       // Follow-up tasks reuse a child thread; walk its subtree only once.
       if (stoppedChildThreadIds.has(threadId)) continue;
       stoppedChildThreadIds.add(threadId);
-      yield* Effect.gen(function* () {
-        let shouldStop = activeChildThreadIds.has(threadId);
-        let hasAppOwnedChildren = true;
-        if (!shouldStop) {
-          const child = yield* orchestrator.getThreadRecords(
-            threadId,
-            ["runs", "providerThreads", "turnItems", "subagents"],
-            {
-              turnItemTypes: ["command_execution", "dynamic_tool", "subagent", "link_request"],
-              turnItemStatuses: ["pending", "running", "waiting"],
-            },
-          );
-          shouldStop = childNeedsStop(child);
-          hasAppOwnedChildren = child.subagents.some(
-            (childTask) => childTask.origin === "app_owned",
-          );
-        }
-        if (shouldStop) {
-          yield* dispatch({
-            type: "thread.stop",
-            commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
-            threadId,
-            stopDelegatedTasks: false,
-            ...(input.reason === undefined ? {} : { reason: input.reason }),
-          });
-        }
-        if (hasAppOwnedChildren) {
-          yield* stopDelegatedTasks({ threadId, commandId: input.commandId, reason: input.reason });
-        }
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Unable to stop a delegated task", {
-            parentThreadId: input.threadId,
-            threadId,
-            error,
-          }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
-        ),
-      );
+      yield* orchestrator
+        .withCurrentDelegatedChild(
+          input.threadId,
+          threadId,
+          Effect.gen(function* () {
+            let shouldStop = activeChildThreadIds.has(threadId);
+            let hasAppOwnedChildren = true;
+            if (!shouldStop) {
+              const child = yield* orchestrator.getThreadRecords(
+                threadId,
+                ["runs", "providerThreads", "turnItems", "subagents"],
+                {
+                  turnItemTypes: ["command_execution", "dynamic_tool", "subagent", "link_request"],
+                  turnItemStatuses: ["pending", "running", "waiting"],
+                },
+              );
+              shouldStop = childNeedsStop(child);
+              hasAppOwnedChildren = child.subagents.some(
+                (childTask) => childTask.origin === "app_owned",
+              );
+            }
+            if (shouldStop) {
+              yield* dispatch({
+                type: "thread.stop",
+                commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
+                threadId,
+                stopDelegatedTasks: false,
+                ...(input.reason === undefined ? {} : { reason: input.reason }),
+              });
+            }
+            if (hasAppOwnedChildren) {
+              yield* stopDelegatedTasks({
+                threadId,
+                commandId: input.commandId,
+                reason: input.reason,
+              });
+            }
+          }),
+        )
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Unable to stop a delegated task", {
+              parentThreadId: input.threadId,
+              threadId,
+              error,
+            }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
+          ),
+        );
     }
     if (failures[0] !== undefined) return yield* failures[0];
   });

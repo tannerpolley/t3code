@@ -3643,6 +3643,7 @@ export const OrchestrationV2Command = Schema.Union([
     expectedRevision: Schema.Int,
     orchestration: RepositoryOrchestration,
     resumeBlockedIssueId: Schema.optional(Schema.String),
+    requireControllerModes: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.stop"),
@@ -4560,6 +4561,8 @@ export type OrchestrationV2ServerCommand = (
   readonly issueReads?: ReadonlyArray<IssueWorkRead>;
   /** Managed worker preparation, supplied only by IssueWorkService. */
   readonly issueWorktree?: { readonly baseRef: string; readonly branch: string };
+  /** Storage cleanup has verified the slot can be returned to the pool. */
+  readonly releaseIssueWorktreeSlot?: true;
   /** Suspension interrupts retain their provider action until it succeeds. */
   readonly retryInterruptUntilDone?: boolean;
   readonly workerArchiveSequence?: number;

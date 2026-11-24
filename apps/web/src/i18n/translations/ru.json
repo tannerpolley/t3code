@@ -6168,7 +6168,6 @@
   "f1575429c821c2b9": "Перенаправлено в {thread}",
   "d03af712af265c98": "Repository recreated: registered ID {registered}, now {live}. Move it with restore_repository_root.",
   "5974d80da360301d": "Handing off",
-  "5215530db681d14a": "Handoff awaiting approval",
   "8cb9452487f29d88": "{count, plural, one {Active, # issue on hold} other {Active, # issues on hold}}",
   "370aa80e162adbf6": "Active",
   "77f6cb84ddb76372": "Issue link copied",
@@ -13231,5 +13230,7 @@
   "012c67c7f1a99e33": "Автослияние стека",
   "c1303d131afc6a17": "Старше суток",
   "9be5b8420ee64ec7": "Передача {target} завершается",
-  "e05b2595e2c7c313": "Передача {target} ожидает одобрения"
+  "e05b2595e2c7c313": "Передача {target} ожидает одобрения",
+  "97144d3a3218d931": "T3 приостанавливает запуск новых задач до завершения текущей работы, а затем передаёт управление новой ветке обсуждения.",
+  "9a73e6f99e93612a": "Начать передачу"
 }

@@ -6169,7 +6169,6 @@
   "f1575429c821c2b9": "Weitergeleitet an {thread}",
   "d03af712af265c98": "Repository recreated: registered ID {registered}, now {live}. Move it with restore_repository_root.",
   "5974d80da360301d": "Handing off",
-  "5215530db681d14a": "Handoff awaiting approval",
   "8cb9452487f29d88": "{count, plural, one {Active, # issue on hold} other {Active, # issues on hold}}",
   "370aa80e162adbf6": "Active",
   "77f6cb84ddb76372": "Issue link copied",
@@ -13231,5 +13230,7 @@
   "012c67c7f1a99e33": "Auto-Merge für Stack",
   "c1303d131afc6a17": "Älter als ein Tag",
   "9be5b8420ee64ec7": "Übergabe an {target} wird abgeschlossen",
-  "e05b2595e2c7c313": "Übergabe an {target} wartet auf Freigabe"
+  "e05b2595e2c7c313": "Übergabe an {target} wartet auf Freigabe",
+  "97144d3a3218d931": "T3 startet keine neuen Issues, bis die laufende Arbeit abgeschlossen ist, und übergibt dann an einen neuen Thread.",
+  "9a73e6f99e93612a": "Übergabe starten"
 }

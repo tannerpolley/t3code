@@ -296,13 +296,13 @@ describe("repositoryWorkStatus", () => {
     [
       "awaiting approval",
       { paused: false, handoff: handoff("awaiting_approval"), suspendedIssues: [] },
-      "Handoff awaiting approval",
+      "Handing off",
       true,
     ],
     [
       "paused and awaiting approval",
       { paused: true, handoff: handoff("awaiting_approval"), suspendedIssues: [] },
-      "Handoff awaiting approval",
+      "Handing off",
       true,
     ],
     [

@@ -31,6 +31,7 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { UnknownError } from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -1736,7 +1737,7 @@ const make = Effect.gen(function* () {
           ) {
             const pullRequest = yield* gitManager.branchPullRequest(
               { cwd: worktreePath, branch: thread.branch },
-              { refresh: true, includeHeadRepository: true },
+              { refresh: true, includeHeadRepository: true, useLocalBranchName: releaseSlot },
             );
             eligible = storageCleanupPullRequestMerged(pullRequest, {
               branch: thread.branch,
@@ -1832,29 +1833,37 @@ const make = Effect.gen(function* () {
                 defaultRef,
                 preserveBranch: explicit,
                 unbind: Effect.gen(function* () {
-                  // Keep the owner's binding until all sharing threads have been unbound.
-                  const ordered = group.toSorted(
-                    (a, b) => Number(a.id === thread.id) - Number(b.id === thread.id),
+                  // Keep the ownership chain intact if a sweep stops halfway.
+                  const children = Map.groupBy(
+                    group.filter((member) => member.id !== thread.id),
+                    (member) => member.lineage.parentThreadId,
                   );
+                  const ordered = [...(children.get(thread.id) ?? [])];
+                  for (const member of ordered) ordered.push(...(children.get(member.id) ?? []));
+                  ordered.reverse();
+                  if (!deleted) ordered.push(thread);
                   for (const member of ordered) {
+                    // Each sweep needs fresh command IDs to retry recorded rejections.
+                    const attempt = yield* randomUuidV4;
                     if (!explicit && member.archivedAt === null && member.role !== "writer")
                       yield* engine.dispatch({
                         type: "thread.archive",
                         commandId: CommandId.make(
-                          `storage-cleanup:merged-slot:${member.id}:${member.branch}:${DateTime.toEpochMillis(member.updatedAt)}`,
+                          `storage-cleanup:merged-slot:${member.id}:${attempt}`,
                         ),
                         threadId: member.id,
                       });
                     yield* engine.dispatch({
                       type: "thread.metadata.update",
                       commandId: CommandId.make(
-                        `storage-cleanup:release-slot:${member.id}:${member.branch}:${DateTime.toEpochMillis(member.updatedAt)}`,
+                        `storage-cleanup:release-slot:${member.id}:${attempt}`,
                       ),
                       threadId: member.id,
                       expectedWorktreePath: member.worktreePath,
                       expectedBranch: member.branch,
                       worktreePath: null,
                       branch: explicit ? member.branch : null,
+                      releaseIssueWorktreeSlot: true,
                     });
                   }
                 }),
