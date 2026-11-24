@@ -7879,6 +7879,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           silent ? hidden : visible,
           silent ? hidden : visible,
         ]);
+        const shell = yield* projectionStore.getThreadShell(threadId);
+        const [issueWork] = yield* projectionStore.getIssueWorkThreads([threadId]);
+        assert.strictEqual(issueWork!.activityRunStatus, shell!.activityRunStatus);
 
         // A follow-up removed before it started stays latest unless a visible run outlives it.
         const removedRunId = RunId.make(`run:projection-shell-silent:${key}:removed`);

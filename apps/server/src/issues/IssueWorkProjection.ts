@@ -102,6 +102,7 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
   threadIds: readonly ThreadId[],
   presentedRunId: Statement.Fragment,
   latestRunInterruptReason: Statement.Fragment,
+  silentRun: Statement.Fragment,
 ) {
   if (threadIds.length === 0) return [];
   const rows = yield* sql<{
@@ -156,9 +157,10 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
     ) END AS session_error,
     (SELECT r.status FROM orchestration_v2_projection_runs r
       WHERE r.thread_id = t.thread_id AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+        AND NOT ${silentRun}
       ORDER BY r.ordinal DESC, r.run_id DESC LIMIT 1) AS activity_status,
     EXISTS(SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id = t.thread_id
-      AND r.status IN ('preparing', 'starting', 'running')) AS active,
+      AND r.status IN ('preparing', 'starting', 'running') AND NOT ${silentRun}) AS active,
     json_extract(pending.payload_json, '$.kind') AS request_kind,
     json_extract(pending.payload_json, '$.routedTo') AS request_routed_to,
     json_extract(pending.payload_json, '$.responseCapability.type') IS NOT 'message' AS request_blocking,
