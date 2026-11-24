@@ -9653,26 +9653,29 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const isTemporaryWorker = sql`json_extract(t.payload_json, '$.role') IN ${sql.in(temporaryWorkerRoles)}`;
 
     // A claimed result is observable once the wake carrying that exact task starts running.
-    const workerResultAvailableAt = sql`CASE
-      WHEN incoming.completed_at IS NULL
-        OR incoming.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted') THEN NULL
-      WHEN incoming.completion_delivery_state IN ('acknowledged', 'delivered')
-        OR (incoming.status IN ('failed', 'cancelled', 'interrupted')
-          AND COALESCE(incoming.completion_delivery_state, 'disposed') = 'disposed')
-        THEN incoming.updated_at
-      WHEN incoming.completion_delivery_state = 'claimed' THEN (
+    const workerResultAvailableAt = (alias: "incoming" | "outstanding") => {
+      const task = sql(alias);
+      return sql`CASE
+      WHEN ${task}.completed_at IS NULL
+        OR ${task}.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted') THEN NULL
+      WHEN ${task}.completion_delivery_state IN ('acknowledged', 'delivered')
+        OR (${task}.status IN ('failed', 'cancelled', 'interrupted')
+          AND ${task}.completion_delivery_state = 'disposed')
+        THEN ${task}.updated_at
+      WHEN ${task}.completion_delivery_state = 'claimed' THEN (
         SELECT json_extract(wake.payload_json, '$.startedAt')
         FROM orchestration_v2_projection_runs wake
         JOIN orchestration_v2_projection_messages message
           ON message.message_id = json_extract(wake.payload_json, '$.userMessageId')
         JOIN json_each(message.payload_json, '$.delegatedCompletion.taskIds') delivered
-          ON delivered.value = incoming.subagent_id
-        WHERE wake.thread_id = incoming.thread_id
+          ON delivered.value = ${task}.subagent_id
+        WHERE wake.thread_id = ${task}.thread_id
           AND wake.status = 'running'
-          AND json_extract(message.payload_json, '$.delegatedCompletion.parentRunId') IS incoming.run_id
+          AND json_extract(message.payload_json, '$.delegatedCompletion.parentRunId') IS ${task}.run_id
         LIMIT 1
       )
     END`;
+    };
 
     const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (
       threadId,
@@ -9682,11 +9685,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .withTransaction(
           Effect.gen(function* () {
             // Linked children are archived manually and have no local child_thread_id.
-            const resultAvailableAt = workers === undefined ? sql`NULL` : workerResultAvailableAt;
+            const resultAvailableAt =
+              workers === undefined ? sql`NULL` : workerResultAvailableAt("incoming");
             const resultCompletedAt =
               workers === undefined
                 ? sql`NULL`
-                : sql`CASE WHEN (${workerResultAvailableAt}) IS NOT NULL THEN incoming.completed_at END`;
+                : sql`CASE WHEN (${resultAvailableAt}) IS NOT NULL THEN incoming.completed_at END`;
             const rows = yield* sql<
               SettlementThreadRow & {
                 readonly worker_archive_sequence: number;
@@ -9856,9 +9860,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND COALESCE(task.completion_delivery_state, '') NOT IN ('acknowledged', 'delivered', 'disposed')))
               )
               AND NOT EXISTS (
-                SELECT 1 FROM orchestration_v2_projection_subagents task
-                WHERE task.child_thread_id = t.thread_id AND task.origin = 'app_owned'
-                  AND task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+                SELECT 1 FROM orchestration_v2_projection_subagents outstanding
+                WHERE outstanding.child_thread_id = t.thread_id AND outstanding.origin = 'app_owned'
+                  AND (
+                    outstanding.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+                    ${
+                      workers.archivedBefore === undefined
+                        ? sql`
+                    OR (
+                      outstanding.completed_at >= COALESCE(r.requested_at, t.created_at)
+                      AND (${workerResultAvailableAt("outstanding")}) IS NULL
+                    )
+                    `
+                        : sql``
+                    }
+                  )
               )
               `
               }

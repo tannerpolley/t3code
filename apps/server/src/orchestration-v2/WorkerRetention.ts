@@ -88,7 +88,7 @@ const make = Effect.gen(function* () {
     refresh: boolean,
   ) {
     const refs = workers.flatMap((worker) =>
-      worker.workerResult === undefined && isIdleWorker(worker, now)
+      isIdleWorker(worker, now) && finishedWorkerAt(worker, now) === null
         ? ownIssues(worker).flatMap((link) => githubIssueRef(link) ?? [])
         : [],
     );
@@ -103,7 +103,8 @@ const make = Effect.gen(function* () {
     statuses: Effect.Success<ReturnType<typeof readIssues>>,
   ) {
     if (!isIdleWorker(worker, now)) return null;
-    if (worker.workerResult !== undefined) return finishedWorkerAt(worker, now);
+    const deliveredAt = finishedWorkerAt(worker, now);
+    if (deliveredAt !== null) return deliveredAt;
     const temporary = worker.workerTemporaryCompletedAt !== undefined;
     const ownsBranchLinks = !sharesParentBranch(worker);
     const preserveOpenWork = temporary;
