@@ -4310,6 +4310,8 @@ export type OrchestrationV2ServerCommand = (
   readonly issueReads?: ReadonlyArray<IssueWorkRead>;
   /** Managed worker preparation, supplied only by IssueWorkService. */
   readonly issueWorktree?: { readonly baseRef: string; readonly branch: string };
+  /** Storage cleanup has verified the slot can be returned to the pool. */
+  readonly releaseIssueWorktreeSlot?: true;
   /** Suspension interrupts retain their provider action until it succeeds. */
   readonly retryInterruptUntilDone?: boolean;
   readonly workerArchiveSequence?: number;

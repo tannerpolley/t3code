@@ -28,6 +28,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
 import * as IssueWorktreeSlots from "./issues/IssueWorktreeSlots.ts";
+import * as IssueWorkStore from "./issues/IssueWorkStore.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as GitManager from "./git/GitManager.ts";
@@ -37,6 +38,10 @@ import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as EventSink from "./orchestration-v2/EventSink.ts";
+import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProviderReplayHarness from "./orchestration-v2/testkit/ProviderReplayHarness.ts";
+import { adapter, modelSelection } from "./orchestration-v2/ThreadLaunchService.testHarness.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -45,6 +50,7 @@ import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  CommandId,
   EventId,
   ProjectId,
   ProviderDriverKind,
@@ -335,6 +341,10 @@ const cleanupFixture = (
     worktreeOnDelete: true,
   },
   sqlOverride?: SqlClient.SqlClient,
+  persistence?: {
+    readonly engine: Orchestrator.OrchestratorV2["Service"];
+    readonly projections: ProjectionStore.ProjectionStoreV2["Service"];
+  },
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -378,7 +388,7 @@ const cleanupFixture = (
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
     const context = yield* Layer.build(
-      StorageCleanup.layer.pipe(Layer.provide(IssueWorktreeSlots.layer)),
+      StorageCleanup.layer.pipe(Layer.provideMerge(IssueWorktreeSlots.layer)),
     ).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
         ...git,
@@ -413,35 +423,39 @@ const cleanupFixture = (
             })),
           ),
       } as unknown as ProjectStore.ProjectStoreV2["Service"]),
-      Effect.provideService(ProjectionStore.ProjectionStoreV2, {
-        getShellSnapshot: (input?: { location?: string }) =>
-          Effect.sync(() => {
-            snapshotReads++;
-            const visible = threads.filter((thread) => thread.deletedAt === null);
-            return {
-              threads:
-                input?.location === "archive"
-                  ? []
-                  : visible.filter((thread) => thread.archivedAt === null),
-              archivedThreads:
-                input?.location === "active"
-                  ? []
-                  : visible.filter((thread) => thread.archivedAt !== null),
-            };
-          }),
-        getThreadWorktreePaths: (input?: { includeArchived?: boolean }) =>
-          Effect.sync(() =>
-            threads.flatMap((thread) =>
-              thread.deletedAt === null &&
-              (input?.includeArchived === true || thread.archivedAt === null) &&
-              thread.worktreePath !== null
-                ? [{ threadId: thread.id, worktreePath: thread.worktreePath }]
-                : [],
-            ),
-          ),
-        getThreadShell: (threadId: ThreadId) =>
-          Effect.sync(() => threads.find((thread) => thread.id === threadId) ?? null),
-      } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
+      Effect.provideService(
+        ProjectionStore.ProjectionStoreV2,
+        persistence?.projections ??
+          ({
+            getShellSnapshot: (input?: { location?: string }) =>
+              Effect.sync(() => {
+                snapshotReads++;
+                const visible = threads.filter((thread) => thread.deletedAt === null);
+                return {
+                  threads:
+                    input?.location === "archive"
+                      ? []
+                      : visible.filter((thread) => thread.archivedAt === null),
+                  archivedThreads:
+                    input?.location === "active"
+                      ? []
+                      : visible.filter((thread) => thread.archivedAt !== null),
+                };
+              }),
+            getThreadWorktreePaths: (input?: { includeArchived?: boolean }) =>
+              Effect.sync(() =>
+                threads.flatMap((thread) =>
+                  thread.deletedAt === null &&
+                  (input?.includeArchived === true || thread.archivedAt === null) &&
+                  thread.worktreePath !== null
+                    ? [{ threadId: thread.id, worktreePath: thread.worktreePath }]
+                    : [],
+                ),
+              ),
+            getThreadShell: (threadId: ThreadId) =>
+              Effect.sync(() => threads.find((thread) => thread.id === threadId) ?? null),
+          } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
+      ),
       Effect.provideService(ThreadManagement.ThreadManagementService, {
         getShellSnapshot: (input?: { threadIds?: ReadonlyArray<ThreadId> }) =>
           Effect.sync(() => ({
@@ -474,20 +488,24 @@ const cleanupFixture = (
             return sessionLive;
           }).pipe(Effect.tap(() => Effect.suspend(() => onLiveCheck))),
       } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),
-      Effect.provideService(Orchestrator.OrchestratorV2, {
-        streamDomainEvents: Stream.suspend(() => events),
-        dispatch: (command: OrchestrationV2ServerCommand) =>
-          Effect.sync(() => {
-            if (command.type === "thread.archive") archivedThreads.push(command.threadId);
-            if (command.type === "thread.metadata.update" && command.worktreePath === null)
-              threads = threads.map((thread) =>
-                thread.id === command.threadId
-                  ? { ...thread, worktreePath: null, branch: command.branch ?? null }
-                  : thread,
-              );
-            return { sequence: 0, storedEvents: [] };
-          }),
-      } as unknown as Orchestrator.OrchestratorV2["Service"]),
+      Effect.provideService(
+        Orchestrator.OrchestratorV2,
+        persistence?.engine ??
+          ({
+            streamDomainEvents: Stream.suspend(() => events),
+            dispatch: (command: OrchestrationV2ServerCommand) =>
+              Effect.sync(() => {
+                if (command.type === "thread.archive") archivedThreads.push(command.threadId);
+                if (command.type === "thread.metadata.update" && command.worktreePath === null)
+                  threads = threads.map((thread) =>
+                    thread.id === command.threadId
+                      ? { ...thread, worktreePath: null, branch: command.branch ?? null }
+                      : thread,
+                  );
+                return { sequence: 0, storedEvents: [] };
+              }),
+          } as unknown as Orchestrator.OrchestratorV2["Service"]),
+      ),
       Effect.provideService(
         SqlClient.SqlClient,
         sqlOverride ??
@@ -550,6 +568,7 @@ const cleanupFixture = (
     );
     return {
       service: Context.get(context, StorageCleanup.StorageCleanup),
+      issueSlots: Context.get(context, IssueWorktreeSlots.IssueWorktreeSlots),
       repo,
       setTerminals: (terminals: TerminalSummary[]) =>
         terminalListener?.({ type: "snapshot", terminals }) ?? Effect.void,
@@ -3307,7 +3326,6 @@ describe("storage cleanup reports and local file policies", () => {
   );
   it.live.each([
     "finished with no PR",
-    "interrupted during merged release",
     "was removed explicitly with unmerged commits",
     "received a merge update",
     "interrupted",
@@ -3357,10 +3375,6 @@ describe("storage cleanup reports and local file policies", () => {
           repositoryKey: "github.com/owner/project",
           updatedAt: null,
         };
-        if (scenario === "interrupted during merged release") {
-          setBranchPullRequest(merged);
-          yield* command(slot, ["switch", "--detach", "origin/main"]);
-        }
         setThreads([
           shell({
             branch: "feature",
@@ -3478,6 +3492,235 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("returns a detached merged worker's slot after an archived binding was rejected", () => {
+    const database = Sqlite.layerMemory;
+    const reviewer = ThreadId.make("reviewer");
+    let failReviewerRead = false;
+    return runCleanupTest(
+      Effect.gen(function* () {
+        const engine = yield* Orchestrator.OrchestratorV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        const { service, issueSlots, fs, repo, worktree, command, setBranchPullRequest } =
+          yield* cleanupFixture(DEFAULT_SERVER_SETTINGS.storageCleanup, undefined, {
+            engine,
+            projections: {
+              ...projections,
+              getShellSnapshot: (input) =>
+                projections.getShellSnapshot(input).pipe(
+                  Effect.map((snapshot) => ({
+                    ...snapshot,
+                    archivedThreads: snapshot.archivedThreads.toSorted((a, b) =>
+                      a.id.localeCompare(b.id),
+                    ),
+                  })),
+                ),
+            },
+          });
+        const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-slot-remote-" });
+        yield* command(remote, ["init", "--bare", "-b", "main"]);
+        yield* command(repo, ["remote", "add", "origin", remote]);
+        const slot = `${repo}/.worktrees/slot-1`;
+        yield* fs.makeDirectory(`${repo}/.worktrees`);
+        yield* command(repo, ["worktree", "move", worktree, slot]);
+        yield* command(slot, ["update-ref", "refs/worktree/t3-issue-slot", "HEAD"]);
+        yield* fs.writeFileString(`${slot}/tracked.txt`, "issue work\n");
+        yield* command(slot, ["commit", "-am", "issue work"]);
+        const headSha = (yield* command(slot, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* command(repo, ["merge", "--squash", "feature"]);
+        yield* command(repo, ["commit", "-m", "merge issue work"]);
+        yield* command(repo, ["push", "origin", "main"]);
+        yield* command(slot, ["switch", "--detach", "origin/main"]);
+
+        const issue = {
+          host: "github.com",
+          repository: "owner/project",
+          repositoryId: "repo",
+          id: "issue",
+          nodeId: "issue-node",
+          number: 1,
+          title: "Issue",
+          url: "https://github.com/owner/project/issues/1",
+        };
+        setBranchPullRequest({
+          number: 2,
+          title: "Merged",
+          url: "https://github.com/owner/project/pull/2",
+          state: "merged",
+          headRef: "feature",
+          baseRef: "main",
+          headSha,
+          repositoryKey: "github.com/owner/project",
+          updatedAt: null,
+        });
+        const root = ThreadId.make("root");
+        const worker = ThreadId.make("worker");
+        const sideChat = ThreadId.make("side-chat");
+        const projectId = ProjectId.make("project-1");
+        const create = {
+          type: "thread.create",
+          projectId,
+          title: "Issue work",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdBy: "user",
+          creationSource: "web",
+        } as const;
+        yield* engine.dispatch({
+          ...create,
+          commandId: CommandId.make("create-root"),
+          threadId: root,
+          branch: null,
+          worktreePath: null,
+          repositoryOrchestration: {
+            host: issue.host,
+            repository: issue.repository,
+            repositoryId: issue.repositoryId,
+            projectId,
+            launchCommandId: CommandId.make("create-root"),
+            revision: 1,
+            paused: false,
+            workerLimit: 1,
+            readOnlyLimit: 4,
+            publishStatusComments: false,
+            publishCloseoutComments: false,
+            milestones: [],
+            suspendedIssues: [],
+          },
+        });
+        for (const threadId of [worker, reviewer, sideChat]) {
+          yield* engine.dispatch({
+            ...create,
+            commandId: CommandId.make(`create-${threadId}`),
+            threadId,
+            branch: "feature",
+            worktreePath: slot,
+            ...(threadId === worker ? { linkedIssue: issue } : { role: "reviewer" as const }),
+          });
+          const thread = yield* projections.getThread(threadId);
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`lineage-${threadId}`),
+                type: "thread.metadata-updated",
+                threadId,
+                occurredAt: thread.updatedAt,
+                payload: {
+                  ...thread,
+                  lineage: {
+                    rootThreadId: root,
+                    parentThreadId:
+                      threadId === worker ? root : threadId === reviewer ? worker : reviewer,
+                    relationshipToParent: threadId === sideChat ? "fork" : "subagent",
+                    ...(threadId === sideChat ? { sideChat: true } : {}),
+                  },
+                },
+              },
+            ],
+          });
+          yield* engine.dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make(`archive-${threadId}`),
+            threadId,
+          });
+        }
+        const archivedReviewer = yield* projections.getThread(reviewer);
+        const oldRelease = yield* engine
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(
+              `storage-cleanup:release-slot:${reviewer}:feature:${DateTime.toEpochMillis(archivedReviewer.updatedAt)}`,
+            ),
+            threadId: reviewer,
+            expectedWorktreePath: slot,
+            expectedBranch: "feature",
+            worktreePath: null,
+            branch: null,
+          })
+          .pipe(Effect.flip);
+        expect(oldRelease.message).toContain("archived and cannot change workspace");
+        expect(yield* store.slotsInUse(root)).toBe(1);
+
+        failReviewerRead = true;
+        const interrupted = yield* service.runNow;
+        expect(interrupted.entries[0]).toMatchObject({ outcome: "failed" });
+        expect((yield* projections.getThread(sideChat)).worktreePath).toBeNull();
+        expect((yield* projections.getThread(reviewer)).worktreePath).toBe(slot);
+        expect(yield* store.slotsInUse(root)).toBe(1);
+
+        failReviewerRead = false;
+        const report = yield* service.runNow;
+        expect(report.entries[0]?.reason).toBe("Returned to the issue worktree pool");
+        for (const threadId of [worker, reviewer, sideChat]) {
+          const thread = yield* projections.getThread(threadId);
+          expect(thread.archivedAt).not.toBeNull();
+          expect(thread.worktreePath).toBeNull();
+        }
+        expect(yield* store.slotsInUse(root)).toBe(0);
+        const next = ThreadId.make("next-worker");
+        yield* engine.dispatch({
+          ...create,
+          commandId: CommandId.make("create-next-worker"),
+          threadId: next,
+          branch: null,
+          worktreePath: null,
+          linkedIssue: { ...issue, id: "next", nodeId: "next-node", number: 3 },
+        });
+        expect(
+          yield* issueSlots.claim<
+            Orchestrator.OrchestratorV2Error | ProjectionStore.ProjectionStoreV2Error,
+            never
+          >({
+            cwd: repo,
+            branch: "next-issue",
+            limit: () => Effect.succeed(1),
+            occupied: (worktreePath) =>
+              projections
+                .getShellSnapshot({ worktreePath })
+                .pipe(
+                  Effect.map(
+                    ({ threads, archivedThreads }) => threads.length + archivedThreads.length > 0,
+                  ),
+                ),
+            bind: (worktreePath, branch) =>
+              engine.dispatch({
+                type: "thread.metadata.update",
+                commandId: CommandId.make("bind-next-worker"),
+                threadId: next,
+                worktreePath,
+                branch,
+              }),
+          }),
+        ).toEqual({ path: slot, branch: "next-issue" });
+        expect((yield* projections.getThread(next)).worktreePath).toBe(slot);
+        expect(yield* store.slotsInUse(root)).toBe(1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ProjectionStore.layer.pipe(Layer.provide(database)),
+            IssueWorkStore.layer.pipe(Layer.provide(database)),
+            ProviderReplayHarness.layerWithRegistry(
+              { name: "archived-slot-release" },
+              ProviderAdapterRegistry.layerFromAdapters([adapter]),
+              {
+                databaseLayer: database,
+                runEffectWorker: false,
+                wrapProjectionStore: (store) => ({
+                  ...store,
+                  getThreadProviderContext: (threadId, targetInstanceId) =>
+                    failReviewerRead && threadId === reviewer
+                      ? Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId }))
+                      : store.getThreadProviderContext(threadId, targetInstanceId),
+                }),
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  });
   it.live("keeps a Writer unarchived when cleanup removes the shared issue worktree", () =>
     runCleanupTest(
       Effect.gen(function* () {

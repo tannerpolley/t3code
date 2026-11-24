@@ -4861,8 +4861,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
           .pipe(mapDispatchError(command))
       : null;
-    // Handoffs compare the binding under this lock and must have a session that can end
-    // each unfinished run. Preparing or disconnected work cannot be safely moved.
+    // Guarded workspace changes compare the binding under this lock. Preparing
+    // or disconnected work cannot be safely moved.
     if (
       command.type === "thread.metadata.update" &&
       command.expectedWorktreePath !== undefined &&
@@ -4887,14 +4887,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ),
           ),
       );
-      if (thread.archivedAt !== null || unsafeRun !== undefined) {
+      const releasingSlot =
+        command.releaseIssueWorktreeSlot === true && command.worktreePath === null;
+      const archivedWorkspaceChange = thread.archivedAt !== null && !releasingSlot;
+      if (archivedWorkspaceChange || unsafeRun !== undefined) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause:
-            thread.archivedAt !== null
-              ? `Thread ${command.threadId} is archived and cannot change workspace.`
-              : `Thread ${command.threadId} has an unfinished run without a live provider session to detach. Stop it before changing workspace.`,
+          cause: archivedWorkspaceChange
+            ? `Thread ${command.threadId} is archived and cannot change workspace.`
+            : `Thread ${command.threadId} has an unfinished run without a live provider session to detach. Stop it before changing workspace.`,
         });
       }
     }
