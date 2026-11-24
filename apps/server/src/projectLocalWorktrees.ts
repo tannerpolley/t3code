@@ -2,6 +2,7 @@ import {
   GitCommandError,
   PROJECT_LOCAL_WORKTREES,
   PROJECT_WORKTREES_FOLDER,
+  TaskFolderError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,7 +12,7 @@ import type * as Semaphore from "effect/Semaphore";
 
 import { resolveWorktreePath } from "./forkWorktreePaths.ts";
 import type { GitVcsDriver } from "./vcs/GitVcsDriver.ts";
-import { isFilesystemRoot, resolveWorktreesDirectory } from "./worktreesDirectory.ts";
+import { resolveWorktreesDirectory } from "./worktreesDirectory.ts";
 
 // ponytail: linear probe; past this many copies of one name, creation fails.
 const UNIQUE_WORKTREE_NAME_ATTEMPTS = 100;
@@ -99,10 +100,18 @@ export const prepareTaskFolderParent = Effect.fn("TaskFolders.prepareParent")(fu
     const { projectRoot } = input;
     const parent = path.join(projectRoot, PROJECT_WORKTREES_FOLDER);
     const fileSystem = yield* FileSystem.FileSystem;
-    const resolved = yield* fileSystem
-      .realPath(parent)
-      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(parent)));
-    if (isFilesystemRoot(resolved, path)) return null;
+    const realProjectRoot = yield* fileSystem.realPath(projectRoot);
+    const isPlainDirectory = yield* fileSystem
+      .lstat(path.join(realProjectRoot, PROJECT_WORKTREES_FOLDER))
+      .pipe(
+        Effect.map((entry) => entry.type === "Directory"),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(true)),
+      );
+    if (!isPlainDirectory)
+      return yield* new TaskFolderError({
+        operation: "create",
+        detail: `The project-local worktree location ${parent} must be a plain directory inside the project.`,
+      });
     const { exitCode, stdout } = yield* input.executeGit({
       operation: "TaskFolders.prepareParent.gitCommonDir",
       cwd: projectRoot,
