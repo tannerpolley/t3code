@@ -409,13 +409,13 @@ describe("workspace card beside chat", () => {
       resolveThreadDetailsCardLayout({
         container: { width, height: 900 },
         narrowestWidth,
-        lane: { padding: 48, minChatWidth: 640 },
+        lane: { padding: 48 },
         frame: null,
       });
     expect(place(1344, 1344)).toMatchObject({ x: 1052 });
-    expect(place(1344, 804)).toBeNull();
-    expect(place(1344, 1124)).toMatchObject({ x: 1052 });
+    expect(place(1344, 771)).toBeNull();
+    expect(place(1344, 772)).toMatchObject({ x: 1052 });
     // A window resize mid-animation leaves the sampled ends wider than the canvas.
-    expect(place(900, 1344)).toBeNull();
+    expect(place(771, 1344)).toBeNull();
   });
 });

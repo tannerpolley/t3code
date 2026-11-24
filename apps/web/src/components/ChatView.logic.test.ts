@@ -1605,6 +1605,7 @@ describe("deriveThreadPendingBackgroundTasks", () => {
       {
         taskId: "child-session-1",
         kind: "subagent",
+        origin: "provider_native",
         providerInstanceId: base.thread.providerInstanceId,
       },
     ]);
