@@ -64,7 +64,7 @@ import { ProjectService } from "../project/ProjectService.ts";
 import * as Layer from "effect/Layer";
 import { IssueService, makeLiveReadCache } from "./IssueService.ts";
 import { IssueWorkStore, missingOwnerMessage } from "./IssueWorkStore.ts";
-import { deriveIssueWorkStatus, issueOwnerAvailable } from "./IssueWorkStatus.ts";
+import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import {
   ThreadManagementService,
@@ -1372,12 +1372,17 @@ export const layer = Layer.effect(
           config = yield* store.configuration(rootThreadId);
         }
       }
-      if (config === null || !repositoryAdmitsWork(config)) return;
+      if (config === null) return;
+      const admitsWork = repositoryAdmitsWork(config);
       const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry]));
       for (const threadId of yield* store.workerThreads(rootThreadId)) {
         const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
+        if (shell?.linkedIssue === undefined) continue;
+        if (shell.activeRunId === null && shell.status !== "queued") {
+          yield* threads.archiveObservedWorker(threadId);
+        }
         if (
-          shell?.linkedIssue === undefined ||
+          !admitsWork ||
           (!isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) &&
             shell.activeRunId === null &&
             shell.status !== "queued" &&
@@ -1457,6 +1462,7 @@ export const layer = Layer.effect(
         );
         config = (yield* store.configuration(rootThreadId))!;
       }
+      if (!admitsWork) return;
       // Queued issues start before continueLocal promotes waiting milestone workers into free slots.
       yield* startQueuedIssues(rootThreadId).pipe(
         Effect.catchCause((cause) =>
@@ -1534,7 +1540,7 @@ export const layer = Layer.effect(
           }
           if (owner !== null) {
             const shell = yield* threads.getThreadShell(owner).pipe(Effect.mapError(mapError));
-            if (!issueOwnerAvailable(shell)) {
+            if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) {
               unreadable = true;
               continue;
             }

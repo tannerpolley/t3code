@@ -156,46 +156,38 @@ export const layerExecutor: Layer.Layer<
       runId: RunId,
       willRetry: boolean,
     ) =>
-      providerTurnStart
-        .start({
-          threadId: effect.threadId,
-          runId,
-          willRetry,
-          archiveDelegatedCompletion: (taskIds) =>
-            threads.archiveDelegatedCompletion(effect.threadId, taskIds),
-        })
-        .pipe(
-          Effect.catchCauseIf(
-            (cause) => !willRetry && !Cause.hasInterruptsOnly(cause),
-            (cause) =>
-              Effect.logWarning(
-                "Last run start attempt failed",
-                { effectId: effect.id, effectType: effect.request.type, runId },
-                cause,
-              ).pipe(
-                Effect.andThen(
-                  Effect.suspend(() => {
-                    const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
-                    // A failed read cannot identify the attempt. Keep retry ownership
-                    // rather than settling whichever attempt happens to be current.
-                    if (
-                      !ProviderTurnStartService.isProviderTurnStartError(failure) ||
-                      failure.attemptId === undefined ||
-                      failure.rootNodeId === undefined
-                    ) {
-                      return Effect.failCause(cause);
-                    }
-                    return providerTurnStart.failStartingRun({
-                      threadId: effect.threadId,
-                      runId,
-                      attemptId: failure.attemptId,
-                      rootNodeId: failure.rootNodeId,
-                    });
-                  }),
-                ),
+      providerTurnStart.start({ threadId: effect.threadId, runId, willRetry }).pipe(
+        Effect.catchCauseIf(
+          (cause) => !willRetry && !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning(
+              "Last run start attempt failed",
+              { effectId: effect.id, effectType: effect.request.type, runId },
+              cause,
+            ).pipe(
+              Effect.andThen(
+                Effect.suspend(() => {
+                  const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+                  // A failed read cannot identify the attempt. Keep retry ownership
+                  // rather than settling whichever attempt happens to be current.
+                  if (
+                    !ProviderTurnStartService.isProviderTurnStartError(failure) ||
+                    failure.attemptId === undefined ||
+                    failure.rootNodeId === undefined
+                  ) {
+                    return Effect.failCause(cause);
+                  }
+                  return providerTurnStart.failStartingRun({
+                    threadId: effect.threadId,
+                    runId,
+                    attemptId: failure.attemptId,
+                    rootNodeId: failure.rootNodeId,
+                  });
+                }),
               ),
-          ),
-        );
+            ),
+        ),
+      );
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;

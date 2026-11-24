@@ -203,21 +203,9 @@ const make = Effect.gen(function* () {
     for (const { threadId } of yield* projections.getArchivedHandoffSources(now)) {
       const workers = yield* finishedWorkers(projections, now, threadId);
       for (const worker of workers.values()) {
-        yield* orchestrator
-          .dispatch({
-            type: "thread.archive",
-            commandId: CommandId.make(`worker-retention:handoff:${yield* random.uuidV4()}`),
-            threadId: worker.id,
-            archiveDelegatedWorker: true,
-          })
-          .pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Could not resume handoff worker archive", {
-                threadId: worker.id,
-                cause,
-              }),
-            ),
-          );
+        if (worker.workerResult?.observed) {
+          yield* orchestrator.archiveObservedWorker(worker.id, worker.workerResult.taskId);
+        }
       }
     }
   });

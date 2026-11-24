@@ -278,7 +278,6 @@ export type ProjectionThreadPullRequests = Pick<
 >;
 
 export type WorkerRetentionPage = {
-  readonly observedTaskId?: NodeId | undefined;
   readonly afterThreadId?: ThreadId;
   readonly archivedBefore?: DateTime.Utc;
   readonly rootThreadId?: ThreadId;
@@ -319,6 +318,7 @@ export type ProjectionSettlementCandidate = Pick<
     readonly workerResult?: {
       readonly taskId: NodeId;
       readonly completedAt: number;
+      readonly observed: boolean;
     };
     readonly workerTemporaryCompletedAt?: number | null;
     /** A temporary worker in its parent's checkout, whose branch links belong to the parent. */
@@ -2237,7 +2237,6 @@ export function threadShellFromProjection(
     createdAt: projection.thread.createdAt,
     updatedAt: projection.thread.updatedAt,
     archivedAt: projection.thread.archivedAt,
-    archivedByDelegatedResult: projection.thread.archivedByDelegatedResult,
     settledOverride: projection.thread.settledOverride,
     settledAt: projection.thread.settledAt,
     unsettledAt: projection.thread.unsettledAt ?? null,
@@ -2608,7 +2607,6 @@ function shellFromState(input: {
     createdAt: input.state.thread.createdAt,
     updatedAt: input.state.updatedAt,
     archivedAt: input.state.thread.archivedAt,
-    archivedByDelegatedResult: input.state.thread.archivedByDelegatedResult,
     settledOverride: input.state.thread.settledOverride,
     settledAt: input.state.thread.settledAt,
     unsettledAt: input.state.thread.unsettledAt ?? null,
@@ -9665,27 +9663,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     });
     const isTemporaryWorker = sql`json_extract(t.payload_json, '$.role') IN ${sql.in(temporaryWorkerRoles)}`;
 
-    // A claimed result is observable once the wake carrying that exact task starts running.
-    const workerResultAvailableAt = (
-      alias: "incoming" | "outstanding",
-      observedTaskId: NodeId | undefined,
-    ) => {
+    const workerResultObserved = (task: ReturnType<typeof sql>) => sql`
+      (${task}.completion_delivery_state = 'acknowledged'
+       OR json_extract(${task}.payload_json, '$.completionDelivery.observedByRunId') IS NOT NULL)
+    `;
+
+    // Manual archiving also accepts a claimed result while its wake is running.
+    const workerResultAvailableAt = (alias: "incoming" | "outstanding") => {
       const task = sql(alias);
       return sql`CASE
       WHEN ${task}.completed_at IS NULL
         OR ${task}.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted') THEN NULL
       WHEN ${task}.completion_delivery_state IN ('acknowledged', 'delivered')
-        OR (${task}.status IN ('failed', 'cancelled', 'interrupted')
-          AND ${task}.completion_delivery_state = 'disposed')
+        OR (${task}.completion_delivery_state = 'disposed'
+          AND (${task}.status IN ('failed', 'cancelled', 'interrupted') OR ${workerResultObserved(task)}))
         THEN ${task}.updated_at
-      ${
-        observedTaskId === undefined
-          ? sql``
-          : sql`
-        WHEN ${task}.completion_delivery_state = 'claimed' AND ${task}.subagent_id = ${observedTaskId}
-          THEN ${task}.updated_at
-      `
-      }
       WHEN ${task}.completion_delivery_state = 'claimed' THEN (
         SELECT json_extract(wake.payload_json, '$.startedAt')
         FROM orchestration_v2_projection_runs wake
@@ -9732,9 +9724,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           Effect.gen(function* () {
             // Linked children are archived manually and have no local child_thread_id.
             const resultAvailableAt =
-              workers === undefined
-                ? sql`NULL`
-                : workerResultAvailableAt("incoming", workers.observedTaskId);
+              workers === undefined ? sql`NULL` : workerResultAvailableAt("incoming");
             const resultCompletedAt =
               workers === undefined
                 ? sql`NULL`
@@ -9749,6 +9739,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 readonly shares_parent_checkout: number | null;
                 readonly result_task_id: string | null;
                 readonly result_completed_at: string | null;
+                readonly result_observed: number | null;
               }
             >`
             SELECT t.thread_id, t.payload_json,
@@ -9782,6 +9773,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               } AS shares_parent_checkout,
               ${workers === undefined ? sql`NULL` : sql`incoming.subagent_id`} AS result_task_id,
               ${resultCompletedAt} AS result_completed_at,
+              ${workers === undefined ? sql`NULL` : workerResultObserved(sql("incoming"))} AS result_observed,
               ${nativeSubagentPayload} AS native_subagent_payload_json,
               ${
                 workers === undefined
@@ -9916,7 +9908,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         ? sql`
                     OR (
                       outstanding.completed_at >= COALESCE(r.requested_at, t.created_at)
-                      AND (${workerResultAvailableAt("outstanding", workers.observedTaskId)}) IS NULL
+                      AND (${workerResultAvailableAt("outstanding")}) IS NULL
                     )
                     `
                         : sql``
@@ -10025,6 +10017,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                               workerResult: {
                                 taskId: NodeId.make(row.result_task_id),
                                 completedAt: Date.parse(row.result_completed_at),
+                                observed: row.result_observed === 1,
                               },
                             }),
                         ...(row.temporary_worker === 1

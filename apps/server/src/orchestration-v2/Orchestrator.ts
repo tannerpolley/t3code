@@ -479,10 +479,7 @@ export interface OrchestratorV2Shape {
     effect: Effect.Effect<void, E, R>,
   ) => Effect.Effect<void, E | OrchestratorProjectionError, R>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
-  readonly archiveDelegatedCompletion: (
-    parentThreadId: ThreadId,
-    taskIds: ReadonlyArray<NodeId>,
-  ) => Effect.Effect<void>;
+  readonly archiveObservedWorker: (threadId: ThreadId, taskId?: NodeId) => Effect.Effect<void>;
   readonly recoverDelegatedTask: (
     threadId: ThreadId,
     options?: { readonly sourceRunId?: RunId; readonly completedRunId?: RunId },
@@ -966,7 +963,6 @@ function unarchiveThread(thread: OrchestrationV2AppThread, now: DateTime.Utc) {
     ...thread,
     archivedAt: null,
     archivedBySettlement: undefined,
-    archivedByDelegatedResult: undefined,
     ...(thread.lineage.relationshipToParent === "subagent"
       ? { workerUnarchivedAt: DateTime.formatIso(now) }
       : {}),
@@ -1858,6 +1854,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     threadDispatch,
     readIssueSnapshots,
     withAdmissionReads,
+    isClosedIssue,
     promoteOtherIssueQueues,
     successorFor,
   } = yield* makeIssueWorkDispatch;
@@ -2536,7 +2533,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         driver: task.driver,
         providerInstanceId: task.providerInstanceId,
         occurredAt: now,
-        payload: { ...task, completionDelivery: { state, observedByRunId: null }, updatedAt: now },
+        payload: {
+          ...task,
+          completionDelivery: {
+            state,
+            observedByRunId:
+              state === "delivered" && input.command.type === "notification.delivery.accept"
+                ? (message?.runId ?? null)
+                : null,
+          },
+          updatedAt: now,
+        },
       });
     }
     for (const event of completionCohortEvents(
@@ -4216,8 +4223,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload:
           task.completionDelivery?.state === "disposed" &&
           command.type === "delegated_task.completion-delivery.acknowledge" &&
-          command.observedByRunId !== null &&
-          task.status !== "completed"
+          task.completionDelivery.observedByRunId === null &&
+          command.observedByRunId !== null
             ? {
                 ...task,
                 completionDelivery: { state: "disposed", observedByRunId: command.observedByRunId },
@@ -4233,7 +4240,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         observedByRunId:
           command.type === "delegated_task.completion-delivery.acknowledge"
             ? command.observedByRunId
-            : null,
+            : (task.completionDelivery?.observedByRunId ?? null),
       },
       updatedAt: now,
     };
@@ -5603,7 +5610,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             archivedAt: now,
-            ...(command.archiveDelegatedWorker ? { archivedByDelegatedResult: true as const } : {}),
             titleRegeneration: null,
             guestShare: null,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
@@ -5796,14 +5802,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : { autoProviderSwitch: command.autoProviderSwitch }),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
-            ...(command.releaseIssueWorktreeSlot === true &&
-            command.worktreePath === null &&
-            thread.linkedIssue === undefined &&
-            isLocalDelegatedWorker(thread)
-              ? { issueWorkspaceReleased: true as const }
-              : command.worktreePath == null
-                ? {}
-                : { issueWorkspaceReleased: undefined }),
             ...(command.worktreePath == null
               ? {}
               : worktreeRole({
@@ -7937,14 +7935,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       thread: OrchestrationV2AppThread,
     ) {
       if (
-        thread.issueWorkspaceReleased === true ||
-        (thread.archivedAt !== null &&
-          thread.worktreePath === null &&
-          thread.linkedIssue === undefined &&
-          isLocalDelegatedWorker(thread) &&
-          (yield* projectionStore
-            .hasReleasedIssueWorkspace(thread.id)
-            .pipe(mapDispatchError(command))))
+        thread.worktreePath === null &&
+        thread.delegatedFrom == null &&
+        thread.lineage.relationshipToParent === "subagent" &&
+        (yield* projectionStore
+          .hasReleasedIssueWorkspace(thread.id)
+          .pipe(mapDispatchError(command)))
       )
         return yield* releasedIssueWorkspaceError(command);
     },
@@ -8020,6 +8016,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.archivedAt !== null &&
       projection.thread.deletedAt === null &&
       isLocalDelegatedWorker(projection.thread) &&
+      !isManagedIssueImplementor(projection.thread) &&
       mayStartSubagentFollowup(command) &&
       command.linkedSender === undefined &&
       command.notification === undefined &&
@@ -13931,7 +13928,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       state === null ||
       state.run.workspacePreparation === undefined ||
       failureItem === undefined ||
-      (projection.thread.archivedAt !== null && !isLocalDelegatedWorker(projection.thread)) ||
+      (projection.thread.archivedAt !== null &&
+        (!isLocalDelegatedWorker(projection.thread) ||
+          isManagedIssueImplementor(projection.thread))) ||
       projection.thread.deletedAt !== null
     ) {
       return yield* new OrchestratorDispatchError({
@@ -16542,7 +16541,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(cancelled
           ? {
               cancelledRunId: childRun.id,
-              completionDelivery: { state: "disposed" as const, observedByRunId: null },
+              completionDelivery: {
+                state: "disposed" as const,
+                observedByRunId: task.completionDelivery?.observedByRunId ?? null,
+              },
             }
           : {}),
       };
@@ -16878,6 +16880,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
 
+    const providerTurns =
+      deliveryRun.status === "completed" && deliveryRun.rootNodeId !== null
+        ? (yield* projectionStore.getRunProviderRecords(
+            threadId,
+            deliveryRun.id,
+            deliveryRun.rootNodeId,
+          )).providerTurns
+        : [];
+    const observedByRunId = providerTurns.some(
+      (turn) =>
+        turn.runAttemptId === deliveryRun.activeAttemptId &&
+        turn.nodeId === deliveryRun.rootNodeId &&
+        turn.status === "completed" &&
+        turn.promptDropped !== true,
+    )
+      ? deliveryRun.id
+      : null;
     const now = yield* DateTime.now;
     const nextTaskStates = new Map<
       OrchestrationV2Subagent["id"],
@@ -16894,7 +16913,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       nextTaskStates.set(task.id, {
         state: deliveryRun.status === "cancelled" ? "pending" : "delivered",
-        observedByRunId: null,
+        observedByRunId,
       });
     }
     const pendingTasks = projection.subagents.filter(
@@ -16967,6 +16986,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...taskEvents,
       ...completionCohortEvents(projection.thread, parentRun, updatedCohort, now),
     ]);
+    for (const { payload } of taskEvents) {
+      if (workerResultWasObserved(payload)) {
+        yield* archiveObservedWorker(payload.childThreadId, payload.id);
+      }
+    }
     if (nextDelivery !== null) {
       yield* offerDelegatedCompletionDelivery(threadId, messageOwnership.parentRunId);
     }
@@ -17485,15 +17509,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.unarchive": {
         if (command.type === "thread.archive" && command.archiveDelegatedWorker) {
           const [worker] = yield* projectionStore
-            .getSettlementCandidates(command.threadId, {
-              observedTaskId: command.archiveObservedTaskId,
-            })
+            .getSettlementCandidates(command.threadId, {})
             .pipe(mapDispatchError(command));
+          const thread = yield* findThread(command.threadId);
+          const closedIssue = command.archiveClosedIssue;
           if (
             worker === undefined ||
             finishedWorkerAt(worker, yield* DateTime.now) === null ||
             (command.archiveObservedTaskId !== undefined &&
-              worker.workerResult?.taskId !== command.archiveObservedTaskId)
+              (worker.workerResult?.taskId !== command.archiveObservedTaskId ||
+                !worker.workerResult.observed ||
+                (thread !== null &&
+                  isManagedIssueImplementor(thread) &&
+                  (closedIssue === undefined ||
+                    thread.linkedIssue?.id !== closedIssue.id ||
+                    thread.linkedIssue.host !== closedIssue.host ||
+                    thread.linkedIssue.repositoryId !== closedIssue.repositoryId))))
           ) {
             return yield* new OrchestratorDispatchError({
               commandId: command.commandId,
@@ -18295,9 +18326,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           event.type === "subagent.updated" &&
           event.payload.origin === "app_owned" &&
-          (workerResultWasObserved(event.payload) ||
-            (command.type === "notification.delivery.accept" &&
-              event.payload.completionDelivery?.state === "delivered"))
+          workerResultWasObserved(event.payload)
         ) {
           yield* archiveObservedWorker(event.payload.childThreadId, event.payload.id);
         }
@@ -18307,7 +18336,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "repository.work.handoff" &&
       result.storedEvents.some(({ event }) => event.type === "thread.archived")
     ) {
-      yield* archiveHandoffWorkers(command.threadId, command.commandId);
+      yield* archiveHandoffWorkers(command.threadId);
     }
     return result;
   });
@@ -18383,35 +18412,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const workerResultWasObserved = (task: OrchestrationV2Subagent) =>
-    task.completionDelivery?.state === "acknowledged" ||
-    (task.completionDelivery?.state === "disposed" &&
+    task.completionDelivery !== undefined &&
+    (task.completionDelivery.state === "acknowledged" ||
       task.completionDelivery.observedByRunId !== null);
 
   const archiveObservedWorker = Effect.fn("Orchestrator.archiveObservedWorker")(function* (
     threadId: ThreadId | null,
-    taskId: NodeId,
-    providerAccepted = false,
+    taskId?: NodeId,
   ) {
     if (threadId === null) return;
     yield* threadDispatch
       .withLock(
         threadId,
         Effect.gen(function* () {
-          const observedTaskId = providerAccepted ? taskId : undefined;
-          const [worker] = yield* projectionStore.getSettlementCandidates(threadId, {
-            observedTaskId,
-          });
+          const [worker] = yield* projectionStore.getSettlementCandidates(threadId, {});
+          const result = worker?.workerResult;
           if (
-            worker?.workerResult?.taskId !== taskId ||
+            worker === undefined ||
+            !result?.observed ||
+            (taskId !== undefined && result.taskId !== taskId) ||
             finishedWorkerAt(worker, yield* DateTime.now) === null
           )
             return;
+          const thread = yield* projectionStore.getThread(threadId);
+          const issue = isManagedIssueImplementor(thread) ? thread.linkedIssue : undefined;
+          if (issue !== undefined && !(yield* isClosedIssue(issue))) return;
           yield* dispatchWithReceiptEffect({
             type: "thread.archive",
-            commandId: CommandId.make(`archive-delivered-worker:${taskId}`),
+            commandId: CommandId.make(`archive-delivered-worker:${result.taskId}`),
             threadId,
             archiveDelegatedWorker: true,
-            ...(observedTaskId === undefined ? {} : { archiveObservedTaskId: observedTaskId }),
+            archiveObservedTaskId: result.taskId,
+            ...(issue === undefined ? {} : { archiveClosedIssue: issue }),
           });
         }),
       )
@@ -18426,39 +18458,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
   });
 
-  const archiveDelegatedCompletion = Effect.fn("Orchestrator.archiveDelegatedCompletion")(
-    function* (parentThreadId: ThreadId, taskIds: ReadonlyArray<NodeId>) {
-      const { subagents } = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
-        subagentIds: taskIds,
-      });
-      for (const task of subagents) {
-        if (task.origin === "app_owned")
-          yield* archiveObservedWorker(task.childThreadId, task.id, true);
-      }
-    },
-    (effect, parentThreadId) =>
-      effect.pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not read accepted delegated results", { parentThreadId, cause }),
-        ),
-      ),
-  );
-
   const archiveHandoffWorkers = Effect.fn("Orchestrator.archiveHandoffWorkers")(
-    function* (rootThreadId: ThreadId, handoffCommandId: CommandId) {
+    function* (rootThreadId: ThreadId) {
       const workers = yield* finishedWorkers(projectionStore, yield* DateTime.now, rootThreadId);
-      for (const threadId of workers.keys()) {
-        // The archive command rechecks eligibility under each worker's dispatch lock.
-        yield* dispatchWithLocks({
-          type: "thread.archive",
-          threadId,
-          commandId: CommandId.make(`${handoffCommandId}:archive-child:${threadId}`),
-          archiveDelegatedWorker: true,
-        }).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Could not archive a finished handoff worker", { threadId, cause }),
-          ),
-        );
+      for (const worker of workers.values()) {
+        if (worker.workerResult?.observed) {
+          yield* archiveObservedWorker(worker.id, worker.workerResult.taskId);
+        }
       }
     },
     (effect, rootThreadId) =>
@@ -19085,7 +19091,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     resumeQueuedRuns,
     withCurrentDelegatedChild,
     recoverDelegatedTasks,
-    archiveDelegatedCompletion,
+    archiveObservedWorker,
     recoverDelegatedTask,
     cancelDelegatedTask,
     delegatedTaskResultPending,

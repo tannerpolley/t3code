@@ -211,6 +211,37 @@ it.effect("keeps roots with an unheld queued reader active for the admission swe
   }).pipe(Effect.provide(dependencies)),
 );
 
+it.effect("rechecks a paused repository for closure after a managed result was observed", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider,
+      runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+      VALUES ('root', 'project', 'Root', 'codex', 'full-access', 'default', '2026-11-23', '2026-11-23', '{}'),
+        ('worker', 'project', 'Worker', 'codex', 'full-access', 'default', '2026-11-23', '2026-11-23',
+          '{"lineage":{"rootThreadId":"root","parentThreadId":"root","relationshipToParent":"subagent"}}')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_repository_orchestration(host, repository_id, repository,
+      root_thread_id, project_id, workspace, launch_command_id, revision, paused, worker_limit,
+      publish_status_comments, publish_closeout_comments, created_at, updated_at)
+      VALUES ('github.com', 'repo', 'owner/repo', 'root', 'project', 'project', 'start', 1, 1, 4, 1, 1, '2026-11-23', '2026-11-23')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_issue_work(host, repository_id, issue_id,
+      issue_number, repository, node_id, issue_url, issue_title, owner_thread_id, status_marker, updated_at)
+      VALUES ('github.com', 'repo', 'issue', 1, 'owner/repo', 'issue-node',
+        'https://github.com/owner/repo/issues/1', 'Issue', 'worker', 'marker', '2026-11-23')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_subagents(subagent_id, thread_id, child_thread_id,
+      parent_node_id, provider, origin, status, completed_at, completion_delivery_state, updated_at, payload_json)
+      VALUES ('task', 'root', 'worker', 'node', 'codex', 'app_owned', 'completed', '2026-11-23',
+        'delivered', '2026-11-23', '{}')`;
+    assert.deepEqual(yield* store.activeRoots(), []);
+    yield* sql`UPDATE orchestration_v2_projection_subagents
+      SET payload_json = '{"completionDelivery":{"state":"delivered","observedByRunId":"wake"}}'`;
+    assert.deepEqual(yield* store.activeRoots(), [ThreadId.make("root")]);
+    yield* sql`UPDATE orchestration_v2_projection_threads SET archived_at = '2026-11-24'
+      WHERE thread_id = 'worker'`;
+    assert.deepEqual(yield* store.activeRoots(), []);
+  }).pipe(Effect.provide(dependencies)),
+);
+
 it.effect("drains past an item left open by an ended run", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

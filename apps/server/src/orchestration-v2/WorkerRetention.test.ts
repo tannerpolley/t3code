@@ -14,6 +14,7 @@ import {
   SourceControlProviderKind,
   ThreadId,
   type OrchestrationV2AppThread,
+  type ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -47,6 +48,16 @@ const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
 const projectId = ProjectId.make("project:worker");
 const workspaceRoot = "/workspace/project";
+const managedIssue = (number: number): ThreadLinkedIssue => ({
+  host: "github.com",
+  repository: "owner/project",
+  repositoryId: "repo",
+  id: String(number),
+  nodeId: `issue-node:${number}`,
+  number,
+  title: "Managed issue",
+  url: `https://github.com/owner/project/issues/${number}`,
+});
 const adapter = {
   instanceId,
   driver: ProviderDriverKind.make("codex"),
@@ -73,7 +84,24 @@ const layerTest = Layer.mergeAll(
   ProviderReplayHarness.layerWithRegistry(
     { name: "control-reads" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
-    { databaseLayer: layerDatabase, runEffectWorker: false },
+    {
+      databaseLayer: layerDatabase,
+      runEffectWorker: false,
+      issueServiceLayer: Layer.mock(IssueService.IssueService)({
+        workRead: (issue) =>
+          Effect.map(DateTime.now, (now) => ({
+            issue: managedIssue(issue.number),
+            state: issue.number === 43 || DateTime.toEpochMillis(now) >= 2_000 ? "closed" : "open",
+            milestoneNumber: null,
+            parent: null,
+            subIssues: [],
+            blockedBy: [],
+            parentComplete: true,
+            subIssuesComplete: true,
+            blockersComplete: true,
+          })),
+      }),
+    },
   ),
 );
 
@@ -290,6 +318,7 @@ const makeFixture = Effect.fn("WorkerRetention.test.fixture")(function* () {
         },
       ],
     });
+    return id;
   });
 
   const recordRun = Effect.fn("WorkerRetention.test.recordRun")(function* (
@@ -398,6 +427,57 @@ it.effect("restores an archived local child when sent a follow-up", () =>
   }).pipe(Effect.provide(layerSend)),
 );
 
+it.effect.each([43, 44])(
+  "archives a managed worker only after both delivery and closure (issue %s)",
+  (number) =>
+    Effect.gen(function* () {
+      const { parent, seed, recordTask, projections, orchestrator } = yield* makeFixture();
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      yield* seed(parent, "open", {
+        lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+      });
+      const slot = "/workspace/project/.worktrees/slot-1";
+      const worker = yield* seed("managed-worker", "merged", {
+        role: "implementor",
+        linkedIssue: managedIssue(number),
+        branch: "managed-branch",
+        worktreePath: slot,
+      });
+      const taskId = yield* recordTask(parent, worker, "pending");
+      yield* threads.archiveObservedWorker(worker);
+      assert.isNull((yield* projections.getThread(worker)).archivedAt);
+      yield* orchestrator.dispatch({
+        type: "delegated_task.completion-delivery.acknowledge",
+        commandId: CommandId.make("observe-managed-result"),
+        parentThreadId: parent,
+        taskId,
+        observedByRunId: RunId.make("observing-parent"),
+      });
+      assert.equal((yield* projections.getThread(worker)).archivedAt !== null, number === 43);
+      yield* TestClock.adjust("1 second");
+      yield* threads.archiveObservedWorker(worker);
+      assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
+      yield* threads
+        .sendToThread({
+          projectId,
+          commandId: CommandId.make("follow-up-to-managed-worker"),
+          threadId: worker,
+          senderThreadId: parent,
+          messageId: MessageId.make("managed-worker-follow-up"),
+          text: "Resume in the old checkout.",
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "mcp",
+          mode: "auto",
+        })
+        .pipe(Effect.flip);
+      const { thread, runs } = yield* projections.getThreadRecords(worker, ["runs"]);
+      assert.isNotNull(thread.archivedAt);
+      assert.equal(thread.worktreePath, slot);
+      assert.isEmpty(runs);
+    }).pipe(Effect.provide(layerSend)),
+);
+
 it.effect.each([false, true])(
   "refuses to run without the released issue workspace (legacy release %s)",
   (legacy) =>
@@ -422,13 +502,20 @@ it.effect.each([false, true])(
       } else {
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make("release-review-slot"),
+          commandId: CommandId.make("storage-cleanup:release-slot:reviewer"),
           threadId: child,
           expectedWorktreePath: path,
           expectedBranch: "fix",
           worktreePath: null,
           branch: null,
           releaseIssueWorktreeSlot: true,
+        });
+      }
+      if (legacy) {
+        yield* orchestrator.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("restore-released-reviewer"),
+          threadId: child,
         });
       }
       const failure = yield* threads
@@ -451,7 +538,7 @@ it.effect.each([false, true])(
         "This worker's issue worktree was returned to the pool. Assign a worktree before resuming this thread.",
       );
       const { thread, runs } = yield* projections.getThreadRecords(child, ["runs"]);
-      assert.isNotNull(thread.archivedAt);
+      assert.equal(thread.archivedAt === null, legacy);
       assert.isEmpty(runs);
     }).pipe(Effect.provide(layerSend)),
 );
@@ -571,8 +658,8 @@ it.effect.each([undefined, "orchestrator"] as const)(
       yield* archiveRoot(replacement, false);
       const worker = yield* seed("finished-child", "open");
       const pinned = yield* seed("pinned-child", "open", { pinnedAt: archivedAt });
-      yield* recordTask(parent, worker, "delivered");
-      yield* recordTask(parent, pinned, "delivered");
+      yield* recordTask(parent, worker, "acknowledged");
+      yield* recordTask(parent, pinned, "acknowledged");
 
       yield* service.recoverHandoffArchives();
       assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
@@ -666,7 +753,7 @@ it.effect("archives during the running result wake and leaves the worker’s sid
     yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'running',
       payload_json = json_set(payload_json, '$.startedAt', ${DateTime.formatIso(createdAt)})
       WHERE run_id = ${wake}`;
-    yield* orchestrator.archiveDelegatedCompletion(parent, [followupTask]);
+    yield* archive("archive-after-wake");
     assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
     assert.isNull((yield* projections.getThread(side)).archivedAt);
     const [sideRun] = yield* sql<{ status: string }>`

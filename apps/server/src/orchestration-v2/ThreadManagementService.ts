@@ -13,6 +13,7 @@ import type {
 import {
   type ChatAttachment,
   CommandId,
+  isManagedIssueImplementor,
   isDelegatedAppThread,
   isListedThreadLineage,
   isOrchestrationV2WorkActive,
@@ -638,7 +639,7 @@ export interface ThreadManagementServiceShape {
   readonly getThreadEventSequence: Orchestrator.OrchestratorV2["Service"]["getThreadEventSequence"];
   readonly recoverDelegatedTask: Orchestrator.OrchestratorV2["Service"]["recoverDelegatedTask"];
   readonly cancelDelegatedTask: Orchestrator.OrchestratorV2["Service"]["cancelDelegatedTask"];
-  readonly archiveDelegatedCompletion: Orchestrator.OrchestratorV2Shape["archiveDelegatedCompletion"];
+  readonly archiveObservedWorker: Orchestrator.OrchestratorV2Shape["archiveObservedWorker"];
   readonly delegatedTaskResultPending: Orchestrator.OrchestratorV2["Service"]["delegatedTaskResultPending"];
   readonly streamStoredEvents: Orchestrator.OrchestratorV2["Service"]["streamStoredEvents"];
   readonly streamStoredEventsFrom: Orchestrator.OrchestratorV2["Service"]["streamStoredEventsFrom"];
@@ -972,6 +973,7 @@ const make = Effect.gen(function* () {
     if (
       target.thread.archivedAt !== null &&
       (!isLocalDelegatedWorker(target.thread) ||
+        isManagedIssueImplementor(target.thread) ||
         input.linkedSender !== undefined ||
         input.scheduledTaskId !== undefined ||
         (input.createdBy !== "user" && input.creationSource !== "mcp"))
@@ -2170,7 +2172,7 @@ const make = Effect.gen(function* () {
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,
     cancelDelegatedTask: orchestrator.cancelDelegatedTask,
     delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
-    archiveDelegatedCompletion: orchestrator.archiveDelegatedCompletion,
+    archiveObservedWorker: orchestrator.archiveObservedWorker,
     streamStoredEvents: orchestrator.streamStoredEvents,
     streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
     streamDomainEvents: orchestrator.streamDomainEvents,

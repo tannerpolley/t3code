@@ -621,18 +621,19 @@ question and answer when the thread wakes; the question stays unanswered.
 
 ### Archived workers
 
-T3 Code archives delegated workers in the same environment as soon as their
-parent receives their final results, including interrupted, failed, and cancelled
-work. Workers with running or queued work, pending questions or approvals, or
-unfinished child work stay visible. Writers, orchestrators, pinned threads,
-side chats, and threads you created are exempt. Archive children on linked
-environments manually.
+T3 Code archives delegated workers in the same environment when their parent
+receives their final results, including interrupted, failed, and cancelled work.
+Workers with running or queued work, pending questions or approvals, or unfinished
+child work stay visible. Writers, orchestrators, pinned threads, side chats, and
+threads you created are exempt. Archive children on linked environments manually.
 
-Sending a follow-up to an archived worker or retrying its work restores the
-thread automatically. You can also restore it from **Settings → Archived threads**.
-It stays visible until the parent receives a new result. If T3 returned a
-reviewer’s shared issue worktree to the pool, restore the thread and assign a
-worktree before resuming it.
+A managed issue worker stays visible while its issue is open. Once its result has
+been delivered and the issue is closed, T3 Code archives it. Use the issue’s
+restore or resume flow to retry its work.
+
+A follow-up to another archived worker restores the thread automatically. You can
+also restore it from **Settings → Archived threads**. If T3 Code returned its shared
+worktree to the issue slot pool, assign a worktree before sending the follow-up.
 
 **Archived worker retention** controls when eligible archived workers and their
 history are permanently deleted. The default is 14 days. Choose

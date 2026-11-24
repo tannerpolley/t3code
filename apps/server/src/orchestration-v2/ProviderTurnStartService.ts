@@ -276,7 +276,6 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly willRetry?: boolean;
-    readonly archiveDelegatedCompletion?: (taskIds: ReadonlyArray<NodeId>) => Effect.Effect<void>;
   }) => Effect.Effect<void, ProviderTurnStartError>;
   readonly failStartingRun: (input: {
     readonly threadId: ThreadId;
@@ -568,7 +567,11 @@ export const layer: Layer.Layer<
     );
 
     const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (
-      input: Parameters<ProviderTurnStartServiceV2Shape["start"]>[0],
+      input: {
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly willRetry?: boolean;
+      },
       startingRun: OrchestrationV2Run,
       claimStartupDecision: Effect.Effect<boolean>,
     ) {
@@ -2411,8 +2414,6 @@ export const layer: Layer.Layer<
       const deliverySession = carriesPendingContext
         ? makeDeliverySession(skillSession, startWithHandoffs)
         : skillSession;
-      const archiveDelegatedCompletion = input.archiveDelegatedCompletion;
-      const deliveredTaskIds = message.delegatedCompletion?.taskIds;
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
@@ -2426,15 +2427,6 @@ export const layer: Layer.Layer<
         attemptId: attempt.id,
         baseline,
         loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
-        ...(deliveredTaskIds === undefined || archiveDelegatedCompletion === undefined
-          ? {}
-          : {
-              onPromptAccepted: Effect.suspend(() =>
-                promptDroppedOnTerminal
-                  ? Effect.void
-                  : archiveDelegatedCompletion(deliveredTaskIds),
-              ),
-            }),
         relatedThreadIds: routableSubagents.flatMap((subagent) =>
           subagent.childThreadId === null ? [] : [subagent.childThreadId],
         ),
