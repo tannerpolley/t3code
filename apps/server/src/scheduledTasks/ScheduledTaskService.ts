@@ -271,8 +271,11 @@ export class ScheduledTaskService extends Context.Service<
     readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
-      /** Ties settings derived by the caller to the action it read. */
-      expectedAction?: NonNullable<ScheduledTask["action"]>,
+      options?: {
+        /** Ties settings derived by the caller to the action it read. */
+        readonly expectedAction?: NonNullable<ScheduledTask["action"]>;
+        readonly createOnly?: boolean;
+      },
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
@@ -656,8 +659,11 @@ export const layer = Layer.effect(
     // Check existence in the write so edits cannot undo concurrent deletion.
     const saveTask = (
       task: ScheduledTask,
-      requireExisting: boolean,
-      expectedAction: NonNullable<ScheduledTask["action"]> | null,
+      options: {
+        readonly requireExisting: boolean;
+        readonly createOnly: boolean;
+        readonly expectedAction: NonNullable<ScheduledTask["action"]> | null;
+      },
       /** The schedule this save read, when it left the schedule unchanged. */
       keptSchedule: ScheduledTask["schedule"] | null,
       webhook: {
@@ -720,7 +726,7 @@ export const layer = Layer.effect(
           ${task.runCount},
           ${webhook.token},
           ${webhook.secret}
-        WHERE ${requireExisting ? 0 : 1} = 1
+        WHERE ${options.requireExisting ? 0 : 1} = 1
            OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
         DO UPDATE SET
@@ -768,17 +774,20 @@ export const layer = Layer.effect(
             WHEN ${webhook.secretChanged ? 1 : 0} = 1 THEN excluded.webhook_secret
             ELSE scheduled_tasks.webhook_secret
           END
-        WHERE ${expectedAction} IS NULL OR scheduled_tasks.action = ${expectedAction}
+        WHERE ${options.createOnly ? 0 : 1} = 1
+          AND (${options.expectedAction} IS NULL OR scheduled_tasks.action = ${options.expectedAction})
         RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not save schedule task.", { taskId: task.id, cause }),
         ),
         Effect.flatMap((rows) =>
-          rows.length > 0
-            ? Effect.void
+          rows.length > 0 || options.createOnly
+            ? Effect.succeed(rows.length > 0)
             : taskError(
-                expectedAction === null ? "Schedule task not found." : STALE_TASK_ACTION_MESSAGE,
+                options.expectedAction === null
+                  ? "Schedule task not found."
+                  : STALE_TASK_ACTION_MESSAGE,
                 { taskId: task.id },
               ),
         ),
@@ -1507,7 +1516,7 @@ export const layer = Layer.effect(
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
-    )(function* (input, expectedAction) {
+    )(function* (input, options) {
       // A webhook task the policy blocks can still be edited while it is off.
       if (input.enabled && input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
         return yield* taskError(
@@ -1531,10 +1540,12 @@ export const layer = Layer.effect(
         ScheduledTaskId.make(
           input.commandId ? `scheduled-task:${input.commandId}` : `scheduled-task:${uuid}`,
         );
-      // Look up by the *resolved* id so idempotent creates (commandId replays)
-      // keep their run history, and so real load failures propagate instead
-      // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
+      const expectedAction = options?.expectedAction;
+      const requireExisting = input.requireExisting === true || expectedAction !== undefined;
+      const createOnly = !requireExisting && options?.createOnly === true;
+      // A create retry must not overwrite settings edited since the first save.
+      if (createOnly && existingTask !== null) return { task: existingTask };
       const storedAction = existingTask === null ? null : (existingTask.action ?? "prompt");
       if (expectedAction !== undefined && storedAction !== expectedAction) {
         return yield* taskError(STALE_TASK_ACTION_MESSAGE, { taskId: id });
@@ -1682,13 +1693,13 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      yield* saveTask(
+      const saved = yield* saveTask(
         task,
-        input.requireExisting === true || expectedAction !== undefined,
-        storedAction,
+        { requireExisting, createOnly, expectedAction: storedAction },
         scheduleUnchanged ? existingTask.schedule : null,
         webhook,
       );
+      if (!saved) return { task: yield* loadTask(id) };
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });
