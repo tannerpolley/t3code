@@ -42,7 +42,8 @@ it("shows the titled preview inside and outside search results from a collapsed 
   using _environment = installFakeEnvironment([first, second]);
   using cleanup = new DisposableStack();
   const localLayoutKey = `t3code:sidebar-local:${ENVIRONMENT_ID}`;
-  for (const key of [localLayoutKey, SIDEBAR_DISPLAY_KEY]) {
+  const sidebarOpenKey = "chat_thread_sidebar_open";
+  for (const key of [localLayoutKey, SIDEBAR_DISPLAY_KEY, sidebarOpenKey]) {
     const savedValue = localStorage.getItem(key);
     cleanup.defer(() => {
       if (savedValue === null) localStorage.removeItem(key);
@@ -50,6 +51,7 @@ it("shows the titled preview inside and outside search results from a collapsed 
     });
   }
   localStorage.setItem(localLayoutKey, JSON.stringify(EMPTY_SIDEBAR_LAYOUT));
+  localStorage.setItem(sidebarOpenKey, "true");
   const savedState = useUiStateStore.getState();
   cleanup.defer(() => useUiStateStore.setState(savedState, true));
   useUiStateStore.setState({ sidebarDisplaySnapshot: null, sidebarProjectScopeKeys: [] });

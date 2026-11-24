@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -29,6 +29,7 @@ import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "../state/en
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useUiStateStore } from "../uiStateStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
@@ -83,6 +84,15 @@ function project(id: string): Project {
   };
 }
 
+async function setupActivitySidebar(): Promise<Disposable> {
+  await page.viewport(1400, 900);
+  const { sidebarMode, sidebarProjectScopeKeys } = useUiStateStore.getState();
+  useUiStateStore.setState({ sidebarMode: "activity", sidebarProjectScopeKeys: [] });
+  return {
+    [Symbol.dispose]: () => useUiStateStore.setState({ sidebarMode, sidebarProjectScopeKeys }),
+  };
+}
+
 describe("sidebar header new thread", () => {
   it.each([
     { mode: "normal", count: 2, shift: false, picker: true },
@@ -96,7 +106,6 @@ describe("sidebar header new thread", () => {
     __setClientSettingsForTests({
       ...DEFAULT_CLIENT_SETTINGS,
       boringSidebarEnabled: scenario.mode === "boring",
-      projectsView: false,
     });
     const projects = [project("active"), project("idle")].slice(0, scenario.count);
     const currentProjectRef = {
@@ -115,13 +124,14 @@ describe("sidebar header new thread", () => {
       routeThreadRef: null,
     });
     vi.mocked(openCommandPalette).mockClear();
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
       </SidebarProvider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "New thread", exact: true }), {
+    await userEvent.click(screen.getByRole("button", { name: /^New thread(?: \(|$)/ }), {
       modifiers: scenario.shift ? ["Shift"] : [],
     });
 
@@ -183,6 +193,7 @@ describe("sidebar project folder new thread", () => {
       routeThreadRef: threadRef,
     });
 
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
@@ -226,6 +237,7 @@ describe("sidebar numbered jumps", () => {
     });
     initial.setPrompt(draftId, "Unsent prompt");
 
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
@@ -300,6 +312,7 @@ describe("sidebar render isolation", () => {
     document.body.append(terminal);
     stack.defer(() => terminal.remove());
     stack.defer(() => useTerminalUiStateStore.getState().setTerminalOpen(routeThreadRef, false));
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
@@ -376,6 +389,7 @@ describe("sidebar thread rename", () => {
           <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
         </SidebarProvider>
       );
+      using _sidebar = await setupActivitySidebar();
       await using screen = await render(tree());
       await userEvent.dblClick(screen.getByText("Fix the login redirect").first());
       const input = screen.getByRole("textbox", { name: "Thread title" });
@@ -415,6 +429,7 @@ describe("sidebar thread click", () => {
       routeDraftId: null,
       routeThreadRef,
     });
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
@@ -464,6 +479,7 @@ describe("sidebar thread menu", () => {
       routeDraftId: null,
       routeThreadRef: threadRef,
     });
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedRoute: null, pendingKey: null }} />
@@ -540,6 +556,7 @@ describe("sidebar settled pagination", () => {
         ],
       ]),
     );
+    using _sidebar = await setupActivitySidebar();
     await using screen = await render(
       <SidebarProvider
         {...workspaceAreaProps("sidebar", 0, "Threads")}
