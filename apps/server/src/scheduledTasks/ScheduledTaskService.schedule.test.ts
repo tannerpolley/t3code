@@ -14,6 +14,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -32,13 +33,21 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
-it.effect("rejects a stale form save after deletion while preserving explicit-id creates", () =>
+it.effect("rejects a stale save after an action change or deletion", () =>
   Effect.gen(function* () {
+    const checkingWorkspace = yield* Deferred.make<void>();
+    const checkedWorkspace = yield* Deferred.make<void>();
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Scheduler.layer,
       ManagedPolicy.layerTest(),
-      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        isNonGitProject: () =>
+          Deferred.succeed(checkingWorkspace, undefined).pipe(
+            Effect.andThen(Deferred.await(checkedWorkspace)),
+            Effect.as(false),
+          ),
+      }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
@@ -63,6 +72,20 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
       const created = yield* service.upsert(input);
       const edit = yield* decodeUpsertInput({ ...input, requireExisting: true, title: "Edited" });
       expect((yield* service.upsert(edit)).task.title).toBe("Edited");
+      const pending = yield* service
+        .upsert({ ...edit, workspaceStrategy: { type: "worktree", baseRef: "main" } }, "prompt")
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(checkingWorkspace);
+      yield* service.upsert({ ...input, action: "usage_budget" });
+      yield* Deferred.succeed(checkedWorkspace, undefined);
+      expect((yield* Fiber.join(pending)).message).toContain("action changed");
+      const stale = yield* service.upsert(edit, "prompt").pipe(Effect.flip);
+      expect(stale.message).toContain("action changed");
+      expect((yield* service.list()).tasks[0]).toMatchObject({
+        action: "usage_budget",
+        prompt: "Usage budget report",
+        workspaceStrategy: { type: "root" },
+      });
       yield* service.delete({ id: created.task.id });
 
       const failure = yield* service.upsert(edit).pipe(Effect.flip);
