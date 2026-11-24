@@ -201,8 +201,8 @@
   "bd19196b43a87b29": "Dependency cycle",
   "9a177023bb38a981": "Answers approvals",
   "9f7af9830925ca2c": "Lets this agent accept or decline command approvals in threads it started and their subagents. It can always answer questions.",
-  "18caa678616c9e08": "Handoff to {model} is draining",
-  "a8d9877851d00fde": "Handoff to {model} awaits approval",
+  "9be5b8420ee64ec7": "Handoff to {target} is draining",
+  "e05b2595e2c7c313": "Handoff to {target} awaits approval",
   "c1303d131afc6a17": "Over a day old",
   "00ad8aeed0a6c461": "Cancel",
   "ac48cc297029db41": "Approve"

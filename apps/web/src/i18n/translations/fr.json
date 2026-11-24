@@ -201,8 +201,8 @@
   "bd19196b43a87b29": "Cycle de dépendances",
   "9a177023bb38a981": "Répond aux approbations",
   "9f7af9830925ca2c": "Permet à cet agent d'accepter ou de refuser les approbations de commandes dans les fils qu'il a lancés et leurs sous-agents. Il peut toujours répondre aux questions.",
-  "18caa678616c9e08": "Le transfert vers {model} est en cours de finalisation",
-  "a8d9877851d00fde": "Le transfert vers {model} attend une approbation",
+  "9be5b8420ee64ec7": "Le transfert vers {target} est en cours de finalisation",
+  "e05b2595e2c7c313": "Le transfert vers {target} attend une approbation",
   "c1303d131afc6a17": "Plus d'un jour",
   "00ad8aeed0a6c461": "Annuler",
   "ac48cc297029db41": "Approuver"
