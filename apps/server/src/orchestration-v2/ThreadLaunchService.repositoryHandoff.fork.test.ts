@@ -1,5 +1,5 @@
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { ISSUE_HOSTS, SourceControlProviderKind } from "@t3tools/contracts";
+import { ISSUE_HOSTS, IssueReadError, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Queue from "effect/Queue";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -156,6 +156,7 @@ describe("fresh-thread repository handoff", () => {
       ) => ThreadManagement.ThreadManagementService["Service"];
       inventoryIssues?: () => number[];
       issueReads?: string[];
+      issueReadUnavailable?: () => boolean;
       repositoryId?: () => string;
       issueState?: (number: number) => "open" | "closed";
       /** Runs first in the provider check, which the handoff command makes under the root's lock. */
@@ -170,8 +171,14 @@ describe("fresh-thread repository handoff", () => {
     } = {},
   ) => {
     const workRead: IssueService.IssueService["Service"]["workRead"] = (input) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         options.issueReads?.push(`relationships:${input.number}`);
+        if (options.issueReadUnavailable?.())
+          return yield* new IssueReadError({
+            code: "upstream",
+            operation: "detail",
+            message: "Issue host temporarily unavailable.",
+          });
         return {
           issue: {
             ...linked(input.number),
@@ -1353,6 +1360,160 @@ describe("fresh-thread repository handoff", () => {
                     ),
                   )
                 : Effect.void,
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect.each(["delegate_task", "t3_thread_send"] as const)(
+    "resumes a finished retained worker through %s after repository handoff",
+    (operation) => {
+      let issueReadUnavailable = false;
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const sink = yield* EventSink.EventSinkV2;
+        const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
+        yield* createRoot;
+        const worker = (yield* service.start({
+          ...reference,
+          number: 9,
+          projectId,
+          modelRoleId: "implementor-complex",
+          clientRequestId: CommandId.make("retained-worker:start"),
+        })).issueThreadId!;
+        yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(worker).pipe(
+          Stream.filter((snapshot) => snapshot?.phase === "done"),
+          Stream.runHead,
+        );
+        const worktree = (yield* threads.getThreadShell(worker))!.worktreePath;
+        assert.isNotNull(worktree);
+        const beforeWorker = yield* sink.latestSequence();
+        yield* finish(worker, "retained-worker:first");
+        yield* awaitFollowup(rootId, beforeWorker);
+        const beforeRoot = yield* sink.latestSequence();
+        yield* finish(rootId, "retained-worker:delivery");
+        yield* sink.stream({ afterSequence: beforeRoot }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "subagent.updated" &&
+              event.threadId === rootId &&
+              event.payload.completionDelivery?.state === "delivered",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const original = (yield* threads.getThreadRecords(rootId, ["subagents"])).subagents;
+        const moved = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: 1,
+          summary: "Continue work in the retained issue worktree.",
+          clientRequestId: CommandId.make("retained-worker:handoff"),
+        });
+        const successor = moved.rootThreadId!;
+        assert.notEqual(successor, rootId);
+        const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const cancelFormerTask = (clientRequestId: string) =>
+          mcp
+            .cancelTask(scope(rootId), { taskId: original[0]!.id, clientRequestId })
+            .pipe(Effect.flip);
+        const beforeAdoption = yield* locks.withLock(
+          successor,
+          cancelFormerTask("retained-worker:cancel-before-adoption"),
+        );
+        assert.equal(beforeAdoption.code, "task_not_cancellable");
+        const resume = "Continue in the existing issue workspace.";
+        issueReadUnavailable = operation === "t3_thread_send";
+        const taskId =
+          operation === "delegate_task"
+            ? (yield* mcp.delegateTask(scope(successor), {
+                issue: { ...reference, number: 9 },
+                task: resume,
+                mode: "async",
+                clientRequestId: "retained-worker:delegate",
+              })).taskId
+            : (yield* mcp.sendToThread(scope(successor), {
+                threadId: worker,
+                message: resume,
+                clientRequestId: "retained-worker:send",
+              })).taskId;
+        if (issueReadUnavailable) {
+          const queued = (yield* threads.getThreadRecords(worker, ["runs"])).runs.at(-1);
+          assert.equal(queued?.status, "queued");
+          assert.equal(queued?.admissionWait, "issue_suspended");
+          issueReadUnavailable = false;
+          yield* threads.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make("retained-worker:resume-queue"),
+            threadId: worker,
+          });
+        }
+
+        const staleCancel = yield* locks.withLock(
+          successor,
+          threads
+            .stopDelegatedTasks({
+              threadId: rootId,
+              commandId: CommandId.make("retained-worker:stop-former-root"),
+            })
+            .pipe(Effect.andThen(cancelFormerTask("retained-worker:cancel-former-task"))),
+        );
+        assert.equal(staleCancel.code, "task_not_cancellable");
+        const child = yield* threads.getThreadRecords(worker, ["runs", "messages"]);
+        assert.equal(child.thread.worktreePath, worktree);
+        const message = child.messages.find((entry) => entry.text.includes(resume));
+        assert.isDefined(message);
+        const run = child.runs.find((entry) => entry.id === message?.runId);
+        assert.equal(run?.status, "starting");
+        assert.isFalse(
+          yield* threads.hasReceipt(
+            CommandId.make(`retained-worker:stop-former-root:stop:${worker}`),
+          ),
+        );
+        assert.isDefined(taskId);
+        assert.equal(run?.delegatedTaskId, taskId);
+        const beforeResume = yield* sink.latestSequence();
+        yield* finish(worker, "retained-worker:resumed");
+        yield* sink.stream({ afterSequence: beforeResume }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "subagent.updated" &&
+              event.threadId === successor &&
+              event.payload.id === taskId &&
+              event.payload.result !== null,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const beforeSuccessor = yield* sink.latestSequence();
+        yield* finish(successor, "retained-worker:successor");
+        yield* awaitFollowup(successor, beforeSuccessor);
+        const beforeDelivery = yield* sink.latestSequence();
+        yield* finish(successor, "retained-worker:resumed-delivery");
+        yield* sink.stream({ afterSequence: beforeDelivery }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "subagent.updated" &&
+              event.threadId === successor &&
+              event.payload.id === taskId &&
+              event.payload.completionDelivery?.state === "delivered",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        assert.deepEqual(
+          (yield* threads.getThreadRecords(rootId, ["subagents"])).subagents,
+          original,
+        );
+      }).pipe(
+        Effect.provide(
+          fixture({
+            recovery: true,
+            continuation: true,
+            inventoryIssues: () => [],
+            issueReadUnavailable: () => issueReadUnavailable,
           }),
         ),
       );

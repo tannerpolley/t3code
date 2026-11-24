@@ -1803,24 +1803,34 @@ const make = Effect.gen(function* () {
       // Follow-up tasks reuse a child thread; walk its subtree only once.
       if (stoppedChildThreadIds.has(threadId)) continue;
       stoppedChildThreadIds.add(threadId);
-      yield* dispatch({
-        type: "thread.stop",
-        commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
-        threadId,
-        stopDelegatedTasks: false,
-        ...(input.reason === undefined ? {} : { reason: input.reason }),
-      }).pipe(
-        Effect.andThen(
-          stopDelegatedTasks({ threadId, commandId: input.commandId, reason: input.reason }),
-        ),
-        Effect.catch((error) =>
-          Effect.logWarning("Unable to stop a delegated task", {
-            parentThreadId: input.threadId,
-            threadId,
-            error,
-          }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
-        ),
-      );
+      yield* orchestrator
+        .withCurrentDelegatedChild(
+          input.threadId,
+          threadId,
+          Effect.gen(function* () {
+            yield* dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
+              threadId,
+              stopDelegatedTasks: false,
+              ...(input.reason === undefined ? {} : { reason: input.reason }),
+            });
+            yield* stopDelegatedTasks({
+              threadId,
+              commandId: input.commandId,
+              reason: input.reason,
+            });
+          }),
+        )
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Unable to stop a delegated task", {
+              parentThreadId: input.threadId,
+              threadId,
+              error,
+            }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
+          ),
+        );
     }
     if (failures[0] !== undefined) return yield* failures[0];
   });
