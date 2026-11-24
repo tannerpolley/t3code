@@ -1467,6 +1467,26 @@ it.effect(
       assert.isNull(yield* archivedAt(parentId));
       assert.isNull(yield* archivedAt(busy));
       assert.deepEqual(yield* archivedAt(archivedFirst), childArchivedAt);
+
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("side-chat-settle-parent"),
+        threadId: parentId,
+      });
+      assert.isNotNull(yield* archivedAt(parentId));
+      assert.isNull(yield* archivedAt(busy));
+      yield* TestClock.adjust("1 second");
+      yield* archive("side-chat-archive-after-parent-settled", busy);
+      const independentlyArchivedAt = yield* archivedAt(busy);
+      assert.isNotNull(independentlyArchivedAt);
+
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("side-chat-unarchive-settled-parent"),
+        threadId: parentId,
+      });
+      assert.isNull(yield* archivedAt(parentId));
+      assert.deepEqual(yield* archivedAt(busy), independentlyArchivedAt);
     }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 

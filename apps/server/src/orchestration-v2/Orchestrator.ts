@@ -17349,8 +17349,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             });
           }
         }
-        const parentArchivedAt = (yield* findThread(command.threadId))?.archivedAt ?? null;
+        const parent = yield* findThread(command.threadId);
+        const parentArchivedAt = parent?.archivedAt ?? null;
         yield* dispatchThreadMutation(command, events, effects);
+        if (command.type === "thread.unarchive" && parent?.archivedBySettlement) break;
         // Unarchive restores the side chats this parent's archive took, not ones archived before it.
         for (const threadId of sideChatIds) {
           const sideChatArchivedAt = (yield* findThread(threadId))?.archivedAt ?? null;
