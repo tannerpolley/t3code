@@ -40,6 +40,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as OrchestratorMcp from "../mcp/OrchestratorMcpService.ts";
@@ -3402,6 +3403,44 @@ describe("fresh-thread repository handoff", () => {
       );
       assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
     }).pipe(Effect.provide(fixture({ continuation: true }))),
+  );
+
+  it.effect("approving a proposal keeps the time the handoff was first requested", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      yield* createRoot;
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("requested-at:root-start"),
+        threadId: rootId,
+        messageId: MessageId.make("requested-at:root-start"),
+        text: "Keep the drain open",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const requestedAt = DateTime.formatIso(yield* DateTime.now);
+      const input = {
+        ...reference,
+        expectedRevision: 1,
+        summary: "Decisions to preserve.",
+        clientRequestId: CommandId.make("requested-at:proposal"),
+      };
+      const proposed = yield* mcp.requestRepositoryHandoff(scope(rootId), input);
+      assert.equal(proposed.orchestration!.handoff?.requestedAt, requestedAt);
+      yield* TestClock.adjust("25 hours");
+      const draining = yield* service.handoff({
+        ...input,
+        action: "approve",
+        expectedRevision: proposed.orchestration!.revision,
+        clientRequestId: CommandId.make("requested-at:approve"),
+      });
+      assert.equal(draining.orchestration!.handoff?.status, "draining");
+      assert.equal(draining.orchestration!.handoff?.requestedAt, requestedAt);
+    }).pipe(Effect.provide(fixture())),
   );
 
   it.effect(

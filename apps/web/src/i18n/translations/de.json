@@ -200,5 +200,10 @@
   "626069229ac7aa1a": "Abhängigkeiten unbekannt",
   "bd19196b43a87b29": "Abhängigkeitszyklus",
   "9a177023bb38a981": "Beantwortet Freigaben",
-  "9f7af9830925ca2c": "Erlaubt diesem Agenten, Befehlsfreigaben in Threads, die er gestartet hat, und deren Subagenten anzunehmen oder abzulehnen. Fragen kann er immer beantworten."
+  "9f7af9830925ca2c": "Erlaubt diesem Agenten, Befehlsfreigaben in Threads, die er gestartet hat, und deren Subagenten anzunehmen oder abzulehnen. Fragen kann er immer beantworten.",
+  "18caa678616c9e08": "Übergabe an {model} wird abgeschlossen",
+  "a8d9877851d00fde": "Übergabe an {model} wartet auf Freigabe",
+  "c1303d131afc6a17": "Älter als ein Tag",
+  "00ad8aeed0a6c461": "Abbrechen",
+  "ac48cc297029db41": "Freigeben"
 }
