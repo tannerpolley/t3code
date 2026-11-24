@@ -238,7 +238,9 @@ const make = Effect.gen(function* () {
     for (const [threadId, workers] of byRecipient) {
       const hash = yield* digest.digest(
         Digest.sha256,
-        new TextEncoder().encode(JSON.stringify(workers.map((worker) => worker.taskId))),
+        new TextEncoder().encode(
+          workers.map(({ taskId }) => `${taskId.length}:${taskId}`).join("|"),
+        ),
       );
       const id = `missed-worker-archive:${threadId}:${Hex.encode(hash)}`;
       const summary = `Finished children still visible (${workers.length})`;
