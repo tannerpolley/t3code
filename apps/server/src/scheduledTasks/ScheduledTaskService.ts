@@ -95,6 +95,8 @@ const WEBHOOK_FILTERED_LOG_PER_MINUTE = 10;
 const WEBHOOK_DELIVERY_LOG_BODY_LIMIT = 64 * 1024;
 const WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT = 64 * 1024;
 const WEBHOOK_MAX_QUEUED_PER_TASK = 20;
+const STALE_TASK_ACTION_MESSAGE =
+  "Schedule task action changed or the task was deleted. Reload and retry.";
 // Enforce the relay's per-task/minute limit here too; tunnel hostnames are public.
 const WEBHOOK_RATE_LIMIT_PER_MINUTE = 60;
 const LEGACY_DELIVERY_OUTCOMES: ReadonlySet<string> = new Set([
@@ -269,6 +271,8 @@ export class ScheduledTaskService extends Context.Service<
     readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
+      /** Ties settings derived by the caller to the action it read. */
+      expectedAction?: NonNullable<ScheduledTask["action"]>,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
@@ -653,6 +657,7 @@ export const layer = Layer.effect(
     const saveTask = (
       task: ScheduledTask,
       requireExisting: boolean,
+      expectedAction: NonNullable<ScheduledTask["action"]> | null,
       /** The schedule this save read, when it left the schedule unchanged. */
       keptSchedule: ScheduledTask["schedule"] | null,
       webhook: {
@@ -763,6 +768,7 @@ export const layer = Layer.effect(
             WHEN ${webhook.secretChanged ? 1 : 0} = 1 THEN excluded.webhook_secret
             ELSE scheduled_tasks.webhook_secret
           END
+        WHERE ${expectedAction} IS NULL OR scheduled_tasks.action = ${expectedAction}
         RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
@@ -771,7 +777,10 @@ export const layer = Layer.effect(
         Effect.flatMap((rows) =>
           rows.length > 0
             ? Effect.void
-            : taskError("Schedule task not found.", { taskId: task.id }),
+            : taskError(
+                expectedAction === null ? "Schedule task not found." : STALE_TASK_ACTION_MESSAGE,
+                { taskId: task.id },
+              ),
         ),
       );
 
@@ -1498,7 +1507,7 @@ export const layer = Layer.effect(
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
-    )(function* (input) {
+    )(function* (input, expectedAction) {
       // A webhook task the policy blocks can still be edited while it is off.
       if (input.enabled && input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
         return yield* taskError(
@@ -1526,7 +1535,11 @@ export const layer = Layer.effect(
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
-      const action = input.action ?? existingTask?.action ?? "prompt";
+      const storedAction = existingTask === null ? null : (existingTask.action ?? "prompt");
+      if (expectedAction !== undefined && storedAction !== expectedAction) {
+        return yield* taskError(STALE_TASK_ACTION_MESSAGE, { taskId: id });
+      }
+      const action = input.action ?? storedAction ?? "prompt";
       if (action === "usage_budget" && input.schedule.type === "webhook") {
         return yield* taskError("Usage budget reports require a time-based schedule.", {
           taskId: id,
@@ -1671,7 +1684,8 @@ export const layer = Layer.effect(
       };
       yield* saveTask(
         task,
-        input.requireExisting === true,
+        input.requireExisting === true || expectedAction !== undefined,
+        storedAction,
         scheduleUnchanged ? existingTask.schedule : null,
         webhook,
       );

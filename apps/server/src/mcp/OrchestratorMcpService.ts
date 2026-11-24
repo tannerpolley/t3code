@@ -58,6 +58,7 @@ import {
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
   type ProviderDriverKind,
+  ProviderInstanceId,
   type ProviderInteractionMode,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
@@ -347,6 +348,11 @@ export function threadManagementFailure(error: unknown): OrchestratorMcpFailure 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+const usageBudgetFallbackModel: ModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "default",
+};
 
 function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
   return {
@@ -1315,13 +1321,17 @@ const make = Effect.gen(function* () {
 
   const projectDefaultModelSelection = Effect.fn(
     "OrchestratorMcpService.projectDefaultModelSelection",
-  )(function* (project: Effect.Success<ReturnType<typeof requireProject>>) {
+  )(function* (
+    project: Effect.Success<ReturnType<typeof requireProject>>,
+    fallback?: ModelSelection,
+  ) {
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
     );
-    const selection = resolveProjectSettings(settings, project.id, project).settings
-      .defaultModelSelection;
-    if (selection === null)
+    const selection =
+      resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection ??
+      fallback;
+    if (selection === undefined)
       return yield* failure(
         "invalid_request",
         `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
@@ -2319,8 +2329,13 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
+      const isUsageBudget = input.action === "usage_budget";
       const modelSelection =
-        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+        parent?.thread.modelSelection ??
+        (yield* projectDefaultModelSelection(
+          project,
+          isUsageBudget ? usageBudgetFallbackModel : undefined,
+        ));
       // Never end on a lone high surrogate, which renders as a broken character.
       const derivedTitle = (input.prompt.split("\n")[0]?.trim() ?? "")
         .slice(0, 80)
@@ -2345,7 +2360,9 @@ const make = Effect.gen(function* () {
           : bindToCurrentThread
             ? "continue"
             : "new_thread",
-        workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
+        workspaceStrategy: isUsageBudget
+          ? { type: "root" }
+          : yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
         modelSelection,
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
@@ -2442,6 +2459,13 @@ const make = Effect.gen(function* () {
               : input.bindToCurrentThread && parent !== undefined
                 ? parent.thread.id
                 : null;
+        const modelSelection =
+          switchingToPrompt &&
+          existing.modelSelection.instanceId === usageBudgetFallbackModel.instanceId &&
+          existing.modelSelection.model === usageBudgetFallbackModel.model
+            ? (parent?.thread.modelSelection ??
+              (yield* projectDefaultModelSelection(yield* requireProject(existing.projectId))))
+            : existing.modelSelection;
         // Rebinding or restoring prompt runs must keep unbound tasks out of the shared checkout.
         const workspaceStrategy =
           !switchingToPrompt && (threadId === null) === (existing.threadId === null)
@@ -2470,14 +2494,14 @@ const make = Effect.gen(function* () {
                   : "continue",
           workspaceStrategy,
           repositoryTarget,
-          modelSelection: existing.modelSelection,
+          modelSelection,
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,
           creationSource: existing.creationSource,
         };
         const { task } = yield* scheduledTasks
-          .upsert(upsertInput)
+          .upsert(upsertInput, existing.action ?? "prompt")
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not update scheduled task: ${error.message}`),
