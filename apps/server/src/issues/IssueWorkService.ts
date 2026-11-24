@@ -60,6 +60,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { issueRepositoryOf } from "./issueRepositoryOf.ts";
+import { setGitHubIssueStatus } from "./trackerIssueRef.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import * as Layer from "effect/Layer";
 import * as TrackerIssueService from "../issue/IssueService.ts";
@@ -300,17 +301,39 @@ export const layer = Layer.effect(
       },
     );
 
+    const managedModelRoles = Effect.fn("IssueWorkService.managedModelRoles")(function* () {
+      const serverSettings = yield* settings.getSettings.pipe(Effect.mapError(mapError));
+      const availableProviders = yield* providers.getProviders;
+      const capableIds = new Set<import("@t3tools/contracts").ProviderInstanceId>();
+      for (const instanceId of yield* adapters.list()) {
+        const adapter = yield* adapters.get(instanceId).pipe(Effect.mapError(mapError));
+        if (supportsManagedIssueWork(adapter.driver)) capableIds.add(instanceId);
+      }
+      const now = yield* Clock.currentTimeMillis;
+      return modelRoleStatuses(
+        resolveModelRoles(serverSettings),
+        availableProviders,
+        capableIds,
+        now,
+        providerCreditStatuses(availableProviders, serverSettings.providerCreditsApproved, now),
+      );
+    });
+    const modelSelection = ({
+      providerInstanceId,
+      model,
+      options,
+    }: ReturnType<typeof modelRoleStatuses>[number]["targets"][number]) => ({
+      instanceId: providerInstanceId,
+      model,
+      ...(options === undefined ? {} : { options }),
+    });
+
     const ensureRoot = Effect.fn("IssueWorkService.ensureRoot")(function* (
       input: Pick<
         IssueWorkStartInput,
-        | "projectId"
-        | "modelRoleId"
-        | "orchestratorThreadId"
-        | "createOrchestrator"
-        | "clientRequestId"
+        "projectId" | "orchestratorThreadId" | "createOrchestrator" | "clientRequestId"
       >,
       issue: Pick<ThreadLinkedIssue, "host" | "repository" | "repositoryId">,
-      requireExplicitRoot = false,
     ) {
       if (input.orchestratorThreadId !== undefined && input.createOrchestrator === true)
         return yield* new IssueWorkError({
@@ -334,42 +357,8 @@ export const layer = Layer.effect(
           message:
             "A different repository orchestrator is already registered. Use it, or explicitly restore ownership first.",
         });
-      const serverSettings = yield* settings.getSettings.pipe(Effect.mapError(mapError));
-      const availableProviders = yield* providers.getProviders;
-      const capableIds = new Set<import("@t3tools/contracts").ProviderInstanceId>();
-      for (const instanceId of yield* adapters.list()) {
-        const adapter = yield* adapters.get(instanceId).pipe(Effect.mapError(mapError));
-        if (supportsManagedIssueWork(adapter.driver)) capableIds.add(instanceId);
-      }
-      const now = yield* Clock.currentTimeMillis;
-      const roles = modelRoleStatuses(
-        resolveModelRoles(serverSettings),
-        availableProviders,
-        capableIds,
-        now,
-        providerCreditStatuses(availableProviders, serverSettings.providerCreditsApproved, now),
-      );
-      const role = roles.find((entry) => entry.id === input.modelRoleId);
-      if (role === undefined)
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: "The selected model role no longer exists.",
-        });
-      const select = ({ providerInstanceId, model, options }: (typeof role.targets)[number]) => ({
-        instanceId: providerInstanceId,
-        model,
-        ...(options === undefined ? {} : { options }),
-      });
-      const [worker] = role.targets;
-      if (worker.unavailableReason !== null)
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: `Managed issue work requires an available Codex or Claude target in the selected model role (${worker.unavailableReason}).`,
-        });
-      const selection = select(worker);
       if (
         root === null &&
-        requireExplicitRoot &&
         input.orchestratorThreadId === undefined &&
         input.createOrchestrator !== true
       )
@@ -429,6 +418,7 @@ export const layer = Layer.effect(
           if (previous === null || repositoryPhase(previous) !== "retired") break;
           commandId = CommandId.make(`${commandId}:restart`);
         }
+        const roles = yield* managedModelRoles();
         const orchestrator = roles.find(
           (entry) => entry.role === "orchestrator" && entry.level === "complex",
         )!.targets[0];
@@ -437,7 +427,7 @@ export const layer = Layer.effect(
             code: "invalid-request",
             message: `The Orchestrator role is unavailable (${orchestrator.unavailableReason}).`,
           });
-        const rootSelection = select(orchestrator);
+        const rootSelection = modelSelection(orchestrator);
         const launched = yield* launch
           .launch({
             commandId,
@@ -485,7 +475,7 @@ export const layer = Layer.effect(
           });
         createdRoot = !launched.resumed;
       }
-      return { root, selection, createdRoot };
+      return { root, createdRoot };
     });
 
     // Workspace preparation claims a slot after the worker is admitted.
@@ -562,6 +552,8 @@ export const layer = Layer.effect(
     const start = Effect.fn("IssueWorkService.start")(function* (
       input: IssueWorkStartInput,
     ): Effect.fn.Return<IssueWorkStartResult, IssueWorkError> {
+      if (input.modelRoleId === undefined || input.modelRoleId.startsWith("orchestrator-"))
+        return yield* startFromBoard(input);
       // An accepted operation remains replayable even if GitHub changed afterward.
       const accepted = yield* store.request(input.clientRequestId);
       let read: IssueWorkRead | undefined;
@@ -608,6 +600,90 @@ export const layer = Layer.effect(
       }
       return yield* startAccepted(input, read);
     });
+    const assertRootAvailable = Effect.fn("IssueWorkService.assertRootAvailable")(function* (
+      rootThreadId: ThreadId,
+    ) {
+      const rootShell = yield* threads.getThreadShell(rootThreadId).pipe(Effect.mapError(mapError));
+      if (rootShell === null || rootShell.archivedAt !== null || rootShell.deletedAt !== null)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message:
+            "The registered repository orchestrator is unavailable. Restore it to resume issue work.",
+        });
+    });
+    const startFromBoard = Effect.fn("IssueWorkService.startFromBoard")(function* (
+      input: IssueWorkStartInput,
+    ): Effect.fn.Return<IssueWorkStartResult, IssueWorkError> {
+      if ((yield* store.request(input.clientRequestId)) !== null)
+        return yield* startAccepted(input, undefined);
+      const read = yield* issues.workRead(input).pipe(Effect.mapError(mapError));
+      const { issue } = read;
+      if (read.state !== "open")
+        return yield* new IssueWorkError({
+          code: "issue-unavailable",
+          message: "Only open issues can be queued for work.",
+        });
+      if (read.parent !== null && !sameIssueRepository(read.parent, issue))
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: issueScopeExpansionError,
+        });
+      const { root, createdRoot } = yield* ensureRoot(input, issue);
+      const rootThreadId = root.rootThreadId;
+      yield* assertRootAvailable(rootThreadId);
+      const result = Effect.gen(function* () {
+        const issueThreadId = yield* store.issueOwner(issue);
+        return issueThreadId === null
+          ? null
+          : {
+              rootThreadId,
+              issueThreadId,
+              createdRoot,
+              status: (yield* progressFor(issueThreadId, false)).status,
+            };
+      });
+      const existing = yield* result;
+      if (existing !== null) return existing;
+      const commandId = CommandId.make(`issue-start-queue:${issue.id}:${input.clientRequestId}`);
+      const receipt = yield* commandReceipts
+        .getByCommandId(commandId)
+        .pipe(Effect.mapError(mapError));
+      yield* threads
+        .dispatch({
+          type: "issue.queue.change",
+          commandId,
+          threadId: Option.isSome(receipt) ? receipt.value.threadId : rootThreadId,
+          issue,
+          queued: true,
+        })
+        .pipe(Effect.mapError(mapError));
+      const queued = (yield* store.queue(issue)).some(
+        (entry) => sameIssueRepository(entry.issue, issue) && entry.issue.id === issue.id,
+      );
+      if (!queued)
+        return (
+          (yield* result) ?? { rootThreadId, issueThreadId: null, createdRoot, status: "cancelled" }
+        );
+      if (read.planningStatus?.toLowerCase() !== "todo") {
+        if (Option.isNone(tracker))
+          return yield* new IssueWorkError({
+            code: "issue-unavailable",
+            message: "GitHub issue statuses are unavailable.",
+          });
+        yield* setGitHubIssueStatus(tracker.value, issue, "Todo").pipe(Effect.mapError(mapError));
+        yield* issues.markChanged(issue);
+      }
+      yield* admitQueuedIssues(rootThreadId);
+      return (
+        (yield* result) ?? {
+          rootThreadId,
+          issueThreadId: null,
+          createdRoot,
+          status: "queued_preparing",
+        }
+      );
+    });
+
     const startAccepted = Effect.fn("IssueWorkService.startAccepted")(function* (
       input: IssueWorkStartInput,
       verifiedRead: IssueWorkRead | undefined,
@@ -645,16 +721,23 @@ export const layer = Layer.effect(
           message: "Only unheld Todo issues with complete, unblocked relationships can start.",
         });
       const { issue } = read;
-      const { root, selection, createdRoot } = yield* ensureRoot(input, issue, true);
-      const rootShell = yield* threads
-        .getThreadShell(root.rootThreadId)
-        .pipe(Effect.mapError(mapError));
-      if (rootShell === null || rootShell.archivedAt !== null || rootShell.deletedAt !== null)
+      const roles = yield* managedModelRoles();
+      const worker = roles.find(
+        (entry) => entry.id === input.modelRoleId && entry.role !== "orchestrator",
+      )?.targets[0];
+      if (worker === undefined)
         return yield* new IssueWorkError({
           code: "invalid-request",
-          message:
-            "The registered repository orchestrator is unavailable. Restore it to resume issue work.",
+          message: "The selected worker model role no longer exists.",
         });
+      if (worker.unavailableReason !== null)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: `Managed issue work requires an available Codex or Claude target in the selected model role (${worker.unavailableReason}).`,
+        });
+      const selection = modelSelection(worker);
+      const { root, createdRoot } = yield* ensureRoot(input, issue);
+      yield* assertRootAvailable(root.rootThreadId);
       const dispatched = yield* startWorker({
         type: "issue.work.start",
         commandId: input.clientRequestId,
@@ -987,15 +1070,7 @@ export const layer = Layer.effect(
             issue.id,
           );
       }
-      if (owner !== null && queued)
-        yield* startQueuedIssues(owner.rootThreadId).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Queued issue start deferred", {
-              root: owner.rootThreadId,
-              cause,
-            }),
-          ),
-        );
+      if (owner !== null && queued) yield* admitQueuedIssues(owner.rootThreadId);
       return yield* repositoryStatus(input);
     });
     const update = (
@@ -1107,6 +1182,17 @@ export const layer = Layer.effect(
           }),
         );
     };
+    const admitQueuedIssues = coalescedPerRoot((rootThreadId) =>
+      automation
+        ? store
+            .withQueuedIssuePriority(rootThreadId, startQueuedIssues(rootThreadId))
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Queued issue start deferred", { rootThreadId, cause }),
+              ),
+            )
+        : Effect.void,
+    );
     const verificationPending = Effect.fnUntraced(function* (
       targetId: ThreadId,
       startedAt: string,
@@ -1584,13 +1670,7 @@ ${exhaustionMarker}`,
         config = (yield* store.configuration(rootThreadId))!;
       }
       if (!admitsWork) return;
-      yield* store
-        .withQueuedIssuePriority(rootThreadId, startQueuedIssues(rootThreadId))
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Queued issue starts failed", { rootThreadId, cause }),
-          ),
-        );
+      yield* admitQueuedIssues(rootThreadId);
       yield* continueLocal(rootThreadId, true);
       config = yield* store.configuration(rootThreadId);
       if (
