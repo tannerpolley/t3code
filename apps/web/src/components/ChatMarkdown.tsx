@@ -2035,14 +2035,7 @@ const markdownIslandOptionsByState = new WeakMap<
 function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslandOptions {
   const cached = markdownIslandOptionsByState.get(state);
   if (cached) return cached;
-  const {
-    cwd,
-    headingLevelOffset,
-    imageBaseDir,
-    inlineCodeFileLinkMetaByText,
-    onTaskListChange,
-    skills,
-  } = state;
+  const { headingLevelOffset, onTaskListChange, skills } = state;
   const options: MarkdownIslandOptions = {
     components: CHAT_MARKDOWN_COMPONENTS,
     variant: String(headingLevelOffset),
@@ -2060,14 +2053,8 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
           return artifactTemplateFromHastProperties(node.properties) !== null;
         case "input":
           return node.properties.type === "checkbox" && onTaskListChange !== undefined;
-        case "code": {
-          if (node.properties.dataInlineCode == null) return false;
-          const codeText = hastPlainTextDeep(node);
-          return (
-            (inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
-              resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd)) != null
-          );
-        }
+        case "code":
+          return node.properties.dataInlineCode != null;
         case "p":
         case "li":
           return hastTextHasChip(node, skills);

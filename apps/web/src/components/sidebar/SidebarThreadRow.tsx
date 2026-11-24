@@ -568,6 +568,7 @@ export type SidebarThreadRowColumns = {
   readonly render: (parts: {
     /** The shared pin mark, or its unpin button. */
     readonly pin: ReactNode;
+    readonly issueBadge: ReactNode;
     readonly lastVisitedAt: string | undefined;
   }) => ReactNode;
   /** Inside the list item, after the row: a work toggle and child rows. */
@@ -588,9 +589,14 @@ export type SidebarThreadRowColumns = {
 const SidebarThreadRowColumnsContent = memo(function SidebarThreadRowColumnsContent(props: {
   render: SidebarThreadRowColumns["render"];
   pin: ReactNode;
+  issueBadge: ReactNode;
   lastVisitedAt: string | undefined;
 }) {
-  return props.render({ pin: props.pin, lastVisitedAt: props.lastVisitedAt });
+  return props.render({
+    pin: props.pin,
+    issueBadge: props.issueBadge,
+    lastVisitedAt: props.lastVisitedAt,
+  });
 });
 
 export type SidebarThreadRowProps = {
@@ -1400,6 +1406,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               <SidebarThreadRowColumnsContent
                 render={columns.render}
                 pin={pinIndicator}
+                issueBadge={issueBadge}
                 lastVisitedAt={localLastVisitedAt}
               />
             )}
@@ -2076,6 +2083,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 )}
                 {terminalStatusIcon}
                 {prBadge}
+                {issueBadge}
                 {diff ? (
                   <span className="shrink-0 font-mono">
                     <span className="text-diff-addition-foreground">

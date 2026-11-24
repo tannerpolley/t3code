@@ -1490,6 +1490,7 @@ const SidebarProjectThreadRow = memo(
     ) => assembly.onContextMenu(scopeThreadRef(child.environmentId, child.id), position, "mouse");
     const renderColumns = (parts: {
       readonly pin: ReactNode;
+      readonly issueBadge: ReactNode;
       readonly lastVisitedAt: string | undefined;
     }) => {
       // Finished while you were away and not opened since: a green dot where the spinner was.
@@ -1514,7 +1515,9 @@ const SidebarProjectThreadRow = memo(
             <ThreadLocationIcon thread={thread} tooltip={false} />
             <ThreadRoleIcon thread={thread.source} />
             <span className="min-w-0 flex-1">
-              <SidebarProjectThreadName thread={thread}>{thread.title}</SidebarProjectThreadName>
+              <SidebarProjectThreadName thread={thread} issueBadge={parts.issueBadge}>
+                {thread.title}
+              </SidebarProjectThreadName>
             </span>
             {parts.pin}
             {workerLabel && (
@@ -1562,14 +1565,16 @@ const SidebarProjectThreadRow = memo(
           }
           badgeKind={sidebarBadgeKind(
             role,
-            !!thread.source.linkedIssue,
+            parts.issueBadge !== null || !!thread.source.linkedIssue,
             thread.pullRequests.length > 0,
           )}
           issue={
-            <ThreadIssueBadge
-              environmentId={thread.environmentId}
-              issue={thread.source.linkedIssue}
-            />
+            parts.issueBadge ?? (
+              <ThreadIssueBadge
+                environmentId={thread.environmentId}
+                issue={thread.source.linkedIssue}
+              />
+            )
           }
           pr={<ThreadPullRequestBadge thread={thread} />}
           time={

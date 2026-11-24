@@ -63,6 +63,7 @@ const previewState = vi.hoisted(() => ({
   projects: undefined as ReadonlyArray<EnvironmentProject> | undefined,
   previewPullRequest: vi.fn(),
 }));
+const threadWorktrees = vi.hoisted(() => new Map<string, string>());
 
 vi.mock(import("../state/entities"), async (original) => {
   const actual = await original();
@@ -72,6 +73,10 @@ vi.mock(import("../state/entities"), async (original) => {
       const projects = actual.useProjects();
       return previewState.projects ?? projects;
     },
+    readThreadShell: ((ref: { threadId: string }) => {
+      const worktreePath = threadWorktrees.get(ref.threadId);
+      return worktreePath === undefined ? actual.readThreadShell(ref as never) : { worktreePath };
+    }) as never,
     useServerConfigs: () => {
       const configs = actual.useServerConfigs();
       return previewState.projects === undefined
@@ -180,17 +185,6 @@ vi.mock(import("../state/filesystem"), async (original) => {
       environmentId === deniedEnvironmentId
         ? { canReadFiles: false, isPending: false, error: null }
         : actual.useFilesystemReadAccess(environmentId)) as never,
-  };
-});
-const threadWorktrees = vi.hoisted(() => new Map<string, string>());
-vi.mock(import("../state/entities"), async (original) => {
-  const actual = await original();
-  return {
-    ...actual,
-    readThreadShell: ((ref: { threadId: string }) => {
-      const worktreePath = threadWorktrees.get(ref.threadId);
-      return worktreePath === undefined ? actual.readThreadShell(ref as never) : { worktreePath };
-    }) as never,
   };
 });
 vi.mock(import("../remoteOpen"), async (original) => ({
