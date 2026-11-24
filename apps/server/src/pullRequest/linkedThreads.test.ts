@@ -17,7 +17,7 @@ import { listLinkedPullRequestThreads, makeLinkedThreadsChangeDetector } from ".
 const encodePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.effect(
-  "finds active, settled, and archived threads for exactly one pull request, excluding deleted, dismissed, and side chat links",
+  "finds active, settled, and archived threads for exactly one pull request, excluding hidden thread links",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -79,6 +79,13 @@ it.effect(
           source: "manual",
         },
         {
+          id: "provider-subagent",
+          host: "github.com",
+          repository: "acme/web",
+          number: 7,
+          source: "manual",
+        },
+        {
           id: "dismissed",
           host: "github.com",
           repository: "acme/web",
@@ -113,6 +120,9 @@ it.effect(
           settledOverride: ["settled", "archived"].includes(fixture.id) ? "settled" : null,
           settledAt: fixture.id === "auto-settled" ? archivedAt : null,
           ...(fixture.id === "side-chat" ? { lineage: { sideChat: true } } : {}),
+          ...(fixture.id === "provider-subagent"
+            ? { creationSource: "provider", lineage: { relationshipToParent: "subagent" } }
+            : {}),
           pullRequests: [{ ...fixture, linkedAt: createdAt, snapshot: null, stack: null }],
         });
         yield* sql`

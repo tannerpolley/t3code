@@ -60,7 +60,7 @@ it("compares only displayed rows, following role order, nesting and expansion", 
     lineage: { rootThreadId: parentId, parentThreadId: parentId, relationshipToParent: "subagent" },
     pendingBackgroundTasks: [
       { taskId: "known-child", kind: "subagent", childThreadId: ThreadId.make("helper") },
-      { taskId: "unknown-child", kind: "subagent" },
+      { taskId: "unknown-child", kind: "subagent", origin: "app_owned" },
     ],
   });
   const helper = makeThreadFixture({

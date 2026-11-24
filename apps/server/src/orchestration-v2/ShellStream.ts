@@ -15,6 +15,7 @@ import {
   isListedThreadLineage,
   isLiveSubagentShell,
   isOlderSettledThreadShell,
+  isProviderNativeSubagentThread,
   OrchestrationProjectShell as ProjectShellSchema,
   OrchestrationV2ThreadShell as ThreadShellSchema,
 } from "@t3tools/contracts";
@@ -469,10 +470,12 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
     const omittedWorkers = new Map<ThreadId, number>();
     if (input.options.omitIdleSubagents && read.index !== null) {
       const sent = new Set(snapshot.threads.map((thread) => thread.id));
-      for (const { id, lineage, workerAncestorIds } of read.index) {
+      for (const entry of read.index) {
+        const { id, lineage, workerAncestorIds } = entry;
         if (
           lineage.relationshipToParent !== "subagent" ||
           lineage.parentThreadId === null ||
+          isProviderNativeSubagentThread(entry) ||
           sent.has(id)
         )
           continue;

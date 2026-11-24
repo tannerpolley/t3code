@@ -20,8 +20,10 @@ import {
   threadKey,
 } from "@t3tools/client-runtime/state/entities";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
+import { isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type {
   EnvironmentId,
+  OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2RemoteTaskChild,
   OrchestrationV2ThreadShell,
@@ -168,9 +170,43 @@ export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThr
   );
 }
 
+/** Older environments send linked subagent tasks without an origin. */
+export function withNativeSidebarTaskOrigins(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+): ReadonlyArray<EnvironmentThreadShell> {
+  const key = (thread: EnvironmentThreadShell, threadId: ThreadId) =>
+    threadKey({ environmentId: thread.environmentId, threadId });
+  const nativeChildren = new Set(
+    threads
+      .filter((thread) => isProviderNativeSubagentThread(thread.source))
+      .map((thread) => key(thread, thread.id)),
+  );
+  if (nativeChildren.size === 0) return threads;
+  return threads.map((thread) => {
+    let pendingBackgroundTasks: OrchestrationV2PendingBackgroundTask[] | undefined;
+    for (const [index, task] of thread.pendingBackgroundTasks.entries()) {
+      if (
+        task.kind === "subagent" &&
+        task.origin === undefined &&
+        task.childThreadId !== undefined &&
+        nativeChildren.has(key(thread, task.childThreadId))
+      ) {
+        pendingBackgroundTasks ??= [...thread.pendingBackgroundTasks];
+        pendingBackgroundTasks[index] = { ...task, origin: "provider_native" };
+      }
+    }
+    return pendingBackgroundTasks === undefined ? thread : { ...thread, pendingBackgroundTasks };
+  });
+}
+
+const sidebarThreadShellsAtom = Atom.map(
+  environmentThreadShells.quietThreadShellsAtom,
+  withNativeSidebarTaskOrigins,
+);
+
 /** Every thread shell, held through streaming ticks; see quietThreadShellAtom. */
 export function useQuietThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(environmentThreadShells.quietThreadShellsAtom);
+  return useAtomValue(sidebarThreadShellsAtom);
 }
 
 export function useChildThreadInputs(ref: ScopedThreadRef | null) {

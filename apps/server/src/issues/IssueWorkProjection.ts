@@ -20,6 +20,7 @@ const workThread = OrchestrationV2AppThreadJson.mapFields(
     id,
     title,
     role,
+    creationSource,
     branch,
     worktreePath,
     lineage,
@@ -33,6 +34,7 @@ const workThread = OrchestrationV2AppThreadJson.mapFields(
     id,
     title,
     role,
+    creationSource,
     branch,
     worktreePath,
     lineage,
@@ -126,6 +128,7 @@ export const readIssueWorkThreads = Effect.fn("IssueLinks.readWorkProjection")(f
       'activeProviderThreadId', json_extract(t.payload_json, '$.activeProviderThreadId')
     ), json_object(
       'role', json_extract(t.payload_json, '$.role'),
+      'creationSource', json_extract(t.payload_json, '$.creationSource'),
       'linkedIssue', json_extract(t.payload_json, '$.linkedIssue'),
       'linkedPullRequest', json_extract(t.payload_json, '$.linkedPullRequest'),
       'pullRequests', json_extract(t.payload_json, '$.pullRequests')

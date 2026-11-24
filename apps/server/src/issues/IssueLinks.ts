@@ -1,6 +1,7 @@
 import { repositoryPhaseSql } from "./RepositoryPhaseSql.ts";
 import {
   IssueLinkError,
+  isProviderNativeSubagentThread,
   RepositoryOrchestration,
   RepositoryIssueRef,
   type IssueRepositoryRef,
@@ -200,10 +201,11 @@ const make = Effect.gen(function* () {
         for (const number of issuesByPr.get(key(legacyThreadPullRequestKey(pr))) ?? [])
           add(thread.id, number);
     }
-    // Delegated and native child shells inherit associations from their ancestors. A visited set
+    // Delegated child shells inherit associations from their ancestors. A visited set
     // bounds corrupt lineage; each selected shell is read once, never per issue.
     const byId = new Map(threads.map((thread) => [thread.id, thread]));
     const linked = threads.flatMap((thread) => {
+      if (isProviderNativeSubagentThread(thread)) return [];
       const refs = new Set(refsByThread.get(thread.id));
       const visited = new Set<string>([thread.id]);
       let parent: string | null = thread.lineage.parentThreadId;

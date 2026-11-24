@@ -628,6 +628,7 @@ export function filterSidebarV2VisibleThreads<
     projectId: string;
     hasPendingApprovals?: boolean;
     hasPendingUserInput?: boolean;
+    source: Pick<SidebarThreadSummary["source"], "creationSource">;
   },
 >(
   threads: readonly T[],
@@ -643,6 +644,10 @@ export function filterSidebarV2VisibleThreads<
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
+      !isProviderNativeSubagentThread({
+        creationSource: thread.source.creationSource,
+        lineage: thread.lineage,
+      }) &&
       (showInActivity?.(thread) ||
         !isShownUnderParent(
           { environmentId: thread.environmentId, threadId: thread.id },
@@ -1082,6 +1087,10 @@ export function groupRunningSubagentsByParent<
       thread.lineage.parentThreadId === null ||
       thread.lineage.relationshipToParent !== "subagent" ||
       thread.archivedAt !== null ||
+      isProviderNativeSubagentThread({
+        creationSource: thread.source.creationSource,
+        lineage: thread.lineage,
+      }) ||
       // A child waiting on the user stays listed so its question is one click away.
       !(
         threadRuntimeIsActive(thread.runtime) ||
@@ -1700,7 +1709,7 @@ export function sortLogicalProjectsForSidebar<
 export function sortSidebarV2ProjectGroups<
   TProject extends LogicalSidebarProject,
   TThread extends ScopedSidebarThread &
-    Pick<SidebarThreadSummary, "environmentId" | "id" | "lineage">,
+    Pick<SidebarThreadSummary, "environmentId" | "id" | "lineage" | "source">,
 >(
   projects: readonly TProject[],
   threads: readonly TThread[],

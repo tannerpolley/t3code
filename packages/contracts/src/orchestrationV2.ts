@@ -728,6 +728,8 @@ export function isProviderNativeSubagentThread(
   return thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider";
 }
 
+export const DELEGATED_TASK_TURN_ITEM_PREFIX = "turn-item:delegated-task:";
+
 export const IDLE_COMPACTION_TEXT = "/compact";
 
 interface CompactionMessageFields {
@@ -1372,6 +1374,7 @@ function pendingBackgroundTaskSchema<
       Schema.Struct({
         ...fields,
         kind: Schema.Literal("subagent"),
+        origin: Schema.optional(Schema.Literals(["provider_native", "app_owned"])),
         providerInstanceId: Schema.optional(ProviderInstanceId),
       }),
       Schema.Struct({ ...fields, kind: Schema.Literal("command") }),

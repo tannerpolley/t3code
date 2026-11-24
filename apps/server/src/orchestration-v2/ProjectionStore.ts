@@ -585,6 +585,7 @@ export interface ActiveShellIndexEntry extends Pick<
   OrchestrationV2ThreadShell,
   | "id"
   | "projectId"
+  | "creationSource"
   | "lineage"
   | "workerAncestorIds"
   | "settledOverride"
@@ -10277,7 +10278,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               parent.thread_id <> ${workerPage.parentThreadId}
                 AND parent.archived_at IS NULL AND parent.deleted_at IS NULL
                 AND CASE WHEN json_valid(parent.payload_json)
-                  THEN json_extract(parent.payload_json, '$.lineage.relationshipToParent') END = 'subagent',
+                  THEN json_extract(parent.payload_json, '$.lineage.relationshipToParent') END = 'subagent'
+                AND CASE WHEN json_valid(parent.payload_json)
+                  THEN json_extract(parent.payload_json, '$.creationSource') END IS NOT 'provider',
               0
             ) AS nested
             FROM descendants
@@ -10289,6 +10292,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND child.archived_at IS NULL AND child.deleted_at IS NULL
               AND CASE WHEN json_valid(child.payload_json)
                 THEN json_extract(child.payload_json, '$.lineage.relationshipToParent') END = 'subagent'
+              AND CASE WHEN json_valid(child.payload_json)
+                THEN json_extract(child.payload_json, '$.creationSource') END IS NOT 'provider'
           ),
           listed AS (
             SELECT thread_id, count(*) OVER () AS total
@@ -10710,6 +10715,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly thread_id: string;
         readonly project_id: string;
         readonly relationship_to_parent: string | null;
+        readonly creation_source: OrchestrationV2ThreadShell["creationSource"] | null;
         readonly parent_thread_id: string | null;
         readonly root_thread_id: string;
         readonly side_chat: number | null;
@@ -10726,6 +10732,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           t.thread_id,
           t.project_id,
           ${indexedField("$.lineage.relationshipToParent")} AS relationship_to_parent,
+          ${indexedField("$.creationSource")} AS creation_source,
           ${indexedField("$.lineage.parentThreadId")} AS parent_thread_id,
           ${indexedField("$.lineage.rootThreadId")} AS root_thread_id,
           ${indexedField("$.lineage.sideChat")} AS side_chat,
@@ -10790,6 +10797,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows.map((row): ActiveShellIndexEntry => ({
         id: ThreadId.make(row.thread_id),
         projectId: ProjectId.make(row.project_id),
+        creationSource: row.creation_source ?? "server",
         lineage: shellIndexLineage(row),
         ...workerAncestorsFromRow(row),
         settledOverride:

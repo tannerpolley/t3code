@@ -302,6 +302,23 @@ it("leaves older-server inherited work settled when an unlinked child runs", () 
       overlay.summary(old.issues[0]!, scope, environmentId, indexIssueWork([root, running])),
     ),
   ).toBe("backlog");
+  const native = {
+    ...running,
+    id: ThreadId.make("native"),
+    source: { ...running.source, creationSource: "provider" as const },
+  };
+  const stored = old.issues[0]!;
+  const issue = {
+    ...stored,
+    pullRequestCount: 3,
+    liveWork: [
+      ...stored.liveWork,
+      { ...stored.liveWork[1]!, threadId: native.id, status: "working" as const },
+    ],
+  };
+  expect(
+    withLiveIssueWork({ ...old, issues: [issue] }, [root, running, native]).issues[0],
+  ).toMatchObject({ liveWork: stored.liveWork, pullRequestCount: 3 });
 });
 
 it("combines closing PRs with linked threads' PRs, deduplicates identity and follows streamed PR state", () => {
@@ -427,6 +444,24 @@ it("counts a directly linked subagent, but inherited children do not make a sett
   };
   expect(section(withLiveIssueWork(inherited, [root, running]))).toBe("backlog");
   expect(section(withLiveIssueWork(list, [{ ...running, linkedIssue }]))).toBe("in-progress");
+});
+
+it("excludes native issue workers while keeping their app-owned descendants", () => {
+  const native = {
+    ...running,
+    id: ThreadId.make("native"),
+    source: { ...running.source, creationSource: "provider" as const },
+  };
+  const nested = makeThreadFixture({
+    id: ThreadId.make("nested"),
+    lineage: { ...running.lineage, parentThreadId: native.id },
+  });
+  const issue = withLiveIssueWork(list, [root, running, native, nested]).issues[0];
+  expect(issue?.liveWork?.map(({ threadId }) => threadId)).toEqual([
+    root.id,
+    running.id,
+    nested.id,
+  ]);
 });
 
 it("keeps identical repository and thread IDs on separate environments apart", () => {

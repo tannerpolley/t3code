@@ -3,7 +3,7 @@ import { type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { SidebarThreadSummary } from "../../types";
 import {
-  describeSidebarBackgroundWork,
+  describeProjectSidebarWork,
   type BackgroundWorkTaskRow,
 } from "./SidebarBackgroundWork.logic";
 import { sidebarWorkExpanded } from "./SidebarThreadProcesses.logic";
@@ -60,7 +60,7 @@ export function collectDisplayedFamilyRows(input: {
       thread,
       topLevel: parent === undefined,
     });
-    const rows = describeSidebarBackgroundWork(
+    const rows = describeProjectSidebarWork(
       parent === undefined
         ? thread.pendingBackgroundTasks
         : pendingBackgroundWorkOfThread(

@@ -1985,6 +1985,7 @@ it.effect("SQL shells use the latest subagent owner for duplicate provider-threa
         description: item.title,
         startedAt: item.startedAt,
         kind: "subagent",
+        origin: "provider_native",
         providerInstanceId,
       },
     ];

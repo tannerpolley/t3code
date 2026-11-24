@@ -4,6 +4,7 @@ import {
   CommandId,
   ContextHandoffId,
   ContextTransferId,
+  DELEGATED_TASK_TURN_ITEM_PREFIX,
   EventId,
   MessageId,
   NodeId,
@@ -287,7 +288,7 @@ export const derive: IdAllocatorV2Derive = {
   delegatedTaskMessage: (input) =>
     MessageId.make(joinId("message", "delegated-task", input.commandId)),
   delegatedTaskTurnItem: (input) =>
-    TurnItemId.make(joinId("turn-item", "delegated-task", input.commandId)),
+    TurnItemId.make(`${DELEGATED_TASK_TURN_ITEM_PREFIX}${encodePart(input.commandId)}`),
   createdThreadTurnItem: (input) =>
     TurnItemId.make(joinId("turn-item", "created-thread", input.commandId)),
   threadFromProviderThread: deriveThreadFromProviderThread,
