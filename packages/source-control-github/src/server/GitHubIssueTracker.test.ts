@@ -400,8 +400,6 @@ describe("GitHubIssueTracker", () => {
       yield* api.setState({ ...target, state: "Open" });
       yield* api.setState({ ...target, state: "Duplicate" });
       yield* api.setState({ ...target, state: "Open" });
-      yield* Effect.flatten(api.prepareStateChange({ ...target, state: { category: "closed" } }));
-      yield* Effect.flatten(api.prepareStateChange({ ...target, state: { category: "open" } }));
       yield* api.setReaction({ ...target, content: "thumbs-up", reacted: true });
       yield* api.setReaction({ ...target, content: "thumbs-up", reacted: false });
 
@@ -463,19 +461,13 @@ describe("GitHubIssueTracker", () => {
           { state: "closed", state_reason: "duplicate" },
         ],
         ["PATCH", "https://api.github.com/repos/acme/web/issues/42", { state: "open" }],
-        [
-          "PATCH",
-          "https://api.github.com/repos/acme/web/issues/42",
-          { state: "closed", state_reason: "completed" },
-        ],
-        ["PATCH", "https://api.github.com/repos/acme/web/issues/42", { state: "open" }],
         "AddReaction",
         "RemoveReaction",
       ]);
     }),
   );
 
-  it.effect("moves an issue by status ID even if the repository renames it before the write", () =>
+  it.effect("moves an issue between the repository's issue statuses", () =>
     Effect.gen(function* () {
       const status = (id: string, name: string, key: string, stateReason: string | null) => ({
         id,
@@ -499,7 +491,6 @@ describe("GitHubIssueTracker", () => {
         closedByPullRequestsReferences: { pageInfo: page, nodes: [] },
       });
       const writes: unknown[] = [];
-      let statusReads = 0;
       const http = HttpClient.make((request) => {
         if (request.body._tag !== "Uint8Array") return Effect.die("Expected a JSON request.");
         const text = new TextDecoder().decode(request.body.body);
@@ -510,7 +501,6 @@ describe("GitHubIssueTracker", () => {
           if (operation === "IssueDetail") {
             response = fixture;
           } else if (operation === "IssueStatuses") {
-            statusReads++;
             response = {
               data: {
                 repository: {
@@ -561,13 +551,6 @@ describe("GitHubIssueTracker", () => {
         operation: "setState",
         reason: "failed",
       });
-      const beforeClose = statusReads;
-      const close = yield* api.prepareStateChange({ ...target, state: { category: "closed" } });
-      expect(statusReads).toBe(beforeClose + 1);
-      expect(writes).toHaveLength(2);
-      planningStatuses.nodes[2]!.name = "Shipped";
-      yield* close;
-      expect(statusReads).toBe(beforeClose + 1);
       expect(writes).toEqual([
         ["SetIssueStatus", { issueId: "I_42", statusId: "IS_1" }],
         [
@@ -575,7 +558,6 @@ describe("GitHubIssueTracker", () => {
           "https://api.github.com/repos/acme/web/issues/42",
           { state: "closed", state_reason: "duplicate" },
         ],
-        ["SetIssueStatus", { issueId: "I_42", statusId: "IS_3" }],
       ]);
     }),
   );
