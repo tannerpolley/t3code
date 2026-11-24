@@ -267,12 +267,13 @@ describe("threadRoutes", () => {
     ).toBe("loading");
   });
 
-  it("opens archived repository history until the predecessor is deleted", () => {
+  it("opens archived repository history only while the predecessor exists and its tags are visible", () => {
     const projection = makeThreadProjectionFixture();
     const archivedAt = DateTime.makeUnsafe("2026-01-02T00:00:00Z");
     const thread = {
       ...projection.thread,
       archivedAt,
+      tags: ["private"],
       repositoryOrchestration: {
         projectId: projection.thread.projectId,
         host: "github.com",
@@ -290,19 +291,27 @@ describe("threadRoutes", () => {
         retiredToThreadId: ThreadId.make("successor"),
       },
     };
-    const state = (deletedAt: typeof thread.deletedAt) =>
+    const state = (
+      deletedAt: typeof thread.deletedAt,
+      hiddenArchivedThreadTags: string[] | null,
+      status: "synchronizing" | "live" = "live",
+    ) =>
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
         serverThreadExists: false,
         serverThreadDeleted: false,
         draftThreadExists: false,
+        hiddenArchivedThreadTags,
         unlistedThreadDetail: {
           ...EMPTY_ENVIRONMENT_THREAD_STATE,
-          status: "live",
+          status,
           data: Option.some({ ...projection, thread: { ...thread, deletedAt } }),
         },
       });
-    expect(state(null)).toBe("ready");
-    expect(state(archivedAt)).toBe("missing");
+    expect(state(null, null)).toBe("ready");
+    expect(state(null, ["other"])).toBe("ready");
+    expect(state(null, ["private"])).toBe("missing");
+    expect(state(null, ["other"], "synchronizing")).toBe("loading");
+    expect(state(archivedAt, null)).toBe("missing");
   });
 });

@@ -467,9 +467,9 @@ it.effect("archives only eligible children and keeps restored children active", 
   }).pipe(Effect.provide(layerRetention)),
 );
 
-it.effect(
-  "recovers worker archives for a completed handoff and expires its source at the cutoff",
-  () =>
+it.effect.each([undefined, "orchestrator"] as const)(
+  "recovers worker archives for a completed handoff and expires its source at the cutoff (role %s)",
+  (role) =>
     Effect.gen(function* () {
       const { service, projections, sink, parent, seed, recordTask } = yield* makeFixture();
       const archivedAt = yield* DateTime.now;
@@ -492,7 +492,7 @@ it.effect(
       };
       const archiveRoot = Effect.fnUntraced(function* (id: ThreadId, handedOff: boolean) {
         yield* seed(id, "open", {
-          role: "orchestrator",
+          ...(role === undefined ? {} : { role }),
           lineage: { rootThreadId: id, parentThreadId: null, relationshipToParent: null },
         });
         const thread = yield* projections.getThread(id);

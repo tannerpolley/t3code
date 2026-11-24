@@ -4,6 +4,7 @@ import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entitie
 import { visibilityParentKey } from "@t3tools/client-runtime/state/threads";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import { Link, Navigate, useNavigate } from "@tanstack/react-router";
 import { T } from "gt-react";
 import { useEffect, useState } from "react";
@@ -22,6 +23,7 @@ import {
 } from "../state/entities";
 import { environmentUnreachableAtom } from "../state/presentation";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { serverEnvironment } from "../state/server";
 import { useEnvironmentShellStatus } from "../state/shell";
 import { environmentThreadShells, threadFamilies, useEnvironmentThread } from "../state/threads";
 import {
@@ -31,6 +33,8 @@ import {
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
+
+const NO_HIDDEN_TAGS_ATOM = Atom.make(null);
 
 /**
  * Keeps an omitted thread and its ancestors mounted until the route leaves it.
@@ -118,24 +122,31 @@ export function ThreadRouteView({
   useOpenThreadPath(serverThreadRef, bootstrapComplete && unlistedThreadRef !== null);
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
-  const viewingPredecessor =
-    unlistedThread !== null && isArchivedRepositoryPredecessor(unlistedThread);
   const unlistedParentKey =
     unlistedThreadRef === null || unlistedThread === null
       ? null
       : visibilityParentKey(unlistedThreadRef.environmentId, unlistedThread);
+  const viewingArchivedRoot =
+    unlistedParentKey === null &&
+    unlistedThread !== null &&
+    isArchivedRepositoryPredecessor(unlistedThread);
+  const hiddenArchivedThreadTags = useAtomValue(
+    viewingArchivedRoot && unlistedThreadRef !== null
+      ? serverEnvironment.hiddenThreadTagsAtom(unlistedThreadRef.environmentId)
+      : NO_HIDDEN_TAGS_ATOM,
+  );
   const unlistedParentShell = useQuietThreadShell(
     unlistedParentKey === null ? null : parseThreadKey(unlistedParentKey),
   );
   const hidingAnywhere = useAnyEnvironmentHiding();
   const draftRedirectShell = useQuietThreadShell(draftRedirect ?? null);
   const hiddenByTagFilter = serverThreadRef !== null && hiddenKeys.has(threadKey(serverThreadRef));
-  // Cached detail can predate a tag or an archive, so while hiding an off-shell thread opens only
-  // as the child of a loaded, visible parent (lineage never changes); anything else stays closed.
+  // Archived roots use their stored tags. Other off-shell threads can only inherit visibility
+  // from a loaded parent while any environment hides tags.
   const offShellBlocked =
     hidingAnywhere &&
     unlistedThreadRef !== null &&
-    !viewingPredecessor &&
+    !viewingArchivedRoot &&
     !(
       unlistedParentKey !== null &&
       unlistedParentShell !== null &&
@@ -147,6 +158,7 @@ export function ThreadRouteView({
     serverThreadDeleted: serverThreadShell?.deletedAt != null,
     unlistedThreadDetail,
     draftThreadExists: draftThread !== null,
+    hiddenArchivedThreadTags,
     environmentUnreachable,
   });
   const environmentHasAnyThreads = environmentThreadRefs.length > 0 || environmentHasDraftThreads;
