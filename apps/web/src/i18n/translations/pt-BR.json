@@ -13228,5 +13228,8 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Cancelar merge automático da pilha",
-  "012c67c7f1a99e33": "Merge automático da pilha"
+  "012c67c7f1a99e33": "Merge automático da pilha",
+  "c1303d131afc6a17": "Mais de um dia",
+  "9be5b8420ee64ec7": "A transferência para {target} está sendo concluída",
+  "e05b2595e2c7c313": "A transferência para {target} aguarda aprovação"
 }

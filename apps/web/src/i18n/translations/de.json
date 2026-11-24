@@ -2005,7 +2005,7 @@
   "e74139c17fab1fa1": "Bestätigen",
   "775a3e99e2638341": "Ein Gerät möchte sich mit {environmentLabel} verbinden",
   "a8befcb9f1c61f60": "{device}. Genehmige nur, wenn der Code {code} angezeigt wird.",
-  "ac48cc297029db41": "Genehmigen",
+  "ac48cc297029db41": "Freigeben",
   "c12ca3fea745def0": "Das Gerät konnte nicht genehmigt werden",
   "af63f05ed2f5eeb3": "Ablehnen",
   "b735bab216b27041": "Das Gerät konnte nicht abgelehnt werden",
@@ -13228,5 +13228,8 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Auto-Merge für Stack abbrechen",
-  "012c67c7f1a99e33": "Auto-Merge für Stack"
+  "012c67c7f1a99e33": "Auto-Merge für Stack",
+  "c1303d131afc6a17": "Älter als ein Tag",
+  "9be5b8420ee64ec7": "Übergabe an {target} wird abgeschlossen",
+  "e05b2595e2c7c313": "Übergabe an {target} wartet auf Freigabe"
 }

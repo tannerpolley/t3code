@@ -215,16 +215,20 @@ const McpToolUseCallWithAlternatives = Schema.Struct({
   ...McpToolUseCall.fields,
   argsAnyOf: Schema.optional(Schema.Array(Schema.Record(Schema.String, Schema.Unknown))),
 });
-const McpToolUseExpectedCall = Schema.Struct({
+const McpToolUseRequiredCall = Schema.Struct({
   ...McpToolUseCallWithAlternatives.fields,
   success: Schema.optional(Schema.Literal(true)),
+  /** Regex against a successful tool result. */
+  output: Schema.optional(Schema.String),
+  /** Any calls to these tools must occur in a later step. */
+  before: Schema.optional(Schema.Array(Schema.String)),
 });
-type McpToolUseCall = typeof McpToolUseExpectedCall.Type;
+type McpToolUseRequiredCall = typeof McpToolUseRequiredCall.Type;
 
 /** Grading rules. Tool names are bare: `delegate_task`, `Bash`, `Agent`. */
 const McpToolUseCallsExpect = Schema.Struct({
   /** Each entry needs one matching call. */
-  calls: Schema.optional(Schema.Array(McpToolUseExpectedCall)),
+  calls: Schema.optional(Schema.Array(McpToolUseRequiredCall)),
   /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
   distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
   minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
@@ -2625,19 +2629,35 @@ export const gradeSample = (
     ),
   }));
   const calls = attempted.filter((call) => !(call.failed && isPageTool(call.tool)));
+  const test = (pattern: string, value: string) => new RegExp(pattern).test(value);
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request"; counts add up.
   const count = (tool: string) =>
     calls.filter((call) => tool.split("|").includes(call.tool)).length;
-  const found = ({ tool, args = {}, argsAnyOf, success }: McpToolUseCall, among = calls) =>
+  const found = (
+    { tool, args = {}, argsAnyOf, success, output, before }: McpToolUseRequiredCall,
+    among = calls,
+  ) =>
     among.some(
       (call) =>
         tool.split("|").includes(call.tool) &&
-        (success === undefined || call.failed === false) &&
         matches(args, call.input) &&
+        (success === undefined || call.failed === false) &&
         (argsAnyOf === undefined ||
-          argsAnyOf.some((alternative) => matches(alternative, call.input))),
+          argsAnyOf.some((alternative) => matches(alternative, call.input))) &&
+        (output === undefined ||
+          (!call.failed && call.output !== undefined && test(output, call.output))) &&
+        (before === undefined ||
+          !attempted.some((other) => before.includes(other.tool) && other.step <= call.step)),
     );
-  const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
+  const label = ({ tool, args, output, before }: McpToolUseRequiredCall) =>
+    [
+      tool,
+      args && valueText(args),
+      output !== undefined && `output /${output}/`,
+      before && `before ${before.join("|")}`,
+    ]
+      .filter(Boolean)
+      .join(" ");
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
   if (expect.distinctCalls !== undefined) {
     const expected = expect.distinctCalls.map(({ tool, args }) => ({ tool, input: args ?? {} }));
@@ -2701,7 +2721,6 @@ export const gradeSample = (
       ? [call.input.command, ...(sources[i] ?? [])]
       : [],
   );
-  const test = (pattern: string, value: string) => new RegExp(pattern).test(value);
   for (const p of expect.shellMustNot ?? [])
     add(`shellMustNot /${p}/`, !shell.some((c) => test(p, c)));
   // A positive check also reads argv lists as command lines: spawnSync('pnpm', ['exec', …]).

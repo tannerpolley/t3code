@@ -45,6 +45,7 @@ import {
 } from "./run.ts";
 import { briefRoute, gradeDevice, shellInvocations } from "./device-grading.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+import { makeBackgroundWait } from "./backgroundWait.ts";
 
 it("grades Codex shell and subagent calls with the shared rules", () => {
   const calls = [
@@ -690,6 +691,72 @@ const childCase: McpToolUseCase = {
 };
 
 const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+
+it.effect("grades issue worker handbacks against the check result", () =>
+  Effect.gen(function* () {
+    const cases = NodeFS.readFileSync(
+      new URL("./cases/issue-worker-checks.ndjson", import.meta.url),
+      "utf8",
+    )
+      .trim()
+      .split("\n")
+      .map((line) => decodeDeviceCase(line));
+    const codex = cases.find((testCase) => testCase.id === "issue-worker-check-codex")!;
+    const claude = cases.find((testCase) => testCase.id === "issue-worker-check-claude")!;
+    const backgroundWait = yield* makeBackgroundWait(["bcheck617", "bdev617"]);
+    const registerWait = (input: unknown) =>
+      backgroundWait(input).pipe(
+        Effect.map(({ text, isError }) => ({
+          step: 0,
+          tool: "t3_background_wait",
+          input,
+          output: text,
+          failed: isError,
+        })),
+      );
+    const poll = {
+      step: 0,
+      tool: "write_stdin",
+      input: { session_id: 6170, chars: "" },
+      output: JSON.stringify({ exit_code: 0, output: "check:changed summary: all checks passed" }),
+      failed: false,
+    };
+    const review = { step: 1, tool: "delegate_task", input: { role: "reviewer" } };
+    const passes = (testCase: McpToolUseCase, calls: SampleRun["calls"]) =>
+      failed(testCase.expect, {
+        calls,
+        text: "",
+        stopReason: "end_turn",
+      }).length === 0;
+
+    const wait = yield* registerWait({ taskId: "bcheck617" });
+    assert.isTrue(passes(claude, [wait]));
+    assert.isFalse(passes(claude, [{ ...wait, failed: true }]));
+    assert.isTrue(passes(claude, [yield* registerWait({ taskIds: ["bcheck617"] })]));
+    assert.isFalse(
+      passes(claude, [yield* registerWait({ taskId: "bcheck617", taskIds: ["bdev617"] })]),
+    );
+    assert.isFalse(
+      passes(claude, [yield* registerWait({ taskId: "bcheck617", waiting: "false" })]),
+    );
+    assert.isFalse(
+      passes(claude, [
+        { ...review, tool: "Agent", step: 0 },
+        { ...wait, step: 1 },
+      ]),
+    );
+    assert.isTrue(passes(codex, [poll, review]));
+    assert.isFalse(
+      passes(codex, [
+        { ...review, step: 0 },
+        { ...poll, step: 1 },
+      ]),
+    );
+    assert.isFalse(passes(codex, [poll, { ...review, step: 0 }]));
+    assert.isFalse(passes(codex, [{ ...poll, output: '{"session_id":6170}' }]));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 const browserCase = (id: string) =>
   NodeFS.readFileSync(new URL("./cases/browser-routing.ndjson", import.meta.url), "utf8")
     .trim()

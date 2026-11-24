@@ -13237,5 +13237,8 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Cancel stack auto-merge",
-  "012c67c7f1a99e33": "Auto-merge stack"
+  "012c67c7f1a99e33": "Auto-merge stack",
+  "c1303d131afc6a17": "Over a day old",
+  "9be5b8420ee64ec7": "Handoff to {target} is draining",
+  "e05b2595e2c7c313": "Handoff to {target} awaits approval"
 }

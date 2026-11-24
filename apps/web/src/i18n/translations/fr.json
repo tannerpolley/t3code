@@ -13228,5 +13228,8 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Annuler la fusion automatique de la pile",
-  "012c67c7f1a99e33": "Fusion automatique de la pile"
+  "012c67c7f1a99e33": "Fusion automatique de la pile",
+  "c1303d131afc6a17": "Plus d'un jour",
+  "9be5b8420ee64ec7": "Le transfert vers {target} est en cours de finalisation",
+  "e05b2595e2c7c313": "Le transfert vers {target} attend une approbation"
 }

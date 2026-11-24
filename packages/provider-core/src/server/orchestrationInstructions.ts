@@ -68,7 +68,13 @@ export function t3OrchestrationBaseInstructions(managedIssue?: ManagedIssueRole)
 const MANAGED_ISSUE_PROPOSALS =
   "Keep issues current through propose_issue_change. Submit the typed proposal and follow its returned decision. Reuse its `clientRequestId` on retry. Agents cannot approve changes, and question answers never approve a mutation. A stale baseline needs a new proposal and preview. An uncertain create that needs attention requires the user to check GitHub and mark it resolved. Submit another create only when you intend to create a separate issue. T3 tracks its written bodies by exact baseline, never GitHub author login. Labels and assignees are outside this tool's scope. Ask before expanding the approved milestone or repository scope.";
 
-const MANAGED_ISSUE_WORKFLOW = `T3 posts managed status and closeout comments and wakes you when children finish. End the turn while children work; report results and open gates in the final answer.`;
+const MANAGED_ISSUE_WORKFLOW = `T3 posts managed status and closeout comments and wakes you when children finish. End the turn while delegated children work.
+
+Run required checks in the foreground when possible. Collect their exit status and output before reviewing, publishing, or reporting completion.
+- Codex: if the shell returns a session ID, use \`write_stdin\` with that session ID and empty input until the check exits. If you background a check in your shell, capture its PID and wait for it in the shell that started it.
+- Claude Code: if a required check runs in the background, use \`t3_background_wait\` with its exact task ID. Yield only once the tool confirms the ID matched, then inspect the result on the completion wake.
+
+Report a result, blocker, or question when handing back to the parent. A progress update belongs in commentary.`;
 
 const ISSUE_OWNER_WORKFLOW = `Use Designer for research or planning. Read native hierarchy and blockers before delegation. For an outside blocker, use propose_issue_change to create an issue, add blocked_by with the blocked issue as number and the new issue as blockerNumber, then report it in your final result. Use the question tool for owner decisions and fix failing tests within scope.`;
 

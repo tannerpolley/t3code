@@ -13223,5 +13223,8 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Cancelar la fusión automática de la pila",
-  "012c67c7f1a99e33": "Fusión automática de la pila"
+  "012c67c7f1a99e33": "Fusión automática de la pila",
+  "c1303d131afc6a17": "Más de un día",
+  "9be5b8420ee64ec7": "El traspaso a {target} se está completando",
+  "e05b2595e2c7c313": "El traspaso a {target} espera aprobación"
 }
