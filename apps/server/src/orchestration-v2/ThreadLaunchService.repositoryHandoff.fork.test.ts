@@ -652,6 +652,21 @@ describe("fresh-thread repository handoff", () => {
       const sink = yield* EventSink.EventSinkV2;
       const settings = yield* ServerSettingsService;
       const nextId = automaticHandoffThreadId(rootId);
+      const source = (yield* threads.getThreadRecords(rootId, [])).thread;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("auto:source-completion-cohort"),
+            type: "thread.metadata-updated",
+            threadId: rootId,
+            occurredAt: source.updatedAt,
+            payload: {
+              ...source,
+              delegatedCompletion: { disposition: "open", nextGeneration: 2, delivery: null },
+            },
+          },
+        ],
+      });
       yield* threads.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("auto:watch"),
@@ -951,6 +966,10 @@ describe("fresh-thread repository handoff", () => {
       const old = yield* threads.getThreadShell(rootId);
       assert.isNotNull(old?.archivedAt);
       assert.equal(old?.handoffToThreadId, nextId);
+      assert.equal(
+        (yield* threads.getThreadRecords(rootId, [])).thread.delegatedCompletion?.disposition,
+        "disposed",
+      );
       const successor = yield* threads.getThreadRecords(nextId, ["messages", "turnItems"]);
       assert.equal(successor.thread.handoffFromThreadId, rootId);
       assert.deepEqual(successor.thread.modelSelection, old?.modelSelection);
@@ -3353,12 +3372,11 @@ describe("fresh-thread repository handoff", () => {
           clientRequestId: CommandId.make("latest-root-pause"),
         });
         // These later complete-state events supersede the transfer metadata during compaction.
-        for (const threadId of [rootId, first.rootThreadId!, second.rootThreadId!])
-          yield* threads.dispatch({
-            type: "thread.archive",
-            threadId,
-            commandId: CommandId.make(`archive:${threadId}`),
-          });
+        yield* threads.dispatch({
+          type: "thread.archive",
+          threadId: second.rootThreadId!,
+          commandId: CommandId.make("archive:latest-root"),
+        });
         yield* threads.dispatch({
           type: "thread.unarchive",
           threadId: second.rootThreadId!,
@@ -3376,6 +3394,8 @@ describe("fresh-thread repository handoff", () => {
           ended.handoffHistory?.map((entry) => entry.threadId),
           [rootId, first.rootThreadId],
         );
+        assert.isNotNull((yield* threads.getThreadShell(rootId))!.archivedAt);
+        assert.isNotNull((yield* threads.getThreadShell(first.rootThreadId!))!.archivedAt);
         assert.equal((yield* store.configuration(rootId))!.retiredToThreadId, first.rootThreadId);
         assert.equal(
           (yield* store.configuration(first.rootThreadId!))!.retiredToThreadId,
@@ -3444,6 +3464,7 @@ describe("fresh-thread repository handoff", () => {
         assert.equal(pending.orchestration!.handoff?.status, "draining");
         const nextId = pending.orchestration!.handoff!.nextThreadId;
         assert.isNull(yield* threads.getThreadShell(nextId));
+        assert.isNull((yield* threads.getThreadShell(rootId))!.archivedAt);
         for (const type of ["thread.archive", "thread.delete"] as const) {
           const blocked = yield* threads
             .dispatch({ type, threadId: rootId, commandId: CommandId.make(`blocked:${type}`) })
@@ -3471,6 +3492,14 @@ describe("fresh-thread repository handoff", () => {
           Stream.runDrain,
         );
         assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
+        assert.isNotNull((yield* threads.getThreadShell(rootId))!.archivedAt);
+        yield* sink.stream({ afterSequence: beforeRoot, eventType: "thread.archived" }).pipe(
+          Stream.filter(({ event }) => event.threadId === parent || event.threadId === child),
+          Stream.take(2),
+          Stream.runDrain,
+        );
+        assert.isNotNull((yield* threads.getThreadShell(parent))!.archivedAt);
+        assert.isNotNull((yield* threads.getThreadShell(child))!.archivedAt);
         assert.equal(
           (yield* threads.getThreadRecords(child, [])).thread.lineage.parentThreadId,
           parent,

@@ -12459,8 +12459,6 @@
   "f31a95961de19433": "Issue {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} linked issue} other {{count} linked issues}}",
   "8cf699ae75fd8067": "Pinned",
-  "50c54e168c9c4ab6": "Predecessor",
-  "759e59bb1b2ed0b6": "Successor",
   "be451f475c514b37": "Dismiss Woke notification",
   "e9ced65134f2f36c": "Wake thread now",
   "aca5896600bf173e": "You're currently checked out on another branch.",

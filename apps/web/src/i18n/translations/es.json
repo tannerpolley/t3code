@@ -12444,8 +12444,6 @@
   "f31a95961de19433": "Incidencia {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} incidencia vinculada} other {{count} incidencias vinculadas}}",
   "8cf699ae75fd8067": "Fijados",
-  "50c54e168c9c4ab6": "Predecesor",
-  "759e59bb1b2ed0b6": "Sucesor",
   "be451f475c514b37": "Descartar notificación de reactivación",
   "e9ced65134f2f36c": "Reactivar hilo ahora",
   "aca5896600bf173e": "Ahora mismo tienes otra rama en el checkout.",

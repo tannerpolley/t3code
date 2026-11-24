@@ -22,14 +22,15 @@ export function finishedWorkerAt(
 export const finishedWorkers = Effect.fn("WorkerArchiveCandidates.finishedWorkers")(function* (
   projections: ProjectionStore.ProjectionStoreV2["Service"],
   now: DateTime.Utc,
+  rootThreadId?: ThreadId,
 ) {
   const finished = new Map<ThreadId, ProjectionStore.ProjectionSettlementCandidate>();
   let afterThreadId: ThreadId | undefined;
   do {
-    const workers = yield* projections.getSettlementCandidates(
-      undefined,
-      afterThreadId === undefined ? {} : { afterThreadId },
-    );
+    const workers = yield* projections.getSettlementCandidates(undefined, {
+      ...(rootThreadId === undefined ? {} : { rootThreadId }),
+      ...(afterThreadId === undefined ? {} : { afterThreadId }),
+    });
     for (const worker of workers) {
       if (finishedWorkerAt(worker, now) !== null) finished.set(worker.id, worker);
     }

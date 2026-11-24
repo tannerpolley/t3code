@@ -835,8 +835,7 @@ Your first authorized action is read-only. Use t3_thread_read on the source to r
       occurredAt: now,
       payload: retiredRoot,
     });
-    if (automatic !== undefined)
-      yield* archiveRetiredRoot(command.commandId, retiredRoot, events, effects);
+    yield* archiveRetiredRoot(command.commandId, retiredRoot, events, effects);
     yield* emitEvent({
       type: "thread.metadata-updated",
       threadId: nextThreadId,

@@ -12449,8 +12449,6 @@
   "f31a95961de19433": "Ticket {key} : {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} ticket lié} other {{count} tickets liés}}",
   "8cf699ae75fd8067": "Épinglés",
-  "50c54e168c9c4ab6": "Prédécesseur",
-  "759e59bb1b2ed0b6": "Successeur",
   "be451f475c514b37": "Ignorer la notification Réveillé",
   "e9ced65134f2f36c": "Réveiller le fil maintenant",
   "aca5896600bf173e": "Vous êtes actuellement sur une autre branche.",

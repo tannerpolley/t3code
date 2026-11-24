@@ -12451,8 +12451,6 @@
   "f31a95961de19433": "Issue {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} verknüpftes Issue} other {{count} verknüpfte Issues}}",
   "8cf699ae75fd8067": "Angeheftet",
-  "50c54e168c9c4ab6": "Vorgänger",
-  "759e59bb1b2ed0b6": "Nachfolger",
   "be451f475c514b37": "Aufgeweckt-Hinweis schließen",
   "e9ced65134f2f36c": "Thread jetzt aufwecken",
   "aca5896600bf173e": "Du hast gerade einen anderen Branch ausgecheckt.",
