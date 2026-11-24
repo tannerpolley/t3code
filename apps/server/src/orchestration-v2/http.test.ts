@@ -293,7 +293,7 @@ it.effect("exports a transcript with oversized fields dropped by the decoder", (
           type: "run.created",
           threadId: thread.id,
           occurredAt: now,
-          payload: { ...rolledBackRun, status: "cancelled" },
+          payload: { ...rolledBackRun, status: "cancelled", startedAt: null },
         },
         ...[item, followingItem, queuedItem].map((item) => ({
           id: EventId.make(`legacy:${item.id}`),

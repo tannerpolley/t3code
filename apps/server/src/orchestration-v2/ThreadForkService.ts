@@ -124,6 +124,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         // The source's title job and rename stay with the source thread.
         titleRegeneration: null,
         titleRenamed: false,
+        titleSource: undefined,
         activeProviderThreadId: null,
         lineage: {
           parentThreadId: input.sourceProjection.thread.id,
