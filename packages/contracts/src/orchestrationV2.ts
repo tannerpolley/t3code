@@ -640,6 +640,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   /** The Settle undo may reopen this archive along with reversing settlement. */
   archivedBySettlement: Schema.optional(Schema.Literal(true)),
   archivedByDelegatedResult: Schema.optional(Schema.Literal(true)),
+  issueWorkspaceReleased: Schema.optional(Schema.Literal(true)),
   workerUnarchivedAt: Schema.optional(IsoDateTime),
   settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -4572,6 +4573,7 @@ export type OrchestrationV2ServerCommand = (
   /** Suspension interrupts retain their provider action until it succeeds. */
   readonly retryInterruptUntilDone?: boolean;
   readonly archiveDelegatedWorker?: true;
+  readonly archiveObservedTaskId?: NodeId;
   readonly workerArchiveSequence?: number;
   readonly workerDeleteArchivedAt?: DateTime.Utc;
   readonly handoffDeleteArchivedAt?: DateTime.Utc;
