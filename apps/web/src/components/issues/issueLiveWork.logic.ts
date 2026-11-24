@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   RepositoryIssueListResult,
@@ -127,6 +128,7 @@ export function createLiveIssueWorkOverlay() {
       return previous.result as T;
     const active = threads
       .filter((thread) => thread != null)
+      .filter((thread) => !isProviderNativeSubagentThread(thread.source))
       .filter((thread) => issue.state === "closed" || thread.archivedAt === null);
     const directIds = new Set(direct.map((thread) => thread.id));
     const omittedWork = [...ids].flatMap((id, position) => {

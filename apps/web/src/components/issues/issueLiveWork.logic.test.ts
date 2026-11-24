@@ -429,6 +429,24 @@ it("counts a directly linked subagent, but inherited children do not make a sett
   expect(section(withLiveIssueWork(list, [{ ...running, linkedIssue }]))).toBe("in-progress");
 });
 
+it("excludes native issue workers while keeping their app-owned descendants", () => {
+  const native = {
+    ...running,
+    id: ThreadId.make("native"),
+    source: { ...running.source, creationSource: "provider" as const },
+  };
+  const nested = makeThreadFixture({
+    id: ThreadId.make("nested"),
+    lineage: { ...running.lineage, parentThreadId: native.id },
+  });
+  const issue = withLiveIssueWork(list, [root, running, native, nested]).issues[0];
+  expect(issue?.liveWork?.map(({ threadId }) => threadId)).toEqual([
+    root.id,
+    running.id,
+    nested.id,
+  ]);
+});
+
 it("keeps identical repository and thread IDs on separate environments apart", () => {
   const otherEnvironment = EnvironmentId.make("ENVIRONMENT-test");
   const other = {

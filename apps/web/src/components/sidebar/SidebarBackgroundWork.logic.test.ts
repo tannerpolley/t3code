@@ -14,6 +14,7 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { describe, expect, it } from "vite-plus/test";
 
+import { withNativeSidebarTaskOrigins } from "../../state/entities";
 import { makeThreadFixture } from "../../test-fixtures";
 import {
   childWorktreeLabel,
@@ -67,18 +68,16 @@ describe("describeSidebarBackgroundWork", () => {
         kind: "subagent",
         childThreadId: runningChild.id,
       },
-      {
-        taskId: "native-agent",
-        kind: "subagent",
-        origin: "provider_native",
-        childThreadId: nativeChild.id,
-      },
+      { taskId: "native-agent", kind: "subagent", childThreadId: nativeChild.id },
+      { taskId: "native-roster", kind: "subagent", origin: "provider_native" },
       { taskId: "roster-agent", description: "Explore", kind: "subagent" },
       { taskId: "command", description: "Run tests", kind: "command" },
       { taskId: "monitor", description: "Watch build", kind: "monitor" },
       { taskId: "unknown", kind: "background_task" },
     ] as const;
-    const rows = describeProjectSidebarWork(tasks, [runningChild]);
+    const parent = makeThreadFixture({ pendingBackgroundTasks: tasks });
+    const [marked] = withNativeSidebarTaskOrigins([parent, nativeChild, runningChild]);
+    const rows = describeProjectSidebarWork(marked!.pendingBackgroundTasks, [runningChild]);
 
     expect(rows.map(({ taskId, kind }) => [taskId, kind])).toEqual([
       ["command", "command"],
