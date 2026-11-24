@@ -337,6 +337,7 @@ export function layerWithRegistry<Error>(
             runtimeMode: input.thread.runtimeMode,
             interactionMode: input.thread.interactionMode,
             cwd: input.thread.worktreePath ?? workspace,
+            ...RuntimePolicy.delegatedToolPolicy(input.thread),
           }),
       };
     }),

@@ -282,6 +282,7 @@ describe("DesktopLifecycle", () => {
               Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
                 platform: "linux",
                 isDevelopment: trigger === "development relaunch",
+                appImagePath: Option.none(),
               } as DesktopEnvironment.DesktopEnvironment["Service"]),
             ),
             Layer.provideMerge(

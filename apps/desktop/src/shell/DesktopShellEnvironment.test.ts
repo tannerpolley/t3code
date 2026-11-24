@@ -189,22 +189,24 @@ describe("DesktopShellEnvironment", () => {
     { platform: "linux" as const, runtime: { APPIMAGE: "/opt/T3.AppImage" }, scrub: true },
     { platform: "linux" as const, runtime: {}, scrub: false },
     { platform: "darwin" as const, runtime: { APPDIR: "/opt/t3.AppDir/" }, scrub: false },
+    { platform: "linux" as const, runtime: {}, scrub: false, mountOnlyCache: true },
   ])(
     "keeps AppImage mounts out of cached and discovered PATH: %j",
-    ({ platform, runtime, scrub }) =>
+    ({ platform, runtime, scrub, mountOnlyCache }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const stateDir = yield* fs.makeTempDirectoryScoped();
         const cachePath = `${stateDir}/shell-environment-cache.json`;
         const inheritedPath =
           "/tmp/.mount_T3-Codold123/usr/bin:/launcher/bin:/opt/t3.AppDir/usr/bin";
-        const cachedPath = "/cached/bin:/tmp/.mount_T3-Codcache1/usr/bin";
+        const cachedPath = mountOnlyCache
+          ? "/tmp/.mount_T3-Codcache1/usr/bin"
+          : "/cached/bin:/tmp/.mount_T3-Codcache1/usr/bin";
         const discoveredPath = "/fresh/bin:/tmp/.mount_T3-Codprobe1/usr/bin";
         const retainedPath = "/tmp/tools:/tmp/.mount_Other123/usr/bin:/opt/t3.AppDir-backup/bin";
         const cleanInherited = scrub
           ? `/launcher/bin${runtime.APPDIR ? "" : ":/opt/t3.AppDir/usr/bin"}`
           : inheritedPath;
-        const cleanCached = scrub ? "/cached/bin" : cachedPath;
         const cleanDiscovered = scrub ? "/fresh/bin" : discoveredPath;
         const env: NodeJS.ProcessEnv = {
           ...runtime,
@@ -243,7 +245,7 @@ describe("DesktopShellEnvironment", () => {
           use: (service) =>
             Effect.gen(function* () {
               yield* service.installIntoProcess;
-              const expectedCached = `${cleanCached}:${cleanInherited}:${retainedPath}`;
+              const expectedCached = `${mountOnlyCache ? "" : "/cached/bin:"}${cleanInherited}:${retainedPath}`;
               assert.equal(env.PATH, expectedCached);
               assert.equal(env.__MISE_DIFF, "cached-mise");
               const cached = yield* Stream.runHead(service.updates);

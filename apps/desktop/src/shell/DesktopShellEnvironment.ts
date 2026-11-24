@@ -799,6 +799,8 @@ export const make = Effect.gen(function* () {
             mergePaths(environment.platform, [Option.some(cachedPath), readEnvPath(inherited)]),
             () => cachedPath,
           );
+        } else {
+          delete cached.PATH;
         }
         applyShellEnvironment(baseline, cached, environment.platform);
         yield* publish(
