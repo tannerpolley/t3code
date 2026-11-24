@@ -51,6 +51,7 @@ import {
   ThreadId,
   ThreadMetadataMcpUpdateResult,
   TurnItemId,
+  withMessageSenderNote,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as FileSystem from "effect/FileSystem";
@@ -131,6 +132,14 @@ const declaredFailure = (result: McpSchema.CallToolResult) => {
 };
 
 const parentThreadId = ThreadId.make("thread:mcp-orchestrator-parent");
+const parentAttribution = `[T3 Code: the agent in T3 thread "${parentThreadId}" sent this message, not the user.]\n\n`;
+function fixturePromptBody(message: ProviderAdapter.ProviderAdapterV2TurnInput["message"]) {
+  const note = withMessageSenderNote(message, "");
+  const prefix = `${note}\n\n`;
+  return note !== "" && message.text.startsWith(prefix)
+    ? message.text.slice(prefix.length)
+    : message.text;
+}
 const projectId = ProjectId.make("project:mcp-orchestrator");
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
@@ -328,6 +337,7 @@ function makeDeterministicAdapter(input: {
                   },
                 },
               ]);
+              // Match fixture prompts by body while capturedTurns keeps what the provider received.
               const terminalGate = input.terminalGate?.(turnInput);
               if (terminalGate !== undefined) {
                 yield* Deferred.await(terminalGate);
@@ -575,14 +585,15 @@ describe("orchestrator MCP toolkit", () => {
               },
               capturedTurns,
               shouldComplete: (turn) =>
-                turn.threadId !== parentThreadId && turn.message.text !== cancellationPrompt,
-              terminalGate: (turn) =>
-                turn.message.text.startsWith("Delegated task") ||
-                turn.message.text.startsWith("Delegated tasks")
+                turn.threadId !== parentThreadId &&
+                fixturePromptBody(turn.message) !== cancellationPrompt,
+              terminalGate: (turn) => {
+                const prompt = fixturePromptBody(turn.message);
+                return prompt.startsWith("Delegated task")
                   ? deliveryTerminalGates.get(turn.threadId)
-                  : (parentTerminalGates.get(turn.threadId) ??
-                    promptTerminalGates.get(turn.message.text)),
-              response: (turn) => `Codex completed: ${turn.message.text}`,
+                  : (parentTerminalGates.get(turn.threadId) ?? promptTerminalGates.get(prompt));
+              },
+              response: (turn) => `Codex completed: ${fixturePromptBody(turn.message)}`,
               respondToRuntimeRequest: (response) =>
                 Deferred.succeed(approvalResponse, response).pipe(Effect.asVoid),
             }),
@@ -591,21 +602,20 @@ describe("orchestrator MCP toolkit", () => {
               driver: ProviderDriverKind.make("claudeAgent"),
               capabilities: ClaudeProviderCapabilitiesV2,
               capturedTurns,
-              shouldComplete: (turn) => turn.message.text !== cancellationPrompt,
+              shouldComplete: (turn) => fixturePromptBody(turn.message) !== cancellationPrompt,
               installedSkillsForPreload: () =>
                 Effect.succeed([
                   { name: "cse:review", path: skillPath, scope: "plugin", enabled: true },
                 ]),
               terminalGate: (turn) =>
-                turn.message.text.startsWith("Delegated task") ||
-                turn.message.text.startsWith("Delegated tasks")
+                fixturePromptBody(turn.message).startsWith("Delegated task")
                   ? deliveryTerminalGates.get(turn.threadId)
                   : parentTerminalGates.get(turn.threadId),
-              response: (turn) =>
-                turn.message.text === delegatedPrompt
-                  ? delegatedResult
-                  : `Claude completed: ${turn.message.text}`,
-              steerReceived: (steer) => steerReceivedGates.get(steer.message.text),
+              response: (turn) => {
+                const prompt = fixturePromptBody(turn.message);
+                return prompt === delegatedPrompt ? delegatedResult : `Claude completed: ${prompt}`;
+              },
+              steerReceived: (steer) => steerReceivedGates.get(fixturePromptBody(steer.message)),
             }),
           ]);
           const approvalParentId = ThreadId.make("thread:mcp-approval-parent");
@@ -801,6 +811,7 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
             Layer.provide(
               Layer.mock(ProjectService.ProjectService)({
+                workspaceScanDirectory: Effect.succeed,
                 getById: (id) =>
                   Effect.succeed(
                     id === projectId || id === "project:mcp-foreign"
@@ -2386,7 +2397,7 @@ describe("orchestrator MCP toolkit", () => {
               {
                 instanceId: claudeInstanceId,
                 threadId: delegated.childThreadId,
-                text: delegatedPrompt,
+                text: `${parentAttribution}${delegatedPrompt}`,
                 modelSelection: { ...claudeSelection, options: delegatedOptions },
               },
             ]);
