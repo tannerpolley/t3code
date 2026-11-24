@@ -79,27 +79,26 @@ describe("issuesPageSearchFromUrl", () => {
     ).toMatchObject({ view: "list", who: "assigned", q: "regression" });
   });
 
-  it("clears malformed board scope and issue fields from the matched raw search", () => {
-    const search = canonicalIssuesSearch(
-      "/issues?view=board&repository=true&environmentId=false&number=-1",
-    );
-    expect(search).toMatchObject({
-      view: "board",
-      repository: undefined,
-      environmentId: undefined,
-      number: undefined,
-    });
-  });
+  it.each(["true", "123"])(
+    "clears malformed board text fields with value %s from the matched search",
+    (invalid) => {
+      const search = canonicalIssuesSearch(
+        `/issues?view=board&repository=${invalid}&environmentId=${invalid}&selectedRepository=${invalid}&number=-1`,
+      );
+      expect(search).toMatchObject({
+        view: "board",
+        repository: undefined,
+        environmentId: undefined,
+        selectedRepository: undefined,
+        number: undefined,
+      });
+    },
+  );
 
   it("preserves links to the original list, including tracker issue keys parsed as numbers", () => {
     expect(
-      issuesPageSearchFromUrl({
-        selectedProjectId: "app",
-        tracker: "github",
-        scope: "acme/app",
-        key: 42,
-      }),
-    ).toMatchObject({ view: "list", scope: "acme/app", key: "42" });
+      canonicalIssuesSearch("/issues?selectedProjectId=app&tracker=github&scope=acme%2Fapp&key=42"),
+    ).toMatchObject({ view: "list", selectedProjectId: "app", scope: "acme/app", key: "42" });
     expect(issuesPageSearchFromUrl({ host: "gitlab.com" }).view).toBe("list");
     expect(issuesPageSearchFromUrl({ view: "other" }).view).toBe("board");
   });
