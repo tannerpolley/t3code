@@ -3,7 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
-import { issueFilterProjects, issueListTargets, issuesSearchFromUrl } from "./issuesSearch.logic";
+import {
+  issueFilterProjects,
+  issueListTargets,
+  issuesPageSearchFromUrl,
+  issuesSearchFromUrl,
+  roadmapSearchFromUrl,
+} from "./issuesSearch.logic";
 
 describe("issuesSearchFromUrl", () => {
   it("replaces a malformed filter instead of letting the raw value through", () => {
@@ -26,6 +32,45 @@ describe("issuesSearchFromUrl", () => {
       ["env", "web"],
       ["env", "3"],
     ]);
+  });
+});
+
+describe("issuesPageSearchFromUrl", () => {
+  it("preserves links to the original list, including tracker issue keys parsed as numbers", () => {
+    expect(
+      issuesPageSearchFromUrl({
+        selectedProjectId: "app",
+        tracker: "github",
+        scope: "acme/app",
+        key: 42,
+      }),
+    ).toMatchObject({ view: "list", scope: "acme/app", key: "42" });
+    expect(issuesPageSearchFromUrl({ host: "gitlab.com" }).view).toBe("list");
+    expect(issuesPageSearchFromUrl({ view: "other" }).view).toBeUndefined();
+  });
+
+  it("retains the scope and selection when a legacy roadmap link forces the board", () => {
+    const legacy = roadmapSearchFromUrl({
+      environmentId: "remote",
+      host: "github.com",
+      repository: "acme/app",
+      number: "42",
+      selectedRepository: "acme/other",
+      selectedNumber: 7,
+      issueQuery: "build",
+      originThreadId: "thread",
+    });
+    expect(issuesPageSearchFromUrl({ ...legacy, view: "board" })).toMatchObject({
+      view: "board",
+      environmentId: "remote",
+      host: "github.com",
+      repository: "acme/app",
+      number: 42,
+      selectedRepository: "acme/other",
+      selectedNumber: 7,
+      issueQuery: "build",
+      originThreadId: "thread",
+    });
   });
 });
 

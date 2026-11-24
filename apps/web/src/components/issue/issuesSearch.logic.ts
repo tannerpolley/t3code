@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type IssueListInput,
   type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import type { IssueListTarget } from "@t3tools/client-runtime/state/issues";
@@ -12,9 +13,9 @@ import type { IssueListTarget } from "@t3tools/client-runtime/state/issues";
 import type { IssuesSearch } from "./IssuesPage";
 
 // The router reads a bare `key=42` as a number.
-const bounded = (value: unknown): string | undefined => {
+const bounded = (value: unknown, maxLength = 200): string | undefined => {
   const text = typeof value === "number" ? String(value) : value;
-  return typeof text === "string" && text.trim() ? text.trim().slice(0, 200) : undefined;
+  return typeof text === "string" && text.trim() ? text.trim().slice(0, maxLength) : undefined;
 };
 
 const labels = (raw: unknown): ReadonlyArray<string> | undefined => {
@@ -52,6 +53,69 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
   scope: bounded(raw.scope),
   key: bounded(raw.key),
 });
+
+export interface RoadmapSearch {
+  readonly environmentId?: EnvironmentId;
+  readonly host?: string | undefined;
+  readonly repository?: string;
+  readonly number?: number;
+  readonly issueQuery?: string | undefined;
+  readonly selectedEnvironmentId?: EnvironmentId | undefined;
+  readonly selectedHost?: string | undefined;
+  readonly selectedRepository?: string | undefined;
+  readonly selectedNumber?: number | undefined;
+  readonly originThreadId?: ThreadId | undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  const number =
+    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+
+export function roadmapSearchFromUrl(raw: Record<string, unknown>): RoadmapSearch {
+  const environmentId = bounded(raw.environmentId) as EnvironmentId | undefined;
+  const repository = bounded(raw.repository);
+  const number = optionalNumber(raw.number);
+  return {
+    ...(environmentId === undefined ? {} : { environmentId }),
+    ...(repository === undefined ? {} : { repository }),
+    ...(number === undefined ? {} : { number }),
+    host: bounded(raw.host, 253),
+    issueQuery: bounded(raw.issueQuery),
+    selectedEnvironmentId: bounded(raw.selectedEnvironmentId) as EnvironmentId | undefined,
+    selectedHost: bounded(raw.selectedHost, 253),
+    selectedRepository: bounded(raw.selectedRepository),
+    selectedNumber: optionalNumber(raw.selectedNumber),
+    originThreadId: bounded(raw.originThreadId) as ThreadId | undefined,
+  };
+}
+
+export type IssueView = "board" | "list";
+
+export function issuesPageSearchFromUrl(raw: Record<string, unknown>) {
+  const list = issuesSearchFromUrl(raw);
+  const board = roadmapSearchFromUrl(raw);
+  // Links to the original Issues page have list controls or a tracker-specific selection.
+  const legacyList =
+    raw.who !== undefined ||
+    raw.status !== undefined ||
+    [
+      list.hideProjects,
+      list.host,
+      list.q,
+      list.label,
+      list.assignee,
+      list.order,
+      list.selectedProjectId,
+      list.tracker,
+      list.scope,
+      list.key,
+    ].some((value) => value !== undefined);
+  const view: IssueView | undefined =
+    raw.view === "board" || raw.view === "list" ? raw.view : legacyList ? "list" : undefined;
+  return { ...board, ...list, ...(view === "board" ? board : {}), view };
+}
 
 /**
  * One choice per project: projects on one repository can read different Linear teams. Scratch

@@ -345,7 +345,7 @@ and their marks follow the same rules as on web and desktop.
 
 The roadmap shows a GitHub repository's issues by the state of their work. Use it to start, queue
 and follow agent work on issues. To read and edit issues across all your projects and trackers,
-use the [Issues page](#issues) instead.
+switch to the [List view](#issues).
 
 The roadmap needs a connected environment with GitHub Issues support. It appears in two places:
 
@@ -355,14 +355,12 @@ The roadmap needs a connected environment with GitHub Issues support. It appears
   palette. A thread's details list the same roadmap in a shorter **Issues** section; **Browse all
   issues** there opens the panel. To hide that section, turn off **Issues in thread details** in
   **Settings → Source control & issues → Issue work & branch picker**.
-- **The Roadmap page** covers every repository. Open it with **Open roadmap** in the command
-  palette. It lists the repositories your GitHub account owns and the organization repositories
+- **Board** is the default view on the Issues page. It lists the repositories your GitHub account owns and the organization repositories
   you administer, grouped by owner with your own account first. Repositories you only collaborate
   on, including the upstream of a fork, are left out. Issues load only for a repository that is
   a project in T3 Code; add any other repository as a project to see its issues.
 
-Select an issue to open it in the issue panel, the same one the Issues page uses: in a tab next to
-the Issues panel, or beside the list on the Roadmap page. Its work section holds **Start agent**,
+Select an issue to open it in a tab next to the Issues panel or beside the board. Its work section holds **Start agent**,
 **Add to queue**, **Prepare draft**, the issue's work state, GitHub Project fields, sub-issues,
 blockers, pending decisions and changes. A linked pull request opens in the pull request panel,
 and its back arrow returns to the issue. A link to an issue in one of your projects' repositories
@@ -602,9 +600,11 @@ out from the matching organization and repository.
 
 ## Issues
 
-The Issues page lists the issues of every project whose remote is on GitHub, GitLab, Azure
-DevOps or Forgejo, grouped per tracker account. Choose **Open issues** in the command palette.
-Filter by open or closed, by your involvement (assigned, opened by you, mentioning you), and
+Open **Issues** from the sidebar or choose **Open issues** in the command palette. Switch between
+the GitHub **Board** and the full **List**. T3 Code remembers your choice.
+
+**List** shows the issues of every project whose remote is on GitHub, GitLab, Azure DevOps or
+Forgejo, grouped per tracker account. Filter by open or closed, by your involvement (assigned, opened by you, mentioning you), and
 by tracker. Under **Projects**, uncheck the projects you do not want to see; the list remembers
 them, and a project you add later shows. The search box asks the tracker itself where it can
 search. Press **Load more** at the end of a group to read further back.

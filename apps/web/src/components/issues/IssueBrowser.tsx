@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { LockIcon, PinIcon, PinOffIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
-import { type ReactNode, type Ref, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import {
   repositoryIssueCapabilities,
@@ -31,7 +31,7 @@ import {
   useIssueRepositories,
   type RepositoryIssueListTarget,
 } from "~/state/repositoryIssues";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+import { T } from "gt-react";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -212,10 +212,8 @@ export function IssueBrowser({
   selectedIssue = null,
   onSelectIssue,
   onRefresh,
-  headingRef,
   className,
 }: {
-  /** The page adds a back button and clears the collapsed sidebar's titlebar controls. */
   readonly variant: "page" | "panel";
   readonly repositories: ReturnType<typeof useIssueRepositoryTargets>;
   readonly search: IssueBrowserSearch;
@@ -223,7 +221,6 @@ export function IssueBrowser({
   readonly selectedIssue?: IssueTarget | null;
   readonly onSelectIssue: (target: IssueTarget) => void;
   readonly onRefresh?: () => void;
-  readonly headingRef?: Ref<HTMLHeadingElement>;
   readonly className?: string | undefined;
 }) {
   const {
@@ -762,24 +759,20 @@ export function IssueBrowser({
     </>
   );
 
-  const Heading = variant === "page" ? "h1" : "h2";
   return (
     <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
-      <header
-        className={cn(
-          "@container/issues-header shrink-0 border-b border-border/60 px-4 py-3",
-          variant === "page" && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-        )}
-      >
-        <div className="flex items-center gap-2">
-          <IssueStateIcon issue={{ state: "open" }} />
-          <Heading
-            ref={headingRef}
-            tabIndex={-1}
-            className="min-w-0 flex-1 truncate text-base font-semibold outline-none"
-          >
-            {urlRepository?.repository ?? "Issues"}
-          </Heading>
+      <header className="@container/issues-header shrink-0 border-b border-border/60 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {variant === "panel" ? (
+            <>
+              <IssueStateIcon issue={{ state: "open" }} />
+              <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
+                {urlRepository?.repository ?? <T context="page title, list of issues">Issues</T>}
+              </h2>
+            </>
+          ) : urlRepository ? (
+            <span className="min-w-0 truncate text-sm font-medium">{urlRepository.repository}</span>
+          ) : null}
           {viewerLogins.map((login) => (
             <span
               key={login}

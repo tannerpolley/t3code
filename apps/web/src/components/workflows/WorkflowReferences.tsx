@@ -109,6 +109,7 @@ export function useOpenReferencePage(
           to: "/issues",
           search: {
             ...readIssueListPreferences(),
+            view: "list",
             selectedEnvironmentId: environmentId,
             selectedProjectId: issue.projectId,
             ...(issue.host === undefined ? {} : { selectedHost: issue.host }),

@@ -130,6 +130,13 @@ export function useIssuesSupported() {
   return useAtomValue(environmentSummaries.issuesSupportedAtom);
 }
 
+export function useIssuesWorkspaceSupported() {
+  const configs = useAtomValue(environmentPresentations.serverConfigsAtom);
+  return [...configs.values()].some(
+    ({ environment: { capabilities } }) => capabilities.issues || capabilities.githubIssues,
+  );
+}
+
 export function useEnvironmentMachines() {
   return useAtomValue(environmentSummaries.machineByIdAtom);
 }
