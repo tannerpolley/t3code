@@ -199,6 +199,11 @@ export const layer = Layer.effect(
     const launch = yield* ThreadLaunchService;
     const threads = yield* ThreadManagementService;
     const settings = yield* ServerSettingsService;
+    const handoffThreshold = (projectId: ProjectId) =>
+      Effect.map(settings.getSettings, (current) => {
+        const override = current.projectSettingsOverrides[projectId]?.orchestratorHandoffTokens;
+        return override === undefined ? current.orchestratorHandoffTokens : override;
+      });
     const providers = yield* ProviderRegistry;
     const adapters = yield* ProviderAdapterRegistryV2;
     const ids = yield* IdAllocatorV2;
@@ -693,8 +698,15 @@ export const layer = Layer.effect(
     const repositoryStatus: IssueWorkService["Service"]["repositoryStatus"] = Effect.fn(
       "IssueWorkService.repositoryStatus",
     )(function* (input, options) {
-      const status = yield* readRepositoryStatus(input);
-      if (status.orchestration === null || options?.verifyIdentity === false) return status;
+      const snapshot = yield* readRepositoryStatus(input);
+      if (snapshot.orchestration === null) return snapshot;
+      const threshold = yield* handoffThreshold(snapshot.orchestration.projectId).pipe(
+        Effect.option,
+      );
+      const status = Option.isSome(threshold)
+        ? { ...snapshot, orchestratorHandoffTokens: threshold.value }
+        : snapshot;
+      if (options?.verifyIdentity === false) return status;
       // A host that cannot answer must not hide the registration, so only a successful read can report a mismatch.
       const live = yield* Effect.exit(
         liveIdentity(
@@ -704,11 +716,11 @@ export const layer = Layer.effect(
         ),
       );
       return live._tag === "Success" &&
-        live.value.repositoryId !== status.orchestration.repositoryId
+        live.value.repositoryId !== snapshot.orchestration.repositoryId
         ? {
             ...status,
             idMismatch: {
-              registeredRepositoryId: status.orchestration.repositoryId,
+              registeredRepositoryId: snapshot.orchestration.repositoryId,
               liveRepositoryId: live.value.repositoryId,
             },
           }
@@ -1140,11 +1152,7 @@ export const layer = Layer.effect(
           repositoryPhase(config) === "retired"
         )
           return;
-        const readThreshold = Effect.map(settings.getSettings, (current) => {
-          const override =
-            current.projectSettingsOverrides[config.projectId]?.orchestratorHandoffTokens;
-          return override === undefined ? current.orchestratorHandoffTokens : override;
-        });
+        const readThreshold = handoffThreshold(config.projectId);
         const attempt = config.automaticHandoff;
         const targetId = automaticHandoffThreadId(rootThreadId);
         let automatic: NonNullable<
@@ -2309,7 +2317,13 @@ export const layer = Layer.effect(
           if (now < nextReadAt) return;
           nextReadAt = now + 60_000;
           for (const root of yield* store.handoffRoots()) yield* considerAutomaticHandoff(root);
-          for (const root of yield* store.activeRoots()) yield* reconcile(root);
+          for (const root of yield* store.activeRoots()) {
+            yield* reconcile(root).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Repository reconcile failed", { root, cause }),
+              ),
+            );
+          }
         }),
       );
     }

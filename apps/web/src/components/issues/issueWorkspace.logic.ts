@@ -250,11 +250,12 @@ export function repositoryWorkStatus(
     };
   const phase = repositoryPhase(config);
   const suspended = config.suspendedIssues.length;
-  if (phase === "draining" || phase === "handoff_verifying")
+  if (
+    phase === "draining" ||
+    phase === "handoff_verifying" ||
+    phase === "handoff_awaiting_approval"
+  )
     return { label: "Handing off", needsAttention: true };
-  // A handoff request keeps the existing pause, so a waiting handoff must outrank Paused.
-  if (phase === "handoff_awaiting_approval")
-    return { label: "Handoff awaiting approval", needsAttention: true };
   if (config.paused) return { label: "Paused", needsAttention: true };
   if (suspended > 0)
     return {

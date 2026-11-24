@@ -202,10 +202,9 @@
   "9a177023bb38a981": "Beantwortet Freigaben",
   "9f7af9830925ca2c": "Erlaubt diesem Agenten, Befehlsfreigaben in Threads, die er gestartet hat, und deren Subagenten anzunehmen oder abzulehnen. Fragen kann er immer beantworten.",
   "9be5b8420ee64ec7": "Übergabe an {target} wird abgeschlossen",
-  "e05b2595e2c7c313": "Übergabe an {target} wartet auf Freigabe",
+  "f94e61808bdaa986": "Übergabe an {target} steht aus",
   "c1303d131afc6a17": "Älter als ein Tag",
   "00ad8aeed0a6c461": "Abbrechen",
-  "ac48cc297029db41": "Freigeben",
   "97144d3a3218d931": "T3 startet keine neuen Issues, bis die laufende Arbeit abgeschlossen ist, und übergibt dann an einen neuen Thread.",
   "9a73e6f99e93612a": "Übergabe starten"
 }

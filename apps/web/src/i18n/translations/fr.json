@@ -202,10 +202,9 @@
   "9a177023bb38a981": "Répond aux approbations",
   "9f7af9830925ca2c": "Permet à cet agent d'accepter ou de refuser les approbations de commandes dans les fils qu'il a lancés et leurs sous-agents. Il peut toujours répondre aux questions.",
   "9be5b8420ee64ec7": "Le transfert vers {target} est en cours de finalisation",
-  "e05b2595e2c7c313": "Le transfert vers {target} attend une approbation",
+  "f94e61808bdaa986": "Le passage de relais à {target} est en attente",
   "c1303d131afc6a17": "Plus d'un jour",
   "00ad8aeed0a6c461": "Annuler",
-  "ac48cc297029db41": "Approuver",
   "97144d3a3218d931": "T3 suspend le démarrage de nouvelles tâches liées aux tickets le temps que le travail en cours se termine, puis passe le relais à un nouveau fil.",
   "9a73e6f99e93612a": "Passer le relais"
 }
