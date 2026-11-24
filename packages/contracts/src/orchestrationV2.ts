@@ -4572,6 +4572,7 @@ export type OrchestrationV2ServerCommand = (
   readonly archiveDelegatedWorker?: true;
   readonly workerArchiveSequence?: number;
   readonly workerDeleteArchivedAt?: DateTime.Utc;
+  readonly handoffDeleteArchivedAt?: DateTime.Utc;
   /** Completion read outside the lock, valid for the worker's checked event sequence. */
   readonly workerCompletedAt?: number;
 };

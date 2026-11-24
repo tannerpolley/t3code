@@ -21,6 +21,7 @@ import { useGT } from "gt-react";
 import { useState } from "react";
 import { useServerConfigs, useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
+import { orchestrationEnvironment } from "~/state/orchestration";
 import { repositoryIssueEnvironment } from "~/state/repositoryIssues";
 import { useEnvironmentQuery, formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -394,21 +395,12 @@ function RepositoryControls({
                     </MenuItem>
                   ) : null}
                   {config.handoffHistory?.length ? (
-                    <>
-                      {canHandOff ? <MenuSeparator /> : null}
-                      <MenuGroup>
-                        <MenuGroupLabel>Previous orchestrators</MenuGroupLabel>
-                        {config.handoffHistory.map((entry) => (
-                          <PreviousRootItem
-                            key={entry.threadId}
-                            environmentId={environmentId}
-                            threadId={entry.threadId}
-                            transferredAt={entry.transferredAt}
-                            onOpen={openRoot}
-                          />
-                        ))}
-                      </MenuGroup>
-                    </>
+                    <PreviousRootsMenu
+                      environmentId={environmentId}
+                      history={config.handoffHistory}
+                      separator={canHandOff}
+                      onOpen={openRoot}
+                    />
                   ) : null}
                 </MenuPopup>
               </Menu>
@@ -632,25 +624,39 @@ function PendingHandoffLine({
   );
 }
 
-/** A menu entry per earlier orchestrator, named by its thread title once loaded. */
-function PreviousRootItem({
+function PreviousRootsMenu({
   environmentId,
-  threadId,
-  transferredAt,
+  history,
+  separator,
   onOpen,
 }: {
   environmentId: EnvironmentId;
-  threadId: ThreadId;
-  transferredAt: string;
+  history: NonNullable<RepositoryOrchestration["handoffHistory"]>;
+  separator: boolean;
   onOpen: (threadId: ThreadId) => void;
 }) {
-  const thread = useThreadShell(scopeThreadRef(environmentId, threadId));
+  const { data } = useEnvironmentQuery(
+    orchestrationEnvironment.threadTitles({
+      environmentId,
+      input: { threadIds: history.map(({ threadId }) => threadId) },
+    }),
+  );
+  const previous = data == null ? history : history.filter(({ threadId }) => data[threadId]);
+  if (previous.length === 0) return null;
   return (
-    <MenuItem onClick={() => onOpen(threadId)}>
-      <span className="min-w-0 flex-1 truncate">{thread?.title ?? threadId}</span>
-      <span className="shrink-0 text-muted-foreground">
-        <RelativeTime timestamp={transferredAt} />
-      </span>
-    </MenuItem>
+    <>
+      {separator ? <MenuSeparator /> : null}
+      <MenuGroup>
+        <MenuGroupLabel>Previous orchestrators</MenuGroupLabel>
+        {previous.map(({ threadId, transferredAt }) => (
+          <MenuItem key={threadId} onClick={() => onOpen(threadId)}>
+            <span className="min-w-0 flex-1 truncate">{data?.[threadId] ?? threadId}</span>
+            <span className="shrink-0 text-muted-foreground">
+              <RelativeTime timestamp={transferredAt} />
+            </span>
+          </MenuItem>
+        ))}
+      </MenuGroup>
+    </>
   );
 }

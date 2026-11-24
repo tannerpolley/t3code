@@ -218,10 +218,33 @@ const make = Effect.gen(function* () {
     const now = yield* DateTime.now;
     const dueBy = DateTime.toEpochMillis(now) - ARCHIVE_REMINDER_GRACE_MS;
     const finished = yield* finishedWorkers(projections, now);
+    if (finished.size === 0) return;
+    const handedOff = new Set(
+      (yield* projections.getArchivedHandoffSources(now)).map(({ threadId }) => threadId),
+    );
 
     const parents = new Map<ThreadId, ThreadId | null>();
     const byRecipient = new Map<ThreadId, ReminderChild[]>();
     for (const worker of finished.values()) {
+      // The archived source persists the handoff even if the initial child cleanup was interrupted.
+      if (handedOff.has(worker.lineage.rootThreadId)) {
+        yield* orchestrator
+          .dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make(`worker-retention:handoff:${yield* random.uuidV4()}`),
+            threadId: worker.id,
+            archiveDelegatedWorker: true,
+          })
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not resume handoff worker archive", {
+                threadId: worker.id,
+                cause,
+              }),
+            ),
+          );
+        continue;
+      }
       if (worker.workerResult === undefined || worker.workerResult.availableAt > dueBy) continue;
       const recipient = yield* reminderRecipient(
         projections,
@@ -279,9 +302,22 @@ const make = Effect.gen(function* () {
     const { archivedWorkerRetentionDays } = yield* settings.getSettings;
     if (archivedWorkerRetentionDays === null) return;
     const now = yield* DateTime.now;
+    const archivedBefore = DateTime.subtract(now, { days: archivedWorkerRetentionDays });
+    if (afterThreadId === undefined) {
+      for (const { threadId, archivedAt } of yield* projections.getArchivedHandoffSources(
+        archivedBefore,
+      )) {
+        yield* orchestrator.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make(`worker-retention:orchestrator:${yield* random.uuidV4()}`),
+          threadId,
+          handoffDeleteArchivedAt: archivedAt,
+        });
+      }
+    }
     const workers = yield* projections.getSettlementCandidates(undefined, {
       ...(afterThreadId === undefined ? {} : { afterThreadId }),
-      archivedBefore: DateTime.subtract(now, { days: archivedWorkerRetentionDays }),
+      archivedBefore,
     });
     const discoverBranch = yield* branchDiscovery.forPass(true);
     // A reopened issue must not authorize deletion through a cached closed state.

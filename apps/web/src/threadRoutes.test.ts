@@ -7,7 +7,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
-import { ThreadId } from "@t3tools/contracts";
+import { CommandId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { linkedThreadRouteParams } from "./linkedThreadSurface";
@@ -265,5 +265,44 @@ describe("threadRoutes", () => {
         draftThreadExists: false,
       }),
     ).toBe("loading");
+  });
+
+  it("opens archived repository history until the predecessor is deleted", () => {
+    const projection = makeThreadProjectionFixture();
+    const archivedAt = DateTime.makeUnsafe("2026-01-02T00:00:00Z");
+    const thread = {
+      ...projection.thread,
+      archivedAt,
+      repositoryOrchestration: {
+        projectId: projection.thread.projectId,
+        host: "github.com",
+        repository: "owner/project",
+        repositoryId: "repository",
+        launchCommandId: CommandId.make("launch"),
+        revision: 1,
+        paused: false,
+        workerLimit: 1,
+        readOnlyLimit: 1,
+        publishStatusComments: false,
+        publishCloseoutComments: false,
+        milestones: [],
+        suspendedIssues: [],
+        retiredToThreadId: ThreadId.make("successor"),
+      },
+    };
+    const state = (deletedAt: typeof thread.deletedAt) =>
+      resolveThreadRouteRenderState({
+        bootstrapComplete: true,
+        serverThreadExists: false,
+        serverThreadDeleted: false,
+        draftThreadExists: false,
+        unlistedThreadDetail: {
+          ...EMPTY_ENVIRONMENT_THREAD_STATE,
+          status: "live",
+          data: Option.some({ ...projection, thread: { ...thread, deletedAt } }),
+        },
+      });
+    expect(state(null)).toBe("ready");
+    expect(state(archivedAt)).toBe("missing");
   });
 });

@@ -17308,6 +17308,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
             return { events: [], effects: [] };
         }
+        if (command.handoffDeleteArchivedAt !== undefined) {
+          const { archivedWorkerRetentionDays } = yield* serverSettings.getSettings.pipe(
+            mapDispatchError(command),
+          );
+          if (archivedWorkerRetentionDays === null || sideChatIds.length > 0) {
+            return { events: [], effects: [] };
+          }
+          const [source] = yield* projectionStore
+            .getArchivedHandoffSources(
+              DateTime.subtract(now, { days: archivedWorkerRetentionDays }),
+              command.threadId,
+            )
+            .pipe(mapDispatchError(command));
+          if (
+            source === undefined ||
+            DateTime.toEpochMillis(source.archivedAt) !==
+              DateTime.toEpochMillis(command.handoffDeleteArchivedAt) ||
+            (Option.isSome(issueWorkStore) &&
+              (!(yield* issueWorkStore.value
+                .subtreeDrained(source.threadId)
+                .pipe(mapDispatchError(command))) ||
+                !(yield* issueWorkStore.value
+                  .handoffSafe(source.threadId)
+                  .pipe(mapDispatchError(command))))) ||
+            (yield* finishedWorkers(projectionStore, now, source.threadId).pipe(
+              mapDispatchError(command),
+            )).size > 0
+          )
+            return { events: [], effects: [] };
+        }
         // Checked under the thread lock: a message sent since the client looked keeps the thread.
         if (command.onlyIfUnused === true) {
           const usage = yield* projectionStore
@@ -17899,7 +17929,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             // Closing a share again, or after it ended, is not an error.
             command.type === "thread.guest-share.close" ||
             (command.type === "thread.delete" &&
-              (command.onlyIfUnused === true || command.workerDeleteArchivedAt !== undefined)),
+              (command.onlyIfUnused === true ||
+                command.workerDeleteArchivedAt !== undefined ||
+                command.handoffDeleteArchivedAt !== undefined)),
           (_planned) =>
             new OrchestratorDispatchError({
               commandId: command.commandId,

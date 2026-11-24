@@ -487,7 +487,7 @@ export default function ChatView(props: ChatViewProps) {
   } = props;
   const embedded = parentPanel !== undefined;
   const panelHostShell = useQuietThreadShell(parentPanel?.hostRef ?? null);
-  const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const hasThreadOperateScope = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
@@ -547,6 +547,9 @@ export default function ChatView(props: ChatViewProps) {
   });
   const serverThreadProjection = useQuietThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  const archivedAt =
+    serverThreadShell === null ? serverProjection?.thread.archivedAt : serverThreadShell.archivedAt;
+  const canOperateThread = hasThreadOperateScope && archivedAt == null;
   // Only the shell-less fallback needs these; with a shell, the shell carries them.
   const fallbackDetailRef = serverThreadShell === null ? routeThreadDetailRef : null;
   const fallbackUpdatedAt = useThreadUpdatedAt(fallbackDetailRef);
@@ -1909,7 +1912,7 @@ export default function ChatView(props: ChatViewProps) {
     turnDiffSummaries.some((summary) => summary.repositories !== undefined);
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
-  const composerMounted = !showProviderSubagentBar;
+  const composerMounted = !showProviderSubagentBar && archivedAt == null;
   const providerSubagentModels = selectedProviderEntry?.models ?? EMPTY_PROVIDER_MODELS;
   // Providers can report dated model ids or aliases.
   const providerSubagentModelSlug = selectedProviderEntry

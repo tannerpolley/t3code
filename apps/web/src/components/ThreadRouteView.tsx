@@ -26,6 +26,7 @@ import { useEnvironmentShellStatus } from "../state/shell";
 import { environmentThreadShells, threadFamilies, useEnvironmentThread } from "../state/threads";
 import {
   buildThreadRouteParams,
+  isArchivedRepositoryPredecessor,
   isThreadRouteSnapshotAuthoritative,
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
@@ -117,6 +118,8 @@ export function ThreadRouteView({
   useOpenThreadPath(serverThreadRef, bootstrapComplete && unlistedThreadRef !== null);
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
+  const viewingPredecessor =
+    unlistedThread !== null && isArchivedRepositoryPredecessor(unlistedThread);
   const unlistedParentKey =
     unlistedThreadRef === null || unlistedThread === null
       ? null
@@ -132,6 +135,7 @@ export function ThreadRouteView({
   const offShellBlocked =
     hidingAnywhere &&
     unlistedThreadRef !== null &&
+    !viewingPredecessor &&
     !(
       unlistedParentKey !== null &&
       unlistedParentShell !== null &&

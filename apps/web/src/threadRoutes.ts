@@ -1,7 +1,12 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2AppThread,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import type { DraftId } from "./composerDraftStore";
 
@@ -27,6 +32,12 @@ export function isThreadRouteSnapshotAuthoritative(
   status: EnvironmentShellStatus | null | undefined,
 ): boolean {
   return status === "live";
+}
+
+export function isArchivedRepositoryPredecessor(
+  thread: Pick<OrchestrationV2AppThread, "archivedAt" | "repositoryOrchestration">,
+): boolean {
+  return thread.archivedAt !== null && thread.repositoryOrchestration?.retiredToThreadId != null;
 }
 
 export function resolveThreadRouteRenderState(input: {
@@ -55,7 +66,8 @@ export function resolveThreadRouteRenderState(input: {
   if (projection === null) {
     return "loading";
   }
-  return projection.thread.deletedAt !== null || projection.thread.archivedAt !== null
+  return projection.thread.deletedAt !== null ||
+    (projection.thread.archivedAt !== null && !isArchivedRepositoryPredecessor(projection.thread))
     ? "missing"
     : "ready";
 }

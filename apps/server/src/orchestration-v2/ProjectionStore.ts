@@ -815,6 +815,13 @@ export interface ProjectionStoreV2Shape {
     threadId?: ThreadId,
     workers?: WorkerRetentionPage,
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
+  readonly getArchivedHandoffSources: (
+    archivedBefore: DateTime.Utc,
+    threadId?: ThreadId,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly archivedAt: DateTime.Utc }>,
+    ProjectionStoreV2Error
+  >;
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
     options?: { readonly includeArchived?: boolean },
@@ -9678,6 +9685,29 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     END`;
     };
 
+    const getArchivedHandoffSources: ProjectionStoreV2Shape["getArchivedHandoffSources"] =
+      Effect.fn("ProjectionStore.getArchivedHandoffSources")((archivedBefore, threadId) =>
+        sql<{ thread_id: ThreadId; archived_at: string }>`
+          SELECT thread_id, archived_at FROM orchestration_v2_projection_threads
+          WHERE deleted_at IS NULL AND archived_at <= ${DateTime.formatIso(archivedBefore)}
+            AND json_extract(payload_json, '$.role') = 'orchestrator'
+            AND json_extract(payload_json, '$.lineage.rootThreadId') = thread_id
+            AND json_extract(payload_json, '$.lineage.parentThreadId') IS NULL
+            AND json_extract(payload_json, '$.repositoryOrchestration.retiredToThreadId') =
+                json_extract(payload_json, '$.handoffToThreadId')
+            ${threadId === undefined ? sql`` : sql`AND thread_id = ${threadId}`}
+          ORDER BY thread_id
+        `.pipe(
+          Effect.map((rows) =>
+            rows.map((row) => ({
+              threadId: row.thread_id,
+              archivedAt: DateTime.makeUnsafe(row.archived_at),
+            })),
+          ),
+          Effect.mapError(controlReadError(threadId ?? ThreadId.make("thread:handoff-retention"))),
+        ),
+      );
+
     const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (
       threadId,
       workers,
@@ -11173,6 +11203,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread: readOnReader(getThread),
       findThread: readOnReader(findThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
+      getArchivedHandoffSources: readOnReader(getArchivedHandoffSources),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
       getThreadLinkMetadata: readOnReader(getThreadLinkMetadata),
