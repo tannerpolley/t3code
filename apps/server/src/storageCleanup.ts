@@ -1568,14 +1568,16 @@ const make = Effect.gen(function* () {
                     });
                   yield* engine.dispatch({
                     type: "thread.metadata.update",
+                    // Skip rejected receipts from before archived slot releases were allowed.
                     commandId: CommandId.make(
-                      `storage-cleanup:release-slot:${member.id}:${member.branch}:${DateTime.toEpochMillis(member.updatedAt)}`,
+                      `storage-cleanup:release-slot:v2:${member.id}:${member.branch}:${DateTime.toEpochMillis(member.updatedAt)}`,
                     ),
                     threadId: member.id,
                     expectedWorktreePath: member.worktreePath,
                     expectedBranch: member.branch,
                     worktreePath: null,
                     branch: explicit ? member.branch : null,
+                    releaseIssueWorktreeSlot: true,
                   });
                 }
               }),
