@@ -1929,22 +1929,14 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
       assert.equal(cohort?.nextGeneration, delivery.generation + 2);
       assert.deepEqual(cohort?.delivery, successor);
       assert.deepEqual(
-        delivered.messages
-          .filter((message) => message.delegatedCompletion?.parentRunId === originRunId)
-          .map((message) => [message.id, message.delegatedCompletion]),
+        delivered.messages.flatMap(({ id, delegatedCompletion }) =>
+          delegatedCompletion?.parentRunId === originRunId
+            ? [[id, delegatedCompletion.generation, delegatedCompletion.taskIds]]
+            : [],
+        ),
         [
-          [
-            delivery.messageId,
-            {
-              parentRunId: originRunId,
-              generation: delivery.generation,
-              taskIds: [incomingTaskId],
-            },
-          ],
-          [
-            successor!.messageId,
-            { parentRunId: originRunId, generation: successor!.generation, taskIds: [sibling.id] },
-          ],
+          [delivery.messageId, delivery.generation, [incomingTaskId]],
+          [successor!.messageId, successor!.generation, [sibling.id]],
         ],
       );
       const successorRuns = delivered.runs.filter(
