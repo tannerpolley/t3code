@@ -580,10 +580,12 @@ function PdfViewerContent(props: PdfViewerProps) {
           <ScanIcon className="size-3.5" />
         </FileSurfaceAction>
         <div className="w-28">
+          {/* Native search inputs clear on Escape even during IME composition. */}
           <Input
             ref={find}
             size="compact"
-            type="search"
+            type="text"
+            role="searchbox"
             aria-label={gt("Find in PDF")}
             placeholder={gt("Find in PDF")}
             value={query}
@@ -591,6 +593,13 @@ function PdfViewerContent(props: PdfViewerProps) {
               setQuery(event.target.value);
               setMatches([]);
               setFindError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+                return;
+              if (!query && !event.repeat) return;
+              event.stopPropagation();
+              setQuery("");
             }}
           />
         </div>
