@@ -121,7 +121,7 @@ test(
       await dialog.getByPlaceholder("PAIRCODE").fill(token);
       await dialog.getByRole("button", "Add environment").tap();
       await screen.getByRole("button", "More actions for Scenario").waitFor({ timeout: 60_000 });
-      await app.open("/issues");
+      await app.open("/issues?view=list");
 
       await screen.getByText("Before refresh", { exact: true }).waitFor({ timeout: 60_000 });
       await screen.getByText("Issue from the linked environment", { exact: true }).waitFor();

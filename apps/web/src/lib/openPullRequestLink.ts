@@ -132,6 +132,7 @@ export function useOpenChangeRequestLink(
         // The pull request list keeps its selection in the URL; the Issues page's panel does not.
         if (resolvedPanelRef === PULL_REQUESTS_PANEL_REF) {
           void navigate({
+            from: "/pull-requests",
             to: "/pull-requests",
             search: (previous) => ({
               ...previous,

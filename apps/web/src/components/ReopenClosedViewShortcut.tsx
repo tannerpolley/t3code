@@ -172,7 +172,9 @@ export function ReopenClosedViewShortcut() {
       destination = linkOptions({
         to: "/issues",
         search:
-          selected?.kind === "pull-request"
+          selected?.kind === "pull-request" ||
+          (selected?.kind === "issue" &&
+            (selected.tracker !== "github" || selected.environmentId === undefined))
             ? { ...readIssueListPreferences(), view: "list" }
             : readIssuesSearch(),
       });

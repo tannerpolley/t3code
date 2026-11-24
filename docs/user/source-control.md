@@ -369,14 +369,14 @@ on a branch named after the issue, with an unsent prompt. You can also drag an i
 composer, or type `#` there, to reference it in chat.
 
 Use **Filter** to choose what is shown: open and closed issues, assignment, and how issues are
-sorted. On the Roadmap page it also chooses among archived, forked, empty, public, private,
+sorted. In the Board view it also chooses among archived, forked, empty, public, private,
 personal and organization repositories. Open issues are shown by default, with archived, forked
 and empty repositories hidden. Filter choices are remembered in that browser. The search box
 matches issue numbers, titles and other issue details. The roadmap updates by itself when T3
 Code changes an issue or its work, and within a few minutes of a change made on GitHub;
 **Refresh** reads it again at once.
 
-To keep one repository visible on the Roadmap page while its kind is hidden, such as a single
+To keep one repository visible on the Board while its kind is hidden, such as a single
 fork, show it once, then use the pin button on its row. A pinned repository ignores the
 repository filters but still follows the issue filters and search. Pins are remembered with your
 filter choices.
@@ -426,7 +426,7 @@ Archiving or deleting an idle orchestrator thread also ends orchestration; live 
 To run issue work, open an issue, choose **Start agent**, then a model role and the
 matching repository project. Use a model role with an available Codex or Claude target.
 **Start agent on issue…** in the command palette opens the Issues panel for the current
-repository, or the Roadmap page when there is no current repository.
+repository, or the Board view on the Issues page when there is no current repository.
 If no repository orchestrator is registered, choose an existing lead in the matching project or
 explicitly choose **Create first orchestrator**. When you open issues beside a thread, its lead
 is selected for you. A thread becomes the repository orchestrator only from the main checkout on the
@@ -649,6 +649,6 @@ even when its changes look independent. Stack actions require an environment tha
 
 ## Owner decisions
 
-When Don't ask mode is on, agents can request a decision on a GitHub issue or pull request instead of asking you in the thread, with two to four choices, a recommendation, evidence, and the consequence of each choice. Open **Decisions** on the Roadmap page, a thread's Issues panel, or the Pull requests page, or answer from the issue or pull request detail. The all-projects view gathers decisions from connected environments and warns when an environment is unavailable.
+When Don't ask mode is on, agents can request a decision on a GitHub issue or pull request instead of asking you in the thread, with two to four choices, a recommendation, evidence, and the consequence of each choice. Open **Decisions** in the Board view on the Issues page, a thread's Issues panel, or the Pull requests page, or answer from the issue or pull request detail. The all-projects view gathers decisions from connected environments and warns when an environment is unavailable.
 
 Only T3's signed-in owner interface accepts a choice. Agents and Ask mode cannot choose. T3 records the choice in a GitHub comment, then notifies the requesting thread. Temporary publication or delivery failures retry automatically. Comment mismatches and unavailable requesters without a successor stay visible and stop retrying. While Ask mode is on, agents ask you with their question tool and T3 refuses new decision requests; decisions already open stay available. A decision does not approve a separate issue-change preview. This identity guarantee uses the owner login boundary: it cannot prove a physical person clicked if someone else has the owner's credentials.

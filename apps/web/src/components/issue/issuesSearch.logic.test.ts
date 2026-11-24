@@ -1,3 +1,9 @@
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
@@ -35,7 +41,56 @@ describe("issuesSearchFromUrl", () => {
   });
 });
 
+function canonicalIssuesSearch(
+  initialUrl: string,
+  preferred?: Parameters<typeof issuesPageSearchFromUrl>[1],
+) {
+  const rootRoute = createRootRoute();
+  const issuesRoute = createRoute({
+    path: "/issues",
+    getParentRoute: () => rootRoute,
+    validateSearch: (raw: Record<string, unknown>) => issuesPageSearchFromUrl(raw, preferred),
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([issuesRoute]),
+    history: createMemoryHistory({ initialEntries: [initialUrl] }),
+  });
+  const canonicalLocation = router.buildLocation({
+    to: "/issues",
+    search: true,
+    _includeValidateSearch: true,
+  });
+  return router.matchRoutes(canonicalLocation).at(-1)?.search;
+}
+
 describe("issuesPageSearchFromUrl", () => {
+  it("keeps the default and saved view through the router's initial URL normalization", () => {
+    expect(canonicalIssuesSearch("/issues")).toMatchObject({ view: "board" });
+    expect(canonicalIssuesSearch("/issues", () => ({ view: "board" }))).toMatchObject({
+      view: "board",
+    });
+    expect(
+      canonicalIssuesSearch("/issues", () => ({
+        view: "list",
+        who: "assigned",
+        status: "open",
+        q: "regression",
+      })),
+    ).toMatchObject({ view: "list", who: "assigned", q: "regression" });
+  });
+
+  it("clears malformed board scope and issue fields from the matched raw search", () => {
+    const search = canonicalIssuesSearch(
+      "/issues?view=board&repository=true&environmentId=false&number=-1",
+    );
+    expect(search).toMatchObject({
+      view: "board",
+      repository: undefined,
+      environmentId: undefined,
+      number: undefined,
+    });
+  });
+
   it("preserves links to the original list, including tracker issue keys parsed as numbers", () => {
     expect(
       issuesPageSearchFromUrl({
@@ -46,7 +101,7 @@ describe("issuesPageSearchFromUrl", () => {
       }),
     ).toMatchObject({ view: "list", scope: "acme/app", key: "42" });
     expect(issuesPageSearchFromUrl({ host: "gitlab.com" }).view).toBe("list");
-    expect(issuesPageSearchFromUrl({ view: "other" }).view).toBeUndefined();
+    expect(issuesPageSearchFromUrl({ view: "other" }).view).toBe("board");
   });
 
   it("retains the scope and selection when a legacy roadmap link forces the board", () => {
