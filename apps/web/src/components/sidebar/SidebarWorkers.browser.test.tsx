@@ -35,14 +35,19 @@ vi.mock(import("../../state/threads"), async (original) => {
   const pagingFixture = Atom.family((key: string) => {
     const [, parentId] = JSON.parse(key) as [string, string];
     const growing = parentId === "Growing parent";
-    const count = Atom.make(1);
+    const visible = Atom.make(1);
+    const count = Atom.writable(
+      (get) => get(visible),
+      (ctx, input: { readonly showMore: boolean }) => {
+        if (input.showMore) ctx.set(visible, ctx.get(visible) + 1);
+      },
+    );
     const rows = Atom.make(
       growing ? [{ snapshotSequence: 1, threads: [], remainingWorkers: 0 }] : [page],
     );
     const failed = Atom.make(AsyncResult.initial<never, never>());
     return {
       count,
-      nestedPageCount: Atom.make(1),
       rows,
       state: Atom.make((get) => ({
         generation: 1,

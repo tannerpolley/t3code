@@ -242,7 +242,7 @@ describe("createThreadFamilyAtoms", () => {
       releaseFamily();
 
       const key = JSON.stringify([TARGET.environmentId, parent.id]);
-      const { count, nestedPageCount, state, rows } = families.workerPages(key);
+      const { count, state, rows } = families.workerPages(key);
       families.mountRows(registry, TARGET.environmentId, key, rows);
       const whenSettled = AtomRegistry.toStream(registry, state).pipe(
         Stream.filter((result) => !result.waiting),
@@ -261,7 +261,7 @@ describe("createThreadFamilyAtoms", () => {
         }),
       );
       expect((yield* whenSettled).pages).toHaveLength(1);
-      registry.set(nestedPageCount, 2);
+      registry.set(count, { through: 2, showMore: false });
       expect((yield* Queue.take(workerRequests)).workers).toEqual({ before: cursor });
       expect(mergedIds()).toEqual(["parent", "idle-child"]);
       yield* Queue.offer(
@@ -282,8 +282,6 @@ describe("createThreadFamilyAtoms", () => {
       expect((yield* whenSettled).pages).toHaveLength(2);
       expect(mergedIds()).toEqual(["parent", "idle-child", "unseen"]);
       expect(registry.get(count)).toBe(1);
-      registry.set(count, 2);
-      expect(registry.get(state).pages).toHaveLength(2);
 
       registry.set(
         shellState,
@@ -326,9 +324,37 @@ describe("createThreadFamilyAtoms", () => {
       expect((yield* Queue.take(workerRequests)).workers).toEqual({});
       yield* Queue.offer(
         replies,
-        Effect.succeed({ snapshotSequence: 7, threads: [child], remainingWorkers: 0 }),
+        Effect.succeed({
+          snapshotSequence: 7,
+          threads: [child],
+          nextWorkerPage: cursor,
+          remainingWorkers: 2,
+        }),
       );
-      expect((yield* whenSettled).pages[0]?.snapshotSequence).toBe(7);
+      expect((yield* Queue.take(workerRequests)).workers).toEqual({ before: cursor });
+      const secondCursor = { threadId: restored.id, createdAt: "2026-09-30T00:00:00.000Z" };
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({
+          snapshotSequence: 7,
+          threads: [restored],
+          nextWorkerPage: secondCursor,
+          remainingWorkers: 1,
+        }),
+      );
+      expect((yield* whenSettled).pages).toHaveLength(2);
+      expect(registry.get(count)).toBe(1);
+      registry.set(count, { through: 3, showMore: true });
+      expect(registry.get(state).waiting).toBe(true);
+      expect((yield* Queue.take(workerRequests)).workers).toEqual({ before: secondCursor });
+      const older = row("older");
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({ snapshotSequence: 7, threads: [older], remainingWorkers: 0 }),
+      );
+      expect((yield* whenSettled).pages).toHaveLength(3);
+      expect(mergedIds()).toEqual(["parent", "restored", "idle-child", "older"]);
+      expect(registry.get(count)).toBe(2);
     }),
   );
 });
