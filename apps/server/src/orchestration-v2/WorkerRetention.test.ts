@@ -467,6 +467,73 @@ it.effect("archives only eligible children and keeps restored children active", 
   }).pipe(Effect.provide(layerRetention)),
 );
 
+it.effect(
+  "recovers worker archives for a completed handoff and expires its source at the cutoff",
+  () =>
+    Effect.gen(function* () {
+      const { service, projections, sink, parent, seed, recordTask } = yield* makeFixture();
+      const archivedAt = yield* DateTime.now;
+      const successor = ThreadId.make("successor");
+      const repositoryOrchestration = {
+        projectId,
+        host: "github.com",
+        repository: "owner/project",
+        repositoryId: "repo",
+        launchCommandId: CommandId.make("launch"),
+        revision: 1,
+        paused: false,
+        workerLimit: 1,
+        readOnlyLimit: 1,
+        publishStatusComments: false,
+        publishCloseoutComments: false,
+        milestones: [],
+        suspendedIssues: [],
+        retiredToThreadId: successor,
+      };
+      const archiveRoot = Effect.fnUntraced(function* (id: ThreadId, handedOff: boolean) {
+        yield* seed(id, "open", {
+          role: "orchestrator",
+          lineage: { rootThreadId: id, parentThreadId: null, relationshipToParent: null },
+        });
+        const thread = yield* projections.getThread(id);
+        yield* sink.write({
+          events: [
+            {
+              type: "thread.archived",
+              id: EventId.make(`archived:${id}`),
+              threadId: id,
+              occurredAt: archivedAt,
+              payload: {
+                ...thread,
+                archivedAt,
+                repositoryOrchestration,
+                ...(handedOff ? { handoffToThreadId: successor } : {}),
+              },
+            },
+          ],
+        });
+      });
+      yield* archiveRoot(parent, true);
+      const replacement = ThreadId.make("archived-after-restore");
+      yield* archiveRoot(replacement, false);
+      const worker = yield* seed("finished-child", "open");
+      const pinned = yield* seed("pinned-child", "open", { pinnedAt: archivedAt });
+      yield* recordTask(parent, worker, "delivered");
+      yield* recordTask(parent, pinned, "delivered");
+
+      yield* service.remindMissedArchives();
+      assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
+      assert.isNull((yield* projections.getThread(pinned)).archivedAt);
+      yield* TestClock.adjust("13 days");
+      yield* service.removeExpired();
+      assert.isNull((yield* projections.getThread(parent)).deletedAt);
+      yield* TestClock.adjust("1 day");
+      yield* service.removeExpired();
+      assert.isNotNull((yield* projections.getThread(parent)).deletedAt);
+      assert.isNull((yield* projections.getThread(replacement)).deletedAt);
+    }).pipe(Effect.provide(layerRetention)),
+);
+
 it.effect("archives during the running result wake and leaves the worker’s side chat active", () =>
   Effect.gen(function* () {
     const {

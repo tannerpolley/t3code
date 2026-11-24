@@ -510,7 +510,9 @@ summary. Starting the handoff pauses new issue admissions while existing workers
 results finish. T3 archives the previous orchestrator when the fresh thread takes over. The fresh
 thread receives your summary and a recovery inventory. Saved requests
 from an older build proceed when their source thread has full access and is in default mode.
-You can cancel a pending handoff in Settings, and the same menu opens previous orchestrators.
+You can cancel a pending handoff in Settings. Open **Previous orchestrators** in the same
+menu to read archived conversations. The server's **Archived worker retention** setting
+also controls when it removes these conversations. The default is 14 days.
 For a routine provider or model change, keep the same thread.
 
 To restore orchestration to another existing thread, first pause repository work from **Status**. The

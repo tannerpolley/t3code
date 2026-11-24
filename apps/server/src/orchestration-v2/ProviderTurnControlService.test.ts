@@ -167,6 +167,7 @@ function layerProjectionStore(
       getThread: () => Effect.die("unused getThread"),
       findThread: () => Effect.die("unused findThread"),
       getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
+      getArchivedHandoffSources: () => Effect.die("unused getArchivedHandoffSources"),
       getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
       getThreadWorktreePaths: () => Effect.die("unused getThreadWorktreePaths"),
       getThreadProjection: () => Effect.die("control effects must not load transcript"),

@@ -820,7 +820,7 @@ Your first authorized action is read-only. Use t3_thread_read on the source to r
     const paused = config.handoff?.wasPaused ?? config.paused;
     const retiredRoot = {
       ...shell,
-      ...(automatic === undefined ? {} : { handoffToThreadId: next.id }),
+      handoffToThreadId: next.id,
       repositoryOrchestration: {
         ...config,
         automaticHandoff: undefined,
