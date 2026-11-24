@@ -4856,10 +4856,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-    retiredRoot?: OrchestrationV2AppThread,
+    options?: {
+      readonly retiredRoot?: OrchestrationV2AppThread;
+      readonly automaticSettlement?: boolean;
+    },
   ) {
     let thread =
-      retiredRoot ??
+      options?.retiredRoot ??
       (yield* projectionStore.getThread(command.threadId).pipe(
         Effect.mapError(
           (cause) =>
@@ -5134,6 +5137,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
         )
         .pipe(mapDispatchError(command));
+      // Automatic settlement can race queued-run promotion and dispose the results the wake carries.
+      if (
+        options?.automaticSettlement === true &&
+        [...queuedMessages.values()].some((message) => message.delegatedCompletion !== undefined)
+      ) {
+        return;
+      }
       const automaticMessageIds = new Set(
         [...queuedMessages.values()]
           .filter(
@@ -17032,7 +17042,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         { type: "thread.archive", commandId, threadId: thread.id },
         events,
         effects,
-        thread,
+        { retiredRoot: thread },
       ),
   });
 
@@ -17126,6 +17136,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
           events,
           effects,
+          { automaticSettlement: true },
         );
         break;
       }

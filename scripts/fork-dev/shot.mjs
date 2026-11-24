@@ -22,7 +22,10 @@ const journal = NodeChildProcess.execFileSync(
 );
 const pairUrl = [...journal.matchAll(/pairingUrl: (\S+\/pair#token=\S+)/g)].at(-1)?.[1];
 if (!pairUrl) throw new Error("No pairing URL in the t3-dev journal");
-const out = NodePath.join(NodeOS.homedir(), "Workspaces/Sandbox/Workspaces-Dev/.t3-dev-fixture/shots");
+const out = NodePath.join(
+  NodeOS.homedir(),
+  "Workspaces/Sandbox/Workspaces-Dev/.t3-dev-fixture/shots",
+);
 // Finished children remain reachable by route even when Projects hides their inactive rows.
 const userdata = NodePath.join(
   NodeOS.homedir(),
