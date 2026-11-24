@@ -114,7 +114,12 @@ const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
   Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(
+    Layer.mock(GitVcsDriver.GitVcsDriver)({
+      resolvePrimaryRemoteName: () => Effect.succeed(null),
+      resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
+    }),
+  ),
 );
 
 // Effect returns a declared tool failure as `isError` with its encoded payload
@@ -480,6 +485,7 @@ const client = McpSchema.McpServerClient.of({
 function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask {
   const timestamp = IsoDateTime.make("2026-07-01T09:00:00.000Z");
   return {
+    ...(input.action === undefined ? {} : { action: input.action }),
     id: input.id ?? ScheduledTaskId.make(`scheduled-task:${input.commandId ?? "stub"}`),
     title: input.title,
     prompt: input.prompt,
@@ -499,8 +505,8 @@ function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask
           }
         : input.schedule,
     projectId: input.projectId,
-    threadId: input.threadId ?? null,
-    workspaceStrategy: input.workspaceStrategy,
+    threadId: input.action === "usage_budget" ? null : (input.threadId ?? null),
+    workspaceStrategy: input.action === "usage_budget" ? { type: "root" } : input.workspaceStrategy,
     modelSelection: input.modelSelection,
     runtimeMode: input.runtimeMode,
     interactionMode: input.interactionMode,
@@ -2096,6 +2102,17 @@ describe("orchestrator MCP toolkit", () => {
               enabled: false,
             });
 
+            const converted = yield* invoke("schedule_task", {
+              scheduledTaskId,
+              action: "usage_budget",
+            });
+            expect(converted.isError).toBe(false);
+            expect(converted.structuredContent).toMatchObject({
+              scheduledTaskId,
+              action: "usage_budget",
+              schedule: { type: "interval", everyMs: 60_000 },
+            });
+
             const scheduledDeleteCall = yield* invoke("delete_scheduled_task", { scheduledTaskId });
             expect(scheduledDeleteCall.isError).toBe(false);
             expect(scheduledDeleteCall.structuredContent).toMatchObject({
@@ -2124,6 +2141,35 @@ describe("orchestrator MCP toolkit", () => {
               scheduledTaskId: serializedScheduledTaskId,
             });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
+
+            const report = yield* invoke("schedule_task", {
+              action: "usage_budget",
+              schedule: { type: "interval", everyMs: 60_000 },
+              clientRequestId: "schedule-budget-report",
+            });
+            expect(report.isError).toBe(false);
+            expect(report.structuredContent).toMatchObject({
+              action: "usage_budget",
+              title: "Usage budget report",
+            });
+            const reportId = (report.structuredContent as { scheduledTaskId: string })
+              .scheduledTaskId;
+            const switched = yield* invoke("schedule_task", {
+              scheduledTaskId: reportId,
+              action: "prompt",
+              prompt: "Check the nightly build",
+            });
+            expect(switched.isError).toBe(false);
+            expect(yield* Ref.get(scheduledStore)).toMatchObject([
+              {
+                id: reportId,
+                action: "prompt",
+                prompt: "Check the nightly build",
+                threadId: null,
+                workspaceStrategy: { type: "worktree" },
+              },
+            ]);
+            yield* invoke("delete_scheduled_task", { scheduledTaskId: reportId });
 
             const secretRequests = yield* SecretRequests.SecretRequests;
             const secretEvents = yield* EventSink.EventSinkV2;

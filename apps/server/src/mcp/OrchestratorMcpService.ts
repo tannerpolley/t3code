@@ -350,6 +350,7 @@ function errorMessage(error: unknown): string {
 
 function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
   return {
+    action: task.action ?? "prompt",
     scheduledTaskId: task.id,
     title: task.title,
     prompt: task.prompt,
@@ -2326,6 +2327,7 @@ const make = Effect.gen(function* () {
         .replace(/[\uD800-\uDBFF]$/, "");
       const title = input.title ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");
       const upsertInput: ScheduledTaskUpsertInput = {
+        ...(input.action === undefined ? {} : { action: input.action }),
         title,
         prompt: input.prompt,
         enabled: input.enabled ?? true,
@@ -2398,6 +2400,13 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
+        const switchingToPrompt = existing.action === "usage_budget" && input.action === "prompt";
+        if (switchingToPrompt && input.prompt === undefined) {
+          return yield* failure(
+            "invalid_request",
+            "Switching to the prompt action needs `prompt`.",
+          );
+        }
         if (
           input.bindToCurrentThread === true &&
           (parent === undefined || parent.thread.projectId !== existing.projectId)
@@ -2433,12 +2442,13 @@ const make = Effect.gen(function* () {
               : input.bindToCurrentThread && parent !== undefined
                 ? parent.thread.id
                 : null;
-        // Update workspace strategy on rebinding so unbound root tasks cannot run in the shared checkout.
+        // Rebinding or restoring prompt runs must keep unbound tasks out of the shared checkout.
         const workspaceStrategy =
-          (threadId === null) === (existing.threadId === null)
+          !switchingToPrompt && (threadId === null) === (existing.threadId === null)
             ? existing.workspaceStrategy
             : yield* scheduledTaskWorkspaceStrategy(threadId !== null, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
+          ...(input.action === undefined ? {} : { action: input.action }),
           id: existing.id,
           title: input.title ?? existing.title,
           prompt: input.prompt ?? existing.prompt,
