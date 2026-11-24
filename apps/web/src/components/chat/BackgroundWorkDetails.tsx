@@ -6,7 +6,7 @@ import type {
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useState } from "react";
 
-import { describeSidebarBackgroundWork } from "../sidebar/SidebarBackgroundWork.logic";
+import { describeBackgroundWork } from "../sidebar/SidebarBackgroundWork.logic";
 import { InlineButton } from "../ui/button";
 import {
   Dialog,
@@ -93,7 +93,7 @@ export function BackgroundWorkDetails(props: {
           <BackgroundWorkTaskList
             environmentId={props.environmentId}
             threadId={props.threadId}
-            rows={describeSidebarBackgroundWork(props.tasks, [])}
+            rows={describeBackgroundWork(props.tasks, [])}
             renderDetails={(row) => <TaskDetails detail={details.get(row.taskId)!} />}
             renderOutput={(row) => output(row.taskId)}
             renderAgent={(row) => {

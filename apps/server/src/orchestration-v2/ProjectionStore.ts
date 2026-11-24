@@ -545,6 +545,7 @@ export interface ActiveShellIndexEntry extends Pick<
   OrchestrationV2ThreadShell,
   | "id"
   | "projectId"
+  | "creationSource"
   | "lineage"
   | "workerAncestorIds"
   | "settledOverride"
@@ -9775,10 +9776,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           )
           SELECT thread_id, created_at, count(*) OVER () AS total
           FROM descendants
-          JOIN orchestration_v2_projection_threads USING (thread_id)
+          JOIN orchestration_v2_projection_threads t USING (thread_id)
           WHERE thread_id <> ${workerPage.parentThreadId} AND archived_at IS NULL AND deleted_at IS NULL
-            AND CASE WHEN json_valid(payload_json)
-              THEN json_extract(payload_json, '$.lineage.relationshipToParent') END = 'subagent'
+            AND ${indexedField("$.lineage.relationshipToParent")} = 'subagent'
+            AND ${indexedField("$.creationSource")} IS NOT 'provider'
             ${workerPage.before === undefined ? sql`` : sql`AND (created_at, thread_id) < (${workerPage.before.createdAt}, ${workerPage.before.threadId})`}
           ORDER BY created_at DESC, thread_id DESC
           LIMIT ${SIDEBAR_WORKER_PAGE_SIZE}
@@ -10172,6 +10173,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly thread_id: string;
         readonly project_id: string;
         readonly relationship_to_parent: string | null;
+        readonly creation_source: OrchestrationV2ThreadShell["creationSource"] | null;
         readonly parent_thread_id: string | null;
         readonly root_thread_id: string;
         readonly side_chat: number | null;
@@ -10188,6 +10190,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           t.thread_id,
           t.project_id,
           ${indexedField("$.lineage.relationshipToParent")} AS relationship_to_parent,
+          ${indexedField("$.creationSource")} AS creation_source,
           ${indexedField("$.lineage.parentThreadId")} AS parent_thread_id,
           ${indexedField("$.lineage.rootThreadId")} AS root_thread_id,
           ${indexedField("$.lineage.sideChat")} AS side_chat,
@@ -10252,6 +10255,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows.map((row): ActiveShellIndexEntry => ({
         id: ThreadId.make(row.thread_id),
         projectId: ProjectId.make(row.project_id),
+        creationSource: row.creation_source ?? "server",
         lineage: shellIndexLineage(row),
         ...workerAncestorsFromRow(row),
         settledOverride:

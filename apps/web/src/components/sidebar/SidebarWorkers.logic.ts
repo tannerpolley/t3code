@@ -1,4 +1,8 @@
-import { type ThreadId, workerListParentIds } from "@t3tools/contracts";
+import {
+  isProviderNativeSubagentThread,
+  type ThreadId,
+  workerListParentIds,
+} from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import type { SidebarThreadSummary } from "../../types";
@@ -14,6 +18,7 @@ export function indexSidebarWorkers(threads: readonly SidebarThreadSummary[]) {
   const isWorker = (thread: SidebarThreadSummary | undefined) =>
     thread !== undefined &&
     thread.archivedAt === null &&
+    !isProviderNativeSubagentThread(thread.source) &&
     thread.lineage.relationshipToParent === "subagent";
   const byKey = new Map(threads.map((thread) => [keyOf(thread), thread]));
   const children = new Map<string, SidebarThreadSummary[]>();

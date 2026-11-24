@@ -7,6 +7,7 @@ import {
 import {
   PullRequestLinkedThreadsResult,
   PullRequestOperationError,
+  isProviderNativeSubagentThread,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type ThreadId,
@@ -34,8 +35,12 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
       repository: string;
       number: number;
       url: string;
+      creationSource: OrchestrationV2AppThread["creationSource"];
+      relationshipToParent: OrchestrationV2AppThread["lineage"]["relationshipToParent"];
     }>`
       SELECT t.thread_id AS id, t.project_id AS "projectId", t.title,
+        json_extract(t.payload_json, '$.creationSource') AS "creationSource",
+        json_extract(t.payload_json, '$.lineage.relationshipToParent') AS "relationshipToParent",
         t.archived_at AS "archivedAt",
         (json_extract(t.payload_json, '$.settledAt') IS NOT NULL
           OR json_extract(t.payload_json, '$.settledOverride') IS 'settled') AS settled,
@@ -53,7 +58,14 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
       ORDER BY "updatedAt" DESC, id ASC
     `.pipe(NodeSqliteClient.readOnly);
     const threads = rows
-      .filter((row) => threadPullRequestKeysEqual(row, key))
+      .filter(
+        (row) =>
+          threadPullRequestKeysEqual(row, key) &&
+          !isProviderNativeSubagentThread({
+            creationSource: row.creationSource,
+            lineage: { relationshipToParent: row.relationshipToParent },
+          }),
+      )
       .map(({ id, projectId, title, archivedAt, settled }) => ({
         id,
         projectId,
@@ -75,7 +87,12 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
 
 // Mirrors the rows and filters of `listLinkedPullRequestThreads`.
 function linkedKeys(thread: OrchestrationV2AppThread): ReadonlyArray<string> {
-  if (thread.deletedAt !== null || thread.lineage.sideChat === true) return [];
+  if (
+    thread.deletedAt !== null ||
+    thread.lineage.sideChat === true ||
+    isProviderNativeSubagentThread(thread)
+  )
+    return [];
   return visibleThreadPullRequests(thread.pullRequests ?? [])
     .map(threadPullRequestKeyOf)
     .toSorted();

@@ -21,6 +21,7 @@ import {
   sidebarModelParts,
   sameSidebarSubagentTree,
   describeSidebarBackgroundWork,
+  describeBackgroundWork,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
   sidebarEffortGlyph,
@@ -59,39 +60,44 @@ describe("describeSidebarBackgroundWork", () => {
       ...nativeFixture,
       source: { ...nativeFixture.source, creationSource: "provider" as const },
     };
-    const rows = describeSidebarBackgroundWork(
-      [
-        {
-          taskId: "linked-agent",
-          description: "Review the diff",
-          kind: "subagent",
-          childThreadId: runningChild.id,
-        },
-        { taskId: "native-agent", kind: "subagent", childThreadId: nativeChild.id },
-        { taskId: "roster-agent", description: "Explore", kind: "subagent" },
-        { taskId: "command", description: "Run tests", kind: "command" },
-        { taskId: "monitor", description: "Watch build", kind: "monitor" },
-        { taskId: "unknown", kind: "background_task" },
-      ],
-      [nativeChild, runningChild],
-    );
+    const tasks = [
+      {
+        taskId: "linked-agent",
+        description: "Review the diff",
+        kind: "subagent",
+        childThreadId: runningChild.id,
+      },
+      {
+        taskId: "native-agent",
+        kind: "subagent",
+        origin: "provider_native",
+        childThreadId: nativeChild.id,
+      },
+      { taskId: "roster-agent", description: "Explore", kind: "subagent" },
+      { taskId: "command", description: "Run tests", kind: "command" },
+      { taskId: "monitor", description: "Watch build", kind: "monitor" },
+      { taskId: "unknown", kind: "background_task" },
+    ] as const;
+    const rows = describeSidebarBackgroundWork(tasks, [runningChild]);
 
     expect(rows.map(({ taskId, kind }) => [taskId, kind])).toEqual([
       ["command", "command"],
       ["monitor", "monitor"],
       ["unknown", "background_task"],
-      [nativeChild.id, "subagent"],
       [runningChild.id, "subagent"],
       ["roster-agent", "subagent"],
     ]);
-    expect(rows[4]).toMatchObject({
+    expect(rows[3]).toMatchObject({
       label: "Review the diff",
       childThreadId: runningChild.id,
       startedAt: "2026-09-23T10:00:00.000Z",
       status: "working",
       child: runningChild,
     });
-    expect(rows[5]).toMatchObject({ childThreadId: null, startedAt: null });
+    expect(rows[4]).toMatchObject({ childThreadId: null, startedAt: null });
+    expect(describeBackgroundWork(tasks, [nativeChild, runningChild])).toContainEqual(
+      expect.objectContaining({ childThreadId: nativeChild.id, child: nativeChild }),
+    );
     expect(rows[0]).not.toHaveProperty("childThreadId");
   });
 
@@ -149,12 +155,12 @@ describe("describeSidebarBackgroundWork", () => {
       "designer",
       "other",
     ];
-    expect(describeSidebarBackgroundWork([], children).map((row) => row.taskId)).toEqual(expected);
+    expect(describeBackgroundWork([], children).map((row) => row.taskId)).toEqual(expected);
     const streamingChildren = children.map((child) => ({
       ...child,
       updatedAt: child.id === "implementor-old" ? "2026-09-23T12:00:00.000Z" : old,
     }));
-    expect(describeSidebarBackgroundWork([], streamingChildren).map((row) => row.taskId)).toEqual(
+    expect(describeBackgroundWork([], streamingChildren).map((row) => row.taskId)).toEqual(
       expected,
     );
     expect(children[0]?.id).toBe("designer");
@@ -163,7 +169,7 @@ describe("describeSidebarBackgroundWork", () => {
       worktreePath: child.id === "reviewer-old" ? null : `/worktrees/${child.id}`,
     }));
     expect(
-      describeSidebarBackgroundWork([], sharedCheckout, undefined, null).map((row) => row.taskId),
+      describeBackgroundWork([], sharedCheckout, undefined, null).map((row) => row.taskId),
     ).toEqual(["reviewer-old", ...expected.filter((id) => id !== "reviewer-old")]);
   });
 

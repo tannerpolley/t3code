@@ -302,17 +302,13 @@ describe("groupRunningSubagentsByParent", () => {
     ).toEqual(["middle", "leaf"]);
   });
 
-  it("leaves worker ordering to the background work rows", () => {
+  it("lists running app-owned children in Projects", () => {
     const grouped = groupRunningSubagentsByParent([
       child("native-early", { native: true }),
       child("implementor"),
       child("native-late", { native: true }),
     ]);
-    expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual([
-      "native-early",
-      "implementor",
-      "native-late",
-    ]);
+    expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual(["implementor"]);
   });
 
   it("lists a running subagent under its fork, including through an inactive parent", () => {

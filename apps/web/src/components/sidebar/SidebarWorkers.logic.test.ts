@@ -53,15 +53,25 @@ it("nests a worker's own children under that worker, and lists them under the ro
     ...subagentOf("running-reviewer", worker.id),
     runtime: { ...idleReviewer.runtime!, status: "running" as const },
   };
+  const nativeChild = subagentOf("thread:subagent:native-review", worker.id);
+  const native = {
+    ...nativeChild,
+    runtime: runningReviewer.runtime,
+    source: { ...nativeChild.source, creationSource: "provider" as const },
+  };
   const keyOf = (thread: typeof root) =>
     scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
 
-  const indexed = indexSidebarWorkers([root, worker, idleReviewer, runningReviewer]);
+  const indexed = indexSidebarWorkers([root, worker, idleReviewer, runningReviewer, native]);
   expect(indexed.children.get(keyOf(root))).toEqual([worker]);
-  expect(new Set(indexed.children.get(keyOf(worker)))).toEqual(
-    new Set([idleReviewer, runningReviewer]),
-  );
+  expect(
+    indexed.children
+      .get(keyOf(worker))
+      ?.map(({ id }) => id)
+      .toSorted(),
+  ).toEqual([idleReviewer.id, runningReviewer.id].toSorted());
   expect(indexed.running.has(keyOf(runningReviewer))).toBe(true);
+  expect(indexed.running.has(keyOf(native))).toBe(false);
 
   const archived = { ...worker, archivedAt: "2026-11-20T00:00:00Z" };
   const orphaned = indexSidebarWorkers([root, archived, idleReviewer]);

@@ -327,6 +327,7 @@ it.effect.each([
           description: item.title,
           startedAt: item.startedAt,
           kind: "subagent",
+          origin: "provider_native",
           providerInstanceId,
         },
       ];
@@ -453,7 +454,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
         const delegated = ThreadId.make("subscriber-delegated");
         const unrelated = ThreadId.make("subscriber-unrelated");
-        for (const id of [delegated, unrelated]) {
+        const native = ThreadId.make("thread:subagent:native-review");
+        for (const id of [delegated, unrelated, native]) {
           yield* store.apply({
             id: EventId.make(`subscriber-child:${id}`),
             type: "thread.created",
@@ -462,6 +464,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             payload: {
               ...thread,
               id,
+              ...(id === native ? { creationSource: "provider" } : {}),
               lineage: {
                 rootThreadId: root,
                 parentThreadId: root,

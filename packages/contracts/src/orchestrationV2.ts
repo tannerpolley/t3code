@@ -1251,6 +1251,7 @@ function pendingBackgroundTaskSchema<
       Schema.Struct({
         ...fields,
         kind: Schema.Literal("subagent"),
+        origin: Schema.optional(Schema.Literals(["provider_native", "app_owned"])),
         providerInstanceId: Schema.optional(ProviderInstanceId),
       }),
       Schema.Struct({ ...fields, kind: Schema.Literal("command") }),

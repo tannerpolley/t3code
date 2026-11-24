@@ -117,9 +117,9 @@ Adjust the title text size for each Projects view row type under **Settings → 
 
 Drag a thread from Projects onto the composer to add it as context for your next
 message; subagent rows in Projects and rows in **Lineage** drag the same way.
-Running subagents and background tasks appear beneath their parent
-thread: its own background tasks first, then its native subagents, then app-owned
-children, each followed by its own work.
+Background tasks and app-owned children appear beneath their parent thread in
+Projects. Follow provider-native subagents from **Agents** or the conversation
+in their parent thread.
 
 With **Codex-style sidebar** on, each project lists its threads grouped by the
 location they work in: the project's own checkout first, then each worktree. A
@@ -391,7 +391,7 @@ a restart. Sending a new message, archiving, or settling prevents a pending cont
 
 On web and desktop, open **Agents** to follow delegated work and **Lineage** to see
 parent and fork relationships. Stop on a thread also stops the subagents it delegated to.
-You can stop a running native Codex or Claude subagent from its row while its
+You can stop a running native Codex or Claude subagent from **Agents** while its
 parent keeps working. Codex Stop interrupts the child's current turn and its
 descendants; Claude Stop uses its native task control.
 Use **Clear** under **Previous agents** to hide finished agents, and **Show** to restore
@@ -464,7 +464,7 @@ role. A native provider subagent takes its role from its agent type: Codex's man
 is an Orchestrator, reviewer and tester types are Reviewers, explorer and researcher types are
 Designers, writing types are Writers, and every other type, including
 the default agents, is an Implementor. Native subagents with the Implementor role display as
-Worker with a hard hat icon. Role icons appear in the chat header, and in
+Worker with a hard hat icon in the child thread header. Role icons appear in the chat header, and in
 thread rows when you turn them on in **Settings → Appearance → Sidebar & projects**.
 
 Native provider subagents run on their own; their role icon's tooltip identifies them as

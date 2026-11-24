@@ -21,7 +21,7 @@ import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
 import {
   childWorktreeLabel,
-  describeSidebarBackgroundWork,
+  describeBackgroundWork,
   sidebarEffortGlyph,
   sidebarRoleLabel,
 } from "../sidebar/SidebarBackgroundWork.logic";
@@ -260,7 +260,7 @@ function ThreadLineageBackgroundTasks(props: {
       key={`${props.environmentId}:${props.threadId}`}
       environmentId={props.environmentId}
       threadId={props.threadId}
-      rows={describeSidebarBackgroundWork(
+      rows={describeBackgroundWork(
         props.tasks.filter((task) => task.kind !== "subagent"),
         [],
       )}

@@ -205,6 +205,20 @@ export function describeSidebarBackgroundWork(
   ownerThreadId?: ThreadId,
   ownerWorktreePath?: string | null,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
+  return describeBackgroundWork(
+    tasks.filter((task) => task.kind !== "subagent" || task.origin !== "provider_native"),
+    runningChildren,
+    ownerThreadId,
+    ownerWorktreePath,
+  );
+}
+
+export function describeBackgroundWork(
+  tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
+  runningChildren: ReadonlyArray<ChildThread>,
+  ownerThreadId?: ThreadId,
+  ownerWorktreePath?: string | null,
+): ReadonlyArray<BackgroundWorkTaskRow> {
   const listedChildIds = new Set(runningChildren.map((child) => child.id));
   const linked = tasks.filter(
     (task): task is LinkedSubagentTask =>
