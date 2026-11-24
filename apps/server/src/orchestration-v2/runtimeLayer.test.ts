@@ -150,6 +150,44 @@ const layerProjectServiceTest = Layer.mock(ProjectService.ProjectService)({
 });
 
 const driver = ProviderDriverKind.make("codex");
+
+function claimedCompletionTaskEvent(
+  run: OrchestrationV2Run,
+  taskId: NodeId,
+  now: DateTime.Utc,
+): OrchestrationV2DomainEvent {
+  assert.isNotNull(run.rootNodeId);
+  return {
+    id: EventId.make(`${taskId}:claimed`),
+    type: "subagent.updated",
+    threadId: run.threadId,
+    runId: run.id,
+    nodeId: taskId,
+    occurredAt: now,
+    payload: {
+      id: taskId,
+      threadId: run.threadId,
+      runId: run.id,
+      parentNodeId: run.rootNodeId,
+      origin: "app_owned",
+      createdBy: "agent",
+      driver,
+      providerInstanceId: run.providerInstanceId,
+      providerThreadId: null,
+      childThreadId: null,
+      nativeTaskRef: null,
+      prompt: "Delegated work",
+      title: null,
+      model: null,
+      status: "completed",
+      result: "Done",
+      completionDelivery: { state: "claimed", observedByRunId: null },
+      startedAt: run.requestedAt,
+      completedAt: now,
+      updatedAt: now,
+    },
+  };
+}
 const orchestrationAdapter = {
   instanceId: modelSelection.instanceId,
   driver,
@@ -10341,6 +10379,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const now = yield* DateTime.now;
         yield* eventSink.write({
           events: [
+            claimedCompletionTaskEvent(active, taskId, now),
             {
               id: EventId.make(`${threadId}:cohort`),
               type: "run.updated",
@@ -12772,9 +12811,11 @@ it.layer(layerTest)("snooze queued runs", (it) => {
         });
         const activeRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
         const now = yield* DateTime.now;
+        const taskId = NodeId.make(`${threadId}:task`);
         if (kind === "delegated-completion") {
           yield* eventSink.write({
             events: [
+              claimedCompletionTaskEvent(activeRun, taskId, now),
               {
                 id: EventId.make(`completion:${threadId}`),
                 type: "run.updated",
@@ -12789,7 +12830,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
                     delivery: {
                       messageId: MessageId.make(`queued:${threadId}`),
                       generation: 1,
-                      taskIds: [NodeId.make("snooze-queued-task")],
+                      taskIds: [taskId],
                     },
                   },
                 },
@@ -12821,7 +12862,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
                   delegatedCompletion: {
                     parentRunId: activeRun.id,
                     generation: 1,
-                    taskIds: [NodeId.make("snooze-queued-task")],
+                    taskIds: [taskId],
                   },
                 }
               : {}),
