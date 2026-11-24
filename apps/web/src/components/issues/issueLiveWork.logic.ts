@@ -149,7 +149,7 @@ export function createLiveIssueWorkOverlay() {
           : previous?.result.liveWork !== undefined && sameItems(previous.result.liveWork, liveWork)
             ? previous.result
             : { ...issue, liveWork };
-      cached.set(key, { threads, parents, result });
+      cached.set(key, { threads, parents, lineageParents, result });
       return result as T;
     }
     const active = threads
