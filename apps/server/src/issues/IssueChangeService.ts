@@ -694,12 +694,12 @@ const make = Effect.gen(function* () {
                 .pipe(Effect.mapError(githubError));
             }
           } else {
-            yield* startStep("write");
             if (op.type === "body" || (op.type === "state" && op.state !== baseline.state)) {
               const ref = yield* trackerIssueRef(tracker, "detail", baseline.issue).pipe(
                 Effect.mapError(githubError),
               );
               if (op.type === "body") {
+                yield* startStep("write");
                 yield* tracker
                   .update({ ...ref, body: op.body })
                   .pipe(Effect.mapError(trackerDetailError));
@@ -719,15 +719,18 @@ const make = Effect.gen(function* () {
                         ? "This repository has no open issue status."
                         : "This repository has no issue status that closes an issue as completed.",
                   });
+                yield* startStep("write");
                 yield* tracker
                   .setState({ ...ref, state: state.name })
                   .pipe(Effect.mapError(trackerDetailError));
               }
             }
-            if (op.type === "milestone")
+            if (op.type === "milestone") {
+              yield* startStep("write");
               yield* issues
                 .setMilestone({ ...baseline.issue, milestoneNumber: op.milestoneNumber })
                 .pipe(Effect.mapError(githubError));
+            }
           }
           yield* saveStep(
             "write",

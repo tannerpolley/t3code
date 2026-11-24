@@ -563,6 +563,32 @@ it.effect("stale body or state baselines conflict before any GitHub write", () =
   ),
 );
 
+it.effect("retry after status selection fails detects an external close", () =>
+  inDatabase(
+    (h) =>
+      Effect.gen(function* () {
+        const service = yield* IssueChangeService.IssueChangeService;
+        const close = yield* propose({ type: "state", number: 10, state: "closed" });
+        yield* service.decide({ id: close.id, decision: "approved" }, user);
+        assert.equal(yield* drain, 1);
+        assert.include((yield* service.list({ threadId }))[0]!, {
+          status: "failed",
+          result: "This repository has no issue status that closes an issue as completed.",
+        });
+        h.snapshots.set(10, { ...h.snapshots.get(10)!, state: "closed" });
+        h.stateReasons.set(10, "not-planned");
+        yield* service.decide({ id: close.id, decision: "retry" }, user);
+        assert.equal(yield* drain, 1);
+        assert.equal((yield* service.list({ threadId }))[0]?.status, "conflict");
+        assert.isEmpty(h.stateWrites);
+      }).pipe(Effect.provide(h.singleAttemptRuntime)),
+    [
+      { category: "open", name: "Backlog" },
+      { category: "closed", name: "Not planned", closeReason: "not-planned" },
+    ],
+  ),
+);
+
 it.effect("approved proposals survive rebuilding the service and effect worker", () =>
   inDatabase((h) =>
     Effect.gen(function* () {
